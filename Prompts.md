@@ -1,0 +1,2 @@
+Feature 0 Prompt:
+I created the feature0.md basically to come up with the right infrastructure for supply chain demand forecasting. to do traditional, and ML based forecasting and lightning fast analysis in the UI and aggregations with item, location and customer attributes and should be able to handle 500 millions and more records. Please refine and make it simple. Iceberg, spark,trino that you suggested earlier are missing. refine and make a simple .md file with the right recommendation.
