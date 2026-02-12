@@ -13,12 +13,15 @@ Build a scalable forecasting platform for:
 - `MLflow` for experiment tracking, model registry, and run comparison
 - `Postgres` for app metadata and workflow (users, scenarios, overrides, approvals, audit)
 - `FastAPI` backend and `React/Next.js` frontend
+- `Pydantic` for canonical data structures, schema contracts, and validation
+- `uv` as the Python package/environment manager (`pyproject.toml` + `uv.lock`)
 
 ## Why This Works
 - `Iceberg` gives ACID tables, schema evolution, partition evolution, and time travel for large datasets.
 - `Spark` handles heavy ETL and model pipelines at scale.
 - `Trino` queries Iceberg tables interactively, enabling fast slice-and-dice in UI.
 - `MLflow` gives model lineage, reproducibility, and governance for both traditional and ML models.
+- `Pydantic` enforces typed, validated data contracts between ingestion, API, and modeling layers.
 - Clear separation: Spark writes, Trino reads, Iceberg stores.
 
 ## High-Level Architecture
@@ -73,12 +76,28 @@ Build a scalable forecasting platform for:
 - Run everything on a single MacBook using Docker Compose (no cloud services):
   - Iceberg catalog + MinIO + Spark + Trino + MLflow + Postgres + API + UI
 - Move to Kubernetes only when concurrency and SLA demand it.
+- Standardize Python workflows with `uv`:
+  - `uv venv`
+  - `uv sync`
+  - `uv run <command>`
 
 ## Local-Only Guardrails (MacBook)
 - Use `MinIO` only (do not configure `S3` endpoints).
 - Keep all data/artifacts local volumes on the MacBook.
 - Disable external callbacks/webhooks from MLflow and app services.
 - Restrict network egress from containers if strict isolation is required.
+
+## Critical Standardization Rules
+1. Canonical naming + grain:
+   - enforce standard keys (`item_sk`, `location_sk`, `customer_sk`) and require explicit grain on every fact table.
+2. Versioned data contracts with `Pydantic`:
+   - use typed, versioned schemas at API and pipeline boundaries.
+3. Quality gates before publish:
+   - block publish when null checks, key uniqueness, referential integrity, or row-count drift checks fail.
+4. Forecast lineage + governance:
+   - require `scenario_id`, `algorithm_id`, `model_version`, `run_id`, and `planning_grain` on every forecast record; overrides require reason + approval.
+5. Single config standard:
+   - centralize typed, environment-driven config with `local/dev/prod` profiles; avoid hardcoded paths/endpoints.
 
 ## Final Recommendation
 For your requirement, use `Iceberg + Spark + Trino + MLflow` as the core platform, fully local on your MacBook.
