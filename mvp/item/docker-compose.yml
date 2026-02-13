@@ -60,19 +60,22 @@ services:
       - "8181:8181"
 
   spark:
-    image: bitnami/spark:3.5.1
+    image: ${SPARK_IMAGE:-spark:3.5.7-java17}
     container_name: item-mvp-spark
     depends_on:
       - iceberg-rest
-    environment:
-      SPARK_MODE: master
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      --host 0.0.0.0
+      --port 7077
+      --webui-port 8080
     ports:
       - "7077:7077"
       - "8080:8080"
     volumes:
       - ./scripts:/opt/mvp/scripts
       - ./data:/opt/mvp/data
-      - ./infra/spark/spark-defaults.conf:/opt/bitnami/spark/conf/spark-defaults.conf:ro
+      - ./infra/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
 
   trino:
     image: trinodb/trino:451

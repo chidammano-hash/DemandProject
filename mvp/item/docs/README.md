@@ -48,3 +48,4 @@ Detailed execution and validation guide:
 ## Notes
 - `item_ck = item_no` per `feature1a.md`.
 - `itemdata.csv` has duplicate `size` header in source; `normalize_item_csv.py` handles header normalization.
+- Default Spark image is `spark:3.5.7-java17`; override with `SPARK_IMAGE=spark:<valid-tag>` in `mvp/item/.env` if needed.

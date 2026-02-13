@@ -56,7 +56,7 @@ api:
 	$(UV) uvicorn api.main:app --reload --port 8000
 
 spark:
-	docker exec -it item-mvp-spark /opt/bitnami/spark/bin/spark-submit \
+	docker exec -it item-mvp-spark /opt/spark/bin/spark-submit \
 		--packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.0,org.apache.hadoop:hadoop-aws:3.3.4 \
 		/opt/mvp/scripts/spark_item_to_iceberg.py
 
