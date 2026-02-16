@@ -11,7 +11,7 @@ Build a scalable forecasting platform for:
 - `Apache Spark` for ingestion, data quality, feature prep, batch training, and batch scoring
 - `Trino` for low-latency SQL analytics powering the UI
 - `MLflow` for experiment tracking, model registry, and run comparison
-- `Postgres` for app metadata and workflow (users, scenarios, overrides, approvals, audit)
+- `Postgres` (via `pgvector/pgvector:pg16`) for app metadata, workflow, and vector embeddings for NL queries
 - `FastAPI` backend and `React/Next.js` frontend
 - `Pydantic` for canonical data structures, schema contracts, and validation
 - `uv` as the Python package/environment manager (`pyproject.toml` + `uv.lock`)
@@ -71,6 +71,20 @@ Build a scalable forecasting platform for:
 4. Write forecasts + metrics to Iceberg.
 5. Expose Trino-backed APIs for portfolio, exceptions, and item drilldown.
 6. Add overrides and approvals in Postgres with full audit.
+
+## Implemented Features (MVP)
+- **Feature 0:** Infrastructure setup — Docker Compose, MinIO, Spark, Trino, MLflow, Postgres, FastAPI, React
+- **Feature 1a:** Item dimension (`dim_item`)
+- **Feature 1b:** Location dimension (`dim_location`)
+- **Feature 1c:** Customer dimension (`dim_customer`)
+- **Feature 1d:** Time dimension (`dim_time`) — auto-generated 2020–2035
+- **Feature 1e:** DFU dimension (`dim_dfu`)
+- **Feature 1f:** Sales fact (`fact_sales_monthly`) — TYPE=1 filter, monthly grain
+- **Feature 1g:** External forecast fact (`fact_external_forecast_monthly`) — lag 0–4, monthly grain
+- **Feature 10:** Forecast accuracy KPIs — Accuracy %, WAPE, MAPE, Bias, window selector, trend charts
+- **Feature 11:** Multi-model forecast support — `model_id` column, model selector, per-model analytics
+- **Feature 12:** Chatbot / natural language queries — OpenAI GPT-4o + pgvector embeddings, NL→SQL with safe execution
+- **Feature 13:** DFU clustering framework — Time series feature engineering, KMeans clustering with optimal K selection, automated cluster labeling, MLflow integration
 
 ## Deployment Notes
 - Run everything on a single MacBook using Docker Compose (no cloud services):

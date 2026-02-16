@@ -7,11 +7,12 @@ Store archived external statistical forecasts for lag-based forecast accuracy an
 `datafiles/dfu_stat_fcst.txt` (pipe-delimited)
 
 ## Grain
-- one row per `dmdunit` + `dmdgroup` + `loc` + `fcstdate` + `startdate`
+- one row per `dmdunit` + `dmdgroup` + `loc` + `fcstdate` + `startdate` + `model_id`
 - `fcstdate` is forecast generation month (month-start)
 - `startdate` is forecasted demand month (month-start)
 - `lag` is computed as month difference between `startdate` and `fcstdate`
 - only lags `0..4` are stored in MVP
+- `model_id` identifies the forecasting algorithm (default `'external'`); see feature11.md
 
 ## Table
 `fact_external_forecast_monthly`
@@ -30,6 +31,7 @@ Store archived external statistical forecasts for lag-based forecast accuracy an
 - `startdate`
 - `lag`
 - `execution_lag`
+- `model_id` (forecasting algorithm identifier; default `'external'`)
 - `basefcst_pref` (base statistical forecast)
 - `tothist_dmd` (actual sales for the month)
 
