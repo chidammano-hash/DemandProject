@@ -1,0 +1,18 @@
+clustering:
+  min_months_history: 12
+  time_window_months: 24  # or "all"
+  k_range: [3, 12]
+  min_cluster_size_pct: 1.0
+  feature_scaling: "standard"
+  use_pca: false
+  pca_components: null  # auto if use_pca=true
+  
+  labeling:
+    volume_thresholds:
+      high: 0.75
+      low: 0.25
+    cv_thresholds:
+      steady: 0.3
+      volatile: 0.8
+    seasonality_threshold: 0.5
+    zero_demand_threshold: 0.2

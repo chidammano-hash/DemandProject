@@ -1,0 +1,114 @@
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: demand-mvp-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "${MINIO_API_HOST_PORT:-9200}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-9201}:9001"
+    volumes:
+      - minio_data:/data
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: demand-mvp-postgres
+    environment:
+      POSTGRES_DB: demand_mvp
+      POSTGRES_USER: demand
+      POSTGRES_PASSWORD: demand
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c work_mem=64MB
+      -c effective_cache_size=1536MB
+      -c max_connections=50
+      -c checkpoint_completion_target=0.9
+      -c random_page_cost=1.1
+    ports:
+      - "${POSTGRES_HOST_PORT:-5440}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./sql/001_create_dim_item.sql:/docker-entrypoint-initdb.d/001_create_dim_item.sql:ro
+      - ./sql/002_create_dim_location.sql:/docker-entrypoint-initdb.d/002_create_dim_location.sql:ro
+      - ./sql/003_create_dim_customer.sql:/docker-entrypoint-initdb.d/003_create_dim_customer.sql:ro
+      - ./sql/004_create_dim_time.sql:/docker-entrypoint-initdb.d/004_create_dim_time.sql:ro
+      - ./sql/005_create_dim_dfu.sql:/docker-entrypoint-initdb.d/005_create_dim_dfu.sql:ro
+      - ./sql/006_create_fact_sales_monthly.sql:/docker-entrypoint-initdb.d/006_create_fact_sales_monthly.sql:ro
+      - ./sql/007_create_fact_external_forecast_monthly.sql:/docker-entrypoint-initdb.d/007_create_fact_external_forecast_monthly.sql:ro
+      - ./sql/009_create_chat_embeddings.sql:/docker-entrypoint-initdb.d/009_create_chat_embeddings.sql:ro
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.16.2
+    container_name: demand-mvp-mlflow
+    depends_on:
+      - postgres
+    environment:
+      MLFLOW_TRACKING_URI: http://0.0.0.0:5000
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://demand:demand@postgres:5432/demand_mvp
+      --default-artifact-root /mlruns
+      --host 0.0.0.0
+      --port 5000
+    ports:
+      - "${MLFLOW_HOST_PORT:-5003}:5000"
+    volumes:
+      - mlflow_data:/mlruns
+
+  iceberg-rest:
+    image: tabulario/iceberg-rest:1.6.0
+    container_name: demand-mvp-iceberg-rest
+    depends_on:
+      - minio
+    environment:
+      AWS_ACCESS_KEY_ID: minio
+      AWS_SECRET_ACCESS_KEY: minio123
+      AWS_REGION: us-east-1
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+    ports:
+      - "${ICEBERG_REST_HOST_PORT:-8381}:8181"
+
+  spark:
+    image: ${SPARK_IMAGE:-spark:3.5.7-java17-python3}
+    container_name: demand-mvp-spark
+    depends_on:
+      - iceberg-rest
+    environment:
+      HOME: /tmp
+      AWS_ACCESS_KEY_ID: minio
+      AWS_SECRET_ACCESS_KEY: minio123
+      AWS_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: "true"
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      --host 0.0.0.0
+      --port 7077
+      --webui-port 8080
+    ports:
+      - "${SPARK_MASTER_HOST_PORT:-7277}:7077"
+      - "${SPARK_UI_HOST_PORT:-8280}:8080"
+    volumes:
+      - ./scripts:/opt/mvp/scripts
+      - ./data:/opt/mvp/data
+      - ./infra/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+
+  trino:
+    image: trinodb/trino:451
+    container_name: demand-mvp-trino
+    depends_on:
+      - iceberg-rest
+    ports:
+      - "${TRINO_HOST_PORT:-8282}:8080"
+    volumes:
+      - ./infra/trino/catalog/iceberg.properties:/etc/trino/catalog/iceberg.properties:ro
+
+volumes:
+  minio_data:
+  pg_data:
+  mlflow_data:
