@@ -41,9 +41,12 @@ def compute_time_series_features(df: pd.DataFrame) -> pd.Series:
     
     if len(df) == 0:
         return pd.Series()
-    
+
     # Use .to_numpy() for a single contiguous array (faster than .values for some ops)
     demand_values = np.asarray(df["qty"].fillna(0), dtype=np.float64)
+
+    # History length as a feature
+    features["months_available"] = len(demand_values)
     
     # Volume metrics
     features["mean_demand"] = np.mean(demand_values)
@@ -161,7 +164,7 @@ def compute_time_series_features(df: pd.DataFrame) -> pd.Series:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate clustering features from sales history")
-    parser.add_argument("--min-months", type=int, default=12, help="Minimum months of history required")
+    parser.add_argument("--min-months", type=int, default=1, help="Minimum months of history (1 = include all DFUs with any sales)")
     parser.add_argument("--time-window", type=str, default="24", help="Months to include (number or 'all')")
     parser.add_argument("--output", type=str, default="data/clustering_features.csv", help="Output file path")
     args = parser.parse_args()
@@ -194,34 +197,36 @@ def main() -> None:
         dfus = pd.read_sql(dfu_query, conn)
         print(f"Found {len(dfus)} DFUs")
         
-        # Get sales data
+        # Get sales data — only for DFUs that exist in dim_dfu
         sales_query = """
-            SELECT 
-                CONCAT(dmdunit, '_', dmdgroup, '_', loc) AS dfu_ck,
-                startdate,
-                qty
-            FROM fact_sales_monthly
-            WHERE qty IS NOT NULL
+            SELECT d.dfu_ck, s.startdate, s.qty
+            FROM fact_sales_monthly s
+            INNER JOIN dim_dfu d
+                ON d.dmdunit = s.dmdunit
+                AND d.dmdgroup = s.dmdgroup
+                AND d.loc = s.loc
+            WHERE s.qty IS NOT NULL
         """
+        params: dict[str, object] = {}
         if cutoff_date:
-            sales_query += f" AND startdate >= '{cutoff_date}'"
-        sales_query += " ORDER BY dfu_ck, startdate"
-        
-        sales_df = pd.read_sql(sales_query, conn)
+            sales_query += " AND s.startdate >= %(cutoff)s"
+            params["cutoff"] = cutoff_date
+        sales_query += " ORDER BY d.dfu_ck, s.startdate"
+
+        sales_df = pd.read_sql(sales_query, conn, params=params if params else None)
         sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
         print(f"Found {len(sales_df)} sales records")
-        
-        # Get DFU attributes
-        dfu_attrs_query = f"""
-            SELECT 
-                dfu_ck,
-                brand, region, state_plan, sales_div,
-                prod_cat_desc, prod_class_desc, subclass_desc,
-                abc_vol, service_lvl_grp, supergroup,
-                execution_lag, total_lt, alcoh_pct, proof, vintage
-            FROM dim_dfu
-        """
-        dfu_attrs = pd.read_sql(dfu_attrs_query, conn)
+        print(f"Unique DFUs with sales: {sales_df['dfu_ck'].nunique()}")
+
+        # Get DFU attributes (only for qualified DFUs)
+        dfu_attrs = pd.read_sql(
+            "SELECT dfu_ck, brand, region, state_plan, sales_div,"
+            " prod_cat_desc, prod_class_desc, subclass_desc,"
+            " abc_vol, service_lvl_grp, supergroup,"
+            " execution_lag, total_lt, alcoh_pct, proof, vintage"
+            " FROM dim_dfu",
+            conn,
+        )
         
         # Get item attributes (join via dmdunit)
         item_query = f"""
@@ -244,10 +249,8 @@ def main() -> None:
     n_groups = grouped.ngroups
     ts_features_list = []
     for idx, (dfu_ck, dfu_sales) in enumerate(grouped):
-        if (idx + 1) % 500 == 0 or idx == 0:
+        if (idx + 1) % 2000 == 0 or idx == 0:
             print(f"  Processing DFU {idx + 1}/{n_groups}...")
-        if len(dfu_sales) < args.min_months:
-            continue
         ts_features = compute_time_series_features(dfu_sales)
         ts_features["dfu_ck"] = dfu_ck
         ts_features_list.append(ts_features)

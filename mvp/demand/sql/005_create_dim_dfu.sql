@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS dim_dfu (
   file_dt TEXT,
   histstart TEXT,
   cluster_assignment TEXT,
+  ml_cluster TEXT,
   sop_ref TEXT,
   load_ts TIMESTAMPTZ DEFAULT NOW(),
   modified_ts TIMESTAMPTZ DEFAULT NOW()
@@ -180,3 +181,4 @@ CREATE INDEX IF NOT EXISTS idx_dim_dfu_loc ON dim_dfu (loc);
 CREATE INDEX IF NOT EXISTS idx_dim_dfu_brand ON dim_dfu (brand);
 CREATE INDEX IF NOT EXISTS idx_dim_dfu_region ON dim_dfu (region);
 CREATE INDEX IF NOT EXISTS idx_dim_dfu_cluster_assignment ON dim_dfu (cluster_assignment);
+CREATE INDEX IF NOT EXISTS idx_dim_dfu_ml_cluster ON dim_dfu (ml_cluster);

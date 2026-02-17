@@ -89,6 +89,41 @@ type SamplePairPayload = {
   location?: string | null;
 };
 
+type ClusterInfo = {
+  cluster_id: string;
+  label: string;
+  count: number;
+  pct_of_total: number;
+  avg_demand: number;
+  cv_demand: number;
+};
+
+type DfuClustersPayload = {
+  domain: string;
+  total_assigned: number;
+  clusters: ClusterInfo[];
+};
+
+type ClusterProfile = {
+  cluster_id: number;
+  label: string;
+  mean_demand: number;
+  cv_demand: number;
+  seasonality_strength: number;
+  trend_slope: number;
+  growth_rate: number;
+  zero_demand_pct: number;
+};
+
+type ClusterProfilesPayload = {
+  profiles: ClusterProfile[];
+  metadata: {
+    optimal_k: number | null;
+    silhouette_score: number | null;
+    inertia: number | null;
+  };
+};
+
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -211,6 +246,12 @@ export default function App() {
   const [locationFilter, setLocationFilter] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [selectedCluster, setSelectedCluster] = useState("");
+  const [clusterSource, setClusterSource] = useState<"ml" | "source">("ml");
+  const [clusterSummary, setClusterSummary] = useState<ClusterInfo[]>([]);
+  const [clusterProfiles, setClusterProfiles] = useState<ClusterProfile[]>([]);
+  const [clusterMeta, setClusterMeta] = useState<ClusterProfilesPayload["metadata"] | null>(null);
+  const [showClusterViz, setShowClusterViz] = useState(false);
   const [autoSampledDomain, setAutoSampledDomain] = useState("");
   const [itemSuggestions, setItemSuggestions] = useState<string[]>([]);
   const [locationSuggestions, setLocationSuggestions] = useState<string[]>([]);
@@ -295,8 +336,12 @@ export default function App() {
     if (domain === "forecast" && selectedModel.trim()) {
       out["model_id"] = `=${selectedModel.trim()}`;
     }
+    if (domain === "dfu" && selectedCluster.trim()) {
+      const filterCol = clusterSource === "ml" ? "ml_cluster" : "cluster_assignment";
+      out[filterCol] = `=${selectedCluster.trim()}`;
+    }
     return out;
-  }, [columnFilters, showFactFilters, itemFilter, locationFilter, itemField, locationField, domain, selectedModel]);
+  }, [columnFilters, showFactFilters, itemFilter, locationFilter, itemField, locationField, domain, selectedModel, selectedCluster, clusterSource]);
 
   useEffect(() => {
     let cancelled = false;
@@ -564,6 +609,48 @@ export default function App() {
   }, [domain, meta]);
 
   useEffect(() => {
+    if (domain !== "dfu") {
+      setClusterSummary([]);
+      setSelectedCluster("");
+      setClusterProfiles([]);
+      setClusterMeta(null);
+      return;
+    }
+    let cancelled = false;
+    async function loadClusters() {
+      try {
+        const res = await fetch(`/domains/dfu/clusters?source=${clusterSource}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const payload = (await res.json()) as DfuClustersPayload;
+        if (!cancelled && payload.clusters) {
+          setClusterSummary(payload.clusters);
+        }
+      } catch {
+        if (!cancelled) setClusterSummary([]);
+      }
+    }
+    async function loadProfiles() {
+      try {
+        const res = await fetch("/domains/dfu/clusters/profiles");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const payload = (await res.json()) as ClusterProfilesPayload;
+        if (!cancelled) {
+          setClusterProfiles(payload.profiles || []);
+          setClusterMeta(payload.metadata || null);
+        }
+      } catch {
+        if (!cancelled) {
+          setClusterProfiles([]);
+          setClusterMeta(null);
+        }
+      }
+    }
+    loadClusters();
+    if (clusterSource === "ml") loadProfiles();
+    return () => { cancelled = true; };
+  }, [domain, clusterSource]);
+
+  useEffect(() => {
     if (!meta || !showFactFilters || autoSampledDomain === domain) {
       return;
     }
@@ -794,6 +881,146 @@ export default function App() {
       {error ? (
         <Card className="mt-4 border-red-200 bg-red-50">
           <CardContent className="pt-4 text-sm text-red-700">{error}</CardContent>
+        </Card>
+      ) : null}
+
+      {domain === "dfu" ? (
+        <Card className="mt-4 animate-fade-in">
+          <CardHeader>
+            <CardTitle className="text-base">DFU Clustering</CardTitle>
+            <CardDescription>
+              Filter by demand-pattern cluster.{" "}
+              {clusterSource === "ml"
+                ? "ML pipeline clusters from KMeans."
+                : "Source clusters from dfu.txt."}
+            </CardDescription>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Source
+                <select
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={clusterSource}
+                  onChange={(e) => {
+                    setClusterSource(e.target.value as "ml" | "source");
+                    setSelectedCluster("");
+                    setOffset(0);
+                  }}
+                >
+                  <option value="ml">ML Pipeline</option>
+                  <option value="source">Source (dfu.txt)</option>
+                </select>
+              </label>
+              {clusterSummary.length > 0 ? (
+                <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Cluster
+                  <select
+                    className="h-9 w-full min-w-[200px] rounded-md border border-input bg-background px-3 text-sm"
+                    value={selectedCluster}
+                    onChange={(e) => {
+                      setOffset(0);
+                      setSelectedCluster(e.target.value);
+                    }}
+                  >
+                    <option value="">All Clusters</option>
+                    {clusterSummary.map((c) => (
+                      <option key={c.label} value={c.label}>
+                        {c.label} ({formatCompactNumber(c.count)})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {clusterSummary.length > 0 ? (
+              <>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Cluster summary &mdash; {clusterSummary.length} clusters, {formatCompactNumber(clusterSummary.reduce((s, c) => s + c.count, 0))} DFUs assigned</p>
+                <div className="max-h-[320px] overflow-y-auto rounded-md border border-input">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-muted bg-muted/30">
+                        <TableHead className="text-xs">Cluster</TableHead>
+                        <TableHead className="text-xs text-right">DFUs</TableHead>
+                        <TableHead className="text-xs text-right">%</TableHead>
+                        <TableHead className="text-xs text-right">Avg demand</TableHead>
+                        <TableHead className="text-xs text-right">CV</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {clusterSummary.map((c) => (
+                        <TableRow
+                          key={c.label}
+                          className={cn(
+                            "cursor-pointer transition-colors hover:bg-muted/40",
+                            selectedCluster === c.label && "bg-primary/10 font-semibold"
+                          )}
+                          onClick={() => {
+                            setOffset(0);
+                            setSelectedCluster(selectedCluster === c.label ? "" : c.label);
+                          }}
+                        >
+                          <TableCell className="font-medium text-sm">{c.label}</TableCell>
+                          <TableCell className="text-right text-sm tabular-nums">{formatNumber(c.count)}</TableCell>
+                          <TableCell className="text-right text-sm tabular-nums">{formatNumber(c.pct_of_total)}%</TableCell>
+                          <TableCell className="text-right text-sm tabular-nums">{formatNumber(c.avg_demand)}</TableCell>
+                          <TableCell className="text-right text-sm tabular-nums">{formatNumber(c.cv_demand)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <p className="text-xs text-muted-foreground">Click a row or use the dropdown above to filter the table below.</p>
+
+                {/* Model metadata (ML source only) */}
+                {clusterSource === "ml" && clusterMeta?.optimal_k ? (
+                  <div className="mt-3 flex flex-wrap gap-3 text-xs">
+                    <span className="rounded bg-muted px-2 py-1">K = {clusterMeta.optimal_k}</span>
+                    <span className="rounded bg-muted px-2 py-1">Silhouette = {clusterMeta.silhouette_score?.toFixed(4)}</span>
+                    <span className="rounded bg-muted px-2 py-1">Inertia = {formatCompactNumber(clusterMeta.inertia ?? 0)}</span>
+                  </div>
+                ) : null}
+
+                {/* Visualization toggle (ML source only) */}
+                {clusterSource === "ml" ? (
+                  <>
+                    <button
+                      className="mt-2 text-xs text-primary underline underline-offset-2 hover:text-primary/80"
+                      onClick={() => setShowClusterViz(!showClusterViz)}
+                    >
+                      {showClusterViz ? "Hide visualizations" : "Show cluster visualizations"}
+                    </button>
+                    {showClusterViz ? (
+                      <div className="mt-2 grid gap-4 md:grid-cols-2">
+                        <div>
+                          <p className="mb-1 text-xs font-semibold text-muted-foreground">K Selection (Elbow / Silhouette / Gap)</p>
+                          <img
+                            src="/domains/dfu/clusters/visualization/k_selection_plots.png"
+                            alt="K Selection Plots"
+                            className="w-full rounded-md border"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                          />
+                        </div>
+                        <div>
+                          <p className="mb-1 text-xs font-semibold text-muted-foreground">Cluster Visualization (2D PCA)</p>
+                          <img
+                            src="/domains/dfu/clusters/visualization/cluster_visualization.png"
+                            alt="Cluster PCA Visualization"
+                            className="w-full rounded-md border"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No cluster assignments yet. Run the clustering pipeline: <code className="rounded bg-muted px-1">make cluster-features</code>, then <code className="rounded bg-muted px-1">make cluster-train</code>, <code className="rounded bg-muted px-1">make cluster-label</code>, and <code className="rounded bg-muted px-1">make cluster-update</code> to see clusters here.
+              </p>
+            )}
+          </CardContent>
         </Card>
       ) : null}
 

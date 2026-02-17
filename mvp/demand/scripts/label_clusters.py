@@ -20,73 +20,109 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def assign_cluster_label(
-    centroid: pd.Series,
+def assign_cluster_labels(
+    centroids_df: pd.DataFrame,
     volume_thresholds: dict[str, float],
     cv_thresholds: dict[str, float],
     seasonality_threshold: float,
-    zero_demand_threshold: float
-) -> str:
-    """Assign a label to a cluster based on its centroid features."""
-    
-    mean_demand = centroid.get("mean_demand", 0)
-    cv_demand = centroid.get("cv_demand", 0)
-    seasonality_strength = centroid.get("seasonality_strength", 0)
-    trend_slope = centroid.get("trend_slope", 0)
-    growth_rate = centroid.get("growth_rate", 0)
-    zero_demand_pct = centroid.get("zero_demand_pct", 0)
-    
-    # Determine volume tier
-    # Note: thresholds are percentiles, so we need to compare relative to other clusters
-    # For now, use absolute thresholds based on typical values
-    if mean_demand > volume_thresholds.get("high", 1000):
-        volume_tier = "high_volume"
-    elif mean_demand < volume_thresholds.get("low", 100):
-        volume_tier = "low_volume"
-    else:
-        volume_tier = "medium_volume"
-    
-    # Determine pattern type
-    pattern_type = None
-    
-    # Check for intermittent pattern
-    if zero_demand_pct > zero_demand_threshold:
-        pattern_type = "intermittent"
-    # Check for seasonal pattern
-    elif seasonality_strength > seasonality_threshold:
-        pattern_type = "seasonal"
-    # Check for trending patterns
-    elif trend_slope > 0.01 or growth_rate > 5:
-        pattern_type = "trending_up"
-    elif trend_slope < -0.01 or growth_rate < -5:
-        pattern_type = "trending_down"
-    # Check for volatile pattern
-    elif cv_demand > cv_thresholds.get("volatile", 0.8):
-        pattern_type = "volatile"
-    # Check for steady pattern
-    elif cv_demand < cv_thresholds.get("steady", 0.3) and abs(trend_slope) < 0.01:
-        pattern_type = "steady"
-    else:
-        pattern_type = "mixed"
-    
-    # Combine into composite label if both dimensions are strong
-    if volume_tier == "high_volume" and pattern_type == "steady":
-        return "high_volume_steady"
-    elif volume_tier == "high_volume" and pattern_type == "seasonal":
-        return "seasonal_high_volume"
-    elif volume_tier == "low_volume" and pattern_type == "intermittent":
-        return "intermittent_low_volume"
-    elif volume_tier == "high_volume" and pattern_type == "trending_up":
-        return "high_volume_growing"
-    elif volume_tier == "low_volume" and pattern_type == "trending_down":
-        return "low_volume_declining"
-    elif volume_tier == "medium_volume" and pattern_type == "seasonal":
-        return "seasonal_medium_volume"
-    elif volume_tier == "medium_volume" and pattern_type == "steady":
-        return "medium_volume_steady"
-    else:
-        # Return volume-based label if pattern is weak
-        return f"{volume_tier}_{pattern_type}" if pattern_type != "mixed" else volume_tier
+    zero_demand_threshold: float,
+) -> dict[int, str]:
+    """Assign unique labels to all clusters based on centroid features.
+
+    Uses a two-pass approach: first assigns base labels from volume + pattern,
+    then disambiguates any duplicates using secondary features.
+    """
+
+    def _volume_tier(mean_demand: float) -> str:
+        if mean_demand > volume_thresholds.get("very_high", volume_thresholds.get("high", 1000) * 10):
+            return "very_high_volume"
+        if mean_demand > volume_thresholds.get("high", 1000):
+            return "high_volume"
+        if mean_demand < volume_thresholds.get("low", 100):
+            return "low_volume"
+        return "medium_volume"
+
+    def _pattern(row: pd.Series) -> str:
+        cv = row.get("cv_demand", 0)
+        seas = row.get("seasonality_strength", 0)
+        slope = row.get("trend_slope", 0)
+        growth = row.get("growth_rate", 0)
+        zero_pct = row.get("zero_demand_pct", 0)
+
+        if zero_pct > zero_demand_threshold:
+            return "intermittent"
+        if seas > seasonality_threshold and cv > cv_thresholds.get("volatile", 0.8):
+            return "seasonal_volatile"
+        if seas > seasonality_threshold:
+            return "seasonal"
+        if slope > 0.05 or growth > 5:
+            return "growing"
+        if slope < -0.05 or growth < -5:
+            return "declining"
+        if slope > 0.01 or growth > 1:
+            return "slight_growth"
+        if slope < -0.01 or growth < -1:
+            return "slight_decline"
+        if cv > cv_thresholds.get("volatile", 0.8):
+            return "volatile"
+        if cv < cv_thresholds.get("steady", 0.3):
+            return "steady"
+        return "moderate"
+
+    def _disambiguator(row: pd.Series) -> str:
+        """Return a secondary descriptor to break ties."""
+        cv = row.get("cv_demand", 0)
+        seas = row.get("seasonality_strength", 0)
+        mean_d = row.get("mean_demand", 0)
+        growth = row.get("growth_rate", 0)
+
+        # Pick the most distinguishing secondary trait
+        if seas > seasonality_threshold:
+            return "seasonal"
+        if cv > cv_thresholds.get("volatile", 0.8):
+            return "volatile"
+        if cv < cv_thresholds.get("steady", 0.3):
+            return "stable"
+        if abs(growth) < 0.5:
+            return "flat"
+        if growth > 3:
+            return "accelerating"
+        if growth < -3:
+            return "contracting"
+        if mean_d > 200:
+            return "higher_avg"
+        if mean_d > 90:
+            return "mid_range"
+        return "lower_avg"
+
+    # Pass 1: assign base labels
+    base_labels: dict[int, str] = {}
+    for _, row in centroids_df.iterrows():
+        cid = int(row["cluster_id"])
+        centroid = row.drop("cluster_id")
+        vol = _volume_tier(centroid.get("mean_demand", 0))
+        pat = _pattern(centroid)
+        base_labels[cid] = f"{vol}_{pat}"
+
+    # Pass 2: disambiguate duplicates
+    from collections import Counter
+    label_counts = Counter(base_labels.values())
+    duplicated = {lbl for lbl, cnt in label_counts.items() if cnt > 1}
+
+    final_labels: dict[int, str] = {}
+    for cid, base in base_labels.items():
+        if base not in duplicated:
+            final_labels[cid] = base
+        else:
+            row = centroids_df[centroids_df["cluster_id"] == cid].iloc[0]
+            suffix = _disambiguator(row.drop("cluster_id"))
+            candidate = f"{base}_{suffix}"
+            # If still duplicate, append cluster_id as last resort
+            if candidate in final_labels.values():
+                candidate = f"{base}_c{cid}"
+            final_labels[cid] = candidate
+
+    return final_labels
 
 
 def main() -> None:
@@ -151,36 +187,36 @@ def main() -> None:
         feature_names = [c for c in centroids_df.columns if c != "cluster_id"]
     
     # Compute percentile-based volume thresholds from actual data
-    # We'll use the mean_demand values from centroids
     mean_demands = centroids_df["mean_demand"].values
     if len(mean_demands) > 0:
         volume_high_threshold = np.percentile(mean_demands, volume_thresholds.get("high", 75) * 100)
         volume_low_threshold = np.percentile(mean_demands, volume_thresholds.get("low", 25) * 100)
-        volume_thresholds_abs = {"high": volume_high_threshold, "low": volume_low_threshold}
+        very_high_threshold = volume_high_threshold * 10
+        volume_thresholds_abs = {
+            "very_high": very_high_threshold,
+            "high": volume_high_threshold,
+            "low": volume_low_threshold,
+        }
     else:
-        volume_thresholds_abs = {"high": 1000, "low": 100}
-    
-    print(f"Volume thresholds: high={volume_thresholds_abs['high']:.2f}, low={volume_thresholds_abs['low']:.2f}")
-    
-    # Assign labels to each cluster
-    cluster_labels = {}
+        volume_thresholds_abs = {"very_high": 100000, "high": 1000, "low": 100}
+
+    print(f"Volume thresholds: very_high={volume_thresholds_abs['very_high']:.0f}, high={volume_thresholds_abs['high']:.0f}, low={volume_thresholds_abs['low']:.0f}")
+
+    # Assign unique labels to all clusters
+    cluster_labels = assign_cluster_labels(
+        centroids_df,
+        volume_thresholds_abs,
+        cv_thresholds,
+        seasonality_threshold,
+        zero_demand_threshold,
+    )
+
     cluster_profiles = []
-    
     for _, row in centroids_df.iterrows():
         cluster_id = int(row["cluster_id"])
         centroid = row.drop("cluster_id")
-        
-        label = assign_cluster_label(
-            centroid,
-            volume_thresholds_abs,
-            cv_thresholds,
-            seasonality_threshold,
-            zero_demand_threshold
-        )
-        
-        cluster_labels[cluster_id] = label
-        
-        # Create profile
+        label = cluster_labels[cluster_id]
+
         profile = {
             "cluster_id": cluster_id,
             "label": label,
@@ -192,16 +228,14 @@ def main() -> None:
             "zero_demand_pct": float(centroid.get("zero_demand_pct", 0)),
         }
         cluster_profiles.append(profile)
-        
         print(f"Cluster {cluster_id}: {label}")
-    
+
     # Validate label uniqueness
     labels = list(cluster_labels.values())
     if len(labels) != len(set(labels)):
-        print("Warning: Some clusters have duplicate labels!")
-        from collections import Counter
-        duplicates = [label for label, count in Counter(labels).items() if count > 1]
-        print(f"Duplicate labels: {duplicates}")
+        print("Warning: Some clusters still have duplicate labels!")
+    else:
+        print(f"All {len(labels)} cluster labels are unique.")
     
     # Add labels to assignments
     assignments_df["cluster_label"] = assignments_df["cluster_id"].map(cluster_labels)

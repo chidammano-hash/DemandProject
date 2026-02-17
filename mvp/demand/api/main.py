@@ -16,6 +16,7 @@ load_dotenv()
 import psycopg
 from psycopg_pool import ConnectionPool
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from common.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
@@ -695,59 +696,118 @@ def forecast_models():
 
 
 @app.get("/domains/dfu/clusters")
-def dfu_clusters():
-    """Get cluster summary statistics for DFU clustering."""
+def dfu_clusters(source: str = Query(default="ml", regex="^(ml|source)$")):
+    """Get cluster summary statistics for DFU clustering.
+
+    source=ml    → pipeline-generated clusters (ml_cluster column)
+    source=source → original source-file clusters (cluster_assignment column)
+    """
+    col = "ml_cluster" if source == "ml" else "cluster_assignment"
     with get_conn() as conn, conn.cursor() as cur:
-        # Get cluster distribution with statistics
-        cur.execute("""
-            SELECT 
-                d.cluster_assignment AS cluster_label,
-                COUNT(*) AS count,
-                COUNT(*) * 100.0 / (SELECT COUNT(*) FROM dim_dfu WHERE cluster_assignment IS NOT NULL AND cluster_assignment != '') AS pct_of_total
-            FROM dim_dfu d
-            WHERE d.cluster_assignment IS NOT NULL AND d.cluster_assignment != ''
-            GROUP BY d.cluster_assignment
-            ORDER BY count DESC
+        cur.execute(f"""
+            WITH cluster_counts AS (
+                SELECT
+                    {col} AS cluster_label,
+                    COUNT(*) AS dfu_count
+                FROM dim_dfu
+                WHERE {col} IS NOT NULL AND {col} != ''
+                GROUP BY {col}
+            ),
+            total AS (
+                SELECT SUM(dfu_count) AS total_assigned FROM cluster_counts
+            ),
+            cluster_demand AS (
+                SELECT
+                    d.{col} AS cluster_label,
+                    AVG(s.qty) AS avg_demand,
+                    CASE
+                        WHEN AVG(s.qty) > 0 THEN COALESCE(STDDEV(s.qty), 0) / AVG(s.qty)
+                        ELSE 0
+                    END AS cv_demand
+                FROM dim_dfu d
+                INNER JOIN fact_sales_monthly s
+                    ON s.dmdunit = d.dmdunit
+                    AND s.dmdgroup = d.dmdgroup
+                    AND s.loc = d.loc
+                WHERE d.{col} IS NOT NULL AND d.{col} != ''
+                    AND s.qty IS NOT NULL
+                GROUP BY d.{col}
+            )
+            SELECT
+                cc.cluster_label,
+                cc.dfu_count,
+                ROUND(cc.dfu_count * 100.0 / t.total_assigned, 2) AS pct_of_total,
+                COALESCE(cd.avg_demand, 0) AS avg_demand,
+                COALESCE(cd.cv_demand, 0) AS cv_demand
+            FROM cluster_counts cc
+            CROSS JOIN total t
+            LEFT JOIN cluster_demand cd ON cd.cluster_label = cc.cluster_label
+            ORDER BY cc.dfu_count DESC
         """)
-        cluster_counts = cur.fetchall()
-        
-        # Get average demand and CV per cluster
-        cur.execute("""
-            SELECT 
-                d.cluster_assignment AS cluster_label,
-                AVG(s.qty) AS avg_demand,
-                CASE 
-                    WHEN AVG(s.qty) > 0 THEN STDDEV(s.qty) / AVG(s.qty)
-                    ELSE 0
-                END AS cv_demand
-            FROM dim_dfu d
-            INNER JOIN fact_sales_monthly s ON 
-                CONCAT(s.dmdunit, '_', s.dmdgroup, '_', s.loc) = d.dfu_ck
-            WHERE d.cluster_assignment IS NOT NULL AND d.cluster_assignment != ''
-                AND s.qty IS NOT NULL
-            GROUP BY d.cluster_assignment
-        """)
-        cluster_stats = {row[0]: {"avg_demand": float(row[1] or 0), "cv_demand": float(row[2] or 0)} for row in cur.fetchall()}
-        
+        rows = cur.fetchall()
+
         clusters = []
-        total_assigned = sum(count for _, count, _ in cluster_counts)
-        
-        for cluster_label, count, pct in cluster_counts:
-            stats = cluster_stats.get(cluster_label, {"avg_demand": 0.0, "cv_demand": 0.0})
+        total_assigned = 0
+        for cluster_label, count, pct, avg_demand, cv_demand in rows:
+            total_assigned += int(count)
             clusters.append({
-                "cluster_id": cluster_label,  # Using label as ID for now
+                "cluster_id": cluster_label,
                 "label": cluster_label,
                 "count": int(count),
-                "pct_of_total": round(float(pct), 2),
-                "avg_demand": round(stats["avg_demand"], 2),
-                "cv_demand": round(stats["cv_demand"], 4),
+                "pct_of_total": float(pct),
+                "avg_demand": round(float(avg_demand), 2),
+                "cv_demand": round(float(cv_demand), 4),
             })
-        
+
         return {
             "domain": "dfu",
+            "source": source,
             "total_assigned": total_assigned,
             "clusters": clusters,
         }
+
+
+@app.get("/domains/dfu/clusters/profiles")
+def dfu_cluster_profiles():
+    """Get cluster profiles with centroid features and metadata."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    profiles_path = root / "data" / "clustering" / "cluster_profiles.json"
+    metadata_path = root / "data" / "clustering" / "cluster_metadata.json"
+
+    profiles = []
+    if profiles_path.exists():
+        with open(profiles_path) as f:
+            profiles = json.load(f)
+
+    metadata = {}
+    if metadata_path.exists():
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+
+    return {
+        "profiles": profiles,
+        "metadata": {
+            "optimal_k": metadata.get("optimal_k"),
+            "silhouette_score": metadata.get("silhouette_score"),
+            "inertia": metadata.get("inertia"),
+            "k_selection_results": metadata.get("k_selection_results"),
+        },
+    }
+
+
+@app.get("/domains/dfu/clusters/visualization/{image_name}")
+def dfu_cluster_visualization(image_name: str):
+    """Serve clustering visualization images."""
+    from pathlib import Path
+    allowed = {"k_selection_plots.png", "cluster_visualization.png"}
+    if image_name not in allowed:
+        raise HTTPException(404, f"Image not found: {image_name}")
+    root = Path(__file__).resolve().parents[1]
+    img_path = root / "data" / "clustering" / image_name
+    if not img_path.exists():
+        raise HTTPException(404, f"Image not generated yet: {image_name}")
+    return FileResponse(str(img_path), media_type="image/png")
 
 
 @app.get("/domains/{domain}/analytics")

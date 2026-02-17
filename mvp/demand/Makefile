@@ -8,7 +8,7 @@ UV := uv run
 help:
 	@echo "Targets:"
 	@echo "  init                 - copy env, create uv env, install deps"
-	@echo "  up/down/logs         - manage docker services"
+	@echo "  up/down/logs         - manage docker services (Postgres, MinIO, MLflow, Iceberg, Spark, Trino)"
 	@echo "  db-apply-sql         - apply dataset DDL into running Postgres"
 	@echo "  normalize-item       - normalize itemdata.csv"
 	@echo "  normalize-location   - normalize locationdata.csv"
@@ -301,10 +301,10 @@ check-db:
 	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -c "SELECT 'dim_item' AS table_name, count(*) AS cnt FROM dim_item UNION ALL SELECT 'dim_location' AS table_name, count(*) AS cnt FROM dim_location UNION ALL SELECT 'dim_customer' AS table_name, count(*) AS cnt FROM dim_customer UNION ALL SELECT 'dim_time' AS table_name, count(*) AS cnt FROM dim_time UNION ALL SELECT 'dim_dfu' AS table_name, count(*) AS cnt FROM dim_dfu UNION ALL SELECT 'fact_sales_monthly' AS table_name, count(*) AS cnt FROM fact_sales_monthly UNION ALL SELECT 'fact_external_forecast_monthly' AS table_name, count(*) AS cnt FROM fact_external_forecast_monthly;"
 
 cluster-features:
-	$(UV) python scripts/generate_clustering_features.py --min-months 12 --time-window 24
+	$(UV) python scripts/generate_clustering_features.py --time-window 24
 
 cluster-train:
-	$(UV) python scripts/train_clustering_model.py --k-range 3 12
+	$(UV) python scripts/train_clustering_model.py --k-range 3 12 --skip-gap
 
 cluster-label:
 	$(UV) python scripts/label_clusters.py

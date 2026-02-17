@@ -1,5 +1,7 @@
 """
-Update dim_dfu.cluster_assignment column in PostgreSQL with cluster labels.
+Update dim_dfu.ml_cluster column in PostgreSQL with ML pipeline cluster labels.
+
+Note: This writes to ml_cluster (pipeline-generated), NOT cluster_assignment (source data from dfu.txt).
 
 This script loads labeled cluster assignments and updates the database.
 """
@@ -62,71 +64,67 @@ def main() -> None:
     # Get database connection
     db = get_db_conn()
     
+    # Show cluster distribution from file
+    cluster_counts = assignments_df["cluster_label"].value_counts()
+    print("\nCluster distribution (from file):")
+    for label, count in cluster_counts.items():
+        pct = count / len(assignments_df) * 100
+        print(f"  {label}: {count} ({pct:.1f}%)")
+
+    if args.dry_run:
+        print("\nDry run mode - no changes made")
+        return
+
     with psycopg.connect(**db) as conn:
         with conn.cursor() as cur:
             # Check current state
             cur.execute("SELECT COUNT(*) FROM dim_dfu")
             total_dfus = cur.fetchone()[0]
-            print(f"Total DFUs in database: {total_dfus}")
-            
-            # Check how many will be updated
-            dfu_ck_list = assignments_df["dfu_ck"].unique().tolist()
-            placeholders = ",".join(["%s"] * len(dfu_ck_list))
-            cur.execute(
-                f"SELECT COUNT(*) FROM dim_dfu WHERE dfu_ck IN ({placeholders})",
-                dfu_ck_list
-            )
-            matching_dfus = cur.fetchone()[0]
-            print(f"DFUs matching assignments: {matching_dfus}")
-            
-            if matching_dfus != len(dfu_ck_list):
-                print(f"Warning: {len(dfu_ck_list) - matching_dfus} DFUs in assignments not found in database")
-            
-            # Show cluster distribution
-            cluster_counts = assignments_df["cluster_label"].value_counts()
-            print("\nCluster distribution:")
-            for label, count in cluster_counts.items():
-                pct = count / len(assignments_df) * 100
-                print(f"  {label}: {count} ({pct:.1f}%)")
-            
-            if args.dry_run:
-                print("\nDry run mode - no changes made")
-                return
-            
-            # Update cluster assignments
-            print("\nUpdating cluster assignments...")
-            updated_count = 0
-            
-            for _, row in assignments_df.iterrows():
-                dfu_ck = row["dfu_ck"]
-                cluster_label = row["cluster_label"]
-                
-                if pd.isna(cluster_label):
-                    continue
-                
-                cur.execute(
-                    "UPDATE dim_dfu SET cluster_assignment = %s, modified_ts = NOW() WHERE dfu_ck = %s",
-                    (str(cluster_label), dfu_ck)
-                )
-                updated_count += 1
-            
+            print(f"\nTotal DFUs in database: {total_dfus}")
+
+            # Use a temp table for efficient bulk update
+            print("Updating cluster assignments via temp table...")
+            cur.execute("""
+                CREATE TEMP TABLE _cluster_updates (
+                    dfu_ck TEXT PRIMARY KEY,
+                    cluster_label TEXT NOT NULL
+                ) ON COMMIT DROP
+            """)
+
+            # COPY data into temp table using psycopg's COPY support
+            valid = assignments_df.dropna(subset=["cluster_label"])
+            with cur.copy("COPY _cluster_updates (dfu_ck, cluster_label) FROM STDIN") as copy:
+                for _, r in valid.iterrows():
+                    copy.write_row((r["dfu_ck"], str(r["cluster_label"])))
+
+            print(f"Loaded {len(valid)} rows into temp table")
+
+            # Single UPDATE join
+            cur.execute("""
+                UPDATE dim_dfu d
+                SET ml_cluster = u.cluster_label,
+                    modified_ts = NOW()
+                FROM _cluster_updates u
+                WHERE d.dfu_ck = u.dfu_ck
+            """)
+            updated_count = cur.rowcount
             conn.commit()
             print(f"Updated {updated_count} DFU cluster assignments")
-            
+
             # Validate updates
-            cur.execute("SELECT cluster_assignment, COUNT(*) FROM dim_dfu GROUP BY cluster_assignment ORDER BY COUNT(*) DESC")
+            cur.execute("SELECT ml_cluster, COUNT(*) FROM dim_dfu GROUP BY ml_cluster ORDER BY COUNT(*) DESC")
             updated_distribution = cur.fetchall()
             print("\nUpdated cluster distribution in database:")
             for label, count in updated_distribution:
                 if label:
                     pct = count / total_dfus * 100
                     print(f"  {label}: {count} ({pct:.1f}%)")
-            
+
             # Check for DFUs without assignments
-            cur.execute("SELECT COUNT(*) FROM dim_dfu WHERE cluster_assignment IS NULL OR cluster_assignment = ''")
+            cur.execute("SELECT COUNT(*) FROM dim_dfu WHERE ml_cluster IS NULL OR ml_cluster = ''")
             unassigned = cur.fetchone()[0]
             if unassigned > 0:
-                print(f"\nWarning: {unassigned} DFUs still have no cluster assignment")
+                print(f"\nNote: {unassigned} DFUs have no cluster assignment (insufficient sales history for clustering)")
 
 
 if __name__ == "__main__":

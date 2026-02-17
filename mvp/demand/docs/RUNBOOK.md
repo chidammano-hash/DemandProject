@@ -121,10 +121,16 @@ make down
   - check API logs for OpenAI rate limit or connection errors
 - Forecast load fails with "missing data for column model_id":
   - re-normalize forecast: `make normalize-forecast && make load-forecast`
+- **MLflow not running (Connection refused on port 5003)**:
+  - MLflow is a Docker Compose service and only runs when the stack is up.
+  - Start the full stack: `make up` (this starts Postgres, MinIO, MLflow, Iceberg REST, Spark, Trino).
+  - Check that the MLflow container is up: `docker ps | grep mlflow` (expect `demand-mvp-mlflow`).
+  - MLflow UI: `http://localhost:5003` (or the port in `MLFLOW_HOST_PORT` in `.env`).
+  - Clustering still completes if MLflow is down; it skips logging and saves outputs to disk.
 - Clustering fails:
   - Ensure sales data is loaded: `make load-sales`
   - Check minimum history requirement (default: 12 months)
-  - Verify MLflow is running: `docker ps | grep mlflow`
+  - Verify MLflow is running (optional): `docker ps | grep mlflow`
   - Check feature matrix output: `ls -lh data/clustering_features.csv`
   - Review cluster output: `ls -lh data/clustering/`
 - Cluster assignments not updating:
