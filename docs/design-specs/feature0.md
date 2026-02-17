@@ -85,6 +85,7 @@ Build a scalable forecasting platform for:
 - **Feature 11:** Multi-model forecast support — `model_id` column, model selector, per-model analytics
 - **Feature 12:** Chatbot / natural language queries — OpenAI GPT-4o + pgvector embeddings, NL→SQL with safe execution
 - **Feature 13:** DFU clustering framework — Time series feature engineering, KMeans clustering with optimal K selection, automated cluster labeling, MLflow integration
+- **Feature 14:** Backtesting framework — Expanding window timeframes (A–J), multi-model training (LGBM, CatBoost), lag 0–4 predictions, accuracy at execution lag
 
 ## Deployment Notes
 - Run everything on a single MacBook using Docker Compose (no cloud services):
