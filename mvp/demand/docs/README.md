@@ -48,6 +48,7 @@ Clustering:
 - Spark + Iceberg + MinIO
 - Trino
 - MLflow (experiment tracking, model registry)
+- LightGBM (demand forecasting models)
 - scikit-learn (clustering algorithms)
 - OpenAI (GPT-4o + text-embedding-3-small) for NL→SQL chatbot
 - Docker Compose
@@ -58,7 +59,11 @@ Clustering:
 - Monthly materialized views are maintained for faster trend analytics:
   - `agg_sales_monthly`
   - `agg_forecast_monthly`
-- `load-sales`, `load-forecast`, and `load-all` refresh these aggregates automatically.
+- Accuracy slice views for O(1) aggregate KPI queries (feature16):
+  - `agg_accuracy_by_dim` — pre-joins forecast + DFU attributes at (model, lag, month, cluster, supplier, abc_vol, region, brand) grain
+  - `agg_accuracy_lag_archive` — same from archive table; powers lag-curve analysis
+- `load-sales`, `load-forecast`, and `load-all` refresh `agg_*` aggregates automatically.
+- `backtest-load` refreshes accuracy slice views automatically.
 
 ## Quick Start
 ```bash
@@ -117,6 +122,26 @@ Clustering:
 - API endpoint: `GET /domains/dfu/clusters` returns cluster summary statistics
 - Filter DFUs by cluster: use `cluster_assignment` filter in `/domains/dfu/page` endpoint
 
+LGBM Backtesting:
+- Run global backtest: `make backtest-lgbm` (trains LightGBM across 10 expanding windows)
+- Run per-cluster backtest: `make backtest-lgbm-cluster` (separate model per cluster)
+- Load predictions: `make backtest-load` (loads execution-lag rows into `fact_external_forecast_monthly`, all-lag rows into `backtest_lag_archive`, refreshes accuracy slice views)
+- Or all at once: `make backtest-all`
+- Models appear as `lgbm_global` / `lgbm_cluster` in the forecast model selector
+- Existing accuracy KPIs and trend charts work automatically for LGBM models
+- `backtest_lag_archive` stores lag 0–4 predictions for accuracy reporting at any horizon
+- `make backtest-load` only replaces rows for the model_id in the CSV (safe to run per-cluster after global)
+
+Accuracy Comparison (feature16):
+- Collapsible "Accuracy Comparison" panel in the Forecast analytics page
+- Slice by: Cluster, ML Cluster, Supplier, ABC Volume, Region, Brand, Execution Lag, Month
+- Filter by lag: execution lag (per DFU) or specific lag 0–4
+- Model comparison pivot table: side-by-side Accuracy %, WAPE, Bias per model — best model highlighted in teal
+- Lag curve chart: accuracy degradation from lag 0 → lag 4, one line per model
+- API endpoints: `GET /forecast/accuracy/slice`, `GET /forecast/accuracy/lag-curve`
+- Data source: pre-aggregated `agg_accuracy_by_dim` and `agg_accuracy_lag_archive` views
+- Refresh manually: `make accuracy-slice-refresh`
+
 Benchmark Postgres vs Iceberg/Trino:
 - endpoint: `GET /bench/compare`
 - compares the same query shapes (`count`, `page`, `trend`) for one domain
@@ -160,6 +185,7 @@ make cluster-all  # Full pipeline: features -> train -> label -> update
 - Generic Spark writer: `mvp/demand/scripts/spark_dataset_to_iceberg.py`
 - Embeddings generator: `mvp/demand/scripts/generate_embeddings.py`
 - Clustering scripts: `mvp/demand/scripts/generate_clustering_features.py`, `train_clustering_model.py`, `label_clusters.py`, `update_cluster_assignments.py`
+- Backtest scripts: `mvp/demand/scripts/run_backtest.py`, `load_backtest_forecasts.py`
 - Clustering config: `mvp/demand/config/clustering_config.yaml`
-- DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings)
-- Design specs: `docs/design-specs/` (feature0–feature13)
+- DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views)
+- Design specs: `docs/design-specs/` (feature0–feature16)

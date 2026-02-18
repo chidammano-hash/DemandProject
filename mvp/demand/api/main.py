@@ -695,6 +695,208 @@ def forecast_models():
     return {"domain": "forecast", "models": models}
 
 
+_ACCURACY_SLICE_DIMS = {
+    "cluster_assignment",
+    "ml_cluster",
+    "supplier_desc",
+    "abc_vol",
+    "region",
+    "brand_desc",
+    "dfu_execution_lag",
+    "month_start",
+    "lag",
+    "model_id",
+}
+
+
+def _compute_kpis(sum_forecast: float, sum_actual: float, sum_abs_error: float) -> dict[str, Any]:
+    wape = (100.0 * sum_abs_error / abs(sum_actual)) if sum_actual != 0 else None
+    bias = ((sum_forecast / sum_actual) - 1.0) if sum_actual != 0 else None
+    accuracy_pct = (100.0 - wape) if wape is not None else None
+    return {
+        "accuracy_pct": round(accuracy_pct, 4) if accuracy_pct is not None else None,
+        "wape": round(wape, 4) if wape is not None else None,
+        "bias": round(bias, 4) if bias is not None else None,
+        "sum_forecast": round(sum_forecast, 2),
+        "sum_actual": round(sum_actual, 2),
+    }
+
+
+@app.get("/forecast/accuracy/slice")
+def forecast_accuracy_slice(
+    group_by: str = Query(default="cluster_assignment", max_length=64),
+    models: str = Query(default="", max_length=500),
+    lag: int = Query(default=-1, ge=-1, le=4),
+    month_from: str = Query(default="", max_length=20),
+    month_to: str = Query(default="", max_length=20),
+    cluster_assignment: str = Query(default="", max_length=120),
+    supplier_desc: str = Query(default="", max_length=120),
+    abc_vol: str = Query(default="", max_length=40),
+    region: str = Query(default="", max_length=120),
+):
+    """Return accuracy KPIs grouped by a chosen DFU-attribute dimension.
+
+    Uses pre-aggregated agg_accuracy_by_dim for O(1) performance at aggregate level.
+    Falls back gracefully if the view has no data yet.
+    """
+    if group_by not in _ACCURACY_SLICE_DIMS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid group_by '{group_by}'. Valid: {sorted(_ACCURACY_SLICE_DIMS)}",
+        )
+
+    model_list = [m.strip() for m in models.split(",") if m.strip()] if models.strip() else []
+
+    where_parts: list[str] = []
+    params: list[Any] = []
+
+    if model_list:
+        placeholders = ",".join(["%s"] * len(model_list))
+        where_parts.append(f"model_id IN ({placeholders})")
+        params.extend(model_list)
+    if lag == -1:
+        # execution lag: lag column equals dfu_execution_lag
+        where_parts.append("lag::text = dfu_execution_lag")
+    elif lag >= 0:
+        where_parts.append("lag = %s")
+        params.append(lag)
+    if month_from.strip():
+        where_parts.append("month_start >= %s::date")
+        params.append(month_from.strip())
+    if month_to.strip():
+        where_parts.append("month_start <= %s::date")
+        params.append(month_to.strip())
+    if cluster_assignment.strip():
+        where_parts.append("cluster_assignment = %s")
+        params.append(cluster_assignment.strip())
+    if supplier_desc.strip():
+        where_parts.append("supplier_desc = %s")
+        params.append(supplier_desc.strip())
+    if abc_vol.strip():
+        where_parts.append("abc_vol = %s")
+        params.append(abc_vol.strip())
+    if region.strip():
+        where_parts.append("region = %s")
+        params.append(region.strip())
+
+    where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+    sql = f"""
+        SELECT
+            {group_by} AS bucket,
+            model_id,
+            SUM(row_count)::bigint   AS n_rows,
+            SUM(sum_forecast)        AS sum_forecast,
+            SUM(sum_actual)          AS sum_actual,
+            SUM(sum_abs_error)       AS sum_abs_error
+        FROM agg_accuracy_by_dim
+        {where_sql}
+        GROUP BY 1, 2
+        ORDER BY 1 ASC NULLS LAST, 2 ASC
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        db_rows = cur.fetchall()
+
+    # Pivot: bucket → {model_id: kpis}
+    pivot: dict[str, dict[str, Any]] = {}
+    for bucket, model_id, n_rows, sf, sa, sae in db_rows:
+        b = str(bucket) if bucket is not None else "(unknown)"
+        if b not in pivot:
+            pivot[b] = {"bucket": b, "n_rows": 0, "by_model": {}}
+        pivot[b]["n_rows"] = int(pivot[b]["n_rows"]) + int(n_rows or 0)
+        pivot[b]["by_model"][model_id] = _compute_kpis(float(sf or 0), float(sa or 0), float(sae or 0))
+
+    return {
+        "group_by": group_by,
+        "lag_filter": lag,
+        "models": model_list or None,
+        "rows": sorted(pivot.values(), key=lambda r: r["bucket"]),
+        "source": "agg_accuracy_by_dim",
+    }
+
+
+@app.get("/forecast/accuracy/lag-curve")
+def forecast_accuracy_lag_curve(
+    models: str = Query(default="", max_length=500),
+    cluster_assignment: str = Query(default="", max_length=120),
+    supplier_desc: str = Query(default="", max_length=120),
+    abc_vol: str = Query(default="", max_length=40),
+    region: str = Query(default="", max_length=120),
+    month_from: str = Query(default="", max_length=20),
+    month_to: str = Query(default="", max_length=20),
+):
+    """Return accuracy by lag (0–4) for each model.
+
+    Uses pre-aggregated agg_accuracy_lag_archive for performance.
+    Returns a list ordered by lag for easy charting.
+    """
+    model_list = [m.strip() for m in models.split(",") if m.strip()] if models.strip() else []
+
+    where_parts: list[str] = []
+    params: list[Any] = []
+
+    if model_list:
+        placeholders = ",".join(["%s"] * len(model_list))
+        where_parts.append(f"model_id IN ({placeholders})")
+        params.extend(model_list)
+    if cluster_assignment.strip():
+        where_parts.append("cluster_assignment = %s")
+        params.append(cluster_assignment.strip())
+    if supplier_desc.strip():
+        where_parts.append("supplier_desc = %s")
+        params.append(supplier_desc.strip())
+    if abc_vol.strip():
+        where_parts.append("abc_vol = %s")
+        params.append(abc_vol.strip())
+    if region.strip():
+        where_parts.append("region = %s")
+        params.append(region.strip())
+    if month_from.strip():
+        where_parts.append("month_start >= %s::date")
+        params.append(month_from.strip())
+    if month_to.strip():
+        where_parts.append("month_start <= %s::date")
+        params.append(month_to.strip())
+
+    where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+    sql = f"""
+        SELECT
+            model_id,
+            lag,
+            SUM(row_count)::bigint   AS n_rows,
+            SUM(sum_forecast)        AS sum_forecast,
+            SUM(sum_actual)          AS sum_actual,
+            SUM(sum_abs_error)       AS sum_abs_error
+        FROM agg_accuracy_lag_archive
+        {where_sql}
+        GROUP BY 1, 2
+        ORDER BY 2 ASC, 1 ASC
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        db_rows = cur.fetchall()
+
+    # Group by lag: {lag: {model_id: kpis}}
+    by_lag: dict[int, dict[str, Any]] = {}
+    for model_id, lag_val, n_rows, sf, sa, sae in db_rows:
+        lag_key = int(lag_val)
+        if lag_key not in by_lag:
+            by_lag[lag_key] = {"lag": lag_key, "by_model": {}}
+        by_lag[lag_key]["by_model"][model_id] = _compute_kpis(
+            float(sf or 0), float(sa or 0), float(sae or 0)
+        )
+
+    return {
+        "models": model_list or None,
+        "by_lag": [by_lag[k] for k in sorted(by_lag.keys())],
+        "source": "agg_accuracy_lag_archive",
+    }
+
+
 @app.get("/domains/dfu/clusters")
 def dfu_clusters(source: str = Query(default="ml", regex="^(ml|source)$")):
     """Get cluster summary statistics for DFU clustering.

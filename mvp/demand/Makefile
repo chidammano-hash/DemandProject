@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat generate-embeddings api ui-init ui normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-all refresh-agg-sales refresh-agg-forecast refresh-agg spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat generate-embeddings api ui-init ui normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-all refresh-agg-sales refresh-agg-forecast refresh-agg spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all backtest-lgbm backtest-lgbm-cluster backtest-load backtest-all accuracy-slice-refresh accuracy-slice-check
 
 help:
 	@echo "Targets:"
@@ -38,6 +38,12 @@ help:
 	@echo "  spark-sales          - write iceberg.silver.fact_sales_monthly"
 	@echo "  spark-forecast       - write iceberg.silver.fact_external_forecast_monthly"
 	@echo "  bench-compare        - compare Postgres vs Trino query latency"
+	@echo "  backtest-lgbm        - run LGBM global backtest (10 timeframes)"
+	@echo "  backtest-lgbm-cluster- run LGBM per-cluster backtest"
+	@echo "  backtest-load        - load backtest predictions into Postgres"
+	@echo "  backtest-all         - backtest-lgbm + backtest-load"
+	@echo "  accuracy-slice-refresh - refresh agg_accuracy_by_dim + agg_accuracy_lag_archive"
+	@echo "  accuracy-slice-check - curl accuracy slice + lag-curve endpoints"
 	@echo "  check-all            - run DB/API/Trino checks"
 
 init:
@@ -84,6 +90,8 @@ db-apply-sql:
 	cat sql/007_create_fact_external_forecast_monthly.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
 	cat sql/008_perf_indexes_and_agg.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
 	cat sql/009_create_chat_embeddings.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+	cat sql/010_create_backtest_lag_archive.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+	cat sql/011_create_accuracy_slice_views.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
 	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 -c "ALTER TABLE IF EXISTS dim_customer ALTER COLUMN customer_name DROP NOT NULL;" >/dev/null
 
 down:
@@ -313,5 +321,24 @@ cluster-update:
 	$(UV) python scripts/update_cluster_assignments.py
 
 cluster-all: cluster-features cluster-train cluster-label cluster-update
+
+backtest-lgbm:
+	$(UV) python scripts/run_backtest.py --cluster-strategy global
+
+backtest-lgbm-cluster:
+	$(UV) python scripts/run_backtest.py --cluster-strategy per_cluster
+
+backtest-load:
+	$(UV) python scripts/load_backtest_forecasts.py --replace
+
+backtest-all: backtest-lgbm backtest-load
+
+accuracy-slice-refresh:
+	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 \
+		-c "REFRESH MATERIALIZED VIEW agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive;"
+
+accuracy-slice-check:
+	curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=cluster_assignment" | python3 -m json.tool | head -60
+	curl -s "http://localhost:8000/forecast/accuracy/lag-curve" | python3 -m json.tool | head -40
 
 check-all: check-db check-api trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast

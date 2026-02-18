@@ -134,6 +134,34 @@ type ChatMessage = {
   error?: string | null;
 };
 
+type AccuracyKpis = {
+  accuracy_pct: number | null;
+  wape: number | null;
+  bias: number | null;
+  sum_forecast: number;
+  sum_actual: number;
+};
+
+type AccuracySliceRow = {
+  bucket: string;
+  n_rows: number;
+  by_model: Record<string, AccuracyKpis>;
+};
+
+type AccuracySlicePayload = {
+  group_by: string;
+  rows: AccuracySliceRow[];
+};
+
+type LagPoint = {
+  lag: number;
+  by_model: Record<string, AccuracyKpis>;
+};
+
+type LagCurvePayload = {
+  by_lag: LagPoint[];
+};
+
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState<T>(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -220,6 +248,7 @@ function updateDomainPath(domain: string) {
 export default function App() {
   const [domains, setDomains] = useState<string[]>([]);
   const [domain, setDomain] = useState<string>(getInitialDomain);
+  const [activeTab, setActiveTab] = useState<string>(getInitialDomain);
 
   const [meta, setMeta] = useState<DomainMeta | null>(null);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
@@ -266,6 +295,14 @@ export default function App() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Accuracy comparison panel state (feature16)
+  const [sliceGroupBy, setSliceGroupBy] = useState("cluster_assignment");
+  const [sliceLag, setSliceLag] = useState(-1);
+  const [sliceModels, setSliceModels] = useState("");
+  const [sliceData, setSliceData] = useState<AccuracySliceRow[]>([]);
+  const [lagCurveData, setLagCurveData] = useState<LagPoint[]>([]);
+  const [loadingSlice, setLoadingSlice] = useState(false);
 
   const visibleCols = useMemo(() => {
     if (!meta) {
@@ -855,6 +892,31 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
 
+  // Fetch accuracy slice + lag curve data when on the Accuracy tab (feature16)
+  useEffect(() => {
+    if (activeTab !== "accuracy") return;
+    let cancelled = false;
+    setLoadingSlice(true);
+    const sliceParams = new URLSearchParams({ group_by: sliceGroupBy, lag: String(sliceLag) });
+    if (sliceModels.trim()) sliceParams.set("models", sliceModels.trim());
+    const lagParams = new URLSearchParams();
+    if (sliceModels.trim()) lagParams.set("models", sliceModels.trim());
+    Promise.all([
+      fetch(`/forecast/accuracy/slice?${sliceParams}`).then((r) => r.json() as Promise<AccuracySlicePayload>),
+      fetch(`/forecast/accuracy/lag-curve?${lagParams}`).then((r) => r.json() as Promise<LagCurvePayload>),
+    ])
+      .then(([slicePayload, lagPayload]) => {
+        if (cancelled) return;
+        setSliceData(slicePayload.rows || []);
+        setLagCurveData(lagPayload.by_lag || []);
+      })
+      .catch(() => {
+        if (!cancelled) { setSliceData([]); setLagCurveData([]); }
+      })
+      .finally(() => { if (!cancelled) setLoadingSlice(false); });
+    return () => { cancelled = true; };
+  }, [activeTab, sliceGroupBy, sliceLag, sliceModels]);
+
   return (
     <main className="mx-auto w-full max-w-[1800px] min-w-0 overflow-x-hidden p-4 md:p-6">
       <section className="animate-fade-in rounded-xl border border-white/20 bg-gradient-to-r from-slate-900/90 via-teal-900/80 to-cyan-800/80 p-4 text-white shadow-xl">
@@ -867,13 +929,20 @@ export default function App() {
             {domains.map((d) => (
               <Button
                 key={d}
-                variant={d === domain ? "secondary" : "outline"}
-                className={d === domain ? "bg-orange-200 text-slate-900 hover:bg-orange-100" : "border-white/35 bg-transparent text-white hover:bg-white/10"}
-                onClick={() => setDomain(d)}
+                variant={activeTab === d ? "secondary" : "outline"}
+                className={activeTab === d ? "bg-orange-200 text-slate-900 hover:bg-orange-100" : "border-white/35 bg-transparent text-white hover:bg-white/10"}
+                onClick={() => { setDomain(d); setActiveTab(d); }}
               >
                 {titleCase(d)}
               </Button>
             ))}
+            <Button
+              variant={activeTab === "accuracy" ? "secondary" : "outline"}
+              className={activeTab === "accuracy" ? "bg-orange-200 text-slate-900 hover:bg-orange-100" : "border-white/35 bg-transparent text-white hover:bg-white/10"}
+              onClick={() => setActiveTab("accuracy")}
+            >
+              Accuracy
+            </Button>
           </div>
         </div>
       </section>
@@ -884,7 +953,7 @@ export default function App() {
         </Card>
       ) : null}
 
-      {domain === "dfu" ? (
+      {domain === "dfu" && activeTab !== "accuracy" ? (
         <Card className="mt-4 animate-fade-in">
           <CardHeader>
             <CardTitle className="text-base">DFU Clustering</CardTitle>
@@ -1024,7 +1093,177 @@ export default function App() {
         </Card>
       ) : null}
 
-      <section className={cn("mt-4 grid gap-4 [&>*]:min-w-0", analyticsEnabled ? "2xl:grid-cols-[1.15fr_1fr]" : "xl:grid-cols-1")}>
+      {activeTab === "accuracy" ? (
+        <section className="mt-4">
+          <Card className="animate-fade-in">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <ChartColumn className="h-5 w-5" />
+                <CardTitle className="text-base">Accuracy Comparison</CardTitle>
+              </div>
+              <CardDescription>Compare forecast accuracy across models by DFU attribute. Uses pre-aggregated views for fast results.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Slice by
+                  <select
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    value={sliceGroupBy}
+                    onChange={(e) => setSliceGroupBy(e.target.value)}
+                    disabled={loadingSlice}
+                  >
+                    <option value="cluster_assignment">Cluster (Business Label)</option>
+                    <option value="ml_cluster">Cluster (ML)</option>
+                    <option value="supplier_desc">Supplier</option>
+                    <option value="abc_vol">ABC Volume</option>
+                    <option value="region">Region</option>
+                    <option value="brand_desc">Brand</option>
+                    <option value="dfu_execution_lag">Execution Lag</option>
+                    <option value="month_start">Month</option>
+                  </select>
+                </label>
+                <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Lag Filter
+                  <select
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    value={sliceLag}
+                    onChange={(e) => setSliceLag(Number(e.target.value))}
+                    disabled={loadingSlice}
+                  >
+                    <option value={-1}>Execution Lag (per DFU)</option>
+                    <option value={0}>Lag 0 (same month)</option>
+                    <option value={1}>Lag 1</option>
+                    <option value={2}>Lag 2</option>
+                    <option value={3}>Lag 3</option>
+                    <option value={4}>Lag 4</option>
+                  </select>
+                </label>
+                <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Models (comma-separated, blank = all)
+                  <input
+                    className="h-9 w-52 rounded-md border border-input bg-background px-3 text-sm"
+                    placeholder="e.g. lgbm_global,external"
+                    value={sliceModels}
+                    onChange={(e) => setSliceModels(e.target.value)}
+                    disabled={loadingSlice}
+                  />
+                </label>
+                {loadingSlice ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                ) : null}
+              </div>
+
+              {sliceData.length > 0 ? (() => {
+                const allModels = Array.from(
+                  new Set(sliceData.flatMap((r) => Object.keys(r.by_model)))
+                ).sort();
+                return (
+                  <div className="space-y-2">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Model Comparison — {sliceData.length} {sliceGroupBy.replace(/_/g, " ")} bucket(s)
+                    </p>
+                    <div className="max-h-[400px] overflow-auto rounded-md border border-input">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="border-muted bg-muted/30">
+                            <TableHead className="text-xs sticky left-0 bg-muted/30">
+                              {titleCase(sliceGroupBy)}
+                            </TableHead>
+                            {allModels.flatMap((m) => [
+                              <TableHead key={`${m}-acc`} className="text-xs text-right">{m} Acc%</TableHead>,
+                              <TableHead key={`${m}-wape`} className="text-xs text-right">{m} WAPE%</TableHead>,
+                              <TableHead key={`${m}-bias`} className="text-xs text-right">{m} Bias</TableHead>,
+                            ])}
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {sliceData.map((row) => {
+                            const accValues = allModels
+                              .map((m) => row.by_model[m]?.accuracy_pct)
+                              .filter((v): v is number => v !== null && v !== undefined);
+                            const bestAcc = accValues.length > 0 ? Math.max(...accValues) : null;
+                            return (
+                              <TableRow key={row.bucket} className="hover:bg-muted/30">
+                                <TableCell className="sticky left-0 bg-background font-medium text-sm">{row.bucket}</TableCell>
+                                {allModels.flatMap((m) => {
+                                  const kpi = row.by_model[m];
+                                  const isBest = kpi?.accuracy_pct !== null && kpi?.accuracy_pct !== undefined && kpi.accuracy_pct === bestAcc;
+                                  return [
+                                    <TableCell key={`${m}-acc`} className={cn("text-right text-sm tabular-nums", isBest ? "font-bold text-teal-700" : "")}>
+                                      {formatPercent(kpi?.accuracy_pct)}
+                                    </TableCell>,
+                                    <TableCell key={`${m}-wape`} className="text-right text-sm tabular-nums">
+                                      {formatPercent(kpi?.wape)}
+                                    </TableCell>,
+                                    <TableCell key={`${m}-bias`} className={cn("text-right text-sm tabular-nums", kpi?.bias !== null && kpi?.bias !== undefined ? (Math.abs(kpi.bias) > 0.15 ? "text-red-600" : "") : "")}>
+                                      {kpi?.bias !== null && kpi?.bias !== undefined ? `${(kpi.bias * 100).toFixed(1)}%` : "-"}
+                                    </TableCell>,
+                                  ];
+                                })}
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Bold teal = best accuracy for that row. Red bias = |bias| &gt; 15%.</p>
+                  </div>
+                );
+              })() : (
+                !loadingSlice ? (
+                  <p className="text-sm text-muted-foreground">
+                    No data. Run <code className="rounded bg-muted px-1">make backtest-load</code> to populate the accuracy views.
+                  </p>
+                ) : null
+              )}
+
+              {lagCurveData.length > 0 ? (() => {
+                const lagModels = Array.from(
+                  new Set(lagCurveData.flatMap((p) => Object.keys(p.by_model)))
+                ).sort();
+                const chartData = lagCurveData.map((p) => {
+                  const row: Record<string, number | string> = { lag: `Lag ${p.lag}` };
+                  for (const m of lagModels) {
+                    const acc = p.by_model[m]?.accuracy_pct;
+                    if (acc !== null && acc !== undefined) row[m] = acc;
+                  }
+                  return row;
+                });
+                return (
+                  <div className="space-y-2">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Accuracy by Lag Horizon — how accuracy degrades as lead time increases
+                    </p>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <LineChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="lag" tick={{ fontSize: 11 }} />
+                        <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11 }} tickFormatter={(v) => `${Number(v).toFixed(0)}%`} />
+                        <Tooltip formatter={(v) => `${Number(v).toFixed(1)}%`} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        {lagModels.map((m, i) => (
+                          <Line
+                            key={m}
+                            type="monotone"
+                            dataKey={m}
+                            stroke={TREND_COLORS[i % TREND_COLORS.length]}
+                            strokeWidth={2}
+                            dot={{ r: 4 }}
+                            connectNulls
+                          />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                );
+              })() : null}
+            </CardContent>
+          </Card>
+        </section>
+      ) : null}
+
+      {activeTab !== "accuracy" ? <section className={cn("mt-4 grid gap-4 [&>*]:min-w-0", analyticsEnabled ? "2xl:grid-cols-[1.15fr_1fr]" : "xl:grid-cols-1")}>
         {analyticsEnabled ? <Card className="animate-fade-in">
           <CardHeader className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1420,7 +1659,7 @@ export default function App() {
             </div>
           </CardContent>
         </Card>
-      </section>
+      </section> : null}
 
       <section className="mt-4">
         <Card className="animate-fade-in">

@@ -50,6 +50,71 @@ make cluster-update    # Update dim_dfu.cluster_assignment in database
 
 This groups DFUs by historical demand patterns for improved global LGBM model performance. Results are logged to MLflow experiment `dfu_clustering`. Cluster assignments can be filtered via `/domains/dfu/page` using the `cluster_assignment` filter, or viewed via `/domains/dfu/clusters` endpoint.
 
+## 3d) Run LGBM backtesting (optional, requires clustering)
+
+Global model (one LGBM for all DFUs, `ml_cluster` as feature):
+```bash
+make backtest-lgbm          # Global LGBM backtest (10 timeframes)
+make backtest-load          # Load predictions into Postgres
+```
+
+Per-cluster model (separate LGBM per cluster):
+```bash
+make backtest-lgbm-cluster  # Per-cluster LGBM backtest
+make backtest-load          # Load predictions into Postgres
+```
+
+Or run global + load in one shot:
+```bash
+make backtest-all           # backtest-lgbm + backtest-load
+```
+
+Each backtest run produces two CSV files:
+- `data/backtest/backtest_predictions.csv` — execution-lag only (loaded into `fact_external_forecast_monthly`)
+- `data/backtest/backtest_predictions_all_lags.csv` — lag 0–4 archive (loaded into `backtest_lag_archive`)
+
+`make backtest-load` has `--replace` built in. It only deletes rows matching the `model_id` in the CSV, so running the per-cluster backtest does **not** affect existing global results in Postgres.
+
+Note: each backtest run overwrites the CSV files on disk. If you need both models loaded, run global first, load, then run per-cluster and load again.
+
+Predictions are stored in `fact_external_forecast_monthly` with `model_id = lgbm_global` or `lgbm_cluster`. All-lag predictions are archived in `backtest_lag_archive` for accuracy reporting at any horizon. Results appear automatically in the forecast model selector UI and accuracy KPIs.
+
+`make backtest-load` also automatically refreshes the accuracy slice views (`agg_accuracy_by_dim`, `agg_accuracy_lag_archive`) after loading — no additional step needed.
+
+Verify archive data:
+```bash
+docker exec demand-mvp-postgres psql -U demand -d demand_mvp \
+  -c "SELECT model_id, lag, COUNT(*) FROM backtest_lag_archive GROUP BY 1,2 ORDER BY 1,2"
+```
+
+## 3e) Multi-dimensional accuracy comparison (feature16)
+
+After running `make backtest-load`, the accuracy slice views are automatically populated. To view accuracy sliced by DFU attributes:
+
+1. Open the Forecast domain in the UI.
+2. Click **Accuracy Comparison** (collapsible card below the main analytics section).
+3. Select a **Slice by** dimension (e.g., Cluster, Supplier, ABC Volume, Region).
+4. Optionally select a **Lag Filter** (Execution Lag, or specific lag 0–4).
+5. Optionally filter **Models** (comma-separated, e.g., `lgbm_global,external`).
+
+The panel shows:
+- **Model comparison table**: side-by-side Accuracy %, WAPE, Bias per model for each bucket. Best model highlighted in teal, high-bias cells in red.
+- **Lag curve chart**: accuracy degradation from lag 0 → lag 4, one line per model.
+
+To refresh the views manually (e.g., after `load-forecast` without backtest):
+```bash
+make accuracy-slice-refresh
+```
+
+To verify the slice endpoint:
+```bash
+make accuracy-slice-check
+```
+
+API endpoints:
+- `GET /forecast/accuracy/slice?group_by=cluster_assignment&models=lgbm_global,external`
+- `GET /forecast/accuracy/lag-curve?models=lgbm_global,lgbm_cluster,external`
+
 ## 4) Start API + UI
 ```bash
 make api
@@ -133,6 +198,11 @@ make down
   - Verify MLflow is running (optional): `docker ps | grep mlflow`
   - Check feature matrix output: `ls -lh data/clustering_features.csv`
   - Review cluster output: `ls -lh data/clustering/`
+- Backtest fails:
+  - Ensure clustering has been run first: `make cluster-all`
+  - Ensure sales data is loaded: `make load-sales`
+  - Install lightgbm: `uv sync`
+  - Check output: `ls -lh data/backtest/`
 - Cluster assignments not updating:
   - Use `--dry-run` flag to preview changes: `make cluster-update` (with dry-run in script)
   - Verify DFU keys match: check `dfu_ck` format in assignments vs database

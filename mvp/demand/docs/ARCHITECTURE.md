@@ -61,9 +61,33 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - MLflow experiment tracking (`dfu_clustering`)
    - Cluster assignments stored in `dim_dfu.cluster_assignment`
    - Supports LGBM global models with homogeneous training segments
+9. LGBM backtesting:
+   - Expanding window backtest (10 timeframes A–J) with LightGBM regressors
+   - Global strategy (`lgbm_global`): one model, `ml_cluster` as categorical feature
+   - Per-cluster strategy (`lgbm_cluster`): separate model per cluster
+   - Causal feature engineering: lag 1-12, rolling stats, calendar, DFU/item attributes
+   - Execution-lag predictions loaded into `fact_external_forecast_monthly` via COPY + upsert
+   - All-lag (0–4) predictions archived in `backtest_lag_archive` for accuracy at any horizon
+   - MLflow experiment tracking (`demand_backtest`)
+10. Multi-dimensional accuracy slicing:
+   - Pre-aggregated `agg_accuracy_by_dim` view: (model_id, lag, month, cluster, supplier, abc_vol, region, brand) grain
+   - Pre-aggregated `agg_accuracy_lag_archive` view: same grain for archive table + timeframe
+   - `/forecast/accuracy/slice` endpoint: compare WAPE, Accuracy %, Bias across models by any DFU attribute
+   - `/forecast/accuracy/lag-curve` endpoint: accuracy degradation by lag horizon (0–4) per model
+   - UI Accuracy Comparison panel: model comparison pivot table + lag curve chart
+   - Views refreshed automatically by `backtest-load`; also manually via `make accuracy-slice-refresh`
 
 ## Additional tables
 1. `chat_embeddings` — pgvector table storing schema metadata embeddings (1536-dim) for NL query context retrieval
+2. `backtest_lag_archive` — stores all-lag (0–4) backtest predictions for accuracy reporting at any horizon; grain: `(forecast_ck, model_id, lag)`; includes `timeframe` column (A–J) for traceability
+
+## Accuracy Slice Materialized Views (feature16)
+Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-table joins:
+
+1. `agg_accuracy_by_dim` — joins `fact_external_forecast_monthly` + `dim_dfu`, aggregates at (model_id, lag, month, cluster, supplier, abc_vol, region, brand, execution_lag) grain; stores `SUM(F)`, `SUM(A)`, `SUM(ABS(F-A))` for KPI derivation. Refreshed by `backtest-load`.
+2. `agg_accuracy_lag_archive` — same aggregation from `backtest_lag_archive` + `dim_dfu`, adds `timeframe` grain; used for lag-horizon accuracy curves. Refreshed by `backtest-load`.
+
+Performance impact: aggregate queries (cluster-level, supplier-level) drop from 5–30s → <300ms.
 
 ## ML Pipeline Components
 1. **Feature Engineering** (`generate_clustering_features.py`):
@@ -84,6 +108,18 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 4. **Assignment Update** (`update_cluster_assignments.py`):
    - Updates `dim_dfu.cluster_assignment` column in PostgreSQL
    - Validates updates and reports cluster distribution
+5. **LGBM Backtest** (`run_backtest.py`):
+   - Expanding window training with 10 timeframes (A–J)
+   - Feature engineering: lag 1-12, rolling mean/std 3/6/12m, calendar, DFU/item attributes
+   - Global and per-cluster training strategies
+   - Outputs two CSVs: execution-lag only (main table) + all lags 0–4 (archive)
+   - Deduplication across timeframes (latest timeframe wins)
+   - MLflow logging to `demand_backtest` experiment
+6. **Backtest Loader** (`load_backtest_forecasts.py`):
+   - Loads execution-lag rows into `fact_external_forecast_monthly` via COPY + staging + upsert
+   - Loads all-lag rows into `backtest_lag_archive` via same pattern
+   - `--replace` scoped to `model_id` in CSV (safe for multi-model coexistence)
+   - Refreshes `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` materialized views
 
 ## How to add next dataset
 1. Add `<DATASET>_SPEC` in `common/domain_specs.py`

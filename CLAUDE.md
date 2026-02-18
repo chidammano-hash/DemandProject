@@ -48,7 +48,10 @@
 | `mvp/demand/scripts/label_clusters.py` | Assign business labels to clusters based on feature centroids |
 | `mvp/demand/scripts/update_cluster_assignments.py` | Write cluster labels to `dim_dfu.cluster_assignment` in Postgres |
 | `mvp/demand/config/clustering_config.yaml` | Clustering hyperparameters and labeling thresholds |
-| `docs/design-specs/` | Feature specs (feature1b–feature1g, feature10–feature13) |
+| `mvp/demand/scripts/run_backtest.py` | LGBM backtest: expanding-window training + prediction |
+| `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load backtest predictions into Postgres (main + archive) |
+| `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
+| `docs/design-specs/` | Feature specs (feature1b–feature1g, feature10–feature15) |
 
 ---
 
@@ -91,6 +94,12 @@ make cluster-train     # Train KMeans, select optimal K, log to MLflow
 make cluster-label     # Assign business labels to clusters
 make cluster-update    # Write cluster labels to dim_dfu in Postgres
 make cluster-all       # Run full clustering pipeline (features → train → label → update)
+
+# Backtesting (LGBM)
+make backtest-lgbm          # Run global LGBM backtest (10 expanding timeframes)
+make backtest-lgbm-cluster  # Run per-cluster LGBM backtest
+make backtest-load          # Load backtest predictions into Postgres + refresh agg
+make backtest-all           # backtest-lgbm + backtest-load
 ```
 
 ---
@@ -139,6 +148,9 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - `fact_sales_monthly`: grain = item + customer_group + location + month + type; measures = qty_shipped, qty_ordered, qty
 - `fact_external_forecast_monthly`: grain = item + loc + forecast_date + actual_month; tracks lag 0–4 months; measures = base forecast + actual demand
 
+### Archive Tables
+- `backtest_lag_archive`: All-lags (0–4) backtest predictions for accuracy analysis at any horizon. Grain = forecast_ck + model_id + lag. Includes `timeframe` column for traceability.
+
 ### Materialized Views
 - `agg_sales_monthly`, `agg_forecast_monthly` — pre-aggregated for O(1) KPI queries
 
@@ -183,8 +195,8 @@ Located in `docs/design-specs/`:
 - `feature11.md` — Multi-model forecast support
 - `feature12.md` — Chatbot / natural language queries
 - `feature13.md` — DFU clustering framework
-
----
+- `feature14.md` — Backtesting framework (expanding window timeframes)
+- `feature15.md` — LGBM backtesting implementation
 
 ---
 
