@@ -1,96 +1,82 @@
-# Feature 11: Multi-Model Forecast Support
+# Feature 11: Chatbot / Natural Language Queries
 
 ## Objective
-Enable multiple forecasting algorithms to coexist in the forecast pipeline. Users can filter KPIs, trends, and data by model, or view all models aggregated.
+Allow users to ask questions in plain English ("What's the accuracy for item 100320 in Q4?") and receive answers with data from the Demand Studio database.
 
-## Scope
-- Dataset: `fact_external_forecast_monthly`
-- New column: `model_id TEXT NOT NULL DEFAULT 'external'`
-- Backward compatible: existing data defaults to `model_id = 'external'`
+## Architecture
 
-## Schema Change
-
-### fact_external_forecast_monthly
-
-Add column:
-```sql
-model_id TEXT NOT NULL DEFAULT 'external'
+```
+User Question
+      |
+OpenAI text-embedding-3-small -> embed question
+      |
+pgvector cosine similarity search -> top-10 relevant schema chunks
+      |
+GPT-4o prompt (system: schema + context + rules, user: question)
+      |
+Parse response -> extract answer + SQL
+      |
+Validate SQL (SELECT only) -> execute read-only with timeout
+      |
+Return answer + SQL + result data
 ```
 
-Uniqueness constraint change:
-- Remove: `forecast_ck TEXT UNIQUE NOT NULL`
-- Replace: `forecast_ck TEXT NOT NULL` + `CONSTRAINT uq_forecast_ck_model UNIQUE (forecast_ck, model_id)`
+## Components
 
-This allows the same business key (dmdunit/dmdgroup/loc/fcstdate/startdate) to appear once per model.
+### 1. pgvector Embeddings Table (`chat_embeddings`)
+- Stores schema metadata as vector embeddings (1536 dimensions)
+- Content types: `table_desc`, `column_desc`, `example_query`, `relationship`
+- Populated by `scripts/generate_embeddings.py` from `domain_specs.py`
+- Used for semantic search to find relevant context for user questions
 
-Add index:
-```sql
-CREATE INDEX idx_fact_external_forecast_monthly_model_id
-  ON fact_external_forecast_monthly (model_id);
+### 2. API Endpoint (`POST /chat`)
+- **Input:** `{ question: string, domain?: string }`
+- **Output:** `{ answer: string, sql?: string, data?: row[], row_count?: int, domains_used: string[] }`
+- Embeds user question, retrieves context via pgvector, calls GPT-4o, optionally executes SQL
+
+### 3. Frontend Chat Panel
+- Collapsible card below the main analytics/explorer grid
+- Message history with user/assistant bubbles
+- Shows generated SQL and result tables inline
+- Sends current domain as context hint
+
+## Safety Guardrails
+- **SELECT only:** SQL must start with SELECT (after stripping whitespace/comments)
+- **Read-only transaction:** `SET TRANSACTION READ ONLY`
+- **Statement timeout:** `SET LOCAL statement_timeout = '5000'` (5 seconds)
+- **Row limit:** Results capped at 500 rows
+- **Graceful errors:** SQL execution failures return the SQL + error message, not HTTP 500
+
+## LLM Configuration
+- **Provider:** OpenAI
+- **Chat model:** `gpt-4o`
+- **Embedding model:** `text-embedding-3-small` (1536 dimensions)
+- **API key:** `OPENAI_API_KEY` environment variable
+
+## Schema Context Strategy
+The system prompt includes:
+1. Full compact schema summary (all 7 tables, columns, types)
+2. Top-10 pgvector-retrieved context chunks (semantic match to question)
+3. Business rules: accuracy formula, bias formula, sales TYPE=1 filter, lag 0-4
+4. Instruction to generate PostgreSQL-compatible SELECT with LIMIT 500
+
+## Files Created/Modified
+- `sql/009_create_chat_embeddings.sql` — pgvector extension + embeddings table
+- `scripts/generate_embeddings.py` — schema -> embeddings pipeline
+- `api/main.py` — POST /chat endpoint
+- `frontend/src/App.tsx` — chat panel UI
+- `docker-compose.yml` — pgvector/pgvector:pg16 image
+- `pyproject.toml` — openai dependency
+- `.env.example` — OPENAI_API_KEY
+- `Makefile` — generate-embeddings, db-apply-chat targets
+
+## Makefile Targets
+```makefile
+db-apply-chat:          # Apply pgvector + embeddings table DDL
+generate-embeddings:    # Generate and store schema embeddings (requires OPENAI_API_KEY)
 ```
 
-### agg_forecast_monthly (materialized view)
-
-Add `model_id` to GROUP BY and indexes:
-- Grain becomes: `(month_start, dmdunit, loc, model_id)`
-- Unique index: `(dmdunit, loc, month_start, model_id)`
-
-## Normalize Pipeline
-
-In `normalize_dataset_csv.py`, forecast-specific block:
-- If source CSV has a `model_id` column, use it
-- If missing, default to `'external'`
-
-## API Changes
-
-### New endpoint: `GET /domains/forecast/models`
-Returns distinct model_id values from the forecast table.
-
-Response:
-```json
-{
-  "domain": "forecast",
-  "models": ["external", "arima", "prophet"]
-}
-```
-
-### Analytics endpoint: `GET /domains/{domain}/analytics`
-Add optional parameter:
-- `model: str = Query(default="")` — filter by model_id
-
-When `model` is provided and domain is `forecast`:
-- Add `model_id = %s` to WHERE clause
-- KPIs, trends, and summary stats are scoped to that model
-- Aggregation table (`agg_forecast_monthly`) is used when model filter is compatible
-
-When `model` is empty (default):
-- All models are aggregated (same behavior as before feature 11)
-
-### Page endpoint
-No changes needed — `model_id` is a regular column visible in the data explorer. Users can filter via the existing column filter UI.
-
-## UI Changes
-
-### Model selector dropdown (forecast domain only)
-- Location: analytics panel, alongside item/location filters
-- Populated from `GET /domains/forecast/models`
-- Options: "All Models" (default, no filter) + list of model_id values
-- Resets to "All Models" on domain change
-
-### Filter integration
-- When a model is selected, add `model_id` to `effectiveFilters` with exact-match prefix (`=<model>`)
-- This filters both the data explorer table and the analytics panel
-
-### KPI context
-- Display selected model name near the accuracy window selector
-- Example: "Model: arima | Averaged across last 6 month(s)"
-
-## Model ID Conventions
-- `external` — base statistical forecast from the source system (dfu_stat_fcst.txt)
-- Future models use descriptive names: `arima`, `prophet`, `xgboost`, `ensemble`, etc.
-- Model IDs should be lowercase, alphanumeric with underscores
-
-## Migration
-- Existing data: `make normalize-forecast && make load-forecast` fills `model_id = 'external'`
-- Schema: `make down && make up` recreates tables with new column
-- Views: `make refresh-agg` rebuilds materialized views with model_id dimension
+## Dependencies
+- All prior features (reads from all tables for schema context)
+- OpenAI API (`OPENAI_API_KEY`)
+- pgvector extension

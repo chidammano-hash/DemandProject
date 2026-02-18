@@ -1,80 +1,117 @@
-# Feature 1: Internal Data Architecture (Parent Feature)
+# Feature 1: Infrastructure & Platform Setup
 
 ## Objective
-Define the parent architecture for demand forecasting data across master data, transactions, forecasts, and governance, while delegating domain-specific dimension design to sub-features.
+Build a scalable forecasting platform for:
+- traditional statistical models and ML models
+- fast UI analytics across item, location, and customer attributes
+- 500M+ records with reliable performance and governance
 
-## Scope
-Feature 1 covers:
-- shared architecture and design principles
-- common conformance and mapping patterns
-- supersession policy at item-location level
-- forecast storage, archival, KPI, and lineage standards
-- weekly and monthly planning-grain support
+## Recommended Stack (Simple and Right-Sized)
+- `Apache Iceberg` on local object storage (`MinIO`) as the single source of truth
+- `Apache Spark` for ingestion, data quality, feature prep, batch training, and batch scoring
+- `Trino` for low-latency SQL analytics powering the UI
+- `MLflow` for experiment tracking, model registry, and run comparison
+- `Postgres` (via `pgvector/pgvector:pg16`) for app metadata, workflow, and vector embeddings for NL queries
+- `FastAPI` backend and `React/Next.js` frontend
+- `Pydantic` for canonical data structures, schema contracts, and validation
+- `uv` as the Python package/environment manager (`pyproject.toml` + `uv.lock`)
 
-Feature 1 does not define full domain-level attribute lists. Those are in:
-- `docs/design-specs/feature1a.md` (item dimension)
-- `docs/design-specs/feature1b.md` (location dimension)
-- `docs/design-specs/feature1c.md` (customer dimension)
-- `docs/design-specs/feature1d.md` (date/calendar dimension)
+## Why This Works
+- `Iceberg` gives ACID tables, schema evolution, partition evolution, and time travel for large datasets.
+- `Spark` handles heavy ETL and model pipelines at scale.
+- `Trino` queries Iceberg tables interactively, enabling fast slice-and-dice in UI.
+- `MLflow` gives model lineage, reproducibility, and governance for both traditional and ML models.
+- `Pydantic` enforces typed, validated data contracts between ingestion, API, and modeling layers.
+- Clear separation: Spark writes, Trino reads, Iceberg stores.
 
-## Core Principles
-- `Canonical + Mapping`: all client source data maps into canonical keys and structures.
-- `Lakehouse First`: analytical persistence in Iceberg (`bronze/silver/gold`).
-- `Metadata Separation`: workflow/config/approvals in Postgres.
-- `Lineage by Default`: model and pipeline lineage in MLflow + table-level run IDs.
-- `Time Variance`: SCD2 and effective dating for historically correct analytics.
+## High-Level Architecture
+1. Land raw files (`CSV/Parquet`) into object storage.
+2. Spark validates and standardizes data into Iceberg bronze/silver/gold tables.
+3. Spark runs training and forecasting jobs and writes forecast outputs to Iceberg.
+4. Trino serves UI queries from curated Iceberg gold tables.
+5. App writes business actions (override, approval, comments, audit) to Postgres.
+6. ML training/scoring jobs log params, metrics, and artifacts to MLflow.
 
-## Platform Roles
-- `Iceberg`: analytical source of truth and time-travel storage.
-- `Spark`: ingestion, conformance, feature prep, training/scoring, KPI jobs.
-- `Trino`: interactive query serving for APIs and dashboards.
-- `MLflow`: model experiment, version, and run lineage.
-- `Postgres`: operational metadata, overrides, approvals, audit states.
+## Data Model (Minimum)
+- Grain: `item_id`, `location_id`, `customer_id` (nullable), `date`
+- Facts:
+  - `demand_actuals`
+  - `demand_forecast`
+  - `forecast_accuracy`
+- Dimensions:
+  - `dim_item`
+  - `dim_location`
+  - `dim_customer`
+  - `dim_calendar`
 
-## Cross-Domain Canonical Model
-- Core dimensions:
-  - `dim_item_scd`
-  - `dim_location_scd`
-  - `dim_customer_scd`
-  - `dim_calendar` / date dimension
-- Core mapping tables:
-  - `map_item_source_to_canonical`
-  - `map_location_source_to_canonical`
-  - `map_customer_source_to_canonical`
-  - domain-specific source-attribute-to-canonical mappings
-- Core facts:
-  - historical demand/sales/fulfillment
-  - pricing/promo/external drivers
-  - forecasts, lag archives, accuracy KPIs, override audit
+## Performance Design for 500M+ Rows
+- Partition Iceberg fact tables by date (weekly/monthly) and optionally region.
+- Sort/cluster by high-filter columns (`location_id`, `item_id`) during Spark writes.
+- Keep Trino queries on curated "gold" tables, not raw bronze data.
+- Create pre-aggregated tables for UI:
+  - `agg_loc_week`
+  - `agg_loc_item_week`
+  - `agg_loc_customer_week`
+  - `exceptions_topn`
+- Enforce bounded queries in API:
+  - always require time window
+  - default top-N for exception screens
+  - server-side pagination only
 
-## Supersession Standard
-- Use `bridge_item_location_supersession` for old-item to new-item continuity by location.
-- Preserve immutable raw history.
-- Serve continuity-adjusted analytics and archives by default.
-- Keep approval/version lineage for supersession rules.
+## Forecasting Approach
+- Traditional models: seasonal naive, ETS/ARIMA (where stable and interpretable).
+- ML models: LightGBM/XGBoost with lag, rolling stats, calendar, and promo features.
+- Champion/challenger selection by segment using `WMAPE`, bias, and service impact.
+- Version each run (`run_id`, model version, training window) in Iceberg + MLflow + Postgres metadata.
 
-## Planning Grain Standard
-- All forecast, lag, and KPI facts must support:
-  - `planning_grain` (`WEEKLY`, `MONTHLY`)
-  - `period_id`, `period_start_date`, `period_end_date`
-- Daily actuals remain atomic and are aggregated for weekly/monthly planning layers.
+## Simple MVP Scope
+1. Ingest `actuals` and master dimensions.
+2. Build Iceberg silver/gold tables.
+3. Train baseline + one ML model in Spark.
+4. Write forecasts + metrics to Iceberg.
+5. Expose Trino-backed APIs for portfolio, exceptions, and item drilldown.
+6. Add overrides and approvals in Postgres with full audit.
 
-## Governance and Quality
-- Mandatory data contract checks at bronze-to-silver and silver-to-gold boundaries.
-- Required integrity checks:
-  - key mapping completeness
-  - SCD validity windows
-  - supersession overlap/cycle checks
-  - null/volume/drift checks
-- Required lineage fields in forecast outputs:
-  - `scenario_id`, `algorithm_id`, `model_version`, `run_id`, `planning_grain`
+## Implemented Features (MVP)
+- **Feature 1:** Infrastructure setup — Docker Compose, MinIO, Spark, Trino, MLflow, Postgres, FastAPI, React
+- **Feature 2:** Internal data architecture & data contracts — canonical keys, lakehouse standards, SCD2, ERD
+- **Feature 3:** Dimension tables — Item, Location, Customer, Time, DFU
+- **Feature 4:** Fact tables — Sales (`fact_sales_monthly`), External Forecast (`fact_external_forecast_monthly`)
+- **Feature 5:** Forecast accuracy KPIs — Accuracy %, WAPE, MAPE, Bias, window selector, trend charts
+- **Feature 6:** Multi-model forecast support — `model_id` column, model selector, per-model analytics
+- **Feature 7:** DFU clustering framework — KMeans, feature engineering, automated labeling, MLflow
+- **Feature 8:** Backtesting framework — expanding window timeframes (A-J), multi-model, lag 0-4 archive
+- **Feature 9:** LGBM backtesting implementation — global + per-cluster models, lag features, rolling stats
+- **Feature 10:** Multi-dimensional accuracy slicing — accuracy by cluster/supplier/lag/model, materialized views, UI panel
+- **Feature 11:** Chatbot / natural language queries — OpenAI GPT-4o + pgvector, NL-to-SQL with safe execution
 
-## Implementation Sequence
-1. Shared canonical keys, mapping standards, and metadata tables.
-2. Domain dimensions via sub-features (`1a`, `1b`, `1c`, `1d`).
-3. Shared transactional and forecast facts.
-4. Supersession bridge and continuity serving layer.
-5. KPI marts and dashboard-serving datasets.
+## Deployment Notes
+- Run everything on a single MacBook using Docker Compose (no cloud services):
+  - Iceberg catalog + MinIO + Spark + Trino + MLflow + Postgres + API + UI
+- Move to Kubernetes only when concurrency and SLA demand it.
+- Standardize Python workflows with `uv`:
+  - `uv venv`
+  - `uv sync`
+  - `uv run <command>`
+
+## Local-Only Guardrails (MacBook)
+- Use `MinIO` only (do not configure `S3` endpoints).
+- Keep all data/artifacts local volumes on the MacBook.
+- Disable external callbacks/webhooks from MLflow and app services.
+- Restrict network egress from containers if strict isolation is required.
+
+## Critical Standardization Rules
+1. Canonical naming + grain:
+   - enforce standard keys (`item_sk`, `location_sk`, `customer_sk`) and require explicit grain on every fact table.
+2. Versioned data contracts with `Pydantic`:
+   - use typed, versioned schemas at API and pipeline boundaries.
+3. Quality gates before publish:
+   - block publish when null checks, key uniqueness, referential integrity, or row-count drift checks fail.
+4. Forecast lineage + governance:
+   - require `scenario_id`, `algorithm_id`, `model_version`, `run_id`, and `planning_grain` on every forecast record; overrides require reason + approval.
+5. Single config standard:
+   - centralize typed, environment-driven config with `local/dev/prod` profiles; avoid hardcoded paths/endpoints.
 
 ## Final Recommendation
-Keep Feature 1 as the architecture contract and use sub-features for dimension-level detail. This keeps governance centralized and domain models independently evolvable.
+For your requirement, use `Iceberg + Spark + Trino + MLflow` as the core platform, fully local on your MacBook.
+This gives the best balance of scale, speed, model governance, and simplicity for 500M+ record demand forecasting with both ML and traditional methods.

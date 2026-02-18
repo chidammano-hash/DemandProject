@@ -185,18 +185,17 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 ## Design Specs
 
 Located in `docs/design-specs/`:
-- `feature1b.md` — Location dimension
-- `feature1c.md` — Customer dimension
-- `feature1d.md` — Time dimension
-- `feature1e.md` — DFU dimension
-- `feature1f.md` — Sales fact
-- `feature1g.md` — External forecast fact
-- `feature10.md` — Forecast accuracy KPIs
-- `feature11.md` — Multi-model forecast support
-- `feature12.md` — Chatbot / natural language queries
-- `feature13.md` — DFU clustering framework
-- `feature14.md` — Backtesting framework (expanding window timeframes)
-- `feature15.md` — LGBM backtesting implementation
+- `feature1.md` — Infrastructure & platform setup
+- `feature2.md` — Internal data architecture & data contracts (includes ERD)
+- `feature3.md` — Dimension tables (Item, Location, Customer, Time, DFU)
+- `feature4.md` — Fact tables (Sales, External Forecast)
+- `feature5.md` — Forecast accuracy KPIs
+- `feature6.md` — Multi-model forecast support
+- `feature7.md` — DFU clustering framework
+- `feature8.md` — Backtesting framework (expanding window timeframes)
+- `feature9.md` — LGBM backtesting implementation
+- `feature10.md` — Multi-dimensional accuracy slicing
+- `feature11.md` — Chatbot / natural language queries
 
 ---
 
@@ -205,7 +204,7 @@ Located in `docs/design-specs/`:
 **Whenever you implement a new feature or make significant changes, you MUST update the following files:**
 
 1. **`docs/design-specs/feature<N>.md`** — Create or update the design spec for the feature
-2. **`docs/design-specs/feature0.md`** — Add the feature to the "Implemented Features (MVP)" list
+2. **`docs/design-specs/feature1.md`** — Add the feature to the "Implemented Features (MVP)" list
 3. **`mvp/demand/docs/ARCHITECTURE.md`** — Update architecture, component technologies, tables, or data flow if affected
 4. **`mvp/demand/docs/README.md`** — Update stack, datasets, analytics behavior, quick start, or key paths if affected
 5. **`mvp/demand/docs/RUNBOOK.md`** — Update setup steps, notes, or troubleshooting if affected

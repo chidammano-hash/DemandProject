@@ -1,69 +1,58 @@
-# Feature10: Forecast Accuracy KPI Cards (External Forecast)
+# Feature 10: Multi-Dimensional Accuracy Slicing
 
 ## Objective
-Define and surface forecast-accuracy KPIs for external monthly forecasts in the forecast UI.
+Enable accuracy analysis sliced by cluster, supplier, ABC volume classification, region, brand, lag, and model — powered by materialized views and a collapsible UI panel.
 
 ## Scope
-- Dataset: `fact_external_forecast_monthly`
-- Forecast measure: `basefcst_pref`
-- Actual measure: `tothist_dmd`
-- Grain: monthly (`startdate`) for selected filter context (item, location, lag/date scope)
+- Materialized views: `agg_accuracy_by_dim`, `agg_accuracy_lag_archive`
+- API endpoints for accuracy slicing and lag-horizon curves
+- UI: collapsible Accuracy Comparison panel in the Forecast domain
 
-## KPI Definitions
-Let:
-- `F` = forecast (`basefcst_pref`)
-- `A` = actual (`tothist_dmd`)
-- `E` = error = `F - A`
+## Materialized Views
 
-For the selected filtered set of rows:
+### `agg_accuracy_by_dim`
+Joins `fact_external_forecast_monthly` + `dim_dfu`. Grain: `(model_id, lag, month, cluster, supplier, abc_vol, region, brand)`.
 
-1. Total Forecast
-- Formula: `SUM(F)`
+Stores: `SUM(F)`, `SUM(A)`, `SUM(ABS(F-A))` for KPI derivation. Refreshed by `backtest-load`.
 
-2. Total Actual
-- Formula: `SUM(A)`
+### `agg_accuracy_lag_archive`
+Same structure from `backtest_lag_archive` + `dim_dfu`. Adds `timeframe` grain. Powers lag-horizon accuracy curves. Refreshed by `backtest-load`.
 
-3. Absolute Error
-- Formula: `SUM(ABS(E))`
+### DDL
+`mvp/demand/sql/011_create_accuracy_slice_views.sql`
 
-4. Bias
-- Formula: `(SUM(F) / SUM(A)) - 1`
-- If `SUM(A) = 0`, return `NULL`.
+## API Endpoints
 
-5. WAPE (%)
-- Formula: `100 * SUM(ABS(E)) / ABS(SUM(A))`
-- If `SUM(A) = 0`, return `NULL`.
+### Accuracy Slice
+`GET /domains/forecast/accuracy-slice`
 
-6. MAPE (%)
-- Formula: `100 * AVG(ABS(E) / ABS(A))` for rows where `A != 0`
-- Rows with `A = 0` are excluded.
+Parameters: `model_id`, `lag`, `cluster`, `supplier`, `abc_vol`, `region`, `brand`
 
-7. Forecast Accuracy (%)
-- Formula: `100 - WAPE%`
-- If `WAPE%` is `NULL`, return `NULL`.
+Returns accuracy metrics grouped by the requested dimension.
 
-## UI Mapping (Forecast Domain)
-Show the following KPI cards in the forecast analytics panel:
-- Forecast Accuracy
-- WAPE
-- MAPE
-- Total Forecast
-- Total Actual
-- Absolute Error
-- Bias
+### Lag-Horizon Curve
+`GET /domains/forecast/lag-curve`
 
-KPI window selector:
-- Add a dropdown `Accuracy Window (Months)` with values `1..12`.
-- Selected value `N` means KPI cards are computed on the latest `N` monthly buckets (by `startdate`) within active filters.
-- Accuracy metrics shown on cards (`Forecast Accuracy`, `WAPE`, `MAPE`) are **average monthly** values across this `N`-month window.
-- Volume/error cards (`Total Forecast`, `Total Actual`, `Absolute Error`) are summed over the same `N`-month window.
-- `Bias` is computed as `(SUM(Forecast) / SUM(History)) - 1` across the `N`-month window.
+Parameters: `model_id`, optional dimension filters
 
-Trend chart requirement:
-- Support monthly `Forecast Accuracy %` series in the trend chart.
-- Formula per month bucket:
-  - `Forecast Accuracy % = 100 - (100 * SUM(ABS(F - A)) / ABS(SUM(A)))`
-  - If monthly `SUM(A) = 0`, value is null for that month.
-- This measure should be selectable alongside volume measures (`basefcst_pref`, `tothist_dmd`).
+Returns accuracy at each lag (0-4) for the selected model/filters — used to plot how accuracy degrades with forecast horizon.
 
-These cards are computed on the backend using the same active filters used for trend/chart queries.
+## UI Components
+
+### Accuracy Comparison Panel (Forecast domain)
+- Collapsible panel below KPI cards
+- Slice by: cluster, supplier, ABC vol, region, brand, lag
+- Model comparison pivot table with best-model highlighting
+- Lag-horizon accuracy curve chart (Recharts)
+
+## Makefile Targets
+```makefile
+accuracy-slice-refresh:  # Refresh agg_accuracy_by_dim + agg_accuracy_lag_archive
+accuracy-slice-check:    # Curl accuracy slice + lag-curve endpoints
+```
+
+## Dependencies
+- Feature 7 (clustering — provides `cluster_assignment` for slicing)
+- Feature 8 + 9 (backtesting — provides `backtest_lag_archive` data)
+- Feature 5 (KPI formulas)
+- Feature 6 (multi-model — `model_id` dimension)
