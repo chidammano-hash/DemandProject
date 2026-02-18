@@ -84,6 +84,13 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - Same feature engineering, lag strategy, and output format as LGBM
    - GPU support via `device="cuda"`; auto-detected at runtime
    - MLflow experiment tracking (`demand_backtest`)
+13. Transfer learning backtesting:
+   - All three frameworks (LGBM, CatBoost, XGBoost) support `--cluster-strategy transfer`
+   - Phase 1: Train base model on ALL data, excluding `ml_cluster` from features
+   - Phase 2: Per-cluster fine-tune via warm-start (LightGBM `init_model`, CatBoost `init_model`, XGBoost `xgb_model`)
+   - Clusters < `transfer_min_rows` (default 20) or unassigned DFUs fallback to base model predictions
+   - Model IDs: `lgbm_transfer`, `catboost_transfer`, `xgboost_transfer`
+   - MLflow experiment tracking (`demand_backtest`)
 10. Multi-dimensional accuracy slicing:
    - Pre-aggregated `agg_accuracy_by_dim` view: (model_id, lag, month, cluster, supplier, abc_vol, region, brand) grain
    - Pre-aggregated `agg_accuracy_lag_archive` view: same grain for archive table + timeframe

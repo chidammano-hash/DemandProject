@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat generate-embeddings api ui-init ui normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-all refresh-agg-sales refresh-agg-forecast refresh-agg spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all backtest-lgbm backtest-lgbm-cluster backtest-catboost backtest-catboost-cluster backtest-xgboost backtest-xgboost-cluster backtest-load backtest-all accuracy-slice-refresh accuracy-slice-check
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat generate-embeddings api ui-init ui normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-all refresh-agg-sales refresh-agg-forecast refresh-agg spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-load backtest-all accuracy-slice-refresh accuracy-slice-check
 
 help:
 	@echo "Targets:"
@@ -40,10 +40,13 @@ help:
 	@echo "  bench-compare        - compare Postgres vs Trino query latency"
 	@echo "  backtest-lgbm        - run LGBM global backtest (10 timeframes)"
 	@echo "  backtest-lgbm-cluster- run LGBM per-cluster backtest"
+	@echo "  backtest-lgbm-transfer - run LGBM transfer learning backtest"
 	@echo "  backtest-catboost    - run CatBoost global backtest (10 timeframes)"
 	@echo "  backtest-catboost-cluster - run CatBoost per-cluster backtest"
+	@echo "  backtest-catboost-transfer - run CatBoost transfer learning backtest"
 	@echo "  backtest-xgboost     - run XGBoost global backtest (10 timeframes)"
 	@echo "  backtest-xgboost-cluster - run XGBoost per-cluster backtest"
+	@echo "  backtest-xgboost-transfer - run XGBoost transfer learning backtest"
 	@echo "  backtest-load        - load backtest predictions into Postgres"
 	@echo "  backtest-all         - backtest-lgbm + backtest-load"
 	@echo "  accuracy-slice-refresh - refresh agg_accuracy_by_dim + agg_accuracy_lag_archive"
@@ -332,17 +335,26 @@ backtest-lgbm:
 backtest-lgbm-cluster:
 	$(UV) python scripts/run_backtest.py --cluster-strategy per_cluster
 
+backtest-lgbm-transfer:
+	$(UV) python scripts/run_backtest.py --cluster-strategy transfer
+
 backtest-catboost:
 	$(UV) python scripts/run_backtest_catboost.py --cluster-strategy global
 
 backtest-catboost-cluster:
 	$(UV) python scripts/run_backtest_catboost.py --cluster-strategy per_cluster
 
+backtest-catboost-transfer:
+	$(UV) python scripts/run_backtest_catboost.py --cluster-strategy transfer
+
 backtest-xgboost:
 	$(UV) python scripts/run_backtest_xgboost.py --cluster-strategy global
 
 backtest-xgboost-cluster:
 	$(UV) python scripts/run_backtest_xgboost.py --cluster-strategy per_cluster
+
+backtest-xgboost-transfer:
+	$(UV) python scripts/run_backtest_xgboost.py --cluster-strategy transfer
 
 backtest-load:
 	$(UV) python scripts/load_backtest_forecasts.py --replace

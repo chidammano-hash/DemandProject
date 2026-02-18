@@ -127,9 +127,10 @@ Clustering:
 LGBM Backtesting:
 - Run global backtest: `make backtest-lgbm` (trains LightGBM across 10 expanding windows)
 - Run per-cluster backtest: `make backtest-lgbm-cluster` (separate model per cluster)
+- Run transfer backtest: `make backtest-lgbm-transfer` (global base → per-cluster fine-tune)
 - Load predictions: `make backtest-load` (loads execution-lag rows into `fact_external_forecast_monthly`, all-lag rows into `backtest_lag_archive`, refreshes accuracy slice views)
 - Or all at once: `make backtest-all`
-- Models appear as `lgbm_global` / `lgbm_cluster` in the forecast model selector
+- Models appear as `lgbm_global` / `lgbm_cluster` / `lgbm_transfer` in the forecast model selector
 - Existing accuracy KPIs and trend charts work automatically for LGBM models
 - `backtest_lag_archive` stores lag 0–4 predictions for accuracy reporting at any horizon
 - `make backtest-load` only replaces rows for the model_id in the CSV (safe to run per-cluster after global)
@@ -137,16 +138,25 @@ LGBM Backtesting:
 CatBoost Backtesting:
 - Run global backtest: `make backtest-catboost` (trains CatBoost across 10 expanding windows)
 - Run per-cluster backtest: `make backtest-catboost-cluster` (separate model per cluster)
+- Run transfer backtest: `make backtest-catboost-transfer` (global base → per-cluster fine-tune)
 - Load predictions: `make backtest-load` (same shared loader as LGBM)
-- Models appear as `catboost_global` / `catboost_cluster` in the forecast model selector
+- Models appear as `catboost_global` / `catboost_cluster` / `catboost_transfer` in the forecast model selector
 - Same feature engineering, lag strategy, and output format as LGBM
 
 XGBoost Backtesting:
 - Run global backtest: `make backtest-xgboost` (trains XGBoost across 10 expanding windows)
 - Run per-cluster backtest: `make backtest-xgboost-cluster` (separate model per cluster)
+- Run transfer backtest: `make backtest-xgboost-transfer` (global base → per-cluster fine-tune)
 - Load predictions: `make backtest-load` (same shared loader as LGBM)
-- Models appear as `xgboost_global` / `xgboost_cluster` in the forecast model selector
+- Models appear as `xgboost_global` / `xgboost_cluster` / `xgboost_transfer` in the forecast model selector
 - Same feature engineering, lag strategy, and output format as LGBM
+
+Transfer Learning Backtesting (feature14):
+- All three frameworks support `--cluster-strategy transfer`
+- Phase 1: Trains a base model on all data (excluding `ml_cluster` from features)
+- Phase 2: Fine-tunes per cluster with warm-start (100 extra trees/iterations, min 20 rows)
+- Small clusters and unassigned DFUs use base model predictions (not zeroed out)
+- Improves accuracy for small clusters compared to `per_cluster` strategy
 
 Accuracy Comparison (feature10):
 - Collapsible "Accuracy Comparison" panel in the Forecast analytics page
@@ -204,4 +214,4 @@ make cluster-all  # Full pipeline: features -> train -> label -> update
 - Backtest scripts: `mvp/demand/scripts/run_backtest.py`, `run_backtest_catboost.py`, `run_backtest_xgboost.py`, `load_backtest_forecasts.py`
 - Clustering config: `mvp/demand/config/clustering_config.yaml`
 - DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views)
-- Design specs: `docs/design-specs/` (feature1–feature13)
+- Design specs: `docs/design-specs/` (feature1–feature14)

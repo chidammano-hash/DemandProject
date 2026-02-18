@@ -99,6 +99,23 @@ make backtest-xgboost-cluster  # Per-cluster XGBoost backtest
 make backtest-load             # Load predictions into Postgres
 ```
 
+### Transfer Learning (all frameworks)
+
+Transfer learning trains a global base model (no `ml_cluster`), then fine-tunes per cluster with warm-start. Small clusters and unassigned DFUs fall back to the base model (never zeroed).
+
+```bash
+make backtest-lgbm-transfer      # LGBM transfer backtest
+make backtest-load               # Load predictions into Postgres
+
+make backtest-catboost-transfer  # CatBoost transfer backtest
+make backtest-load               # Load predictions into Postgres
+
+make backtest-xgboost-transfer   # XGBoost transfer backtest
+make backtest-load               # Load predictions into Postgres
+```
+
+Transfer model IDs: `lgbm_transfer`, `catboost_transfer`, `xgboost_transfer`
+
 ### Backtest output
 
 Each backtest run produces two CSV files:
@@ -110,9 +127,9 @@ Each backtest run produces two CSV files:
 Note: each backtest run overwrites the CSV files on disk. To load multiple models, run and load each one sequentially (e.g., LGBM → load → CatBoost → load → XGBoost → load).
 
 Predictions are stored in `fact_external_forecast_monthly` with model_id values:
-- LGBM: `lgbm_global` / `lgbm_cluster`
-- CatBoost: `catboost_global` / `catboost_cluster`
-- XGBoost: `xgboost_global` / `xgboost_cluster`
+- LGBM: `lgbm_global` / `lgbm_cluster` / `lgbm_transfer`
+- CatBoost: `catboost_global` / `catboost_cluster` / `catboost_transfer`
+- XGBoost: `xgboost_global` / `xgboost_cluster` / `xgboost_transfer`
 
 All-lag predictions are archived in `backtest_lag_archive` for accuracy reporting at any horizon. Results appear automatically in the forecast model selector UI and accuracy KPIs.
 

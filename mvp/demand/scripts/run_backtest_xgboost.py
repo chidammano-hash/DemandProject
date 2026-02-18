@@ -1,9 +1,10 @@
 """
 Run XGBoost backtesting with expanding-window timeframes.
 
-Supports two strategies:
+Supports three strategies:
   - global:      One XGBoost for all DFUs, ml_cluster as categorical feature (model_id=xgboost_global)
   - per_cluster:  Separate XGBoost per ml_cluster (model_id=xgboost_cluster)
+  - transfer:    Global base model (no ml_cluster) → per-cluster fine-tune via xgb_model (model_id=xgboost_transfer)
 
 Produces two CSVs:
   - backtest_predictions.csv: execution-lag only (for fact_external_forecast_monthly)
@@ -290,6 +291,97 @@ def train_and_predict_per_cluster(
     return pd.concat(all_results, ignore_index=True), models
 
 
+def train_and_predict_transfer(
+    train_df: pd.DataFrame,
+    predict_df: pd.DataFrame,
+    feature_cols: list[str],
+    cat_cols: list[str],
+    params: dict,
+    transfer_n_estimators: int = 100,
+    transfer_min_rows: int = 20,
+) -> pd.DataFrame:
+    """Transfer learning: global base model (no ml_cluster) → per-cluster fine-tune.
+
+    Phase 1: Train a base XGBoost on ALL training data, excluding ml_cluster from features.
+    Phase 2: For each cluster with >= transfer_min_rows: fine-tune from the base model
+             with transfer_n_estimators additional trees via xgb_model.
+    Fallback: Clusters < transfer_min_rows or unassigned DFUs use base model predictions.
+    """
+    # Feature sets without ml_cluster (base and per-cluster use same features)
+    feat_cols_no_cluster = [c for c in feature_cols if c != "ml_cluster"]
+
+    # ── Phase 1: Train base model on ALL data (no ml_cluster) ──
+    t0 = time.time()
+    X_train_all = train_df[feat_cols_no_cluster]
+    y_train_all = train_df["qty"]
+
+    print(f"    [{_ts()}] Phase 1: Training base XGBoost ({len(X_train_all):,} rows, "
+          f"{len(feat_cols_no_cluster)} features, no ml_cluster)...")
+    base_model = xgb.XGBRegressor(**params)
+    base_model.fit(X_train_all, y_train_all)
+    print(f"    [{_ts()}] Base model trained ({time.time() - t0:.1f}s)")
+
+    # ── Phase 2: Fine-tune per cluster ──
+    all_results = []
+    models = {"__base__": base_model}
+
+    clusters = sorted(train_df["ml_cluster"].dropna().unique())
+    clusters = [c for c in clusters if c != "__unknown__"]
+    print(f"    [{_ts()}] Phase 2: Fine-tuning {len(clusters)} clusters "
+          f"(min_rows={transfer_min_rows}, extra_trees={transfer_n_estimators})...")
+
+    for ci, cluster_label in enumerate(clusters, 1):
+        train_c = train_df[train_df["ml_cluster"] == cluster_label]
+        pred_c = predict_df[predict_df["ml_cluster"] == cluster_label]
+
+        if len(pred_c) == 0:
+            continue
+
+        if len(train_c) < transfer_min_rows:
+            # Fallback: use base model (not zero)
+            print(f"    [{_ts()}] Cluster {ci}/{len(clusters)} '{cluster_label}': "
+                  f"train={len(train_c)} < {transfer_min_rows} → base model fallback")
+            X_pred = pred_c[feat_cols_no_cluster]
+            preds = base_model.predict(X_pred)
+            result = pred_c[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
+            result["basefcst_pref"] = np.maximum(preds, 0)
+            all_results.append(result)
+            continue
+
+        # Fine-tune: new XGBoost initialized from base model's booster
+        X_train_c = train_c[feat_cols_no_cluster]
+        y_train_c = train_c["qty"]
+        X_pred = pred_c[feat_cols_no_cluster]
+
+        t1 = time.time()
+        ft_params = {**params, "n_estimators": transfer_n_estimators}
+        ft_model = xgb.XGBRegressor(**ft_params)
+        ft_model.fit(
+            X_train_c, y_train_c,
+            xgb_model=base_model.get_booster(),
+        )
+        preds = ft_model.predict(X_pred)
+
+        result = pred_c[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
+        result["basefcst_pref"] = np.maximum(preds, 0)
+        all_results.append(result)
+        models[cluster_label] = ft_model
+        print(f"    [{_ts()}] Cluster {ci}/{len(clusters)} '{cluster_label}': "
+              f"train={len(train_c):,}, pred={len(pred_c):,}, fine-tuned ({time.time() - t1:.1f}s)")
+
+    # Handle DFUs with no cluster assignment → base model fallback
+    no_cluster = predict_df[predict_df["ml_cluster"].isna() | (predict_df["ml_cluster"] == "__unknown__")]
+    if len(no_cluster) > 0:
+        print(f"    [{_ts()}] {len(no_cluster)} predict rows with no cluster → base model fallback")
+        X_pred = no_cluster[feat_cols_no_cluster]
+        preds = base_model.predict(X_pred)
+        result = no_cluster[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
+        result["basefcst_pref"] = np.maximum(preds, 0)
+        all_results.append(result)
+
+    return pd.concat(all_results, ignore_index=True), models
+
+
 # ── Execution-lag assignment ────────────────────────────────────────────────
 
 def assign_execution_lag(
@@ -353,12 +445,17 @@ def expand_to_all_lags(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run XGBoost backtest with expanding-window timeframes")
-    parser.add_argument("--cluster-strategy", choices=["global", "per_cluster"], default="global",
-                        help="global: one model, per_cluster: model per ml_cluster")
+    parser.add_argument("--cluster-strategy", choices=["global", "per_cluster", "transfer"], default="global",
+                        help="global: one model, per_cluster: model per ml_cluster, transfer: global base → per-cluster fine-tune")
     parser.add_argument("--model-id", type=str, default=None,
-                        help="Override model_id (default: xgboost_global or xgboost_cluster)")
+                        help="Override model_id (default: xgboost_global, xgboost_cluster, or xgboost_transfer)")
     parser.add_argument("--n-timeframes", type=int, default=10, help="Number of expanding windows")
     parser.add_argument("--output-dir", type=str, default="data/backtest", help="Output directory")
+    # Transfer learning params
+    parser.add_argument("--transfer-n-estimators", type=int, default=100,
+                        help="Number of additional trees for per-cluster fine-tuning (transfer strategy)")
+    parser.add_argument("--transfer-min-rows", type=int, default=20,
+                        help="Minimum cluster rows for fine-tuning; smaller clusters use base model (transfer strategy)")
     # XGBoost hyperparams
     parser.add_argument("--n-estimators", type=int, default=500)
     parser.add_argument("--learning-rate", type=float, default=0.05)
@@ -373,9 +470,12 @@ def main() -> None:
     load_dotenv(ROOT / ".env")
     db = get_db_conn()
 
-    model_id = args.model_id or (
-        "xgboost_global" if args.cluster_strategy == "global" else "xgboost_cluster"
-    )
+    _default_model_ids = {
+        "global": "xgboost_global",
+        "per_cluster": "xgboost_cluster",
+        "transfer": "xgboost_transfer",
+    }
+    model_id = args.model_id or _default_model_ids[args.cluster_strategy]
     print(f"[{_ts()}] Backtest: strategy={args.cluster_strategy}, model_id={model_id}, "
           f"n_timeframes={args.n_timeframes}")
 
@@ -519,6 +619,12 @@ def main() -> None:
             preds, model = train_and_predict_global(
                 train_data, predict_data, feature_cols, cat_cols, xgb_params
             )
+        elif args.cluster_strategy == "transfer":
+            preds, models = train_and_predict_transfer(
+                train_data, predict_data, feature_cols, cat_cols, xgb_params,
+                transfer_n_estimators=args.transfer_n_estimators,
+                transfer_min_rows=args.transfer_min_rows,
+            )
         else:
             preds, models = train_and_predict_per_cluster(
                 train_data, predict_data, feature_cols, cat_cols, xgb_params
@@ -609,6 +715,8 @@ def main() -> None:
         "cluster_strategy": args.cluster_strategy,
         "n_timeframes": args.n_timeframes,
         "xgboost_params": {k: v for k, v in xgb_params.items()},
+        **({"transfer_n_estimators": args.transfer_n_estimators,
+            "transfer_min_rows": args.transfer_min_rows} if args.cluster_strategy == "transfer" else {}),
         "n_predictions": len(output_df),
         "n_dfus": int(output_df["dmdunit"].nunique()),
         "date_range": {
@@ -679,7 +787,7 @@ def main() -> None:
             mlflow.set_tag("cluster_strategy", args.cluster_strategy)
             mlflow.set_tag("model_id", model_id)
 
-            mlflow.log_params({
+            _mlflow_params = {
                 "n_timeframes": args.n_timeframes,
                 "cluster_strategy": args.cluster_strategy,
                 "n_estimators": args.n_estimators,
@@ -688,7 +796,11 @@ def main() -> None:
                 "min_child_weight": args.min_child_weight,
                 "subsample": args.subsample,
                 "colsample_bytree": args.colsample_bytree,
-            })
+            }
+            if args.cluster_strategy == "transfer":
+                _mlflow_params["transfer_n_estimators"] = args.transfer_n_estimators
+                _mlflow_params["transfer_min_rows"] = args.transfer_min_rows
+            mlflow.log_params(_mlflow_params)
 
             mlflow.log_metrics({
                 "n_predictions": len(output_df),

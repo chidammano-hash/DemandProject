@@ -86,6 +86,7 @@ Build a scalable forecasting platform for:
 - **Feature 11:** Chatbot / natural language queries — OpenAI GPT-4o + pgvector, NL-to-SQL with safe execution
 - **Feature 12:** CatBoost backtesting implementation — global + per-cluster models, native categorical support, same feature engineering as LGBM
 - **Feature 13:** XGBoost backtesting implementation — global + per-cluster models, histogram-based with native categorical support
+- **Feature 14:** Transfer learning backtest strategy — global base model → per-cluster fine-tune via warm-start for all three frameworks
 
 ## Deployment Notes
 - Run everything on a single MacBook using Docker Compose (no cloud services):

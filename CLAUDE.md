@@ -100,14 +100,17 @@ make cluster-all       # Run full clustering pipeline (features → train → la
 # Backtesting (LGBM)
 make backtest-lgbm          # Run global LGBM backtest (10 expanding timeframes)
 make backtest-lgbm-cluster  # Run per-cluster LGBM backtest
+make backtest-lgbm-transfer # Run LGBM transfer learning backtest
 
 # Backtesting (CatBoost)
 make backtest-catboost          # Run global CatBoost backtest (10 expanding timeframes)
 make backtest-catboost-cluster  # Run per-cluster CatBoost backtest
+make backtest-catboost-transfer # Run CatBoost transfer learning backtest
 
 # Backtesting (XGBoost)
 make backtest-xgboost          # Run global XGBoost backtest (10 expanding timeframes)
 make backtest-xgboost-cluster  # Run per-cluster XGBoost backtest
+make backtest-xgboost-transfer # Run XGBoost transfer learning backtest
 
 # Backtest loading (shared across all models)
 make backtest-load          # Load backtest predictions into Postgres + refresh agg
@@ -210,6 +213,7 @@ Located in `docs/design-specs/`:
 - `feature11.md` — Chatbot / natural language queries
 - `feature12.md` — CatBoost backtesting implementation
 - `feature13.md` — XGBoost backtesting implementation
+- `feature14.md` — Transfer learning backtest strategy
 
 ---
 
