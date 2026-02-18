@@ -84,6 +84,8 @@ Build a scalable forecasting platform for:
 - **Feature 9:** LGBM backtesting implementation — global + per-cluster models, lag features, rolling stats
 - **Feature 10:** Multi-dimensional accuracy slicing — accuracy by cluster/supplier/lag/model, materialized views, UI panel
 - **Feature 11:** Chatbot / natural language queries — OpenAI GPT-4o + pgvector, NL-to-SQL with safe execution
+- **Feature 12:** CatBoost backtesting implementation — global + per-cluster models, native categorical support, same feature engineering as LGBM
+- **Feature 13:** XGBoost backtesting implementation — global + per-cluster models, histogram-based with native categorical support
 
 ## Deployment Notes
 - Run everything on a single MacBook using Docker Compose (no cloud services):

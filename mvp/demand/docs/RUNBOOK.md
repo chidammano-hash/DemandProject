@@ -50,7 +50,9 @@ make cluster-update    # Update dim_dfu.cluster_assignment in database
 
 This groups DFUs by historical demand patterns for improved global LGBM model performance. Results are logged to MLflow experiment `dfu_clustering`. Cluster assignments can be filtered via `/domains/dfu/page` using the `cluster_assignment` filter, or viewed via `/domains/dfu/clusters` endpoint.
 
-## 3d) Run LGBM backtesting (optional, requires clustering)
+## 3d) Run backtesting (optional, requires clustering)
+
+### LGBM
 
 Global model (one LGBM for all DFUs, `ml_cluster` as feature):
 ```bash
@@ -69,15 +71,50 @@ Or run global + load in one shot:
 make backtest-all           # backtest-lgbm + backtest-load
 ```
 
+### CatBoost
+
+Global model:
+```bash
+make backtest-catboost          # Global CatBoost backtest (10 timeframes)
+make backtest-load              # Load predictions into Postgres
+```
+
+Per-cluster model:
+```bash
+make backtest-catboost-cluster  # Per-cluster CatBoost backtest
+make backtest-load              # Load predictions into Postgres
+```
+
+### XGBoost
+
+Global model:
+```bash
+make backtest-xgboost          # Global XGBoost backtest (10 timeframes)
+make backtest-load             # Load predictions into Postgres
+```
+
+Per-cluster model:
+```bash
+make backtest-xgboost-cluster  # Per-cluster XGBoost backtest
+make backtest-load             # Load predictions into Postgres
+```
+
+### Backtest output
+
 Each backtest run produces two CSV files:
 - `data/backtest/backtest_predictions.csv` — execution-lag only (loaded into `fact_external_forecast_monthly`)
 - `data/backtest/backtest_predictions_all_lags.csv` — lag 0–4 archive (loaded into `backtest_lag_archive`)
 
-`make backtest-load` has `--replace` built in. It only deletes rows matching the `model_id` in the CSV, so running the per-cluster backtest does **not** affect existing global results in Postgres.
+`make backtest-load` has `--replace` built in. It only deletes rows matching the `model_id` in the CSV, so running different models does **not** affect each other's results in Postgres.
 
-Note: each backtest run overwrites the CSV files on disk. If you need both models loaded, run global first, load, then run per-cluster and load again.
+Note: each backtest run overwrites the CSV files on disk. To load multiple models, run and load each one sequentially (e.g., LGBM → load → CatBoost → load → XGBoost → load).
 
-Predictions are stored in `fact_external_forecast_monthly` with `model_id = lgbm_global` or `lgbm_cluster`. All-lag predictions are archived in `backtest_lag_archive` for accuracy reporting at any horizon. Results appear automatically in the forecast model selector UI and accuracy KPIs.
+Predictions are stored in `fact_external_forecast_monthly` with model_id values:
+- LGBM: `lgbm_global` / `lgbm_cluster`
+- CatBoost: `catboost_global` / `catboost_cluster`
+- XGBoost: `xgboost_global` / `xgboost_cluster`
+
+All-lag predictions are archived in `backtest_lag_archive` for accuracy reporting at any horizon. Results appear automatically in the forecast model selector UI and accuracy KPIs.
 
 `make backtest-load` also automatically refreshes the accuracy slice views (`agg_accuracy_by_dim`, `agg_accuracy_lag_archive`) after loading — no additional step needed.
 
@@ -201,7 +238,7 @@ make down
 - Backtest fails:
   - Ensure clustering has been run first: `make cluster-all`
   - Ensure sales data is loaded: `make load-sales`
-  - Install lightgbm: `uv sync`
+  - Install dependencies: `uv sync` (installs lightgbm, catboost, xgboost)
   - Check output: `ls -lh data/backtest/`
 - Cluster assignments not updating:
   - Use `--dry-run` flag to preview changes: `make cluster-update` (with dry-run in script)

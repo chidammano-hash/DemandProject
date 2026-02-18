@@ -49,9 +49,11 @@
 | `mvp/demand/scripts/update_cluster_assignments.py` | Write cluster labels to `dim_dfu.cluster_assignment` in Postgres |
 | `mvp/demand/config/clustering_config.yaml` | Clustering hyperparameters and labeling thresholds |
 | `mvp/demand/scripts/run_backtest.py` | LGBM backtest: expanding-window training + prediction |
+| `mvp/demand/scripts/run_backtest_catboost.py` | CatBoost backtest: expanding-window training + prediction |
+| `mvp/demand/scripts/run_backtest_xgboost.py` | XGBoost backtest: expanding-window training + prediction |
 | `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load backtest predictions into Postgres (main + archive) |
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
-| `docs/design-specs/` | Feature specs (feature1–feature11) |
+| `docs/design-specs/` | Feature specs (feature1–feature13) |
 
 ---
 
@@ -98,6 +100,16 @@ make cluster-all       # Run full clustering pipeline (features → train → la
 # Backtesting (LGBM)
 make backtest-lgbm          # Run global LGBM backtest (10 expanding timeframes)
 make backtest-lgbm-cluster  # Run per-cluster LGBM backtest
+
+# Backtesting (CatBoost)
+make backtest-catboost          # Run global CatBoost backtest (10 expanding timeframes)
+make backtest-catboost-cluster  # Run per-cluster CatBoost backtest
+
+# Backtesting (XGBoost)
+make backtest-xgboost          # Run global XGBoost backtest (10 expanding timeframes)
+make backtest-xgboost-cluster  # Run per-cluster XGBoost backtest
+
+# Backtest loading (shared across all models)
 make backtest-load          # Load backtest predictions into Postgres + refresh agg
 make backtest-all           # backtest-lgbm + backtest-load
 ```
@@ -196,6 +208,8 @@ Located in `docs/design-specs/`:
 - `feature9.md` — LGBM backtesting implementation
 - `feature10.md` — Multi-dimensional accuracy slicing
 - `feature11.md` — Chatbot / natural language queries
+- `feature12.md` — CatBoost backtesting implementation
+- `feature13.md` — XGBoost backtesting implementation
 
 ---
 

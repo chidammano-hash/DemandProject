@@ -49,6 +49,8 @@ Clustering:
 - Trino
 - MLflow (experiment tracking, model registry)
 - LightGBM (demand forecasting models)
+- CatBoost (demand forecasting models)
+- XGBoost (demand forecasting models)
 - scikit-learn (clustering algorithms)
 - OpenAI (GPT-4o + text-embedding-3-small) for NL→SQL chatbot
 - Docker Compose
@@ -132,6 +134,20 @@ LGBM Backtesting:
 - `backtest_lag_archive` stores lag 0–4 predictions for accuracy reporting at any horizon
 - `make backtest-load` only replaces rows for the model_id in the CSV (safe to run per-cluster after global)
 
+CatBoost Backtesting:
+- Run global backtest: `make backtest-catboost` (trains CatBoost across 10 expanding windows)
+- Run per-cluster backtest: `make backtest-catboost-cluster` (separate model per cluster)
+- Load predictions: `make backtest-load` (same shared loader as LGBM)
+- Models appear as `catboost_global` / `catboost_cluster` in the forecast model selector
+- Same feature engineering, lag strategy, and output format as LGBM
+
+XGBoost Backtesting:
+- Run global backtest: `make backtest-xgboost` (trains XGBoost across 10 expanding windows)
+- Run per-cluster backtest: `make backtest-xgboost-cluster` (separate model per cluster)
+- Load predictions: `make backtest-load` (same shared loader as LGBM)
+- Models appear as `xgboost_global` / `xgboost_cluster` in the forecast model selector
+- Same feature engineering, lag strategy, and output format as LGBM
+
 Accuracy Comparison (feature10):
 - Collapsible "Accuracy Comparison" panel in the Forecast analytics page
 - Slice by: Cluster, ML Cluster, Supplier, ABC Volume, Region, Brand, Execution Lag, Month
@@ -185,7 +201,7 @@ make cluster-all  # Full pipeline: features -> train -> label -> update
 - Generic Spark writer: `mvp/demand/scripts/spark_dataset_to_iceberg.py`
 - Embeddings generator: `mvp/demand/scripts/generate_embeddings.py`
 - Clustering scripts: `mvp/demand/scripts/generate_clustering_features.py`, `train_clustering_model.py`, `label_clusters.py`, `update_cluster_assignments.py`
-- Backtest scripts: `mvp/demand/scripts/run_backtest.py`, `load_backtest_forecasts.py`
+- Backtest scripts: `mvp/demand/scripts/run_backtest.py`, `run_backtest_catboost.py`, `run_backtest_xgboost.py`, `load_backtest_forecasts.py`
 - Clustering config: `mvp/demand/config/clustering_config.yaml`
 - DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views)
-- Design specs: `docs/design-specs/` (feature1–feature11)
+- Design specs: `docs/design-specs/` (feature1–feature13)
