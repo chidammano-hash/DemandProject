@@ -87,7 +87,7 @@ docker exec demand-mvp-postgres psql -U demand -d demand_mvp \
   -c "SELECT model_id, lag, COUNT(*) FROM backtest_lag_archive GROUP BY 1,2 ORDER BY 1,2"
 ```
 
-## 3e) Multi-dimensional accuracy comparison (feature16)
+## 3e) Multi-dimensional accuracy comparison (feature10)
 
 After running `make backtest-load`, the accuracy slice views are automatically populated. To view accuracy sliced by DFU attributes:
 

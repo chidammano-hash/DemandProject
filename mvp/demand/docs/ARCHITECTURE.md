@@ -81,7 +81,7 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 1. `chat_embeddings` — pgvector table storing schema metadata embeddings (1536-dim) for NL query context retrieval
 2. `backtest_lag_archive` — stores all-lag (0–4) backtest predictions for accuracy reporting at any horizon; grain: `(forecast_ck, model_id, lag)`; includes `timeframe` column (A–J) for traceability
 
-## Accuracy Slice Materialized Views (feature16)
+## Accuracy Slice Materialized Views (feature10)
 Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-table joins:
 
 1. `agg_accuracy_by_dim` — joins `fact_external_forecast_monthly` + `dim_dfu`, aggregates at (model_id, lag, month, cluster, supplier, abc_vol, region, brand, execution_lag) grain; stores `SUM(F)`, `SUM(A)`, `SUM(ABS(F-A))` for KPI derivation. Refreshed by `backtest-load`.

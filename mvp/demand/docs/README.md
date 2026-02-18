@@ -59,7 +59,7 @@ Clustering:
 - Monthly materialized views are maintained for faster trend analytics:
   - `agg_sales_monthly`
   - `agg_forecast_monthly`
-- Accuracy slice views for O(1) aggregate KPI queries (feature16):
+- Accuracy slice views for O(1) aggregate KPI queries (feature10):
   - `agg_accuracy_by_dim` — pre-joins forecast + DFU attributes at (model, lag, month, cluster, supplier, abc_vol, region, brand) grain
   - `agg_accuracy_lag_archive` — same from archive table; powers lag-curve analysis
 - `load-sales`, `load-forecast`, and `load-all` refresh `agg_*` aggregates automatically.
@@ -132,7 +132,7 @@ LGBM Backtesting:
 - `backtest_lag_archive` stores lag 0–4 predictions for accuracy reporting at any horizon
 - `make backtest-load` only replaces rows for the model_id in the CSV (safe to run per-cluster after global)
 
-Accuracy Comparison (feature16):
+Accuracy Comparison (feature10):
 - Collapsible "Accuracy Comparison" panel in the Forecast analytics page
 - Slice by: Cluster, ML Cluster, Supplier, ABC Volume, Region, Brand, Execution Lag, Month
 - Filter by lag: execution lag (per DFU) or specific lag 0–4
@@ -188,4 +188,4 @@ make cluster-all  # Full pipeline: features -> train -> label -> update
 - Backtest scripts: `mvp/demand/scripts/run_backtest.py`, `load_backtest_forecasts.py`
 - Clustering config: `mvp/demand/config/clustering_config.yaml`
 - DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views)
-- Design specs: `docs/design-specs/` (feature0–feature16)
+- Design specs: `docs/design-specs/` (feature1–feature11)

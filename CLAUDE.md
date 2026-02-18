@@ -51,7 +51,7 @@
 | `mvp/demand/scripts/run_backtest.py` | LGBM backtest: expanding-window training + prediction |
 | `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load backtest predictions into Postgres (main + archive) |
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
-| `docs/design-specs/` | Feature specs (feature1b–feature1g, feature10–feature15) |
+| `docs/design-specs/` | Feature specs (feature1–feature11) |
 
 ---
 
