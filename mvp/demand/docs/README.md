@@ -168,6 +168,15 @@ Accuracy Comparison (feature10):
 - Data source: pre-aggregated `agg_accuracy_by_dim` and `agg_accuracy_lag_archive` views
 - Refresh manually: `make accuracy-slice-refresh`
 
+Champion Model Selection (feature15):
+- Automatically selects the best-performing model per DFU using industry-standard Forecast Value Added (FVA)
+- Per-DFU WAPE evaluation: picks the lowest-WAPE model for each DFU (dmdunit + dmdgroup + loc)
+- Champion composite stored as `model_id='champion'` — auto-appears in all accuracy views
+- Configurable via YAML (`config/model_competition.yaml`) or UI panel in Accuracy tab
+- UI: model checkboxes, metric/lag selectors, Run Competition button, model wins bar chart
+- CLI: `make champion-select`
+- API: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
+
 Benchmark Postgres vs Iceberg/Trino:
 - endpoint: `GET /bench/compare`
 - compares the same query shapes (`count`, `page`, `trend`) for one domain
@@ -212,6 +221,8 @@ make cluster-all  # Full pipeline: features -> train -> label -> update
 - Embeddings generator: `mvp/demand/scripts/generate_embeddings.py`
 - Clustering scripts: `mvp/demand/scripts/generate_clustering_features.py`, `train_clustering_model.py`, `label_clusters.py`, `update_cluster_assignments.py`
 - Backtest scripts: `mvp/demand/scripts/run_backtest.py`, `run_backtest_catboost.py`, `run_backtest_xgboost.py`, `load_backtest_forecasts.py`
+- Champion selection script: `mvp/demand/scripts/run_champion_selection.py`
 - Clustering config: `mvp/demand/config/clustering_config.yaml`
+- Competition config: `mvp/demand/config/model_competition.yaml`
 - DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views)
-- Design specs: `docs/design-specs/` (feature1–feature14)
+- Design specs: `docs/design-specs/` (feature1–feature15)

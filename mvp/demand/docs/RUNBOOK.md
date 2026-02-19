@@ -169,6 +169,53 @@ API endpoints:
 - `GET /forecast/accuracy/slice?group_by=cluster_assignment&models=lgbm_global,external`
 - `GET /forecast/accuracy/lag-curve?models=lgbm_global,lgbm_cluster,external`
 
+## 3f) Champion model selection (feature15)
+
+After loading backtest predictions for multiple models, run champion selection to identify the best model per DFU:
+
+### Via CLI
+```bash
+make champion-select
+```
+
+This reads `config/model_competition.yaml`, computes per-DFU WAPE for each competing model, picks the lowest-WAPE winner per DFU, and inserts champion forecast rows with `model_id='champion'`.
+
+### Via UI
+1. Open the Forecast domain in the UI.
+2. Go to the **Accuracy Comparison** section.
+3. Scroll to the **Champion Selection** panel.
+4. Check/uncheck models to include in the competition.
+5. Select metric (WAPE or Accuracy %) and lag mode (Execution Lag or fixed 0–4).
+6. Click **Save Config** to persist changes to YAML.
+7. Click **Run Competition** to execute champion selection.
+8. Results show: DFUs evaluated, champion accuracy/WAPE, and model wins breakdown.
+
+### Via API
+```bash
+# Get current config + available models
+curl http://localhost:8000/competition/config
+
+# Update config
+curl -X PUT http://localhost:8000/competition/config \
+  -H "Content-Type: application/json" \
+  -d '{"metric": "wape", "lag": "execution", "min_dfu_rows": 3, "models": ["external", "lgbm_global", "catboost_global"]}'
+
+# Run champion selection
+curl -X POST http://localhost:8000/competition/run
+
+# Get last run summary
+curl http://localhost:8000/competition/summary
+```
+
+### Output
+- Champion rows appear in `fact_external_forecast_monthly` with `model_id='champion'`
+- Summary saved to `data/champion/champion_summary.json`
+- Materialized views refreshed automatically — champion appears in all accuracy comparisons
+- Running again is idempotent (old champion rows replaced)
+
+### Config file
+`config/model_competition.yaml` controls which models compete, the selection metric, lag mode, and minimum DFU rows. Editable from the UI or directly on disk.
+
 ## 4) Start API + UI
 ```bash
 make api
@@ -261,3 +308,8 @@ make down
   - Use `--dry-run` flag to preview changes: `make cluster-update` (with dry-run in script)
   - Verify DFU keys match: check `dfu_ck` format in assignments vs database
   - Check PostgreSQL connection: verify `.env` DB values
+- Champion selection finds no qualifying DFUs:
+  - Ensure backtest predictions are loaded: `make backtest-load`
+  - Check `min_dfu_rows` in `config/model_competition.yaml` (default 3); lower if DFUs have few forecast rows
+  - Verify models listed in config exist in `fact_external_forecast_monthly`: `SELECT DISTINCT model_id FROM fact_external_forecast_monthly`
+  - Check that `basefcst_pref` and `tothist_dmd` are not NULL for the configured models

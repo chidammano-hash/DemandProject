@@ -328,7 +328,6 @@ export default function App() {
 
   // Champion / model competition state (feature15)
   const [competitionConfig, setCompetitionConfig] = useState<{ metric: string; lag: string; min_dfu_rows: number; champion_model_id: string; models: string[] } | null>(null);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [championSummary, setChampionSummary] = useState<{ total_dfus: number; total_champion_rows: number; model_wins: Record<string, number>; overall_champion_wape: number | null; overall_champion_accuracy_pct: number | null; run_ts: string } | null>(null);
   const [runningCompetition, setRunningCompetition] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);

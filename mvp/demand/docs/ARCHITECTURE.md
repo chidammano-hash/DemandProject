@@ -98,6 +98,15 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - `/forecast/accuracy/lag-curve` endpoint: accuracy degradation by lag horizon (0–4) per model
    - UI Accuracy Comparison panel: model comparison pivot table + lag curve chart
    - Views refreshed automatically by `backtest-load`; also manually via `make accuracy-slice-refresh`
+14. Champion model selection (feature15):
+   - Per-DFU best-model selection using Forecast Value Added (FVA) approach
+   - WAPE-based DFU-level evaluation: `SUM(ABS(F-A)) / ABS(SUM(A))` per DFU per model
+   - Champion composite stored as `model_id='champion'` in `fact_external_forecast_monthly` — auto-appears in all accuracy views
+   - YAML config (`config/model_competition.yaml`): competing models, metric (wape/accuracy_pct), lag mode, min DFU rows
+   - CLI: `make champion-select` runs standalone script
+   - API endpoints: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
+   - UI: Champion Selection panel in Accuracy tab with model checkboxes, metric/lag selectors, and model wins bar chart
+   - Summary saved to `data/champion/champion_summary.json`
 
 ## Additional tables
 1. `chat_embeddings` — pgvector table storing schema metadata embeddings (1536-dim) for NL query context retrieval
@@ -152,6 +161,12 @@ Performance impact: aggregate queries (cluster-level, supplier-level) drop from 
    - Loads all-lag rows into `backtest_lag_archive` via same pattern
    - `--replace` scoped to `model_id` in CSV (safe for multi-model coexistence)
    - Refreshes `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` materialized views
+10. **Champion Selection** (`run_champion_selection.py`):
+   - Evaluates all competing models per DFU using WAPE (industry-standard Forecast Value Added)
+   - Selects best model per DFU: `ROW_NUMBER() OVER (PARTITION BY dmdunit, dmdgroup, loc ORDER BY wape ASC)`
+   - Bulk inserts champion rows via temp table + COPY + INSERT...SELECT with `model_id='champion'`
+   - Refreshes materialized views so champion auto-appears in all accuracy comparisons
+   - Config-driven via `config/model_competition.yaml`; also callable via API
 
 ## How to add next dataset
 1. Add `<DATASET>_SPEC` in `common/domain_specs.py`
