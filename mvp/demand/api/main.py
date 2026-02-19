@@ -115,7 +115,7 @@ def build_where(spec: DomainSpec, q: str, filters: str) -> tuple[str, list[Any]]
 
     if q.strip():
         term = f"%{q.strip()}%"
-        where.append("(" + " OR ".join([f"{c} ILIKE %s" for c in spec.search_fields]) + ")")
+        where.append("(" + " OR ".join([f"{c}::text ILIKE %s" for c in spec.search_fields]) + ")")
         params.extend([term] * len(spec.search_fields))
 
     if filters.strip():
