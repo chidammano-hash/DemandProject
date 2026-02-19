@@ -10,7 +10,5 @@ competition:
     - lgbm_transfer
     - catboost_global
     - catboost_cluster
-    - catboost_transfer
     - xgboost_global
     - xgboost_cluster
-    - xgboost_transfer
