@@ -175,8 +175,8 @@ function useDebounce<T>(value: T, delay: number): T {
 
 const FALLBACK_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales", "forecast"];
 const ANALYTICS_ENABLED_DOMAINS = new Set(["sales", "forecast"]);
-const DIMENSION_DOMAINS = ["item", "location", "customer", "time"];
-const TAB_BAR_DOMAINS = ["dfu", "sales", "forecast"];
+const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "dfu"];
+const TAB_BAR_DOMAINS = ["sales", "forecast"];
 const EXCLUDED_TREND_FIELDS = new Set(["type", "lag", "execution_lag"]);
 const FORECAST_ACCURACY_METRIC = "accuracy_pct";
 
@@ -195,7 +195,8 @@ const ELEMENT_CONFIG: Record<string, { symbol: string; number: number; name: str
   location: { symbol: "Lo", number: 71, name: "Location", color: "bg-rose-100 text-rose-900 border-rose-300",       activeColor: "bg-rose-200 text-rose-950 border-rose-400" },
   customer: { symbol: "Cu", number: 29, name: "Customer", color: "bg-amber-100 text-amber-900 border-amber-300",   activeColor: "bg-amber-200 text-amber-950 border-amber-400" },
   time:     { symbol: "Ti", number: 22, name: "Time",     color: "bg-amber-100 text-amber-900 border-amber-300",   activeColor: "bg-amber-200 text-amber-950 border-amber-400" },
-  dfu:      { symbol: "Df", number: 2, name: "DFU",      color: "bg-yellow-100 text-yellow-900 border-yellow-300", activeColor: "bg-yellow-200 text-yellow-950 border-yellow-400" },
+  dfu:      { symbol: "Df", number: 110, name: "DFU",      color: "bg-yellow-100 text-yellow-900 border-yellow-300", activeColor: "bg-yellow-200 text-yellow-950 border-yellow-400" },
+  clusters: { symbol: "Cl", number: 2, name: "Clusters", color: "bg-yellow-100 text-yellow-900 border-yellow-300", activeColor: "bg-yellow-200 text-yellow-950 border-yellow-400" },
   sales:    { symbol: "Sa", number: 3, name: "Sales",    color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
   forecast: { symbol: "Fc", number: 4, name: "Forecast", color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
   accuracy: { symbol: "Ac", number: 5, name: "Accuracy", color: "bg-violet-100 text-violet-900 border-violet-300", activeColor: "bg-violet-200 text-violet-950 border-violet-400" },
@@ -1012,7 +1013,31 @@ export default function App() {
                 </button>
               );
             })()}
-            {/* DFU, Sales, Forecast tabs */}
+            {/* Clusters tab — DFU clustering info only */}
+            {(() => {
+              const el = ELEMENT_CONFIG["clusters"];
+              const isActive = activeTab === "clusters";
+              return (
+                <button
+                  key="clusters"
+                  className={cn(
+                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    isActive
+                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
+                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                  )}
+                  onClick={() => {
+                    setActiveTab("clusters");
+                    if (domain !== "dfu") setDomain("dfu");
+                  }}
+                >
+                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
+                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
+                  <span className="text-[10px] leading-none">{el.name}</span>
+                </button>
+              );
+            })()}
+            {/* Sales, Forecast tabs */}
             {TAB_BAR_DOMAINS.filter((d) => domains.includes(d)).map((d) => {
               const el = ELEMENT_CONFIG[d];
               const isActive = activeTab === d;
@@ -1091,7 +1116,7 @@ export default function App() {
         </Card>
       ) : null}
 
-      {domain === "dfu" && activeTab !== "accuracy" ? (
+      {activeTab === "clusters" ? (
         <Card className="mt-4 animate-fade-in">
           <CardHeader>
             <CardTitle className="text-base">DFU Clustering</CardTitle>
@@ -1669,7 +1694,7 @@ export default function App() {
         </section>
       ) : null}
 
-      {activeTab !== "accuracy" ? <section className={cn("mt-4 grid gap-4 [&>*]:min-w-0", analyticsEnabled ? "2xl:grid-cols-[1.15fr_1fr]" : "xl:grid-cols-1")}>
+      {activeTab !== "accuracy" && activeTab !== "clusters" ? <section className={cn("mt-4 grid gap-4 [&>*]:min-w-0", analyticsEnabled ? "2xl:grid-cols-[1.15fr_1fr]" : "xl:grid-cols-1")}>
         {analyticsEnabled ? <Card className="animate-fade-in">
           <CardHeader className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
