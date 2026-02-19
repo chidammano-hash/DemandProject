@@ -88,6 +88,7 @@ Build a scalable forecasting platform for:
 - **Feature 13:** XGBoost backtesting implementation — global + per-cluster models, histogram-based with native categorical support
 - **Feature 14:** Transfer learning backtest strategy — global base model → per-cluster fine-tune via warm-start for all three frameworks
 - **Feature 15:** Champion model selection — per-DFU best-of-models pick via WAPE, ceiling (oracle) model for theoretical upper bound, gap-to-ceiling analysis, UI-editable competition config, FVA analysis
+- **Feature 16:** Data Explorer performance & UX — type-aware SQL filtering, GIN trigram indexes, capped COUNT, column-level typeahead suggestions, chemistry-themed loading overlay, debounce stability fix
 - **Feature 18:** Market intelligence — AI-powered market briefings combining Google web search + GPT-4o narrative synthesis for item + location pairs, with demographic context and demand insights
 
 ## Deployment Notes

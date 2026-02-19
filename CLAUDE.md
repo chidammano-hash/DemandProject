@@ -55,6 +55,8 @@
 | `mvp/demand/scripts/run_backtest_xgboost.py` | XGBoost backtest: expanding-window training + prediction |
 | `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load backtest predictions into Postgres (main + archive) |
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
+| `mvp/demand/sql/008_perf_indexes_and_agg.sql` | Performance indexes (B-tree, GIN trigram) + materialized views |
+| `mvp/demand/frontend/tailwind.config.ts` | Tailwind config with custom `pulse-glow` animation |
 | `docs/design-specs/` | Feature specs (feature1–feature18) |
 
 ---
@@ -179,6 +181,10 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 ## Frontend Features
 
 - Paginated data explorer with column filtering and sorting
+- Type-aware column filters: `=exact` prefix for B-tree match, plain text for GIN trigram substring search
+- Column-level typeahead suggestions via native HTML datalist (text columns only)
+- Chemistry-themed loading overlay: periodic table element tile with pulse-glow animation (replaces invisible spinner)
+- Approximate row count badge (`100,000+`) for large filtered queries
 - KPI cards: Accuracy %, WAPE, MAPE, Bias, Total Forecast/Actual
 - KPI window selector: 1–12 month rolling window
 - Multi-metric trend charts (dual Y-axis: volume left, accuracy % right)
@@ -224,6 +230,7 @@ Located in `docs/design-specs/`:
 - `feature13.md` — XGBoost backtesting implementation
 - `feature14.md` — Transfer learning backtest strategy
 - `feature15.md` — Champion model selection (best-of-models per DFU)
+- `feature16.md` — Data Explorer performance & UX (type-aware filtering, GIN indexes, column typeahead, loading overlay)
 - `feature18.md` — Market intelligence (web search + LLM narrative briefings)
 
 ---

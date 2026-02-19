@@ -217,6 +217,15 @@ curl http://localhost:8000/competition/summary
 ### Config file
 `config/model_competition.yaml` controls which models compete, the selection metric, lag mode, and minimum DFU rows. Editable from the UI or directly on disk.
 
+## 3g) Apply performance indexes (recommended for large tables)
+
+After loading data, apply GIN trigram indexes for fast Data Explorer filtering on large tables:
+```bash
+make db-apply-sql
+```
+
+This creates GIN `gin_trgm_ops` indexes on fact table text columns (`model_id`, `dmdunit`, `loc`, `dmdgroup`). One-time operation; takes 5–15 minutes on 66M+ row tables. Enables indexed `ILIKE` substring search instead of full table scans.
+
 ## 4) Start API + UI
 ```bash
 make api
@@ -238,6 +247,10 @@ Notes:
 - `sales` and `forecast` analytics include Item (`dmdunit`) and Location (`loc`) filters.
 - Use item/location filters (exact match) to focus charts and KPIs on one item-location pair.
 - Item/Location filters show autocomplete suggestions as you type.
+- Column-level filters support two modes: plain text for substring search, prefix `=` for exact match.
+- Column filters on text columns show typeahead suggestions as you type.
+- Large tables show approximate row counts (`100,000+`) when filtered.
+- A chemistry-themed loading overlay (periodic table element tile) appears during queries.
 - Trend chart supports multiple measures via `Trend Measures` checkboxes.
 - Forecast domain has a **Model selector** dropdown to filter by `model_id` (e.g., `external`, `arima`).
 - **Chat panel** (below analytics grid) lets you ask natural language questions. Requires `OPENAI_API_KEY`.

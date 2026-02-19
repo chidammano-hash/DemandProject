@@ -185,11 +185,16 @@ type MarketIntelPayload = {
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState<T>(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // For objects (e.g. columnFilters record), compare by content instead of
+  // reference so that re-renders producing an identical object don't reset the
+  // debounce timer — which would prevent it from ever resolving.
+  const serialized = typeof value === "object" ? JSON.stringify(value) : undefined;
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setDebounced(value), delay);
     return () => { if (timer.current) clearTimeout(timer.current); };
-  }, [value, delay]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serialized ?? value, delay]);
   return debounced;
 }
 
@@ -209,18 +214,18 @@ const titleCase = (value: string): string =>
 
 const TREND_COLORS = ["#4f46e5", "#0d9488", "#d97706", "#7c3aed", "#dc2626", "#0284c7"];
 
-const ELEMENT_CONFIG: Record<string, { symbol: string; number: number; name: string; color: string; activeColor: string }> = {
-  explorer: { symbol: "Dx", number: 1, name: "Explorer", color: "bg-rose-100 text-rose-900 border-rose-300",       activeColor: "bg-rose-200 text-rose-950 border-rose-400" },
-  item:     { symbol: "It", number: 26, name: "Item",     color: "bg-rose-100 text-rose-900 border-rose-300",       activeColor: "bg-rose-200 text-rose-950 border-rose-400" },
-  location: { symbol: "Lo", number: 71, name: "Location", color: "bg-rose-100 text-rose-900 border-rose-300",       activeColor: "bg-rose-200 text-rose-950 border-rose-400" },
-  customer: { symbol: "Cu", number: 29, name: "Customer", color: "bg-amber-100 text-amber-900 border-amber-300",   activeColor: "bg-amber-200 text-amber-950 border-amber-400" },
-  time:     { symbol: "Ti", number: 22, name: "Time",     color: "bg-amber-100 text-amber-900 border-amber-300",   activeColor: "bg-amber-200 text-amber-950 border-amber-400" },
-  dfu:      { symbol: "Df", number: 110, name: "DFU",      color: "bg-yellow-100 text-yellow-900 border-yellow-300", activeColor: "bg-yellow-200 text-yellow-950 border-yellow-400" },
-  clusters: { symbol: "Cl", number: 2, name: "Clusters", color: "bg-yellow-100 text-yellow-900 border-yellow-300", activeColor: "bg-yellow-200 text-yellow-950 border-yellow-400" },
-  sales:    { symbol: "Sa", number: 3, name: "Sales",    color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
-  forecast: { symbol: "Fc", number: 4, name: "Forecast", color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
-  accuracy: { symbol: "Ac", number: 5, name: "Accuracy", color: "bg-violet-100 text-violet-900 border-violet-300", activeColor: "bg-violet-200 text-violet-950 border-violet-400" },
-  intel:    { symbol: "Mi", number: 6, name: "Intel",    color: "bg-sky-100 text-sky-900 border-sky-300",           activeColor: "bg-sky-200 text-sky-950 border-sky-400" },
+const ELEMENT_CONFIG: Record<string, { symbol: string; number: number; name: string; color: string; activeColor: string; glow: string }> = {
+  explorer: { symbol: "Dx", number: 1, name: "Explorer", color: "bg-pink-50/90 text-pink-800 border-pink-200/60",        activeColor: "bg-pink-100 text-pink-950 border-pink-300", glow: "shadow-[0_0_12px_rgba(236,72,153,0.3)]" },
+  item:     { symbol: "It", number: 26, name: "Item",     color: "bg-pink-50/90 text-pink-800 border-pink-200/60",        activeColor: "bg-pink-100 text-pink-950 border-pink-300", glow: "shadow-[0_0_12px_rgba(236,72,153,0.3)]" },
+  location: { symbol: "Lo", number: 71, name: "Location", color: "bg-pink-50/90 text-pink-800 border-pink-200/60",        activeColor: "bg-pink-100 text-pink-950 border-pink-300", glow: "shadow-[0_0_12px_rgba(236,72,153,0.3)]" },
+  customer: { symbol: "Cu", number: 29, name: "Customer", color: "bg-amber-50/90 text-amber-800 border-amber-200/60",     activeColor: "bg-amber-100 text-amber-950 border-amber-300", glow: "shadow-[0_0_12px_rgba(245,158,11,0.3)]" },
+  time:     { symbol: "Ti", number: 22, name: "Time",     color: "bg-amber-50/90 text-amber-800 border-amber-200/60",     activeColor: "bg-amber-100 text-amber-950 border-amber-300", glow: "shadow-[0_0_12px_rgba(245,158,11,0.3)]" },
+  dfu:      { symbol: "Df", number: 110, name: "DFU",      color: "bg-lime-50/90 text-lime-800 border-lime-200/60",        activeColor: "bg-lime-100 text-lime-950 border-lime-300", glow: "shadow-[0_0_12px_rgba(132,204,22,0.3)]" },
+  clusters: { symbol: "Cl", number: 2, name: "Clusters", color: "bg-emerald-50/90 text-emerald-800 border-emerald-200/60", activeColor: "bg-emerald-100 text-emerald-950 border-emerald-300", glow: "shadow-[0_0_12px_rgba(16,185,129,0.3)]" },
+  sales:    { symbol: "Sa", number: 3, name: "Sales",    color: "bg-sky-50/90 text-sky-800 border-sky-200/60",            activeColor: "bg-sky-100 text-sky-950 border-sky-300", glow: "shadow-[0_0_12px_rgba(14,165,233,0.3)]" },
+  forecast: { symbol: "Fc", number: 4, name: "Forecast", color: "bg-indigo-50/90 text-indigo-800 border-indigo-200/60",    activeColor: "bg-indigo-100 text-indigo-950 border-indigo-300", glow: "shadow-[0_0_12px_rgba(99,102,241,0.3)]" },
+  accuracy: { symbol: "Ac", number: 5, name: "Accuracy", color: "bg-purple-50/90 text-purple-800 border-purple-200/60",    activeColor: "bg-purple-100 text-purple-950 border-purple-300", glow: "shadow-[0_0_12px_rgba(168,85,247,0.3)]" },
+  intel:    { symbol: "Mi", number: 6, name: "Intel",    color: "bg-cyan-50/90 text-cyan-800 border-cyan-200/60",          activeColor: "bg-cyan-100 text-cyan-950 border-cyan-300", glow: "shadow-[0_0_12px_rgba(6,182,212,0.3)]" },
 };
 
 const ACCURACY_KPI_OPTIONS = [
@@ -341,6 +346,7 @@ export default function App() {
   const [autoSampledDomain, setAutoSampledDomain] = useState("");
   const [itemSuggestions, setItemSuggestions] = useState<string[]>([]);
   const [locationSuggestions, setLocationSuggestions] = useState<string[]>([]);
+  const [columnSuggestions, setColumnSuggestions] = useState<Record<string, string[]>>({});
 
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [loadingTable, setLoadingTable] = useState(false);
@@ -536,6 +542,7 @@ export default function App() {
         setAutoSampledDomain("");
         setItemSuggestions([]);
         setLocationSuggestions([]);
+        setColumnSuggestions({});
         setVisibleColumns(Object.fromEntries(payload.columns.map((c) => [c, true])));
         updateDomainPath(domain);
 
@@ -885,6 +892,73 @@ export default function App() {
     };
   }, [showFactFilters, locationField, locationFilter, domain, itemField, itemFilter]);
 
+  // Column-level typeahead suggestions
+  useEffect(() => {
+    if (!meta) return;
+    // Determine which columns are text (not numeric, not date)
+    const textCols = new Set(
+      meta.columns.filter(
+        (c) => !meta.numeric_fields.includes(c) && !meta.date_fields.includes(c),
+      ),
+    );
+    // Find columns that have a non-empty, non-exact filter typed
+    const active = Object.entries(debouncedColumnFilters).filter(
+      ([col, val]) => val.trim() !== "" && !val.startsWith("=") && textCols.has(col),
+    );
+    // Clear suggestions for columns no longer being filtered.
+    // Return prev reference unchanged when nothing is stale to avoid re-renders.
+    setColumnSuggestions((prev) => {
+      const staleCols = Object.keys(prev).filter((col) => !debouncedColumnFilters[col]?.trim());
+      if (staleCols.length === 0) return prev;
+      const next = { ...prev };
+      staleCols.forEach((col) => delete next[col]);
+      return next;
+    });
+    if (active.length === 0) return;
+
+    let cancelled = false;
+    const timers: number[] = [];
+    for (const [col, val] of active) {
+      const tid = window.setTimeout(async () => {
+        try {
+          const params = new URLSearchParams({
+            field: col,
+            q: val.trim(),
+            limit: "12",
+          });
+          // Pass other active column filters as scoped context
+          const otherFilters: Record<string, string> = {};
+          for (const [k, v] of Object.entries(debouncedColumnFilters)) {
+            if (k !== col && v.trim()) otherFilters[k] = v.trim();
+          }
+          if (Object.keys(otherFilters).length > 0) {
+            params.set("filters", JSON.stringify(otherFilters));
+          }
+          const res = await fetch(
+            `/domains/${encodeURIComponent(domain)}/suggest?${params.toString()}`,
+          );
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const payload = (await res.json()) as SuggestPayload;
+          const values = Array.from(
+            new Set((payload.values || []).filter(Boolean)),
+          ).slice(0, 12);
+          if (!cancelled) {
+            setColumnSuggestions((prev) => ({ ...prev, [col]: values }));
+          }
+        } catch {
+          if (!cancelled) {
+            setColumnSuggestions((prev) => ({ ...prev, [col]: [] }));
+          }
+        }
+      }, 180);
+      timers.push(tid);
+    }
+    return () => {
+      cancelled = true;
+      timers.forEach((t) => window.clearTimeout(t));
+    };
+  }, [debouncedColumnFilters, domain, meta]);
+
   const trendChartData = useMemo(() => {
     const bucket = new Map<string, Record<string, number | string>>();
     for (const m of selectedTrendMetrics) {
@@ -1086,13 +1160,27 @@ export default function App() {
 
   return (
     <main className="mx-auto w-full max-w-[1800px] min-w-0 overflow-x-hidden p-4 md:p-6">
-      <section className="animate-fade-in rounded-xl border border-white/20 bg-gradient-to-r from-slate-900/95 via-indigo-950/90 to-slate-800/90 p-4 text-white shadow-xl">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <section className="animate-fade-in relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-5 text-white shadow-2xl">
+        {/* Decorative orbs */}
+        <div className="pointer-events-none absolute -left-20 -top-20 h-64 w-64 rounded-full bg-indigo-500/10 blur-3xl" />
+        <div className="pointer-events-none absolute -right-16 -bottom-16 h-48 w-48 rounded-full bg-purple-500/10 blur-3xl" />
+        <div className="pointer-events-none absolute left-1/2 top-0 h-px w-2/3 -translate-x-1/2 bg-gradient-to-r from-transparent via-indigo-400/30 to-transparent" />
+        <div className="relative flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Planthium</h1>
-            <p className="text-sm text-indigo-100/90 md:text-base">Periodic Analytics for Demand Forecasting</p>
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/20 ring-1 ring-indigo-400/30">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-300">
+                  <circle cx="12" cy="12" r="3" />
+                  <ellipse cx="12" cy="12" rx="10" ry="4" />
+                  <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)" />
+                  <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)" />
+                </svg>
+              </div>
+              <h1 className="text-2xl font-bold tracking-tight md:text-3xl bg-gradient-to-r from-white via-indigo-100 to-indigo-200 bg-clip-text text-transparent">Planthium</h1>
+            </div>
+            <p className="mt-1 ml-[46px] text-sm text-indigo-200/70 md:text-base">Periodic Analytics for Demand Forecasting</p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2.5">
             {/* Data Explorer tab — consolidates item, location, customer, time */}
             {(() => {
               const el = ELEMENT_CONFIG["explorer"];
@@ -1101,10 +1189,10 @@ export default function App() {
                 <button
                   key="explorer"
                   className={cn(
-                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
                     isActive
-                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
-                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
+                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
                   )}
                   onClick={() => {
                     setActiveTab("explorer");
@@ -1113,9 +1201,10 @@ export default function App() {
                     }
                   }}
                 >
-                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
-                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
-                  <span className="text-[10px] leading-none">{el.name}</span>
+                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
+                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
+                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
+                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
                 </button>
               );
             })()}
@@ -1127,19 +1216,20 @@ export default function App() {
                 <button
                   key="clusters"
                   className={cn(
-                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
                     isActive
-                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
-                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
+                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
                   )}
                   onClick={() => {
                     setActiveTab("clusters");
                     if (domain !== "dfu") setDomain("dfu");
                   }}
                 >
-                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
-                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
-                  <span className="text-[10px] leading-none">{el.name}</span>
+                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
+                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
+                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
+                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
                 </button>
               );
             })()}
@@ -1151,19 +1241,20 @@ export default function App() {
                 <button
                   key="sales"
                   className={cn(
-                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
                     isActive
-                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
-                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
+                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
                   )}
                   onClick={() => {
                     setActiveTab("sales");
                     if (domain !== "sales") setDomain("sales");
                   }}
                 >
-                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
-                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
-                  <span className="text-[10px] leading-none">{el.name}</span>
+                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
+                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
+                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
+                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
                 </button>
               );
             })()}
@@ -1175,19 +1266,20 @@ export default function App() {
                 <button
                   key="forecast"
                   className={cn(
-                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
                     isActive
-                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
-                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
+                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
                   )}
                   onClick={() => {
                     setActiveTab("forecast");
                     if (domain !== "forecast") setDomain("forecast");
                   }}
                 >
-                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
-                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
-                  <span className="text-[10px] leading-none">{el.name}</span>
+                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
+                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
+                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
+                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
                 </button>
               );
             })()}
@@ -1198,16 +1290,17 @@ export default function App() {
               return (
                 <button
                   className={cn(
-                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
                     isActive
-                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
-                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
+                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
                   )}
                   onClick={() => setActiveTab("accuracy")}
                 >
-                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
-                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
-                  <span className="text-[10px] leading-none">{el.name}</span>
+                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
+                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
+                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
+                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
                 </button>
               );
             })()}
@@ -2400,12 +2493,20 @@ export default function App() {
                           <Input
                             className="h-7 text-xs"
                             placeholder="Filter (=exact)"
+                            list={`col-suggest-${domain}-${col}`}
                             value={columnFilters[col] || ""}
                             onChange={(e) => {
                               setOffset(0);
                               setColumnFilters((prev) => ({ ...prev, [col]: e.target.value }));
                             }}
                           />
+                          {(columnSuggestions[col]?.length ?? 0) > 0 && (
+                            <datalist id={`col-suggest-${domain}-${col}`}>
+                              {columnSuggestions[col].map((v) => (
+                                <option key={v} value={v} />
+                              ))}
+                            </datalist>
+                          )}
                         </TableHead>
                       ))}
                     </TableRow>
