@@ -5,7 +5,6 @@ competition:
   min_dfu_rows: 3               # minimum forecast rows per DFU to qualify
   champion_model_id: "champion" # model_id written for the composite champion forecast
   models:
-    - external
     - lgbm_global
     - lgbm_cluster
     - lgbm_transfer
