@@ -376,7 +376,7 @@ export default function App() {
     }
     return "";
   }, [meta]);
-  const showFactFilters = (domain === "sales" || domain === "forecast") && Boolean(itemField) && Boolean(locationField);
+  const showFactFilters = (domain === "sales" || domain === "forecast") && Boolean(itemField) && Boolean(locationField) && activeTab !== "explorer";
   const trendMetricOptions = useMemo(() => {
     const base = trendMetricCandidates(meta?.numeric_fields || []);
     if (domain === "forecast") {
