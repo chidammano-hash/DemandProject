@@ -188,6 +188,13 @@ Champion Model Selection (feature15):
 - CLI: `make champion-select` (runs both champion + ceiling)
 - API: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
 
+DFU Analysis (feature17):
+- **DFU Analysis tab** overlays sales history and multi-model forecast predictions on a single chart
+- Three scope modes: Item @ Location (single DFU), All Items @ Location, Item @ All Locations
+- Per-model KPI cards with Accuracy %, WAPE, Bias, Total Forecast, Total Actual
+- Toggleable measure visibility — select/deselect sales and individual forecast models
+- API: `GET /dfu/analysis?mode=&item=&location=&points=&kpi_months=&sales_metric=`
+
 Market Intelligence (feature18):
 - AI-powered market briefings for any product + location pair
 - Select an item and location, click "Generate Briefing" to get:

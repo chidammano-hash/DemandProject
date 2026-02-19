@@ -117,7 +117,14 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - Column-level typeahead suggestions: `/domains/{domain}/suggest` reused per column header with native HTML `<datalist>`
    - Chemistry-themed loading overlay: periodic table element tile with `pulse-glow` animation, frosted glass backdrop
    - Debounce stability: `useDebounce` uses `JSON.stringify` deep comparison for object values to prevent re-render loops
-16. Market intelligence (feature18):
+16. DFU Analysis tab (feature17):
+   - Unified sales vs multi-model forecast overlay on a single chart
+   - Three analysis modes: Item @ Location (single DFU), All Items @ Location, Item @ All Locations
+   - `GET /dfu/analysis` endpoint: server-side join of `agg_sales_monthly` + `agg_forecast_monthly`, returns pre-pivoted series + per-model KPIs
+   - Per-model KPI cards: Accuracy %, WAPE, Bias, Total Forecast, Total Actual
+   - Toggleable measure visibility (sales line + per-model forecast lines)
+   - Typeahead item/location filters with cross-filtering, auto-sample on first visit
+17. Market intelligence (feature18):
    - `POST /market-intelligence` endpoint combining Google Custom Search + GPT-4o narrative
    - Item metadata lookup from `dim_item` (item_desc, brand_name, category, producer_name)
    - Location metadata lookup from `dim_location` (state_id, site_desc)

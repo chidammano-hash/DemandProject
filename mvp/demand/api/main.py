@@ -1475,6 +1475,152 @@ def dfu_cluster_visualization(image_name: str):
     return FileResponse(str(img_path), media_type="image/png")
 
 
+_DFU_ANALYSIS_MODES = {"item_location", "all_items_at_location", "item_at_all_locations"}
+_DFU_SALES_METRICS = {"qty", "qty_shipped", "qty_ordered"}
+
+
+@app.get("/dfu/analysis")
+def dfu_analysis(
+    mode: str = Query(default="item_location", max_length=30),
+    item: str = Query(default="", max_length=120),
+    location: str = Query(default="", max_length=120),
+    points: int = Query(default=36, ge=3, le=120),
+    kpi_months: int = Query(default=12, ge=1, le=24),
+    sales_metric: str = Query(default="qty", max_length=20),
+):
+    """Unified DFU analysis: overlay sales history + multi-model forecasts with KPIs."""
+    if mode not in _DFU_ANALYSIS_MODES:
+        raise HTTPException(422, f"Invalid mode '{mode}'. Valid: {sorted(_DFU_ANALYSIS_MODES)}")
+    if sales_metric not in _DFU_SALES_METRICS:
+        raise HTTPException(422, f"Invalid sales_metric '{sales_metric}'. Valid: {sorted(_DFU_SALES_METRICS)}")
+
+    item_val = item.strip()
+    loc_val = location.strip()
+    if mode == "item_location" and (not item_val or not loc_val):
+        raise HTTPException(422, "item_location mode requires both item and location")
+    if mode == "all_items_at_location" and not loc_val:
+        raise HTTPException(422, "all_items_at_location mode requires location")
+    if mode == "item_at_all_locations" and not item_val:
+        raise HTTPException(422, "item_at_all_locations mode requires item")
+
+    # Build WHERE clause based on mode
+    where_parts: list[str] = []
+    params: list[Any] = []
+    if mode == "item_location":
+        where_parts.append("dmdunit = %s")
+        params.append(item_val)
+        where_parts.append("loc = %s")
+        params.append(loc_val)
+    elif mode == "all_items_at_location":
+        where_parts.append("loc = %s")
+        params.append(loc_val)
+    elif mode == "item_at_all_locations":
+        where_parts.append("dmdunit = %s")
+        params.append(item_val)
+
+    where_sql = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+
+    with get_conn() as conn, conn.cursor() as cur:
+        # 1. Sales trend from agg_sales_monthly
+        sales_sql = f"""
+            SELECT month_start, SUM({qident(sales_metric)})::double precision AS sales_value
+            FROM agg_sales_monthly
+            {where_sql}
+            GROUP BY 1 ORDER BY 1 ASC
+        """
+        cur.execute(sales_sql, params)
+        sales_by_month: dict[str, float] = {}
+        for row in cur.fetchall():
+            sales_by_month[str(row[0])] = float(row[1] or 0)
+
+        # 2. Forecast trend from agg_forecast_monthly (all models)
+        forecast_sql = f"""
+            SELECT month_start, model_id,
+                   SUM(basefcst_pref)::double precision AS forecast_value,
+                   SUM(tothist_dmd)::double precision AS actual_value
+            FROM agg_forecast_monthly
+            {where_sql}
+            GROUP BY 1, 2 ORDER BY 1 ASC
+        """
+        cur.execute(forecast_sql, params)
+        # {month: {model_id: forecast_value}}
+        forecast_by_month: dict[str, dict[str, float]] = {}
+        model_set: set[str] = set()
+        for row in cur.fetchall():
+            month_key = str(row[0])
+            model_id = str(row[1])
+            forecast_val = float(row[2] or 0)
+            model_set.add(model_id)
+            if month_key not in forecast_by_month:
+                forecast_by_month[month_key] = {}
+            forecast_by_month[month_key][model_id] = forecast_val
+
+        models = sorted(model_set)
+
+        # 3. Merge into series
+        all_months = sorted(set(sales_by_month.keys()) | set(forecast_by_month.keys()))
+        # Apply points limit (most recent N months)
+        if len(all_months) > points:
+            all_months = all_months[-points:]
+
+        series: list[dict[str, Any]] = []
+        for month in all_months:
+            point: dict[str, Any] = {"month": month}
+            if month in sales_by_month:
+                point["sales"] = sales_by_month[month]
+            for model_id in models:
+                fcst = forecast_by_month.get(month, {}).get(model_id)
+                if fcst is not None:
+                    point[f"forecast_{model_id}"] = fcst
+            series.append(point)
+
+        # 4. KPIs per model (windowed by kpi_months)
+        kpi_sql = f"""
+            WITH monthly AS (
+                SELECT month_start, model_id,
+                       SUM(basefcst_pref)::double precision AS fcst,
+                       SUM(tothist_dmd)::double precision AS actual,
+                       SUM(ABS(basefcst_pref - tothist_dmd))::double precision AS abs_err
+                FROM agg_forecast_monthly
+                {where_sql}
+                GROUP BY 1, 2
+            ),
+            ranked AS (
+                SELECT DISTINCT month_start FROM monthly ORDER BY month_start DESC LIMIT %s
+            ),
+            windowed AS (
+                SELECT m.* FROM monthly m JOIN ranked r ON m.month_start = r.month_start
+            )
+            SELECT model_id,
+                   COUNT(DISTINCT month_start)::int AS months_covered,
+                   COALESCE(SUM(fcst), 0)::double precision,
+                   COALESCE(SUM(actual), 0)::double precision,
+                   COALESCE(SUM(abs_err), 0)::double precision
+            FROM windowed
+            GROUP BY 1
+        """
+        cur.execute(kpi_sql, [*params, kpi_months])
+        kpis: dict[str, Any] = {}
+        for row in cur.fetchall():
+            model_id = str(row[0])
+            months_covered = int(row[1])
+            kpi = _compute_kpis(float(row[2]), float(row[3]), float(row[4]))
+            kpi["months_covered"] = months_covered
+            kpis[model_id] = kpi
+
+    return {
+        "mode": mode,
+        "item": item_val,
+        "location": loc_val,
+        "sales_metric": sales_metric,
+        "points": points,
+        "kpi_months": kpi_months,
+        "models": models,
+        "series": series,
+        "kpis": kpis,
+    }
+
+
 @app.get("/domains/{domain}/analytics")
 def domain_analytics(
     domain: str,

@@ -182,6 +182,29 @@ type MarketIntelPayload = {
   generated_at: string;
 };
 
+type DfuAnalysisMode = "item_location" | "all_items_at_location" | "item_at_all_locations";
+
+type DfuAnalysisKpis = {
+  accuracy_pct: number | null;
+  wape: number | null;
+  bias: number | null;
+  sum_forecast: number;
+  sum_actual: number;
+  months_covered: number;
+};
+
+type DfuAnalysisPayload = {
+  mode: DfuAnalysisMode;
+  item: string;
+  location: string;
+  sales_metric: string;
+  points: number;
+  kpi_months: number;
+  models: string[];
+  series: Record<string, number | string>[];
+  kpis: Record<string, DfuAnalysisKpis>;
+};
+
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState<T>(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -224,6 +247,7 @@ const ELEMENT_CONFIG: Record<string, { symbol: string; number: number; name: str
   clusters: { symbol: "Cl", number: 2, name: "Clusters", color: "bg-emerald-50/90 text-emerald-800 border-emerald-200/60", activeColor: "bg-emerald-100 text-emerald-950 border-emerald-300", glow: "shadow-[0_0_12px_rgba(16,185,129,0.3)]" },
   sales:    { symbol: "Sa", number: 3, name: "Sales",    color: "bg-sky-50/90 text-sky-800 border-sky-200/60",            activeColor: "bg-sky-100 text-sky-950 border-sky-300", glow: "shadow-[0_0_12px_rgba(14,165,233,0.3)]" },
   forecast: { symbol: "Fc", number: 4, name: "Forecast", color: "bg-indigo-50/90 text-indigo-800 border-indigo-200/60",    activeColor: "bg-indigo-100 text-indigo-950 border-indigo-300", glow: "shadow-[0_0_12px_rgba(99,102,241,0.3)]" },
+  dfuAnalysis: { symbol: "Da", number: 7, name: "DFU Analysis", color: "bg-teal-50/90 text-teal-800 border-teal-200/60", activeColor: "bg-teal-100 text-teal-950 border-teal-300", glow: "shadow-[0_0_12px_rgba(20,184,166,0.3)]" },
   accuracy: { symbol: "Ac", number: 5, name: "Accuracy", color: "bg-purple-50/90 text-purple-800 border-purple-200/60",    activeColor: "bg-purple-100 text-purple-950 border-purple-300", glow: "shadow-[0_0_12px_rgba(168,85,247,0.3)]" },
   intel:    { symbol: "Mi", number: 6, name: "Intel",    color: "bg-cyan-50/90 text-cyan-800 border-cyan-200/60",          activeColor: "bg-cyan-100 text-cyan-950 border-cyan-300", glow: "shadow-[0_0_12px_rgba(6,182,212,0.3)]" },
 };
@@ -384,6 +408,22 @@ export default function App() {
   const [miResult, setMiResult] = useState<MarketIntelPayload | null>(null);
   const [miLoading, setMiLoading] = useState(false);
   const [miError, setMiError] = useState("");
+
+  // DFU Analysis tab state
+  const [dfuMode, setDfuMode] = useState<DfuAnalysisMode>("item_location");
+  const [dfuItem, setDfuItem] = useState("");
+  const [dfuLocation, setDfuLocation] = useState("");
+  const [dfuSalesMetric, setDfuSalesMetric] = useState("qty");
+  const [dfuPoints, setDfuPoints] = useState(36);
+  const [dfuKpiMonths, setDfuKpiMonths] = useState(12);
+  const [dfuData, setDfuData] = useState<DfuAnalysisPayload | null>(null);
+  const [dfuVisibleSeries, setDfuVisibleSeries] = useState<Set<string>>(new Set(["sales"]));
+  const [dfuLoading, setDfuLoading] = useState(false);
+  const [dfuAutoSampled, setDfuAutoSampled] = useState(false);
+  const [dfuItemSuggestions, setDfuItemSuggestions] = useState<string[]>([]);
+  const [dfuLocationSuggestions, setDfuLocationSuggestions] = useState<string[]>([]);
+  const debouncedDfuItem = useDebounce(dfuItem, 500);
+  const debouncedDfuLocation = useDebounce(dfuLocation, 500);
 
   const visibleCols = useMemo(() => {
     if (!meta) {
@@ -1158,6 +1198,112 @@ export default function App() {
     }
   }
 
+  // DFU Analysis: auto-sample item+location on first visit
+  useEffect(() => {
+    if (activeTab !== "dfuAnalysis" || dfuAutoSampled) return;
+    if (dfuItem.trim() || dfuLocation.trim()) {
+      setDfuAutoSampled(true);
+      return;
+    }
+    let cancelled = false;
+    async function loadSample() {
+      try {
+        const res = await fetch("/domains/sales/sample-pair");
+        if (!res.ok) throw new Error("HTTP error");
+        const payload = (await res.json()) as SamplePairPayload;
+        if (!cancelled) {
+          if (payload.item) setDfuItem(String(payload.item));
+          if (payload.location) setDfuLocation(String(payload.location));
+        }
+      } catch { /* non-blocking */ }
+      finally { if (!cancelled) setDfuAutoSampled(true); }
+    }
+    loadSample();
+    return () => { cancelled = true; };
+  }, [activeTab, dfuAutoSampled, dfuItem, dfuLocation]);
+
+  // DFU Analysis: fetch data from /dfu/analysis
+  useEffect(() => {
+    if (activeTab !== "dfuAnalysis") return;
+    const needsItem = dfuMode !== "all_items_at_location";
+    const needsLoc = dfuMode !== "item_at_all_locations";
+    if (needsItem && !debouncedDfuItem.trim()) return;
+    if (needsLoc && !debouncedDfuLocation.trim()) return;
+
+    let cancelled = false;
+    async function loadAnalysis() {
+      setDfuLoading(true);
+      try {
+        const params = new URLSearchParams({
+          mode: dfuMode,
+          item: debouncedDfuItem.trim(),
+          location: debouncedDfuLocation.trim(),
+          points: String(dfuPoints),
+          kpi_months: String(dfuKpiMonths),
+          sales_metric: dfuSalesMetric,
+        });
+        const res = await fetch(`/dfu/analysis?${params}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const payload = (await res.json()) as DfuAnalysisPayload;
+        if (!cancelled) {
+          setDfuData(payload);
+          const allKeys = new Set(["sales", ...payload.models.map((m) => `forecast_${m}`)]);
+          setDfuVisibleSeries(allKeys);
+        }
+      } catch {
+        if (!cancelled) setDfuData(null);
+      } finally {
+        if (!cancelled) setDfuLoading(false);
+      }
+    }
+    loadAnalysis();
+    return () => { cancelled = true; };
+  }, [activeTab, dfuMode, debouncedDfuItem, debouncedDfuLocation, dfuPoints, dfuKpiMonths, dfuSalesMetric]);
+
+  // DFU Analysis: item typeahead suggestions
+  useEffect(() => {
+    if (activeTab !== "dfuAnalysis" || !dfuItem.trim()) {
+      setDfuItemSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ field: "dmdunit", q: dfuItem.trim(), limit: "12" });
+        if (debouncedDfuLocation.trim()) {
+          params.set("filters", JSON.stringify({ loc: `=${debouncedDfuLocation.trim()}` }));
+        }
+        const res = await fetch(`/domains/sales/suggest?${params}`);
+        if (!res.ok) throw new Error("HTTP error");
+        const payload = (await res.json()) as SuggestPayload;
+        if (!cancelled) setDfuItemSuggestions(payload.values || []);
+      } catch { if (!cancelled) setDfuItemSuggestions([]); }
+    }, 180);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [activeTab, dfuItem, debouncedDfuLocation]);
+
+  // DFU Analysis: location typeahead suggestions
+  useEffect(() => {
+    if (activeTab !== "dfuAnalysis" || !dfuLocation.trim()) {
+      setDfuLocationSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ field: "loc", q: dfuLocation.trim(), limit: "12" });
+        if (debouncedDfuItem.trim()) {
+          params.set("filters", JSON.stringify({ dmdunit: `=${debouncedDfuItem.trim()}` }));
+        }
+        const res = await fetch(`/domains/sales/suggest?${params}`);
+        if (!res.ok) throw new Error("HTTP error");
+        const payload = (await res.json()) as SuggestPayload;
+        if (!cancelled) setDfuLocationSuggestions(payload.values || []);
+      } catch { if (!cancelled) setDfuLocationSuggestions([]); }
+    }, 180);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [activeTab, dfuLocation, debouncedDfuItem]);
+
   return (
     <main className="mx-auto w-full max-w-[1800px] min-w-0 overflow-x-hidden p-4 md:p-6">
       <section className="animate-fade-in relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-5 text-white shadow-2xl">
@@ -1280,6 +1426,27 @@ export default function App() {
                   <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
                   <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
                   <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
+                </button>
+              );
+            })()}
+            {/* DFU Analysis tab */}
+            {(() => {
+              const el = ELEMENT_CONFIG["dfuAnalysis"];
+              const isActive = activeTab === "dfuAnalysis";
+              return (
+                <button
+                  key="dfuAnalysis"
+                  className={cn(
+                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    isActive
+                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
+                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                  )}
+                  onClick={() => setActiveTab("dfuAnalysis")}
+                >
+                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
+                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
+                  <span className="text-[10px] leading-none">{el.name}</span>
                 </button>
               );
             })()}
@@ -2370,6 +2537,306 @@ export default function App() {
           </CardContent>
         </Card>
       </section> : null}
+
+      {activeTab === "dfuAnalysis" ? (
+        <section className="mt-4 grid gap-4 [&>*]:min-w-0 xl:grid-cols-1">
+          <Card className="animate-fade-in">
+            <CardHeader className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <CardTitle className="text-base">DFU Analysis</CardTitle>
+                  <CardDescription>
+                    {dfuMode === "item_location"
+                      ? "Sales + multi-model forecasts for a specific DFU (item @ location)"
+                      : dfuMode === "all_items_at_location"
+                        ? "Aggregated sales + forecasts across all items at a location"
+                        : "Aggregated sales + forecasts for an item across all locations"}
+                  </CardDescription>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => { setDfuData(null); setDfuAutoSampled(false); setDfuItem(""); setDfuLocation(""); }}>
+                  <RefreshCcw className="mr-1 h-4 w-4" /> Reset
+                </Button>
+              </div>
+
+              {/* Row 1: Analysis scope selector */}
+              <div className="grid gap-2 md:grid-cols-3">
+                <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Analysis Scope
+                  <select
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    value={dfuMode}
+                    onChange={(e) => setDfuMode(e.target.value as DfuAnalysisMode)}
+                  >
+                    <option value="item_location">Item @ Location (single DFU)</option>
+                    <option value="all_items_at_location">All Items @ Location</option>
+                    <option value="item_at_all_locations">Item @ All Locations</option>
+                  </select>
+                </label>
+                <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Sales Measure
+                  <select
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    value={dfuSalesMetric}
+                    onChange={(e) => setDfuSalesMetric(e.target.value)}
+                  >
+                    <option value="qty">Qty</option>
+                    <option value="qty_shipped">Qty Shipped</option>
+                    <option value="qty_ordered">Qty Ordered</option>
+                  </select>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Points
+                    <select
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      value={dfuPoints}
+                      onChange={(e) => setDfuPoints(Number(e.target.value))}
+                    >
+                      {[12, 24, 36, 48, 60].map((v) => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    KPI Window
+                    <select
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      value={dfuKpiMonths}
+                      onChange={(e) => setDfuKpiMonths(Number(e.target.value))}
+                    >
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                        <option key={m} value={m}>{m} mo</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              {/* Row 2: Item + Location filters */}
+              <div className="grid gap-2 md:grid-cols-2">
+                {dfuMode !== "all_items_at_location" ? (
+                  <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Item (dmdunit)
+                    <Input
+                      className="h-9"
+                      placeholder="Type to search items..."
+                      list="dfu-analysis-item-suggest"
+                      value={dfuItem}
+                      onChange={(e) => setDfuItem(e.target.value)}
+                    />
+                    <datalist id="dfu-analysis-item-suggest">
+                      {dfuItemSuggestions.map((val) => (
+                        <option key={val} value={val} />
+                      ))}
+                    </datalist>
+                  </label>
+                ) : (
+                  <div className="flex items-end">
+                    <p className="pb-2 text-xs text-muted-foreground italic">Item: All (aggregated at location level)</p>
+                  </div>
+                )}
+                {dfuMode !== "item_at_all_locations" ? (
+                  <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Location (loc)
+                    <Input
+                      className="h-9"
+                      placeholder="Type to search locations..."
+                      list="dfu-analysis-loc-suggest"
+                      value={dfuLocation}
+                      onChange={(e) => setDfuLocation(e.target.value)}
+                    />
+                    <datalist id="dfu-analysis-loc-suggest">
+                      {dfuLocationSuggestions.map((val) => (
+                        <option key={val} value={val} />
+                      ))}
+                    </datalist>
+                  </label>
+                ) : (
+                  <div className="flex items-end">
+                    <p className="pb-2 text-xs text-muted-foreground italic">Location: All (aggregated at item level)</p>
+                  </div>
+                )}
+              </div>
+            </CardHeader>
+
+            <CardContent className="space-y-4">
+              {/* Measure toggles */}
+              {dfuData && dfuData.series.length > 0 ? (
+                <>
+                  <div className="space-y-1">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Visible Measures</span>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-md border border-input bg-background p-2">
+                      <label className="flex items-center gap-2 text-xs font-medium">
+                        <Checkbox
+                          checked={dfuVisibleSeries.has("sales")}
+                          onCheckedChange={(v) => {
+                            setDfuVisibleSeries((prev) => {
+                              const next = new Set(prev);
+                              if (v) next.add("sales"); else next.delete("sales");
+                              return next;
+                            });
+                          }}
+                        />
+                        <span className="flex items-center gap-1">
+                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: TREND_COLORS[0] }} />
+                          Sales ({dfuSalesMetric})
+                        </span>
+                      </label>
+                      {dfuData.models.map((model, idx) => {
+                        const seriesKey = `forecast_${model}`;
+                        return (
+                          <label key={model} className="flex items-center gap-2 text-xs font-medium">
+                            <Checkbox
+                              checked={dfuVisibleSeries.has(seriesKey)}
+                              onCheckedChange={(v) => {
+                                setDfuVisibleSeries((prev) => {
+                                  const next = new Set(prev);
+                                  if (v) next.add(seriesKey); else next.delete(seriesKey);
+                                  return next;
+                                });
+                              }}
+                            />
+                            <span className="flex items-center gap-1">
+                              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: TREND_COLORS[(idx + 1) % TREND_COLORS.length] }} />
+                              {model}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Chart */}
+                  <Card className="min-w-0 border-muted shadow-none">
+                    <CardHeader className="pb-0">
+                      <CardTitle className="flex items-center gap-2 text-sm">
+                        <ChartColumn className="h-4 w-4" /> Sales vs Forecast Overlay
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="h-[380px] pt-2">
+                      <div className="h-full overflow-x-scroll overflow-y-hidden pb-2 [scrollbar-gutter:stable]">
+                        <div className="h-full" style={{ minWidth: `${Math.max(1200, dfuData.series.length * 100)}px` }}>
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={dfuData.series} margin={{ top: 8, right: 16, left: 18, bottom: 8 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
+                              <XAxis dataKey="month" />
+                              <YAxis yAxisId="left" width={84} tickFormatter={formatCompactNumber} tickMargin={10} />
+                              <Tooltip
+                                formatter={(value: number, name: string) => [
+                                  formatNumber(Number.isFinite(Number(value)) ? Number(value) : null),
+                                  String(name),
+                                ]}
+                              />
+                              <Legend />
+                              {dfuVisibleSeries.has("sales") ? (
+                                <Line
+                                  type="monotone"
+                                  dataKey="sales"
+                                  yAxisId="left"
+                                  name={`Sales (${dfuSalesMetric})`}
+                                  stroke={TREND_COLORS[0]}
+                                  strokeWidth={2.5}
+                                  dot={false}
+                                  activeDot={{ r: 5 }}
+                                />
+                              ) : null}
+                              {dfuData.models
+                                .filter((m) => dfuVisibleSeries.has(`forecast_${m}`))
+                                .map((model, idx) => (
+                                  <Line
+                                    key={model}
+                                    type="monotone"
+                                    dataKey={`forecast_${model}`}
+                                    yAxisId="left"
+                                    name={`${model}`}
+                                    stroke={TREND_COLORS[(dfuData!.models.indexOf(model) + 1) % TREND_COLORS.length]}
+                                    strokeWidth={model === "champion" ? 2.5 : 1.5}
+                                    strokeDasharray={model === "champion" ? undefined : "5 3"}
+                                    dot={false}
+                                    activeDot={{ r: 4 }}
+                                  />
+                                ))}
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* KPI Cards per model */}
+                  {Object.keys(dfuData.kpis).length > 0 ? (
+                    <div className="space-y-2">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Model KPIs ({dfuKpiMonths}-month window)</span>
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        {dfuData.models
+                          .filter((m) => dfuVisibleSeries.has(`forecast_${m}`) && dfuData!.kpis[m])
+                          .map((model) => {
+                            const kpi = dfuData!.kpis[model];
+                            const colorIdx = dfuData!.models.indexOf(model) + 1;
+                            return (
+                              <Card key={model} className="border-muted bg-muted/20 shadow-none">
+                                <CardContent className="pt-4">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: TREND_COLORS[colorIdx % TREND_COLORS.length] }} />
+                                    <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">{model}</p>
+                                    <span className="text-[10px] text-muted-foreground ml-auto">{kpi.months_covered} mo</span>
+                                  </div>
+                                  <div className="grid grid-cols-5 gap-2">
+                                    <div>
+                                      <p className="text-[10px] uppercase text-muted-foreground">Accuracy</p>
+                                      <p className="text-sm font-semibold tabular-nums">{formatPercent(kpi.accuracy_pct)}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] uppercase text-muted-foreground">WAPE</p>
+                                      <p className="text-sm font-semibold tabular-nums">{formatPercent(kpi.wape)}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] uppercase text-muted-foreground">Bias</p>
+                                      <p className="text-sm font-semibold tabular-nums">{formatNumber(kpi.bias)}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] uppercase text-muted-foreground">Fcst</p>
+                                      <p className="text-sm font-semibold tabular-nums">{formatCompactNumber(kpi.sum_forecast)}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] uppercase text-muted-foreground">Actual</p>
+                                      <p className="text-sm font-semibold tabular-nums">{formatCompactNumber(kpi.sum_actual)}</p>
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : dfuLoading ? (
+                <div className="flex h-[320px] items-center justify-center">
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-cyan-300 bg-cyan-50 px-4 py-2 shadow-md animate-pulse-glow">
+                      <span className="text-[9px] leading-none self-start font-mono text-cyan-500 opacity-70">6</span>
+                      <span className="text-lg font-bold leading-tight font-mono text-cyan-900">Da</span>
+                      <span className="text-[9px] leading-none text-cyan-600">Loading</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">Fetching DFU analysis...</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">
+                  {dfuMode === "item_location" && (!dfuItem.trim() || !dfuLocation.trim())
+                    ? "Enter both item and location to view DFU analysis."
+                    : dfuMode === "all_items_at_location" && !dfuLocation.trim()
+                      ? "Enter a location to view aggregated analysis."
+                      : dfuMode === "item_at_all_locations" && !dfuItem.trim()
+                        ? "Enter an item to view aggregated analysis."
+                        : "No data available for the selected filters."}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+      ) : null}
 
       {activeTab === "explorer" ? <section className="mt-4 grid gap-4 [&>*]:min-w-0 xl:grid-cols-1">
         <Card className="animate-fade-in">

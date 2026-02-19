@@ -192,6 +192,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - Postgres vs Iceberg latency benchmarking panel
 - Champion Selection panel: model competition config, run, and FVA model-wins visualization
 - Market Intelligence tab: item/location selector with Google web search + GPT-4o narrative briefing
+- DFU Analysis tab: unified sales vs multi-model forecast overlay chart, 3 scope modes, per-model KPI cards, toggleable measures
 
 ---
 
@@ -231,6 +232,7 @@ Located in `docs/design-specs/`:
 - `feature14.md` — Transfer learning backtest strategy
 - `feature15.md` — Champion model selection (best-of-models per DFU)
 - `feature16.md` — Data Explorer performance & UX (type-aware filtering, GIN indexes, column typeahead, loading overlay)
+- `feature17.md` — DFU Analysis tab (sales vs multi-model forecast overlay)
 - `feature18.md` — Market intelligence (web search + LLM narrative briefings)
 
 ---
