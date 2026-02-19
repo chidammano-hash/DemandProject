@@ -187,6 +187,14 @@ const titleCase = (value: string): string =>
 
 const TREND_COLORS = ["#0f766e", "#f97316", "#1d4ed8", "#a21caf", "#b45309", "#0891b2"];
 
+const ACCURACY_KPI_OPTIONS = [
+  { key: "accuracy_pct", label: "Accuracy %", format: "pct" },
+  { key: "wape",         label: "WAPE %",     format: "pct" },
+  { key: "bias",         label: "Bias",        format: "bias" },
+  { key: "sum_forecast", label: "\u03A3 Forecast", format: "num" },
+  { key: "sum_actual",   label: "\u03A3 Actual",   format: "num" },
+] as const;
+
 const numberFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 const compactNumberFmt = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 
@@ -303,6 +311,8 @@ export default function App() {
   const [sliceData, setSliceData] = useState<AccuracySliceRow[]>([]);
   const [lagCurveData, setLagCurveData] = useState<LagPoint[]>([]);
   const [loadingSlice, setLoadingSlice] = useState(false);
+  const [sliceKpis, setSliceKpis] = useState<string[]>(["accuracy_pct", "wape", "bias"]);
+  const [lagCurveMetric, setLagCurveMetric] = useState("accuracy_pct");
 
   const visibleCols = useMemo(() => {
     if (!meta) {
@@ -1153,6 +1163,31 @@ export default function App() {
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 ) : null}
               </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">KPIs</span>
+                {ACCURACY_KPI_OPTIONS.map((opt) => {
+                  const checked = sliceKpis.includes(opt.key);
+                  const isLast = sliceKpis.length === 1 && checked;
+                  return (
+                    <label key={opt.key} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 rounded border-input accent-teal-700"
+                        checked={checked}
+                        disabled={isLast}
+                        onChange={() => {
+                          setSliceKpis((prev) =>
+                            prev.includes(opt.key)
+                              ? prev.filter((k) => k !== opt.key)
+                              : [...prev, opt.key]
+                          );
+                        }}
+                      />
+                      {opt.label}
+                    </label>
+                  );
+                })}
+              </div>
 
               {sliceData.length > 0 ? (() => {
                 const allModels = Array.from(
@@ -1170,11 +1205,13 @@ export default function App() {
                             <TableHead className="text-xs sticky left-0 bg-muted/30">
                               {titleCase(sliceGroupBy)}
                             </TableHead>
-                            {allModels.flatMap((m) => [
-                              <TableHead key={`${m}-acc`} className="text-xs text-right">{m} Acc%</TableHead>,
-                              <TableHead key={`${m}-wape`} className="text-xs text-right">{m} WAPE%</TableHead>,
-                              <TableHead key={`${m}-bias`} className="text-xs text-right">{m} Bias</TableHead>,
-                            ])}
+                            {allModels.flatMap((m) =>
+                              ACCURACY_KPI_OPTIONS
+                                .filter((k) => sliceKpis.includes(k.key))
+                                .map((k) => (
+                                  <TableHead key={`${m}-${k.key}`} className="text-xs text-right">{m} {k.label}</TableHead>
+                                ))
+                            )}
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1188,18 +1225,35 @@ export default function App() {
                                 <TableCell className="sticky left-0 bg-background font-medium text-sm">{row.bucket}</TableCell>
                                 {allModels.flatMap((m) => {
                                   const kpi = row.by_model[m];
-                                  const isBest = kpi?.accuracy_pct !== null && kpi?.accuracy_pct !== undefined && kpi.accuracy_pct === bestAcc;
-                                  return [
-                                    <TableCell key={`${m}-acc`} className={cn("text-right text-sm tabular-nums", isBest ? "font-bold text-teal-700" : "")}>
-                                      {formatPercent(kpi?.accuracy_pct)}
-                                    </TableCell>,
-                                    <TableCell key={`${m}-wape`} className="text-right text-sm tabular-nums">
-                                      {formatPercent(kpi?.wape)}
-                                    </TableCell>,
-                                    <TableCell key={`${m}-bias`} className={cn("text-right text-sm tabular-nums", kpi?.bias !== null && kpi?.bias !== undefined ? (Math.abs(kpi.bias) > 0.15 ? "text-red-600" : "") : "")}>
-                                      {kpi?.bias !== null && kpi?.bias !== undefined ? `${(kpi.bias * 100).toFixed(1)}%` : "-"}
-                                    </TableCell>,
-                                  ];
+                                  return ACCURACY_KPI_OPTIONS
+                                    .filter((k) => sliceKpis.includes(k.key))
+                                    .map((k) => {
+                                      const val = kpi?.[k.key as keyof AccuracyKpis] as number | null | undefined;
+                                      const isBestAcc = k.key === "accuracy_pct" && val !== null && val !== undefined && val === bestAcc;
+                                      const isBadBias = k.key === "bias" && val !== null && val !== undefined && Math.abs(val) > 0.15;
+                                      let display: string;
+                                      if (val === null || val === undefined) {
+                                        display = "-";
+                                      } else if (k.format === "pct") {
+                                        display = formatPercent(val);
+                                      } else if (k.format === "bias") {
+                                        display = `${(val * 100).toFixed(1)}%`;
+                                      } else {
+                                        display = Number(val).toLocaleString(undefined, { maximumFractionDigits: 0 });
+                                      }
+                                      return (
+                                        <TableCell
+                                          key={`${m}-${k.key}`}
+                                          className={cn(
+                                            "text-right text-sm tabular-nums",
+                                            isBestAcc ? "font-bold text-teal-700" : "",
+                                            isBadBias ? "text-red-600" : "",
+                                          )}
+                                        >
+                                          {display}
+                                        </TableCell>
+                                      );
+                                    });
                                 })}
                               </TableRow>
                             );
@@ -1222,25 +1276,48 @@ export default function App() {
                 const lagModels = Array.from(
                   new Set(lagCurveData.flatMap((p) => Object.keys(p.by_model)))
                 ).sort();
+                const activeLagMetric = sliceKpis.includes(lagCurveMetric) ? lagCurveMetric : sliceKpis[0];
+                const lagMetricOpt = ACCURACY_KPI_OPTIONS.find((k) => k.key === activeLagMetric);
                 const chartData = lagCurveData.map((p) => {
                   const row: Record<string, number | string> = { lag: `Lag ${p.lag}` };
                   for (const m of lagModels) {
-                    const acc = p.by_model[m]?.accuracy_pct;
-                    if (acc !== null && acc !== undefined) row[m] = acc;
+                    const val = p.by_model[m]?.[activeLagMetric as keyof AccuracyKpis];
+                    if (val !== null && val !== undefined) row[m] = val as number;
                   }
                   return row;
                 });
+                const fmtIsPct = lagMetricOpt?.format === "pct";
+                const fmtIsBias = lagMetricOpt?.format === "bias";
+                const yFormatter = (v: number) =>
+                  fmtIsPct ? `${Number(v).toFixed(0)}%`
+                  : fmtIsBias ? `${(Number(v) * 100).toFixed(0)}%`
+                  : Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+                const tooltipFormatter = (v: number) =>
+                  fmtIsPct ? `${Number(v).toFixed(1)}%`
+                  : fmtIsBias ? `${(Number(v) * 100).toFixed(1)}%`
+                  : Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
                 return (
                   <div className="space-y-2">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Accuracy by Lag Horizon — how accuracy degrades as lead time increases
-                    </p>
+                    <div className="flex items-center gap-3">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                        {lagMetricOpt?.label ?? "KPI"} by Lag Horizon
+                      </p>
+                      <select
+                        className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+                        value={activeLagMetric}
+                        onChange={(e) => setLagCurveMetric(e.target.value)}
+                      >
+                        {ACCURACY_KPI_OPTIONS.filter((k) => sliceKpis.includes(k.key)).map((k) => (
+                          <option key={k.key} value={k.key}>{k.label}</option>
+                        ))}
+                      </select>
+                    </div>
                     <ResponsiveContainer width="100%" height={220}>
                       <LineChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                         <XAxis dataKey="lag" tick={{ fontSize: 11 }} />
-                        <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11 }} tickFormatter={(v) => `${Number(v).toFixed(0)}%`} />
-                        <Tooltip formatter={(v) => `${Number(v).toFixed(1)}%`} />
+                        <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11 }} tickFormatter={yFormatter} />
+                        <Tooltip formatter={tooltipFormatter} />
                         <Legend wrapperStyle={{ fontSize: 11 }} />
                         {lagModels.map((m, i) => (
                           <Line
