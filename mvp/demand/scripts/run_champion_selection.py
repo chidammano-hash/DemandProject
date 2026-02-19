@@ -136,6 +136,120 @@ def compute_dfu_winners(
     return cur.fetchall()
 
 
+def compute_ceiling_winners(
+    cur: psycopg.Cursor,
+    models: list[str],
+    lag_mode: str,
+) -> list[tuple[str, str, str, str, str, float, float, float]]:
+    """Return per-DFU per-month oracle winners.
+
+    For each (dmdunit, dmdgroup, loc, startdate), picks the model with
+    lowest absolute error — the theoretical best if you always knew which
+    model would be most accurate for every single month.
+
+    Returns (dmdunit, dmdgroup, loc, startdate, model_id, abs_err,
+             basefcst_pref, tothist_dmd).
+    """
+    placeholders = ",".join(["%s"] * len(models))
+
+    if lag_mode == "execution":
+        lag_cond = "lag::text = execution_lag::text"
+        params: list[Any] = list(models)
+    else:
+        lag_cond = "lag = %s"
+        params = list(models) + [int(lag_mode)]
+
+    sql = f"""
+    WITH monthly_ranked AS (
+        SELECT
+            dmdunit, dmdgroup, loc, startdate, model_id,
+            ABS(basefcst_pref - tothist_dmd) AS abs_err,
+            basefcst_pref, tothist_dmd,
+            ROW_NUMBER() OVER (
+                PARTITION BY dmdunit, dmdgroup, loc, startdate
+                ORDER BY ABS(basefcst_pref - tothist_dmd) ASC NULLS LAST
+            ) AS rn
+        FROM fact_external_forecast_monthly
+        WHERE model_id IN ({placeholders})
+          AND {lag_cond}
+          AND basefcst_pref IS NOT NULL
+          AND tothist_dmd IS NOT NULL
+    )
+    SELECT dmdunit, dmdgroup, loc, startdate, model_id,
+           abs_err, basefcst_pref, tothist_dmd
+    FROM monthly_ranked
+    WHERE rn = 1
+    ORDER BY dmdunit, dmdgroup, loc, startdate
+    """
+    cur.execute(sql, params)
+    return cur.fetchall()
+
+
+def insert_ceiling_forecasts(
+    cur: psycopg.Cursor,
+    ceiling_rows: list[tuple[str, str, str, str, str, float, float, float]],
+    ceiling_model_id: str,
+) -> int:
+    """Bulk-insert ceiling (oracle) forecast rows.
+
+    Uses temp table + INSERT ... SELECT.  The ceiling picks the best model
+    per DFU per month, so the temp table key includes startdate.
+    Returns number of rows inserted.
+    """
+    if not ceiling_rows:
+        return 0
+
+    # 1. Delete existing ceiling rows
+    cur.execute(
+        "DELETE FROM fact_external_forecast_monthly WHERE model_id = %s",
+        (ceiling_model_id,),
+    )
+    deleted = cur.rowcount
+    print(f"  Deleted {deleted:,} existing ceiling rows")
+
+    # 2. Create temp table with DFU+month → winning model mapping
+    cur.execute("""
+        CREATE TEMP TABLE _ceiling_winners (
+            dmdunit TEXT NOT NULL,
+            dmdgroup TEXT NOT NULL,
+            loc TEXT NOT NULL,
+            startdate DATE NOT NULL,
+            winning_model_id TEXT NOT NULL
+        ) ON COMMIT DROP
+    """)
+
+    # 3. COPY ceiling winners into temp table
+    buf = io.StringIO()
+    for dmdunit, dmdgroup, loc, startdate, model_id, *_ in ceiling_rows:
+        buf.write(f"{dmdunit}\t{dmdgroup}\t{loc}\t{startdate}\t{model_id}\n")
+    buf.seek(0)
+    with cur.copy("COPY _ceiling_winners FROM STDIN") as copy:
+        copy.write(buf.read())
+
+    # 4. Bulk INSERT ... SELECT ceiling rows
+    cur.execute(
+        """
+        INSERT INTO fact_external_forecast_monthly
+            (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+             lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+        SELECT
+            f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
+            f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
+            %s
+        FROM fact_external_forecast_monthly f
+        INNER JOIN _ceiling_winners w
+            ON f.dmdunit = w.dmdunit
+           AND f.dmdgroup = w.dmdgroup
+           AND f.loc = w.loc
+           AND f.startdate = w.startdate
+           AND f.model_id = w.winning_model_id
+        """,
+        (ceiling_model_id,),
+    )
+    inserted = cur.rowcount
+    return inserted
+
+
 def insert_champion_forecasts(
     cur: psycopg.Cursor,
     winners: list[tuple[str, str, str, str, float, int]],
@@ -203,8 +317,10 @@ def generate_summary(
     champion_model_id: str,
     total_rows: int,
     config: dict[str, Any],
+    ceiling_rows: list[tuple] | None = None,
+    ceiling_inserted: int = 0,
 ) -> dict[str, Any]:
-    """Produce a summary dict from the winner list."""
+    """Produce a summary dict from the winner list + optional ceiling data."""
     model_wins: dict[str, int] = {}
     total_wape_num = 0.0
     total_wape_denom = 0.0
@@ -220,7 +336,7 @@ def generate_summary(
     # Sort model wins descending
     sorted_wins = dict(sorted(model_wins.items(), key=lambda x: -x[1]))
 
-    return {
+    summary: dict[str, Any] = {
         "config": {
             "metric": config.get("metric"),
             "lag": config.get("lag"),
@@ -235,6 +351,27 @@ def generate_summary(
         "overall_champion_accuracy_pct": round(overall_acc, 4) if overall_acc is not None else None,
         "run_ts": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Ceiling (oracle) metrics — per-DFU per-month best model
+    if ceiling_rows:
+        ceil_wins: dict[str, int] = {}
+        ceil_abs_err_sum = 0.0
+        ceil_actual_sum = 0.0
+        for _u, _g, _l, _sd, mid, abs_err, _fcst, actual in ceiling_rows:
+            ceil_wins[mid] = ceil_wins.get(mid, 0) + 1
+            ceil_abs_err_sum += float(abs_err)
+            ceil_actual_sum += abs(float(actual))
+
+        ceil_wape = (ceil_abs_err_sum / ceil_actual_sum * 100) if ceil_actual_sum else None
+        ceil_acc = (100.0 - ceil_wape) if ceil_wape is not None else None
+        sorted_ceil = dict(sorted(ceil_wins.items(), key=lambda x: -x[1]))
+
+        summary["total_ceiling_rows"] = ceiling_inserted
+        summary["ceiling_model_wins"] = sorted_ceil
+        summary["overall_ceiling_wape"] = round(ceil_wape, 4) if ceil_wape is not None else None
+        summary["overall_ceiling_accuracy_pct"] = round(ceil_acc, 4) if ceil_acc is not None else None
+
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -317,20 +454,53 @@ def main() -> None:
     print(f"  Inserted {inserted:,} champion rows ({time.time() - t1:.1f}s)")
     print()
 
-    # Step 3: Refresh materialized views
+    # Step 3: Compute ceiling (oracle) — best model per DFU per month
+    ceiling_id = cfg.get("ceiling_model_id", "ceiling")
+    print("Computing ceiling (oracle) — best model per DFU per month...")
+    t2 = time.time()
+    with psycopg.connect(**db) as conn, conn.cursor() as cur:
+        ceiling_rows = compute_ceiling_winners(cur, models, lag_mode)
+    print(f"  {len(ceiling_rows):,} DFU-month rows evaluated ({time.time() - t2:.1f}s)")
+
+    # Print ceiling model wins
+    if ceiling_rows:
+        ceil_count: dict[str, int] = {}
+        for _, _, _, _, mid, *_ in ceiling_rows:
+            ceil_count[mid] = ceil_count.get(mid, 0) + 1
+        for mid, cnt in sorted(ceil_count.items(), key=lambda x: -x[1]):
+            pct = 100.0 * cnt / len(ceiling_rows)
+            print(f"    {mid:<25s} {cnt:>6,} months ({pct:.1f}%)")
+        print()
+
+    # Step 4: Insert ceiling rows
+    print("Inserting ceiling forecast rows...")
+    t3 = time.time()
+    with psycopg.connect(**db) as conn, conn.cursor() as cur:
+        ceiling_inserted = insert_ceiling_forecasts(cur, ceiling_rows, ceiling_id)
+        conn.commit()
+    print(f"  Inserted {ceiling_inserted:,} ceiling rows ({time.time() - t3:.1f}s)")
+    print()
+
+    # Step 5: Refresh materialized views
     refresh_views(db)
     print()
 
-    # Step 4: Save summary JSON
-    summary = generate_summary(winners, champion_id, inserted, cfg)
+    # Step 6: Save summary JSON
+    summary = generate_summary(
+        winners, champion_id, inserted, cfg,
+        ceiling_rows=ceiling_rows, ceiling_inserted=ceiling_inserted,
+    )
     summary_dir = ROOT / "data" / "champion"
     summary_dir.mkdir(parents=True, exist_ok=True)
     summary_path = summary_dir / "champion_summary.json"
     with open(summary_path, "w") as f:
-        json.dump(summary, f, indent=2)
+        json.dump(summary, f, indent=2, default=str)
     print(f"Summary saved to {summary_path}")
     print(f"  Overall champion accuracy: {summary['overall_champion_accuracy_pct']}%")
     print(f"  Overall champion WAPE: {summary['overall_champion_wape']}%")
+    if summary.get("overall_ceiling_accuracy_pct") is not None:
+        print(f"  Overall ceiling accuracy: {summary['overall_ceiling_accuracy_pct']}%")
+        print(f"  Overall ceiling WAPE: {summary['overall_ceiling_wape']}%")
     print("\nDone.")
 
 

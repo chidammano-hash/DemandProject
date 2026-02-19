@@ -1088,27 +1088,110 @@ def run_competition():
         inserted = cur.rowcount
         conn.commit()
 
-    # 4. Refresh materialized views
+    # 4. Compute ceiling (oracle) — best model per DFU per month
+    ceiling_id = cfg.get("ceiling_model_id", "ceiling")
+    ceil_placeholders = ",".join(["%s"] * len(models))
+    ceil_params: list[Any] = list(models)
+    if lag_mode == "execution":
+        ceil_lag_cond = "lag::text = execution_lag::text"
+    else:
+        ceil_lag_cond = "lag = %s"
+        ceil_params.append(int(lag_mode))
+
+    ceiling_sql = f"""
+    WITH monthly_ranked AS (
+        SELECT
+            dmdunit, dmdgroup, loc, startdate, model_id,
+            ABS(basefcst_pref - tothist_dmd) AS abs_err,
+            basefcst_pref, tothist_dmd,
+            ROW_NUMBER() OVER (
+                PARTITION BY dmdunit, dmdgroup, loc, startdate
+                ORDER BY ABS(basefcst_pref - tothist_dmd) ASC NULLS LAST
+            ) AS rn
+        FROM fact_external_forecast_monthly
+        WHERE model_id IN ({ceil_placeholders})
+          AND {ceil_lag_cond}
+          AND basefcst_pref IS NOT NULL
+          AND tothist_dmd IS NOT NULL
+    )
+    SELECT dmdunit, dmdgroup, loc, startdate, model_id,
+           abs_err, basefcst_pref, tothist_dmd
+    FROM monthly_ranked
+    WHERE rn = 1
+    ORDER BY dmdunit, dmdgroup, loc, startdate
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(ceiling_sql, ceil_params)
+        ceiling_rows = cur.fetchall()
+
+    # 5. Bulk insert ceiling rows
+    ceiling_inserted = 0
+    if ceiling_rows:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM fact_external_forecast_monthly WHERE model_id = %s",
+                (ceiling_id,),
+            )
+            cur.execute("""
+                CREATE TEMP TABLE _ceiling_winners (
+                    dmdunit TEXT NOT NULL,
+                    dmdgroup TEXT NOT NULL,
+                    loc TEXT NOT NULL,
+                    startdate DATE NOT NULL,
+                    winning_model_id TEXT NOT NULL
+                ) ON COMMIT DROP
+            """)
+
+            buf2 = io.StringIO()
+            for dmdunit, dmdgroup, loc, startdate, model_id, *_ in ceiling_rows:
+                buf2.write(f"{dmdunit}\t{dmdgroup}\t{loc}\t{startdate}\t{model_id}\n")
+            buf2.seek(0)
+            with cur.copy("COPY _ceiling_winners FROM STDIN") as copy:
+                copy.write(buf2.read())
+
+            cur.execute(
+                """
+                INSERT INTO fact_external_forecast_monthly
+                    (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+                     lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+                SELECT
+                    f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
+                    f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
+                    %s
+                FROM fact_external_forecast_monthly f
+                INNER JOIN _ceiling_winners w
+                    ON f.dmdunit = w.dmdunit
+                   AND f.dmdgroup = w.dmdgroup
+                   AND f.loc = w.loc
+                   AND f.startdate = w.startdate
+                   AND f.model_id = w.winning_model_id
+                """,
+                (ceiling_id,),
+            )
+            ceiling_inserted = cur.rowcount
+            conn.commit()
+
+    # 6. Refresh materialized views
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("SET maintenance_work_mem = '512MB'")
         cur.execute("REFRESH MATERIALIZED VIEW agg_forecast_monthly")
         cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
         conn.commit()
 
-    # 5. Build summary
+    # 7. Build summary (champion)
     model_wins: dict[str, int] = {}
     total_wape_num = 0.0
     total_wape_denom = 0.0
     for _u, _g, _l, mid, wape, n_rows in winners:
         model_wins[mid] = model_wins.get(mid, 0) + 1
         if wape is not None:
-            total_wape_num += wape * n_rows
-            total_wape_denom += n_rows
+            total_wape_num += float(wape) * float(n_rows)
+            total_wape_denom += float(n_rows)
 
     overall_wape = (total_wape_num / total_wape_denom * 100) if total_wape_denom else None
     overall_acc = (100.0 - overall_wape) if overall_wape is not None else None
 
-    summary = {
+    summary: dict[str, Any] = {
         "config": {
             "metric": metric,
             "lag": lag_mode,
@@ -1124,11 +1207,29 @@ def run_competition():
         "run_ts": datetime.now(timezone.utc).isoformat(),
     }
 
+    # 8. Ceiling metrics
+    if ceiling_rows:
+        ceil_wins: dict[str, int] = {}
+        ceil_abs_err_sum = 0.0
+        ceil_actual_sum = 0.0
+        for _u, _g, _l, _sd, mid, abs_err, _fcst, actual in ceiling_rows:
+            ceil_wins[mid] = ceil_wins.get(mid, 0) + 1
+            ceil_abs_err_sum += float(abs_err)
+            ceil_actual_sum += abs(float(actual))
+
+        ceil_wape = (ceil_abs_err_sum / ceil_actual_sum * 100) if ceil_actual_sum else None
+        ceil_acc = (100.0 - ceil_wape) if ceil_wape is not None else None
+
+        summary["total_ceiling_rows"] = ceiling_inserted
+        summary["ceiling_model_wins"] = dict(sorted(ceil_wins.items(), key=lambda x: -x[1]))
+        summary["overall_ceiling_wape"] = round(ceil_wape, 4) if ceil_wape is not None else None
+        summary["overall_ceiling_accuracy_pct"] = round(ceil_acc, 4) if ceil_acc is not None else None
+
     # Save summary to disk
     summary_dir = os.path.dirname(_CHAMPION_SUMMARY_PATH)
     os.makedirs(summary_dir, exist_ok=True)
     with open(_CHAMPION_SUMMARY_PATH, "w") as f:
-        json.dump(summary, f, indent=2)
+        json.dump(summary, f, indent=2, default=str)
 
     return summary
 

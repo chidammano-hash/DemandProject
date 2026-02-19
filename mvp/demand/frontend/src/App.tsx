@@ -340,7 +340,7 @@ export default function App() {
 
   // Champion / model competition state (feature15)
   const [competitionConfig, setCompetitionConfig] = useState<{ metric: string; lag: string; min_dfu_rows: number; champion_model_id: string; models: string[] } | null>(null);
-  const [championSummary, setChampionSummary] = useState<{ total_dfus: number; total_champion_rows: number; model_wins: Record<string, number>; overall_champion_wape: number | null; overall_champion_accuracy_pct: number | null; run_ts: string } | null>(null);
+  const [championSummary, setChampionSummary] = useState<{ total_dfus: number; total_champion_rows: number; model_wins: Record<string, number>; overall_champion_wape: number | null; overall_champion_accuracy_pct: number | null; run_ts: string; total_ceiling_rows?: number; ceiling_model_wins?: Record<string, number>; overall_ceiling_wape?: number | null; overall_ceiling_accuracy_pct?: number | null } | null>(null);
   const [runningCompetition, setRunningCompetition] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
 
@@ -1551,7 +1551,7 @@ export default function App() {
                   <div className="space-y-3">
                     <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Competing Models</span>
                     <div className="flex flex-wrap gap-3">
-                      {availableModels.filter((m) => m !== competitionConfig.champion_model_id).map((m) => {
+                      {availableModels.filter((m) => m !== competitionConfig.champion_model_id && m !== "ceiling").map((m) => {
                         const checked = competitionConfig.models.includes(m);
                         const isLast = competitionConfig.models.length <= 2 && checked;
                         return (
@@ -1669,6 +1669,7 @@ export default function App() {
                       Last run: {new Date(championSummary.run_ts).toLocaleString()}
                     </span>
                   </div>
+                  {/* Champion KPI cards */}
                   <div className="flex flex-wrap gap-4 text-sm">
                     <div className="rounded-md border bg-card px-3 py-2">
                       <p className="text-xs text-muted-foreground">DFUs Evaluated</p>
@@ -1696,9 +1697,44 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Model wins bar chart */}
+                  {/* Ceiling (Oracle) KPI cards */}
+                  {championSummary.overall_ceiling_accuracy_pct != null && (
+                    <div className="flex flex-wrap gap-4 text-sm">
+                      <div className="rounded-md border bg-card px-3 py-2 border-emerald-200">
+                        <p className="text-xs text-muted-foreground">Ceiling Accuracy <span className="text-[10px]">(oracle)</span></p>
+                        <p className="text-lg font-bold tabular-nums text-emerald-700">
+                          {championSummary.overall_ceiling_accuracy_pct.toFixed(2)}%
+                        </p>
+                      </div>
+                      <div className="rounded-md border bg-card px-3 py-2 border-emerald-200">
+                        <p className="text-xs text-muted-foreground">Ceiling WAPE <span className="text-[10px]">(oracle)</span></p>
+                        <p className="text-lg font-bold tabular-nums text-emerald-700">
+                          {championSummary.overall_ceiling_wape != null
+                            ? `${championSummary.overall_ceiling_wape.toFixed(2)}%`
+                            : "-"}
+                        </p>
+                      </div>
+                      {championSummary.total_ceiling_rows != null && (
+                        <div className="rounded-md border bg-card px-3 py-2 border-emerald-200">
+                          <p className="text-xs text-muted-foreground">Ceiling Rows</p>
+                          <p className="text-lg font-bold tabular-nums">{championSummary.total_ceiling_rows.toLocaleString()}</p>
+                        </div>
+                      )}
+                      {/* Gap indicator: how far champion is from ceiling */}
+                      {championSummary.overall_champion_accuracy_pct != null && (
+                        <div className="rounded-md border bg-card px-3 py-2 border-amber-200">
+                          <p className="text-xs text-muted-foreground">Gap to Ceiling</p>
+                          <p className="text-lg font-bold tabular-nums text-amber-700">
+                            {(championSummary.overall_ceiling_accuracy_pct - championSummary.overall_champion_accuracy_pct).toFixed(2)} pp
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Champion model wins bar chart */}
                   <div className="space-y-1.5">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Model Wins (DFUs won per model)</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Champion Model Wins (best model per DFU overall)</p>
                     {Object.entries(championSummary.model_wins).map(([model, wins]) => {
                       const pct = championSummary.total_dfus > 0 ? (wins / championSummary.total_dfus) * 100 : 0;
                       return (
@@ -1717,6 +1753,33 @@ export default function App() {
                       );
                     })}
                   </div>
+
+                  {/* Ceiling model wins bar chart */}
+                  {championSummary.ceiling_model_wins && Object.keys(championSummary.ceiling_model_wins).length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ceiling Model Wins — Oracle (best model per DFU per month)</p>
+                      {(() => {
+                        const totalCeil = Object.values(championSummary.ceiling_model_wins!).reduce((a, b) => a + b, 0);
+                        return Object.entries(championSummary.ceiling_model_wins!).map(([model, wins]) => {
+                          const pct = totalCeil > 0 ? (wins / totalCeil) * 100 : 0;
+                          return (
+                            <div key={model} className="flex items-center gap-2 text-sm">
+                              <span className="w-40 truncate font-mono text-xs text-right">{model}</span>
+                              <div className="flex-1 h-5 rounded bg-muted overflow-hidden">
+                                <div
+                                  className="h-full rounded bg-emerald-500 transition-all"
+                                  style={{ width: `${Math.max(pct, 1)}%` }}
+                                />
+                              </div>
+                              <span className="w-24 text-xs tabular-nums text-muted-foreground">
+                                {wins.toLocaleString()} ({pct.toFixed(1)}%)
+                              </span>
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  )}
                 </div>
               ) : null}
             </CardContent>
