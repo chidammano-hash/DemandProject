@@ -1118,33 +1118,7 @@ export default function App() {
         </Card>
       ) : null}
 
-      {activeTab === "explorer" ? (
-        <Card className="mt-4 animate-fade-in">
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <CardTitle className="text-base">Data Explorer</CardTitle>
-                <CardDescription>Browse all tables</CardDescription>
-              </div>
-              <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Table
-                <select
-                  className="block h-9 w-[180px] rounded-md border border-input bg-background px-3 text-sm"
-                  value={domain}
-                  onChange={(e) => setDomain(e.target.value)}
-                >
-                  {DIMENSION_DOMAINS.map((d) => {
-                    const el = ELEMENT_CONFIG[d];
-                    return (
-                      <option key={d} value={d}>{el?.name || titleCase(d)}</option>
-                    );
-                  })}
-                </select>
-              </label>
-            </div>
-          </CardHeader>
-        </Card>
-      ) : null}
+      {/* Explorer TABLE dropdown merged into the data grid card below */}
 
       {activeTab === "clusters" ? (
         <Card className="mt-4 animate-fade-in">
@@ -2053,11 +2027,25 @@ export default function App() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <CardTitle className="text-base">Data Explorer</CardTitle>
-                <CardDescription>Search, filter, sort, and select fields.</CardDescription>
+                <CardDescription>Browse, search, filter, and sort.</CardDescription>
               </div>
-              <Badge variant="secondary">
-                {meta ? `${titleCase(meta.name)} (${formatNumber(total)})` : "Loading"}
-              </Badge>
+              <div className="flex items-center gap-3">
+                <select
+                  className="h-9 w-[180px] rounded-md border border-input bg-background px-3 text-sm"
+                  value={domain}
+                  onChange={(e) => setDomain(e.target.value)}
+                >
+                  {DIMENSION_DOMAINS.map((d) => {
+                    const el = ELEMENT_CONFIG[d];
+                    return (
+                      <option key={d} value={d}>{el?.name || titleCase(d)}</option>
+                    );
+                  })}
+                </select>
+                <Badge variant="secondary">
+                  {meta ? `${titleCase(meta.name)} (${formatNumber(total)})` : "Loading"}
+                </Badge>
+              </div>
             </div>
 
             <div className="grid gap-2 md:grid-cols-[2fr_120px_1fr]">
@@ -2090,16 +2078,30 @@ export default function App() {
             </div>
 
             {showFieldPanel && meta ? (
-              <div className="grid max-h-40 grid-cols-2 gap-2 overflow-y-auto overflow-x-hidden rounded-md border p-2 lg:grid-cols-3">
-                {meta.columns.map((col) => (
-                  <label key={col} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={visibleColumns[col] !== false}
-                      onCheckedChange={(checked) => toggleColumn(col, checked === true)}
-                    />
-                    <span>{titleCase(col)}</span>
-                  </label>
-                ))}
+              <div className="rounded-md border p-2">
+                <div className="flex gap-2 mb-2">
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                    const all: Record<string, boolean> = {};
+                    meta.columns.forEach((c) => { all[c] = true; });
+                    setVisibleColumns(all);
+                  }}>Select All</Button>
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => {
+                    const none: Record<string, boolean> = {};
+                    meta.columns.forEach((c) => { none[c] = false; });
+                    setVisibleColumns(none);
+                  }}>Deselect All</Button>
+                </div>
+                <div className="grid max-h-40 grid-cols-2 gap-2 overflow-y-auto overflow-x-hidden lg:grid-cols-3">
+                  {meta.columns.map((col) => (
+                    <label key={col} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={visibleColumns[col] !== false}
+                        onCheckedChange={(checked) => toggleColumn(col, checked === true)}
+                      />
+                      <span>{titleCase(col)}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             ) : null}
           </CardHeader>
