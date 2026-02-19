@@ -313,6 +313,7 @@ export default function App() {
   const [loadingSlice, setLoadingSlice] = useState(false);
   const [sliceKpis, setSliceKpis] = useState<string[]>(["accuracy_pct", "wape", "bias"]);
   const [lagCurveMetric, setLagCurveMetric] = useState("accuracy_pct");
+  const [sliceMonths, setSliceMonths] = useState(12); // 1-12 month rolling window
 
   const visibleCols = useMemo(() => {
     if (!meta) {
@@ -907,10 +908,19 @@ export default function App() {
     if (activeTab !== "accuracy") return;
     let cancelled = false;
     setLoadingSlice(true);
+    // Compute trailing month window (skip when slicing by month — each row is already one month)
+    let monthFrom = "";
+    if (sliceGroupBy !== "month_start") {
+      const now = new Date();
+      const from = new Date(now.getFullYear(), now.getMonth() - sliceMonths, 1);
+      monthFrom = from.toISOString().slice(0, 10);
+    }
     const sliceParams = new URLSearchParams({ group_by: sliceGroupBy, lag: String(sliceLag) });
     if (sliceModels.trim()) sliceParams.set("models", sliceModels.trim());
+    if (monthFrom) sliceParams.set("month_from", monthFrom);
     const lagParams = new URLSearchParams();
     if (sliceModels.trim()) lagParams.set("models", sliceModels.trim());
+    if (monthFrom) lagParams.set("month_from", monthFrom);
     Promise.all([
       fetch(`/forecast/accuracy/slice?${sliceParams}`).then((r) => r.json() as Promise<AccuracySlicePayload>),
       fetch(`/forecast/accuracy/lag-curve?${lagParams}`).then((r) => r.json() as Promise<LagCurvePayload>),
@@ -925,7 +935,7 @@ export default function App() {
       })
       .finally(() => { if (!cancelled) setLoadingSlice(false); });
     return () => { cancelled = true; };
-  }, [activeTab, sliceGroupBy, sliceLag, sliceModels]);
+  }, [activeTab, sliceGroupBy, sliceLag, sliceModels, sliceMonths]);
 
   return (
     <main className="mx-auto w-full max-w-[1800px] min-w-0 overflow-x-hidden p-4 md:p-6">
@@ -1159,6 +1169,21 @@ export default function App() {
                     disabled={loadingSlice}
                   />
                 </label>
+                {sliceGroupBy !== "month_start" ? (
+                  <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    KPI Window
+                    <select
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      value={sliceMonths}
+                      onChange={(e) => setSliceMonths(Number(e.target.value))}
+                      disabled={loadingSlice}
+                    >
+                      {Array.from({ length: 12 }, (_, idx) => idx + 1).map((m) => (
+                        <option key={m} value={m}>{m} month{m > 1 ? "s" : ""}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 {loadingSlice ? (
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 ) : null}
