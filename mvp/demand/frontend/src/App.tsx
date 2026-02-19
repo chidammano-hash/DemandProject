@@ -321,6 +321,7 @@ export default function App() {
   const [autoSampledDomain, setAutoSampledDomain] = useState("");
   const [itemSuggestions, setItemSuggestions] = useState<string[]>([]);
   const [locationSuggestions, setLocationSuggestions] = useState<string[]>([]);
+  const [columnSuggestions, setColumnSuggestions] = useState<Record<string, string[]>>({});
 
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [loadingTable, setLoadingTable] = useState(false);
@@ -507,6 +508,7 @@ export default function App() {
         setAutoSampledDomain("");
         setItemSuggestions([]);
         setLocationSuggestions([]);
+        setColumnSuggestions({});
         setVisibleColumns(Object.fromEntries(payload.columns.map((c) => [c, true])));
         updateDomainPath(domain);
 
@@ -855,6 +857,73 @@ export default function App() {
       window.clearTimeout(timer);
     };
   }, [showFactFilters, locationField, locationFilter, domain, itemField, itemFilter]);
+
+  // Column-level typeahead suggestions
+  useEffect(() => {
+    if (!meta) return;
+    // Determine which columns are text (not numeric, not date)
+    const textCols = new Set(
+      meta.columns.filter(
+        (c) => !meta.numeric_fields.includes(c) && !meta.date_fields.includes(c),
+      ),
+    );
+    // Find columns that have a non-empty, non-exact filter typed
+    const active = Object.entries(debouncedColumnFilters).filter(
+      ([col, val]) => val.trim() !== "" && !val.startsWith("=") && textCols.has(col),
+    );
+    // Clear suggestions for columns no longer being filtered
+    setColumnSuggestions((prev) => {
+      const next = { ...prev };
+      for (const col of Object.keys(next)) {
+        const cur = debouncedColumnFilters[col]?.trim();
+        if (!cur) delete next[col];
+      }
+      return next;
+    });
+    if (active.length === 0) return;
+
+    let cancelled = false;
+    const timers: number[] = [];
+    for (const [col, val] of active) {
+      const tid = window.setTimeout(async () => {
+        try {
+          const params = new URLSearchParams({
+            field: col,
+            q: val.trim(),
+            limit: "12",
+          });
+          // Pass other active column filters as scoped context
+          const otherFilters: Record<string, string> = {};
+          for (const [k, v] of Object.entries(debouncedColumnFilters)) {
+            if (k !== col && v.trim()) otherFilters[k] = v.trim();
+          }
+          if (Object.keys(otherFilters).length > 0) {
+            params.set("filters", JSON.stringify(otherFilters));
+          }
+          const res = await fetch(
+            `/domains/${encodeURIComponent(domain)}/suggest?${params.toString()}`,
+          );
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const payload = (await res.json()) as SuggestPayload;
+          const values = Array.from(
+            new Set((payload.values || []).filter(Boolean)),
+          ).slice(0, 12);
+          if (!cancelled) {
+            setColumnSuggestions((prev) => ({ ...prev, [col]: values }));
+          }
+        } catch {
+          if (!cancelled) {
+            setColumnSuggestions((prev) => ({ ...prev, [col]: [] }));
+          }
+        }
+      }, 180);
+      timers.push(tid);
+    }
+    return () => {
+      cancelled = true;
+      timers.forEach((t) => window.clearTimeout(t));
+    };
+  }, [debouncedColumnFilters, domain, meta]);
 
   const trendChartData = useMemo(() => {
     const bucket = new Map<string, Record<string, number | string>>();
@@ -2164,12 +2233,20 @@ export default function App() {
                           <Input
                             className="h-7 text-xs"
                             placeholder="Filter (=exact)"
+                            list={`col-suggest-${domain}-${col}`}
                             value={columnFilters[col] || ""}
                             onChange={(e) => {
                               setOffset(0);
                               setColumnFilters((prev) => ({ ...prev, [col]: e.target.value }));
                             }}
                           />
+                          {(columnSuggestions[col]?.length ?? 0) > 0 && (
+                            <datalist id={`col-suggest-${domain}-${col}`}>
+                              {columnSuggestions[col].map((v) => (
+                                <option key={v} value={v} />
+                              ))}
+                            </datalist>
+                          )}
                         </TableHead>
                       ))}
                     </TableRow>
