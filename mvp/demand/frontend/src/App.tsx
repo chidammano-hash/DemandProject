@@ -1124,16 +1124,16 @@ export default function App() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <CardTitle className="text-base">Data Explorer</CardTitle>
-                <CardDescription>Browse dimension tables</CardDescription>
+                <CardDescription>Browse all tables</CardDescription>
               </div>
               <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Dimension
+                Table
                 <select
                   className="block h-9 w-[180px] rounded-md border border-input bg-background px-3 text-sm"
                   value={domain}
                   onChange={(e) => setDomain(e.target.value)}
                 >
-                  {DIMENSION_DOMAINS.filter((d) => !ANALYTICS_TAB_DOMAINS.has(d)).map((d) => {
+                  {DIMENSION_DOMAINS.map((d) => {
                     const el = ELEMENT_CONFIG[d];
                     return (
                       <option key={d} value={d}>{el?.name || titleCase(d)}</option>
