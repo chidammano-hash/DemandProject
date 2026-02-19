@@ -107,6 +107,14 @@ Analytics behavior:
 - Trend chart supports multiple measures using `Trend Measures` checkboxes
 - Forecast domain includes a **Model selector** to filter analytics by `model_id`
 
+Data Explorer (feature16):
+- Column-level filters with two modes: plain text for substring search (`ILIKE`), prefix `=` for exact match
+- Column-level typeahead suggestions (text columns only) — dropdown shows matching values as you type
+- Type-aware SQL filtering avoids `::text` casts to leverage B-tree and GIN trigram indexes
+- Approximate row count badge (`100,000+`) for filtered queries on large tables (66M+ rows)
+- Chemistry-themed loading overlay: periodic table element tile with pulse-glow animation over frosted glass backdrop
+- GIN trigram indexes on fact table text columns — apply once via `make db-apply-sql`
+
 Chatbot:
 - Collapsible chat panel below the analytics grid
 - Ask questions in plain English (e.g., "What's the accuracy for item 100320?")
@@ -228,4 +236,4 @@ make cluster-all  # Full pipeline: features -> train -> label -> update
 - Clustering config: `mvp/demand/config/clustering_config.yaml`
 - Competition config: `mvp/demand/config/model_competition.yaml`
 - DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views)
-- Design specs: `docs/design-specs/` (feature1–feature15)
+- Design specs: `docs/design-specs/` (feature1–feature16)

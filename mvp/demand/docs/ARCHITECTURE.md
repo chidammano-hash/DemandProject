@@ -69,14 +69,14 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - Execution-lag predictions loaded into `fact_external_forecast_monthly` via COPY + upsert
    - All-lag (0–4) predictions archived in `backtest_lag_archive` for accuracy at any horizon
    - MLflow experiment tracking (`demand_backtest`)
-11. CatBoost backtesting:
+10. CatBoost backtesting:
    - Same expanding window framework as LGBM (10 timeframes A–J) with CatBoost regressors
    - Global strategy (`catboost_global`) and per-cluster strategy (`catboost_cluster`)
    - Native categorical feature handling via ordered target encoding (no one-hot needed)
    - Same feature engineering, lag strategy, and output format as LGBM
    - GPU support via `task_type="GPU"`; auto-detected at runtime
    - MLflow experiment tracking (`demand_backtest`)
-12. XGBoost backtesting:
+11. XGBoost backtesting:
    - Same expanding window framework as LGBM (10 timeframes A–J) with XGBoost regressors
    - Global strategy (`xgboost_global`) and per-cluster strategy (`xgboost_cluster`)
    - Native categorical support via `enable_categorical=True` with `tree_method="hist"`
@@ -84,14 +84,14 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - Same feature engineering, lag strategy, and output format as LGBM
    - GPU support via `device="cuda"`; auto-detected at runtime
    - MLflow experiment tracking (`demand_backtest`)
-13. Transfer learning backtesting:
+12. Transfer learning backtesting:
    - All three frameworks (LGBM, CatBoost, XGBoost) support `--cluster-strategy transfer`
    - Phase 1: Train base model on ALL data, excluding `ml_cluster` from features
    - Phase 2: Per-cluster fine-tune via warm-start (LightGBM `init_model`, CatBoost `init_model`, XGBoost `xgb_model`)
    - Clusters < `transfer_min_rows` (default 20) or unassigned DFUs fallback to base model predictions
    - Model IDs: `lgbm_transfer`, `catboost_transfer`, `xgboost_transfer`
    - MLflow experiment tracking (`demand_backtest`)
-10. Multi-dimensional accuracy slicing:
+13. Multi-dimensional accuracy slicing:
    - Pre-aggregated `agg_accuracy_by_dim` view: (model_id, lag, month, cluster, supplier, abc_vol, region, brand) grain
    - Pre-aggregated `agg_accuracy_lag_archive` view: same grain for archive table + timeframe
    - `/forecast/accuracy/slice` endpoint: compare WAPE, Accuracy %, Bias across models by any DFU attribute
@@ -110,6 +110,13 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - API endpoints: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
    - UI: Champion Selection panel in Accuracy tab with model checkboxes, metric/lag selectors, champion + ceiling KPI cards, gap indicator, and dual model wins bar charts
    - Summary saved to `data/champion/champion_summary.json`
+15. Data Explorer performance & UX (feature16):
+   - Type-aware SQL filtering: `_col_type()` dispatches to native-type clauses instead of universal `::text` casts
+   - GIN trigram indexes (`gin_trgm_ops`) on fact table text columns (model_id, dmdunit, loc, dmdgroup) for indexed `ILIKE` substring search
+   - Capped COUNT: `pg_class.reltuples` for unfiltered; `LIMIT 100001` subquery for filtered large tables; `total_approximate` flag in response
+   - Column-level typeahead suggestions: `/domains/{domain}/suggest` reused per column header with native HTML `<datalist>`
+   - Chemistry-themed loading overlay: periodic table element tile with `pulse-glow` animation, frosted glass backdrop
+   - Debounce stability: `useDebounce` uses `JSON.stringify` deep comparison for object values to prevent re-render loops
 
 ## Additional tables
 1. `chat_embeddings` — pgvector table storing schema metadata embeddings (1536-dim) for NL query context retrieval
@@ -149,22 +156,22 @@ Performance impact: aggregate queries (cluster-level, supplier-level) drop from 
    - Outputs two CSVs: execution-lag only (main table) + all lags 0–4 (archive)
    - Deduplication across timeframes (latest timeframe wins)
    - MLflow logging to `demand_backtest` experiment
-7. **CatBoost Backtest** (`run_backtest_catboost.py`):
+6. **CatBoost Backtest** (`run_backtest_catboost.py`):
    - Same expanding window framework as LGBM
    - CatBoost regressors with native categorical support (ordered target encoding)
    - Global (`catboost_global`) and per-cluster (`catboost_cluster`) strategies
    - Same output format: two CSVs compatible with shared loader
-8. **XGBoost Backtest** (`run_backtest_xgboost.py`):
+7. **XGBoost Backtest** (`run_backtest_xgboost.py`):
    - Same expanding window framework as LGBM
    - XGBoost regressors with histogram-based tree method and native categorical support
    - Global (`xgboost_global`) and per-cluster (`xgboost_cluster`) strategies
    - Same output format: two CSVs compatible with shared loader
-9. **Backtest Loader** (`load_backtest_forecasts.py`):
+8. **Backtest Loader** (`load_backtest_forecasts.py`):
    - Loads execution-lag rows into `fact_external_forecast_monthly` via COPY + staging + upsert
    - Loads all-lag rows into `backtest_lag_archive` via same pattern
    - `--replace` scoped to `model_id` in CSV (safe for multi-model coexistence)
    - Refreshes `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` materialized views
-10. **Champion Selection** (`run_champion_selection.py`):
+9. **Champion Selection** (`run_champion_selection.py`):
    - Evaluates all competing models per DFU using WAPE (industry-standard Forecast Value Added)
    - Selects best model per DFU: `ROW_NUMBER() OVER (PARTITION BY dmdunit, dmdgroup, loc ORDER BY wape ASC)`
    - Bulk inserts champion rows via temp table + COPY + INSERT...SELECT with `model_id='champion'`
