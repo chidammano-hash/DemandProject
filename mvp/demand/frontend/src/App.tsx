@@ -1983,8 +1983,15 @@ export default function App() {
               </CardHeader>
               <CardContent className="h-[320px] pt-2">
                 {isTrendBusy ? (
-                  <div className="flex h-full items-center justify-center text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                  <div className="flex h-full items-center justify-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="flex flex-col items-center justify-center rounded-lg border-2 border-indigo-300 bg-indigo-50 px-4 py-2 shadow-md animate-pulse-glow">
+                        <span className="text-[9px] leading-none self-start font-mono text-indigo-500 opacity-70">{ELEMENT_CONFIG[domain]?.number ?? 0}</span>
+                        <span className="text-lg font-bold leading-tight font-mono text-indigo-900">{ELEMENT_CONFIG[domain]?.symbol ?? "Ld"}</span>
+                        <span className="text-[9px] leading-none text-indigo-600">Loading</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground">Computing trends...</span>
+                    </div>
                   </div>
                 ) : !activeDateField ? (
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No date field configured for this domain.</div>
@@ -2121,64 +2128,73 @@ export default function App() {
           </CardHeader>
 
           <CardContent>
-            <div className="max-h-[680px] overflow-x-scroll overflow-y-auto rounded-md border pb-2 [scrollbar-gutter:stable]">
-              <Table style={{ minWidth: `${Math.max(visibleCols.length * 260, 1800)}px` }}>
-                <TableHeader className="sticky top-0 z-20 bg-muted/80 backdrop-blur">
-                  <TableRow>
-                    {visibleCols.map((col) => (
-                      <TableHead key={col} className="min-w-[180px] bg-muted/70 align-top">
-                        <Button
-                          variant={sortBy === col ? "secondary" : "ghost"}
-                          size="sm"
-                          className="mb-1 h-7 w-full justify-between px-2"
-                          onClick={() => toggleSort(col)}
-                        >
-                          <span>{titleCase(col)}</span>
-                          {sortBy === col ? (
-                            sortDir === "asc" ? <ArrowUpWideNarrow className="h-3.5 w-3.5" /> : <ArrowDownWideNarrow className="h-3.5 w-3.5" />
-                          ) : (
-                            <ChevronsUpDown className="h-3.5 w-3.5" />
-                          )}
-                        </Button>
-                        <Input
-                          className="h-7 text-xs"
-                          placeholder="Filter (=exact)"
-                          value={columnFilters[col] || ""}
-                          onChange={(e) => {
-                            setOffset(0);
-                            setColumnFilters((prev) => ({ ...prev, [col]: e.target.value }));
-                          }}
-                        />
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loadingTable ? (
+            <div className="relative">
+              {/* Chemistry-themed loading overlay */}
+              {loadingTable && (
+                <div className="absolute inset-0 z-30 flex items-center justify-center rounded-md bg-background/70 backdrop-blur-[1px]">
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-indigo-300 bg-indigo-50 px-5 py-2.5 shadow-lg animate-pulse-glow">
+                      <span className="text-[10px] leading-none self-start font-mono text-indigo-500 opacity-70">{ELEMENT_CONFIG[domain]?.number ?? 0}</span>
+                      <span className="text-2xl font-bold leading-tight font-mono text-indigo-900">{ELEMENT_CONFIG[domain]?.symbol ?? "Ld"}</span>
+                      <span className="text-[10px] leading-none text-indigo-600">Loading</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">Querying {titleCase(domain)}...</span>
+                  </div>
+                </div>
+              )}
+              <div className="max-h-[680px] overflow-x-scroll overflow-y-auto rounded-md border pb-2 [scrollbar-gutter:stable]">
+                <Table style={{ minWidth: `${Math.max(visibleCols.length * 260, 1800)}px` }}>
+                  <TableHeader className="sticky top-0 z-20 bg-muted/80 backdrop-blur">
                     <TableRow>
-                      <TableCell colSpan={Math.max(visibleCols.length, 1)} className="h-24 text-center text-muted-foreground">
-                        <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                      </TableCell>
+                      {visibleCols.map((col) => (
+                        <TableHead key={col} className="min-w-[180px] bg-muted/70 align-top">
+                          <Button
+                            variant={sortBy === col ? "secondary" : "ghost"}
+                            size="sm"
+                            className="mb-1 h-7 w-full justify-between px-2"
+                            onClick={() => toggleSort(col)}
+                          >
+                            <span>{titleCase(col)}</span>
+                            {sortBy === col ? (
+                              sortDir === "asc" ? <ArrowUpWideNarrow className="h-3.5 w-3.5" /> : <ArrowDownWideNarrow className="h-3.5 w-3.5" />
+                            ) : (
+                              <ChevronsUpDown className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                          <Input
+                            className="h-7 text-xs"
+                            placeholder="Filter (=exact)"
+                            value={columnFilters[col] || ""}
+                            onChange={(e) => {
+                              setOffset(0);
+                              setColumnFilters((prev) => ({ ...prev, [col]: e.target.value }));
+                            }}
+                          />
+                        </TableHead>
+                      ))}
                     </TableRow>
-                  ) : rows.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={Math.max(visibleCols.length, 1)} className="h-24 text-center text-muted-foreground">
-                        No records
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    rows.map((row, idx) => (
-                      <TableRow key={`row-${offset + idx}`}>
-                        {visibleCols.map((col) => (
-                          <TableCell key={`${offset + idx}-${col}`} className="whitespace-nowrap">
-                            {formatCell(row[col])}
-                          </TableCell>
-                        ))}
+                  </TableHeader>
+                  <TableBody>
+                    {rows.length === 0 && !loadingTable ? (
+                      <TableRow>
+                        <TableCell colSpan={Math.max(visibleCols.length, 1)} className="h-24 text-center text-muted-foreground">
+                          No records
+                        </TableCell>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                    ) : (
+                      rows.map((row, idx) => (
+                        <TableRow key={`row-${offset + idx}`}>
+                          {visibleCols.map((col) => (
+                            <TableCell key={`${offset + idx}-${col}`} className="whitespace-nowrap">
+                              {formatCell(row[col])}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
 
             <div className="mt-3 flex items-center justify-between gap-2 text-sm">
