@@ -897,6 +897,251 @@ def forecast_accuracy_lag_curve(
     }
 
 
+# ---------------------------------------------------------------------------
+# Champion / Model Competition endpoints (feature15)
+# ---------------------------------------------------------------------------
+
+_COMPETITION_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "config", "model_competition.yaml",
+)
+
+_CHAMPION_SUMMARY_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "champion", "champion_summary.json",
+)
+
+
+class CompetitionConfigUpdate(BaseModel):
+    metric: str = "wape"
+    lag: str = "execution"
+    min_dfu_rows: int = 3
+    champion_model_id: str = "champion"
+    models: list[str]
+
+
+@app.get("/competition/config")
+def get_competition_config():
+    """Return current model competition config + available models in DB."""
+    import yaml
+
+    if not os.path.exists(_COMPETITION_CONFIG_PATH):
+        raise HTTPException(404, "Competition config not found")
+    with open(_COMPETITION_CONFIG_PATH) as f:
+        raw = yaml.safe_load(f)
+    cfg = raw.get("competition", {})
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT model_id FROM fact_external_forecast_monthly ORDER BY 1"
+        )
+        available = [r[0] for r in cur.fetchall() if r[0]]
+
+    return {"config": cfg, "available_models": available}
+
+
+@app.put("/competition/config")
+def update_competition_config(body: CompetitionConfigUpdate):
+    """Update model competition config (writes YAML to disk)."""
+    import yaml
+
+    if body.metric not in ("wape", "accuracy_pct"):
+        raise HTTPException(422, "metric must be 'wape' or 'accuracy_pct'")
+    valid_lags = {"execution", "0", "1", "2", "3", "4"}
+    if body.lag not in valid_lags:
+        raise HTTPException(422, f"lag must be one of: {sorted(valid_lags)}")
+    if len(body.models) < 2:
+        raise HTTPException(422, "At least 2 models required for competition")
+
+    cfg = {
+        "competition": {
+            "name": "default",
+            "metric": body.metric,
+            "lag": body.lag,
+            "min_dfu_rows": body.min_dfu_rows,
+            "champion_model_id": body.champion_model_id,
+            "models": body.models,
+        }
+    }
+    os.makedirs(os.path.dirname(_COMPETITION_CONFIG_PATH), exist_ok=True)
+    with open(_COMPETITION_CONFIG_PATH, "w") as f:
+        yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
+
+    return {"status": "ok", "config": cfg["competition"]}
+
+
+@app.post("/competition/run")
+def run_competition():
+    """Execute champion model selection and return summary."""
+    import io
+    import yaml
+    from datetime import datetime, timezone
+
+    # 1. Load config
+    if not os.path.exists(_COMPETITION_CONFIG_PATH):
+        raise HTTPException(404, "Competition config not found")
+    with open(_COMPETITION_CONFIG_PATH) as f:
+        raw = yaml.safe_load(f)
+    cfg = raw.get("competition", {})
+
+    models = cfg.get("models", [])
+    metric = cfg.get("metric", "wape")
+    lag_mode = str(cfg.get("lag", "execution"))
+    min_rows = int(cfg.get("min_dfu_rows", 3))
+    champion_id = cfg.get("champion_model_id", "champion")
+
+    if len(models) < 2:
+        raise HTTPException(422, "At least 2 models required for competition")
+
+    placeholders = ",".join(["%s"] * len(models))
+    params: list[Any] = list(models)
+
+    if lag_mode == "execution":
+        lag_cond = "lag::text = execution_lag::text"
+    else:
+        lag_cond = "lag = %s"
+        params.append(int(lag_mode))
+
+    # 2. Compute DFU-level winners
+    winner_sql = f"""
+    WITH dfu_model_wape AS (
+        SELECT
+            dmdunit, dmdgroup, loc, model_id,
+            SUM(ABS(basefcst_pref - tothist_dmd))
+                / NULLIF(ABS(SUM(tothist_dmd)), 0) AS wape,
+            COUNT(*) AS n_rows
+        FROM fact_external_forecast_monthly
+        WHERE model_id IN ({placeholders})
+          AND {lag_cond}
+          AND basefcst_pref IS NOT NULL
+          AND tothist_dmd IS NOT NULL
+        GROUP BY dmdunit, dmdgroup, loc, model_id
+        HAVING COUNT(*) >= %s
+    ),
+    ranked AS (
+        SELECT *,
+            ROW_NUMBER() OVER (
+                PARTITION BY dmdunit, dmdgroup, loc
+                ORDER BY wape ASC NULLS LAST
+            ) AS rn
+        FROM dfu_model_wape
+        WHERE wape IS NOT NULL
+    )
+    SELECT dmdunit, dmdgroup, loc, model_id, wape, n_rows
+    FROM ranked
+    WHERE rn = 1
+    ORDER BY dmdunit, dmdgroup, loc
+    """
+    params.append(min_rows)
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(winner_sql, params)
+        winners = cur.fetchall()
+
+    if not winners:
+        raise HTTPException(404, "No qualifying DFUs found with current config")
+
+    # 3. Bulk insert champion rows
+    with get_conn() as conn, conn.cursor() as cur:
+        # Delete old champion rows
+        cur.execute(
+            "DELETE FROM fact_external_forecast_monthly WHERE model_id = %s",
+            (champion_id,),
+        )
+
+        # Temp table with winners
+        cur.execute("""
+            CREATE TEMP TABLE _champion_winners (
+                dmdunit TEXT NOT NULL,
+                dmdgroup TEXT NOT NULL,
+                loc TEXT NOT NULL,
+                winning_model_id TEXT NOT NULL
+            ) ON COMMIT DROP
+        """)
+
+        buf = io.StringIO()
+        for dmdunit, dmdgroup, loc, model_id, _wape, _n in winners:
+            buf.write(f"{dmdunit}\t{dmdgroup}\t{loc}\t{model_id}\n")
+        buf.seek(0)
+        with cur.copy("COPY _champion_winners FROM STDIN") as copy:
+            copy.write(buf.read())
+
+        # Bulk INSERT ... SELECT
+        cur.execute(
+            """
+            INSERT INTO fact_external_forecast_monthly
+                (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+                 lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+            SELECT
+                f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
+                f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
+                %s
+            FROM fact_external_forecast_monthly f
+            INNER JOIN _champion_winners w
+                ON f.dmdunit = w.dmdunit
+               AND f.dmdgroup = w.dmdgroup
+               AND f.loc = w.loc
+               AND f.model_id = w.winning_model_id
+            """,
+            (champion_id,),
+        )
+        inserted = cur.rowcount
+        conn.commit()
+
+    # 4. Refresh materialized views
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SET maintenance_work_mem = '512MB'")
+        cur.execute("REFRESH MATERIALIZED VIEW agg_forecast_monthly")
+        cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
+        conn.commit()
+
+    # 5. Build summary
+    model_wins: dict[str, int] = {}
+    total_wape_num = 0.0
+    total_wape_denom = 0.0
+    for _u, _g, _l, mid, wape, n_rows in winners:
+        model_wins[mid] = model_wins.get(mid, 0) + 1
+        if wape is not None:
+            total_wape_num += wape * n_rows
+            total_wape_denom += n_rows
+
+    overall_wape = (total_wape_num / total_wape_denom * 100) if total_wape_denom else None
+    overall_acc = (100.0 - overall_wape) if overall_wape is not None else None
+
+    summary = {
+        "config": {
+            "metric": metric,
+            "lag": lag_mode,
+            "min_dfu_rows": min_rows,
+            "champion_model_id": champion_id,
+            "models": models,
+        },
+        "total_dfus": len(winners),
+        "total_champion_rows": inserted,
+        "model_wins": dict(sorted(model_wins.items(), key=lambda x: -x[1])),
+        "overall_champion_wape": round(overall_wape, 4) if overall_wape is not None else None,
+        "overall_champion_accuracy_pct": round(overall_acc, 4) if overall_acc is not None else None,
+        "run_ts": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Save summary to disk
+    summary_dir = os.path.dirname(_CHAMPION_SUMMARY_PATH)
+    os.makedirs(summary_dir, exist_ok=True)
+    with open(_CHAMPION_SUMMARY_PATH, "w") as f:
+        json.dump(summary, f, indent=2)
+
+    return summary
+
+
+@app.get("/competition/summary")
+def get_competition_summary():
+    """Return the last champion selection summary, if available."""
+    if not os.path.exists(_CHAMPION_SUMMARY_PATH):
+        return {"status": "not_run", "summary": None}
+    with open(_CHAMPION_SUMMARY_PATH) as f:
+        return {"status": "ok", "summary": json.load(f)}
+
+
 @app.get("/domains/dfu/clusters")
 def dfu_clusters(source: str = Query(default="ml", regex="^(ml|source)$")):
     """Get cluster summary statistics for DFU clustering.

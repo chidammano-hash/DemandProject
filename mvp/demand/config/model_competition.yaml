@@ -1,0 +1,17 @@
+competition:
+  name: "default"
+  metric: "wape"                # wape (lowest wins) or accuracy_pct (highest wins)
+  lag: "execution"              # "execution" (per-DFU execution lag) or 0, 1, 2, 3, 4
+  min_dfu_rows: 3               # minimum forecast rows per DFU to qualify
+  champion_model_id: "champion" # model_id written for the composite champion forecast
+  models:
+    - external
+    - lgbm_global
+    - lgbm_cluster
+    - lgbm_transfer
+    - catboost_global
+    - catboost_cluster
+    - catboost_transfer
+    - xgboost_global
+    - xgboost_cluster
+    - xgboost_transfer

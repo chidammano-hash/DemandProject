@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ArrowDownWideNarrow, ArrowUpWideNarrow, ChartColumn, ChevronsUpDown, Loader2, MessageSquare, RefreshCcw, Send } from "lucide-react";
+import { ArrowDownWideNarrow, ArrowUpWideNarrow, ChartColumn, ChevronsUpDown, Loader2, MessageSquare, RefreshCcw, Send, Trophy } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -325,6 +325,13 @@ export default function App() {
   const [sliceKpis, setSliceKpis] = useState<string[]>(["accuracy_pct", "wape", "bias"]);
   const [lagCurveMetric, setLagCurveMetric] = useState("accuracy_pct");
   const [sliceMonths, setSliceMonths] = useState(12); // 1-12 month rolling window
+
+  // Champion / model competition state (feature15)
+  const [competitionConfig, setCompetitionConfig] = useState<{ metric: string; lag: string; min_dfu_rows: number; champion_model_id: string; models: string[] } | null>(null);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [championSummary, setChampionSummary] = useState<{ total_dfus: number; total_champion_rows: number; model_wins: Record<string, number>; overall_champion_wape: number | null; overall_champion_accuracy_pct: number | null; run_ts: string } | null>(null);
+  const [runningCompetition, setRunningCompetition] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
 
   const visibleCols = useMemo(() => {
     if (!meta) {
@@ -948,6 +955,21 @@ export default function App() {
     return () => { cancelled = true; };
   }, [activeTab, sliceGroupBy, sliceLag, sliceModels, sliceMonths]);
 
+  // Fetch competition config + summary when on the accuracy tab (feature15)
+  useEffect(() => {
+    if (activeTab !== "accuracy") return;
+    Promise.all([
+      fetch("/competition/config").then((r) => r.ok ? r.json() : null),
+      fetch("/competition/summary").then((r) => r.ok ? r.json() : null),
+    ]).then(([cfgPayload, sumPayload]) => {
+      if (cfgPayload?.config) {
+        setCompetitionConfig(cfgPayload.config);
+        setAvailableModels(cfgPayload.available_models || []);
+      }
+      if (sumPayload?.summary) setChampionSummary(sumPayload.summary);
+    }).catch(() => {/* ignore */});
+  }, [activeTab]);
+
   return (
     <main className="mx-auto w-full max-w-[1800px] min-w-0 overflow-x-hidden p-4 md:p-6">
       <section className="animate-fade-in rounded-xl border border-white/20 bg-gradient-to-r from-slate-900/95 via-indigo-950/90 to-slate-800/90 p-4 text-white shadow-xl">
@@ -1393,6 +1415,192 @@ export default function App() {
                   </div>
                 );
               })() : null}
+            </CardContent>
+          </Card>
+
+          {/* Champion Selection panel (feature15) */}
+          <Card className="animate-fade-in mt-4">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Trophy className="h-5 w-5" />
+                <CardTitle className="text-base">Champion Selection</CardTitle>
+              </div>
+              <CardDescription>Pick the best model per DFU based on forecast accuracy. Configure which models compete, then run the selection.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {competitionConfig ? (
+                <>
+                  <div className="space-y-3">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Competing Models</span>
+                    <div className="flex flex-wrap gap-3">
+                      {availableModels.filter((m) => m !== competitionConfig.champion_model_id).map((m) => {
+                        const checked = competitionConfig.models.includes(m);
+                        const isLast = competitionConfig.models.length <= 2 && checked;
+                        return (
+                          <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5 rounded border-input accent-indigo-700"
+                              checked={checked}
+                              disabled={isLast || runningCompetition}
+                              onChange={() => {
+                                setCompetitionConfig((prev) => {
+                                  if (!prev) return prev;
+                                  const next = checked
+                                    ? prev.models.filter((x) => x !== m)
+                                    : [...prev.models, m];
+                                  return { ...prev, models: next };
+                                });
+                              }}
+                            />
+                            <span className="font-mono text-xs">{m}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-end gap-3">
+                    <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Metric
+                      <select
+                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                        value={competitionConfig.metric}
+                        onChange={(e) => setCompetitionConfig((prev) => prev ? { ...prev, metric: e.target.value } : prev)}
+                        disabled={runningCompetition}
+                      >
+                        <option value="wape">WAPE (Lowest Wins)</option>
+                        <option value="accuracy_pct">Accuracy % (Highest Wins)</option>
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Lag
+                      <select
+                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                        value={competitionConfig.lag}
+                        onChange={(e) => setCompetitionConfig((prev) => prev ? { ...prev, lag: e.target.value } : prev)}
+                        disabled={runningCompetition}
+                      >
+                        <option value="execution">Execution Lag (per DFU)</option>
+                        <option value="0">Lag 0 (same month)</option>
+                        <option value="1">Lag 1</option>
+                        <option value="2">Lag 2</option>
+                        <option value="3">Lag 3</option>
+                        <option value="4">Lag 4</option>
+                      </select>
+                    </label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={savingConfig || runningCompetition}
+                      onClick={() => {
+                        setSavingConfig(true);
+                        fetch("/competition/config", {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify(competitionConfig),
+                        })
+                          .then((r) => { if (!r.ok) throw new Error("Save failed"); })
+                          .finally(() => setSavingConfig(false));
+                      }}
+                    >
+                      {savingConfig ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                      Save Config
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={runningCompetition || competitionConfig.models.length < 2}
+                      onClick={() => {
+                        setRunningCompetition(true);
+                        // Save config first, then run
+                        fetch("/competition/config", {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify(competitionConfig),
+                        })
+                          .then(() => fetch("/competition/run", { method: "POST" }))
+                          .then((r) => { if (!r.ok) throw new Error("Run failed"); return r.json(); })
+                          .then((summary) => {
+                            setChampionSummary(summary);
+                            // Re-fetch accuracy slice data (champion model now in DB)
+                            const sliceParams = new URLSearchParams({ group_by: sliceGroupBy, lag: String(sliceLag) });
+                            if (sliceModels.trim()) sliceParams.set("models", sliceModels.trim());
+                            fetch(`/forecast/accuracy/slice?${sliceParams}`)
+                              .then((r) => r.json())
+                              .then((p) => setSliceData(p.rows || []));
+                          })
+                          .catch(() => {/* ignore */})
+                          .finally(() => setRunningCompetition(false));
+                      }}
+                    >
+                      {runningCompetition ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Trophy className="mr-1 h-3 w-3" />}
+                      Run Competition
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">Loading competition config...</p>
+              )}
+
+              {/* Results summary */}
+              {championSummary ? (
+                <div className="space-y-3 rounded-lg border bg-muted/40 p-4">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Results</span>
+                    <span className="text-xs text-muted-foreground">
+                      Last run: {new Date(championSummary.run_ts).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-4 text-sm">
+                    <div className="rounded-md border bg-card px-3 py-2">
+                      <p className="text-xs text-muted-foreground">DFUs Evaluated</p>
+                      <p className="text-lg font-bold tabular-nums">{championSummary.total_dfus.toLocaleString()}</p>
+                    </div>
+                    <div className="rounded-md border bg-card px-3 py-2">
+                      <p className="text-xs text-muted-foreground">Champion Accuracy</p>
+                      <p className="text-lg font-bold tabular-nums text-indigo-700">
+                        {championSummary.overall_champion_accuracy_pct != null
+                          ? `${championSummary.overall_champion_accuracy_pct.toFixed(2)}%`
+                          : "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-md border bg-card px-3 py-2">
+                      <p className="text-xs text-muted-foreground">Champion WAPE</p>
+                      <p className="text-lg font-bold tabular-nums">
+                        {championSummary.overall_champion_wape != null
+                          ? `${championSummary.overall_champion_wape.toFixed(2)}%`
+                          : "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-md border bg-card px-3 py-2">
+                      <p className="text-xs text-muted-foreground">Champion Rows</p>
+                      <p className="text-lg font-bold tabular-nums">{championSummary.total_champion_rows.toLocaleString()}</p>
+                    </div>
+                  </div>
+
+                  {/* Model wins bar chart */}
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Model Wins (DFUs won per model)</p>
+                    {Object.entries(championSummary.model_wins).map(([model, wins]) => {
+                      const pct = championSummary.total_dfus > 0 ? (wins / championSummary.total_dfus) * 100 : 0;
+                      return (
+                        <div key={model} className="flex items-center gap-2 text-sm">
+                          <span className="w-40 truncate font-mono text-xs text-right">{model}</span>
+                          <div className="flex-1 h-5 rounded bg-muted overflow-hidden">
+                            <div
+                              className="h-full rounded bg-indigo-500 transition-all"
+                              style={{ width: `${Math.max(pct, 1)}%` }}
+                            />
+                          </div>
+                          <span className="w-24 text-xs tabular-nums text-muted-foreground">
+                            {wins.toLocaleString()} ({pct.toFixed(1)}%)
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </section>

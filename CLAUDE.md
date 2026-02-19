@@ -48,6 +48,8 @@
 | `mvp/demand/scripts/label_clusters.py` | Assign business labels to clusters based on feature centroids |
 | `mvp/demand/scripts/update_cluster_assignments.py` | Write cluster labels to `dim_dfu.cluster_assignment` in Postgres |
 | `mvp/demand/config/clustering_config.yaml` | Clustering hyperparameters and labeling thresholds |
+| `mvp/demand/config/model_competition.yaml` | Champion model selection: competing models, metric, lag |
+| `mvp/demand/scripts/run_champion_selection.py` | Per-DFU champion selection: best-of-models via WAPE |
 | `mvp/demand/scripts/run_backtest.py` | LGBM backtest: expanding-window training + prediction |
 | `mvp/demand/scripts/run_backtest_catboost.py` | CatBoost backtest: expanding-window training + prediction |
 | `mvp/demand/scripts/run_backtest_xgboost.py` | XGBoost backtest: expanding-window training + prediction |
@@ -115,6 +117,9 @@ make backtest-xgboost-transfer # Run XGBoost transfer learning backtest
 # Backtest loading (shared across all models)
 make backtest-load          # Load backtest predictions into Postgres + refresh agg
 make backtest-all           # backtest-lgbm + backtest-load
+
+# Champion model selection
+make champion-select        # Run per-DFU champion selection (best-of-models via WAPE)
 ```
 
 ---
@@ -179,6 +184,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - Multi-metric trend charts (dual Y-axis: volume left, accuracy % right)
 - Item/Location filter with typeahead suggestions
 - Postgres vs Iceberg latency benchmarking panel
+- Champion Selection panel: model competition config, run, and FVA model-wins visualization
 
 ---
 
@@ -194,6 +200,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Forecast model_id:** Identifies the forecasting algorithm; default `'external'` for source-system forecasts. `UNIQUE(forecast_ck, model_id)` constraint prevents duplicates within a model. Not part of the business key.
 - **Chat endpoint:** `POST /chat` — OpenAI-powered NL→SQL with pgvector context retrieval. Read-only execution with 5s timeout and 500-row limit. Requires `OPENAI_API_KEY` in `.env`.
 - **DFU clustering:** KMeans-based clustering pipeline groups DFUs by demand patterns. Feature engineering extracts time series, item, and DFU features. Cluster labels (e.g., `high_volume_steady`, `seasonal_medium_volume`) stored in `dim_dfu.cluster_assignment`. MLflow tracks experiments under `dfu_clustering`. Config in `config/clustering_config.yaml`.
+- **Champion model selection:** Per-DFU best-of-models via WAPE (Forecast Value Added). Config in `config/model_competition.yaml` controls competing models, metric, and lag. Champion rows stored as `model_id='champion'` in `fact_external_forecast_monthly`. UI panel in Accuracy tab for config editing and execution.
 
 ---
 
@@ -214,6 +221,7 @@ Located in `docs/design-specs/`:
 - `feature12.md` — CatBoost backtesting implementation
 - `feature13.md` — XGBoost backtesting implementation
 - `feature14.md` — Transfer learning backtest strategy
+- `feature15.md` — Champion model selection (best-of-models per DFU)
 
 ---
 

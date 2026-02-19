@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat generate-embeddings api ui-init ui normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-all refresh-agg-sales refresh-agg-forecast refresh-agg spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-load backtest-all accuracy-slice-refresh accuracy-slice-check
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat generate-embeddings api ui-init ui normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-all refresh-agg-sales refresh-agg-forecast refresh-agg spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-load backtest-all accuracy-slice-refresh accuracy-slice-check champion-select
 
 help:
 	@echo "Targets:"
@@ -51,6 +51,7 @@ help:
 	@echo "  backtest-all         - backtest-lgbm + backtest-load"
 	@echo "  accuracy-slice-refresh - refresh agg_accuracy_by_dim + agg_accuracy_lag_archive"
 	@echo "  accuracy-slice-check - curl accuracy slice + lag-curve endpoints"
+	@echo "  champion-select      - run champion model selection (best-of-models per DFU)"
 	@echo "  check-all            - run DB/API/Trino checks"
 
 init:
@@ -368,5 +369,8 @@ accuracy-slice-refresh:
 accuracy-slice-check:
 	curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=cluster_assignment" | python3 -m json.tool | head -60
 	curl -s "http://localhost:8000/forecast/accuracy/lag-curve" | python3 -m json.tool | head -40
+
+champion-select:
+	$(UV) python scripts/run_champion_selection.py --config config/model_competition.yaml
 
 check-all: check-db check-api trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast
