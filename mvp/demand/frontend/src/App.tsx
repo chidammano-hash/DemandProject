@@ -418,7 +418,7 @@ export default function App() {
       out[filterCol] = `=${selectedCluster.trim()}`;
     }
     return out;
-  }, [columnFilters, showFactFilters, itemFilter, locationFilter, itemField, locationField, domain, selectedModel, selectedCluster, clusterSource]);
+  }, [debouncedColumnFilters, showFactFilters, itemFilter, locationFilter, itemField, locationField, domain, selectedModel, selectedCluster, clusterSource]);
 
   useEffect(() => {
     let cancelled = false;
