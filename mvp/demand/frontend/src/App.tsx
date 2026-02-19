@@ -166,11 +166,16 @@ type LagCurvePayload = {
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState<T>(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // For objects (e.g. columnFilters record), compare by content instead of
+  // reference so that re-renders producing an identical object don't reset the
+  // debounce timer — which would prevent it from ever resolving.
+  const serialized = typeof value === "object" ? JSON.stringify(value) : undefined;
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setDebounced(value), delay);
     return () => { if (timer.current) clearTimeout(timer.current); };
-  }, [value, delay]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serialized ?? value, delay]);
   return debounced;
 }
 
@@ -871,13 +876,13 @@ export default function App() {
     const active = Object.entries(debouncedColumnFilters).filter(
       ([col, val]) => val.trim() !== "" && !val.startsWith("=") && textCols.has(col),
     );
-    // Clear suggestions for columns no longer being filtered
+    // Clear suggestions for columns no longer being filtered.
+    // Return prev reference unchanged when nothing is stale to avoid re-renders.
     setColumnSuggestions((prev) => {
+      const staleCols = Object.keys(prev).filter((col) => !debouncedColumnFilters[col]?.trim());
+      if (staleCols.length === 0) return prev;
       const next = { ...prev };
-      for (const col of Object.keys(next)) {
-        const cur = debouncedColumnFilters[col]?.trim();
-        if (!cur) delete next[col];
-      }
+      staleCols.forEach((col) => delete next[col]);
       return next;
     });
     if (active.length === 0) return;
