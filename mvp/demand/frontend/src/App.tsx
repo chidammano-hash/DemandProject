@@ -175,6 +175,8 @@ function useDebounce<T>(value: T, delay: number): T {
 
 const FALLBACK_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales", "forecast"];
 const ANALYTICS_ENABLED_DOMAINS = new Set(["sales", "forecast"]);
+const DIMENSION_DOMAINS = ["item", "location", "customer", "time"];
+const TAB_BAR_DOMAINS = ["dfu", "sales", "forecast"];
 const EXCLUDED_TREND_FIELDS = new Set(["type", "lag", "execution_lag"]);
 const FORECAST_ACCURACY_METRIC = "accuracy_pct";
 
@@ -188,14 +190,15 @@ const titleCase = (value: string): string =>
 const TREND_COLORS = ["#4f46e5", "#0d9488", "#d97706", "#7c3aed", "#dc2626", "#0284c7"];
 
 const ELEMENT_CONFIG: Record<string, { symbol: string; number: number; name: string; color: string; activeColor: string }> = {
-  item:     { symbol: "It", number: 1, name: "Item",     color: "bg-rose-100 text-rose-900 border-rose-300",       activeColor: "bg-rose-200 text-rose-950 border-rose-400" },
-  location: { symbol: "Lo", number: 2, name: "Location", color: "bg-rose-100 text-rose-900 border-rose-300",       activeColor: "bg-rose-200 text-rose-950 border-rose-400" },
-  customer: { symbol: "Cu", number: 3, name: "Customer", color: "bg-amber-100 text-amber-900 border-amber-300",   activeColor: "bg-amber-200 text-amber-950 border-amber-400" },
-  time:     { symbol: "Ti", number: 4, name: "Time",     color: "bg-amber-100 text-amber-900 border-amber-300",   activeColor: "bg-amber-200 text-amber-950 border-amber-400" },
-  dfu:      { symbol: "Df", number: 5, name: "DFU",      color: "bg-yellow-100 text-yellow-900 border-yellow-300", activeColor: "bg-yellow-200 text-yellow-950 border-yellow-400" },
-  sales:    { symbol: "Sa", number: 6, name: "Sales",    color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
-  forecast: { symbol: "Fc", number: 7, name: "Forecast", color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
-  accuracy: { symbol: "Ac", number: 8, name: "Accuracy", color: "bg-violet-100 text-violet-900 border-violet-300", activeColor: "bg-violet-200 text-violet-950 border-violet-400" },
+  explorer: { symbol: "Dx", number: 1, name: "Explorer", color: "bg-rose-100 text-rose-900 border-rose-300",       activeColor: "bg-rose-200 text-rose-950 border-rose-400" },
+  item:     { symbol: "It", number: 26, name: "Item",     color: "bg-rose-100 text-rose-900 border-rose-300",       activeColor: "bg-rose-200 text-rose-950 border-rose-400" },
+  location: { symbol: "Lo", number: 71, name: "Location", color: "bg-rose-100 text-rose-900 border-rose-300",       activeColor: "bg-rose-200 text-rose-950 border-rose-400" },
+  customer: { symbol: "Cu", number: 29, name: "Customer", color: "bg-amber-100 text-amber-900 border-amber-300",   activeColor: "bg-amber-200 text-amber-950 border-amber-400" },
+  time:     { symbol: "Ti", number: 22, name: "Time",     color: "bg-amber-100 text-amber-900 border-amber-300",   activeColor: "bg-amber-200 text-amber-950 border-amber-400" },
+  dfu:      { symbol: "Df", number: 2, name: "DFU",      color: "bg-yellow-100 text-yellow-900 border-yellow-300", activeColor: "bg-yellow-200 text-yellow-950 border-yellow-400" },
+  sales:    { symbol: "Sa", number: 3, name: "Sales",    color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
+  forecast: { symbol: "Fc", number: 4, name: "Forecast", color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
+  accuracy: { symbol: "Ac", number: 5, name: "Accuracy", color: "bg-violet-100 text-violet-900 border-violet-300", activeColor: "bg-violet-200 text-violet-950 border-violet-400" },
 };
 
 const ACCURACY_KPI_OPTIONS = [
@@ -257,6 +260,11 @@ function getInitialDomain(): string {
   return (queryDomain || "item").toLowerCase();
 }
 
+function getInitialTab(): string {
+  const d = getInitialDomain();
+  return DIMENSION_DOMAINS.includes(d) ? "explorer" : d;
+}
+
 function updateDomainPath(domain: string) {
     const normalized = domain.toLowerCase();
   const url = new URL(window.location.href);
@@ -267,7 +275,7 @@ function updateDomainPath(domain: string) {
 export default function App() {
   const [domains, setDomains] = useState<string[]>([]);
   const [domain, setDomain] = useState<string>(getInitialDomain);
-  const [activeTab, setActiveTab] = useState<string>(getInitialDomain);
+  const [activeTab, setActiveTab] = useState<string>(getInitialTab);
 
   const [meta, setMeta] = useState<DomainMeta | null>(null);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
@@ -978,7 +986,34 @@ export default function App() {
             <p className="text-sm text-indigo-100/90 md:text-base">Periodic Analytics for Demand Forecasting</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {domains.map((d) => {
+            {/* Data Explorer tab — consolidates item, location, customer, time */}
+            {(() => {
+              const el = ELEMENT_CONFIG["explorer"];
+              const isActive = activeTab === "explorer";
+              return (
+                <button
+                  key="explorer"
+                  className={cn(
+                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    isActive
+                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
+                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                  )}
+                  onClick={() => {
+                    setActiveTab("explorer");
+                    if (!DIMENSION_DOMAINS.includes(domain)) {
+                      setDomain("item");
+                    }
+                  }}
+                >
+                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
+                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
+                  <span className="text-[10px] leading-none">{el.name}</span>
+                </button>
+              );
+            })()}
+            {/* DFU, Sales, Forecast tabs */}
+            {TAB_BAR_DOMAINS.filter((d) => domains.includes(d)).map((d) => {
               const el = ELEMENT_CONFIG[d];
               const isActive = activeTab === d;
               return (
@@ -998,6 +1033,7 @@ export default function App() {
                 </button>
               );
             })}
+            {/* Accuracy tab */}
             {(() => {
               const el = ELEMENT_CONFIG["accuracy"];
               const isActive = activeTab === "accuracy";
@@ -1024,6 +1060,34 @@ export default function App() {
       {error ? (
         <Card className="mt-4 border-red-200 bg-red-50">
           <CardContent className="pt-4 text-sm text-red-700">{error}</CardContent>
+        </Card>
+      ) : null}
+
+      {activeTab === "explorer" ? (
+        <Card className="mt-4 animate-fade-in">
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">Data Explorer</CardTitle>
+                <CardDescription>Browse dimension tables</CardDescription>
+              </div>
+              <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Dimension
+                <select
+                  className="block h-9 w-[180px] rounded-md border border-input bg-background px-3 text-sm"
+                  value={domain}
+                  onChange={(e) => setDomain(e.target.value)}
+                >
+                  {DIMENSION_DOMAINS.map((d) => {
+                    const el = ELEMENT_CONFIG[d];
+                    return (
+                      <option key={d} value={d}>{el?.name || titleCase(d)}</option>
+                    );
+                  })}
+                </select>
+              </label>
+            </div>
+          </CardHeader>
         </Card>
       ) : null}
 
