@@ -52,17 +52,15 @@ competition:
   lag: "execution"            # "execution" (per-DFU) or 0, 1, 2, 3, 4
   min_dfu_rows: 3             # min forecast rows per DFU to qualify
   champion_model_id: "champion"
+  ceiling_model_id: "ceiling" # oracle ceiling (best model per DFU per month)
   models:
-    - external
     - lgbm_global
     - lgbm_cluster
     - lgbm_transfer
     - catboost_global
     - catboost_cluster
-    - catboost_transfer
     - xgboost_global
     - xgboost_cluster
-    - xgboost_transfer
 ```
 
 | Field | Description |
@@ -71,9 +69,12 @@ competition:
 | `lag` | `execution` uses each DFU's own execution lag; integers 0-4 for fixed horizon |
 | `min_dfu_rows` | Minimum forecast rows per DFU to qualify — prevents winning on 1 data point |
 | `champion_model_id` | The model_id used for champion rows (default: `champion`) |
+| `ceiling_model_id` | The model_id used for ceiling/oracle rows (default: `ceiling`) |
 | `models` | List of model_ids to compete; configurable from the UI |
 
 ## Selection Algorithm
+
+### Champion (DFU-level)
 
 DFU-level selection (industry standard, avoids per-month overfitting):
 
@@ -85,6 +86,22 @@ DFU-level selection (industry standard, avoids per-month overfitting):
 6. **Copy** all forecast rows from the winning model for each DFU, inserting with `model_id = 'champion'`
 
 The result: DFU A might use `lgbm_cluster`, DFU B might use `catboost_global`, etc.
+
+### Ceiling / Oracle (DFU × Month level)
+
+The ceiling model picks the best forecast **per DFU per month** — the theoretical upper bound of accuracy achievable with perfect foresight (if you always knew which model would be most accurate for every single month):
+
+1. **Group** all forecast rows by DFU + `startdate` (month) and `model_id`
+2. **Compute absolute error** per row: `ABS(basefcst_pref - tothist_dmd)`
+3. **Rank** models within each DFU-month by absolute error ascending
+4. **Select** the winner (rank = 1) per DFU-month
+5. **Copy** forecast rows from the per-month winner, inserting with `model_id = 'ceiling'`
+
+The ceiling is **not a deployable model** — it uses actuals retroactively (oracle/perfect foresight). It serves as a benchmark to quantify the gap between champion selection and the theoretical best. A small gap means champion selection is near-optimal; a large gap suggests room for improvement.
+
+### Data Leak Note
+
+Both champion and ceiling use actuals (`tothist_dmd`) retroactively. This is the standard **Forecast Value Added (FVA)** approach — a retrospective diagnostic tool, not a forward-looking predictor. The champion evaluates aggregate WAPE per DFU across all months; the ceiling evaluates per-row error per DFU-month.
 
 ## API Endpoints
 
@@ -106,11 +123,19 @@ The result: DFU A might use `lgbm_cluster`, DFU B might use `catboost_global`, e
     "lgbm_cluster": 1234,
     "catboost_global": 1100,
     "lgbm_global": 987,
-    "external": 876,
     ...
   },
   "overall_champion_wape": 28.5,
   "overall_champion_accuracy_pct": 71.5,
+  "total_ceiling_rows": 65000,
+  "ceiling_model_wins": {
+    "lgbm_cluster": 15000,
+    "catboost_global": 12000,
+    "xgboost_global": 11500,
+    ...
+  },
+  "overall_ceiling_wape": 18.2,
+  "overall_ceiling_accuracy_pct": 81.8,
   "run_ts": "2026-02-19T10:30:00+00:00"
 }
 ```
@@ -121,16 +146,23 @@ The result: DFU A might use `lgbm_cluster`, DFU B might use `catboost_global`, e
 
 Located below the Accuracy Comparison table in the Accuracy tab:
 
-1. **Model Checkboxes**: Toggle which models compete (excludes `champion` itself)
+1. **Model Checkboxes**: Toggle which models compete (excludes `champion` and `ceiling`)
 2. **Metric Selector**: WAPE (Lowest Wins) or Accuracy % (Highest Wins)
 3. **Lag Selector**: Execution Lag or fixed lag 0-4
 4. **Save Config**: Persists checkbox/metric/lag changes to YAML
-5. **Run Competition**: Executes champion selection (auto-saves config first)
-6. **Results Card**: Shows DFUs evaluated, champion accuracy/WAPE, and model wins bar chart
+5. **Run Competition**: Executes champion selection + ceiling computation (auto-saves config first)
+6. **Champion Results**: DFUs evaluated, champion accuracy/WAPE, champion rows count, and champion model wins bar chart (indigo)
+7. **Ceiling Results**: Ceiling accuracy/WAPE (emerald green), ceiling rows count, gap-to-ceiling indicator (amber, in percentage points), and ceiling model wins bar chart (emerald)
 
 ### Model Wins Visualization
 
-Horizontal bar chart showing how many DFUs each model won, sorted by win count descending. Each bar displays model name, DFU count, and percentage.
+Two horizontal bar charts:
+- **Champion Model Wins** (indigo): How many DFUs each model won overall. Sorted by win count descending.
+- **Ceiling Model Wins — Oracle** (emerald): How many DFU-months each model won (per-month best pick). Shows which models are most frequently the best at the monthly granularity.
+
+### Gap to Ceiling
+
+The "Gap to Ceiling" KPI card shows how many percentage points the champion accuracy is below the ceiling accuracy. A small gap means champion selection is near-optimal; a large gap suggests room for improvement (e.g., monthly model switching could help).
 
 ## CLI
 
@@ -157,12 +189,14 @@ uv run python scripts/run_champion_selection.py --config config/model_competitio
 
 | Decision | Why |
 |----------|-----|
-| DFU-level (not per-month) | Per-month overfits to noise; planners choose one method per product-location |
+| DFU-level champion (not per-month) | Per-month overfits to noise; planners choose one method per product-location |
+| Ceiling as separate oracle model | Provides theoretical upper bound; quantifies gap to perfect foresight |
 | WAPE as default metric | Volume-weighted, handles zero-demand months; industry standard |
-| Store as model_id='champion' | Reuses existing fact table + views; zero downstream changes |
+| Store as model_id='champion'/'ceiling' | Reuses existing fact table + views; zero downstream changes |
 | YAML config (not DB table) | Matches clustering config pattern; simple and git-trackable |
 | Synchronous API | SQL + bulk INSERT completes in <10s; no async complexity needed |
 | DELETE + INSERT | Idempotent full replace; consistent with backtest loading |
+| Both use actuals retroactively | Standard FVA diagnostic approach; neither is a forward predictor |
 
 ## Dependencies
 

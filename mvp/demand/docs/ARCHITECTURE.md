@@ -102,10 +102,13 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - Per-DFU best-model selection using Forecast Value Added (FVA) approach
    - WAPE-based DFU-level evaluation: `SUM(ABS(F-A)) / ABS(SUM(A))` per DFU per model
    - Champion composite stored as `model_id='champion'` in `fact_external_forecast_monthly` — auto-appears in all accuracy views
-   - YAML config (`config/model_competition.yaml`): competing models, metric (wape/accuracy_pct), lag mode, min DFU rows
-   - CLI: `make champion-select` runs standalone script
+   - Ceiling (oracle) model: per-DFU per-month best model selection — theoretical upper bound with perfect foresight
+   - Ceiling stored as `model_id='ceiling'` — provides accuracy benchmark alongside champion
+   - Gap-to-ceiling metric shows how far champion is from theoretical best (in percentage points)
+   - YAML config (`config/model_competition.yaml`): competing models, metric (wape/accuracy_pct), lag mode, min DFU rows, ceiling_model_id
+   - CLI: `make champion-select` runs both champion + ceiling
    - API endpoints: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
-   - UI: Champion Selection panel in Accuracy tab with model checkboxes, metric/lag selectors, and model wins bar chart
+   - UI: Champion Selection panel in Accuracy tab with model checkboxes, metric/lag selectors, champion + ceiling KPI cards, gap indicator, and dual model wins bar charts
    - Summary saved to `data/champion/champion_summary.json`
 
 ## Additional tables
@@ -165,7 +168,9 @@ Performance impact: aggregate queries (cluster-level, supplier-level) drop from 
    - Evaluates all competing models per DFU using WAPE (industry-standard Forecast Value Added)
    - Selects best model per DFU: `ROW_NUMBER() OVER (PARTITION BY dmdunit, dmdgroup, loc ORDER BY wape ASC)`
    - Bulk inserts champion rows via temp table + COPY + INSERT...SELECT with `model_id='champion'`
-   - Refreshes materialized views so champion auto-appears in all accuracy comparisons
+   - Also computes ceiling (oracle): best model per DFU per month via `ABS(basefcst_pref - tothist_dmd)` ranking
+   - Ceiling rows stored as `model_id='ceiling'` — theoretical upper bound with perfect foresight
+   - Refreshes materialized views so champion + ceiling auto-appear in all accuracy comparisons
    - Config-driven via `config/model_competition.yaml`; also callable via API
 
 ## How to add next dataset

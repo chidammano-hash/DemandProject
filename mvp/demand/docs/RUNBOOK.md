@@ -178,7 +178,7 @@ After loading backtest predictions for multiple models, run champion selection t
 make champion-select
 ```
 
-This reads `config/model_competition.yaml`, computes per-DFU WAPE for each competing model, picks the lowest-WAPE winner per DFU, and inserts champion forecast rows with `model_id='champion'`.
+This reads `config/model_competition.yaml`, computes per-DFU WAPE for each competing model, picks the lowest-WAPE winner per DFU, inserts champion forecast rows with `model_id='champion'`, and also computes the ceiling (oracle) model — the per-DFU per-month best pick stored as `model_id='ceiling'`.
 
 ### Via UI
 1. Open the Forecast domain in the UI.
@@ -187,8 +187,8 @@ This reads `config/model_competition.yaml`, computes per-DFU WAPE for each compe
 4. Check/uncheck models to include in the competition.
 5. Select metric (WAPE or Accuracy %) and lag mode (Execution Lag or fixed 0–4).
 6. Click **Save Config** to persist changes to YAML.
-7. Click **Run Competition** to execute champion selection.
-8. Results show: DFUs evaluated, champion accuracy/WAPE, and model wins breakdown.
+7. Click **Run Competition** to execute champion selection + ceiling computation.
+8. Results show: DFUs evaluated, champion accuracy/WAPE, ceiling accuracy/WAPE (oracle), gap-to-ceiling, and model wins breakdown for both champion and ceiling.
 
 ### Via API
 ```bash
@@ -209,9 +209,10 @@ curl http://localhost:8000/competition/summary
 
 ### Output
 - Champion rows appear in `fact_external_forecast_monthly` with `model_id='champion'`
-- Summary saved to `data/champion/champion_summary.json`
-- Materialized views refreshed automatically — champion appears in all accuracy comparisons
-- Running again is idempotent (old champion rows replaced)
+- Ceiling rows appear in `fact_external_forecast_monthly` with `model_id='ceiling'`
+- Summary saved to `data/champion/champion_summary.json` (includes both champion and ceiling metrics)
+- Materialized views refreshed automatically — champion + ceiling appear in all accuracy comparisons
+- Running again is idempotent (old champion and ceiling rows replaced)
 
 ### Config file
 `config/model_competition.yaml` controls which models compete, the selection metric, lag mode, and minimum DFU rows. Editable from the UI or directly on disk.

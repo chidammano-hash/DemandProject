@@ -172,9 +172,12 @@ Champion Model Selection (feature15):
 - Automatically selects the best-performing model per DFU using industry-standard Forecast Value Added (FVA)
 - Per-DFU WAPE evaluation: picks the lowest-WAPE model for each DFU (dmdunit + dmdgroup + loc)
 - Champion composite stored as `model_id='champion'` — auto-appears in all accuracy views
+- **Ceiling (oracle) model**: picks the best model per DFU **per month** — theoretical upper bound with perfect foresight
+- Ceiling stored as `model_id='ceiling'` — benchmarks how close champion gets to the theoretical best
+- Gap-to-ceiling metric in the UI shows improvement opportunity (in percentage points)
 - Configurable via YAML (`config/model_competition.yaml`) or UI panel in Accuracy tab
-- UI: model checkboxes, metric/lag selectors, Run Competition button, model wins bar chart
-- CLI: `make champion-select`
+- UI: model checkboxes, metric/lag selectors, Run Competition button, champion + ceiling KPI cards, gap indicator, dual model wins bar charts
+- CLI: `make champion-select` (runs both champion + ceiling)
 - API: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
 
 Benchmark Postgres vs Iceberg/Trino:

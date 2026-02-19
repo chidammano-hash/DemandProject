@@ -200,7 +200,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Forecast model_id:** Identifies the forecasting algorithm; default `'external'` for source-system forecasts. `UNIQUE(forecast_ck, model_id)` constraint prevents duplicates within a model. Not part of the business key.
 - **Chat endpoint:** `POST /chat` — OpenAI-powered NL→SQL with pgvector context retrieval. Read-only execution with 5s timeout and 500-row limit. Requires `OPENAI_API_KEY` in `.env`.
 - **DFU clustering:** KMeans-based clustering pipeline groups DFUs by demand patterns. Feature engineering extracts time series, item, and DFU features. Cluster labels (e.g., `high_volume_steady`, `seasonal_medium_volume`) stored in `dim_dfu.cluster_assignment`. MLflow tracks experiments under `dfu_clustering`. Config in `config/clustering_config.yaml`.
-- **Champion model selection:** Per-DFU best-of-models via WAPE (Forecast Value Added). Config in `config/model_competition.yaml` controls competing models, metric, and lag. Champion rows stored as `model_id='champion'` in `fact_external_forecast_monthly`. UI panel in Accuracy tab for config editing and execution.
+- **Champion model selection:** Per-DFU best-of-models via WAPE (Forecast Value Added). Config in `config/model_competition.yaml` controls competing models, metric, and lag. Champion rows stored as `model_id='champion'` in `fact_external_forecast_monthly`. Ceiling (oracle) model picks the best model per DFU per month — theoretical upper bound with perfect foresight, stored as `model_id='ceiling'`. UI panel in Accuracy tab shows champion + ceiling KPI cards, gap-to-ceiling indicator, and dual model wins bar charts.
 
 ---
 
