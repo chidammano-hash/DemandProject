@@ -175,8 +175,8 @@ function useDebounce<T>(value: T, delay: number): T {
 
 const FALLBACK_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales", "forecast"];
 const ANALYTICS_ENABLED_DOMAINS = new Set(["sales", "forecast"]);
-const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "dfu"];
-const TAB_BAR_DOMAINS = ["sales", "forecast"];
+const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales", "forecast"];
+const TAB_BAR_DOMAINS: string[] = [];
 const EXCLUDED_TREND_FIELDS = new Set(["type", "lag", "execution_lag"]);
 const FORECAST_ACCURACY_METRIC = "accuracy_pct";
 
@@ -261,8 +261,11 @@ function getInitialDomain(): string {
   return (queryDomain || "item").toLowerCase();
 }
 
+const ANALYTICS_TAB_DOMAINS = new Set(["sales", "forecast"]);
+
 function getInitialTab(): string {
   const d = getInitialDomain();
+  if (ANALYTICS_TAB_DOMAINS.has(d)) return d;
   return DIMENSION_DOMAINS.includes(d) ? "explorer" : d;
 }
 
@@ -1002,7 +1005,7 @@ export default function App() {
                   )}
                   onClick={() => {
                     setActiveTab("explorer");
-                    if (!DIMENSION_DOMAINS.includes(domain)) {
+                    if (ANALYTICS_TAB_DOMAINS.has(domain) || !DIMENSION_DOMAINS.includes(domain)) {
                       setDomain("item");
                     }
                   }}
@@ -1037,27 +1040,54 @@ export default function App() {
                 </button>
               );
             })()}
-            {/* Sales, Forecast tabs */}
-            {TAB_BAR_DOMAINS.filter((d) => domains.includes(d)).map((d) => {
-              const el = ELEMENT_CONFIG[d];
-              const isActive = activeTab === d;
+            {/* Sales tab — analytics only */}
+            {(() => {
+              const el = ELEMENT_CONFIG["sales"];
+              const isActive = activeTab === "sales";
               return (
                 <button
-                  key={d}
+                  key="sales"
                   className={cn(
                     "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
                     isActive
                       ? el.activeColor + " shadow-md ring-2 ring-white/40"
                       : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
                   )}
-                  onClick={() => { setDomain(d); setActiveTab(d); }}
+                  onClick={() => {
+                    setActiveTab("sales");
+                    if (domain !== "sales") setDomain("sales");
+                  }}
                 >
                   <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
                   <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
                   <span className="text-[10px] leading-none">{el.name}</span>
                 </button>
               );
-            })}
+            })()}
+            {/* Forecast tab — analytics only */}
+            {(() => {
+              const el = ELEMENT_CONFIG["forecast"];
+              const isActive = activeTab === "forecast";
+              return (
+                <button
+                  key="forecast"
+                  className={cn(
+                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    isActive
+                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
+                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                  )}
+                  onClick={() => {
+                    setActiveTab("forecast");
+                    if (domain !== "forecast") setDomain("forecast");
+                  }}
+                >
+                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
+                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
+                  <span className="text-[10px] leading-none">{el.name}</span>
+                </button>
+              );
+            })()}
             {/* Accuracy tab */}
             {(() => {
               const el = ELEMENT_CONFIG["accuracy"];
@@ -1103,7 +1133,7 @@ export default function App() {
                   value={domain}
                   onChange={(e) => setDomain(e.target.value)}
                 >
-                  {DIMENSION_DOMAINS.map((d) => {
+                  {DIMENSION_DOMAINS.filter((d) => !ANALYTICS_TAB_DOMAINS.has(d)).map((d) => {
                     const el = ELEMENT_CONFIG[d];
                     return (
                       <option key={d} value={d}>{el?.name || titleCase(d)}</option>
@@ -1694,8 +1724,8 @@ export default function App() {
         </section>
       ) : null}
 
-      {activeTab !== "accuracy" && activeTab !== "clusters" ? <section className={cn("mt-4 grid gap-4 [&>*]:min-w-0", analyticsEnabled ? "2xl:grid-cols-[1.15fr_1fr]" : "xl:grid-cols-1")}>
-        {analyticsEnabled ? <Card className="animate-fade-in">
+      {(activeTab === "sales" || activeTab === "forecast") ? <section className="mt-4 grid gap-4 [&>*]:min-w-0 xl:grid-cols-1">
+        <Card className="animate-fade-in">
           <CardHeader className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -1951,8 +1981,10 @@ export default function App() {
               </CardContent>
             </Card>
           </CardContent>
-        </Card> : null}
+        </Card>
+      </section> : null}
 
+      {activeTab === "explorer" ? <section className="mt-4 grid gap-4 [&>*]:min-w-0 xl:grid-cols-1">
         <Card className="animate-fade-in">
           <CardHeader className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
