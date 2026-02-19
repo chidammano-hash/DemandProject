@@ -211,8 +211,8 @@ def generate_summary(
     for _dmdunit, _dmdgroup, _loc, model_id, wape, n_rows in winners:
         model_wins[model_id] = model_wins.get(model_id, 0) + 1
         if wape is not None:
-            total_wape_num += wape * n_rows
-            total_wape_denom += n_rows
+            total_wape_num += float(wape) * float(n_rows)
+            total_wape_denom += float(n_rows)
 
     overall_wape = (total_wape_num / total_wape_denom * 100) if total_wape_denom else None
     overall_acc = (100.0 - overall_wape) if overall_wape is not None else None
