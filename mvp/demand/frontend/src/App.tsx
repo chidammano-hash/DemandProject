@@ -304,6 +304,8 @@ export default function App() {
   const [forecastKpiMonths, setForecastKpiMonths] = useState(12);
   const [itemFilter, setItemFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
+  const debouncedItemFilter = useDebounce(itemFilter, 300);
+  const debouncedLocationFilter = useDebounce(locationFilter, 300);
   const [selectedModel, setSelectedModel] = useState("");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedCluster, setSelectedCluster] = useState("");
@@ -404,11 +406,11 @@ export default function App() {
   };
   const effectiveFilters = useMemo(() => {
     const out = Object.fromEntries(Object.entries(debouncedColumnFilters).filter(([, value]) => value.trim() !== ""));
-    if (showFactFilters && itemFilter.trim() && itemField) {
-      out[itemField] = formatPairFilterValue(itemFilter);
+    if (showFactFilters && debouncedItemFilter.trim() && itemField) {
+      out[itemField] = formatPairFilterValue(debouncedItemFilter);
     }
-    if (showFactFilters && locationFilter.trim() && locationField) {
-      out[locationField] = formatPairFilterValue(locationFilter);
+    if (showFactFilters && debouncedLocationFilter.trim() && locationField) {
+      out[locationField] = formatPairFilterValue(debouncedLocationFilter);
     }
     if (domain === "forecast" && selectedModel.trim()) {
       out["model_id"] = `=${selectedModel.trim()}`;
@@ -418,7 +420,7 @@ export default function App() {
       out[filterCol] = `=${selectedCluster.trim()}`;
     }
     return out;
-  }, [debouncedColumnFilters, showFactFilters, itemFilter, locationFilter, itemField, locationField, domain, selectedModel, selectedCluster, clusterSource]);
+  }, [debouncedColumnFilters, showFactFilters, debouncedItemFilter, debouncedLocationFilter, itemField, locationField, domain, selectedModel, selectedCluster, clusterSource]);
 
   useEffect(() => {
     let cancelled = false;
@@ -537,6 +539,11 @@ export default function App() {
       return;
     }
 
+    // Skip page queries when data grid is not visible (only explorer tab shows the grid)
+    if (activeTab !== "explorer") {
+      return;
+    }
+
     const plural = meta.plural;
     let cancelled = false;
 
@@ -584,7 +591,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [meta, domain, offset, limit, debouncedSearch, sortBy, sortDir, effectiveFilters]);
+  }, [meta, domain, offset, limit, debouncedSearch, sortBy, sortDir, effectiveFilters, activeTab]);
 
   useEffect(() => {
     if (!meta || !analyticsEnabled) {
