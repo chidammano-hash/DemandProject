@@ -185,7 +185,18 @@ const titleCase = (value: string): string =>
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
 
-const TREND_COLORS = ["#0f766e", "#f97316", "#1d4ed8", "#a21caf", "#b45309", "#0891b2"];
+const TREND_COLORS = ["#4f46e5", "#0d9488", "#d97706", "#7c3aed", "#dc2626", "#0284c7"];
+
+const ELEMENT_CONFIG: Record<string, { symbol: string; number: number; name: string; color: string; activeColor: string }> = {
+  item:     { symbol: "It", number: 1, name: "Item",     color: "bg-rose-100 text-rose-900 border-rose-300",       activeColor: "bg-rose-200 text-rose-950 border-rose-400" },
+  location: { symbol: "Lo", number: 2, name: "Location", color: "bg-rose-100 text-rose-900 border-rose-300",       activeColor: "bg-rose-200 text-rose-950 border-rose-400" },
+  customer: { symbol: "Cu", number: 3, name: "Customer", color: "bg-amber-100 text-amber-900 border-amber-300",   activeColor: "bg-amber-200 text-amber-950 border-amber-400" },
+  time:     { symbol: "Ti", number: 4, name: "Time",     color: "bg-amber-100 text-amber-900 border-amber-300",   activeColor: "bg-amber-200 text-amber-950 border-amber-400" },
+  dfu:      { symbol: "Df", number: 5, name: "DFU",      color: "bg-yellow-100 text-yellow-900 border-yellow-300", activeColor: "bg-yellow-200 text-yellow-950 border-yellow-400" },
+  sales:    { symbol: "Sa", number: 6, name: "Sales",    color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
+  forecast: { symbol: "Fc", number: 7, name: "Forecast", color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
+  accuracy: { symbol: "Ac", number: 8, name: "Accuracy", color: "bg-violet-100 text-violet-900 border-violet-300", activeColor: "bg-violet-200 text-violet-950 border-violet-400" },
+};
 
 const ACCURACY_KPI_OPTIONS = [
   { key: "accuracy_pct", label: "Accuracy %", format: "pct" },
@@ -939,30 +950,52 @@ export default function App() {
 
   return (
     <main className="mx-auto w-full max-w-[1800px] min-w-0 overflow-x-hidden p-4 md:p-6">
-      <section className="animate-fade-in rounded-xl border border-white/20 bg-gradient-to-r from-slate-900/90 via-teal-900/80 to-cyan-800/80 p-4 text-white shadow-xl">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+      <section className="animate-fade-in rounded-xl border border-white/20 bg-gradient-to-r from-slate-900/95 via-indigo-950/90 to-slate-800/90 p-4 text-white shadow-xl">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Demand Studio</h1>
-            <p className="text-sm text-teal-50/90 md:text-base">Shadcn-powered analytics UI for demand datasets.</p>
+            <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Planthium</h1>
+            <p className="text-sm text-indigo-100/90 md:text-base">Periodic Analytics for Demand Forecasting</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {domains.map((d) => (
-              <Button
-                key={d}
-                variant={activeTab === d ? "secondary" : "outline"}
-                className={activeTab === d ? "bg-orange-200 text-slate-900 hover:bg-orange-100" : "border-white/35 bg-transparent text-white hover:bg-white/10"}
-                onClick={() => { setDomain(d); setActiveTab(d); }}
-              >
-                {titleCase(d)}
-              </Button>
-            ))}
-            <Button
-              variant={activeTab === "accuracy" ? "secondary" : "outline"}
-              className={activeTab === "accuracy" ? "bg-orange-200 text-slate-900 hover:bg-orange-100" : "border-white/35 bg-transparent text-white hover:bg-white/10"}
-              onClick={() => setActiveTab("accuracy")}
-            >
-              Accuracy
-            </Button>
+            {domains.map((d) => {
+              const el = ELEMENT_CONFIG[d];
+              const isActive = activeTab === d;
+              return (
+                <button
+                  key={d}
+                  className={cn(
+                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    isActive
+                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
+                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                  )}
+                  onClick={() => { setDomain(d); setActiveTab(d); }}
+                >
+                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
+                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
+                  <span className="text-[10px] leading-none">{el.name}</span>
+                </button>
+              );
+            })}
+            {(() => {
+              const el = ELEMENT_CONFIG["accuracy"];
+              const isActive = activeTab === "accuracy";
+              return (
+                <button
+                  className={cn(
+                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    isActive
+                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
+                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                  )}
+                  onClick={() => setActiveTab("accuracy")}
+                >
+                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
+                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
+                  <span className="text-[10px] leading-none">{el.name}</span>
+                </button>
+              );
+            })()}
           </div>
         </div>
       </section>
@@ -1197,7 +1230,7 @@ export default function App() {
                     <label key={opt.key} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
                       <input
                         type="checkbox"
-                        className="h-3.5 w-3.5 rounded border-input accent-teal-700"
+                        className="h-3.5 w-3.5 rounded border-input accent-indigo-700"
                         checked={checked}
                         disabled={isLast}
                         onChange={() => {
@@ -1271,7 +1304,7 @@ export default function App() {
                                           key={`${m}-${k.key}`}
                                           className={cn(
                                             "text-right text-sm tabular-nums",
-                                            isBestAcc ? "font-bold text-teal-700" : "",
+                                            isBestAcc ? "font-bold text-indigo-700" : "",
                                             isBadBias ? "text-red-600" : "",
                                           )}
                                         >
@@ -1286,7 +1319,7 @@ export default function App() {
                         </TableBody>
                       </Table>
                     </div>
-                    <p className="text-xs text-muted-foreground">Bold teal = best accuracy for that row. Red bias = |bias| &gt; 15%.</p>
+                    <p className="text-xs text-muted-foreground">Bold = best accuracy for that row. Red bias = |bias| &gt; 15%.</p>
                   </div>
                 );
               })() : (
@@ -1769,7 +1802,7 @@ export default function App() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <MessageSquare className="h-5 w-5" />
-                <CardTitle className="text-base">Chat with Demand Studio</CardTitle>
+                <CardTitle className="text-base">Chat with Planthium</CardTitle>
               </div>
               <Badge variant="outline">{chatOpen ? "Collapse" : "Expand"}</Badge>
             </div>
@@ -1782,7 +1815,7 @@ export default function App() {
                   <p className="text-sm text-muted-foreground">No messages yet. Try asking: &quot;What are the top 10 items by total sales quantity?&quot;</p>
                 ) : (
                   chatMessages.map((msg, idx) => (
-                    <div key={idx} className={cn("rounded-lg px-3 py-2 text-sm", msg.role === "user" ? "ml-8 bg-teal-100 text-teal-900" : "mr-8 bg-white border shadow-sm")}>
+                    <div key={idx} className={cn("rounded-lg px-3 py-2 text-sm", msg.role === "user" ? "ml-8 bg-indigo-100 text-indigo-900" : "mr-8 bg-white border shadow-sm")}>
                       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">{msg.role === "user" ? "You" : "Assistant"}</p>
                       <p className="whitespace-pre-wrap">{msg.content}</p>
                       {msg.error ? <p className="mt-1 text-xs text-red-600">{msg.error}</p> : null}
