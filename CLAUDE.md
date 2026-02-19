@@ -55,7 +55,7 @@
 | `mvp/demand/scripts/run_backtest_xgboost.py` | XGBoost backtest: expanding-window training + prediction |
 | `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load backtest predictions into Postgres (main + archive) |
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
-| `docs/design-specs/` | Feature specs (feature1–feature13) |
+| `docs/design-specs/` | Feature specs (feature1–feature18) |
 
 ---
 
@@ -185,6 +185,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - Item/Location filter with typeahead suggestions
 - Postgres vs Iceberg latency benchmarking panel
 - Champion Selection panel: model competition config, run, and FVA model-wins visualization
+- Market Intelligence tab: item/location selector with Google web search + GPT-4o narrative briefing
 
 ---
 
@@ -201,6 +202,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Chat endpoint:** `POST /chat` — OpenAI-powered NL→SQL with pgvector context retrieval. Read-only execution with 5s timeout and 500-row limit. Requires `OPENAI_API_KEY` in `.env`.
 - **DFU clustering:** KMeans-based clustering pipeline groups DFUs by demand patterns. Feature engineering extracts time series, item, and DFU features. Cluster labels (e.g., `high_volume_steady`, `seasonal_medium_volume`) stored in `dim_dfu.cluster_assignment`. MLflow tracks experiments under `dfu_clustering`. Config in `config/clustering_config.yaml`.
 - **Champion model selection:** Per-DFU best-of-models via WAPE (Forecast Value Added). Config in `config/model_competition.yaml` controls competing models, metric, and lag. Champion rows stored as `model_id='champion'` in `fact_external_forecast_monthly`. Ceiling (oracle) model picks the best model per DFU per month — theoretical upper bound with perfect foresight, stored as `model_id='ceiling'`. UI panel in Accuracy tab shows champion + ceiling KPI cards, gap-to-ceiling indicator, and dual model wins bar charts.
+- **Market intelligence:** `POST /market-intelligence` — combines Google Custom Search API (product news/trends) + GPT-4o narrative synthesis for item + location pairs. Looks up item metadata (description, brand, category) from `dim_item` and location state from `dim_location`. Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` in `.env`.
 
 ---
 
@@ -222,6 +224,7 @@ Located in `docs/design-specs/`:
 - `feature13.md` — XGBoost backtesting implementation
 - `feature14.md` — Transfer learning backtest strategy
 - `feature15.md` — Champion model selection (best-of-models per DFU)
+- `feature18.md` — Market intelligence (web search + LLM narrative briefings)
 
 ---
 

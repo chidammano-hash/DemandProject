@@ -110,6 +110,15 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - API endpoints: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
    - UI: Champion Selection panel in Accuracy tab with model checkboxes, metric/lag selectors, champion + ceiling KPI cards, gap indicator, and dual model wins bar charts
    - Summary saved to `data/champion/champion_summary.json`
+15. Market intelligence (feature18):
+   - `POST /market-intelligence` endpoint combining Google Custom Search + GPT-4o narrative
+   - Item metadata lookup from `dim_item` (item_desc, brand_name, category, producer_name)
+   - Location metadata lookup from `dim_location` (state_id, site_desc)
+   - Google Custom Search API for product news/trends (5 results)
+   - GPT-4o synthesizes search results + state demographics into 3-5 paragraph market briefing
+   - Graceful degradation: if Google search fails, LLM generates from its own knowledge
+   - UI: "Mi" tab with item/location typeahead, generate button, search result cards, narrative card
+   - Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` env vars
 
 ## Additional tables
 1. `chat_embeddings` — pgvector table storing schema metadata embeddings (1536-dim) for NL query context retrieval

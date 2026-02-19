@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ArrowDownWideNarrow, ArrowUpWideNarrow, ChartColumn, ChevronsUpDown, Loader2, MessageSquare, RefreshCcw, Send, Trophy } from "lucide-react";
+import { ArrowDownWideNarrow, ArrowUpWideNarrow, ChartColumn, ChevronsUpDown, Globe, Loader2, MessageSquare, RefreshCcw, Send, Trophy } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -163,6 +163,25 @@ type LagCurvePayload = {
   by_lag: LagPoint[];
 };
 
+type MarketIntelSearchResult = {
+  title: string;
+  link: string;
+  snippet: string;
+};
+
+type MarketIntelPayload = {
+  item_no: string;
+  location_id: string;
+  item_desc: string | null;
+  brand_name: string | null;
+  category: string | null;
+  state_id: string | null;
+  site_desc: string | null;
+  search_results: MarketIntelSearchResult[];
+  narrative: string;
+  generated_at: string;
+};
+
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState<T>(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -201,6 +220,7 @@ const ELEMENT_CONFIG: Record<string, { symbol: string; number: number; name: str
   sales:    { symbol: "Sa", number: 3, name: "Sales",    color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
   forecast: { symbol: "Fc", number: 4, name: "Forecast", color: "bg-teal-100 text-teal-900 border-teal-300",       activeColor: "bg-teal-200 text-teal-950 border-teal-400" },
   accuracy: { symbol: "Ac", number: 5, name: "Accuracy", color: "bg-violet-100 text-violet-900 border-violet-300", activeColor: "bg-violet-200 text-violet-950 border-violet-400" },
+  intel:    { symbol: "Mi", number: 6, name: "Intel",    color: "bg-sky-100 text-sky-900 border-sky-300",           activeColor: "bg-sky-200 text-sky-950 border-sky-400" },
 };
 
 const ACCURACY_KPI_OPTIONS = [
@@ -349,6 +369,15 @@ export default function App() {
   const [championSummary, setChampionSummary] = useState<{ total_dfus: number; total_champion_rows: number; model_wins: Record<string, number>; overall_champion_wape: number | null; overall_champion_accuracy_pct: number | null; run_ts: string; total_ceiling_rows?: number; ceiling_model_wins?: Record<string, number>; overall_ceiling_wape?: number | null; overall_ceiling_accuracy_pct?: number | null } | null>(null);
   const [runningCompetition, setRunningCompetition] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
+
+  // Market Intelligence state (feature18 - market intel)
+  const [miItemFilter, setMiItemFilter] = useState("");
+  const [miLocationFilter, setMiLocationFilter] = useState("");
+  const [miItemSuggestions, setMiItemSuggestions] = useState<string[]>([]);
+  const [miLocationSuggestions, setMiLocationSuggestions] = useState<string[]>([]);
+  const [miResult, setMiResult] = useState<MarketIntelPayload | null>(null);
+  const [miLoading, setMiLoading] = useState(false);
+  const [miError, setMiError] = useState("");
 
   const visibleCols = useMemo(() => {
     if (!meta) {
@@ -995,6 +1024,66 @@ export default function App() {
     }).catch(() => {/* ignore */});
   }, [activeTab]);
 
+  // Market Intelligence — item suggestions
+  useEffect(() => {
+    if (activeTab !== "intel") return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ field: "item_no", q: miItemFilter.trim(), limit: "12" });
+        const res = await fetch(`/domains/item/suggest?${params.toString()}`);
+        if (!res.ok) throw new Error();
+        const payload = (await res.json()) as SuggestPayload;
+        if (!cancelled) setMiItemSuggestions((payload.values || []).filter(Boolean).slice(0, 12));
+      } catch { if (!cancelled) setMiItemSuggestions([]); }
+    }, 180);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [activeTab, miItemFilter]);
+
+  // Market Intelligence — location suggestions
+  useEffect(() => {
+    if (activeTab !== "intel") return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ field: "location_id", q: miLocationFilter.trim(), limit: "12" });
+        const res = await fetch(`/domains/location/suggest?${params.toString()}`);
+        if (!res.ok) throw new Error();
+        const payload = (await res.json()) as SuggestPayload;
+        if (!cancelled) setMiLocationSuggestions((payload.values || []).filter(Boolean).slice(0, 12));
+      } catch { if (!cancelled) setMiLocationSuggestions([]); }
+    }, 180);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [activeTab, miLocationFilter]);
+
+  // Market Intelligence — generate briefing
+  async function generateMarketIntel() {
+    const item = miItemFilter.trim();
+    const loc = miLocationFilter.trim();
+    if (!item || !loc || miLoading) return;
+    setMiLoading(true);
+    setMiError("");
+    setMiResult(null);
+    try {
+      const res = await fetch("/market-intelligence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_no: item, location_id: loc }),
+      });
+      if (!res.ok) {
+        const detail = await res.text();
+        setMiError(`Error: ${detail}`);
+        return;
+      }
+      const payload = (await res.json()) as MarketIntelPayload;
+      setMiResult(payload);
+    } catch (err) {
+      setMiError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setMiLoading(false);
+    }
+  }
+
   return (
     <main className="mx-auto w-full max-w-[1800px] min-w-0 overflow-x-hidden p-4 md:p-6">
       <section className="animate-fade-in rounded-xl border border-white/20 bg-gradient-to-r from-slate-900/95 via-indigo-950/90 to-slate-800/90 p-4 text-white shadow-xl">
@@ -1115,6 +1204,26 @@ export default function App() {
                       : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
                   )}
                   onClick={() => setActiveTab("accuracy")}
+                >
+                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
+                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
+                  <span className="text-[10px] leading-none">{el.name}</span>
+                </button>
+              );
+            })()}
+            {/* Market Intelligence tab */}
+            {(() => {
+              const el = ELEMENT_CONFIG["intel"];
+              const isActive = activeTab === "intel";
+              return (
+                <button
+                  className={cn(
+                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    isActive
+                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
+                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                  )}
+                  onClick={() => setActiveTab("intel")}
                 >
                   <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
                   <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
@@ -1773,6 +1882,133 @@ export default function App() {
             </CardContent>
           </Card>
         </section>
+      ) : null}
+
+      {activeTab === "intel" ? (
+        <Card className="mt-4 animate-fade-in">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Globe className="h-5 w-5" />
+              <CardTitle className="text-base">Market Intelligence</CardTitle>
+            </div>
+            <CardDescription>
+              Select a product and location to generate an AI-powered market briefing with web search results and demographic context.
+            </CardDescription>
+            <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
+              <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Item (item_no)
+                <Input
+                  className="h-9"
+                  placeholder="Search for item..."
+                  list="mi-item-suggest"
+                  value={miItemFilter}
+                  onChange={(e) => setMiItemFilter(e.target.value)}
+                />
+                <datalist id="mi-item-suggest">
+                  {miItemSuggestions.map((val) => (
+                    <option key={val} value={val} />
+                  ))}
+                </datalist>
+              </label>
+              <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Location (location_id)
+                <Input
+                  className="h-9"
+                  placeholder="Search for location..."
+                  list="mi-location-suggest"
+                  value={miLocationFilter}
+                  onChange={(e) => setMiLocationFilter(e.target.value)}
+                />
+                <datalist id="mi-location-suggest">
+                  {miLocationSuggestions.map((val) => (
+                    <option key={val} value={val} />
+                  ))}
+                </datalist>
+              </label>
+              <div className="flex items-end">
+                <Button
+                  onClick={generateMarketIntel}
+                  disabled={!miItemFilter.trim() || !miLocationFilter.trim() || miLoading}
+                  className="h-9"
+                >
+                  {miLoading ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
+                  ) : (
+                    <><Send className="mr-2 h-4 w-4" /> Generate Briefing</>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {miError ? (
+              <Card className="border-red-200 bg-red-50">
+                <CardContent className="pt-4 text-sm text-red-700">{miError}</CardContent>
+              </Card>
+            ) : null}
+
+            {miLoading ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <div className="flex flex-col items-center justify-center rounded-lg border-2 border-sky-300 bg-sky-50 px-4 py-2 shadow-md animate-pulse-glow">
+                  <span className="text-[9px] leading-none self-start font-mono text-sky-500 opacity-70">6</span>
+                  <span className="text-lg font-bold leading-tight font-mono text-sky-900">Mi</span>
+                  <span className="text-[9px] leading-none text-sky-600">Loading</span>
+                </div>
+                <span className="text-sm text-muted-foreground">Searching the web and generating market briefing...</span>
+              </div>
+            ) : null}
+
+            {miResult && !miLoading ? (
+              <>
+                {/* Product + Location context badges */}
+                <div className="flex flex-wrap gap-2">
+                  {miResult.item_desc ? <Badge variant="secondary">{miResult.item_desc}</Badge> : null}
+                  {miResult.brand_name ? <Badge variant="secondary">{miResult.brand_name}</Badge> : null}
+                  {miResult.category ? <Badge variant="secondary">{miResult.category}</Badge> : null}
+                  {miResult.state_id ? <Badge variant="outline">State: {miResult.state_id}</Badge> : null}
+                  {miResult.site_desc ? <Badge variant="outline">{miResult.site_desc}</Badge> : null}
+                </div>
+
+                {/* Search Results Cards */}
+                {miResult.search_results.length > 0 ? (
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
+                      Web Search Results ({miResult.search_results.length})
+                    </p>
+                    <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+                      {miResult.search_results.map((sr, idx) => (
+                        <Card key={idx} className="border-muted bg-muted/10 shadow-none">
+                          <CardContent className="pt-3 pb-3">
+                            <a href={sr.link} target="_blank" rel="noopener noreferrer"
+                               className="text-sm font-medium text-blue-700 hover:underline line-clamp-2">
+                              {sr.title}
+                            </a>
+                            <p className="mt-1 text-xs text-muted-foreground line-clamp-3">{sr.snippet}</p>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Narrative Story */}
+                <Card className="border-sky-200 bg-sky-50/30">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Market Intelligence Briefing</CardTitle>
+                    <CardDescription className="text-xs">
+                      Generated {new Date(miResult.generated_at).toLocaleString()}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="prose prose-sm max-w-none text-sm whitespace-pre-wrap">
+                      {miResult.narrative}
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            ) : null}
+          </CardContent>
+        </Card>
       ) : null}
 
       {(activeTab === "sales" || activeTab === "forecast") ? <section className="mt-4 grid gap-4 [&>*]:min-w-0 xl:grid-cols-1">

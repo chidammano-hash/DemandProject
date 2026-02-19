@@ -180,6 +180,15 @@ Champion Model Selection (feature15):
 - CLI: `make champion-select` (runs both champion + ceiling)
 - API: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
 
+Market Intelligence (feature18):
+- AI-powered market briefings for any product + location pair
+- Select an item and location, click "Generate Briefing" to get:
+  - Web search results from Google Custom Search (product news, market trends)
+  - GPT-4o narrative with market context, state demographics, and demand insights
+- Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` in `.env`
+- API: `POST /market-intelligence`
+- UI: "Mi" tab in the navigation bar
+
 Benchmark Postgres vs Iceberg/Trino:
 - endpoint: `GET /bench/compare`
 - compares the same query shapes (`count`, `page`, `trend`) for one domain
@@ -228,4 +237,4 @@ make cluster-all  # Full pipeline: features -> train -> label -> update
 - Clustering config: `mvp/demand/config/clustering_config.yaml`
 - Competition config: `mvp/demand/config/model_competition.yaml`
 - DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views)
-- Design specs: `docs/design-specs/` (feature1–feature15)
+- Design specs: `docs/design-specs/` (feature1–feature18)
