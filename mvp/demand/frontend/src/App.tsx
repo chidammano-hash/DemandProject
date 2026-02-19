@@ -31,6 +31,7 @@ type DomainMeta = {
 
 type DomainPage = {
   total: number;
+  total_approximate?: boolean;
   limit: number;
   offset: number;
   [key: string]: unknown;
@@ -284,6 +285,7 @@ export default function App() {
   const [meta, setMeta] = useState<DomainMeta | null>(null);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
+  const [totalApproximate, setTotalApproximate] = useState(false);
 
   const [offset, setOffset] = useState(0);
   const [limit, setLimit] = useState(100);
@@ -294,8 +296,10 @@ export default function App() {
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({});
   const [showFieldPanel, setShowFieldPanel] = useState(false);
 
-  const debouncedSearch = useDebounce(search, 300);
-  const debouncedColumnFilters = useDebounce(columnFilters, 300);
+  const isFactDomain = domain === "sales" || domain === "forecast";
+  const filterDebounceMs = isFactDomain ? 500 : 300;
+  const debouncedSearch = useDebounce(search, filterDebounceMs);
+  const debouncedColumnFilters = useDebounce(columnFilters, filterDebounceMs);
 
   const [analytics, setAnalytics] = useState<DomainAnalytics | null>(null);
   const [trendMetrics, setTrendMetrics] = useState<string[]>([]);
@@ -304,8 +308,8 @@ export default function App() {
   const [forecastKpiMonths, setForecastKpiMonths] = useState(12);
   const [itemFilter, setItemFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
-  const debouncedItemFilter = useDebounce(itemFilter, 300);
-  const debouncedLocationFilter = useDebounce(locationFilter, 300);
+  const debouncedItemFilter = useDebounce(itemFilter, filterDebounceMs);
+  const debouncedLocationFilter = useDebounce(locationFilter, filterDebounceMs);
   const [selectedModel, setSelectedModel] = useState("");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedCluster, setSelectedCluster] = useState("");
@@ -511,6 +515,7 @@ export default function App() {
           if (!cancelled) {
             setRows((pagePl[payload.plural] || []) as Record<string, unknown>[]);
             setTotal(Number(pagePl.total || 0));
+            setTotalApproximate(Boolean(pagePl.total_approximate));
           }
         }
       } catch (err) {
@@ -573,12 +578,14 @@ export default function App() {
         if (!cancelled) {
           setRows(pageRows);
           setTotal(Number(payload.total || 0));
+          setTotalApproximate(Boolean(payload.total_approximate));
         }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load records");
           setRows([]);
           setTotal(0);
+          setTotalApproximate(false);
         }
       } finally {
         if (!cancelled) {
@@ -2050,7 +2057,7 @@ export default function App() {
                   })}
                 </select>
                 <Badge variant="secondary">
-                  {meta ? `${titleCase(meta.name)} (${formatNumber(total)})` : "Loading"}
+                  {meta ? `${titleCase(meta.name)} (${totalApproximate ? `${formatNumber(total - 1)}+` : formatNumber(total)})` : "Loading"}
                 </Badge>
               </div>
             </div>
@@ -2135,7 +2142,7 @@ export default function App() {
                         </Button>
                         <Input
                           className="h-7 text-xs"
-                          placeholder="Filter"
+                          placeholder="Filter (=exact)"
                           value={columnFilters[col] || ""}
                           onChange={(e) => {
                             setOffset(0);
@@ -2176,7 +2183,7 @@ export default function App() {
 
             <div className="mt-3 flex items-center justify-between gap-2 text-sm">
               <span className="text-muted-foreground">
-                Showing {start}-{end} of {formatNumber(total)}
+                Showing {start}-{end} of {totalApproximate ? `${formatNumber(total - 1)}+` : formatNumber(total)}
               </span>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>

@@ -11,6 +11,7 @@ CREATE INDEX IF NOT EXISTS idx_fact_forecast_fcstdate
   ON fact_external_forecast_monthly (fcstdate);
 
 -- Trigram indexes for ILIKE-heavy search fields used by the API/UI.
+-- Dimension tables:
 CREATE INDEX IF NOT EXISTS idx_dim_item_item_desc_trgm
   ON dim_item USING gin (item_desc gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_dim_item_brand_name_trgm
@@ -21,6 +22,22 @@ CREATE INDEX IF NOT EXISTS idx_dim_customer_customer_name_trgm
   ON dim_customer USING gin (customer_name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_dim_dfu_brand_desc_trgm
   ON dim_dfu USING gin (brand_desc gin_trgm_ops);
+
+-- Fact table text columns — enables fast ILIKE substring filters on large tables.
+CREATE INDEX IF NOT EXISTS idx_fact_forecast_model_id_trgm
+  ON fact_external_forecast_monthly USING gin (model_id gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fact_forecast_dmdunit_trgm
+  ON fact_external_forecast_monthly USING gin (dmdunit gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fact_forecast_loc_trgm
+  ON fact_external_forecast_monthly USING gin (loc gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fact_forecast_dmdgroup_trgm
+  ON fact_external_forecast_monthly USING gin (dmdgroup gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fact_sales_dmdunit_trgm
+  ON fact_sales_monthly USING gin (dmdunit gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fact_sales_loc_trgm
+  ON fact_sales_monthly USING gin (loc gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_fact_sales_dmdgroup_trgm
+  ON fact_sales_monthly USING gin (dmdgroup gin_trgm_ops);
 
 -- Monthly aggregates for fast trend analytics on fact domains.
 CREATE MATERIALIZED VIEW IF NOT EXISTS agg_sales_monthly AS

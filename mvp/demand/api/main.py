@@ -109,13 +109,90 @@ def parse_filters_json(filters: str) -> dict[str, str]:
     return out
 
 
+def _col_type(spec: DomainSpec, col: str) -> str:
+    """Return 'int', 'float', 'date', or 'text' for a column."""
+    if col in spec.int_fields:
+        return "int"
+    if col in spec.float_fields:
+        return "float"
+    if col in spec.date_fields:
+        return "date"
+    return "text"
+
+
+def _typed_eq_clause(spec: DomainSpec, col: str, val: str, where: list[str], params: list[Any]) -> None:
+    """Append a type-aware equality clause. Uses native types to leverage B-tree indexes."""
+    ctype = _col_type(spec, col)
+    qcol = qident(col)
+    if ctype == "text":
+        where.append(f"{qcol} = %s")
+        params.append(val)
+    elif ctype == "int":
+        try:
+            where.append(f"{qcol} = %s")
+            params.append(int(val))
+        except ValueError:
+            where.append(f"{qcol}::text = %s")
+            params.append(val)
+    elif ctype == "float":
+        try:
+            where.append(f"{qcol} = %s")
+            params.append(float(val))
+        except ValueError:
+            where.append(f"{qcol}::text = %s")
+            params.append(val)
+    elif ctype == "date":
+        try:
+            date.fromisoformat(val)
+            where.append(f"{qcol} = %s::date")
+            params.append(val)
+        except ValueError:
+            where.append(f"{qcol}::text = %s")
+            params.append(val)
+
+
+def _typed_like_clause(spec: DomainSpec, col: str, val: str, where: list[str], params: list[Any]) -> None:
+    """Append a type-aware substring clause. Avoids ::text cast on text columns for index use."""
+    ctype = _col_type(spec, col)
+    qcol = qident(col)
+    if ctype == "text":
+        # No ::text cast — allows GIN trigram index usage for ILIKE
+        where.append(f"{qcol} ILIKE %s")
+        params.append(f"%{val}%")
+    elif ctype == "int":
+        try:
+            where.append(f"{qcol} = %s")
+            params.append(int(val))
+        except ValueError:
+            where.append(f"{qcol}::text ILIKE %s")
+            params.append(f"%{val}%")
+    elif ctype == "float":
+        try:
+            where.append(f"{qcol} = %s")
+            params.append(float(val))
+        except ValueError:
+            where.append(f"{qcol}::text ILIKE %s")
+            params.append(f"%{val}%")
+    elif ctype == "date":
+        where.append(f"{qcol}::text LIKE %s")
+        params.append(f"%{val}%")
+
+
 def build_where(spec: DomainSpec, q: str, filters: str) -> tuple[str, list[Any]]:
     where: list[str] = []
     params: list[Any] = []
 
     if q.strip():
         term = f"%{q.strip()}%"
-        where.append("(" + " OR ".join([f"{c}::text ILIKE %s" for c in spec.search_fields]) + ")")
+        # For text search fields, drop ::text cast so GIN trigram indexes can be used;
+        # keep ::text for non-text columns (int, float, date) that need cast for ILIKE.
+        clauses = []
+        for c in spec.search_fields:
+            if _col_type(spec, c) == "text":
+                clauses.append(f"{qident(c)} ILIKE %s")
+            else:
+                clauses.append(f"{qident(c)}::text ILIKE %s")
+        where.append("(" + " OR ".join(clauses) + ")")
         params.extend([term] * len(spec.search_fields))
 
     if filters.strip():
@@ -127,16 +204,13 @@ def build_where(spec: DomainSpec, q: str, filters: str) -> tuple[str, list[Any]]
                 continue
             if col not in allowed:
                 raise HTTPException(status_code=422, detail=f"Invalid filter column: {raw_key}")
-            # Exact-match mode for UI filter values with "=" prefix (example: "=109101")
             if sval.startswith("="):
                 exact = sval[1:].strip()
                 if not exact:
                     continue
-                where.append(f"{col}::text = %s")
-                params.append(exact)
+                _typed_eq_clause(spec, col, exact, where, params)
             else:
-                where.append(f"{col}::text ILIKE %s")
-                params.append(f"%{sval}%")
+                _typed_like_clause(spec, col, sval, where, params)
 
     return (f"WHERE {' AND '.join(where)}" if where else "", params)
 
@@ -158,7 +232,11 @@ def domain_suggest(
     where: list[str] = []
     params: list[Any] = []
     if q.strip():
-        where.append(f"{qident(target_col)}::text ILIKE %s")
+        # Prefix match for suggestions — use native type when possible
+        if _col_type(spec, target_col) == "text":
+            where.append(f"{qident(target_col)} ILIKE %s")
+        else:
+            where.append(f"{qident(target_col)}::text ILIKE %s")
         params.append(f"{q.strip()}%")
 
     scoped_filters = parse_filters_json(filters)
@@ -172,11 +250,9 @@ def domain_suggest(
             exact = sval[1:].strip()
             if not exact:
                 continue
-            where.append(f"{qident(col)}::text = %s")
-            params.append(exact)
+            _typed_eq_clause(spec, col, exact, where, params)
         else:
-            where.append(f"{qident(col)}::text ILIKE %s")
-            params.append(f"%{sval}%")
+            _typed_like_clause(spec, col, sval, where, params)
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     sql = f"""
@@ -194,6 +270,10 @@ def domain_suggest(
         "field": to_api_col(target_col),
         "values": values,
     }
+
+
+_LARGE_TABLES = {"fact_external_forecast_monthly", "fact_sales_monthly"}
+_MAX_COUNT_SCAN = 100_001
 
 
 def fetch_page(
@@ -214,7 +294,21 @@ def fetch_page(
     where_sql, params = build_where(spec, q, filters)
     select_cols = ", ".join(spec.columns_with_ck)
 
-    count_sql = f"SELECT count(*) FROM {spec.table} {where_sql}"
+    # Smart COUNT: avoid full-scan count(*) on large tables.
+    total_approximate = False
+    if not where_sql:
+        # Unfiltered — use catalog estimate (instant, refreshed by autovacuum/ANALYZE)
+        count_sql = "SELECT COALESCE(c.reltuples, 0)::bigint FROM pg_class c WHERE c.relname = %s"
+        count_params: list[Any] = [spec.table]
+    elif spec.table in _LARGE_TABLES:
+        # Filtered on large table — cap scan to avoid counting millions of rows
+        count_sql = f"SELECT count(*) FROM (SELECT 1 FROM {spec.table} {where_sql} LIMIT {_MAX_COUNT_SCAN}) _sub"
+        count_params = list(params)
+    else:
+        # Small tables — exact count is cheap
+        count_sql = f"SELECT count(*) FROM {spec.table} {where_sql}"
+        count_params = list(params)
+
     data_sql = f"""
       SELECT {select_cols}
       FROM {spec.table}
@@ -224,18 +318,23 @@ def fetch_page(
     """
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(count_sql, params)
+        cur.execute(count_sql, count_params)
         total = int(cur.fetchone()[0])
+        if total >= _MAX_COUNT_SCAN:
+            total_approximate = True
         cur.execute(data_sql, [*params, limit, offset])
         rows = cur.fetchall()
 
     records = [row_to_dict(spec, r) for r in rows]
-    return {
+    result: dict[str, Any] = {
         "total": total,
         "limit": limit,
         "offset": offset,
         spec.plural: records,
     }
+    if total_approximate:
+        result["total_approximate"] = True
+    return result
 
 
 def list_domain(spec: DomainSpec, limit: int) -> list[dict[str, Any]]:
@@ -484,6 +583,8 @@ def build_agg_trend_source(spec: DomainSpec, trend_metrics: list[str], filters: 
 
     parsed = parse_filters_safe(filters)
     allowed_filter_cols = {"dmdunit", "loc", "startdate", "model_id"}
+    # Column types in the agg views: month_start=date, dmdunit/loc/model_id=text
+    agg_col_types = {"month_start": "date"}  # default is text
     where: list[str] = []
     params: list[Any] = []
     for raw_key, sval in parsed.items():
@@ -491,15 +592,29 @@ def build_agg_trend_source(spec: DomainSpec, trend_metrics: list[str], filters: 
         if source_col not in allowed_filter_cols:
             return None
         target_col = "month_start" if source_col == "startdate" else source_col
+        ctype = agg_col_types.get(target_col, "text")
         if sval.startswith("="):
             exact = sval[1:].strip()
             if not exact:
                 continue
-            where.append(f"{qident(target_col)}::text = %s")
-            params.append(exact)
+            if ctype == "text":
+                where.append(f"{qident(target_col)} = %s")
+                params.append(exact)
+            elif ctype == "date":
+                try:
+                    date.fromisoformat(exact)
+                    where.append(f"{qident(target_col)} = %s::date")
+                    params.append(exact)
+                except ValueError:
+                    where.append(f"{qident(target_col)}::text = %s")
+                    params.append(exact)
         else:
-            where.append(f"{qident(target_col)}::text ILIKE %s")
-            params.append(f"%{sval}%")
+            if ctype == "text":
+                where.append(f"{qident(target_col)} ILIKE %s")
+                params.append(f"%{sval}%")
+            else:
+                where.append(f"{qident(target_col)}::text LIKE %s")
+                params.append(f"%{sval}%")
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     return agg_table, "month_start", where_sql, params, "row_count"
