@@ -67,9 +67,10 @@ No changes to feature engineering. The transfer strategy uses the same lag, roll
 Both CSVs (`backtest_predictions.csv`, `backtest_predictions_all_lags.csv`) use the same schema. The shared `load_backtest_forecasts.py` loader works unchanged — it reads `model_id` from the CSV column.
 
 ## Files Modified
-- `mvp/demand/scripts/run_backtest.py` — Added `train_and_predict_transfer()`, updated argparse and dispatch
-- `mvp/demand/scripts/run_backtest_catboost.py` — Same structure with CatBoost-specific warm-start API
-- `mvp/demand/scripts/run_backtest_xgboost.py` — Same structure with XGBoost-specific warm-start API
+- `mvp/demand/scripts/run_backtest.py` — Contains `train_and_predict_transfer()` with LGBM-specific warm-start (`init_model=booster_`)
+- `mvp/demand/scripts/run_backtest_catboost.py` — Contains `train_and_predict_transfer()` with CatBoost-specific warm-start (`init_model=regressor`)
+- `mvp/demand/scripts/run_backtest_xgboost.py` — Contains `train_and_predict_transfer()` with XGBoost-specific warm-start (`xgb_model=booster`)
+- `mvp/demand/common/backtest_framework.py` — Shared orchestrator dispatches to the transfer function via `train_fn_transfer` callable with `transfer_kwargs`
 - `mvp/demand/Makefile` — Added 3 new targets (`backtest-lgbm-transfer`, `backtest-catboost-transfer`, `backtest-xgboost-transfer`)
 
 ## Verification

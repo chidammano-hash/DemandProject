@@ -50,9 +50,16 @@
 | `mvp/demand/config/clustering_config.yaml` | Clustering hyperparameters and labeling thresholds |
 | `mvp/demand/config/model_competition.yaml` | Champion model selection: competing models, metric, lag |
 | `mvp/demand/scripts/run_champion_selection.py` | Per-DFU champion selection: best-of-models via WAPE |
-| `mvp/demand/scripts/run_backtest.py` | LGBM backtest: expanding-window training + prediction |
-| `mvp/demand/scripts/run_backtest_catboost.py` | CatBoost backtest: expanding-window training + prediction |
-| `mvp/demand/scripts/run_backtest_xgboost.py` | XGBoost backtest: expanding-window training + prediction |
+| `mvp/demand/common/backtest_framework.py` | Shared backtest orchestrator: `run_tree_backtest()`, timeframes, data loading, output saving |
+| `mvp/demand/common/feature_engineering.py` | Shared feature matrix: lag/rolling features, future masking, `cat_dtype` parameter |
+| `mvp/demand/common/metrics.py` | Shared accuracy metrics: WAPE, bias, accuracy % |
+| `mvp/demand/common/mlflow_utils.py` | Shared MLflow logging wrapper for backtest runs |
+| `mvp/demand/common/db.py` | Shared DB connection parameters |
+| `mvp/demand/common/constants.py` | Shared constants: `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output columns, thresholds |
+| `mvp/demand/scripts/run_backtest.py` | LGBM backtest: model-specific training functions (uses shared framework) |
+| `mvp/demand/scripts/run_backtest_catboost.py` | CatBoost backtest: model-specific training functions (uses shared framework) |
+| `mvp/demand/scripts/run_backtest_xgboost.py` | XGBoost backtest: model-specific training functions (uses shared framework) |
+| `mvp/demand/scripts/run_backtest_prophet.py` | Prophet backtest: per-DFU fitting with multiprocessing (uses shared utilities) |
 | `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load backtest predictions into Postgres (main + archive) |
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
 | `mvp/demand/sql/008_perf_indexes_and_agg.sql` | Performance indexes (B-tree, GIN trigram) + materialized views |
@@ -209,6 +216,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Chat endpoint:** `POST /chat` — OpenAI-powered NL→SQL with pgvector context retrieval. Read-only execution with 5s timeout and 500-row limit. Requires `OPENAI_API_KEY` in `.env`.
 - **DFU clustering:** KMeans-based clustering pipeline groups DFUs by demand patterns. Feature engineering extracts time series, item, and DFU features. Cluster labels (e.g., `high_volume_steady`, `seasonal_medium_volume`) stored in `dim_dfu.cluster_assignment`. MLflow tracks experiments under `dfu_clustering`. Config in `config/clustering_config.yaml`.
 - **Champion model selection:** Per-DFU best-of-models via WAPE (Forecast Value Added). Config in `config/model_competition.yaml` controls competing models, metric, and lag. Champion rows stored as `model_id='champion'` in `fact_external_forecast_monthly`. Ceiling (oracle) model picks the best model per DFU per month — theoretical upper bound with perfect foresight, stored as `model_id='ceiling'`. UI panel in Accuracy tab shows champion + ceiling KPI cards, gap-to-ceiling indicator, and dual model wins bar charts.
+- **Shared backtest framework:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) use `common/backtest_framework.py` as a shared orchestrator via `run_tree_backtest()`. Each script implements only model-specific training functions passed as callables. Prophet uses shared utilities but orchestrates its own per-DFU fitting loop. Shared modules in `common/`: `backtest_framework.py`, `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`.
 - **Market intelligence:** `POST /market-intelligence` — combines Google Custom Search API (product news/trends) + GPT-4o narrative synthesis for item + location pairs. Looks up item metadata (description, brand, category) from `dim_item` and location state from `dim_location`. Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` in `.env`.
 
 ---
@@ -234,6 +242,9 @@ Located in `docs/design-specs/`:
 - `feature16.md` — Data Explorer performance & UX (type-aware filtering, GIN indexes, column typeahead, loading overlay)
 - `feature17.md` — DFU Analysis tab (sales vs multi-model forecast overlay)
 - `feature18.md` — Market intelligence (web search + LLM narrative briefings)
+- `feature19.md` — PatchTST backtesting implementation (deep learning, Apple MPS GPU)
+- `feature20.md` — DeepAR backtesting implementation (LSTM probabilistic forecasting)
+- `docs/REFACTORING_RECOMMENDATIONS.md` — Comprehensive codebase refactoring roadmap
 
 ---
 

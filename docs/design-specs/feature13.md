@@ -85,8 +85,12 @@ All lags 0-4 preserved:
 
 | Script | Purpose |
 |--------|---------|
-| `mvp/demand/scripts/run_backtest_xgboost.py` | Train XGBoost + generate predictions for all timeframes |
+| `mvp/demand/scripts/run_backtest_xgboost.py` | XGBoost-specific training functions + argparse (imports shared framework from `common/`) |
+| `mvp/demand/common/backtest_framework.py` | Shared orchestrator: data loading, timeframes, feature engineering, output saving, MLflow |
+| `mvp/demand/common/feature_engineering.py` | Shared feature matrix construction (uses `cat_dtype="category"` for XGBoost's native categoricals) |
 | `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load predictions into Postgres (main + archive) — shared with LGBM/CatBoost |
+
+The script contains only three XGBoost-specific functions (`train_and_predict_global`, `train_and_predict_per_cluster`, `train_and_predict_transfer`) passed to `run_tree_backtest()` from the shared framework.
 
 ### run_backtest_xgboost.py
 Parameters: `--cluster-strategy`, `--model-id`, `--n-timeframes`, `--output-dir`, `--n-estimators`, `--learning-rate`, `--max-depth`, `--min-child-weight`, `--subsample`, `--colsample-bytree`, `--verbosity`

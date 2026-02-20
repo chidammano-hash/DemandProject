@@ -52,6 +52,8 @@ This groups DFUs by historical demand patterns for improved global LGBM model pe
 
 ## 3d) Run backtesting (optional, requires clustering)
 
+> **Architecture note:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) share a common framework in `common/`. Each script contains only model-specific training functions (~280 lines) and delegates orchestration to `common/backtest_framework.py` via `run_tree_backtest()`. Shared modules: `backtest_framework.py` (orchestrator), `feature_engineering.py` (lag/rolling features), `metrics.py` (WAPE/accuracy), `mlflow_utils.py` (experiment logging), `db.py` (connection params), `constants.py` (thresholds). Prophet uses shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrates its own per-DFU fitting loop.
+
 ### LGBM
 
 Global model (one LGBM for all DFUs, `ml_cluster` as feature):
@@ -99,6 +101,72 @@ make backtest-xgboost-cluster  # Per-cluster XGBoost backtest
 make backtest-load             # Load predictions into Postgres
 ```
 
+### Prophet
+
+Prophet fits individual time series models per DFU (unlike global tree models). Three strategies:
+
+Global (per-DFU fits across all DFUs):
+```bash
+make backtest-prophet            # Global Prophet backtest (per-DFU fits)
+make backtest-load               # Load predictions into Postgres
+```
+
+Per-cluster (only clustered DFUs):
+```bash
+make backtest-prophet-cluster    # Per-cluster Prophet backtest
+make backtest-load               # Load predictions into Postgres
+```
+
+Pooled (aggregate by cluster → fit → disaggregate proportionally):
+```bash
+make backtest-prophet-pooled     # Pooled cluster Prophet backtest
+make backtest-load               # Load predictions into Postgres
+```
+
+### PatchTST (Deep Learning)
+
+PatchTST is a Transformer-based model using patched time series input. Supports Apple MPS GPU acceleration.
+
+Global model:
+```bash
+make backtest-patchtst           # Global PatchTST backtest (Apple MPS GPU)
+make backtest-load               # Load predictions into Postgres
+```
+
+Per-cluster model:
+```bash
+make backtest-patchtst-cluster   # Per-cluster PatchTST backtest
+make backtest-load               # Load predictions into Postgres
+```
+
+Transfer learning (global base → per-cluster fine-tune):
+```bash
+make backtest-patchtst-transfer  # Transfer learning PatchTST backtest
+make backtest-load               # Load predictions into Postgres
+```
+
+### DeepAR (Deep Learning)
+
+DeepAR is an LSTM-based autoregressive probabilistic model. Produces point forecasts and prediction intervals.
+
+Global model:
+```bash
+make backtest-deepar             # Global DeepAR backtest
+make backtest-load               # Load predictions into Postgres
+```
+
+Per-cluster model:
+```bash
+make backtest-deepar-cluster     # Per-cluster DeepAR backtest
+make backtest-load               # Load predictions into Postgres
+```
+
+Transfer learning:
+```bash
+make backtest-deepar-transfer    # Transfer learning DeepAR backtest
+make backtest-load               # Load predictions into Postgres
+```
+
 ### Transfer Learning (all frameworks)
 
 Transfer learning trains a global base model (no `ml_cluster`), then fine-tunes per cluster with warm-start. Small clusters and unassigned DFUs fall back to the base model (never zeroed).
@@ -130,6 +198,9 @@ Predictions are stored in `fact_external_forecast_monthly` with model_id values:
 - LGBM: `lgbm_global` / `lgbm_cluster` / `lgbm_transfer`
 - CatBoost: `catboost_global` / `catboost_cluster` / `catboost_transfer`
 - XGBoost: `xgboost_global` / `xgboost_cluster` / `xgboost_transfer`
+- Prophet: `prophet_global` / `prophet_cluster` / `prophet_pooled`
+- PatchTST: `patchtst_global` / `patchtst_cluster` / `patchtst_transfer`
+- DeepAR: `deepar_global` / `deepar_cluster` / `deepar_transfer`
 
 All-lag predictions are archived in `backtest_lag_archive` for accuracy reporting at any horizon. Results appear automatically in the forecast model selector UI and accuracy KPIs.
 

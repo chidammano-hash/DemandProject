@@ -61,8 +61,12 @@ All lags 0-4 preserved:
 
 | Script | Purpose |
 |--------|---------|
-| `mvp/demand/scripts/run_backtest.py` | Train LGBM + generate predictions for all timeframes |
+| `mvp/demand/scripts/run_backtest.py` | LGBM-specific training functions + argparse (imports shared framework from `common/`) |
+| `mvp/demand/common/backtest_framework.py` | Shared orchestrator: data loading, timeframes, feature engineering, output saving, MLflow |
+| `mvp/demand/common/feature_engineering.py` | Shared feature matrix construction, lag/rolling features, future masking |
 | `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load predictions into Postgres (main + archive) |
+
+The script contains only three LGBM-specific functions (`train_and_predict_global`, `train_and_predict_per_cluster`, `train_and_predict_transfer`) passed to `run_tree_backtest()` from the shared framework.
 
 ### run_backtest.py
 Parameters: `--cluster-strategy`, `--model-id`, `--n-timeframes`, `--output-dir`, `--n-estimators`, `--learning-rate`, `--num-leaves`, `--min-child-samples`

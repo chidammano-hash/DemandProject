@@ -146,6 +146,20 @@ Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-tab
 
 Performance impact: aggregate queries (cluster-level, supplier-level) drop from 5–30s → <300ms.
 
+## Shared Backtest Framework (`common/`)
+All tree-based backtest scripts share common logic extracted into reusable modules:
+
+| Module | Purpose |
+|--------|---------|
+| `common/backtest_framework.py` | `run_tree_backtest()` orchestrator, timeframe generation, data loading, execution-lag assignment, all-lag expansion, post-processing, output saving, feature importance |
+| `common/feature_engineering.py` | `build_feature_matrix()`, `get_feature_columns()`, `mask_future_sales()` with `cat_dtype` parameter for framework-specific categorical handling |
+| `common/metrics.py` | `compute_accuracy_metrics()`: WAPE, bias, accuracy % |
+| `common/mlflow_utils.py` | `log_backtest_run()`: generic MLflow experiment logging |
+| `common/db.py` | `get_db_params()`: shared DB connection parameters |
+| `common/constants.py` | `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output column ordering, thresholds |
+
+Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_global()`, `train_and_predict_per_cluster()`, and `train_and_predict_transfer()`, passed as callables to `run_tree_backtest()`. Prophet uses shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrates its own per-DFU fitting loop.
+
 ## ML Pipeline Components
 1. **Feature Engineering** (`generate_clustering_features.py`):
    - Extracts time series features from `fact_sales_monthly` (volume, trend, seasonality, volatility, growth)
@@ -165,23 +179,24 @@ Performance impact: aggregate queries (cluster-level, supplier-level) drop from 
 4. **Assignment Update** (`update_cluster_assignments.py`):
    - Updates `dim_dfu.cluster_assignment` column in PostgreSQL
    - Validates updates and reports cluster distribution
-5. **LGBM Backtest** (`run_backtest.py`):
-   - Expanding window training with 10 timeframes (A–J)
-   - Feature engineering: lag 1-12, rolling mean/std 3/6/12m, calendar, DFU/item attributes
-   - Global and per-cluster training strategies
+5. **LGBM Backtest** (`run_backtest.py` → `common/backtest_framework.py`):
+   - Uses shared `run_tree_backtest()` orchestrator from `common/backtest_framework.py`
+   - Script contains only LGBM-specific training functions (~285 lines)
+   - Shared feature engineering from `common/feature_engineering.py`: lag 1-12, rolling mean/std 3/6/12m, calendar, DFU/item attributes
+   - Global, per-cluster, and transfer training strategies
    - Outputs two CSVs: execution-lag only (main table) + all lags 0–4 (archive)
    - Deduplication across timeframes (latest timeframe wins)
-   - MLflow logging to `demand_backtest` experiment
-6. **CatBoost Backtest** (`run_backtest_catboost.py`):
-   - Same expanding window framework as LGBM
+   - MLflow logging via `common/mlflow_utils.py` to `demand_backtest` experiment
+6. **CatBoost Backtest** (`run_backtest_catboost.py` → `common/backtest_framework.py`):
+   - Uses shared `run_tree_backtest()` orchestrator with `cat_dtype="str"` for CatBoost's index-based categoricals
+   - Script contains only CatBoost-specific training functions (~284 lines)
    - CatBoost regressors with native categorical support (ordered target encoding)
-   - Global (`catboost_global`) and per-cluster (`catboost_cluster`) strategies
-   - Same output format: two CSVs compatible with shared loader
-7. **XGBoost Backtest** (`run_backtest_xgboost.py`):
-   - Same expanding window framework as LGBM
+   - Global (`catboost_global`), per-cluster (`catboost_cluster`), and transfer (`catboost_transfer`) strategies
+7. **XGBoost Backtest** (`run_backtest_xgboost.py` → `common/backtest_framework.py`):
+   - Uses shared `run_tree_backtest()` orchestrator with `cat_dtype="category"` for XGBoost's native categoricals
+   - Script contains only XGBoost-specific training functions (~282 lines)
    - XGBoost regressors with histogram-based tree method and native categorical support
-   - Global (`xgboost_global`) and per-cluster (`xgboost_cluster`) strategies
-   - Same output format: two CSVs compatible with shared loader
+   - Global (`xgboost_global`), per-cluster (`xgboost_cluster`), and transfer (`xgboost_transfer`) strategies
 8. **Backtest Loader** (`load_backtest_forecasts.py`):
    - Loads execution-lag rows into `fact_external_forecast_monthly` via COPY + staging + upsert
    - Loads all-lag rows into `backtest_lag_archive` via same pattern

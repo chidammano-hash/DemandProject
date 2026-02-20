@@ -82,8 +82,12 @@ All lags 0-4 preserved:
 
 | Script | Purpose |
 |--------|---------|
-| `mvp/demand/scripts/run_backtest_catboost.py` | Train CatBoost + generate predictions for all timeframes |
+| `mvp/demand/scripts/run_backtest_catboost.py` | CatBoost-specific training functions + argparse (imports shared framework from `common/`) |
+| `mvp/demand/common/backtest_framework.py` | Shared orchestrator: data loading, timeframes, feature engineering, output saving, MLflow |
+| `mvp/demand/common/feature_engineering.py` | Shared feature matrix construction (uses `cat_dtype="str"` for CatBoost's index-based categoricals) |
 | `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load predictions into Postgres (main + archive) — shared with LGBM/XGBoost |
+
+The script contains only three CatBoost-specific functions (`train_and_predict_global`, `train_and_predict_per_cluster`, `train_and_predict_transfer`) passed to `run_tree_backtest()` from the shared framework.
 
 ### run_backtest_catboost.py
 Parameters: `--cluster-strategy`, `--model-id`, `--n-timeframes`, `--output-dir`, `--iterations`, `--learning-rate`, `--depth`, `--l2-leaf-reg`, `--random-seed`

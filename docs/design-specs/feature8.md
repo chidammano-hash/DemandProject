@@ -94,12 +94,31 @@ The `model_id` distinguishes strategies (e.g., `lgbm_global`, `lgbm_cluster_0`).
 
 ## Implementation
 
-### Script: `mvp/demand/scripts/run_backtest.py`
-Parameters: `--model`, `--model-id`, `--n-timeframes`, `--max-lag`, `--cluster-strategy`, `--dry-run`, `--output-dir`
+### Shared Framework (`common/`)
+All tree-based backtest scripts (LGBM, CatBoost, XGBoost) share common logic via modules in `mvp/demand/common/`:
 
-Output: `backtest_predictions.csv`, `backtest_accuracy.csv`, `backtest_metadata.json`, `feature_importance.csv`
+| Module | Purpose |
+|--------|---------|
+| `common/backtest_framework.py` | Orchestrator: `run_tree_backtest()`, timeframe generation, data loading, execution-lag assignment, all-lag expansion, post-processing, output saving |
+| `common/feature_engineering.py` | `build_feature_matrix()`, `get_feature_columns()`, `mask_future_sales()` |
+| `common/metrics.py` | `compute_accuracy_metrics()`: WAPE, bias, accuracy % |
+| `common/mlflow_utils.py` | `log_backtest_run()`: generic MLflow experiment logging |
+| `common/db.py` | `get_db_params()`: shared DB connection parameters |
+| `common/constants.py` | `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output column ordering, thresholds |
 
-### Script: `mvp/demand/scripts/load_backtest_forecasts.py`
+Each model-specific script implements only three functions: `train_and_predict_global()`, `train_and_predict_per_cluster()`, `train_and_predict_transfer()`. These are passed as callables to `run_tree_backtest()`.
+
+Prophet uses shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrates its own per-DFU fitting loop.
+
+### Model-Specific Scripts
+| Script | Model |
+|--------|-------|
+| `mvp/demand/scripts/run_backtest.py` | LightGBM |
+| `mvp/demand/scripts/run_backtest_catboost.py` | CatBoost |
+| `mvp/demand/scripts/run_backtest_xgboost.py` | XGBoost |
+| `mvp/demand/scripts/run_backtest_prophet.py` | Prophet |
+
+### Loader Script: `mvp/demand/scripts/load_backtest_forecasts.py`
 Parameters: `--input`, `--model-id`, `--replace`
 
 Pattern: COPY -> staging -> INSERT with upsert -> refresh agg view. Auto-loads archive CSV if present.
@@ -108,6 +127,8 @@ Pattern: COPY -> staging -> INSERT with upsert -> refresh agg view. Auto-loads a
 ```makefile
 backtest-lgbm:      # Global LGBM backtest
 backtest-catboost:  # CatBoost backtest
+backtest-xgboost:   # XGBoost backtest
+backtest-prophet:   # Prophet backtest
 backtest-load:      # Load predictions into Postgres (main + archive)
 backtest-all:       # backtest-lgbm + backtest-load
 ```
