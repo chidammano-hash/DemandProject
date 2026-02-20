@@ -12,3 +12,5 @@ competition:
   - catboost_cluster
   - xgboost_global
   - xgboost_cluster
+  - prophet_global
+  - prophet_pooled

@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ArrowDownWideNarrow, ArrowUpWideNarrow, ChartColumn, ChevronsUpDown, Globe, Loader2, MessageSquare, RefreshCcw, Send, Trophy } from "lucide-react";
+import { ArrowDownWideNarrow, ArrowUpWideNarrow, ChartColumn, ChevronsUpDown, Globe, Loader2, MessageSquare, RefreshCcw, Send, Settings, Trophy } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -300,6 +300,20 @@ function updateDomainPath(domain: string) {
   window.history.replaceState(null, "", url);
 }
 
+type Theme = "light" | "dark" | "midnight";
+
+const THEME_OPTIONS: { value: Theme; label: string; icon: string }[] = [
+  { value: "light", label: "Light", icon: "\u2600\uFE0F" },
+  { value: "dark", label: "Dark", icon: "\uD83C\uDF19" },
+  { value: "midnight", label: "Midnight", icon: "\uD83C\uDF0A" },
+];
+
+const CHART_COLORS: Record<Theme, { grid: string; axis: string; tooltip_bg: string; tooltip_border: string }> = {
+  light: { grid: "#e2e8f0", axis: "#64748b", tooltip_bg: "#ffffff", tooltip_border: "#e2e8f0" },
+  dark: { grid: "#2d3548", axis: "#94a3b8", tooltip_bg: "#1e2433", tooltip_border: "#2d3548" },
+  midnight: { grid: "#1e2744", axis: "#7b8db5", tooltip_bg: "#141c33", tooltip_border: "#1e2744" },
+};
+
 export default function App() {
   const [domain, setDomain] = useState<string>(getInitialDomain);
   const [activeTab, setActiveTab] = useState<string>(getInitialTab);
@@ -392,6 +406,37 @@ export default function App() {
   const [dfuLocationSuggestions, setDfuLocationSuggestions] = useState<string[]>([]);
   const debouncedDfuItem = useDebounce(dfuItem, 500);
   const debouncedDfuLocation = useDebounce(dfuLocation, 500);
+
+  // Theme state (feature22)
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = localStorage.getItem("ds-theme") as Theme | null;
+    return saved && ["light", "dark", "midnight"].includes(saved) ? saved : "light";
+  });
+  const [showSettings, setShowSettings] = useState(false);
+  const settingsRef = useRef<HTMLDivElement>(null);
+
+  // Apply theme class to HTML element
+  useEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute("data-transitioning", "true");
+    root.classList.remove("light", "dark", "midnight");
+    root.classList.add(theme);
+    localStorage.setItem("ds-theme", theme);
+    const timer = setTimeout(() => root.removeAttribute("data-transitioning"), 300);
+    return () => clearTimeout(timer);
+  }, [theme]);
+
+  // Click-outside dismiss for settings dropdown
+  useEffect(() => {
+    if (!showSettings) return;
+    const handler = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setShowSettings(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showSettings]);
 
   const visibleCols = useMemo(() => {
     if (!meta) {
@@ -1119,25 +1164,25 @@ export default function App() {
 
   return (
     <main className="mx-auto w-full max-w-[1800px] min-w-0 overflow-x-hidden p-4 md:p-6">
-      <section className="animate-fade-in relative overflow-hidden rounded-2xl border border-stone-300 bg-gradient-to-br from-[#E5E4E2] via-[#EDEDEB] to-[#E5E4E2] p-5 text-slate-800 shadow-2xl">
+      <section className="animate-fade-in relative rounded-2xl border border-border bg-card/80 backdrop-blur-sm p-5 text-foreground shadow-2xl">
         {/* Decorative orbs */}
-        <div className="pointer-events-none absolute -left-20 -top-20 h-64 w-64 rounded-full bg-stone-400/10 blur-3xl" />
-        <div className="pointer-events-none absolute -right-16 -bottom-16 h-48 w-48 rounded-full bg-stone-400/10 blur-3xl" />
-        <div className="pointer-events-none absolute left-1/2 top-0 h-px w-2/3 -translate-x-1/2 bg-gradient-to-r from-transparent via-stone-400/30 to-transparent" />
+        <div className="pointer-events-none absolute -left-20 -top-20 h-64 w-64 rounded-full bg-muted/30 blur-3xl" />
+        <div className="pointer-events-none absolute -right-16 -bottom-16 h-48 w-48 rounded-full bg-muted/30 blur-3xl" />
+        <div className="pointer-events-none absolute left-1/2 top-0 h-px w-2/3 -translate-x-1/2 bg-gradient-to-r from-transparent via-border/30 to-transparent" />
         <div className="relative flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-stone-400/30 ring-1 ring-stone-400/50">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-slate-600">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted ring-1 ring-border">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground">
                   <circle cx="12" cy="12" r="3" />
                   <ellipse cx="12" cy="12" rx="10" ry="4" />
                   <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)" />
                   <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)" />
                 </svg>
               </div>
-              <h1 className="text-2xl font-bold tracking-tight md:text-3xl text-slate-800">Planthium</h1>
+              <h1 className="text-2xl font-bold tracking-tight md:text-3xl text-foreground">Planthium</h1>
             </div>
-            <p className="mt-1 ml-[46px] text-sm text-slate-500 md:text-base">Periodic Analytics for Demand Forecasting</p>
+            <p className="mt-1 ml-[46px] text-sm text-muted-foreground md:text-base">Periodic Analytics for Demand Forecasting</p>
           </div>
           <div className="flex flex-wrap gap-2.5">
             {/* Data Explorer tab — consolidates item, location, customer, time */}
@@ -1256,6 +1301,44 @@ export default function App() {
                 </button>
               );
             })()}
+            {/* Settings gear */}
+            <div className="relative" ref={settingsRef}>
+              <button
+                className={cn(
+                  "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
+                  showSettings
+                    ? "bg-muted/80 text-foreground border-border scale-105 shadow-[0_0_12px_rgba(100,116,139,0.3)]"
+                    : "bg-muted/40 text-muted-foreground border-border/40 hover:scale-105 hover:border-border/80"
+                )}
+                onClick={() => setShowSettings(!showSettings)}
+              >
+                <span className="text-[9px] leading-none self-end font-mono opacity-50">{"\u2699"}</span>
+                <Settings className="h-5 w-5" />
+                <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">Settings</span>
+              </button>
+              {showSettings && (
+                <div className="absolute right-0 top-full mt-2 z-50 w-64 rounded-xl border border-border bg-card p-4 shadow-xl backdrop-blur-sm">
+                  <h3 className="text-sm font-semibold text-foreground mb-3">Theme</h3>
+                  <div className="flex gap-2">
+                    {THEME_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => { setTheme(opt.value); setShowSettings(false); }}
+                        className={cn(
+                          "flex-1 flex flex-col items-center gap-1 rounded-lg border p-3 transition-all duration-150",
+                          theme === opt.value
+                            ? "border-primary bg-primary/10 text-primary ring-1 ring-primary/30"
+                            : "border-border text-muted-foreground hover:border-primary/50 hover:bg-muted/50"
+                        )}
+                      >
+                        <span className="text-lg">{opt.icon}</span>
+                        <span className="text-xs font-medium">{opt.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </section>

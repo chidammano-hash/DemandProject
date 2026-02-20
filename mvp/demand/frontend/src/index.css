@@ -19,6 +19,59 @@
   --input: 225 14% 82%;
   --ring: 230 65% 28%;
   --radius: 0.7rem;
+  --bg-gradient-primary: rgba(79, 70, 229, 0.12);
+  --bg-gradient-secondary: rgba(217, 119, 6, 0.10);
+  --bg-gradient-base-start: #eef0f6;
+  --bg-gradient-base-mid: #f0eee8;
+  --bg-gradient-base-end: #eae8e2;
+}
+
+/* Dark theme */
+.dark {
+  --background: 220 15% 10%;
+  --foreground: 220 10% 90%;
+  --card: 220 15% 13%;
+  --card-foreground: 220 10% 90%;
+  --primary: 230 55% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 45 50% 20%;
+  --secondary-foreground: 45 60% 85%;
+  --accent: 43 80% 50%;
+  --accent-foreground: 0 0% 100%;
+  --muted: 220 12% 18%;
+  --muted-foreground: 220 10% 60%;
+  --border: 220 12% 22%;
+  --input: 220 12% 22%;
+  --ring: 230 55% 55%;
+  --bg-gradient-primary: rgba(79, 70, 229, 0.08);
+  --bg-gradient-secondary: rgba(217, 119, 6, 0.06);
+  --bg-gradient-base-start: #161a22;
+  --bg-gradient-base-mid: #181c24;
+  --bg-gradient-base-end: #1a1e26;
+}
+
+/* Midnight theme */
+.midnight {
+  --background: 230 25% 9%;
+  --foreground: 210 20% 88%;
+  --card: 230 22% 12%;
+  --card-foreground: 210 20% 88%;
+  --primary: 200 80% 55%;
+  --primary-foreground: 230 25% 9%;
+  --secondary: 260 40% 20%;
+  --secondary-foreground: 260 30% 80%;
+  --accent: 175 70% 45%;
+  --accent-foreground: 0 0% 100%;
+  --muted: 230 20% 15%;
+  --muted-foreground: 230 15% 55%;
+  --border: 230 18% 20%;
+  --input: 230 18% 20%;
+  --ring: 200 80% 55%;
+  --bg-gradient-primary: rgba(56, 189, 248, 0.08);
+  --bg-gradient-secondary: rgba(139, 92, 246, 0.06);
+  --bg-gradient-base-start: #0f1525;
+  --bg-gradient-base-mid: #111729;
+  --bg-gradient-base-end: #10162a;
 }
 
 * {
@@ -36,7 +89,11 @@ body,
 body {
   @apply text-foreground min-h-screen antialiased;
   background-image:
-    radial-gradient(circle at 12% 10%, rgba(79, 70, 229, 0.12), transparent 36%),
-    radial-gradient(circle at 86% 0%, rgba(217, 119, 6, 0.10), transparent 30%),
-    linear-gradient(140deg, #eef0f6 0%, #f0eee8 62%, #eae8e2 100%);
+    radial-gradient(circle at 12% 10%, var(--bg-gradient-primary), transparent 36%),
+    radial-gradient(circle at 86% 0%, var(--bg-gradient-secondary), transparent 30%),
+    linear-gradient(140deg, var(--bg-gradient-base-start) 0%, var(--bg-gradient-base-mid) 62%, var(--bg-gradient-base-end) 100%);
+}
+
+html[data-transitioning] * {
+  transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease !important;
 }
