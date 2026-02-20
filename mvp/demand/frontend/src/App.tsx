@@ -37,50 +37,6 @@ type DomainPage = {
   [key: string]: unknown;
 };
 
-type AnalyticsSummary = {
-  total_rows: number;
-  metric_total: number;
-  metric_avg: number | null;
-  metric_min: number | null;
-  metric_max: number | null;
-  min_date: string | null;
-  max_date: string | null;
-};
-
-type AnalyticsPoint = { x: string; y: number };
-
-type DomainAnalytics = {
-  config: {
-    metric: string;
-    trend_metrics?: string[];
-    date_field: string;
-    category_field: string;
-    points: number;
-    top_n: number;
-    kpi_months?: number;
-  };
-  available: {
-    metrics: string[];
-    date_fields: string[];
-    category_fields: string[];
-  };
-  summary: AnalyticsSummary;
-  trend: AnalyticsPoint[];
-  trend_multi?: Record<string, AnalyticsPoint[]>;
-  top_categories: AnalyticsPoint[];
-  kpis?: {
-    months_window?: number | null;
-    months_covered?: number | null;
-    total_forecast?: number | null;
-    total_actual?: number | null;
-    abs_error?: number | null;
-    bias?: number | null;
-    wape_pct?: number | null;
-    mape_pct?: number | null;
-    accuracy_pct?: number | null;
-  };
-};
-
 type SuggestPayload = {
   values?: string[];
 };
@@ -141,6 +97,7 @@ type AccuracyKpis = {
   bias: number | null;
   sum_forecast: number;
   sum_actual: number;
+  dfu_count: number;
 };
 
 type AccuracySliceRow = {
@@ -152,6 +109,8 @@ type AccuracySliceRow = {
 type AccuracySlicePayload = {
   group_by: string;
   rows: AccuracySliceRow[];
+  common_dfu_count?: number;
+  dfu_counts?: Record<string, number>;
 };
 
 type LagPoint = {
@@ -193,16 +152,21 @@ type DfuAnalysisKpis = {
   months_covered: number;
 };
 
+type DfuModelMonthly = {
+  month: string;
+  forecast: number;
+  actual: number;
+};
+
 type DfuAnalysisPayload = {
   mode: DfuAnalysisMode;
   item: string;
   location: string;
-  sales_metric: string;
   points: number;
-  kpi_months: number;
   models: string[];
   series: Record<string, number | string>[];
-  kpis: Record<string, DfuAnalysisKpis>;
+  model_monthly: Record<string, DfuModelMonthly[]>;
+  dfu_attributes: Record<string, string | null>[];
 };
 
 function useDebounce<T>(value: T, delay: number): T {
@@ -222,12 +186,7 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 const FALLBACK_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales", "forecast"];
-const ANALYTICS_ENABLED_DOMAINS = new Set(["sales", "forecast"]);
 const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales", "forecast"];
-const TAB_BAR_DOMAINS: string[] = [];
-const EXCLUDED_TREND_FIELDS = new Set(["type", "lag", "execution_lag"]);
-const FORECAST_ACCURACY_METRIC = "accuracy_pct";
-
 const titleCase = (value: string): string =>
   value
     .split("_")
@@ -236,6 +195,31 @@ const titleCase = (value: string): string =>
     .join(" ");
 
 const TREND_COLORS = ["#4f46e5", "#0d9488", "#d97706", "#7c3aed", "#dc2626", "#0284c7"];
+
+// Dedicated colors for DFU Analysis chart — sales measures + known forecast models
+const DFU_SALES_COLORS: Record<string, string> = {
+  tothist_dmd: "#e11d48",   // rose
+  qty_shipped: "#2563eb",   // blue
+  qty_ordered: "#059669",   // emerald
+};
+const DFU_MODEL_COLORS: Record<string, string> = {
+  champion: "#f59e0b",        // amber
+  ceiling: "#8b5cf6",         // violet
+  external: "#06b6d4",        // cyan
+  lgbm_global: "#84cc16",     // lime
+  lgbm_cluster: "#14b8a6",    // teal
+  lgbm_transfer: "#f97316",   // orange
+  catboost_global: "#ec4899", // pink
+  catboost_cluster: "#6366f1",// indigo
+  catboost_transfer: "#a3e635",// lime-400
+  xgboost_global: "#a855f7",  // purple
+  xgboost_cluster: "#0ea5e9", // sky
+  xgboost_transfer: "#fb923c",// orange-400
+};
+const DFU_MODEL_FALLBACK_COLORS = ["#64748b", "#78716c", "#0f766e", "#b45309", "#9333ea", "#e879f9"];
+function dfuModelColor(model: string, idx: number): string {
+  return DFU_MODEL_COLORS[model] ?? DFU_MODEL_FALLBACK_COLORS[idx % DFU_MODEL_FALLBACK_COLORS.length];
+}
 
 const ELEMENT_CONFIG: Record<string, { symbol: string; number: number; name: string; color: string; activeColor: string; glow: string }> = {
   explorer: { symbol: "Dx", number: 1, name: "Explorer", color: "bg-pink-50/90 text-pink-800 border-pink-200/60",        activeColor: "bg-pink-100 text-pink-950 border-pink-300", glow: "shadow-[0_0_12px_rgba(236,72,153,0.3)]" },
@@ -258,21 +242,11 @@ const ACCURACY_KPI_OPTIONS = [
   { key: "bias",         label: "Bias",        format: "bias" },
   { key: "sum_forecast", label: "\u03A3 Forecast", format: "num" },
   { key: "sum_actual",   label: "\u03A3 Actual",   format: "num" },
+  { key: "dfu_count",    label: "DFU Count",  format: "num" },
 ] as const;
 
 const numberFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 const compactNumberFmt = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
-
-function metricLabel(value: string): string {
-  if (value === FORECAST_ACCURACY_METRIC) {
-    return "Forecast Accuracy %";
-  }
-  return value === "__count__" ? "Count" : titleCase(value);
-}
-
-function trendMetricCandidates(fields: string[]): string[] {
-  return fields.filter((field) => !EXCLUDED_TREND_FIELDS.has(field.toLowerCase()));
-}
 
 function formatCompactNumber(value: number | string): string {
   if (typeof value !== "number") {
@@ -327,7 +301,6 @@ function updateDomainPath(domain: string) {
 }
 
 export default function App() {
-  const [domains, setDomains] = useState<string[]>([]);
   const [domain, setDomain] = useState<string>(getInitialDomain);
   const [activeTab, setActiveTab] = useState<string>(getInitialTab);
 
@@ -350,11 +323,6 @@ export default function App() {
   const debouncedSearch = useDebounce(search, filterDebounceMs);
   const debouncedColumnFilters = useDebounce(columnFilters, filterDebounceMs);
 
-  const [analytics, setAnalytics] = useState<DomainAnalytics | null>(null);
-  const [trendMetrics, setTrendMetrics] = useState<string[]>([]);
-  const [trendSeries, setTrendSeries] = useState<Record<string, AnalyticsPoint[]>>({});
-  const [points, setPoints] = useState(24);
-  const [forecastKpiMonths, setForecastKpiMonths] = useState(12);
   const [itemFilter, setItemFilter] = useState("");
   const [locationFilter, setLocationFilter] = useState("");
   const debouncedItemFilter = useDebounce(itemFilter, filterDebounceMs);
@@ -364,17 +332,12 @@ export default function App() {
   const [selectedCluster, setSelectedCluster] = useState("");
   const [clusterSource, setClusterSource] = useState<"ml" | "source">("ml");
   const [clusterSummary, setClusterSummary] = useState<ClusterInfo[]>([]);
-  const [clusterProfiles, setClusterProfiles] = useState<ClusterProfile[]>([]);
   const [clusterMeta, setClusterMeta] = useState<ClusterProfilesPayload["metadata"] | null>(null);
   const [showClusterViz, setShowClusterViz] = useState(false);
   const [autoSampledDomain, setAutoSampledDomain] = useState("");
-  const [itemSuggestions, setItemSuggestions] = useState<string[]>([]);
-  const [locationSuggestions, setLocationSuggestions] = useState<string[]>([]);
   const [columnSuggestions, setColumnSuggestions] = useState<Record<string, string[]>>({});
 
-  const [loadingMeta, setLoadingMeta] = useState(false);
   const [loadingTable, setLoadingTable] = useState(false);
-  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
   const [error, setError] = useState<string>("");
 
   const [chatOpen, setChatOpen] = useState(false);
@@ -393,6 +356,9 @@ export default function App() {
   const [sliceKpis, setSliceKpis] = useState<string[]>(["accuracy_pct", "wape", "bias"]);
   const [lagCurveMetric, setLagCurveMetric] = useState("accuracy_pct");
   const [sliceMonths, setSliceMonths] = useState(12); // 1-12 month rolling window
+  const [commonDfus, setCommonDfus] = useState(false);
+  const [commonDfuCount, setCommonDfuCount] = useState<number | null>(null);
+  const [dfuCounts, setDfuCounts] = useState<Record<string, number> | null>(null);
 
   // Champion / model competition state (feature15)
   const [competitionConfig, setCompetitionConfig] = useState<{ metric: string; lag: string; min_dfu_rows: number; champion_model_id: string; models: string[] } | null>(null);
@@ -413,11 +379,13 @@ export default function App() {
   const [dfuMode, setDfuMode] = useState<DfuAnalysisMode>("item_location");
   const [dfuItem, setDfuItem] = useState("");
   const [dfuLocation, setDfuLocation] = useState("");
-  const [dfuSalesMetric, setDfuSalesMetric] = useState("qty");
   const [dfuPoints, setDfuPoints] = useState(36);
   const [dfuKpiMonths, setDfuKpiMonths] = useState(12);
   const [dfuData, setDfuData] = useState<DfuAnalysisPayload | null>(null);
-  const [dfuVisibleSeries, setDfuVisibleSeries] = useState<Set<string>>(new Set(["sales"]));
+  const [dfuVisibleSeries, setDfuVisibleSeries] = useState<Set<string>>(new Set(["tothist_dmd", "qty_shipped", "qty_ordered"]));
+  const [dfuTimeStart, setDfuTimeStart] = useState("");
+  const [dfuTimeEnd, setDfuTimeEnd] = useState("");
+  const [dfuDefaultStart, setDfuDefaultStart] = useState("");
   const [dfuLoading, setDfuLoading] = useState(false);
   const [dfuAutoSampled, setDfuAutoSampled] = useState(false);
   const [dfuItemSuggestions, setDfuItemSuggestions] = useState<string[]>([]);
@@ -432,7 +400,6 @@ export default function App() {
     return meta.columns.filter((col) => visibleColumns[col] !== false);
   }, [meta, visibleColumns]);
 
-  const analyticsEnabled = ANALYTICS_ENABLED_DOMAINS.has(domain);
   const itemField = useMemo(() => {
     if (!meta) {
       return "";
@@ -458,24 +425,6 @@ export default function App() {
     return "";
   }, [meta]);
   const showFactFilters = (domain === "sales" || domain === "forecast") && Boolean(itemField) && Boolean(locationField) && activeTab !== "explorer";
-  const trendMetricOptions = useMemo(() => {
-    const base = trendMetricCandidates(meta?.numeric_fields || []);
-    if (domain === "forecast") {
-      return [...base, FORECAST_ACCURACY_METRIC];
-    }
-    return base;
-  }, [meta, domain]);
-  const activeDateField = useMemo(() => {
-    if (!meta || meta.date_fields.length === 0) {
-      return "";
-    }
-    const preferred = meta.date_fields.find((field) => field.toLowerCase() === "startdate");
-    return preferred || meta.date_fields[0] || "";
-  }, [meta]);
-  const selectedTrendMetrics = useMemo(() => Array.from(new Set(trendMetrics.filter(Boolean))), [trendMetrics]);
-  const primaryTrendMetric = selectedTrendMetrics[0] || trendMetricOptions[0] || "__count__";
-  const itemListId = `item-suggest-${domain}`;
-  const locationListId = `location-suggest-${domain}`;
   const formatPairFilterValue = (value: string): string => {
     const trimmed = value.trim();
     if (!trimmed) {
@@ -514,14 +463,12 @@ export default function App() {
         const list = (payload.domains || []).map((d) => d.toLowerCase());
         if (!cancelled) {
           const nextDomains = list.length > 0 ? list : FALLBACK_DOMAINS;
-          setDomains(nextDomains);
           if (!nextDomains.includes(domain)) {
             setDomain(nextDomains[0]);
           }
         }
       } catch {
         if (!cancelled) {
-          setDomains(FALLBACK_DOMAINS);
           if (!FALLBACK_DOMAINS.includes(domain)) {
             setDomain("item");
           }
@@ -539,7 +486,7 @@ export default function App() {
     let cancelled = false;
 
     async function loadDomainData() {
-      setLoadingMeta(true);
+      // loading meta
       setLoadingTable(true);
       setError("");
 
@@ -556,32 +503,17 @@ export default function App() {
         const payload = (await metaRes.json()) as DomainMeta;
         if (cancelled) return;
 
-        const filteredMetrics = trendMetricCandidates(payload.numeric_fields || []);
-        const nextMetrics =
-          domain === "forecast"
-            ? filteredMetrics.length > 0
-              ? [filteredMetrics[0], FORECAST_ACCURACY_METRIC]
-              : [FORECAST_ACCURACY_METRIC]
-            : filteredMetrics.length > 0
-              ? [filteredMetrics[0]]
-              : [];
-
         setMeta(payload);
         setOffset(0);
         setSearch("");
         setColumnFilters({});
         setSortBy(payload.default_sort);
         setSortDir("asc");
-        setTrendMetrics(nextMetrics);
-        setTrendSeries({});
         setItemFilter("");
         setLocationFilter("");
         setSelectedModel("");
         setAvailableModels([]);
-        setForecastKpiMonths(12);
         setAutoSampledDomain("");
-        setItemSuggestions([]);
-        setLocationSuggestions([]);
         setColumnSuggestions({});
         setVisibleColumns(Object.fromEntries(payload.columns.map((c) => [c, true])));
         updateDomainPath(domain);
@@ -603,7 +535,7 @@ export default function App() {
         }
       } finally {
         if (!cancelled) {
-          setLoadingMeta(false);
+          // done loading meta
           setLoadingTable(false);
         }
       }
@@ -677,83 +609,6 @@ export default function App() {
   }, [meta, domain, offset, limit, debouncedSearch, sortBy, sortDir, effectiveFilters, activeTab]);
 
   useEffect(() => {
-    if (!meta || !analyticsEnabled) {
-      setAnalytics(null);
-      setTrendSeries({});
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadAnalytics() {
-      setLoadingAnalytics(true);
-      try {
-        const params = new URLSearchParams({
-          q: debouncedSearch,
-          metric: primaryTrendMetric,
-          metrics: selectedTrendMetrics.join(","),
-          date_field: activeDateField,
-          category_field: "",
-          points: String(points),
-          top_n: "12",
-        });
-        if (domain === "forecast") {
-          params.set("kpi_months", String(forecastKpiMonths));
-        }
-
-        if (Object.keys(effectiveFilters).length > 0) {
-          params.set("filters", JSON.stringify(effectiveFilters));
-        }
-
-        const res = await fetch(`/domains/${encodeURIComponent(domain)}/analytics?${params.toString()}`);
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        const payload = (await res.json()) as DomainAnalytics;
-
-        if (!cancelled) {
-          setAnalytics(payload);
-          if (payload.trend_multi && Object.keys(payload.trend_multi).length > 0) {
-            setTrendSeries(payload.trend_multi);
-          } else if (payload.config.metric && payload.trend) {
-            setTrendSeries({ [payload.config.metric]: payload.trend });
-          } else {
-            setTrendSeries({});
-          }
-        }
-      } catch {
-        if (!cancelled) {
-          setAnalytics(null);
-          setTrendSeries({});
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingAnalytics(false);
-        }
-      }
-    }
-
-    loadAnalytics();
-    return () => {
-      cancelled = true;
-    };
-  }, [meta, analyticsEnabled, domain, primaryTrendMetric, selectedTrendMetrics, activeDateField, points, forecastKpiMonths, debouncedSearch, effectiveFilters]);
-
-  useEffect(() => {
-    if (trendMetricOptions.length === 0) {
-      setTrendMetrics([]);
-      return;
-    }
-    setTrendMetrics((prev) => {
-      const filtered = Array.from(new Set(prev.filter((metric) => trendMetricOptions.includes(metric))));
-      if (filtered.length > 0) {
-        return filtered;
-      }
-      return [trendMetricOptions[0]];
-    });
-  }, [trendMetricOptions]);
-
-  useEffect(() => {
     if (domain !== "forecast" || !meta) {
       setAvailableModels([]);
       return;
@@ -779,7 +634,6 @@ export default function App() {
     if (domain !== "dfu") {
       setClusterSummary([]);
       setSelectedCluster("");
-      setClusterProfiles([]);
       setClusterMeta(null);
       return;
     }
@@ -802,12 +656,10 @@ export default function App() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const payload = (await res.json()) as ClusterProfilesPayload;
         if (!cancelled) {
-          setClusterProfiles(payload.profiles || []);
           setClusterMeta(payload.metadata || null);
         }
       } catch {
         if (!cancelled) {
-          setClusterProfiles([]);
           setClusterMeta(null);
         }
       }
@@ -855,82 +707,6 @@ export default function App() {
       cancelled = true;
     };
   }, [meta, showFactFilters, autoSampledDomain, domain, itemFilter, locationFilter]);
-
-  useEffect(() => {
-    if (!showFactFilters || !itemField) {
-      setItemSuggestions([]);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({
-          field: itemField,
-          q: itemFilter.trim(),
-          limit: "12",
-        });
-        if (locationFilter.trim() && locationField) {
-          params.set("filters", JSON.stringify({ [locationField]: formatPairFilterValue(locationFilter) }));
-        }
-        const res = await fetch(`/domains/${encodeURIComponent(domain)}/suggest?${params.toString()}`);
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        const payload = (await res.json()) as SuggestPayload;
-        const values = Array.from(new Set((payload.values || []).filter(Boolean))).slice(0, 12);
-        if (!cancelled) {
-          setItemSuggestions(values);
-        }
-      } catch {
-        if (!cancelled) {
-          setItemSuggestions([]);
-        }
-      }
-    }, 180);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [showFactFilters, itemField, itemFilter, domain, locationField, locationFilter]);
-
-  useEffect(() => {
-    if (!showFactFilters || !locationField) {
-      setLocationSuggestions([]);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({
-          field: locationField,
-          q: locationFilter.trim(),
-          limit: "12",
-        });
-        if (itemFilter.trim() && itemField) {
-          params.set("filters", JSON.stringify({ [itemField]: formatPairFilterValue(itemFilter) }));
-        }
-        const res = await fetch(`/domains/${encodeURIComponent(domain)}/suggest?${params.toString()}`);
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        const payload = (await res.json()) as SuggestPayload;
-        const values = Array.from(new Set((payload.values || []).filter(Boolean))).slice(0, 12);
-        if (!cancelled) {
-          setLocationSuggestions(values);
-        }
-      } catch {
-        if (!cancelled) {
-          setLocationSuggestions([]);
-        }
-      }
-    }, 180);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [showFactFilters, locationField, locationFilter, domain, itemField, itemFilter]);
 
   // Column-level typeahead suggestions
   useEffect(() => {
@@ -998,40 +774,6 @@ export default function App() {
       timers.forEach((t) => window.clearTimeout(t));
     };
   }, [debouncedColumnFilters, domain, meta]);
-
-  const trendChartData = useMemo(() => {
-    const bucket = new Map<string, Record<string, number | string>>();
-    for (const m of selectedTrendMetrics) {
-      const pointsForMetric = trendSeries[m] || [];
-      for (const p of pointsForMetric) {
-        const key = String(p.x);
-        const row = bucket.get(key) || { x: key };
-        row[m] = p.y;
-        bucket.set(key, row);
-      }
-    }
-    return Array.from(bucket.values()).sort((a, b) => String(a.x).localeCompare(String(b.x)));
-  }, [selectedTrendMetrics, trendSeries]);
-  const fallbackTrendData = useMemo(() => {
-    if (!analytics?.trend?.length || !primaryTrendMetric) {
-      return [];
-    }
-    return analytics.trend.map((p) => ({ x: p.x, [primaryTrendMetric]: p.y }));
-  }, [analytics, primaryTrendMetric]);
-  const effectiveTrendData = trendChartData.length > 0 ? trendChartData : fallbackTrendData;
-  const renderedTrendMetrics = useMemo(() => {
-    const available = selectedTrendMetrics.filter((m) =>
-      effectiveTrendData.some((row) => typeof row[m] === "number" && Number.isFinite(Number(row[m]))),
-    );
-    if (available.length > 0) {
-      return available;
-    }
-    return primaryTrendMetric ? [primaryTrendMetric] : selectedTrendMetrics;
-  }, [effectiveTrendData, selectedTrendMetrics, primaryTrendMetric]);
-  const isTrendBusy = loadingAnalytics;
-  const hasAccuracyTrend = renderedTrendMetrics.includes(FORECAST_ACCURACY_METRIC);
-  const hasNonAccuracyTrend = renderedTrendMetrics.some((m) => m !== FORECAST_ACCURACY_METRIC);
-  const forecastKpis = domain === "forecast" ? analytics?.kpis : undefined;
 
   const start = total === 0 ? 0 : offset + 1;
   const end = Math.min(offset + limit, total);
@@ -1101,12 +843,17 @@ export default function App() {
       const from = new Date(now.getFullYear(), now.getMonth() - sliceMonths, 1);
       monthFrom = from.toISOString().slice(0, 10);
     }
+    const needDfuCount = sliceKpis.includes("dfu_count");
     const sliceParams = new URLSearchParams({ group_by: sliceGroupBy, lag: String(sliceLag) });
     if (sliceModels.trim()) sliceParams.set("models", sliceModels.trim());
     if (monthFrom) sliceParams.set("month_from", monthFrom);
+    if (commonDfus) sliceParams.set("common_dfus", "true");
+    if (needDfuCount) sliceParams.set("include_dfu_count", "true");
     const lagParams = new URLSearchParams();
     if (sliceModels.trim()) lagParams.set("models", sliceModels.trim());
     if (monthFrom) lagParams.set("month_from", monthFrom);
+    if (commonDfus) lagParams.set("common_dfus", "true");
+    if (needDfuCount) lagParams.set("include_dfu_count", "true");
     Promise.all([
       fetch(`/forecast/accuracy/slice?${sliceParams}`).then((r) => r.json() as Promise<AccuracySlicePayload>),
       fetch(`/forecast/accuracy/lag-curve?${lagParams}`).then((r) => r.json() as Promise<LagCurvePayload>),
@@ -1115,13 +862,15 @@ export default function App() {
         if (cancelled) return;
         setSliceData(slicePayload.rows || []);
         setLagCurveData(lagPayload.by_lag || []);
+        setCommonDfuCount(slicePayload.common_dfu_count ?? null);
+        setDfuCounts(slicePayload.dfu_counts ?? null);
       })
       .catch(() => {
-        if (!cancelled) { setSliceData([]); setLagCurveData([]); }
+        if (!cancelled) { setSliceData([]); setLagCurveData([]); setCommonDfuCount(null); setDfuCounts(null); }
       })
       .finally(() => { if (!cancelled) setLoadingSlice(false); });
     return () => { cancelled = true; };
-  }, [activeTab, sliceGroupBy, sliceLag, sliceModels, sliceMonths]);
+  }, [activeTab, sliceGroupBy, sliceLag, sliceModels, sliceMonths, commonDfus, sliceKpis]);
 
   // Fetch competition config + summary when on the accuracy tab (feature15)
   useEffect(() => {
@@ -1239,16 +988,34 @@ export default function App() {
           item: debouncedDfuItem.trim(),
           location: debouncedDfuLocation.trim(),
           points: String(dfuPoints),
-          kpi_months: String(dfuKpiMonths),
-          sales_metric: dfuSalesMetric,
         });
         const res = await fetch(`/dfu/analysis?${params}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const payload = (await res.json()) as DfuAnalysisPayload;
         if (!cancelled) {
           setDfuData(payload);
-          const allKeys = new Set(["sales", ...payload.models.map((m) => `forecast_${m}`)]);
+          const allKeys = new Set(["tothist_dmd", "qty_shipped", "qty_ordered", ...payload.models.map((m) => `forecast_${m}`)]);
           setDfuVisibleSeries(allKeys);
+          // Default "from" to the first month where all measures have data
+          const measureKeys = new Set<string>();
+          for (const pt of payload.series) {
+            for (const k of Object.keys(pt)) {
+              if (k !== "month") measureKeys.add(k);
+            }
+          }
+          let smartStart = "";
+          if (measureKeys.size > 0 && payload.series.length > 0) {
+            const keys = Array.from(measureKeys);
+            for (const pt of payload.series) {
+              if (keys.every((k) => k in pt)) {
+                smartStart = String(pt.month);
+                break;
+              }
+            }
+          }
+          setDfuDefaultStart(smartStart);
+          setDfuTimeStart(smartStart);
+          setDfuTimeEnd("");
         }
       } catch {
         if (!cancelled) setDfuData(null);
@@ -1258,7 +1025,53 @@ export default function App() {
     }
     loadAnalysis();
     return () => { cancelled = true; };
-  }, [activeTab, dfuMode, debouncedDfuItem, debouncedDfuLocation, dfuPoints, dfuKpiMonths, dfuSalesMetric]);
+  }, [activeTab, dfuMode, debouncedDfuItem, debouncedDfuLocation, dfuPoints]);
+
+  // DFU Analysis: compute KPIs client-side from model_monthly data
+  const dfuKpis = useMemo<Record<string, DfuAnalysisKpis>>(() => {
+    if (!dfuData?.model_monthly) return {};
+    const result: Record<string, DfuAnalysisKpis> = {};
+    for (const [modelId, rows] of Object.entries(dfuData.model_monthly)) {
+      // rows are sorted month desc; take the most recent kpi_months entries
+      const window = rows.slice(0, dfuKpiMonths);
+      if (window.length === 0) continue;
+      let sumForecast = 0, sumActual = 0, sumAbsErr = 0;
+      for (const r of window) {
+        sumForecast += r.forecast;
+        sumActual += r.actual;
+        sumAbsErr += Math.abs(r.forecast - r.actual);
+      }
+      const absActual = Math.abs(sumActual);
+      const wape = absActual > 0 ? (100 * sumAbsErr) / absActual : null;
+      const accuracy = wape !== null ? 100 - wape : null;
+      const bias = absActual > 0 ? (sumForecast / sumActual) - 1 : null;
+      result[modelId] = {
+        accuracy_pct: accuracy !== null ? Math.round(accuracy * 10000) / 10000 : null,
+        wape: wape !== null ? Math.round(wape * 10000) / 10000 : null,
+        bias: bias !== null ? Math.round(bias * 10000) / 10000 : null,
+        sum_forecast: sumForecast,
+        sum_actual: sumActual,
+        months_covered: window.length,
+      };
+    }
+    return result;
+  }, [dfuData, dfuKpiMonths]);
+
+  // DFU Analysis: available months and time-range-filtered series
+  const dfuMonths = useMemo(() => {
+    if (!dfuData?.series.length) return [] as string[];
+    return dfuData.series.map((p) => String(p.month));
+  }, [dfuData]);
+
+  const dfuFilteredSeries = useMemo(() => {
+    if (!dfuData?.series.length) return [];
+    const start = dfuTimeStart || dfuMonths[0];
+    const end = dfuTimeEnd || dfuMonths[dfuMonths.length - 1];
+    return dfuData.series.filter((p) => {
+      const m = String(p.month);
+      return m >= start && m <= end;
+    });
+  }, [dfuData, dfuMonths, dfuTimeStart, dfuTimeEnd]);
 
   // DFU Analysis: item typeahead suggestions
   useEffect(() => {
@@ -1370,56 +1183,6 @@ export default function App() {
                   onClick={() => {
                     setActiveTab("clusters");
                     if (domain !== "dfu") setDomain("dfu");
-                  }}
-                >
-                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
-                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
-                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
-                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
-                </button>
-              );
-            })()}
-            {/* Sales tab — analytics only */}
-            {(() => {
-              const el = ELEMENT_CONFIG["sales"];
-              const isActive = activeTab === "sales";
-              return (
-                <button
-                  key="sales"
-                  className={cn(
-                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
-                    isActive
-                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
-                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
-                  )}
-                  onClick={() => {
-                    setActiveTab("sales");
-                    if (domain !== "sales") setDomain("sales");
-                  }}
-                >
-                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
-                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
-                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
-                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
-                </button>
-              );
-            })()}
-            {/* Forecast tab — analytics only */}
-            {(() => {
-              const el = ELEMENT_CONFIG["forecast"];
-              const isActive = activeTab === "forecast";
-              return (
-                <button
-                  key="forecast"
-                  className={cn(
-                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
-                    isActive
-                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
-                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
-                  )}
-                  onClick={() => {
-                    setActiveTab("forecast");
-                    if (domain !== "forecast") setDomain("forecast");
                   }}
                 >
                   {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
@@ -1713,6 +1476,24 @@ export default function App() {
                       ))}
                     </select>
                   </label>
+                ) : null}
+                <label className="flex items-center gap-1.5 self-end pb-1.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-input accent-indigo-700"
+                    checked={commonDfus}
+                    onChange={() => setCommonDfus((v) => !v)}
+                    disabled={loadingSlice}
+                  />
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground whitespace-nowrap">Common DFUs Only</span>
+                </label>
+                {commonDfus && commonDfuCount != null && dfuCounts ? (
+                  <div className="flex items-center gap-2 self-end pb-1.5 text-xs text-muted-foreground tabular-nums">
+                    <Badge variant="secondary" className="font-mono text-[10px]">{commonDfuCount.toLocaleString()} common</Badge>
+                    {Object.entries(dfuCounts).map(([m, cnt]) => (
+                      <span key={m} className="font-mono">{m}: {cnt.toLocaleString()}</span>
+                    ))}
+                  </div>
                 ) : null}
                 {loadingSlice ? (
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -2271,273 +2052,6 @@ export default function App() {
         </Card>
       ) : null}
 
-      {(activeTab === "sales" || activeTab === "forecast") ? <section className="mt-4 grid gap-4 [&>*]:min-w-0 xl:grid-cols-1">
-        <Card className="animate-fade-in">
-          <CardHeader className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <CardTitle className="text-base">Analytics</CardTitle>
-                <CardDescription>
-                  {meta ? `${titleCase(meta.name)} metrics` : "Loading domain metadata"}
-                </CardDescription>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => setColumnFilters((prev) => ({ ...prev }))}>
-                <RefreshCcw className="mr-1 h-4 w-4" /> Refresh
-              </Button>
-            </div>
-            <div className="grid gap-2 md:grid-cols-2">
-              <div className="space-y-1">
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Trend Measures</span>
-                <div className="max-h-[84px] overflow-y-auto rounded-md border border-input bg-background p-2">
-                  <div className="grid grid-cols-1 gap-1">
-                    {trendMetricOptions.map((m) => {
-                      const checked = selectedTrendMetrics.includes(m);
-                      return (
-                        <label key={m} className="flex items-center gap-2 text-xs font-medium normal-case tracking-normal text-foreground">
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={(v) => {
-                              const nextChecked = v === true;
-                              if (nextChecked) {
-                                if (!checked) {
-                                  setTrendMetrics((prev) => [...prev, m]);
-                                }
-                                return;
-                              }
-                              const remaining = selectedTrendMetrics.filter((x) => x !== m);
-                              if (remaining.length === 0) {
-                                return;
-                              }
-                              setTrendMetrics(remaining);
-                            }}
-                          />
-                          <span>{metricLabel(m)}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-              <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Trend Points
-                <select
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  value={points}
-                  onChange={(e) => setPoints(Number(e.target.value))}
-                  disabled={loadingAnalytics}
-                >
-                  {[12, 24, 36, 60].map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {showFactFilters ? (
-              <div className="grid gap-2 md:grid-cols-2">
-                <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Item ({itemField})
-                  <Input
-                    className="h-9"
-                    placeholder="Filter item"
-                    list={itemListId}
-                    value={itemFilter}
-                    onChange={(e) => {
-                      setOffset(0);
-                      setItemFilter(e.target.value);
-                    }}
-                  />
-                  <datalist id={itemListId}>
-                    {itemSuggestions.map((val) => (
-                      <option key={val} value={val} />
-                    ))}
-                  </datalist>
-                </label>
-                <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Location ({locationField})
-                  <Input
-                    className="h-9"
-                    placeholder="Filter location"
-                    list={locationListId}
-                    value={locationFilter}
-                    onChange={(e) => {
-                      setOffset(0);
-                      setLocationFilter(e.target.value);
-                    }}
-                  />
-                  <datalist id={locationListId}>
-                    {locationSuggestions.map((val) => (
-                      <option key={val} value={val} />
-                    ))}
-                  </datalist>
-                </label>
-              </div>
-            ) : null}
-            {domain === "forecast" && availableModels.length > 0 ? (
-              <div className="grid gap-2 md:grid-cols-2">
-                <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Forecast Model
-                  <select
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    value={selectedModel}
-                    onChange={(e) => {
-                      setOffset(0);
-                      setSelectedModel(e.target.value);
-                    }}
-                  >
-                    <option value="">All Models</option>
-                    {availableModels.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            ) : null}
-          </CardHeader>
-
-          <CardContent className="space-y-4">
-            <Card className="border-muted bg-muted/20 shadow-none">
-              <CardContent className="pt-4">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Rows</p>
-                <p className="mt-1 text-lg font-semibold">{formatNumber(analytics?.summary.total_rows)}</p>
-              </CardContent>
-            </Card>
-            {domain === "forecast" ? (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-end gap-2 rounded-md border border-input bg-muted/20 px-3 py-2">
-                  <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Accuracy Window (Months)
-                    <select
-                      className="h-9 w-[140px] rounded-md border border-input bg-background px-3 text-sm"
-                      value={forecastKpiMonths}
-                      onChange={(e) => setForecastKpiMonths(Number(e.target.value))}
-                      disabled={loadingAnalytics}
-                    >
-                      {Array.from({ length: 12 }, (_, idx) => idx + 1).map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="pb-1 text-xs text-muted-foreground">
-                    Averaged across last {analytics?.kpis?.months_covered ?? 0} month(s) in current filter context.
-                  </p>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Card className="border-muted bg-muted/20 shadow-none">
-                  <CardContent className="pt-4">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Forecast Accuracy</p>
-                    <p className="mt-1 text-lg font-semibold">{formatPercent(forecastKpis?.accuracy_pct)}</p>
-                  </CardContent>
-                </Card>
-                <Card className="border-muted bg-muted/20 shadow-none">
-                  <CardContent className="pt-4">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Avg WAPE</p>
-                    <p className="mt-1 text-lg font-semibold">{formatPercent(forecastKpis?.wape_pct)}</p>
-                  </CardContent>
-                </Card>
-                <Card className="border-muted bg-muted/20 shadow-none">
-                  <CardContent className="pt-4">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Avg MAPE</p>
-                    <p className="mt-1 text-lg font-semibold">{formatPercent(forecastKpis?.mape_pct)}</p>
-                  </CardContent>
-                </Card>
-                <Card className="border-muted bg-muted/20 shadow-none">
-                  <CardContent className="pt-4">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Forecast</p>
-                    <p className="mt-1 text-lg font-semibold">{formatNumber(forecastKpis?.total_forecast)}</p>
-                  </CardContent>
-                </Card>
-                <Card className="border-muted bg-muted/20 shadow-none">
-                  <CardContent className="pt-4">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Total Actual</p>
-                    <p className="mt-1 text-lg font-semibold">{formatNumber(forecastKpis?.total_actual)}</p>
-                  </CardContent>
-                </Card>
-                <Card className="border-muted bg-muted/20 shadow-none">
-                  <CardContent className="pt-4">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Absolute Error</p>
-                    <p className="mt-1 text-lg font-semibold">{formatNumber(forecastKpis?.abs_error)}</p>
-                  </CardContent>
-                </Card>
-                <Card className="border-muted bg-muted/20 shadow-none">
-                  <CardContent className="pt-4">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Bias (Fcst/Hist)</p>
-                    <p className="mt-1 text-lg font-semibold">{formatNumber(forecastKpis?.bias)}</p>
-                  </CardContent>
-                </Card>
-              </div>
-              </div>
-            ) : null}
-            <Card className="min-w-0 border-muted shadow-none">
-              <CardHeader className="pb-0">
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <ChartColumn className="h-4 w-4" /> Trend
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="h-[320px] pt-2">
-                {isTrendBusy ? (
-                  <div className="flex h-full items-center justify-center">
-                    <div className="flex flex-col items-center gap-2">
-                      <div className="flex flex-col items-center justify-center rounded-lg border-2 border-indigo-300 bg-indigo-50 px-4 py-2 shadow-md animate-pulse-glow">
-                        <span className="text-[9px] leading-none self-start font-mono text-indigo-500 opacity-70">{ELEMENT_CONFIG[domain]?.number ?? 0}</span>
-                        <span className="text-lg font-bold leading-tight font-mono text-indigo-900">{ELEMENT_CONFIG[domain]?.symbol ?? "Ld"}</span>
-                        <span className="text-[9px] leading-none text-indigo-600">Loading</span>
-                      </div>
-                      <span className="text-xs text-muted-foreground">Computing trends...</span>
-                    </div>
-                  </div>
-                ) : !activeDateField ? (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">No date field configured for this domain.</div>
-                ) : effectiveTrendData.length ? (
-                  <div className="h-full overflow-x-scroll overflow-y-hidden pb-2 [scrollbar-gutter:stable]">
-                    <div className="h-full" style={{ minWidth: `${Math.max(1200, effectiveTrendData.length * 120)}px` }}>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={effectiveTrendData} margin={{ top: 8, right: 16, left: 18, bottom: 8 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
-                          <XAxis dataKey="x" />
-                          <YAxis yAxisId="left" hide={!hasNonAccuracyTrend} width={84} tickFormatter={formatCompactNumber} tickMargin={10} />
-                          <YAxis yAxisId="right" hide={!hasAccuracyTrend} orientation="right" width={64} tickFormatter={(v) => `${formatNumber(Number(v))}%`} tickMargin={10} domain={[0, 100]} />
-                          <Tooltip
-                            formatter={(value, name) => {
-                              const n = Number(value);
-                              if (String(name).toLowerCase().includes("accuracy")) {
-                                return [formatPercent(Number.isFinite(n) ? n : null), String(name)];
-                              }
-                              return [formatNumber(Number.isFinite(n) ? n : null), String(name)];
-                            }}
-                          />
-                          <Legend />
-                          {renderedTrendMetrics.map((m, idx) => (
-                            <Line
-                              key={m}
-                              type="monotone"
-                              dataKey={m}
-                              yAxisId={m === FORECAST_ACCURACY_METRIC ? "right" : "left"}
-                              name={metricLabel(m)}
-                              stroke={TREND_COLORS[idx % TREND_COLORS.length]}
-                              strokeWidth={2}
-                              dot={effectiveTrendData.length <= 1 ? { r: 4 } : false}
-                              activeDot={{ r: 5 }}
-                            />
-                          ))}
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    {(analytics?.summary.total_rows || 0) === 0 ? "No rows for current filters (item/location)." : "No trend points for selected measures."}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </CardContent>
-        </Card>
-      </section> : null}
-
       {activeTab === "dfuAnalysis" ? (
         <section className="mt-4 grid gap-4 [&>*]:min-w-0 xl:grid-cols-1">
           <Card className="animate-fade-in">
@@ -2570,18 +2084,6 @@ export default function App() {
                     <option value="item_location">Item @ Location (single DFU)</option>
                     <option value="all_items_at_location">All Items @ Location</option>
                     <option value="item_at_all_locations">Item @ All Locations</option>
-                  </select>
-                </label>
-                <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Sales Measure
-                  <select
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    value={dfuSalesMetric}
-                    onChange={(e) => setDfuSalesMetric(e.target.value)}
-                  >
-                    <option value="qty">Qty</option>
-                    <option value="qty_shipped">Qty Shipped</option>
-                    <option value="qty_ordered">Qty Ordered</option>
                   </select>
                 </label>
                 <div className="grid grid-cols-2 gap-2">
@@ -2660,28 +2162,79 @@ export default function App() {
             </CardHeader>
 
             <CardContent className="space-y-4">
+              {/* DFU Attributes */}
+              {dfuData && dfuData.dfu_attributes && dfuData.dfu_attributes.length > 0 && (
+                <details className="group rounded-md border border-input bg-background">
+                  <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
+                    DFU Attributes ({dfuData.dfu_attributes.length} {dfuData.dfu_attributes.length === 1 ? "record" : "records"})
+                    <span className="ml-1 text-[10px] text-muted-foreground group-open:hidden">+ expand</span>
+                  </summary>
+                  <div className="border-t border-input px-3 py-2 space-y-3">
+                    {dfuData.dfu_attributes.map((attrs, dfuIdx) => (
+                      <div key={dfuIdx}>
+                        {dfuData.dfu_attributes.length > 1 && (
+                          <p className="mb-1 text-xs font-medium text-foreground">
+                            {attrs.dmdunit} / {attrs.dmdgroup} @ {attrs.loc}
+                          </p>
+                        )}
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                          {Object.entries(attrs).map(([key, val]) => (
+                            <div key={key} className="flex items-baseline gap-1 text-xs truncate">
+                              <span className="font-medium text-muted-foreground shrink-0">{titleCase(key)}:</span>
+                              <span className="text-foreground truncate" title={val ?? "—"}>{val ?? "—"}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+
               {/* Measure toggles */}
               {dfuData && dfuData.series.length > 0 ? (
                 <>
                   <div className="space-y-1">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Visible Measures</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Visible Measures</span>
+                      {(() => {
+                        const allKeys = new Set(["tothist_dmd", "qty_shipped", "qty_ordered", ...dfuData.models.map((m) => `forecast_${m}`)]);
+                        const allSelected = [...allKeys].every((k) => dfuVisibleSeries.has(k));
+                        return (
+                          <button
+                            className="text-xs font-medium text-primary hover:underline"
+                            onClick={() => setDfuVisibleSeries(allSelected ? new Set() : allKeys)}
+                          >
+                            {allSelected ? "Deselect All" : "Select All"}
+                          </button>
+                        );
+                      })()}
+                    </div>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-md border border-input bg-background p-2">
-                      <label className="flex items-center gap-2 text-xs font-medium">
-                        <Checkbox
-                          checked={dfuVisibleSeries.has("sales")}
-                          onCheckedChange={(v) => {
-                            setDfuVisibleSeries((prev) => {
-                              const next = new Set(prev);
-                              if (v) next.add("sales"); else next.delete("sales");
-                              return next;
-                            });
-                          }}
-                        />
-                        <span className="flex items-center gap-1">
-                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: TREND_COLORS[0] }} />
-                          Sales ({dfuSalesMetric})
-                        </span>
-                      </label>
+                      {(
+                        [
+                          { key: "tothist_dmd", label: "Sale Qty (external)", color: DFU_SALES_COLORS.tothist_dmd },
+                          { key: "qty_shipped", label: "Qty Shipped", color: DFU_SALES_COLORS.qty_shipped },
+                          { key: "qty_ordered", label: "Qty Ordered", color: DFU_SALES_COLORS.qty_ordered },
+                        ] as { key: string; label: string; color: string }[]
+                      ).map(({ key, label, color }) => (
+                        <label key={key} className="flex items-center gap-2 text-xs font-medium">
+                          <Checkbox
+                            checked={dfuVisibleSeries.has(key)}
+                            onCheckedChange={(v) => {
+                              setDfuVisibleSeries((prev) => {
+                                const next = new Set(prev);
+                                if (v) next.add(key); else next.delete(key);
+                                return next;
+                              });
+                            }}
+                          />
+                          <span className="flex items-center gap-1">
+                            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+                            {label}
+                          </span>
+                        </label>
+                      ))}
                       {dfuData.models.map((model, idx) => {
                         const seriesKey = `forecast_${model}`;
                         return (
@@ -2697,13 +2250,53 @@ export default function App() {
                               }}
                             />
                             <span className="flex items-center gap-1">
-                              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: TREND_COLORS[(idx + 1) % TREND_COLORS.length] }} />
+                              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: dfuModelColor(model, idx) }} />
                               {model}
                             </span>
                           </label>
                         );
                       })}
                     </div>
+                  </div>
+
+                  {/* Time range */}
+                  <div className="flex flex-wrap items-end gap-3">
+                    <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      From
+                      <select
+                        className="h-8 w-36 rounded-md border border-input bg-background px-2 text-sm"
+                        value={dfuTimeStart || dfuMonths[0] || ""}
+                        onChange={(e) => setDfuTimeStart(e.target.value)}
+                      >
+                        {dfuMonths.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      To
+                      <select
+                        className="h-8 w-36 rounded-md border border-input bg-background px-2 text-sm"
+                        value={dfuTimeEnd || dfuMonths[dfuMonths.length - 1] || ""}
+                        onChange={(e) => setDfuTimeEnd(e.target.value)}
+                      >
+                        {dfuMonths.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="h-8 rounded-md border border-input bg-background px-3 text-xs font-medium text-muted-foreground hover:text-foreground"
+                      onClick={() => { setDfuTimeStart(""); setDfuTimeEnd(""); }}
+                    >
+                      Show All
+                    </button>
+                    <button
+                      className="h-8 rounded-md border border-input bg-background px-3 text-xs font-medium text-muted-foreground hover:text-foreground"
+                      onClick={() => { setDfuTimeStart(dfuDefaultStart); setDfuTimeEnd(""); }}
+                    >
+                      Default
+                    </button>
                   </div>
 
                   {/* Chart */}
@@ -2715,9 +2308,9 @@ export default function App() {
                     </CardHeader>
                     <CardContent className="h-[380px] pt-2">
                       <div className="h-full overflow-x-scroll overflow-y-hidden pb-2 [scrollbar-gutter:stable]">
-                        <div className="h-full" style={{ minWidth: `${Math.max(1200, dfuData.series.length * 100)}px` }}>
+                        <div className="h-full" style={{ minWidth: `${Math.max(1200, dfuFilteredSeries.length * 100)}px` }}>
                           <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={dfuData.series} margin={{ top: 8, right: 16, left: 18, bottom: 8 }}>
+                            <LineChart data={dfuFilteredSeries} margin={{ top: 8, right: 16, left: 18, bottom: 8 }}>
                               <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
                               <XAxis dataKey="month" />
                               <YAxis yAxisId="left" width={84} tickFormatter={formatCompactNumber} tickMargin={10} />
@@ -2728,16 +2321,40 @@ export default function App() {
                                 ]}
                               />
                               <Legend />
-                              {dfuVisibleSeries.has("sales") ? (
+                              {dfuVisibleSeries.has("tothist_dmd") ? (
                                 <Line
                                   type="monotone"
-                                  dataKey="sales"
+                                  dataKey="tothist_dmd"
                                   yAxisId="left"
-                                  name={`Sales (${dfuSalesMetric})`}
-                                  stroke={TREND_COLORS[0]}
+                                  name="Sale Qty (external)"
+                                  stroke={DFU_SALES_COLORS.tothist_dmd}
                                   strokeWidth={2.5}
                                   dot={false}
                                   activeDot={{ r: 5 }}
+                                />
+                              ) : null}
+                              {dfuVisibleSeries.has("qty_shipped") ? (
+                                <Line
+                                  type="monotone"
+                                  dataKey="qty_shipped"
+                                  yAxisId="left"
+                                  name="Qty Shipped"
+                                  stroke={DFU_SALES_COLORS.qty_shipped}
+                                  strokeWidth={2}
+                                  dot={false}
+                                  activeDot={{ r: 4 }}
+                                />
+                              ) : null}
+                              {dfuVisibleSeries.has("qty_ordered") ? (
+                                <Line
+                                  type="monotone"
+                                  dataKey="qty_ordered"
+                                  yAxisId="left"
+                                  name="Qty Ordered"
+                                  stroke={DFU_SALES_COLORS.qty_ordered}
+                                  strokeWidth={2}
+                                  dot={false}
+                                  activeDot={{ r: 4 }}
                                 />
                               ) : null}
                               {dfuData.models
@@ -2748,8 +2365,8 @@ export default function App() {
                                     type="monotone"
                                     dataKey={`forecast_${model}`}
                                     yAxisId="left"
-                                    name={`${model}`}
-                                    stroke={TREND_COLORS[(dfuData!.models.indexOf(model) + 1) % TREND_COLORS.length]}
+                                    name={model}
+                                    stroke={dfuModelColor(model, idx)}
                                     strokeWidth={model === "champion" ? 2.5 : 1.5}
                                     strokeDasharray={model === "champion" ? undefined : "5 3"}
                                     dot={false}
@@ -2764,14 +2381,14 @@ export default function App() {
                   </Card>
 
                   {/* KPI Cards per model */}
-                  {Object.keys(dfuData.kpis).length > 0 ? (
+                  {Object.keys(dfuKpis).length > 0 ? (
                     <div className="space-y-2">
                       <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Model KPIs ({dfuKpiMonths}-month window)</span>
                       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                         {dfuData.models
-                          .filter((m) => dfuVisibleSeries.has(`forecast_${m}`) && dfuData!.kpis[m])
+                          .filter((m) => dfuVisibleSeries.has(`forecast_${m}`) && dfuKpis[m])
                           .map((model) => {
-                            const kpi = dfuData!.kpis[model];
+                            const kpi = dfuKpis[model];
                             const colorIdx = dfuData!.models.indexOf(model) + 1;
                             return (
                               <Card key={model} className="border-muted bg-muted/20 shadow-none">

@@ -1,15 +1,14 @@
 competition:
-  name: "default"
-  metric: "wape"                # wape (lowest wins) or accuracy_pct (highest wins)
-  lag: "execution"              # "execution" (per-DFU execution lag) or 0, 1, 2, 3, 4
-  min_dfu_rows: 3               # minimum forecast rows per DFU to qualify
-  champion_model_id: "champion" # model_id written for the composite champion forecast
-  ceiling_model_id: "ceiling"   # model_id for the oracle ceiling (best model per DFU per month)
+  name: default
+  metric: wape
+  lag: execution
+  min_dfu_rows: 3
+  champion_model_id: champion
   models:
-    - lgbm_global
-    - lgbm_cluster
-    - lgbm_transfer
-    - catboost_global
-    - catboost_cluster
-    - xgboost_global
-    - xgboost_cluster
+  - lgbm_global
+  - lgbm_cluster
+  - lgbm_transfer
+  - catboost_global
+  - catboost_cluster
+  - xgboost_global
+  - xgboost_cluster

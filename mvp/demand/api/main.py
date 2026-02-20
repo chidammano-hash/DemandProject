@@ -823,8 +823,22 @@ _ACCURACY_SLICE_DIMS = {
     "model_id",
 }
 
+# Column expressions for raw fact table queries (mirrors materialized view definitions)
+_RAW_BUCKET_EXPR: dict[str, str] = {
+    "cluster_assignment": "COALESCE(d.cluster_assignment, '(unassigned)')",
+    "ml_cluster": "COALESCE(d.ml_cluster, '(unassigned)')",
+    "supplier_desc": "COALESCE(d.supplier_desc, '(unknown)')",
+    "abc_vol": "COALESCE(d.abc_vol, '(unknown)')",
+    "region": "COALESCE(d.region, '(unknown)')",
+    "brand_desc": "COALESCE(d.brand_desc, '(unknown)')",
+    "dfu_execution_lag": "COALESCE(d.execution_lag::text, '(none)')",
+    "month_start": "date_trunc('month', f.startdate)::date",
+    "lag": "f.lag",
+    "model_id": "f.model_id",
+}
 
-def _compute_kpis(sum_forecast: float, sum_actual: float, sum_abs_error: float) -> dict[str, Any]:
+
+def _compute_kpis(sum_forecast: float, sum_actual: float, sum_abs_error: float, dfu_count: int = 0) -> dict[str, Any]:
     wape = (100.0 * sum_abs_error / abs(sum_actual)) if sum_actual != 0 else None
     bias = ((sum_forecast / sum_actual) - 1.0) if sum_actual != 0 else None
     accuracy_pct = (100.0 - wape) if wape is not None else None
@@ -834,6 +848,7 @@ def _compute_kpis(sum_forecast: float, sum_actual: float, sum_abs_error: float) 
         "bias": round(bias, 4) if bias is not None else None,
         "sum_forecast": round(sum_forecast, 2),
         "sum_actual": round(sum_actual, 2),
+        "dfu_count": dfu_count,
     }
 
 
@@ -848,11 +863,16 @@ def forecast_accuracy_slice(
     supplier_desc: str = Query(default="", max_length=120),
     abc_vol: str = Query(default="", max_length=40),
     region: str = Query(default="", max_length=120),
+    common_dfus: bool = Query(default=False),
+    include_dfu_count: bool = Query(default=False),
 ):
     """Return accuracy KPIs grouped by a chosen DFU-attribute dimension.
 
     Uses pre-aggregated agg_accuracy_by_dim for O(1) performance at aggregate level.
-    Falls back gracefully if the view has no data yet.
+    When common_dfus=true and >=2 models specified, falls back to the raw fact table
+    and restricts to DFUs that have data for ALL requested models (intersection).
+    When include_dfu_count=true, computes distinct DFU counts per model per bucket
+    (requires raw table scan — only request when the DFU Count KPI is selected).
     """
     if group_by not in _ACCURACY_SLICE_DIMS:
         raise HTTPException(
@@ -862,7 +882,123 @@ def forecast_accuracy_slice(
 
     model_list = [m.strip() for m in models.split(",") if m.strip()] if models.strip() else []
 
-    where_parts: list[str] = []
+    # ── Common-DFUs path: raw fact table with intersection CTE ──────────
+    use_common = common_dfus and len(model_list) >= 2
+
+    if use_common:
+        bucket_expr = _RAW_BUCKET_EXPR.get(group_by)
+        if bucket_expr is None:
+            raise HTTPException(422, f"group_by '{group_by}' not supported with common_dfus filter")
+
+        cte_ph = ",".join(["%s"] * len(model_list))
+
+        # Main query WHERE parts (applied after the CTE join)
+        where_parts: list[str] = [f"f.model_id IN ({cte_ph})"]
+        main_params: list[Any] = list(model_list)
+
+        if lag == -1:
+            where_parts.append("f.lag = d.execution_lag")
+        elif lag >= 0:
+            where_parts.append("f.lag = %s")
+            main_params.append(lag)
+        if month_from.strip():
+            where_parts.append("date_trunc('month', f.startdate)::date >= %s::date")
+            main_params.append(month_from.strip())
+        if month_to.strip():
+            where_parts.append("date_trunc('month', f.startdate)::date <= %s::date")
+            main_params.append(month_to.strip())
+        if cluster_assignment.strip():
+            where_parts.append("COALESCE(d.cluster_assignment, '(unassigned)') = %s")
+            main_params.append(cluster_assignment.strip())
+        if supplier_desc.strip():
+            where_parts.append("COALESCE(d.supplier_desc, '(unknown)') = %s")
+            main_params.append(supplier_desc.strip())
+        if abc_vol.strip():
+            where_parts.append("COALESCE(d.abc_vol, '(unknown)') = %s")
+            main_params.append(abc_vol.strip())
+        if region.strip():
+            where_parts.append("COALESCE(d.region, '(unknown)') = %s")
+            main_params.append(region.strip())
+
+        where_sql = " AND ".join(where_parts)
+
+        # CTE params: model_list for IN + model count for HAVING
+        cte_params: list[Any] = list(model_list) + [len(model_list)]
+        all_params = cte_params + main_params
+
+        sql = f"""
+            WITH cd AS (
+                SELECT dmdunit, dmdgroup, loc
+                FROM fact_external_forecast_monthly
+                WHERE model_id IN ({cte_ph})
+                  AND tothist_dmd IS NOT NULL AND basefcst_pref IS NOT NULL
+                GROUP BY 1, 2, 3
+                HAVING COUNT(DISTINCT model_id) = %s
+            )
+            SELECT
+                {bucket_expr} AS bucket,
+                f.model_id,
+                COUNT(DISTINCT (f.dmdunit, f.dmdgroup, f.loc))::bigint AS dfu_count,
+                SUM(f.basefcst_pref)                     AS sum_forecast,
+                SUM(f.tothist_dmd)                       AS sum_actual,
+                SUM(ABS(f.basefcst_pref - f.tothist_dmd)) AS sum_abs_error
+            FROM fact_external_forecast_monthly f
+            JOIN dim_dfu d
+              ON f.dmdunit = d.dmdunit AND f.dmdgroup = d.dmdgroup AND f.loc = d.loc
+            WHERE (f.dmdunit, f.dmdgroup, f.loc) IN (SELECT dmdunit, dmdgroup, loc FROM cd)
+              AND f.tothist_dmd IS NOT NULL AND f.basefcst_pref IS NOT NULL
+              AND {where_sql}
+            GROUP BY 1, 2
+            ORDER BY 1 ASC NULLS LAST, 2 ASC
+        """
+
+        # DFU overlap counts (common + per-model)
+        count_sql = f"""
+            SELECT COUNT(*)::bigint FROM (
+                SELECT 1 FROM fact_external_forecast_monthly
+                WHERE model_id IN ({cte_ph})
+                  AND tothist_dmd IS NOT NULL AND basefcst_pref IS NOT NULL
+                GROUP BY dmdunit, dmdgroup, loc
+                HAVING COUNT(DISTINCT model_id) = %s
+            ) sub
+        """
+        per_model_sql = f"""
+            SELECT model_id, COUNT(DISTINCT (dmdunit, dmdgroup, loc))::bigint
+            FROM fact_external_forecast_monthly
+            WHERE model_id IN ({cte_ph})
+              AND tothist_dmd IS NOT NULL AND basefcst_pref IS NOT NULL
+            GROUP BY 1
+        """
+
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, all_params)
+            db_rows = cur.fetchall()
+            cur.execute(count_sql, list(model_list) + [len(model_list)])
+            common_count = int(cur.fetchone()[0])  # type: ignore[index]
+            cur.execute(per_model_sql, list(model_list))
+            dfu_counts = {r[0]: int(r[1]) for r in cur.fetchall()}
+
+        pivot: dict[str, dict[str, Any]] = {}
+        for bucket, mid, dfu_cnt, sf, sa, sae in db_rows:
+            b = str(bucket) if bucket is not None else "(unknown)"
+            if b not in pivot:
+                pivot[b] = {"bucket": b, "n_rows": 0, "by_model": {}}
+            pivot[b]["n_rows"] = int(pivot[b]["n_rows"]) + int(dfu_cnt or 0)
+            pivot[b]["by_model"][mid] = _compute_kpis(float(sf or 0), float(sa or 0), float(sae or 0), int(dfu_cnt or 0))
+
+        return {
+            "group_by": group_by,
+            "lag_filter": lag,
+            "models": model_list,
+            "common_dfus": True,
+            "common_dfu_count": common_count,
+            "dfu_counts": dfu_counts,
+            "rows": sorted(pivot.values(), key=lambda r: r["bucket"]),
+            "source": "fact_external_forecast_monthly",
+        }
+
+    # ── Standard path: pre-aggregated view ──────────────────────────────
+    where_parts = []
     params: list[Any] = []
 
     if model_list:
@@ -910,18 +1046,63 @@ def forecast_accuracy_slice(
         ORDER BY 1 ASC NULLS LAST, 2 ASC
     """
 
+    # Distinct DFU count — fast path via pre-materialized agg_dfu_coverage
+    dfu_map: dict[tuple[str, str], int] = {}
+    if include_dfu_count:
+        dfu_where: list[str] = []
+        dfu_params: list[Any] = []
+        if model_list:
+            dfu_where.append(f"model_id IN ({','.join(['%s'] * len(model_list))})")
+            dfu_params.extend(model_list)
+        if lag == -1:
+            dfu_where.append("lag::text = dfu_execution_lag")
+        elif lag >= 0:
+            dfu_where.append("lag = %s")
+            dfu_params.append(lag)
+        if month_from.strip():
+            dfu_where.append("max_month >= %s::date")
+            dfu_params.append(month_from.strip())
+        if month_to.strip():
+            dfu_where.append("min_month <= %s::date")
+            dfu_params.append(month_to.strip())
+        if cluster_assignment.strip():
+            dfu_where.append("cluster_assignment = %s")
+            dfu_params.append(cluster_assignment.strip())
+        if supplier_desc.strip():
+            dfu_where.append("supplier_desc = %s")
+            dfu_params.append(supplier_desc.strip())
+        if abc_vol.strip():
+            dfu_where.append("abc_vol = %s")
+            dfu_params.append(abc_vol.strip())
+        if region.strip():
+            dfu_where.append("region = %s")
+            dfu_params.append(region.strip())
+
+        dfu_where_sql = ("WHERE " + " AND ".join(dfu_where)) if dfu_where else ""
+        dfu_sql = f"""
+            SELECT {group_by} AS bucket, model_id, COUNT(*)::bigint AS dfu_count
+            FROM agg_dfu_coverage
+            {dfu_where_sql}
+            GROUP BY 1, 2
+        """
+
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         db_rows = cur.fetchall()
+        if include_dfu_count:
+            cur.execute(dfu_sql, dfu_params)
+            for b_raw, mid, cnt in cur.fetchall():
+                dfu_map[(str(b_raw) if b_raw is not None else "(unknown)", mid)] = int(cnt)
 
     # Pivot: bucket → {model_id: kpis}
-    pivot: dict[str, dict[str, Any]] = {}
+    pivot = {}
     for bucket, model_id, n_rows, sf, sa, sae in db_rows:
         b = str(bucket) if bucket is not None else "(unknown)"
         if b not in pivot:
             pivot[b] = {"bucket": b, "n_rows": 0, "by_model": {}}
         pivot[b]["n_rows"] = int(pivot[b]["n_rows"]) + int(n_rows or 0)
-        pivot[b]["by_model"][model_id] = _compute_kpis(float(sf or 0), float(sa or 0), float(sae or 0))
+        dfu_cnt = dfu_map.get((b, model_id), 0)
+        pivot[b]["by_model"][model_id] = _compute_kpis(float(sf or 0), float(sa or 0), float(sae or 0), dfu_cnt)
 
     return {
         "group_by": group_by,
@@ -941,15 +1122,97 @@ def forecast_accuracy_lag_curve(
     region: str = Query(default="", max_length=120),
     month_from: str = Query(default="", max_length=20),
     month_to: str = Query(default="", max_length=20),
+    common_dfus: bool = Query(default=False),
+    include_dfu_count: bool = Query(default=False),
 ):
     """Return accuracy by lag (0–4) for each model.
 
     Uses pre-aggregated agg_accuracy_lag_archive for performance.
-    Returns a list ordered by lag for easy charting.
+    When common_dfus=true and >=2 models specified, falls back to raw
+    backtest_lag_archive and restricts to DFUs common across all models.
     """
     model_list = [m.strip() for m in models.split(",") if m.strip()] if models.strip() else []
 
-    where_parts: list[str] = []
+    # ── Common-DFUs path: raw archive with intersection CTE ─────────────
+    use_common = common_dfus and len(model_list) >= 2
+
+    if use_common:
+        cte_ph = ",".join(["%s"] * len(model_list))
+
+        where_parts: list[str] = [f"a.model_id IN ({cte_ph})"]
+        main_params: list[Any] = list(model_list)
+
+        if cluster_assignment.strip():
+            where_parts.append("COALESCE(d.cluster_assignment, '(unassigned)') = %s")
+            main_params.append(cluster_assignment.strip())
+        if supplier_desc.strip():
+            where_parts.append("COALESCE(d.supplier_desc, '(unknown)') = %s")
+            main_params.append(supplier_desc.strip())
+        if abc_vol.strip():
+            where_parts.append("COALESCE(d.abc_vol, '(unknown)') = %s")
+            main_params.append(abc_vol.strip())
+        if region.strip():
+            where_parts.append("COALESCE(d.region, '(unknown)') = %s")
+            main_params.append(region.strip())
+        if month_from.strip():
+            where_parts.append("date_trunc('month', a.startdate)::date >= %s::date")
+            main_params.append(month_from.strip())
+        if month_to.strip():
+            where_parts.append("date_trunc('month', a.startdate)::date <= %s::date")
+            main_params.append(month_to.strip())
+
+        where_sql = " AND ".join(where_parts)
+        cte_params: list[Any] = list(model_list) + [len(model_list)]
+        all_params = cte_params + main_params
+
+        sql = f"""
+            WITH cd AS (
+                SELECT dmdunit, dmdgroup, loc
+                FROM backtest_lag_archive
+                WHERE model_id IN ({cte_ph})
+                  AND tothist_dmd IS NOT NULL AND basefcst_pref IS NOT NULL
+                GROUP BY 1, 2, 3
+                HAVING COUNT(DISTINCT model_id) = %s
+            )
+            SELECT
+                a.model_id,
+                a.lag,
+                COUNT(DISTINCT (a.dmdunit, a.dmdgroup, a.loc))::bigint AS dfu_count,
+                SUM(a.basefcst_pref)          AS sum_forecast,
+                SUM(a.tothist_dmd)            AS sum_actual,
+                SUM(ABS(a.basefcst_pref - a.tothist_dmd)) AS sum_abs_error
+            FROM backtest_lag_archive a
+            JOIN dim_dfu d
+              ON a.dmdunit = d.dmdunit AND a.dmdgroup = d.dmdgroup AND a.loc = d.loc
+            WHERE (a.dmdunit, a.dmdgroup, a.loc) IN (SELECT dmdunit, dmdgroup, loc FROM cd)
+              AND a.tothist_dmd IS NOT NULL AND a.basefcst_pref IS NOT NULL
+              AND {where_sql}
+            GROUP BY 1, 2
+            ORDER BY 2 ASC, 1 ASC
+        """
+
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql, all_params)
+            db_rows = cur.fetchall()
+
+        by_lag: dict[int, dict[str, Any]] = {}
+        for mid, lag_val, dfu_cnt, sf, sa, sae in db_rows:
+            lag_key = int(lag_val)
+            if lag_key not in by_lag:
+                by_lag[lag_key] = {"lag": lag_key, "by_model": {}}
+            by_lag[lag_key]["by_model"][mid] = _compute_kpis(
+                float(sf or 0), float(sa or 0), float(sae or 0), int(dfu_cnt or 0)
+            )
+
+        return {
+            "models": model_list,
+            "common_dfus": True,
+            "by_lag": [by_lag[k] for k in sorted(by_lag.keys())],
+            "source": "backtest_lag_archive",
+        }
+
+    # ── Standard path: pre-aggregated view ──────────────────────────────
+    where_parts = []
     params: list[Any] = []
 
     if model_list:
@@ -991,18 +1254,58 @@ def forecast_accuracy_lag_curve(
         ORDER BY 2 ASC, 1 ASC
     """
 
+    # Distinct DFU count query — only when requested (raw table scan, slower)
+    dfu_map: dict[tuple[str, int], int] = {}
+    if include_dfu_count:
+        dfu_where: list[str] = []
+        dfu_params: list[Any] = []
+        if model_list:
+            dfu_where.append(f"model_id IN ({','.join(['%s'] * len(model_list))})")
+            dfu_params.extend(model_list)
+        if cluster_assignment.strip():
+            dfu_where.append("cluster_assignment = %s")
+            dfu_params.append(cluster_assignment.strip())
+        if supplier_desc.strip():
+            dfu_where.append("supplier_desc = %s")
+            dfu_params.append(supplier_desc.strip())
+        if abc_vol.strip():
+            dfu_where.append("abc_vol = %s")
+            dfu_params.append(abc_vol.strip())
+        if region.strip():
+            dfu_where.append("region = %s")
+            dfu_params.append(region.strip())
+        if month_from.strip():
+            dfu_where.append("max_month >= %s::date")
+            dfu_params.append(month_from.strip())
+        if month_to.strip():
+            dfu_where.append("min_month <= %s::date")
+            dfu_params.append(month_to.strip())
+
+        dfu_where_sql = ("WHERE " + " AND ".join(dfu_where)) if dfu_where else ""
+        dfu_sql = f"""
+            SELECT model_id, lag, COUNT(*)::bigint AS dfu_count
+            FROM agg_dfu_coverage_lag_archive
+            {dfu_where_sql}
+            GROUP BY 1, 2
+        """
+
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         db_rows = cur.fetchall()
+        if include_dfu_count:
+            cur.execute(dfu_sql, dfu_params)
+            for mid, l, cnt in cur.fetchall():
+                dfu_map[(mid, int(l))] = int(cnt)
 
     # Group by lag: {lag: {model_id: kpis}}
-    by_lag: dict[int, dict[str, Any]] = {}
+    by_lag = {}
     for model_id, lag_val, n_rows, sf, sa, sae in db_rows:
         lag_key = int(lag_val)
         if lag_key not in by_lag:
             by_lag[lag_key] = {"lag": lag_key, "by_model": {}}
+        dfu_cnt = dfu_map.get((model_id, lag_key), 0)
         by_lag[lag_key]["by_model"][model_id] = _compute_kpis(
-            float(sf or 0), float(sa or 0), float(sae or 0)
+            float(sf or 0), float(sa or 0), float(sae or 0), dfu_cnt
         )
 
     return {
@@ -1291,6 +1594,7 @@ def run_competition():
         cur.execute("SET maintenance_work_mem = '512MB'")
         cur.execute("REFRESH MATERIALIZED VIEW agg_forecast_monthly")
         cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
+        cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
         conn.commit()
 
     # 7. Build summary (champion)
@@ -1474,7 +1778,6 @@ def dfu_cluster_visualization(image_name: str):
 
 
 _DFU_ANALYSIS_MODES = {"item_location", "all_items_at_location", "item_at_all_locations"}
-_DFU_SALES_METRICS = {"qty", "qty_shipped", "qty_ordered"}
 
 
 @app.get("/dfu/analysis")
@@ -1483,14 +1786,10 @@ def dfu_analysis(
     item: str = Query(default="", max_length=120),
     location: str = Query(default="", max_length=120),
     points: int = Query(default=36, ge=3, le=120),
-    kpi_months: int = Query(default=12, ge=1, le=24),
-    sales_metric: str = Query(default="qty", max_length=20),
 ):
     """Unified DFU analysis: overlay sales history + multi-model forecasts with KPIs."""
     if mode not in _DFU_ANALYSIS_MODES:
         raise HTTPException(422, f"Invalid mode '{mode}'. Valid: {sorted(_DFU_ANALYSIS_MODES)}")
-    if sales_metric not in _DFU_SALES_METRICS:
-        raise HTTPException(422, f"Invalid sales_metric '{sales_metric}'. Valid: {sorted(_DFU_SALES_METRICS)}")
 
     item_val = item.strip()
     loc_val = location.strip()
@@ -1519,17 +1818,22 @@ def dfu_analysis(
     where_sql = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
     with get_conn() as conn, conn.cursor() as cur:
-        # 1. Sales trend from agg_sales_monthly
-        sales_sql = f"""
-            SELECT month_start, SUM({qident(sales_metric)})::double precision AS sales_value
+        # 1. Sales measures from agg_sales_monthly (qty_shipped, qty_ordered)
+        sales_measures_sql = f"""
+            SELECT month_start,
+                   SUM(qty_shipped)::double precision AS qty_shipped,
+                   SUM(qty_ordered)::double precision AS qty_ordered
             FROM agg_sales_monthly
             {where_sql}
             GROUP BY 1 ORDER BY 1 ASC
         """
-        cur.execute(sales_sql, params)
-        sales_by_month: dict[str, float] = {}
+        cur.execute(sales_measures_sql, params)
+        shipped_by_month: dict[str, float] = {}
+        ordered_by_month: dict[str, float] = {}
         for row in cur.fetchall():
-            sales_by_month[str(row[0])] = float(row[1] or 0)
+            month_key = str(row[0])
+            shipped_by_month[month_key] = float(row[1] or 0)
+            ordered_by_month[month_key] = float(row[2] or 0)
 
         # 2. Forecast trend from agg_forecast_monthly (all models)
         forecast_sql = f"""
@@ -1543,20 +1847,46 @@ def dfu_analysis(
         cur.execute(forecast_sql, params)
         # {month: {model_id: forecast_value}}
         forecast_by_month: dict[str, dict[str, float]] = {}
+        # {month: {model_id: {forecast, actual}}} for client-side KPI computation
+        model_monthly_data: dict[str, dict[str, dict[str, float]]] = {}
         model_set: set[str] = set()
         for row in cur.fetchall():
             month_key = str(row[0])
             model_id = str(row[1])
             forecast_val = float(row[2] or 0)
+            actual_val = float(row[3] or 0)
             model_set.add(model_id)
             if month_key not in forecast_by_month:
                 forecast_by_month[month_key] = {}
             forecast_by_month[month_key][model_id] = forecast_val
+            if month_key not in model_monthly_data:
+                model_monthly_data[month_key] = {}
+            model_monthly_data[month_key][model_id] = {"forecast": forecast_val, "actual": actual_val}
+
+        # 2b. Actual demand (tothist_dmd) — deduplicated via single model per DFU
+        #     Use 'external' model as baseline; fall back to any single model.
+        actual_sql = f"""
+            SELECT month_start,
+                   SUM(tothist_dmd)::double precision AS actual_value
+            FROM agg_forecast_monthly
+            {where_sql}
+              {"AND model_id = 'external'" if 'external' in model_set else f"AND model_id = '{sorted(model_set)[0]}'" if model_set else ""}
+            GROUP BY 1 ORDER BY 1 ASC
+        """
+        cur.execute(actual_sql, params)
+        actual_by_month: dict[str, float] = {}
+        for row in cur.fetchall():
+            actual_by_month[str(row[0])] = float(row[1] or 0)
 
         models = sorted(model_set)
 
         # 3. Merge into series
-        all_months = sorted(set(sales_by_month.keys()) | set(forecast_by_month.keys()))
+        all_months = sorted(
+            set(shipped_by_month.keys())
+            | set(ordered_by_month.keys())
+            | set(actual_by_month.keys())
+            | set(forecast_by_month.keys())
+        )
         # Apply points limit (most recent N months)
         if len(all_months) > points:
             all_months = all_months[-points:]
@@ -1564,58 +1894,76 @@ def dfu_analysis(
         series: list[dict[str, Any]] = []
         for month in all_months:
             point: dict[str, Any] = {"month": month}
-            if month in sales_by_month:
-                point["sales"] = sales_by_month[month]
+            if month in shipped_by_month:
+                point["qty_shipped"] = shipped_by_month[month]
+            if month in ordered_by_month:
+                point["qty_ordered"] = ordered_by_month[month]
+            if month in actual_by_month:
+                point["tothist_dmd"] = actual_by_month[month]
             for model_id in models:
                 fcst = forecast_by_month.get(month, {}).get(model_id)
                 if fcst is not None:
                     point[f"forecast_{model_id}"] = fcst
             series.append(point)
 
-        # 4. KPIs per model (windowed by kpi_months)
-        kpi_sql = f"""
-            WITH monthly AS (
-                SELECT month_start, model_id,
-                       SUM(basefcst_pref)::double precision AS fcst,
-                       SUM(tothist_dmd)::double precision AS actual,
-                       SUM(ABS(basefcst_pref - tothist_dmd))::double precision AS abs_err
-                FROM agg_forecast_monthly
-                {where_sql}
-                GROUP BY 1, 2
-            ),
-            ranked AS (
-                SELECT DISTINCT month_start FROM monthly ORDER BY month_start DESC LIMIT %s
-            ),
-            windowed AS (
-                SELECT m.* FROM monthly m JOIN ranked r ON m.month_start = r.month_start
-            )
-            SELECT model_id,
-                   COUNT(DISTINCT month_start)::int AS months_covered,
-                   COALESCE(SUM(fcst), 0)::double precision,
-                   COALESCE(SUM(actual), 0)::double precision,
-                   COALESCE(SUM(abs_err), 0)::double precision
-            FROM windowed
-            GROUP BY 1
-        """
-        cur.execute(kpi_sql, [*params, kpi_months])
-        kpis: dict[str, Any] = {}
-        for row in cur.fetchall():
-            model_id = str(row[0])
-            months_covered = int(row[1])
-            kpi = _compute_kpis(float(row[2]), float(row[3]), float(row[4]))
-            kpi["months_covered"] = months_covered
-            kpis[model_id] = kpi
+        # 4. Build model_monthly for client-side KPI computation
+        # Structure: {model_id: [{month, forecast, actual}, ...]} sorted by month desc
+        model_monthly: dict[str, list[dict[str, Any]]] = {}
+        for month in sorted(model_monthly_data.keys(), reverse=True):
+            for mid, vals in model_monthly_data[month].items():
+                if mid not in model_monthly:
+                    model_monthly[mid] = []
+                model_monthly[mid].append({
+                    "month": month,
+                    "forecast": vals["forecast"],
+                    "actual": vals["actual"],
+                })
+
+        # 5. DFU attributes from dim_dfu
+        dfu_attrs: list[dict[str, Any]] = []
+        dfu_where_parts: list[str] = []
+        dfu_params: list[Any] = []
+        if item_val:
+            dfu_where_parts.append("dmdunit = %s")
+            dfu_params.append(item_val)
+        if loc_val:
+            dfu_where_parts.append("loc = %s")
+            dfu_params.append(loc_val)
+        if dfu_where_parts:
+            dfu_cols = [
+                "dmdunit", "dmdgroup", "loc", "brand", "brand_desc",
+                "abc_vol", "prod_cat_desc", "prod_class_desc", "subclass_desc",
+                "prod_subgrp_desc", "size", "brand_size", "bot_type_desc",
+                "region", "state_plan", "cnty", "premise", "supergroup",
+                "supplier_desc", "producer_desc", "service_lvl_grp",
+                "execution_lag", "total_lt", "otc_status", "sales_div",
+                "dom_imp_opt", "alcoh_pct", "proof", "grape_vrty_desc",
+                "material", "vintage", "cluster_assignment", "ml_cluster",
+                "histstart", "sop_ref",
+            ]
+            dfu_sql = f"""
+                SELECT {', '.join(dfu_cols)}
+                FROM dim_dfu
+                WHERE {' AND '.join(dfu_where_parts)}
+                ORDER BY dmdunit, loc
+                LIMIT 20
+            """
+            cur.execute(dfu_sql, dfu_params)
+            for row in cur.fetchall():
+                dfu_attrs.append({
+                    col: (str(val) if val is not None else None)
+                    for col, val in zip(dfu_cols, row)
+                })
 
     return {
         "mode": mode,
         "item": item_val,
         "location": loc_val,
-        "sales_metric": sales_metric,
         "points": points,
-        "kpi_months": kpi_months,
         "models": models,
         "series": series,
-        "kpis": kpis,
+        "model_monthly": model_monthly,
+        "dfu_attributes": dfu_attrs,
     }
 
 
@@ -1969,6 +2317,194 @@ def list_forecasts_page(
     sort_dir: str = Query(default="asc"),
 ):
     return fetch_page(get_spec("forecast"), limit, offset, q, filters, sort_by, sort_dir)
+
+
+# ---------------------------------------------------------------------------
+# Market Intelligence (Feature 18)
+# ---------------------------------------------------------------------------
+
+class MarketIntelRequest(BaseModel):
+    item_no: str
+    location_id: str
+
+
+@app.post("/market-intelligence")
+def market_intelligence(req: MarketIntelRequest):
+    """Generate an AI-powered market briefing for a product at a location."""
+    item_no = req.item_no.strip()
+    location_id = req.location_id.strip()
+    if not item_no or not location_id:
+        raise HTTPException(422, "Both item_no and location_id are required")
+
+    # 1. Look up item metadata
+    item_desc = brand_name = category = None
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            'SELECT item_desc, brand_name, category FROM dim_item WHERE item_no = %s LIMIT 1',
+            [item_no],
+        )
+        row = cur.fetchone()
+        if row:
+            item_desc = row[0]
+            brand_name = row[1]
+            category = row[2]
+
+    # 2. Look up location metadata
+    state_id = site_desc = None
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT state_id, site_desc FROM dim_location WHERE location_id = %s LIMIT 1",
+            [location_id],
+        )
+        row = cur.fetchone()
+        if row:
+            state_id = row[0]
+            site_desc = row[1]
+
+    # 3. Gather recent sales context
+    sales_context = ""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT month_start, SUM(qty)::double precision AS qty
+               FROM agg_sales_monthly
+               WHERE dmdunit = %s AND loc = %s
+               GROUP BY 1 ORDER BY 1 DESC LIMIT 12""",
+            [item_no, location_id],
+        )
+        rows = cur.fetchall()
+        if rows:
+            sales_lines = [f"  {r[0]}: {r[1]:.0f} units" for r in rows]
+            sales_context = "Recent 12-month sales (newest first):\n" + "\n".join(sales_lines)
+
+    # 4. Build product context for the AI
+    product_parts = [f"Item: {item_no}"]
+    if item_desc:
+        product_parts.append(f"Description: {item_desc}")
+    if brand_name:
+        product_parts.append(f"Brand: {brand_name}")
+    if category:
+        product_parts.append(f"Category: {category}")
+    product_parts.append(f"Location: {location_id}")
+    if site_desc:
+        product_parts.append(f"Site: {site_desc}")
+    if state_id:
+        product_parts.append(f"State: {state_id}")
+    product_context = "\n".join(product_parts)
+
+    # 5. Web search (Google Custom Search if configured, else OpenAI web search)
+    search_results: list[dict[str, str]] = []
+    google_api_key = os.getenv("GOOGLE_API_KEY", "").strip()
+    google_cx = os.getenv("GOOGLE_CX", "").strip()
+
+    # Build a search query from product context
+    search_query_parts = []
+    if brand_name:
+        search_query_parts.append(brand_name)
+    if item_desc:
+        search_query_parts.append(item_desc)
+    elif category:
+        search_query_parts.append(category)
+    search_query_parts.append("market trends demand forecast")
+    if state_id:
+        search_query_parts.append(state_id)
+    search_query = " ".join(search_query_parts)
+
+    if google_api_key and google_cx:
+        # Use Google Custom Search API
+        import urllib.request
+        import urllib.parse
+        try:
+            qs = urllib.parse.urlencode({"key": google_api_key, "cx": google_cx, "q": search_query, "num": 5})
+            google_url = f"https://www.googleapis.com/customsearch/v1?{qs}"
+            req = urllib.request.Request(google_url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                import json as _json
+                data = _json.loads(resp.read())
+                for hit in data.get("items", [])[:5]:
+                    search_results.append({
+                        "title": hit.get("title", ""),
+                        "link": hit.get("link", ""),
+                        "snippet": hit.get("snippet", ""),
+                    })
+        except Exception:
+            pass  # Non-blocking — proceed without search results
+
+    # 6. Generate narrative with OpenAI
+    client = _get_openai()
+    narrative = ""
+    search_context = ""
+    if search_results:
+        search_lines = [f"- {sr['title']}: {sr['snippet']}" for sr in search_results]
+        search_context = "\nWeb Search Results:\n" + "\n".join(search_lines)
+
+    prompt = f"""You are a market intelligence analyst for a demand planning team.
+
+Product Context:
+{product_context}
+
+{sales_context}
+{search_context}
+
+Generate a concise market intelligence briefing (3-5 paragraphs) covering:
+1. Product/brand overview and market positioning
+2. Recent market trends affecting this product category
+3. Regional demand factors for the location/state
+4. Competitive landscape and potential demand drivers
+5. Forward-looking demand signals and risks
+
+Be specific and actionable. Focus on factors that would help a demand planner make better forecasts."""
+
+    use_web_search = not search_results and not google_api_key
+    if use_web_search:
+        # No Google keys — try OpenAI responses API with web search
+        try:
+            response = client.responses.create(
+                model="gpt-4o-mini",
+                input=prompt,
+                tools=[{"type": "web_search_preview"}],
+            )
+            narrative = response.output_text or ""
+            for out_item in (response.output or []):
+                if getattr(out_item, "type", None) == "message":
+                    for content in getattr(out_item, "content", []):
+                        for ann in getattr(content, "annotations", []):
+                            if getattr(ann, "type", None) == "url_citation":
+                                search_results.append({
+                                    "title": getattr(ann, "title", "") or ann.url,
+                                    "link": ann.url,
+                                    "snippet": getattr(ann, "title", ""),
+                                })
+        except Exception:
+            use_web_search = False  # Fall through to chat completions
+
+    if not narrative:
+        try:
+            chat_resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a market intelligence analyst for demand planning."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=1500,
+                temperature=0.7,
+            )
+            narrative = chat_resp.choices[0].message.content or ""
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"AI generation failed: {e}")
+
+    from datetime import datetime, timezone
+    return {
+        "item_no": item_no,
+        "location_id": location_id,
+        "item_desc": item_desc,
+        "brand_name": brand_name,
+        "category": category,
+        "state_id": state_id,
+        "site_desc": site_desc,
+        "search_results": search_results,
+        "narrative": narrative,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -364,7 +364,7 @@ backtest-all: backtest-lgbm backtest-load
 
 accuracy-slice-refresh:
 	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 \
-		-c "REFRESH MATERIALIZED VIEW agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive;"
+		-c "REFRESH MATERIALIZED VIEW agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW agg_dfu_coverage; REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive;"
 
 accuracy-slice-check:
 	curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=cluster_assignment" | python3 -m json.tool | head -60

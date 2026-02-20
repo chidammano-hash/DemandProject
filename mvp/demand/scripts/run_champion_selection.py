@@ -389,6 +389,9 @@ def refresh_views(db_params: dict[str, Any]) -> None:
         t1 = time.time()
         cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
         print(f"  agg_accuracy_by_dim ({time.time() - t1:.1f}s)")
+        t2 = time.time()
+        cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
+        print(f"  agg_dfu_coverage ({time.time() - t2:.1f}s)")
         conn.commit()
     print(f"  All views refreshed in {time.time() - t0:.1f}s")
 

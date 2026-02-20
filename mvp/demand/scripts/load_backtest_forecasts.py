@@ -473,6 +473,9 @@ def main() -> None:
             t1 = time.time()
             cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
             print(f"  agg_accuracy_by_dim refreshed ({time.time() - t1:.1f}s)")
+            t2 = time.time()
+            cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
+            print(f"  agg_dfu_coverage refreshed ({time.time() - t2:.1f}s)")
         conn.commit()
     print(f"  All forecast views refreshed in {time.time() - t0:.1f}s")
 
@@ -481,14 +484,15 @@ def main() -> None:
     _load_archive(db, archive_path, csv_model_ids, args.replace, args.model_id)
 
     # Step 9: Refresh archive accuracy slice view (depends on backtest_lag_archive)
-    print("Refreshing agg_accuracy_lag_archive...")
+    print("Refreshing agg_accuracy_lag_archive + agg_dfu_coverage_lag_archive...")
     t0 = time.time()
     with psycopg.connect(**db) as conn:
         with conn.cursor() as cur:
             cur.execute("SET maintenance_work_mem = '512MB'")
             cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive")
+            cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive")
         conn.commit()
-    print(f"  agg_accuracy_lag_archive refreshed in {time.time() - t0:.1f}s")
+    print(f"  agg_accuracy_lag_archive + agg_dfu_coverage_lag_archive refreshed in {time.time() - t0:.1f}s")
 
     print("\nDone.")
 
