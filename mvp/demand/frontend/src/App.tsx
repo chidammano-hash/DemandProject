@@ -1119,25 +1119,25 @@ export default function App() {
 
   return (
     <main className="mx-auto w-full max-w-[1800px] min-w-0 overflow-x-hidden p-4 md:p-6">
-      <section className="animate-fade-in relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-5 text-white shadow-2xl">
+      <section className="animate-fade-in relative overflow-hidden rounded-2xl border border-stone-300 bg-gradient-to-br from-[#E5E4E2] via-[#EDEDEB] to-[#E5E4E2] p-5 text-slate-800 shadow-2xl">
         {/* Decorative orbs */}
-        <div className="pointer-events-none absolute -left-20 -top-20 h-64 w-64 rounded-full bg-indigo-500/10 blur-3xl" />
-        <div className="pointer-events-none absolute -right-16 -bottom-16 h-48 w-48 rounded-full bg-purple-500/10 blur-3xl" />
-        <div className="pointer-events-none absolute left-1/2 top-0 h-px w-2/3 -translate-x-1/2 bg-gradient-to-r from-transparent via-indigo-400/30 to-transparent" />
+        <div className="pointer-events-none absolute -left-20 -top-20 h-64 w-64 rounded-full bg-stone-400/10 blur-3xl" />
+        <div className="pointer-events-none absolute -right-16 -bottom-16 h-48 w-48 rounded-full bg-stone-400/10 blur-3xl" />
+        <div className="pointer-events-none absolute left-1/2 top-0 h-px w-2/3 -translate-x-1/2 bg-gradient-to-r from-transparent via-stone-400/30 to-transparent" />
         <div className="relative flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/20 ring-1 ring-indigo-400/30">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-300">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-stone-400/30 ring-1 ring-stone-400/50">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-slate-600">
                   <circle cx="12" cy="12" r="3" />
                   <ellipse cx="12" cy="12" rx="10" ry="4" />
                   <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)" />
                   <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)" />
                 </svg>
               </div>
-              <h1 className="text-2xl font-bold tracking-tight md:text-3xl bg-gradient-to-r from-white via-indigo-100 to-indigo-200 bg-clip-text text-transparent">Planthium</h1>
+              <h1 className="text-2xl font-bold tracking-tight md:text-3xl text-slate-800">Planthium</h1>
             </div>
-            <p className="mt-1 ml-[46px] text-sm text-indigo-200/70 md:text-base">Periodic Analytics for Demand Forecasting</p>
+            <p className="mt-1 ml-[46px] text-sm text-slate-500 md:text-base">Periodic Analytics for Demand Forecasting</p>
           </div>
           <div className="flex flex-wrap gap-2.5">
             {/* Data Explorer tab — consolidates item, location, customer, time */}
@@ -1200,16 +1200,17 @@ export default function App() {
                 <button
                   key="dfuAnalysis"
                   className={cn(
-                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
                     isActive
-                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
-                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
+                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
                   )}
                   onClick={() => setActiveTab("dfuAnalysis")}
                 >
-                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
-                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
-                  <span className="text-[10px] leading-none">{el.name}</span>
+                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
+                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
+                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
+                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
                 </button>
               );
             })()}
@@ -1241,16 +1242,17 @@ export default function App() {
               return (
                 <button
                   className={cn(
-                    "flex flex-col items-center justify-center rounded-lg border-2 px-3 py-1.5 min-w-[64px] transition-all",
+                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
                     isActive
-                      ? el.activeColor + " shadow-md ring-2 ring-white/40"
-                      : el.color + " opacity-80 hover:opacity-100 hover:shadow-sm"
+                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
+                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
                   )}
                   onClick={() => setActiveTab("intel")}
                 >
-                  <span className="text-[10px] leading-none self-start font-mono opacity-70">{el.number}</span>
-                  <span className="text-lg font-bold leading-tight font-mono">{el.symbol}</span>
-                  <span className="text-[10px] leading-none">{el.name}</span>
+                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
+                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
+                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
+                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
                 </button>
               );
             })()}
