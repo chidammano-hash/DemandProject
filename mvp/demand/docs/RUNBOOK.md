@@ -254,7 +254,6 @@ Notes:
 - Trend chart supports multiple measures via `Trend Measures` checkboxes.
 - Forecast domain has a **Model selector** dropdown to filter by `model_id` (e.g., `external`, `arima`).
 - **Chat panel** (below analytics grid) lets you ask natural language questions. Requires `OPENAI_API_KEY`.
-- **Market Intelligence tab** ("Mi"): select an item + location, click "Generate Briefing" to get web search results + AI-generated market narrative. Requires `OPENAI_API_KEY`, `GOOGLE_API_KEY`, and `GOOGLE_CSE_ID` in `.env`.
 
 ## 5) Validate
 ```bash
