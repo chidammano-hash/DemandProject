@@ -22,7 +22,7 @@
 | Lakehouse | Apache Iceberg via MinIO + Iceberg REST |
 | Big Data | Apache Spark 3.5 |
 | Query Engine | Trino |
-| ML / Clustering | scikit-learn, pandas, scipy, matplotlib, seaborn |
+| ML / Clustering | scikit-learn, pandas, scipy, matplotlib, seaborn, StatsForecast, NeuralProphet |
 | ML Tracking | MLflow |
 | Python packaging | uv |
 | Build | Make |
@@ -60,11 +60,14 @@
 | `mvp/demand/scripts/run_backtest_catboost.py` | CatBoost backtest: model-specific training functions (uses shared framework) |
 | `mvp/demand/scripts/run_backtest_xgboost.py` | XGBoost backtest: model-specific training functions (uses shared framework) |
 | `mvp/demand/scripts/run_backtest_prophet.py` | Prophet backtest: per-DFU fitting with multiprocessing (uses shared utilities) |
+| `mvp/demand/scripts/run_backtest_statsforecast.py` | StatsForecast backtest: vectorized AutoARIMA + AutoETS (uses shared utilities) |
+| `mvp/demand/scripts/run_backtest_neuralprophet.py` | NeuralProphet backtest: PyTorch-based per-DFU fitting with GPU support (uses shared utilities) |
 | `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load backtest predictions into Postgres (main + archive) |
+| `mvp/demand/scripts/clean_backtest_models.py` | Selective cleanup of model predictions from Postgres + view refresh |
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
 | `mvp/demand/sql/008_perf_indexes_and_agg.sql` | Performance indexes (B-tree, GIN trigram) + materialized views |
 | `mvp/demand/frontend/tailwind.config.ts` | Tailwind config with custom `pulse-glow` animation |
-| `docs/design-specs/` | Feature specs (feature1–feature18) |
+| `docs/design-specs/` | Feature specs (feature1–feature26) |
 
 ---
 
@@ -123,12 +126,26 @@ make backtest-xgboost          # Run global XGBoost backtest (10 expanding timef
 make backtest-xgboost-cluster  # Run per-cluster XGBoost backtest
 make backtest-xgboost-transfer # Run XGBoost transfer learning backtest
 
+# Backtesting (StatsForecast)
+make backtest-statsforecast          # Run global StatsForecast backtest (AutoARIMA+AutoETS, ~100x faster)
+make backtest-statsforecast-cluster  # Run per-cluster StatsForecast backtest
+make backtest-statsforecast-pooled   # Run StatsForecast pooled cluster backtest
+
+# Backtesting (NeuralProphet)
+make backtest-neuralprophet          # Run global NeuralProphet backtest (PyTorch GPU)
+make backtest-neuralprophet-cluster  # Run per-cluster NeuralProphet backtest
+make backtest-neuralprophet-pooled   # Run NeuralProphet pooled cluster backtest
+
 # Backtest loading (shared across all models)
 make backtest-load          # Load backtest predictions into Postgres + refresh agg
 make backtest-all           # backtest-lgbm + backtest-load
 
 # Champion model selection
 make champion-select        # Run per-DFU champion selection (best-of-models via WAPE)
+
+# Backtest cleanup
+make backtest-list          # List model_id row counts in forecast + archive tables
+make backtest-clean MODELS="lgbm_global deepar_global"  # Remove specific model predictions
 ```
 
 ---
@@ -216,8 +233,10 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Chat endpoint:** `POST /chat` — OpenAI-powered NL→SQL with pgvector context retrieval. Read-only execution with 5s timeout and 500-row limit. Requires `OPENAI_API_KEY` in `.env`.
 - **DFU clustering:** KMeans-based clustering pipeline groups DFUs by demand patterns. Feature engineering extracts time series, item, and DFU features. Cluster labels (e.g., `high_volume_steady`, `seasonal_medium_volume`) stored in `dim_dfu.cluster_assignment`. MLflow tracks experiments under `dfu_clustering`. Config in `config/clustering_config.yaml`.
 - **Champion model selection:** Per-DFU best-of-models via WAPE (Forecast Value Added). Config in `config/model_competition.yaml` controls competing models, metric, and lag. Champion rows stored as `model_id='champion'` in `fact_external_forecast_monthly`. Ceiling (oracle) model picks the best model per DFU per month — theoretical upper bound with perfect foresight, stored as `model_id='ceiling'`. UI panel in Accuracy tab shows champion + ceiling KPI cards, gap-to-ceiling indicator, and dual model wins bar charts.
-- **Shared backtest framework:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) use `common/backtest_framework.py` as a shared orchestrator via `run_tree_backtest()`. Each script implements only model-specific training functions passed as callables. Prophet uses shared utilities but orchestrates its own per-DFU fitting loop. Shared modules in `common/`: `backtest_framework.py`, `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`.
+- **Shared backtest framework:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) use `common/backtest_framework.py` as a shared orchestrator via `run_tree_backtest()`. Each script implements only model-specific training functions passed as callables. Prophet and NeuralProphet use shared utilities but orchestrate their own per-DFU fitting loops. StatsForecast uses shared utilities with vectorized batch fitting (no per-DFU loop, ~100x faster than Prophet). Shared modules in `common/`: `backtest_framework.py`, `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`.
 - **Market intelligence:** `POST /market-intelligence` — combines Google Custom Search API (product news/trends) + GPT-4o narrative synthesis for item + location pairs. Looks up item metadata (description, brand, category) from `dim_item` and location state from `dim_location`. Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` in `.env`.
+- **Backtest cleanup:** `scripts/clean_backtest_models.py` selectively removes model predictions from `fact_external_forecast_monthly` and `backtest_lag_archive` by `model_id`, then refreshes 5 materialized views. Supports `--list`, `--dry-run`, `--all-backtest` (excludes `external`). Make targets: `backtest-clean`, `backtest-list`.
+- **Benchmarking:** `GET /bench/compare` runs identical queries (count, page, trend) against Postgres and Trino/Iceberg, returning per-query latency stats (min/max/avg/p50/p95) with winner determination and speedup factor. Requires Docker services running. Make target: `bench-compare`.
 
 ---
 
@@ -244,6 +263,12 @@ Located in `docs/design-specs/`:
 - `feature18.md` — Market intelligence (web search + LLM narrative briefings)
 - `feature19.md` — PatchTST backtesting implementation (deep learning, Apple MPS GPU)
 - `feature20.md` — DeepAR backtesting implementation (LSTM probabilistic forecasting)
+- `feature21.md` — Prophet backtesting implementation (per-DFU time series)
+- `feature22.md` — UI theming (dark mode + midnight theme)
+- `feature23.md` — Backtest model cleanup utility (selective model removal + view refresh)
+- `feature24.md` — StatsForecast backtesting implementation (vectorized AutoARIMA + AutoETS)
+- `feature25.md` — NeuralProphet backtesting implementation (PyTorch-based Prophet with GPU)
+- `feature26.md` — Postgres vs Trino/Iceberg benchmarking (latency comparison API)
 - `docs/REFACTORING_RECOMMENDATIONS.md` — Comprehensive codebase refactoring roadmap
 
 ---

@@ -91,6 +91,14 @@ Build a scalable forecasting platform for:
 - **Feature 16:** Data Explorer performance & UX — type-aware SQL filtering, GIN trigram indexes, capped COUNT, column-level typeahead suggestions, chemistry-themed loading overlay, debounce stability fix
 - **Feature 17:** DFU Analysis tab — unified sales vs multi-model forecast overlay chart, 3 analysis modes (item@location, all items@location, item@all locations), per-model KPI cards, toggleable measures
 - **Feature 18:** Market intelligence — AI-powered market briefings combining Google web search + GPT-4o narrative synthesis for item + location pairs, with demographic context and demand insights
+- **Feature 19:** PatchTST backtesting implementation — Transformer-based patched time series model with Apple MPS GPU acceleration, global/per-cluster/transfer strategies
+- **Feature 20:** DeepAR backtesting implementation — LSTM-based probabilistic model (Gaussian likelihood), global/per-cluster/transfer strategies
+- **Feature 21:** Prophet backtesting implementation — per-DFU individual time series models with Fourier seasonality, global/per-cluster/pooled strategies
+- **Feature 22:** UI theming — dark mode and midnight theme support via CSS variable-based theming with shadcn/ui
+- **Feature 23:** Backtest model cleanup utility — CLI tool to selectively remove model predictions from Postgres and refresh materialized views, with list/dry-run/bulk modes
+- **Feature 24:** StatsForecast backtesting — vectorized AutoARIMA + AutoETS (~100x faster than Prophet), global/per-cluster/pooled strategies, Numba JIT compiled
+- **Feature 25:** NeuralProphet backtesting — PyTorch-based Prophet successor with Apple MPS GPU acceleration, global/per-cluster/pooled strategies
+- **Feature 26:** Postgres vs Trino/Iceberg benchmarking — API endpoint to run identical queries against both backends with statistical latency comparison and winner determination
 
 ## Deployment Notes
 - Run everything on a single MacBook using Docker Compose (no cloud services):
