@@ -18,6 +18,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { ElementTab } from "@/components/ElementTab";
+import { KpiCard } from "@/components/KpiCard";
+import { LoadingElement } from "@/components/LoadingElement";
 
 type DomainMeta = {
   name: string;
@@ -194,7 +197,11 @@ const titleCase = (value: string): string =>
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
 
-const TREND_COLORS = ["#4f46e5", "#0d9488", "#d97706", "#7c3aed", "#dc2626", "#0284c7"];
+const TREND_COLORS_BY_THEME: Record<Theme, string[]> = {
+  light: ["#4f46e5", "#0d9488", "#d97706", "#7c3aed", "#dc2626", "#0284c7"],
+  dark: ["#818cf8", "#2dd4bf", "#fbbf24", "#a78bfa", "#fca5a5", "#7dd3fc"],
+  midnight: ["#93c5fd", "#5eead4", "#fde68a", "#c4b5fd", "#fda4af", "#a5f3fc"],
+};
 
 // Dedicated colors for DFU Analysis chart — sales measures + known forecast models
 const DFU_SALES_COLORS: Record<string, string> = {
@@ -280,24 +287,28 @@ function formatCell(value: unknown): string {
   return String(value);
 }
 
+const ANALYTICS_TAB_DOMAINS = new Set(["sales", "forecast"]);
+const VALID_TABS = ["explorer", "clusters", "dfuAnalysis", "accuracy", "intel"];
+
 function getInitialDomain(): string {
   const queryDomain = new URLSearchParams(window.location.search).get("domain");
   return (queryDomain || "item").toLowerCase();
 }
 
-const ANALYTICS_TAB_DOMAINS = new Set(["sales", "forecast"]);
-
 function getInitialTab(): string {
+  const params = new URLSearchParams(window.location.search);
+  const urlTab = params.get("tab");
+  if (urlTab && VALID_TABS.includes(urlTab)) return urlTab;
   const d = getInitialDomain();
   if (ANALYTICS_TAB_DOMAINS.has(d)) return d;
   return DIMENSION_DOMAINS.includes(d) ? "explorer" : d;
 }
 
-function updateDomainPath(domain: string) {
-    const normalized = domain.toLowerCase();
+function updateUrlState(domain: string, tab: string) {
   const url = new URL(window.location.href);
-  url.searchParams.set("domain", normalized);
-  window.history.replaceState(null, "", url);
+  url.searchParams.set("domain", domain.toLowerCase());
+  url.searchParams.set("tab", tab);
+  window.history.pushState(null, "", url);
 }
 
 type Theme = "light" | "dark" | "midnight";
@@ -414,6 +425,7 @@ export default function App() {
   });
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
+  const trendColors = TREND_COLORS_BY_THEME[theme];
 
   // Apply theme class to HTML element
   useEffect(() => {
@@ -425,6 +437,24 @@ export default function App() {
     const timer = setTimeout(() => root.removeAttribute("data-transitioning"), 300);
     return () => clearTimeout(timer);
   }, [theme]);
+
+  // Sync tab state to URL when activeTab changes
+  useEffect(() => {
+    updateUrlState(domain, activeTab);
+  }, [activeTab, domain]);
+
+  // Browser back/forward navigation
+  useEffect(() => {
+    const handler = () => {
+      const params = new URLSearchParams(window.location.search);
+      const urlTab = params.get("tab");
+      const urlDomain = params.get("domain");
+      if (urlTab && VALID_TABS.includes(urlTab)) setActiveTab(urlTab);
+      if (urlDomain) setDomain(urlDomain.toLowerCase());
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, []);
 
   // Click-outside dismiss for settings dropdown
   useEffect(() => {
@@ -561,7 +591,7 @@ export default function App() {
         setAutoSampledDomain("");
         setColumnSuggestions({});
         setVisibleColumns(Object.fromEntries(payload.columns.map((c) => [c, true])));
-        updateDomainPath(domain);
+        updateUrlState(domain, activeTab);
 
         if (pageRes.ok) {
           const pagePl = (await pageRes.json()) as DomainPage;
@@ -1164,6 +1194,12 @@ export default function App() {
 
   return (
     <main className="mx-auto w-full max-w-[1800px] min-w-0 overflow-x-hidden p-4 md:p-6">
+      {/* Screen reader live region for status announcements */}
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {loadingTable && `Loading ${titleCase(domain)} data...`}
+        {error && `Error: ${error}`}
+        {!loadingTable && !error && rows.length > 0 && `Loaded ${rows.length} ${titleCase(domain)} records.`}
+      </div>
       <section className="animate-fade-in relative rounded-2xl border border-border bg-card/80 backdrop-blur-sm p-5 text-foreground shadow-2xl">
         {/* Decorative orbs */}
         <div className="pointer-events-none absolute -left-20 -top-20 h-64 w-64 rounded-full bg-muted/30 blur-3xl" />
@@ -1184,126 +1220,38 @@ export default function App() {
             </div>
             <p className="mt-1 ml-[46px] text-sm text-muted-foreground md:text-base">Periodic Analytics for Demand Forecasting</p>
           </div>
-          <div className="flex flex-wrap gap-2.5">
-            {/* Data Explorer tab — consolidates item, location, customer, time */}
-            {(() => {
-              const el = ELEMENT_CONFIG["explorer"];
-              const isActive = activeTab === "explorer";
-              return (
-                <button
-                  key="explorer"
-                  className={cn(
-                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
-                    isActive
-                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
-                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
-                  )}
-                  onClick={() => {
-                    setActiveTab("explorer");
-                    if (ANALYTICS_TAB_DOMAINS.has(domain) || !DIMENSION_DOMAINS.includes(domain)) {
-                      setDomain("item");
-                    }
-                  }}
-                >
-                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
-                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
-                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
-                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
-                </button>
-              );
-            })()}
-            {/* Clusters tab — DFU clustering info only */}
-            {(() => {
-              const el = ELEMENT_CONFIG["clusters"];
-              const isActive = activeTab === "clusters";
-              return (
-                <button
-                  key="clusters"
-                  className={cn(
-                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
-                    isActive
-                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
-                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
-                  )}
-                  onClick={() => {
-                    setActiveTab("clusters");
-                    if (domain !== "dfu") setDomain("dfu");
-                  }}
-                >
-                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
-                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
-                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
-                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
-                </button>
-              );
-            })()}
-            {/* DFU Analysis tab */}
-            {(() => {
-              const el = ELEMENT_CONFIG["dfuAnalysis"];
-              const isActive = activeTab === "dfuAnalysis";
-              return (
-                <button
-                  key="dfuAnalysis"
-                  className={cn(
-                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
-                    isActive
-                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
-                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
-                  )}
-                  onClick={() => setActiveTab("dfuAnalysis")}
-                >
-                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
-                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
-                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
-                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
-                </button>
-              );
-            })()}
-            {/* Accuracy tab */}
-            {(() => {
-              const el = ELEMENT_CONFIG["accuracy"];
-              const isActive = activeTab === "accuracy";
-              return (
-                <button
-                  className={cn(
-                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
-                    isActive
-                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
-                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
-                  )}
-                  onClick={() => setActiveTab("accuracy")}
-                >
-                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
-                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
-                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
-                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
-                </button>
-              );
-            })()}
-            {/* Market Intelligence tab */}
-            {(() => {
-              const el = ELEMENT_CONFIG["intel"];
-              const isActive = activeTab === "intel";
-              return (
-                <button
-                  className={cn(
-                    "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
-                    isActive
-                      ? el.activeColor + " " + el.glow + " scale-105 border-opacity-100"
-                      : el.color + " hover:scale-105 hover:border-opacity-80 border-opacity-40"
-                  )}
-                  onClick={() => setActiveTab("intel")}
-                >
-                  {isActive && <span className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-current opacity-60" />}
-                  <span className="text-[9px] leading-none self-end font-mono opacity-50">{el.number}</span>
-                  <span className="text-xl font-black leading-tight font-mono tracking-tight">{el.symbol}</span>
-                  <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">{el.name}</span>
-                </button>
-              );
-            })()}
+          {/* Mobile: dropdown tab selector */}
+          <div className="md:hidden w-full">
+            <select
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              value={activeTab}
+              onChange={(e) => {
+                const tab = e.target.value;
+                setActiveTab(tab);
+                if (tab === "explorer" && (ANALYTICS_TAB_DOMAINS.has(domain) || !DIMENSION_DOMAINS.includes(domain))) setDomain("item");
+                if (tab === "clusters" && domain !== "dfu") setDomain("dfu");
+              }}
+              aria-label="Navigate to tab"
+            >
+              <option value="explorer">Explorer</option>
+              <option value="clusters">Clusters</option>
+              <option value="dfuAnalysis">DFU Analysis</option>
+              <option value="accuracy">Accuracy</option>
+              <option value="intel">Market Intelligence</option>
+            </select>
+          </div>
+          {/* Desktop: element tab buttons */}
+          <div className="hidden md:flex flex-wrap gap-2.5" role="tablist" aria-label="Main navigation">
+            <ElementTab config={ELEMENT_CONFIG["explorer"]} isActive={activeTab === "explorer"} onClick={() => { setActiveTab("explorer"); if (ANALYTICS_TAB_DOMAINS.has(domain) || !DIMENSION_DOMAINS.includes(domain)) setDomain("item"); }} />
+            <ElementTab config={ELEMENT_CONFIG["clusters"]} isActive={activeTab === "clusters"} onClick={() => { setActiveTab("clusters"); if (domain !== "dfu") setDomain("dfu"); }} />
+            <ElementTab config={ELEMENT_CONFIG["dfuAnalysis"]} isActive={activeTab === "dfuAnalysis"} onClick={() => setActiveTab("dfuAnalysis")} />
+            <ElementTab config={ELEMENT_CONFIG["accuracy"]} isActive={activeTab === "accuracy"} onClick={() => setActiveTab("accuracy")} />
+            <ElementTab config={ELEMENT_CONFIG["intel"]} isActive={activeTab === "intel"} onClick={() => setActiveTab("intel")} />
             {/* Settings gear */}
             <div className="relative" ref={settingsRef}>
               <button
+                aria-label="Settings"
+                aria-expanded={showSettings}
                 className={cn(
                   "group relative flex flex-col items-center justify-center rounded-xl border px-3.5 py-2 min-w-[68px] transition-all duration-200 backdrop-blur-sm",
                   showSettings
@@ -1312,9 +1260,9 @@ export default function App() {
                 )}
                 onClick={() => setShowSettings(!showSettings)}
               >
-                <span className="text-[9px] leading-none self-end font-mono opacity-50">{"\u2699"}</span>
+                <span className="text-[11px] leading-none self-end font-mono opacity-50">{"\u2699"}</span>
                 <Settings className="h-5 w-5" />
-                <span className="text-[9px] font-medium leading-none tracking-wide uppercase opacity-70">Settings</span>
+                <span className="text-[11px] font-medium leading-none tracking-wide uppercase opacity-70">Settings</span>
               </button>
               {showSettings && (
                 <div className="absolute right-0 top-full mt-2 z-50 w-64 rounded-xl border border-border bg-card p-4 shadow-xl backdrop-blur-sm">
@@ -1323,6 +1271,7 @@ export default function App() {
                     {THEME_OPTIONS.map((opt) => (
                       <button
                         key={opt.value}
+                        aria-label={`Switch to ${opt.label} theme`}
                         onClick={() => { setTheme(opt.value); setShowSettings(false); }}
                         className={cn(
                           "flex-1 flex flex-col items-center gap-1 rounded-lg border p-3 transition-all duration-150",
@@ -1344,8 +1293,13 @@ export default function App() {
       </section>
 
       {error ? (
-        <Card className="mt-4 border-red-200 bg-red-50">
-          <CardContent className="pt-4 text-sm text-red-700">{error}</CardContent>
+        <Card className="mt-4 border-destructive/30 bg-destructive/10">
+          <CardContent className="pt-4 flex items-center justify-between gap-2">
+            <span className="text-sm text-destructive">{error}</span>
+            <Button variant="outline" size="sm" onClick={() => { setError(""); setDomain(domain); }}>
+              <RefreshCcw className="mr-1 h-3.5 w-3.5" /> Retry
+            </Button>
+          </CardContent>
         </Card>
       ) : null}
 
@@ -1574,14 +1528,19 @@ export default function App() {
                 </label>
                 {commonDfus && commonDfuCount != null && dfuCounts ? (
                   <div className="flex items-center gap-2 self-end pb-1.5 text-xs text-muted-foreground tabular-nums">
-                    <Badge variant="secondary" className="font-mono text-[10px]">{commonDfuCount.toLocaleString()} common</Badge>
+                    <Badge variant="secondary" className="font-mono text-xs">{commonDfuCount.toLocaleString()} common</Badge>
                     {Object.entries(dfuCounts).map(([m, cnt]) => (
                       <span key={m} className="font-mono">{m}: {cnt.toLocaleString()}</span>
                     ))}
                   </div>
                 ) : null}
                 {loadingSlice ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  <div className="flex items-center gap-2">
+                    <div className={cn("flex flex-col items-center justify-center rounded-md border px-1.5 py-0.5 animate-pulse-glow", ELEMENT_CONFIG.accuracy.activeColor, ELEMENT_CONFIG.accuracy.glow)}>
+                      <span className="text-[9px] font-bold font-mono leading-tight">{ELEMENT_CONFIG.accuracy.symbol}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">Loading...</span>
+                  </div>
                 ) : null}
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -1667,10 +1626,12 @@ export default function App() {
                                           key={`${m}-${k.key}`}
                                           className={cn(
                                             "text-right text-sm tabular-nums",
-                                            isBestAcc ? "font-bold text-indigo-700" : "",
-                                            isBadBias ? "text-red-600" : "",
+                                            isBestAcc ? "font-bold text-indigo-700 dark:text-indigo-400" : "",
+                                            isBadBias ? "text-red-600 dark:text-red-400" : "",
                                           )}
                                         >
+                                          {isBestAcc && <span className="mr-0.5" title="Best accuracy">&#9733;</span>}
+                                          {isBadBias && <span className="mr-0.5" title="High bias (|bias| > 15%)">&#9888;</span>}
                                           {display}
                                         </TableCell>
                                       );
@@ -1682,15 +1643,17 @@ export default function App() {
                         </TableBody>
                       </Table>
                     </div>
-                    <p className="text-xs text-muted-foreground">Bold = best accuracy for that row. Red bias = |bias| &gt; 15%.</p>
+                    <p className="text-xs text-muted-foreground">&#9733; = best accuracy for that row. &#9888; = |bias| &gt; 15%.</p>
                   </div>
                 );
               })() : (
-                !loadingSlice ? (
+                loadingSlice ? (
+                  <LoadingElement config={ELEMENT_CONFIG.accuracy} message="Loading accuracy data..." />
+                ) : (
                   <p className="text-sm text-muted-foreground">
                     No data. Run <code className="rounded bg-muted px-1">make backtest-load</code> to populate the accuracy views.
                   </p>
-                ) : null
+                )
               )}
 
               {lagCurveData.length > 0 ? (() => {
@@ -1735,17 +1698,17 @@ export default function App() {
                     </div>
                     <ResponsiveContainer width="100%" height={220}>
                       <LineChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="lag" tick={{ fontSize: 11 }} />
-                        <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11 }} tickFormatter={yFormatter} />
-                        <Tooltip formatter={tooltipFormatter} />
+                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS[theme].grid} />
+                        <XAxis dataKey="lag" tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }} />
+                        <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }} tickFormatter={yFormatter} />
+                        <Tooltip formatter={tooltipFormatter} contentStyle={{ backgroundColor: CHART_COLORS[theme].tooltip_bg, borderColor: CHART_COLORS[theme].tooltip_border }} />
                         <Legend wrapperStyle={{ fontSize: 11 }} />
                         {lagModels.map((m, i) => (
                           <Line
                             key={m}
                             type="monotone"
                             dataKey={m}
-                            stroke={TREND_COLORS[i % TREND_COLORS.length]}
+                            stroke={trendColors[i % trendColors.length]}
                             strokeWidth={2}
                             dot={{ r: 4 }}
                             connectNulls
@@ -1894,63 +1857,22 @@ export default function App() {
                   </div>
                   {/* Champion KPI cards */}
                   <div className="flex flex-wrap gap-4 text-sm">
-                    <div className="rounded-md border bg-card px-3 py-2">
-                      <p className="text-xs text-muted-foreground">DFUs Evaluated</p>
-                      <p className="text-lg font-bold tabular-nums">{championSummary.total_dfus.toLocaleString()}</p>
-                    </div>
-                    <div className="rounded-md border bg-card px-3 py-2">
-                      <p className="text-xs text-muted-foreground">Champion Accuracy</p>
-                      <p className="text-lg font-bold tabular-nums text-indigo-700">
-                        {championSummary.overall_champion_accuracy_pct != null
-                          ? `${championSummary.overall_champion_accuracy_pct.toFixed(2)}%`
-                          : "-"}
-                      </p>
-                    </div>
-                    <div className="rounded-md border bg-card px-3 py-2">
-                      <p className="text-xs text-muted-foreground">Champion WAPE</p>
-                      <p className="text-lg font-bold tabular-nums">
-                        {championSummary.overall_champion_wape != null
-                          ? `${championSummary.overall_champion_wape.toFixed(2)}%`
-                          : "-"}
-                      </p>
-                    </div>
-                    <div className="rounded-md border bg-card px-3 py-2">
-                      <p className="text-xs text-muted-foreground">Champion Rows</p>
-                      <p className="text-lg font-bold tabular-nums">{championSummary.total_champion_rows.toLocaleString()}</p>
-                    </div>
+                    <KpiCard label="DFUs Evaluated" value={championSummary.total_dfus.toLocaleString()} />
+                    <KpiCard label="Champion Accuracy" value={championSummary.overall_champion_accuracy_pct != null ? `${championSummary.overall_champion_accuracy_pct.toFixed(2)}%` : "-"} colorClass="text-indigo-700 dark:text-indigo-400 midnight:text-indigo-300" />
+                    <KpiCard label="Champion WAPE" value={championSummary.overall_champion_wape != null ? `${championSummary.overall_champion_wape.toFixed(2)}%` : "-"} />
+                    <KpiCard label="Champion Rows" value={championSummary.total_champion_rows.toLocaleString()} />
                   </div>
 
                   {/* Ceiling (Oracle) KPI cards */}
                   {championSummary.overall_ceiling_accuracy_pct != null && (
                     <div className="flex flex-wrap gap-4 text-sm">
-                      <div className="rounded-md border bg-card px-3 py-2 border-emerald-200">
-                        <p className="text-xs text-muted-foreground">Ceiling Accuracy <span className="text-[10px]">(oracle)</span></p>
-                        <p className="text-lg font-bold tabular-nums text-emerald-700">
-                          {championSummary.overall_ceiling_accuracy_pct.toFixed(2)}%
-                        </p>
-                      </div>
-                      <div className="rounded-md border bg-card px-3 py-2 border-emerald-200">
-                        <p className="text-xs text-muted-foreground">Ceiling WAPE <span className="text-[10px]">(oracle)</span></p>
-                        <p className="text-lg font-bold tabular-nums text-emerald-700">
-                          {championSummary.overall_ceiling_wape != null
-                            ? `${championSummary.overall_ceiling_wape.toFixed(2)}%`
-                            : "-"}
-                        </p>
-                      </div>
+                      <KpiCard label="Ceiling Accuracy" sublabel="(oracle)" value={`${championSummary.overall_ceiling_accuracy_pct.toFixed(2)}%`} colorClass="text-emerald-700 dark:text-emerald-400" borderClass="border-emerald-200 dark:border-emerald-800" />
+                      <KpiCard label="Ceiling WAPE" sublabel="(oracle)" value={championSummary.overall_ceiling_wape != null ? `${championSummary.overall_ceiling_wape.toFixed(2)}%` : "-"} colorClass="text-emerald-700 dark:text-emerald-400" borderClass="border-emerald-200 dark:border-emerald-800" />
                       {championSummary.total_ceiling_rows != null && (
-                        <div className="rounded-md border bg-card px-3 py-2 border-emerald-200">
-                          <p className="text-xs text-muted-foreground">Ceiling Rows</p>
-                          <p className="text-lg font-bold tabular-nums">{championSummary.total_ceiling_rows.toLocaleString()}</p>
-                        </div>
+                        <KpiCard label="Ceiling Rows" value={championSummary.total_ceiling_rows.toLocaleString()} borderClass="border-emerald-200 dark:border-emerald-800" />
                       )}
-                      {/* Gap indicator: how far champion is from ceiling */}
                       {championSummary.overall_champion_accuracy_pct != null && (
-                        <div className="rounded-md border bg-card px-3 py-2 border-amber-200">
-                          <p className="text-xs text-muted-foreground">Gap to Ceiling</p>
-                          <p className="text-lg font-bold tabular-nums text-amber-700">
-                            {(championSummary.overall_ceiling_accuracy_pct - championSummary.overall_champion_accuracy_pct).toFixed(2)} pp
-                          </p>
-                        </div>
+                        <KpiCard label="Gap to Ceiling" value={`${(championSummary.overall_ceiling_accuracy_pct - championSummary.overall_champion_accuracy_pct).toFixed(2)} pp`} colorClass="text-amber-700 dark:text-amber-400" borderClass="border-amber-200 dark:border-amber-800" />
                       )}
                     </div>
                   )}
@@ -2068,20 +1990,18 @@ export default function App() {
           </CardHeader>
           <CardContent className="space-y-4">
             {miError ? (
-              <Card className="border-red-200 bg-red-50">
-                <CardContent className="pt-4 text-sm text-red-700">{miError}</CardContent>
+              <Card className="border-destructive/30 bg-destructive/10">
+                <CardContent className="pt-4 flex items-center justify-between gap-2">
+                  <span className="text-sm text-destructive">{miError}</span>
+                  <Button variant="outline" size="sm" onClick={() => { setMiError(""); generateMarketIntel(); }}>
+                    <RefreshCcw className="mr-1 h-3.5 w-3.5" /> Retry
+                  </Button>
+                </CardContent>
               </Card>
             ) : null}
 
             {miLoading ? (
-              <div className="flex flex-col items-center justify-center py-12 gap-3">
-                <div className="flex flex-col items-center justify-center rounded-lg border-2 border-sky-300 bg-sky-50 px-4 py-2 shadow-md animate-pulse-glow">
-                  <span className="text-[9px] leading-none self-start font-mono text-sky-500 opacity-70">6</span>
-                  <span className="text-lg font-bold leading-tight font-mono text-sky-900">Mi</span>
-                  <span className="text-[9px] leading-none text-sky-600">Loading</span>
-                </div>
-                <span className="text-sm text-muted-foreground">Searching the web and generating market briefing...</span>
-              </div>
+              <LoadingElement config={ELEMENT_CONFIG.intel} message="Searching the web and generating market briefing..." />
             ) : null}
 
             {miResult && !miLoading ? (
@@ -2252,7 +2172,7 @@ export default function App() {
                 <details className="group rounded-md border border-input bg-background">
                   <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
                     DFU Attributes ({dfuData.dfu_attributes.length} {dfuData.dfu_attributes.length === 1 ? "record" : "records"})
-                    <span className="ml-1 text-[10px] text-muted-foreground group-open:hidden">+ expand</span>
+                    <span className="ml-1 text-xs text-muted-foreground group-open:hidden">+ expand</span>
                   </summary>
                   <div className="border-t border-input px-3 py-2 space-y-3">
                     {dfuData.dfu_attributes.map((attrs, dfuIdx) => (
@@ -2396,10 +2316,11 @@ export default function App() {
                         <div className="h-full" style={{ minWidth: `${Math.max(1200, dfuFilteredSeries.length * 100)}px` }}>
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={dfuFilteredSeries} margin={{ top: 8, right: 16, left: 18, bottom: 8 }}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
-                              <XAxis dataKey="month" />
-                              <YAxis yAxisId="left" width={84} tickFormatter={formatCompactNumber} tickMargin={10} />
+                              <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS[theme].grid} />
+                              <XAxis dataKey="month" tick={{ fill: CHART_COLORS[theme].axis }} />
+                              <YAxis yAxisId="left" width={84} tickFormatter={formatCompactNumber} tickMargin={10} tick={{ fill: CHART_COLORS[theme].axis }} />
                               <Tooltip
+                                contentStyle={{ backgroundColor: CHART_COLORS[theme].tooltip_bg, borderColor: CHART_COLORS[theme].tooltip_border }}
                                 formatter={(value: number, name: string) => [
                                   formatNumber(Number.isFinite(Number(value)) ? Number(value) : null),
                                   String(name),
@@ -2479,29 +2400,29 @@ export default function App() {
                               <Card key={model} className="border-muted bg-muted/20 shadow-none">
                                 <CardContent className="pt-4">
                                   <div className="flex items-center gap-2 mb-2">
-                                    <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: TREND_COLORS[colorIdx % TREND_COLORS.length] }} />
+                                    <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: trendColors[colorIdx % trendColors.length] }} />
                                     <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">{model}</p>
-                                    <span className="text-[10px] text-muted-foreground ml-auto">{kpi.months_covered} mo</span>
+                                    <span className="text-xs text-muted-foreground ml-auto">{kpi.months_covered} mo</span>
                                   </div>
                                   <div className="grid grid-cols-5 gap-2">
                                     <div>
-                                      <p className="text-[10px] uppercase text-muted-foreground">Accuracy</p>
+                                      <p className="text-xs uppercase text-muted-foreground">Accuracy</p>
                                       <p className="text-sm font-semibold tabular-nums">{formatPercent(kpi.accuracy_pct)}</p>
                                     </div>
                                     <div>
-                                      <p className="text-[10px] uppercase text-muted-foreground">WAPE</p>
+                                      <p className="text-xs uppercase text-muted-foreground">WAPE</p>
                                       <p className="text-sm font-semibold tabular-nums">{formatPercent(kpi.wape)}</p>
                                     </div>
                                     <div>
-                                      <p className="text-[10px] uppercase text-muted-foreground">Bias</p>
+                                      <p className="text-xs uppercase text-muted-foreground">Bias</p>
                                       <p className="text-sm font-semibold tabular-nums">{formatNumber(kpi.bias)}</p>
                                     </div>
                                     <div>
-                                      <p className="text-[10px] uppercase text-muted-foreground">Fcst</p>
+                                      <p className="text-xs uppercase text-muted-foreground">Fcst</p>
                                       <p className="text-sm font-semibold tabular-nums">{formatCompactNumber(kpi.sum_forecast)}</p>
                                     </div>
                                     <div>
-                                      <p className="text-[10px] uppercase text-muted-foreground">Actual</p>
+                                      <p className="text-xs uppercase text-muted-foreground">Actual</p>
                                       <p className="text-sm font-semibold tabular-nums">{formatCompactNumber(kpi.sum_actual)}</p>
                                     </div>
                                   </div>
@@ -2515,14 +2436,7 @@ export default function App() {
                 </>
               ) : dfuLoading ? (
                 <div className="flex h-[320px] items-center justify-center">
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-cyan-300 bg-cyan-50 px-4 py-2 shadow-md animate-pulse-glow">
-                      <span className="text-[9px] leading-none self-start font-mono text-cyan-500 opacity-70">6</span>
-                      <span className="text-lg font-bold leading-tight font-mono text-cyan-900">Da</span>
-                      <span className="text-[9px] leading-none text-cyan-600">Loading</span>
-                    </div>
-                    <span className="text-xs text-muted-foreground">Fetching DFU analysis...</span>
-                  </div>
+                  <LoadingElement config={ELEMENT_CONFIG.dfuAnalysis} message="Fetching DFU analysis..." />
                 </div>
               ) : (
                 <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">
@@ -2629,23 +2543,14 @@ export default function App() {
             <div className="relative">
               {/* Chemistry-themed loading overlay */}
               {loadingTable && (
-                <div className="absolute inset-0 z-30 flex items-center justify-center rounded-md bg-background/70 backdrop-blur-[1px]">
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-indigo-300 bg-indigo-50 px-5 py-2.5 shadow-lg animate-pulse-glow">
-                      <span className="text-[10px] leading-none self-start font-mono text-indigo-500 opacity-70">{ELEMENT_CONFIG[domain]?.number ?? 0}</span>
-                      <span className="text-2xl font-bold leading-tight font-mono text-indigo-900">{ELEMENT_CONFIG[domain]?.symbol ?? "Ld"}</span>
-                      <span className="text-[10px] leading-none text-indigo-600">Loading</span>
-                    </div>
-                    <span className="text-xs text-muted-foreground">Querying {titleCase(domain)}...</span>
-                  </div>
-                </div>
+                <LoadingElement config={ELEMENT_CONFIG[domain] ?? ELEMENT_CONFIG.explorer} message={`Querying ${titleCase(domain)}...`} overlay size="md" />
               )}
               <div className="max-h-[680px] overflow-x-scroll overflow-y-auto rounded-md border pb-2 [scrollbar-gutter:stable]">
                 <Table style={{ minWidth: `${Math.max(visibleCols.length * 260, 1800)}px` }}>
                   <TableHeader className="sticky top-0 z-20 bg-muted/80 backdrop-blur">
                     <TableRow>
-                      {visibleCols.map((col) => (
-                        <TableHead key={col} className="min-w-[180px] bg-muted/70 align-top">
+                      {visibleCols.map((col, colIdx) => (
+                        <TableHead key={col} className={cn("min-w-[180px] bg-muted/70 align-top", colIdx === 0 && "sticky left-0 z-10 bg-muted")}>
                           <Button
                             variant={sortBy === col ? "secondary" : "ghost"}
                             size="sm"
@@ -2690,8 +2595,12 @@ export default function App() {
                     ) : (
                       rows.map((row, idx) => (
                         <TableRow key={`row-${offset + idx}`}>
-                          {visibleCols.map((col) => (
-                            <TableCell key={`${offset + idx}-${col}`} className="whitespace-nowrap">
+                          {visibleCols.map((col, colIdx) => (
+                            <TableCell
+                              key={`${offset + idx}-${col}`}
+                              className={cn("whitespace-nowrap max-w-[300px] truncate", colIdx === 0 && "sticky left-0 z-10 bg-card")}
+                              title={row[col] != null ? String(row[col]) : ""}
+                            >
                               {formatCell(row[col])}
                             </TableCell>
                           ))}
@@ -2706,6 +2615,11 @@ export default function App() {
             <div className="mt-3 flex items-center justify-between gap-2 text-sm">
               <span className="text-muted-foreground">
                 Showing {start}-{end} of {totalApproximate ? `${formatNumber(total - 1)}+` : formatNumber(total)}
+                {total > 0 && (
+                  <span className="ml-2 tabular-nums">
+                    (Page {Math.floor(offset / limit) + 1} of {totalApproximate ? `${Math.ceil((total - 1) / limit)}+` : Math.ceil(total / limit)})
+                  </span>
+                )}
               </span>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))}>
