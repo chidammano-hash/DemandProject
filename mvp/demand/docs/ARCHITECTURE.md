@@ -84,21 +84,48 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - Same feature engineering, lag strategy, and output format as LGBM
    - GPU support via `device="cuda"`; auto-detected at runtime
    - MLflow experiment tracking (`demand_backtest`)
-12. Transfer learning backtesting:
-   - All three frameworks (LGBM, CatBoost, XGBoost) support `--cluster-strategy transfer`
-   - Phase 1: Train base model on ALL data, excluding `ml_cluster` from features
-   - Phase 2: Per-cluster fine-tune via warm-start (LightGBM `init_model`, CatBoost `init_model`, XGBoost `xgb_model`)
-   - Clusters < `transfer_min_rows` (default 20) or unassigned DFUs fallback to base model predictions
-   - Model IDs: `lgbm_transfer`, `catboost_transfer`, `xgboost_transfer`
+12. Prophet backtesting:
+   - Per-DFU individual time series models using Facebook Prophet
+   - Global strategy (`prophet_global`): independent fit per DFU with multiprocessing parallelism
+   - Per-cluster strategy (`prophet_cluster`): fits only clustered DFUs
+   - Pooled strategy (`prophet_pooled`): aggregates by cluster → fits one model per cluster → disaggregates proportionally
+   - Native Fourier seasonality decomposition, piecewise linear trend — no hand-engineered lag features
+   - Uses shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`)
    - MLflow experiment tracking (`demand_backtest`)
-13. Multi-dimensional accuracy slicing:
+13. PatchTST backtesting (deep learning):
+   - Transformer-based model using patched time series input for monthly demand forecasting
+   - Architecture: 12-month lookback → overlapping 3-month patches → d_model=64 Transformer encoder (2 layers, 4 heads) → MLP head
+   - ~60K parameters; HuberLoss, AdamW, CosineAnnealing, early stopping
+   - Global strategy (`patchtst_global`), per-cluster (`patchtst_cluster`), transfer (`patchtst_transfer`)
+   - Apple MPS GPU acceleration (auto-detected), CUDA fallback, CPU fallback
+   - Input: raw log1p qty sequences + 11 static/calendar covariates (no hand-crafted lag features)
+   - Transfer learning: freeze patch embedding + first Transformer layer, fine-tune at 0.1× LR
+   - MLflow experiment tracking (`demand_backtest`)
+14. DeepAR backtesting (deep learning):
+   - LSTM-based autoregressive probabilistic model producing point forecasts + prediction intervals
+   - Architecture: covariate projection → 2-layer LSTM (hidden_size=64) → Gaussian distribution head (mu + sigma)
+   - ~67K parameters; GaussianNLLLoss, AdamW, CosineAnnealing, early stopping
+   - Global strategy (`deepar_global`), per-cluster (`deepar_cluster`), transfer (`deepar_transfer`)
+   - Apple MPS GPU acceleration (auto-detected), CUDA fallback, CPU fallback
+   - Same input format as PatchTST: raw log1p qty sequences + 11 static/calendar covariates
+   - Transfer learning: freeze LSTM layer 1, fine-tune at 0.1× LR
+   - MLflow experiment tracking (`demand_backtest`)
+15. Transfer learning backtesting:
+   - All tree-based frameworks (LGBM, CatBoost, XGBoost) and deep learning models (PatchTST, DeepAR) support `--cluster-strategy transfer`
+   - Phase 1: Train base model on ALL data, excluding `ml_cluster` from features
+   - Tree models: Phase 2 fine-tunes per cluster via warm-start (LightGBM `init_model`, CatBoost `init_model`, XGBoost `xgb_model`)
+   - Deep learning: Phase 2 fine-tunes per cluster with frozen lower layers at 0.1× learning rate
+   - Clusters < `transfer_min_rows` (default 20) or unassigned DFUs fallback to base model predictions
+   - Model IDs: `lgbm_transfer`, `catboost_transfer`, `xgboost_transfer`, `patchtst_transfer`, `deepar_transfer`
+   - MLflow experiment tracking (`demand_backtest`)
+16. Multi-dimensional accuracy slicing:
    - Pre-aggregated `agg_accuracy_by_dim` view: (model_id, lag, month, cluster, supplier, abc_vol, region, brand) grain
    - Pre-aggregated `agg_accuracy_lag_archive` view: same grain for archive table + timeframe
    - `/forecast/accuracy/slice` endpoint: compare WAPE, Accuracy %, Bias across models by any DFU attribute
    - `/forecast/accuracy/lag-curve` endpoint: accuracy degradation by lag horizon (0–4) per model
    - UI Accuracy Comparison panel: model comparison pivot table + lag curve chart
    - Views refreshed automatically by `backtest-load`; also manually via `make accuracy-slice-refresh`
-14. Champion model selection (feature15):
+17. Champion model selection (feature15):
    - Per-DFU best-model selection using Forecast Value Added (FVA) approach
    - WAPE-based DFU-level evaluation: `SUM(ABS(F-A)) / ABS(SUM(A))` per DFU per model
    - Champion composite stored as `model_id='champion'` in `fact_external_forecast_monthly` — auto-appears in all accuracy views
@@ -110,21 +137,21 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - API endpoints: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
    - UI: Champion Selection panel in Accuracy tab with model checkboxes, metric/lag selectors, champion + ceiling KPI cards, gap indicator, and dual model wins bar charts
    - Summary saved to `data/champion/champion_summary.json`
-15. Data Explorer performance & UX (feature16):
+18. Data Explorer performance & UX (feature16):
    - Type-aware SQL filtering: `_col_type()` dispatches to native-type clauses instead of universal `::text` casts
    - GIN trigram indexes (`gin_trgm_ops`) on fact table text columns (model_id, dmdunit, loc, dmdgroup) for indexed `ILIKE` substring search
    - Capped COUNT: `pg_class.reltuples` for unfiltered; `LIMIT 100001` subquery for filtered large tables; `total_approximate` flag in response
    - Column-level typeahead suggestions: `/domains/{domain}/suggest` reused per column header with native HTML `<datalist>`
    - Chemistry-themed loading overlay: periodic table element tile with `pulse-glow` animation, frosted glass backdrop
    - Debounce stability: `useDebounce` uses `JSON.stringify` deep comparison for object values to prevent re-render loops
-16. DFU Analysis tab (feature17):
+19. DFU Analysis tab (feature17):
    - Unified sales vs multi-model forecast overlay on a single chart
    - Three analysis modes: Item @ Location (single DFU), All Items @ Location, Item @ All Locations
    - `GET /dfu/analysis` endpoint: server-side join of `agg_sales_monthly` + `agg_forecast_monthly`, returns pre-pivoted series + per-model KPIs
    - Per-model KPI cards: Accuracy %, WAPE, Bias, Total Forecast, Total Actual
    - Toggleable measure visibility (sales line + per-model forecast lines)
    - Typeahead item/location filters with cross-filtering, auto-sample on first visit
-17. Market intelligence (feature18):
+20. Market intelligence (feature18):
    - `POST /market-intelligence` endpoint combining Google Custom Search + GPT-4o narrative
    - Item metadata lookup from `dim_item` (item_desc, brand_name, category, producer_name)
    - Location metadata lookup from `dim_location` (state_id, site_desc)
@@ -158,7 +185,7 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 | `common/db.py` | `get_db_params()`: shared DB connection parameters |
 | `common/constants.py` | `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output column ordering, thresholds |
 
-Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_global()`, `train_and_predict_per_cluster()`, and `train_and_predict_transfer()`, passed as callables to `run_tree_backtest()`. Prophet uses shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrates its own per-DFU fitting loop.
+Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_global()`, `train_and_predict_per_cluster()`, and `train_and_predict_transfer()`, passed as callables to `run_tree_backtest()`. Non-tree models (Prophet, StatsForecast, NeuralProphet, PatchTST, DeepAR) use shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrate their own training loops. Deep learning models (PatchTST, DeepAR) have separate model files (`patchtst_model.py`, `deepar_model.py`) containing the PyTorch nn.Module, Dataset, and train/predict functions. StatsForecast uses vectorized batch fitting (no per-DFU loop). NeuralProphet follows the Prophet per-DFU pattern with PyTorch GPU support.
 
 ## ML Pipeline Components
 1. **Feature Engineering** (`generate_clustering_features.py`):
@@ -197,12 +224,39 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_g
    - Script contains only XGBoost-specific training functions (~282 lines)
    - XGBoost regressors with histogram-based tree method and native categorical support
    - Global (`xgboost_global`), per-cluster (`xgboost_cluster`), and transfer (`xgboost_transfer`) strategies
-8. **Backtest Loader** (`load_backtest_forecasts.py`):
+8. **Prophet Backtest** (`run_backtest_prophet.py`):
+   - Per-DFU individual time series models using Facebook Prophet
+   - Uses shared utilities but orchestrates its own per-DFU fitting loop with multiprocessing
+   - Three strategies: global (per-DFU fits), per-cluster (clustered DFUs only), pooled (cluster-level aggregate → fit → disaggregate)
+   - Model IDs: `prophet_global`, `prophet_cluster`, `prophet_pooled`
+9. **PatchTST Backtest** (`run_backtest_patchtst.py` + `patchtst_model.py`):
+   - Transformer-based model: patched time series input → positional encoding → Transformer encoder → MLP head
+   - Custom PyTorch nn.Module (~60K params), HuberLoss, AdamW + CosineAnnealing
+   - Input: raw log1p qty sequences (12 months) + 11 covariates (no lag/rolling features)
+   - Global (`patchtst_global`), per-cluster (`patchtst_cluster`), transfer (`patchtst_transfer`) strategies
+   - Apple MPS / CUDA / CPU auto-detection
+10. **DeepAR Backtest** (`run_backtest_deepar.py` + `deepar_model.py`):
+   - LSTM-based probabilistic model: covariate projection → stacked LSTM → Gaussian distribution head (mu + sigma)
+   - Custom PyTorch nn.Module (~67K params), GaussianNLLLoss, AdamW + CosineAnnealing
+   - Same input format as PatchTST: raw log1p sequences + 11 covariates
+   - Global (`deepar_global`), per-cluster (`deepar_cluster`), transfer (`deepar_transfer`) strategies
+   - Apple MPS / CUDA / CPU auto-detection
+11. **StatsForecast Backtest** (`run_backtest_statsforecast.py`):
+   - Vectorized batch fitting via Nixtla's StatsForecast library (AutoARIMA + AutoETS)
+   - Reshapes sales to `(unique_id, ds, y)` format, fits all DFUs in single `sf.forecast()` call
+   - No per-DFU loop — Numba JIT compiled, ~100x faster than Prophet
+   - Global (`statsforecast_global`), per-cluster (`statsforecast_cluster`), pooled (`statsforecast_pooled`) strategies
+12. **NeuralProphet Backtest** (`run_backtest_neuralprophet.py`):
+   - PyTorch-based Prophet successor with per-DFU fitting via multiprocessing (same pattern as Prophet)
+   - Neural network components for trend + seasonality decomposition
+   - Apple MPS / CUDA / CPU GPU acceleration via PyTorch Lightning
+   - Global (`neuralprophet_global`), per-cluster (`neuralprophet_cluster`), pooled (`neuralprophet_pooled`) strategies
+13. **Backtest Loader** (`load_backtest_forecasts.py`):
    - Loads execution-lag rows into `fact_external_forecast_monthly` via COPY + staging + upsert
    - Loads all-lag rows into `backtest_lag_archive` via same pattern
    - `--replace` scoped to `model_id` in CSV (safe for multi-model coexistence)
    - Refreshes `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` materialized views
-9. **Champion Selection** (`run_champion_selection.py`):
+12. **Champion Selection** (`run_champion_selection.py`):
    - Evaluates all competing models per DFU using WAPE (industry-standard Forecast Value Added)
    - Selects best model per DFU: `ROW_NUMBER() OVER (PARTITION BY dmdunit, dmdgroup, loc ORDER BY wape ASC)`
    - Bulk inserts champion rows via temp table + COPY + INSERT...SELECT with `model_id='champion'`
@@ -210,6 +264,30 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_g
    - Ceiling rows stored as `model_id='ceiling'` — theoretical upper bound with perfect foresight
    - Refreshes materialized views so champion + ceiling auto-appear in all accuracy comparisons
    - Config-driven via `config/model_competition.yaml`; also callable via API
+
+21. StatsForecast backtesting (feature24):
+   - Vectorized statistical models (AutoARIMA + AutoETS) from Nixtla's StatsForecast library
+   - Processes ALL DFUs as a single batch DataFrame — no per-DFU loop (~100x faster than Prophet)
+   - Numba JIT compiled for native-speed execution, automatic parallelism via `n_jobs=-1`
+   - Three strategies: global (batch all DFUs), per-cluster (batch clustered DFUs), pooled (cluster-level aggregate → fit → disaggregate)
+   - Model IDs: `statsforecast_global`, `statsforecast_cluster`, `statsforecast_pooled`
+   - Uses shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`)
+   - MLflow experiment tracking (`statsforecast_backtest`)
+22. NeuralProphet backtesting (feature25):
+   - PyTorch-based Prophet successor with Apple MPS GPU acceleration
+   - Per-DFU individual time series models (same pattern as Prophet) with neural network components
+   - Supports trend decomposition, Fourier seasonality, and optional autoregressive lags
+   - Three strategies: global (per-DFU fits), per-cluster (clustered DFUs only), pooled (cluster-level aggregate → disaggregate)
+   - Model IDs: `neuralprophet_global`, `neuralprophet_cluster`, `neuralprophet_pooled`
+   - GPU support via PyTorch Lightning accelerator parameter (MPS/CUDA/CPU)
+   - Uses shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`)
+   - MLflow experiment tracking (`neuralprophet_backtest`)
+23. Backtest model cleanup (feature23):
+   - CLI utility (`scripts/clean_backtest_models.py`) for selective removal of model predictions
+   - Deletes from `fact_external_forecast_monthly` and `backtest_lag_archive` by `model_id`
+   - Refreshes 5 materialized views: `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_dfu_coverage`, `agg_accuracy_lag_archive`, `agg_dfu_coverage_lag_archive`
+   - Modes: `--list` (inventory), `--dry-run` (preview), `--all-backtest` (bulk cleanup excluding external)
+   - Makefile targets: `backtest-clean`, `backtest-list`
 
 ## How to add next dataset
 1. Add `<DATASET>_SPEC` in `common/domain_specs.py`

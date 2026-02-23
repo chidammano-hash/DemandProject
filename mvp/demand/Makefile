@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat generate-embeddings api ui-init ui normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-all refresh-agg-sales refresh-agg-forecast refresh-agg spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-load backtest-all accuracy-slice-refresh accuracy-slice-check champion-select
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat generate-embeddings api ui-init ui normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-all refresh-agg-sales refresh-agg-forecast refresh-agg spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-all backtest-clean backtest-list accuracy-slice-refresh accuracy-slice-check champion-select
 
 help:
 	@echo "Targets:"
@@ -50,7 +50,21 @@ help:
 	@echo "  backtest-prophet     - run Prophet global backtest (per-DFU fits)"
 	@echo "  backtest-prophet-cluster - run Prophet per-cluster backtest"
 	@echo "  backtest-prophet-pooled - run Prophet pooled cluster backtest"
+	@echo "  backtest-patchtst    - run PatchTST global backtest (Apple MPS GPU)"
+	@echo "  backtest-patchtst-cluster - run PatchTST per-cluster backtest"
+	@echo "  backtest-patchtst-transfer - run PatchTST transfer learning backtest"
+	@echo "  backtest-deepar      - run DeepAR global backtest"
+	@echo "  backtest-deepar-cluster - run DeepAR per-cluster backtest"
+	@echo "  backtest-deepar-transfer - run DeepAR transfer learning backtest"
+	@echo "  backtest-statsforecast - run StatsForecast global backtest (AutoARIMA+AutoETS)"
+	@echo "  backtest-statsforecast-cluster - run StatsForecast per-cluster backtest"
+	@echo "  backtest-statsforecast-pooled - run StatsForecast pooled cluster backtest"
+	@echo "  backtest-neuralprophet - run NeuralProphet global backtest (PyTorch GPU)"
+	@echo "  backtest-neuralprophet-cluster - run NeuralProphet per-cluster backtest"
+	@echo "  backtest-neuralprophet-pooled - run NeuralProphet pooled cluster backtest"
 	@echo "  backtest-load        - load backtest predictions into Postgres"
+	@echo "  backtest-clean       - remove model predictions (MODELS='lgbm_global deepar_global')"
+	@echo "  backtest-list        - list model_id row counts in database"
 	@echo "  backtest-all         - backtest-lgbm + backtest-load"
 	@echo "  accuracy-slice-refresh - refresh agg_accuracy_by_dim + agg_accuracy_lag_archive"
 	@echo "  accuracy-slice-check - curl accuracy slice + lag-curve endpoints"
@@ -369,10 +383,52 @@ backtest-prophet-cluster:
 backtest-prophet-pooled:
 	$(UV) python scripts/run_backtest_prophet.py --cluster-strategy pooled
 
+backtest-patchtst:
+	$(UV) python scripts/run_backtest_patchtst.py --cluster-strategy global
+
+backtest-patchtst-cluster:
+	$(UV) python scripts/run_backtest_patchtst.py --cluster-strategy per_cluster
+
+backtest-patchtst-transfer:
+	$(UV) python scripts/run_backtest_patchtst.py --cluster-strategy transfer
+
+backtest-deepar:
+	$(UV) python scripts/run_backtest_deepar.py --cluster-strategy global
+
+backtest-deepar-cluster:
+	$(UV) python scripts/run_backtest_deepar.py --cluster-strategy per_cluster
+
+backtest-deepar-transfer:
+	$(UV) python scripts/run_backtest_deepar.py --cluster-strategy transfer
+
+backtest-statsforecast:
+	$(UV) python scripts/run_backtest_statsforecast.py --cluster-strategy global
+
+backtest-statsforecast-cluster:
+	$(UV) python scripts/run_backtest_statsforecast.py --cluster-strategy per_cluster
+
+backtest-statsforecast-pooled:
+	$(UV) python scripts/run_backtest_statsforecast.py --cluster-strategy pooled
+
+backtest-neuralprophet:
+	$(UV) python scripts/run_backtest_neuralprophet.py --cluster-strategy global
+
+backtest-neuralprophet-cluster:
+	$(UV) python scripts/run_backtest_neuralprophet.py --cluster-strategy per_cluster
+
+backtest-neuralprophet-pooled:
+	$(UV) python scripts/run_backtest_neuralprophet.py --cluster-strategy pooled
+
 backtest-load:
 	$(UV) python scripts/load_backtest_forecasts.py --replace
 
 backtest-all: backtest-lgbm backtest-load
+
+backtest-clean:
+	$(UV) python scripts/clean_backtest_models.py $(MODELS)
+
+backtest-list:
+	$(UV) python scripts/clean_backtest_models.py --list
 
 accuracy-slice-refresh:
 	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 \

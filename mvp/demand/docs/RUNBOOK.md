@@ -52,7 +52,7 @@ This groups DFUs by historical demand patterns for improved global LGBM model pe
 
 ## 3d) Run backtesting (optional, requires clustering)
 
-> **Architecture note:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) share a common framework in `common/`. Each script contains only model-specific training functions (~280 lines) and delegates orchestration to `common/backtest_framework.py` via `run_tree_backtest()`. Shared modules: `backtest_framework.py` (orchestrator), `feature_engineering.py` (lag/rolling features), `metrics.py` (WAPE/accuracy), `mlflow_utils.py` (experiment logging), `db.py` (connection params), `constants.py` (thresholds). Prophet uses shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrates its own per-DFU fitting loop.
+> **Architecture note:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) share a common framework in `common/`. Each script contains only model-specific training functions (~280 lines) and delegates orchestration to `common/backtest_framework.py` via `run_tree_backtest()`. Shared modules: `backtest_framework.py` (orchestrator), `feature_engineering.py` (lag/rolling features), `metrics.py` (WAPE/accuracy), `mlflow_utils.py` (experiment logging), `db.py` (connection params), `constants.py` (thresholds). Prophet and NeuralProphet use shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrate their own per-DFU fitting loops. StatsForecast uses the same shared utilities with vectorized batch fitting (no per-DFU loop).
 
 ### LGBM
 
@@ -167,6 +167,50 @@ make backtest-deepar-transfer    # Transfer learning DeepAR backtest
 make backtest-load               # Load predictions into Postgres
 ```
 
+### StatsForecast (Fast Statistical Models)
+
+StatsForecast uses vectorized AutoARIMA + AutoETS models — ~100x faster than Prophet for large-scale backtesting.
+
+Global (batch all DFUs at once):
+```bash
+make backtest-statsforecast          # Global StatsForecast backtest (AutoARIMA+AutoETS)
+make backtest-load                   # Load predictions into Postgres
+```
+
+Per-cluster (only clustered DFUs):
+```bash
+make backtest-statsforecast-cluster  # Per-cluster StatsForecast backtest
+make backtest-load                   # Load predictions into Postgres
+```
+
+Pooled (aggregate by cluster → fit → disaggregate):
+```bash
+make backtest-statsforecast-pooled   # Pooled cluster StatsForecast backtest
+make backtest-load                   # Load predictions into Postgres
+```
+
+### NeuralProphet (PyTorch-based Prophet)
+
+NeuralProphet is a PyTorch-based Prophet successor with Apple MPS GPU acceleration.
+
+Global (per-DFU fits with GPU):
+```bash
+make backtest-neuralprophet          # Global NeuralProphet backtest (PyTorch GPU)
+make backtest-load                   # Load predictions into Postgres
+```
+
+Per-cluster (only clustered DFUs):
+```bash
+make backtest-neuralprophet-cluster  # Per-cluster NeuralProphet backtest
+make backtest-load                   # Load predictions into Postgres
+```
+
+Pooled (aggregate by cluster → fit → disaggregate):
+```bash
+make backtest-neuralprophet-pooled   # Pooled cluster NeuralProphet backtest
+make backtest-load                   # Load predictions into Postgres
+```
+
 ### Transfer Learning (all frameworks)
 
 Transfer learning trains a global base model (no `ml_cluster`), then fine-tunes per cluster with warm-start. Small clusters and unassigned DFUs fall back to the base model (never zeroed).
@@ -201,6 +245,8 @@ Predictions are stored in `fact_external_forecast_monthly` with model_id values:
 - Prophet: `prophet_global` / `prophet_cluster` / `prophet_pooled`
 - PatchTST: `patchtst_global` / `patchtst_cluster` / `patchtst_transfer`
 - DeepAR: `deepar_global` / `deepar_cluster` / `deepar_transfer`
+- StatsForecast: `statsforecast_global` / `statsforecast_cluster` / `statsforecast_pooled`
+- NeuralProphet: `neuralprophet_global` / `neuralprophet_cluster` / `neuralprophet_pooled`
 
 All-lag predictions are archived in `backtest_lag_archive` for accuracy reporting at any horizon. Results appear automatically in the forecast model selector UI and accuracy KPIs.
 
@@ -211,6 +257,37 @@ Verify archive data:
 docker exec demand-mvp-postgres psql -U demand -d demand_mvp \
   -c "SELECT model_id, lag, COUNT(*) FROM backtest_lag_archive GROUP BY 1,2 ORDER BY 1,2"
 ```
+
+## 3d-cleanup) Clean up backtest model predictions (feature23)
+
+To remove model predictions that are no longer needed from the database:
+
+### List model row counts
+```bash
+make backtest-list
+```
+
+### Preview what would be deleted (dry run)
+```bash
+make backtest-clean MODELS="--dry-run lgbm_global deepar_global"
+```
+
+### Delete specific models
+```bash
+make backtest-clean MODELS="lgbm_global deepar_global"
+```
+
+### Delete ALL non-external backtest models
+```bash
+make backtest-clean MODELS="--all-backtest"
+```
+
+This removes rows from both `fact_external_forecast_monthly` and `backtest_lag_archive` for the specified model_ids, then refreshes all 5 dependent materialized views (`agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_dfu_coverage`, `agg_accuracy_lag_archive`, `agg_dfu_coverage_lag_archive`).
+
+**Safety notes:**
+- `--all-backtest` never deletes `model_id='external'` (source-system forecasts are protected)
+- Always use `--dry-run` first to preview row counts before deleting
+- After cleanup, re-run `make champion-select` if champion/ceiling rows are affected
 
 ## 3e) Multi-dimensional accuracy comparison (feature10)
 

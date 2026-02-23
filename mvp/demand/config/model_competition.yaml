@@ -14,3 +14,11 @@ competition:
   - xgboost_cluster
   - prophet_global
   - prophet_pooled
+  - patchtst_global
+  - patchtst_cluster
+  - deepar_global
+  - deepar_cluster
+  - statsforecast_global
+  - statsforecast_cluster
+  - neuralprophet_global
+  - neuralprophet_cluster

@@ -1,15 +1,16 @@
 """
-Run Prophet backtesting with expanding-window timeframes.
+Run NeuralProphet backtesting with expanding-window timeframes.
 
-Prophet fits a per-DFU individual time series model with native Fourier
-seasonality decomposition and piecewise linear trend.  Unlike tree-based models
-(LGBM, CatBoost, XGBoost), Prophet operates on raw (ds, y) series — no
-hand-engineered lag or rolling features needed.
+NeuralProphet is a PyTorch-based successor to Prophet that supports GPU
+acceleration (Apple MPS, NVIDIA CUDA) while maintaining a Prophet-compatible
+API.  Like Prophet, it fits per-DFU individual time series models with
+native trend and seasonality decomposition, but uses neural network
+components for potentially better non-linear pattern capture.
 
 Supports three strategies:
-  - global:      Independent Prophet fit per DFU (model_id=prophet_global)
-  - per_cluster: Fit only DFUs within assigned clusters (model_id=prophet_cluster)
-  - pooled:      Aggregate by cluster → fit → disaggregate proportionally (model_id=prophet_pooled)
+  - global:      Independent NeuralProphet fit per DFU (model_id=neuralprophet_global)
+  - per_cluster: Fit only DFUs within assigned clusters (model_id=neuralprophet_cluster)
+  - pooled:      Aggregate by cluster -> fit -> disaggregate proportionally (model_id=neuralprophet_pooled)
 
 Produces two CSVs:
   - backtest_predictions.csv: execution-lag only (for fact_external_forecast_monthly)
@@ -29,17 +30,23 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
-# Suppress Prophet/cmdstanpy verbose logging (main process)
+# Suppress verbose logging (main process)
 logging.disable(logging.INFO)
 warnings.filterwarnings("ignore")
 
 
 def _init_worker():
     """Silence all logging and warnings in forked worker processes."""
+    import os
+
     logging.disable(logging.INFO)
     warnings.filterwarnings("ignore")
-    import os
-    os.environ["CMDSTAN_VERBOSE"] = "false"
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+    # Suppress NeuralProphet/PyTorch Lightning logging
+    logging.getLogger("neuralprophet").setLevel(logging.WARNING)
+    logging.getLogger("pytorch_lightning").setLevel(logging.WARNING)
+    logging.getLogger("lightning").setLevel(logging.WARNING)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -59,19 +66,21 @@ def _ts() -> str:
     return time.strftime("%H:%M:%S")
 
 
-# ── Per-DFU Prophet fitting ──────────────────────────────────────────────────
+# -- Per-DFU NeuralProphet fitting -------------------------------------------
 
 
 def _fit_single_dfu(args_tuple: tuple) -> list[dict] | None:
-    """Fit Prophet for one DFU and return predictions.
+    """Fit NeuralProphet for one DFU and return predictions.
 
     Designed to be called via multiprocessing.Pool.map.
     Returns list of dicts with (dfu_ck, dmdunit, dmdgroup, loc, startdate, basefcst_pref)
     or None if fitting fails.
     """
-    dfu_ck, dmdunit, dmdgroup, loc, train_series, predict_months, prophet_kwargs = args_tuple
+    dfu_ck, dmdunit, dmdgroup, loc, train_series, predict_months, np_kwargs = args_tuple
 
-    from prophet import Prophet
+    from neuralprophet import NeuralProphet, set_log_level
+
+    set_log_level("ERROR")
 
     if len(train_series) < 2:
         return [
@@ -86,32 +95,60 @@ def _fit_single_dfu(args_tuple: tuple) -> list[dict] | None:
             for pm in predict_months
         ]
 
-    df_prophet = pd.DataFrame({
+    df_np = pd.DataFrame({
         "ds": train_series.index,
         "y": train_series.values.astype(float),
     })
-    df_prophet = df_prophet.sort_values("ds").reset_index(drop=True)
+    df_np = df_np.sort_values("ds").reset_index(drop=True)
 
     try:
-        m = Prophet(**prophet_kwargs)
-        m.fit(df_prophet)
+        # Extract accelerator separately (not a NeuralProphet constructor arg)
+        accelerator = np_kwargs.pop("accelerator", "auto")
+        trainer_config = {}
+        if accelerator != "auto":
+            trainer_config["accelerator"] = accelerator
 
-        future = pd.DataFrame({"ds": predict_months})
+        m = NeuralProphet(
+            growth=np_kwargs.get("growth", "linear"),
+            yearly_seasonality=np_kwargs.get("yearly_seasonality", "auto"),
+            weekly_seasonality=np_kwargs.get("weekly_seasonality", False),
+            daily_seasonality=np_kwargs.get("daily_seasonality", False),
+            n_lags=np_kwargs.get("n_lags", 0),
+            learning_rate=np_kwargs.get("learning_rate", 0.1),
+            epochs=np_kwargs.get("epochs", 100),
+            batch_size=np_kwargs.get("batch_size", 64),
+            trainer_config=trainer_config if trainer_config else None,
+        )
+        # Restore accelerator for next call
+        np_kwargs["accelerator"] = accelerator
+
+        m.fit(df_np, freq="MS")
+
+        future = m.make_future_dataframe(df_np, periods=len(predict_months))
         forecast = m.predict(future)
 
+        # NeuralProphet uses 'yhat1' for the forecast column
+        yhat_col = "yhat1" if "yhat1" in forecast.columns else "yhat"
+
         results = []
-        for _, row in forecast.iterrows():
-            results.append({
-                "dfu_ck": dfu_ck,
-                "dmdunit": dmdunit,
-                "dmdgroup": dmdgroup,
-                "loc": loc,
-                "startdate": row["ds"],
-                "basefcst_pref": max(float(row["yhat"]), 0),
-            })
+        # Get only the future predictions (last N rows)
+        future_fcst = forecast.tail(len(predict_months))
+        for i, (_, row) in enumerate(future_fcst.iterrows()):
+            if i < len(predict_months):
+                results.append({
+                    "dfu_ck": dfu_ck,
+                    "dmdunit": dmdunit,
+                    "dmdgroup": dmdgroup,
+                    "loc": loc,
+                    "startdate": predict_months[i],
+                    "basefcst_pref": max(float(row[yhat_col]), 0),
+                })
         return results
 
     except Exception:
+        # Restore accelerator if popped
+        if "accelerator" not in np_kwargs:
+            np_kwargs["accelerator"] = "auto"
         return [
             {
                 "dfu_ck": dfu_ck,
@@ -125,17 +162,17 @@ def _fit_single_dfu(args_tuple: tuple) -> list[dict] | None:
         ]
 
 
-def fit_prophet_parallel(
+def fit_neuralprophet_parallel(
     sales_df: pd.DataFrame,
     dfu_keys: pd.DataFrame,
     train_end: pd.Timestamp,
     predict_months: list[pd.Timestamp],
     n_workers: int = 4,
-    prophet_kwargs: dict | None = None,
+    np_kwargs: dict | None = None,
 ) -> pd.DataFrame:
-    """Fit Prophet per DFU in parallel and return predictions."""
-    if prophet_kwargs is None:
-        prophet_kwargs = {}
+    """Fit NeuralProphet per DFU in parallel and return predictions."""
+    if np_kwargs is None:
+        np_kwargs = {}
 
     train_sales = sales_df[sales_df["startdate"] <= train_end].copy()
     grouped = train_sales.groupby("dfu_ck").apply(
@@ -157,7 +194,7 @@ def fit_prophet_parallel(
         else:
             series = pd.Series(dtype=float)
 
-        work_items.append((dfu_ck, dmdunit, dmdgroup, loc, series, predict_months, prophet_kwargs))
+        work_items.append((dfu_ck, dmdunit, dmdgroup, loc, series, predict_months, np_kwargs.copy()))
 
     actual_workers = min(n_workers, len(work_items), cpu_count())
     total = len(work_items)
@@ -192,14 +229,16 @@ def fit_prophet_parallel(
     return pd.DataFrame(rows)
 
 
-# ── Pooled cluster strategy ──────────────────────────────────────────────────
+# -- Pooled cluster strategy --------------------------------------------------
 
 
 def _fit_single_cluster_pooled(args_tuple: tuple) -> list[dict] | None:
-    """Fit Prophet on aggregated cluster-level sales and return cluster-level predictions."""
-    cluster_label, train_series, predict_months, prophet_kwargs = args_tuple
+    """Fit NeuralProphet on aggregated cluster-level sales."""
+    cluster_label, train_series, predict_months, np_kwargs = args_tuple
 
-    from prophet import Prophet
+    from neuralprophet import NeuralProphet, set_log_level
+
+    set_log_level("ERROR")
 
     if len(train_series) < 2:
         return [
@@ -207,57 +246,73 @@ def _fit_single_cluster_pooled(args_tuple: tuple) -> list[dict] | None:
             for pm in predict_months
         ]
 
-    df_prophet = pd.DataFrame({
+    df_np = pd.DataFrame({
         "ds": train_series.index,
         "y": train_series.values.astype(float),
     })
-    df_prophet = df_prophet.sort_values("ds").reset_index(drop=True)
+    df_np = df_np.sort_values("ds").reset_index(drop=True)
 
     try:
-        m = Prophet(**prophet_kwargs)
-        m.fit(df_prophet)
+        accelerator = np_kwargs.pop("accelerator", "auto")
+        trainer_config = {}
+        if accelerator != "auto":
+            trainer_config["accelerator"] = accelerator
 
-        future = pd.DataFrame({"ds": predict_months})
+        m = NeuralProphet(
+            growth=np_kwargs.get("growth", "linear"),
+            yearly_seasonality=np_kwargs.get("yearly_seasonality", "auto"),
+            weekly_seasonality=np_kwargs.get("weekly_seasonality", False),
+            daily_seasonality=np_kwargs.get("daily_seasonality", False),
+            n_lags=np_kwargs.get("n_lags", 0),
+            learning_rate=np_kwargs.get("learning_rate", 0.1),
+            epochs=np_kwargs.get("epochs", 100),
+            batch_size=np_kwargs.get("batch_size", 64),
+            trainer_config=trainer_config if trainer_config else None,
+        )
+        np_kwargs["accelerator"] = accelerator
+
+        m.fit(df_np, freq="MS")
+
+        future = m.make_future_dataframe(df_np, periods=len(predict_months))
         forecast = m.predict(future)
 
+        yhat_col = "yhat1" if "yhat1" in forecast.columns else "yhat"
+
         results = []
-        for _, row in forecast.iterrows():
-            results.append({
-                "cluster": cluster_label,
-                "startdate": row["ds"],
-                "cluster_forecast": max(float(row["yhat"]), 0),
-            })
+        future_fcst = forecast.tail(len(predict_months))
+        for i, (_, row) in enumerate(future_fcst.iterrows()):
+            if i < len(predict_months):
+                results.append({
+                    "cluster": cluster_label,
+                    "startdate": predict_months[i],
+                    "cluster_forecast": max(float(row[yhat_col]), 0),
+                })
         return results
 
     except Exception:
+        if "accelerator" not in np_kwargs:
+            np_kwargs["accelerator"] = "auto"
         return [
             {"cluster": cluster_label, "startdate": pm, "cluster_forecast": 0.0}
             for pm in predict_months
         ]
 
 
-def fit_prophet_pooled(
+def fit_neuralprophet_pooled(
     sales_df: pd.DataFrame,
     dfu_keys: pd.DataFrame,
     cluster_map: dict[str, str],
     train_end: pd.Timestamp,
     predict_months: list[pd.Timestamp],
     n_workers: int = 4,
-    prophet_kwargs: dict | None = None,
+    np_kwargs: dict | None = None,
 ) -> pd.DataFrame:
-    """Pooled cluster strategy: aggregate by cluster → fit → disaggregate.
-
-    1. Aggregate sales by cluster (sum qty per cluster per month).
-    2. Fit one Prophet model per cluster on aggregated series.
-    3. Disaggregate cluster-level forecast to DFU level using historical
-       demand proportions within each cluster.
-    """
-    if prophet_kwargs is None:
-        prophet_kwargs = {}
+    """Pooled cluster strategy: aggregate by cluster -> fit -> disaggregate."""
+    if np_kwargs is None:
+        np_kwargs = {}
 
     train_sales = sales_df[sales_df["startdate"] <= train_end].copy()
     train_sales["cluster"] = train_sales["dfu_ck"].map(cluster_map)
-
     train_sales = train_sales[train_sales["cluster"].notna() & (train_sales["cluster"] != "__unknown__")]
 
     cluster_agg = train_sales.groupby(["cluster", "startdate"])["qty"].sum().reset_index()
@@ -267,7 +322,7 @@ def fit_prophet_pooled(
     for cluster_label in clusters:
         c_data = cluster_agg[cluster_agg["cluster"] == cluster_label]
         series = c_data.set_index("startdate")["qty"]
-        work_items.append((cluster_label, series, predict_months, prophet_kwargs))
+        work_items.append((cluster_label, series, predict_months, np_kwargs.copy()))
 
     actual_workers = min(n_workers, len(work_items), cpu_count())
     total_clusters = len(work_items)
@@ -293,6 +348,7 @@ def fit_prophet_pooled(
 
     cluster_fcst = pd.DataFrame(cluster_rows)
 
+    # Compute DFU proportions within clusters
     dfu_cluster_sales = train_sales.groupby(["dfu_ck", "cluster"])["qty"].sum().reset_index()
     cluster_total = dfu_cluster_sales.groupby("cluster")["qty"].sum().reset_index().rename(
         columns={"qty": "cluster_total"}
@@ -309,73 +365,81 @@ def fit_prophet_pooled(
 
     disagg = dfu_props.merge(cluster_fcst, on="cluster")
     disagg["basefcst_pref"] = np.maximum(disagg["proportion"] * disagg["cluster_forecast"], 0)
-
     disagg = disagg.merge(dfu_lookup, left_on="dfu_ck", right_index=True)
 
     return disagg[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate", "basefcst_pref"]].copy()
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# -- Main --------------------------------------------------------------------
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Prophet backtest with expanding-window timeframes")
+    parser = argparse.ArgumentParser(description="Run NeuralProphet backtest with expanding-window timeframes")
     parser.add_argument("--cluster-strategy", choices=["global", "per_cluster", "pooled"], default="global",
-                        help="global: per-DFU fits, per_cluster: fit only clustered DFUs, pooled: aggregate by cluster → fit → disaggregate")
+                        help="global: per-DFU fits, per_cluster: fit only clustered DFUs, pooled: aggregate by cluster")
     parser.add_argument("--model-id", type=str, default=None,
-                        help="Override model_id (default: prophet_global, prophet_cluster, or prophet_pooled)")
+                        help="Override model_id (default: neuralprophet_global, etc.)")
     parser.add_argument("--n-timeframes", type=int, default=10, help="Number of expanding windows")
     parser.add_argument("--output-dir", type=str, default="data/backtest", help="Output directory")
     parser.add_argument("--n-workers", type=int, default=None,
                         help="Number of parallel workers (default: all CPU cores)")
 
-    # Prophet hyperparameters
+    # NeuralProphet hyperparameters
+    parser.add_argument("--epochs", type=int, default=100, help="Training epochs per model")
+    parser.add_argument("--learning-rate", type=float, default=0.1, help="Learning rate")
+    parser.add_argument("--batch-size", type=int, default=64, help="Training batch size")
+    parser.add_argument("--n-lags", type=int, default=0,
+                        help="Number of autoregressive lags (0 = pure decomposition like Prophet)")
     parser.add_argument("--yearly-seasonality", type=str, default="auto",
-                        help="Yearly seasonality: auto, True, False, or integer Fourier terms")
+                        help="Yearly seasonality: auto, True, False")
     parser.add_argument("--weekly-seasonality", action="store_true", default=False,
                         help="Enable weekly seasonality (default: off for monthly data)")
     parser.add_argument("--daily-seasonality", action="store_true", default=False,
                         help="Enable daily seasonality (default: off for monthly data)")
-    parser.add_argument("--changepoint-prior-scale", type=float, default=0.05,
-                        help="Flexibility of the trend changepoints")
-    parser.add_argument("--seasonality-prior-scale", type=float, default=10.0,
-                        help="Strength of the seasonality model")
     parser.add_argument("--growth", type=str, default="linear",
-                        choices=["linear", "logistic", "flat"],
-                        help="Prophet growth model")
+                        choices=["linear", "discontinuous", "off"],
+                        help="NeuralProphet growth model")
+    parser.add_argument("--accelerator", type=str, default="auto",
+                        choices=["auto", "cpu", "gpu", "mps"],
+                        help="Hardware accelerator for training")
     args = parser.parse_args()
 
     t_start = time.time()
     load_dotenv(ROOT / ".env")
 
     _default_model_ids = {
-        "global": "prophet_global",
-        "per_cluster": "prophet_cluster",
-        "pooled": "prophet_pooled",
+        "global": "neuralprophet_global",
+        "per_cluster": "neuralprophet_cluster",
+        "pooled": "neuralprophet_pooled",
     }
     model_id = args.model_id or _default_model_ids[args.cluster_strategy]
     n_workers = args.n_workers if args.n_workers is not None else cpu_count()
+
     print(f"[{_ts()}] Backtest: strategy={args.cluster_strategy}, model_id={model_id}, "
           f"n_timeframes={args.n_timeframes}, n_workers={n_workers} (CPUs: {cpu_count()})")
 
-    # Build Prophet kwargs
+    # Parse yearly_seasonality
     yearly = args.yearly_seasonality
     if yearly == "auto":
-        pass  # keep "auto"
+        pass
     elif yearly.lower() in ("true", "false"):
         yearly = yearly.lower() == "true"
     else:
         yearly = int(yearly)
 
-    prophet_kwargs = {
+    np_kwargs = {
         "yearly_seasonality": yearly,
         "weekly_seasonality": args.weekly_seasonality,
         "daily_seasonality": args.daily_seasonality,
-        "changepoint_prior_scale": args.changepoint_prior_scale,
-        "seasonality_prior_scale": args.seasonality_prior_scale,
         "growth": args.growth,
+        "epochs": args.epochs,
+        "learning_rate": args.learning_rate,
+        "batch_size": args.batch_size,
+        "n_lags": args.n_lags,
+        "accelerator": args.accelerator,
     }
-    print(f"[{_ts()}] Prophet: growth={args.growth}, cp_prior={args.changepoint_prior_scale}")
+    print(f"[{_ts()}] NeuralProphet: growth={args.growth}, epochs={args.epochs}, "
+          f"lr={args.learning_rate}, accelerator={args.accelerator}")
 
     print(f"[{_ts()}] Loading data...")
     db = get_db_params()
@@ -387,14 +451,14 @@ def main() -> None:
 
     latest_month = sales_df["startdate"].max()
     earliest_month = sales_df["startdate"].min()
-    print(f"[{_ts()}] {len(dfu_keys):,} DFUs, range {earliest_month.date()}→{latest_month.date()}")
+    print(f"[{_ts()}] {len(dfu_keys):,} DFUs, range {earliest_month.date()}->{latest_month.date()}")
 
     timeframes = generate_timeframes(earliest_month, latest_month, args.n_timeframes)
-    print(f"[{_ts()}] {len(timeframes)} timeframes: {timeframes[0]['label']}–{timeframes[-1]['label']}")
+    print(f"[{_ts()}] {len(timeframes)} timeframes: {timeframes[0]['label']}-{timeframes[-1]['label']}")
 
     all_months = sorted(sales_df["startdate"].unique())
 
-    # ── Step 3: Train & predict per timeframe ────────────────────────────────
+    # -- Train & predict per timeframe ----------------------------------------
     all_predictions = []
 
     for ti, tf in enumerate(timeframes):
@@ -424,17 +488,17 @@ def main() -> None:
         print(f"  [{_ts()}] TF {label} ({ti + 1}/{len(timeframes)}): {len(active_dfus):,} DFUs ...", end="", flush=True)
 
         if args.cluster_strategy == "pooled":
-            preds = fit_prophet_pooled(
+            preds = fit_neuralprophet_pooled(
                 sales_df, active_dfus, cluster_map,
                 train_end, predict_months,
                 n_workers=n_workers,
-                prophet_kwargs=prophet_kwargs,
+                np_kwargs=np_kwargs.copy(),
             )
         else:
-            preds = fit_prophet_parallel(
+            preds = fit_neuralprophet_parallel(
                 sales_df, active_dfus, train_end, predict_months,
                 n_workers=n_workers,
-                prophet_kwargs=prophet_kwargs,
+                np_kwargs=np_kwargs.copy(),
             )
 
         if len(preds) == 0:
@@ -469,8 +533,8 @@ def main() -> None:
         model_id=model_id,
         cluster_strategy=args.cluster_strategy,
         n_timeframes=args.n_timeframes,
-        model_params=prophet_kwargs,
-        model_params_key="prophet_kwargs",
+        model_params=np_kwargs,
+        model_params_key="neuralprophet_kwargs",
         timeframes=timeframes,
         earliest_month=earliest_month,
         latest_month=latest_month,
@@ -478,7 +542,7 @@ def main() -> None:
     )
 
     log_backtest_run(
-        model_type="prophet_backtest",
+        model_type="neuralprophet_backtest",
         model_id=model_id,
         cluster_strategy=args.cluster_strategy,
         hyperparams={
@@ -486,8 +550,10 @@ def main() -> None:
             "cluster_strategy": args.cluster_strategy,
             "n_workers": n_workers,
             "growth": args.growth,
-            "changepoint_prior_scale": args.changepoint_prior_scale,
-            "seasonality_prior_scale": args.seasonality_prior_scale,
+            "epochs": args.epochs,
+            "learning_rate": args.learning_rate,
+            "n_lags": args.n_lags,
+            "accelerator": args.accelerator,
         },
         metrics={
             "n_predictions": len(expanded),
@@ -498,7 +564,7 @@ def main() -> None:
     )
 
     elapsed = time.time() - t_start
-    print(f"\n[{_ts()}] Prophet backtest complete in {elapsed:.0f}s ({elapsed / 60:.1f}m)")
+    print(f"\n[{_ts()}] NeuralProphet backtest complete in {elapsed:.0f}s ({elapsed / 60:.1f}m)")
 
 
 if __name__ == "__main__":

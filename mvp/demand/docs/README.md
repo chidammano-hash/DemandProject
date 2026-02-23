@@ -51,6 +51,9 @@ Clustering:
 - LightGBM (demand forecasting models)
 - CatBoost (demand forecasting models)
 - XGBoost (demand forecasting models)
+- Prophet (per-DFU time series forecasting)
+- PyTorch (PatchTST Transformer + DeepAR LSTM + NeuralProphet deep learning models)
+- StatsForecast (vectorized AutoARIMA + AutoETS statistical models)
 - scikit-learn (clustering algorithms)
 - OpenAI (GPT-4o + text-embedding-3-small) for NL→SQL chatbot
 - Docker Compose
@@ -159,10 +162,53 @@ XGBoost Backtesting:
 - Models appear as `xgboost_global` / `xgboost_cluster` / `xgboost_transfer` in the forecast model selector
 - Same feature engineering, lag strategy, and output format as LGBM
 
+Prophet Backtesting (feature21):
+- Run global backtest: `make backtest-prophet` (fits individual Prophet model per DFU)
+- Run per-cluster backtest: `make backtest-prophet-cluster` (only clustered DFUs)
+- Run pooled backtest: `make backtest-prophet-pooled` (aggregate by cluster → fit → disaggregate)
+- Load predictions: `make backtest-load` (same shared loader)
+- Models appear as `prophet_global` / `prophet_cluster` / `prophet_pooled` in the forecast model selector
+- Native Fourier seasonality decomposition — no hand-engineered lag features
+- Per-DFU fitting with multiprocessing parallelism (4 workers)
+
+PatchTST Backtesting (feature19):
+- Run global backtest: `make backtest-patchtst` (Transformer-based model, Apple MPS GPU)
+- Run per-cluster backtest: `make backtest-patchtst-cluster` (separate model per cluster)
+- Run transfer backtest: `make backtest-patchtst-transfer` (global base → per-cluster fine-tune)
+- Load predictions: `make backtest-load` (same shared loader)
+- Models appear as `patchtst_global` / `patchtst_cluster` / `patchtst_transfer` in the forecast model selector
+- Patched time series input: 12-month lookback → overlapping 3-month patches → Transformer encoder
+- ~60K parameters, HuberLoss, AdamW + CosineAnnealing + early stopping
+
+DeepAR Backtesting (feature20):
+- Run global backtest: `make backtest-deepar` (LSTM-based probabilistic model)
+- Run per-cluster backtest: `make backtest-deepar-cluster` (separate model per cluster)
+- Run transfer backtest: `make backtest-deepar-transfer` (global base → per-cluster fine-tune)
+- Load predictions: `make backtest-load` (same shared loader)
+- Models appear as `deepar_global` / `deepar_cluster` / `deepar_transfer` in the forecast model selector
+- Gaussian likelihood output (mu + sigma) — produces point forecasts and prediction intervals
+- ~67K parameters, GaussianNLLLoss, AdamW + CosineAnnealing + early stopping
+
+StatsForecast Backtesting (feature24):
+- Run global backtest: `make backtest-statsforecast` (vectorized AutoARIMA + AutoETS, ~100x faster than Prophet)
+- Run per-cluster backtest: `make backtest-statsforecast-cluster` (only clustered DFUs)
+- Run pooled backtest: `make backtest-statsforecast-pooled` (aggregate by cluster -> fit -> disaggregate)
+- Load predictions: `make backtest-load` (same shared loader)
+- Models appear as `statsforecast_global` / `statsforecast_cluster` / `statsforecast_pooled` in the forecast model selector
+- Batch vectorized fitting — no per-DFU loop, Numba JIT compiled
+
+NeuralProphet Backtesting (feature25):
+- Run global backtest: `make backtest-neuralprophet` (PyTorch-based, Apple MPS GPU)
+- Run per-cluster backtest: `make backtest-neuralprophet-cluster` (only clustered DFUs)
+- Run pooled backtest: `make backtest-neuralprophet-pooled` (aggregate by cluster -> fit -> disaggregate)
+- Load predictions: `make backtest-load` (same shared loader)
+- Models appear as `neuralprophet_global` / `neuralprophet_cluster` / `neuralprophet_pooled` in the forecast model selector
+- Per-DFU fitting with multiprocessing (like Prophet) but with PyTorch GPU acceleration
+
 Transfer Learning Backtesting (feature14):
-- All three frameworks support `--cluster-strategy transfer`
-- Phase 1: Trains a base model on all data (excluding `ml_cluster` from features)
-- Phase 2: Fine-tunes per cluster with warm-start (100 extra trees/iterations, min 20 rows)
+- All tree-based frameworks (LGBM, CatBoost, XGBoost) and deep learning models (PatchTST, DeepAR) support `--cluster-strategy transfer`
+- Tree models: Phase 1 trains base on all data, Phase 2 fine-tunes per cluster with warm-start (100 extra trees/iterations, min 20 rows)
+- Deep learning: Phase 1 trains global base, Phase 2 fine-tunes per cluster with frozen lower layers (0.1× learning rate)
 - Small clusters and unassigned DFUs use base model predictions (not zeroed out)
 - Improves accuracy for small clusters compared to `per_cluster` strategy
 
@@ -203,6 +249,15 @@ Market Intelligence (feature18):
 - Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` in `.env`
 - API: `POST /market-intelligence`
 - UI: "Mi" tab in the navigation bar
+
+Backtest Cleanup (feature23):
+- List model row counts: `make backtest-list`
+- Preview deletions: `make backtest-clean MODELS="--dry-run lgbm_global deepar_global"`
+- Delete specific models: `make backtest-clean MODELS="lgbm_global deepar_global"`
+- Delete all non-external models: `make backtest-clean MODELS="--all-backtest"`
+- Removes from `fact_external_forecast_monthly` + `backtest_lag_archive`, refreshes all materialized views
+- `--all-backtest` protects `model_id='external'` (source-system forecasts)
+- Always `--dry-run` first to preview row counts before deleting
 
 Benchmark Postgres vs Iceberg/Trino:
 - endpoint: `GET /bench/compare`
@@ -248,9 +303,11 @@ make cluster-all  # Full pipeline: features -> train -> label -> update
 - Embeddings generator: `mvp/demand/scripts/generate_embeddings.py`
 - Clustering scripts: `mvp/demand/scripts/generate_clustering_features.py`, `train_clustering_model.py`, `label_clusters.py`, `update_cluster_assignments.py`
 - Shared backtest framework: `mvp/demand/common/backtest_framework.py`, `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`
-- Backtest scripts: `mvp/demand/scripts/run_backtest.py`, `run_backtest_catboost.py`, `run_backtest_xgboost.py`, `run_backtest_prophet.py`, `load_backtest_forecasts.py`
+- Backtest scripts: `mvp/demand/scripts/run_backtest.py`, `run_backtest_catboost.py`, `run_backtest_xgboost.py`, `run_backtest_prophet.py`, `run_backtest_patchtst.py`, `run_backtest_deepar.py`, `run_backtest_statsforecast.py`, `run_backtest_neuralprophet.py`, `load_backtest_forecasts.py`
+- Deep learning models: `mvp/demand/scripts/patchtst_model.py`, `deepar_model.py`
 - Champion selection script: `mvp/demand/scripts/run_champion_selection.py`
 - Clustering config: `mvp/demand/config/clustering_config.yaml`
 - Competition config: `mvp/demand/config/model_competition.yaml`
 - DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views)
-- Design specs: `docs/design-specs/` (feature1–feature18)
+- Backtest cleanup: `mvp/demand/scripts/clean_backtest_models.py`
+- Design specs: `docs/design-specs/` (feature1–feature26)
