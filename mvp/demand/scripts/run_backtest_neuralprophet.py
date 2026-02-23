@@ -22,7 +22,8 @@ import logging
 import sys
 import time
 import warnings
-from multiprocessing import Pool, cpu_count
+import multiprocessing
+from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any
 
@@ -35,13 +36,28 @@ logging.disable(logging.INFO)
 warnings.filterwarnings("ignore")
 
 
+def _get_mp_context():
+    """Return a 'spawn' multiprocessing context.
+
+    PyTorch's MPS backend crashes with fork() on macOS:
+      +[MPSGraphObject initialize] may have been in progress in another
+      thread when fork() was called.
+    Using 'spawn' avoids this by starting fresh worker processes.
+    """
+    return multiprocessing.get_context("spawn")
+
+
 def _init_worker():
-    """Silence all logging and warnings in forked worker processes."""
+    """Silence all logging and warnings in spawned worker processes."""
     import os
 
     logging.disable(logging.INFO)
     warnings.filterwarnings("ignore")
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+    # Force CPU in workers — MPS hangs in spawned subprocesses and adds
+    # overhead for tiny per-DFU series anyway.
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    os.environ["PYTORCH_MPS_FORCE_CPU"] = "1"
     # Suppress NeuralProphet/PyTorch Lightning logging
     logging.getLogger("neuralprophet").setLevel(logging.WARNING)
     logging.getLogger("pytorch_lightning").setLevel(logging.WARNING)
@@ -102,11 +118,10 @@ def _fit_single_dfu(args_tuple: tuple) -> list[dict] | None:
     df_np = df_np.sort_values("ds").reset_index(drop=True)
 
     try:
-        # Extract accelerator separately (not a NeuralProphet constructor arg)
+        # Always use CPU in worker processes — MPS hangs in subprocesses
+        # and adds overhead for tiny per-DFU time series.
         accelerator = np_kwargs.pop("accelerator", "auto")
-        trainer_config = {}
-        if accelerator != "auto":
-            trainer_config["accelerator"] = accelerator
+        trainer_config = {"accelerator": "cpu"}
 
         m = NeuralProphet(
             growth=np_kwargs.get("growth", "linear"),
@@ -117,7 +132,7 @@ def _fit_single_dfu(args_tuple: tuple) -> list[dict] | None:
             learning_rate=np_kwargs.get("learning_rate", 0.1),
             epochs=np_kwargs.get("epochs", 100),
             batch_size=np_kwargs.get("batch_size", 64),
-            trainer_config=trainer_config if trainer_config else None,
+            trainer_config=trainer_config,
         )
         # Restore accelerator for next call
         np_kwargs["accelerator"] = accelerator
@@ -145,7 +160,13 @@ def _fit_single_dfu(args_tuple: tuple) -> list[dict] | None:
                 })
         return results
 
-    except Exception:
+    except Exception as exc:
+        # Log first failure to aid debugging (once per worker)
+        if not getattr(_fit_single_dfu, "_logged_error", False):
+            import traceback
+            print(f"    [NP] DFU {dfu_ck} failed: {type(exc).__name__}: {exc}", flush=True)
+            traceback.print_exc()
+            _fit_single_dfu._logged_error = True
         # Restore accelerator if popped
         if "accelerator" not in np_kwargs:
             np_kwargs["accelerator"] = "auto"
@@ -217,7 +238,8 @@ def fit_neuralprophet_parallel(
             if result is not None:
                 rows.extend(result)
     else:
-        with Pool(processes=actual_workers, initializer=_init_worker) as pool:
+        ctx = _get_mp_context()
+        with ctx.Pool(processes=actual_workers, initializer=_init_worker) as pool:
             for i, result in enumerate(pool.imap_unordered(_fit_single_dfu, work_items, chunksize=10)):
                 _report_progress(result, i)
                 if result is not None:
@@ -254,9 +276,7 @@ def _fit_single_cluster_pooled(args_tuple: tuple) -> list[dict] | None:
 
     try:
         accelerator = np_kwargs.pop("accelerator", "auto")
-        trainer_config = {}
-        if accelerator != "auto":
-            trainer_config["accelerator"] = accelerator
+        trainer_config = {"accelerator": "cpu"}
 
         m = NeuralProphet(
             growth=np_kwargs.get("growth", "linear"),
@@ -267,7 +287,7 @@ def _fit_single_cluster_pooled(args_tuple: tuple) -> list[dict] | None:
             learning_rate=np_kwargs.get("learning_rate", 0.1),
             epochs=np_kwargs.get("epochs", 100),
             batch_size=np_kwargs.get("batch_size", 64),
-            trainer_config=trainer_config if trainer_config else None,
+            trainer_config=trainer_config,
         )
         np_kwargs["accelerator"] = accelerator
 
@@ -289,7 +309,12 @@ def _fit_single_cluster_pooled(args_tuple: tuple) -> list[dict] | None:
                 })
         return results
 
-    except Exception:
+    except Exception as exc:
+        if not getattr(_fit_single_cluster_pooled, "_logged_error", False):
+            import traceback
+            print(f"    [NP] Cluster {cluster_label} failed: {type(exc).__name__}: {exc}", flush=True)
+            traceback.print_exc()
+            _fit_single_cluster_pooled._logged_error = True
         if "accelerator" not in np_kwargs:
             np_kwargs["accelerator"] = "auto"
         return [
@@ -336,7 +361,8 @@ def fit_neuralprophet_pooled(
             if result is not None:
                 cluster_rows.extend(result)
     else:
-        with Pool(processes=actual_workers, initializer=_init_worker) as pool:
+        ctx = _get_mp_context()
+        with ctx.Pool(processes=actual_workers, initializer=_init_worker) as pool:
             for result in pool.imap_unordered(_fit_single_cluster_pooled, work_items, chunksize=2):
                 done += 1
                 if result is not None:

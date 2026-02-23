@@ -1,3 +1,8 @@
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -129,4 +134,40 @@ body {
 
 html[data-transitioning] * {
   transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease !important;
+}
+
+/* Fade-in animation for tab content */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fadeIn 200ms ease-out;
+}
+
+/* Print styles */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print,
+  [role="tablist"],
+  .md\\:hidden {
+    display: none !important;
+  }
+  main {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+  .shadow-2xl,
+  .shadow-xl {
+    box-shadow: none !important;
+  }
+  .backdrop-blur-sm {
+    backdrop-filter: none !important;
+  }
+  * {
+    break-inside: avoid;
+  }
 }

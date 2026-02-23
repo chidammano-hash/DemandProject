@@ -19,10 +19,31 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from starlette.middleware.gzip import GZipMiddleware
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response as FastAPIResponse
+
 from common.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
 
 
 app = FastAPI(title="Demand Unified MVP API")
+
+# --- Middleware (outermost first) ---
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def set_cache(response, max_age: int, stale_while_revalidate: int = 0):
+    """Helper to set Cache-Control header on a response."""
+    parts = [f"max-age={max_age}"]
+    if stale_while_revalidate:
+        parts.append(f"stale-while-revalidate={stale_while_revalidate}")
+    response.headers["Cache-Control"] = ", ".join(parts)
 
 _pool: ConnectionPool | None = None
 
@@ -218,11 +239,13 @@ def build_where(spec: DomainSpec, q: str, filters: str) -> tuple[str, list[Any]]
 @app.get("/domains/{domain}/suggest")
 def domain_suggest(
     domain: str,
+    response: FastAPIResponse,
     field: str = Query(..., min_length=1),
     q: str = Query(default="", max_length=120),
     filters: str = Query(default="", max_length=4000),
     limit: int = Query(default=12, ge=1, le=100),
 ):
+    set_cache(response, max_age=300)
     spec = get_spec(domain)
     target_col = to_sql_col(spec, field)
     allowed = set(spec.columns_with_ck)
@@ -360,7 +383,8 @@ def root():
 
 
 @app.get("/health")
-def health():
+def health(response: FastAPIResponse):
+    set_cache(response, max_age=60)
     return {
         "status": "ok",
         "domains": sorted(DOMAIN_SPECS.keys()),
@@ -368,14 +392,16 @@ def health():
 
 
 @app.get("/domains")
-def list_domains():
+def list_domains(response: FastAPIResponse):
+    set_cache(response, max_age=3600)
     return {
         "domains": sorted(DOMAIN_SPECS.keys()),
     }
 
 
 @app.get("/domains/{domain}/meta")
-def domain_meta(domain: str):
+def domain_meta(domain: str, response: FastAPIResponse):
+    set_cache(response, max_age=600)
     spec = get_spec(domain)
     return {
         "name": spec.name,
@@ -854,6 +880,7 @@ def _compute_kpis(sum_forecast: float, sum_actual: float, sum_abs_error: float, 
 
 @app.get("/forecast/accuracy/slice")
 def forecast_accuracy_slice(
+    response: FastAPIResponse,
     group_by: str = Query(default="cluster_assignment", max_length=64),
     models: str = Query(default="", max_length=500),
     lag: int = Query(default=-1, ge=-1, le=4),
@@ -866,6 +893,7 @@ def forecast_accuracy_slice(
     common_dfus: bool = Query(default=False),
     include_dfu_count: bool = Query(default=False),
 ):
+    set_cache(response, max_age=120, stale_while_revalidate=300)
     """Return accuracy KPIs grouped by a chosen DFU-attribute dimension.
 
     Uses pre-aggregated agg_accuracy_by_dim for O(1) performance at aggregate level.
@@ -1115,6 +1143,7 @@ def forecast_accuracy_slice(
 
 @app.get("/forecast/accuracy/lag-curve")
 def forecast_accuracy_lag_curve(
+    response: FastAPIResponse,
     models: str = Query(default="", max_length=500),
     cluster_assignment: str = Query(default="", max_length=120),
     supplier_desc: str = Query(default="", max_length=120),
@@ -1125,6 +1154,7 @@ def forecast_accuracy_lag_curve(
     common_dfus: bool = Query(default=False),
     include_dfu_count: bool = Query(default=False),
 ):
+    set_cache(response, max_age=120, stale_while_revalidate=300)
     """Return accuracy by lag (0–4) for each model.
 
     Uses pre-aggregated agg_accuracy_lag_archive for performance.

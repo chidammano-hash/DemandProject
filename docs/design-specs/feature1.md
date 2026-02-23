@@ -99,6 +99,8 @@ Build a scalable forecasting platform for:
 - **Feature 24:** StatsForecast backtesting — vectorized AutoARIMA + AutoETS (~100x faster than Prophet), global/per-cluster/pooled strategies, Numba JIT compiled
 - **Feature 25:** NeuralProphet backtesting — PyTorch-based Prophet successor with Apple MPS GPU acceleration, global/per-cluster/pooled strategies
 - **Feature 26:** Postgres vs Trino/Iceberg benchmarking — API endpoint to run identical queries against both backends with statistical latency comparison and winner determination
+- **Feature 28:** UI Architecture & Performance Refactoring — monolith decomposition (2,700→230 lines), TanStack Query caching, lazy-loaded tabs, error boundaries, virtualized data grid, keyboard shortcuts, ECharts, Vitest testing
+- **Feature 31:** Comprehensive Testing Strategy — full-stack testing spec covering backend (pytest), frontend (Vitest/RTL), integration, performance, security, and mandatory testing requirements for all new development
 
 ## Deployment Notes
 - Run everything on a single MacBook using Docker Compose (no cloud services):

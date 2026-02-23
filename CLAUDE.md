@@ -36,7 +36,7 @@
 |---|---|
 | `mvp/demand/common/domain_specs.py` | Central config: all 7 datasets (dimensions + facts) with columns, types, keys |
 | `mvp/demand/api/main.py` | FastAPI backend — all endpoints live here |
-| `mvp/demand/frontend/src/App.tsx` | React UI — full data explorer + analytics |
+| `mvp/demand/frontend/src/App.tsx` | React UI — decomposed app shell (~230 lines, lazy-loaded tabs) |
 | `mvp/demand/Makefile` | All dev commands |
 | `mvp/demand/docker-compose.yml` | 7-service infra cluster |
 | `mvp/demand/scripts/normalize_dataset_csv.py` | Generic ETL: CSV → clean CSV |
@@ -66,8 +66,23 @@
 | `mvp/demand/scripts/clean_backtest_models.py` | Selective cleanup of model predictions from Postgres + view refresh |
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
 | `mvp/demand/sql/008_perf_indexes_and_agg.sql` | Performance indexes (B-tree, GIN trigram) + materialized views |
+| `mvp/demand/frontend/src/api/queries.ts` | Centralized TanStack Query layer (all fetch functions + query keys) |
+| `mvp/demand/frontend/src/tabs/` | Extracted tab components (ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, ChatPanel) |
+| `mvp/demand/frontend/src/hooks/useTheme.ts` | Theme state management hook |
+| `mvp/demand/frontend/src/hooks/useUrlState.ts` | URL state synchronization |
+| `mvp/demand/frontend/src/hooks/useKeyboardShortcuts.ts` | Keyboard shortcuts handler |
+| `mvp/demand/frontend/src/lib/formatters.ts` | Number/cell formatting utilities |
+| `mvp/demand/frontend/src/lib/export.ts` | CSV export utility (papaparse) |
+| `mvp/demand/frontend/src/components/DataTable.tsx` | Virtualized data grid (TanStack Table + Virtual) |
+| `mvp/demand/frontend/src/components/Skeleton.tsx` | Loading skeleton placeholder |
+| `mvp/demand/frontend/src/components/EChartContainer.tsx` | Theme-aware ECharts wrapper |
+| `mvp/demand/frontend/vitest.config.ts` | Vitest test configuration |
 | `mvp/demand/frontend/tailwind.config.ts` | Tailwind config with custom `pulse-glow` animation |
-| `docs/design-specs/` | Feature specs (feature1–feature26) |
+| `mvp/demand/tests/` | Backend test suite (pytest): unit/ + api/ |
+| `mvp/demand/tests/conftest.py` | Shared pytest fixtures (sample DataFrames) |
+| `mvp/demand/tests/api/conftest.py` | API test fixtures (mock DB pool, async httpx client) |
+| `mvp/demand/frontend/src/**/__tests__/` | Frontend test suites (Vitest + RTL) |
+| `docs/design-specs/` | Feature specs (feature1–feature31) |
 
 ---
 
@@ -146,6 +161,14 @@ make champion-select        # Run per-DFU champion selection (best-of-models via
 # Backtest cleanup
 make backtest-list          # List model_id row counts in forecast + archive tables
 make backtest-clean MODELS="lgbm_global deepar_global"  # Remove specific model predictions
+
+# Testing
+make test              # Run all backend pytest tests
+make test-unit         # Backend unit tests only (common/ modules)
+make test-api          # Backend API endpoint tests only
+make test-cov          # Backend tests with coverage report
+make ui-test           # Run frontend vitest unit tests
+make test-all          # Run all backend + frontend tests
 ```
 
 ---
@@ -217,6 +240,49 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - Champion Selection panel: model competition config, run, and FVA model-wins visualization
 - Market Intelligence tab: item/location selector with Google web search + GPT-4o narrative briefing
 - DFU Analysis tab: unified sales vs multi-model forecast overlay chart, 3 scope modes, per-model KPI cards, toggleable measures
+- Keyboard shortcuts (1-5 tab switch, / search, Esc close, ? help, Ctrl+E fields)
+- Lazy-loaded tab components with per-tab error boundaries
+- TanStack Query caching (stale-while-revalidate, instant tab switching)
+- Virtualized data grid with column resize, row selection, CSV export
+- Print-ready CSS (@media print rules)
+- ECharts integration for canvas-based charting
+- Vitest testing infrastructure
+
+---
+
+## Mandatory Testing Rules
+
+**Every new feature, endpoint, component, hook, or utility MUST include tests. Every removed feature MUST have its tests removed. Tests MUST pass before work is considered complete.**
+
+### When adding functionality:
+1. **New Python module in `common/`** → Add unit tests in `tests/unit/test_<module>.py`
+2. **New API endpoint** → Add API tests in `tests/api/test_<feature>.py` using httpx AsyncClient with ASGI transport
+3. **New React component** → Add component tests in `src/components/__tests__/<Component>.test.tsx`
+4. **New React hook** → Add hook tests in `src/hooks/__tests__/<hook>.test.ts`
+5. **New utility function** → Add tests in `src/lib/__tests__/<util>.test.ts`
+6. **New tab component** → Add smoke tests in `src/tabs/__tests__/<Tab>.test.tsx`
+
+### When removing functionality:
+1. Delete the corresponding test files
+2. Remove any fixtures that are no longer needed
+3. Update `conftest.py` if shared fixtures were affected
+
+### Test execution:
+- Run `make test-all` after every change to verify no regressions
+- Backend tests: `make test` (111 tests, ~0.7s, no infra needed — DB is mocked)
+- Frontend tests: `make ui-test` (86 tests, ~0.7s)
+- Coverage: `make test-cov` for backend coverage report
+
+### Test patterns:
+- **Backend API tests:** Use `httpx.AsyncClient(transport=ASGITransport(app))` — no running server needed
+- **Backend mocking:** Mock `pool` fixture in `tests/api/conftest.py` for DB; use `@patch.dict("sys.modules")` for imports inside functions
+- **Frontend component tests:** Wrap with `QueryClientProvider` from `src/tabs/__tests__/test-utils.tsx`
+- **Frontend mocking:** Use `vi.mock("../api/queries")` for API layer; mock `echarts-for-react` for chart components
+
+### Reference:
+- Full testing strategy: `docs/design-specs/feature31.md`
+- Backend test directory: `mvp/demand/tests/`
+- Frontend test directories: `mvp/demand/frontend/src/**/__tests__/`
 
 ---
 
@@ -269,6 +335,8 @@ Located in `docs/design-specs/`:
 - `feature24.md` — StatsForecast backtesting implementation (vectorized AutoARIMA + AutoETS)
 - `feature25.md` — NeuralProphet backtesting implementation (PyTorch-based Prophet with GPU)
 - `feature26.md` — Postgres vs Trino/Iceberg benchmarking (latency comparison API)
+- `feature28.md` — UI Architecture & Performance (component decomposition, TanStack Query, lazy loading, error boundaries, keyboard shortcuts, testing)
+- `feature31.md` — Comprehensive Testing Strategy (full-stack testing spec, mandatory test requirements for new development)
 - `docs/REFACTORING_RECOMMENDATIONS.md` — Comprehensive codebase refactoring roadmap
 
 ---
@@ -284,6 +352,12 @@ Located in `docs/design-specs/`:
 5. **`mvp/demand/docs/RUNBOOK.md`** — Update setup steps, notes, or troubleshooting if affected
 6. **`CLAUDE.md`** (this file) — Update Key Files, Common Commands, Data Models, Frontend Features, Important Conventions, or Design Specs list if affected
 
+**Additionally, you MUST write tests for every change and run `make test-all` to verify they pass:**
+
+7. **`mvp/demand/tests/`** — Add or update backend tests for any new/modified Python modules or API endpoints
+8. **`mvp/demand/frontend/src/**/__tests__/`** — Add or update frontend tests for any new/modified components, hooks, or utilities
+9. **Run `make test-all`** — Verify all 197+ tests pass (both backend and frontend) before considering the work complete
+
 **What counts as "significant changes":**
 - New feature implementation (new endpoints, UI panels, tables, scripts)
 - Schema changes (new columns, tables, indexes, materialized views)
@@ -295,6 +369,12 @@ Located in `docs/design-specs/`:
 - Bug fixes that don't change behavior or interfaces
 - Minor code refactors that don't change architecture
 - Typo corrections
+
+**What ALWAYS requires tests (even for bug fixes):**
+- Any new Python function or class
+- Any new API endpoint or modification to existing endpoint behavior
+- Any new React component, hook, or utility
+- Bug fixes that change behavior (add a regression test)
 
 ---
 

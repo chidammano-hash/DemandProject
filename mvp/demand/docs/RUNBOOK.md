@@ -374,6 +374,62 @@ make db-apply-sql
 
 This creates GIN `gin_trgm_ops` indexes on fact table text columns (`model_id`, `dmdunit`, `loc`, `dmdgroup`). One-time operation; takes 5–15 minutes on 66M+ row tables. Enables indexed `ILIKE` substring search instead of full table scans.
 
+## 3h) Run tests
+
+Run the full test suite to verify everything works:
+
+### Backend tests (pytest)
+```bash
+make test              # All backend tests (111 tests, ~0.7s)
+make test-unit         # Unit tests only (common/ modules)
+make test-api          # API endpoint tests only (mock DB, no infra needed)
+make test-cov          # With coverage report (api + common modules)
+```
+
+Backend tests require no running infrastructure — DB connections are mocked. Dependencies are installed via `make init` (`uv sync`).
+
+### Frontend tests (Vitest + React Testing Library)
+```bash
+make ui-test           # All frontend tests (86 tests, ~0.7s)
+```
+
+Frontend tests require `make ui-init` to install npm dependencies (includes vitest, @testing-library/react, @testing-library/user-event).
+
+### All tests
+```bash
+make test-all          # Backend + frontend (197 total tests, <2s)
+```
+
+### Test structure
+```
+tests/
+├── conftest.py            # Shared fixtures (sample DataFrames)
+├── unit/
+│   ├── test_metrics.py    # WAPE, bias, accuracy %
+│   ├── test_constants.py  # LAG_RANGE, ROLLING_WINDOWS, thresholds
+│   ├── test_domain_specs.py  # All 7 domains (parametrized)
+│   ├── test_backtest_framework.py  # Timeframe generation
+│   ├── test_mlflow_utils.py  # MLflow logging
+│   └── test_db.py         # DB connection parameters
+└── api/
+    ├── conftest.py        # Mock pool + async httpx client
+    ├── test_health.py     # Health endpoint
+    ├── test_domains.py    # Domain CRUD
+    ├── test_forecast_accuracy.py  # Accuracy endpoints
+    ├── test_dfu_analysis.py  # DFU analysis
+    ├── test_competition.py  # Champion selection
+    └── test_clusters.py   # Cluster endpoints
+
+frontend/src/
+├── hooks/__tests__/       # useTheme, useUrlState, useKeyboardShortcuts
+├── lib/__tests__/         # formatters, export
+├── api/__tests__/         # TanStack Query keys
+├── components/__tests__/  # Skeleton, KeyboardShortcutHelp, EChartContainer
+└── tabs/__tests__/        # ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, ChatPanel
+```
+
+**Important:** Run `make test-all` after any code changes to catch regressions. Every new feature must include corresponding tests (see `docs/design-specs/feature31.md`).
+
 ## 4) Start API + UI
 ```bash
 make api
@@ -433,6 +489,14 @@ make down
 ```
 
 ## Troubleshooting
+
+### Tests failing
+- **Backend `ModuleNotFoundError`**: Run `make init` to install dev dependencies (pytest, httpx, pytest-asyncio, pytest-cov, pytest-mock)
+- **Frontend tests fail to start**: Run `make ui-init` to install npm dev dependencies (vitest, @testing-library/react, @testing-library/user-event)
+- **API tests fail with DB errors**: API tests mock the DB pool — ensure `tests/api/conftest.py` is present with the mock fixtures
+- **`localStorage.clear is not a function`**: useTheme tests require a custom localStorage mock for jsdom — see `frontend/src/hooks/__tests__/useTheme.test.ts`
+
+## Troubleshooting (continued)
 - `make up` fails on bucket creation:
   - rerun `make minio-bucket`
 - API returns DB errors:

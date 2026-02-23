@@ -42,7 +42,7 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        sans: ["Avenir Next", "Trebuchet MS", "Segoe UI", "sans-serif"],
+        sans: ["Inter", "Avenir Next", "Trebuchet MS", "Segoe UI", "sans-serif"],
       },
       keyframes: {
         "fade-in": {

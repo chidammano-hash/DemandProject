@@ -149,3 +149,12 @@ export type DfuAnalysisPayload = {
 };
 
 export type Theme = "light" | "dark" | "midnight";
+
+export type ElementConfig = {
+  symbol: string;
+  number: number;
+  name: string;
+  color: string;
+  activeColor: string;
+  glow: string;
+};

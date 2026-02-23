@@ -293,6 +293,37 @@ Optional clustering path (for LGBM model support):
 make cluster-all  # Full pipeline: features -> train -> label -> update
 ```
 
+## Testing
+
+Full-stack automated testing (197 tests, <2s total):
+
+Backend (pytest):
+```bash
+cd mvp/demand
+make test              # All backend tests (111 tests)
+make test-unit         # Unit tests only (common/ modules)
+make test-api          # API endpoint tests only
+make test-cov          # With coverage report
+```
+
+Frontend (Vitest + React Testing Library):
+```bash
+cd mvp/demand
+make ui-test           # All frontend tests (86 tests)
+```
+
+Both:
+```bash
+cd mvp/demand
+make test-all          # Backend + frontend
+```
+
+Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters).
+
+Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`), utilities (`formatters`, `export`, `queries`), components (`Skeleton`, `KeyboardShortcutHelp`, `EChartContainer`), and all tab components.
+
+**Rule:** Every new feature must include tests. See `docs/design-specs/feature31.md`.
+
 ## Key paths
 - Dataset config: `mvp/demand/common/domain_specs.py`
 - API: `mvp/demand/api/main.py`
@@ -310,4 +341,7 @@ make cluster-all  # Full pipeline: features -> train -> label -> update
 - Competition config: `mvp/demand/config/model_competition.yaml`
 - DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views)
 - Backtest cleanup: `mvp/demand/scripts/clean_backtest_models.py`
-- Design specs: `docs/design-specs/` (feature1–feature26)
+- Backend tests: `mvp/demand/tests/` (unit/ + api/)
+- Frontend tests: `mvp/demand/frontend/src/**/__tests__/`
+- Test config: `mvp/demand/frontend/vitest.config.ts`
+- Design specs: `docs/design-specs/` (feature1–feature31)

@@ -289,6 +289,74 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_g
    - Modes: `--list` (inventory), `--dry-run` (preview), `--all-backtest` (bulk cleanup excluding external)
    - Makefile targets: `backtest-clean`, `backtest-list`
 
+## Testing Infrastructure
+
+Full-stack automated testing covering backend (Python) and frontend (TypeScript):
+
+### Backend (pytest)
+| Layer | Framework | Directory |
+|-------|-----------|-----------|
+| Unit tests | pytest | `tests/unit/` |
+| API tests | pytest + httpx AsyncClient (ASGI transport) | `tests/api/` |
+| Coverage | pytest-cov | `--cov=api --cov=common` |
+
+**Test targets:**
+- `make test` — all backend tests
+- `make test-unit` — unit tests only (`tests/unit/`)
+- `make test-api` — API endpoint tests only (`tests/api/`)
+- `make test-cov` — backend tests with coverage report
+
+**Backend test suites:**
+| Suite | Module Under Test | Tests |
+|-------|-------------------|-------|
+| `test_metrics.py` | `common/metrics.py` — WAPE, bias, accuracy % | 10 |
+| `test_constants.py` | `common/constants.py` — LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES | 11 |
+| `test_domain_specs.py` | `common/domain_specs.py` — all 7 domains, parametrized | 14+ |
+| `test_backtest_framework.py` | `common/backtest_framework.py` — timeframe generation | 9 |
+| `test_mlflow_utils.py` | `common/mlflow_utils.py` — experiment logging | 3 |
+| `test_db.py` | `common/db.py` — connection parameters | 5 |
+| `test_health.py` | `api/main.py` — health endpoint | 1 |
+| `test_domains.py` | `api/main.py` — domain CRUD endpoints | 6 |
+| `test_forecast_accuracy.py` | `api/main.py` — accuracy/lag endpoints | 3 |
+| `test_dfu_analysis.py` | `api/main.py` — DFU analysis endpoint | 2 |
+| `test_competition.py` | `api/main.py` — champion selection endpoints | 2 |
+| `test_clusters.py` | `api/main.py` — cluster endpoints | 2 |
+
+**API test pattern:** httpx `AsyncClient` with `ASGITransport(app)` — no running server needed. DB connections mocked via `pool` fixture in `tests/api/conftest.py`.
+
+### Frontend (Vitest + React Testing Library)
+| Layer | Framework | Directory |
+|-------|-----------|-----------|
+| Hook tests | Vitest + renderHook | `src/hooks/__tests__/` |
+| Utility tests | Vitest | `src/lib/__tests__/`, `src/api/__tests__/` |
+| Component tests | Vitest + RTL | `src/components/__tests__/` |
+| Tab tests | Vitest + RTL | `src/tabs/__tests__/` |
+
+**Test target:** `make ui-test`
+
+**Frontend test suites:**
+| Suite | Module Under Test | Tests |
+|-------|-------------------|-------|
+| `useTheme.test.ts` | Theme management hook | 7 |
+| `useUrlState.test.ts` | URL state synchronization | 11 |
+| `useKeyboardShortcuts.test.ts` | Keyboard shortcuts | 8 |
+| `export.test.ts` | CSV export (papaparse) | 4 |
+| `formatters.test.ts` | Number/cell formatting | 23 |
+| `queries.test.ts` | TanStack Query keys + stale times | 10 |
+| `Skeleton.test.tsx` | Loading skeleton components | 7 |
+| `KeyboardShortcutHelp.test.tsx` | Keyboard help dialog | 5 |
+| `EChartContainer.test.tsx` | ECharts wrapper | 4 |
+| `ExplorerTab.test.tsx` | Data Explorer tab | 2 |
+| `AccuracyTab.test.tsx` | Accuracy tab | 1 |
+| `DfuAnalysisTab.test.tsx` | DFU Analysis tab | 1 |
+| `ClustersTab.test.tsx` | Clusters tab | 1 |
+| `MarketIntelTab.test.tsx` | Market Intelligence tab | 1 |
+| `ChatPanel.test.tsx` | Chat panel | 1 |
+
+**Combined:** `make test-all` runs backend + frontend (197 total tests, <2s).
+
+**Mandatory rule:** Every new feature, endpoint, component, or utility must include corresponding tests. See `docs/design-specs/feature31.md` for the full testing strategy.
+
 ## How to add next dataset
 1. Add `<DATASET>_SPEC` in `common/domain_specs.py`
 2. Add matching DDL in `sql/`

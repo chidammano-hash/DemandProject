@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat generate-embeddings api ui-init ui normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-all refresh-agg-sales refresh-agg-forecast refresh-agg spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-all backtest-clean backtest-list accuracy-slice-refresh accuracy-slice-check champion-select
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-all refresh-agg-sales refresh-agg-forecast refresh-agg spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-all backtest-clean backtest-list accuracy-slice-refresh accuracy-slice-check champion-select test test-unit test-api test-cov test-all
 
 help:
 	@echo "Targets:"
@@ -69,6 +69,11 @@ help:
 	@echo "  accuracy-slice-refresh - refresh agg_accuracy_by_dim + agg_accuracy_lag_archive"
 	@echo "  accuracy-slice-check - curl accuracy slice + lag-curve endpoints"
 	@echo "  champion-select      - run champion model selection (best-of-models per DFU)"
+	@echo "  test                 - run all Python tests"
+	@echo "  test-unit            - run Python unit tests only"
+	@echo "  test-api             - run Python API tests only"
+	@echo "  test-cov             - run Python tests with coverage report"
+	@echo "  test-all             - run all tests (Python + frontend)"
 	@echo "  check-all            - run DB/API/Trino checks"
 
 init:
@@ -198,6 +203,9 @@ ui-init:
 ui:
 	cd frontend && [ -x node_modules/.bin/vite ] || npm install
 	cd frontend && npm run dev -- --host --port 5173
+
+ui-test:
+	cd frontend && npx vitest run
 
 spark-item:
 	docker exec -i \
@@ -440,5 +448,19 @@ accuracy-slice-check:
 
 champion-select:
 	$(UV) python scripts/run_champion_selection.py --config config/model_competition.yaml
+
+test:
+	$(UV) pytest tests/ -v --tb=short
+
+test-unit:
+	$(UV) pytest tests/unit/ -v --tb=short
+
+test-api:
+	$(UV) pytest tests/api/ -v --tb=short
+
+test-cov:
+	$(UV) pytest tests/ --cov=api --cov=common --cov-report=term-missing
+
+test-all: test ui-test
 
 check-all: check-db check-api trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast

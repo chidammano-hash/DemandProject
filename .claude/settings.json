@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//opt/homebrew/Cellar/node/25.5.0/bin/**)",
+      "Read(//usr/local/**)",
+      "Bash(export PATH=\"/opt/homebrew/bin:$PATH\")",
+      "Bash(npx vitest run:*)",
+      "Bash(uv add:*)",
+      "Bash(export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:/opt/homebrew/bin:$PATH\")",
+      "Bash(uv run pytest:*)",
+      "Bash(export PATH:*)"
+    ]
+  }
+}
