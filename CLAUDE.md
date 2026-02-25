@@ -17,7 +17,7 @@
 | DB Driver | psycopg v3 |
 | Frontend | React + Vite + TypeScript |
 | Styling | Tailwind CSS + shadcn/ui |
-| Charts | Recharts |
+| Charts | Recharts + ECharts |
 | Database | PostgreSQL 16 |
 | Lakehouse | Apache Iceberg via MinIO + Iceberg REST |
 | Big Data | Apache Spark 3.5 |
@@ -34,15 +34,17 @@
 
 | File | Purpose |
 |---|---|
-| `mvp/demand/common/domain_specs.py` | Central config: all 7 datasets (dimensions + facts) with columns, types, keys |
+| `mvp/demand/common/domain_specs.py` | Central config: all 8 datasets (dimensions + facts + inventory) with columns, types, keys |
 | `mvp/demand/api/main.py` | FastAPI backend — all endpoints live here |
-| `mvp/demand/frontend/src/App.tsx` | React UI — decomposed app shell (~230 lines, lazy-loaded tabs) |
+| `mvp/demand/frontend/src/App.tsx` | React UI — sidebar layout shell (~200 lines, lazy-loaded tabs) |
 | `mvp/demand/Makefile` | All dev commands |
 | `mvp/demand/docker-compose.yml` | 7-service infra cluster |
 | `mvp/demand/scripts/normalize_dataset_csv.py` | Generic ETL: CSV → clean CSV |
 | `mvp/demand/scripts/load_dataset_postgres.py` | Generic loader: clean CSV → PostgreSQL |
 | `mvp/demand/scripts/spark_dataset_to_iceberg.py` | Spark job: clean CSV → Iceberg |
 | `mvp/demand/sql/` | DDL for all tables, indexes, materialized views |
+| `mvp/demand/sql/017_create_fact_inventory_snapshot.sql` | Inventory snapshot table DDL, indexes, materialized view |
+| `mvp/demand/scripts/normalize_inventory_csv.py` | Inventory ETL: merge 14 monthly CSVs → single clean CSV |
 | `mvp/demand/scripts/generate_clustering_features.py` | Feature engineering: sales history → clustering feature matrix |
 | `mvp/demand/scripts/train_clustering_model.py` | KMeans clustering with optimal K selection + MLflow logging |
 | `mvp/demand/scripts/label_clusters.py` | Assign business labels to clusters based on feature centroids |
@@ -67,10 +69,24 @@
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
 | `mvp/demand/sql/008_perf_indexes_and_agg.sql` | Performance indexes (B-tree, GIN trigram) + materialized views |
 | `mvp/demand/frontend/src/api/queries.ts` | Centralized TanStack Query layer (all fetch functions + query keys) |
-| `mvp/demand/frontend/src/tabs/` | Extracted tab components (ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, ChatPanel) |
-| `mvp/demand/frontend/src/hooks/useTheme.ts` | Theme state management hook |
-| `mvp/demand/frontend/src/hooks/useUrlState.ts` | URL state synchronization |
-| `mvp/demand/frontend/src/hooks/useKeyboardShortcuts.ts` | Keyboard shortcuts handler |
+| `mvp/demand/frontend/src/tabs/` | Extracted tab components (DashboardTab, ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, ChatPanel) |
+| `mvp/demand/frontend/src/hooks/useTheme.ts` | Product theme + color mode management (3 themes, light/dark) |
+| `mvp/demand/frontend/src/hooks/useUrlState.ts` | URL state synchronization (9 tabs, overview default) |
+| `mvp/demand/frontend/src/hooks/useKeyboardShortcuts.ts` | Keyboard shortcuts handler (1-7 tabs, sidebar, theme) |
+| `mvp/demand/frontend/src/hooks/useSidebar.ts` | Sidebar collapse/expand state + mobile drawer |
+| `mvp/demand/frontend/src/hooks/useGlobalFilters.ts` | Global filter state with debounced URL sync |
+| `mvp/demand/frontend/src/context/GlobalFilterContext.tsx` | Global filter React context provider |
+| `mvp/demand/frontend/src/types/theme.ts` | TypeScript types for themes, sidebar, filters, dashboard |
+| `mvp/demand/frontend/src/constants/themes/` | Product theme configs (wineSpirits, general, obsidian) |
+| `mvp/demand/frontend/src/components/AppSidebar.tsx` | Collapsible sidebar navigation (9 items, 5 sections) |
+| `mvp/demand/frontend/src/components/ThemeSelector.tsx` | Theme + color mode picker (sidebar footer) |
+| `mvp/demand/frontend/src/components/GlobalFilterBar.tsx` | Cross-tab filter bar (brand, category, market, channel) |
+| `mvp/demand/frontend/src/components/WidgetGrid.tsx` | CSS Grid dashboard layout (WidgetGrid + WidgetCard) |
+| `mvp/demand/frontend/src/components/AlertPanel.tsx` | Severity-coded alert list |
+| `mvp/demand/frontend/src/components/HeatmapGrid.tsx` | CSS Grid heatmap with color scale |
+| `mvp/demand/frontend/src/components/TopMovers.tsx` | Period-over-period top movers list |
+| `mvp/demand/frontend/src/components/ForecastTrendChart.tsx` | ECharts forecast vs actual trend chart |
+| `mvp/demand/sql/018_dashboard_views.sql` | Materialized view for top movers |
 | `mvp/demand/frontend/src/lib/formatters.ts` | Number/cell formatting utilities |
 | `mvp/demand/frontend/src/lib/export.ts` | CSV export utility (papaparse) |
 | `mvp/demand/frontend/src/components/DataTable.tsx` | Virtualized data grid (TanStack Table + Virtual) |
@@ -82,7 +98,7 @@
 | `mvp/demand/tests/conftest.py` | Shared pytest fixtures (sample DataFrames) |
 | `mvp/demand/tests/api/conftest.py` | API test fixtures (mock DB pool, async httpx client) |
 | `mvp/demand/frontend/src/**/__tests__/` | Frontend test suites (Vitest + RTL) |
-| `docs/design-specs/` | Feature specs (feature1–feature31) |
+| `docs/design-specs/` | Feature specs (feature1–feature36) |
 
 ---
 
@@ -98,9 +114,15 @@ make down              # Stop all services
 make db-apply-sql      # Apply DDL schemas to Postgres
 
 # Data pipeline
-make normalize-all     # Normalize all 7 datasets (CSV → clean CSV)
+make normalize-all     # Normalize all 8 datasets (CSV → clean CSV)
 make load-all          # Load cleaned data into Postgres + refresh materialized views
 make spark-all         # Publish datasets to Iceberg (optional)
+
+# Inventory pipeline
+make db-apply-inventory     # Create inventory table + indexes + materialized view (one-time)
+make normalize-inventory    # Merge 14 monthly CSVs into single clean CSV
+make load-inventory         # Load into Postgres + refresh agg view
+make inventory-pipeline     # normalize + load + refresh (all-in-one)
 
 # Run services
 make api               # Start FastAPI on :8000
@@ -179,9 +201,10 @@ make test-all          # Run all backend + frontend tests
 
 All datasets extend a single `DomainSpec` dataclass in `common/domain_specs.py`. Scripts and API endpoints are generic — they operate on any domain via `--dataset <name>` or `/domains/{domain}/*`.
 
-**7 Domains:**
+**8 Domains:**
 - **Dimensions (read-only):** `item`, `location`, `customer`, `time`, `dfu`
 - **Facts (time-series):** `sales`, `forecast`
+- **Inventory:** `inventory` (dedicated normalize script + API endpoints + UI tab)
 
 ### Data Flow
 
@@ -201,7 +224,8 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 
 ### API Pattern
 
-- All domains served via: `GET /domains/{domain}/rows`, `GET /domains/{domain}/search`, etc.
+- Generic domains served via: `GET /domains/{domain}/rows`, `GET /domains/{domain}/search`, etc.
+- Inventory has dedicated endpoints: `GET /inventory/position`, `GET /inventory/kpis`, `GET /inventory/trend`, `GET /inventory/item-detail`
 - Pagination: offset/limit (50–1000 rows)
 - Reserved word workaround: `class` column aliased as `class_` in responses
 
@@ -216,12 +240,14 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 ### Fact Tables
 - `fact_sales_monthly`: grain = item + customer_group + location + month + type; measures = qty_shipped, qty_ordered, qty
 - `fact_external_forecast_monthly`: grain = item + loc + forecast_date + actual_month; tracks lag 0–4 months; measures = base forecast + actual demand
+- `fact_inventory_snapshot`: grain = item_no + loc + snapshot_date; measures = qty_on_hand, qty_on_hand_on_order, qty_on_order, mtd_sales, lead_time_days (~190M rows)
 
 ### Archive Tables
 - `backtest_lag_archive`: All-lags (0–4) backtest predictions for accuracy analysis at any horizon. Grain = forecast_ck + model_id + lag. Includes `timeframe` column for traceability.
 
 ### Materialized Views
 - `agg_sales_monthly`, `agg_forecast_monthly` — pre-aggregated for O(1) KPI queries
+- `agg_inventory_monthly` — monthly avg on-hand, avg on-order, avg lead time, total MTD sales
 
 ---
 
@@ -240,12 +266,18 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - Champion Selection panel: model competition config, run, and FVA model-wins visualization
 - Market Intelligence tab: item/location selector with Google web search + GPT-4o narrative briefing
 - DFU Analysis tab: unified sales vs multi-model forecast overlay chart, 3 scope modes, per-model KPI cards, toggleable measures
-- Keyboard shortcuts (1-5 tab switch, / search, Esc close, ? help, Ctrl+E fields)
+- Collapsible sidebar navigation (9 items, 5 sections, mobile drawer, `[` toggle)
+- Dashboard overview landing page: KPI sparkline cards, alert panel, heatmap, top movers, forecast trend chart
+- Global filter bar: brand, category, market, channel multi-select dropdowns
+- Three product themes: Wine & Spirits, General, Obsidian (CSS variable palettes, light/dark modes)
+- Keyboard shortcuts (1-7 tab switch, `[` sidebar, `t` theme, `d` dark mode, / search, Esc close, ? help, Ctrl+E fields)
 - Lazy-loaded tab components with per-tab error boundaries
 - TanStack Query caching (stale-while-revalidate, instant tab switching)
 - Virtualized data grid with column resize, row selection, CSV export
 - Print-ready CSS (@media print rules)
 - ECharts integration for canvas-based charting
+- Inventory tab: KPI cards, trend chart, paginated position table, item detail drill-down
+- Clustering What-If Scenarios panel: parameter controls, scenario simulation, result charts, promote flow
 - Vitest testing infrastructure
 
 ---
@@ -269,8 +301,8 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 
 ### Test execution:
 - Run `make test-all` after every change to verify no regressions
-- Backend tests: `make test` (111 tests, ~0.7s, no infra needed — DB is mocked)
-- Frontend tests: `make ui-test` (86 tests, ~0.7s)
+- Backend tests: `make test` (~0.7s, no infra needed — DB is mocked)
+- Frontend tests: `make ui-test` (218 tests, ~1.5s)
 - Coverage: `make test-cov` for backend coverage report
 
 ### Test patterns:
@@ -303,6 +335,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Market intelligence:** `POST /market-intelligence` — combines Google Custom Search API (product news/trends) + GPT-4o narrative synthesis for item + location pairs. Looks up item metadata (description, brand, category) from `dim_item` and location state from `dim_location`. Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` in `.env`.
 - **Backtest cleanup:** `scripts/clean_backtest_models.py` selectively removes model predictions from `fact_external_forecast_monthly` and `backtest_lag_archive` by `model_id`, then refreshes 5 materialized views. Supports `--list`, `--dry-run`, `--all-backtest` (excludes `external`). Make targets: `backtest-clean`, `backtest-list`.
 - **Benchmarking:** `GET /bench/compare` runs identical queries (count, page, trend) against Postgres and Trino/Iceberg, returning per-query latency stats (min/max/avg/p50/p95) with winner determination and speedup factor. Requires Docker services running. Make target: `bench-compare`.
+- **Inventory snapshots:** 14 monthly CSV files (`datafiles/Inventory_Snapshot_YYYY_MM.csv`, ~190M rows total) merged by `scripts/normalize_inventory_csv.py` into a single clean CSV. Loaded into `fact_inventory_snapshot` via generic loader. `qty_on_order` derived as `qty_on_hand_on_order - qty_on_hand` during normalization. Dedicated API endpoints (`/inventory/*`) and frontend InventoryTab. `agg_inventory_monthly` materialized view for trend queries.
 
 ---
 
@@ -336,7 +369,9 @@ Located in `docs/design-specs/`:
 - `feature25.md` — NeuralProphet backtesting implementation (PyTorch-based Prophet with GPU)
 - `feature26.md` — Postgres vs Trino/Iceberg benchmarking (latency comparison API)
 - `feature28.md` — UI Architecture & Performance (component decomposition, TanStack Query, lazy loading, error boundaries, keyboard shortcuts, testing)
-- `feature31.md` — Comprehensive Testing Strategy (full-stack testing spec, mandatory test requirements for new development)
+- `feature31.md` — Comprehensive Testing Strategy (full-stack testing spec, mandatory test requirements)
+- `feature34.md` — Inventory Planning Module Phase 1 (snapshot pipeline, API, UI tab)
+- `feature36.md` — Product-Grade UI Overhaul (sidebar, themes, dashboard, global filters, widgets)
 - `docs/REFACTORING_RECOMMENDATIONS.md` — Comprehensive codebase refactoring roadmap
 
 ---
@@ -356,7 +391,7 @@ Located in `docs/design-specs/`:
 
 7. **`mvp/demand/tests/`** — Add or update backend tests for any new/modified Python modules or API endpoints
 8. **`mvp/demand/frontend/src/**/__tests__/`** — Add or update frontend tests for any new/modified components, hooks, or utilities
-9. **Run `make test-all`** — Verify all 197+ tests pass (both backend and frontend) before considering the work complete
+9. **Run `make test-all`** — Verify all 485+ tests pass (both backend and frontend) before considering the work complete
 
 **What counts as "significant changes":**
 - New feature implementation (new endpoints, UI panels, tables, scripts)

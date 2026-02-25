@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-const VALID_TABS = ["explorer", "clusters", "dfuAnalysis", "accuracy", "intel", "inventory"];
+const VALID_TABS = ["overview", "explorer", "clusters", "dfuAnalysis", "accuracy", "inventory", "intel", "chat", "settings"];
 const ANALYTICS_TAB_DOMAINS = new Set(["sales", "forecast"]);
 const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales", "forecast"];
 
@@ -15,7 +15,7 @@ export function getInitialTab(): string {
   if (urlTab && VALID_TABS.includes(urlTab)) return urlTab;
   const d = getInitialDomain();
   if (ANALYTICS_TAB_DOMAINS.has(d)) return d;
-  return DIMENSION_DOMAINS.includes(d) ? "explorer" : d;
+  return DIMENSION_DOMAINS.includes(d) ? "overview" : d;
 }
 
 export function updateUrlState(domain: string, tab: string) {

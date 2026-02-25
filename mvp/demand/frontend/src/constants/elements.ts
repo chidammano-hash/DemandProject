@@ -1,4 +1,5 @@
 export const ELEMENT_CONFIG: Record<string, { symbol: string; number: number; name: string; color: string; activeColor: string; glow: string }> = {
+  overview: { symbol: "Ov", number: 0, name: "Overview", color: "bg-blue-50/90 text-blue-800 border-blue-200/60", activeColor: "bg-blue-100 text-blue-950 border-blue-300", glow: "shadow-[0_0_12px_rgba(59,130,246,0.3)]" },
   explorer: { symbol: "Dx", number: 1, name: "Explorer", color: "bg-pink-50/90 text-pink-800 border-pink-200/60", activeColor: "bg-pink-100 text-pink-950 border-pink-300", glow: "shadow-[0_0_12px_rgba(236,72,153,0.3)]" },
   item: { symbol: "It", number: 26, name: "Item", color: "bg-pink-50/90 text-pink-800 border-pink-200/60", activeColor: "bg-pink-100 text-pink-950 border-pink-300", glow: "shadow-[0_0_12px_rgba(236,72,153,0.3)]" },
   location: { symbol: "Lo", number: 71, name: "Location", color: "bg-pink-50/90 text-pink-800 border-pink-200/60", activeColor: "bg-pink-100 text-pink-950 border-pink-300", glow: "shadow-[0_0_12px_rgba(236,72,153,0.3)]" },

@@ -20,16 +20,22 @@ describe("useKeyboardShortcuts", () => {
     vi.clearAllMocks();
   });
 
-  it("switches tabs with 1-5 keys", () => {
+  it("switches tabs with 1-7 keys", () => {
     renderHook(() => useKeyboardShortcuts(defaultConfig));
 
     act(() => fireKey("1"));
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("overview");
+
+    act(() => fireKey("2"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("explorer");
 
     act(() => fireKey("3"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("dfuAnalysis");
 
     act(() => fireKey("5"));
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("inventory");
+
+    act(() => fireKey("7"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("intel");
   });
 

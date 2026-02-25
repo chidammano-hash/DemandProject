@@ -13,6 +13,7 @@ Dimensions:
 Facts:
 - `fact_sales_monthly`
 - `fact_external_forecast_monthly`
+- `fact_inventory_snapshot`
 
 Sales source details (MVP):
 - input file: `datafiles/dfu_lvl2_hist.txt`
@@ -24,6 +25,13 @@ Forecast source details (MVP):
 - monthly grain dates: `fcstdate`, `startdate` (both month-start)
 - lag rule: `lag = month_diff(startdate, fcstdate)` with allowed range `0..4`
 - `model_id`: identifies forecasting algorithm (default `'external'`); uniqueness is `(forecast_ck, model_id)`
+
+Inventory source details (MVP):
+- input files: 14 monthly CSVs `datafiles/Inventory_Snapshot_YYYY_MM.csv` (~190M rows total)
+- columns: `exec_date,item,loc,lead_time,tot_oh,tot_oh_oo,mtd_sls`
+- grain: `item_no` + `loc` + `snapshot_date` (monthly)
+- `qty_on_order` derived as `qty_on_hand_on_order - qty_on_hand` during normalization
+- materialized view: `agg_inventory_monthly` for monthly trend aggregation
 
 AI/Chatbot:
 - `chat_embeddings` table (pgvector) — stores schema metadata embeddings for NL query context
@@ -44,7 +52,7 @@ Clustering:
 ## Stack
 - PostgreSQL 16 (pgvector/pgvector:pg16 — includes vector extension)
 - FastAPI + Uvicorn
-- React + Vite + Tailwind + shadcn/ui + Recharts
+- React + Vite + Tailwind + shadcn/ui + Recharts + ECharts
 - Spark + Iceberg + MinIO
 - Trino
 - MLflow (experiment tracking, model registry)
@@ -67,7 +75,9 @@ Clustering:
 - Accuracy slice views for O(1) aggregate KPI queries (feature10):
   - `agg_accuracy_by_dim` — pre-joins forecast + DFU attributes at (model, lag, month, cluster, supplier, abc_vol, region, brand) grain
   - `agg_accuracy_lag_archive` — same from archive table; powers lag-curve analysis
-- `load-sales`, `load-forecast`, and `load-all` refresh `agg_*` aggregates automatically.
+- Inventory aggregate view for O(1) trend queries:
+  - `agg_inventory_monthly` — monthly avg on-hand, avg on-order, avg lead time, total MTD sales
+- `load-sales`, `load-forecast`, `load-inventory`, and `load-all` refresh `agg_*` aggregates automatically.
 - `backtest-load` refreshes accuracy slice views automatically.
 
 ## Quick Start
@@ -79,6 +89,7 @@ make normalize-all
 make load-all
 make generate-embeddings   # populate chat embeddings (requires OPENAI_API_KEY in .env)
 make cluster-all            # optional: run DFU clustering (requires sales data)
+make inventory-pipeline     # optional: normalize + load inventory snapshots
 ```
 
 Run API:
@@ -250,6 +261,25 @@ Market Intelligence (feature18):
 - API: `POST /market-intelligence`
 - UI: "Mi" tab in the navigation bar
 
+UI Overhaul (feature36):
+- Collapsible sidebar navigation (9 items, 5 sections) replacing horizontal tabs
+- Dashboard overview landing page with KPI cards (sparklines), alerts, heatmap, top movers, forecast trend chart
+- Global filter bar: brand, category, market, channel multi-select dropdowns
+- Three product themes: Wine & Spirits (burgundy+gold), General (blue SaaS), Obsidian (green+black dark-only)
+- Light/dark color modes per theme via CSS variable palettes
+- Keyboard: `[` sidebar, `t` theme, `d` dark mode, `1-7` tabs
+- API: `GET /domains/{domain}/distinct`, `GET /dashboard/kpis`, `GET /dashboard/alerts`, `GET /dashboard/top-movers`, `GET /dashboard/heatmap`
+
+Inventory Planning (feature34):
+- Inventory tab with KPI cards (Total On-Hand, Total On-Order, Avg Lead Time), trend charts, and position table
+- Item/location filters with debounce, months selector for date range
+- Paginated, sortable position table with clickable rows for item detail drill-down
+- Dual Y-axis trend chart showing on-hand, on-order, lead time, and MTD sales over time
+- Pipeline: `make inventory-pipeline` (normalize 14 CSVs → load → refresh aggregates)
+- Individual steps: `make normalize-inventory`, `make load-inventory`, `make refresh-agg-inventory`
+- DDL: `make db-apply-inventory` (creates table + indexes + materialized view)
+- API: `GET /inventory/position`, `GET /inventory/kpis`, `GET /inventory/trend`, `GET /inventory/item-detail`
+
 Backtest Cleanup (feature23):
 - List model row counts: `make backtest-list`
 - Preview deletions: `make backtest-clean MODELS="--dry-run lgbm_global deepar_global"`
@@ -288,6 +318,12 @@ make spark-forecast
 make check-all
 ```
 
+Optional inventory pipeline:
+```bash
+make db-apply-inventory     # Create table + indexes + materialized view
+make inventory-pipeline     # Normalize 14 monthly CSVs + load into Postgres + refresh agg
+```
+
 Optional clustering path (for LGBM model support):
 ```bash
 make cluster-all  # Full pipeline: features -> train -> label -> update
@@ -295,12 +331,12 @@ make cluster-all  # Full pipeline: features -> train -> label -> update
 
 ## Testing
 
-Full-stack automated testing (197 tests, <2s total):
+Full-stack automated testing (485+ tests, <3s total):
 
 Backend (pytest):
 ```bash
 cd mvp/demand
-make test              # All backend tests (111 tests)
+make test              # All backend tests
 make test-unit         # Unit tests only (common/ modules)
 make test-api          # API endpoint tests only
 make test-cov          # With coverage report
@@ -309,7 +345,7 @@ make test-cov          # With coverage report
 Frontend (Vitest + React Testing Library):
 ```bash
 cd mvp/demand
-make ui-test           # All frontend tests (86 tests)
+make ui-test           # All frontend tests (218 tests)
 ```
 
 Both:
@@ -318,9 +354,9 @@ cd mvp/demand
 make test-all          # Backend + frontend
 ```
 
-Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters).
+Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters, dashboard, distinct values).
 
-Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`), utilities (`formatters`, `export`, `queries`), components (`Skeleton`, `KeyboardShortcutHelp`, `EChartContainer`), and all tab components.
+Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, `useSidebar`, `useGlobalFilters`), utilities (`formatters`, `export`, `queries`), components (`Skeleton`, `KeyboardShortcutHelp`, `EChartContainer`, `AppSidebar`, `ThemeSelector`, `GlobalFilterBar`, `WidgetGrid`, `AlertPanel`, `TopMovers`, `HeatmapGrid`), and all tab components (including DashboardTab).
 
 **Rule:** Every new feature must include tests. See `docs/design-specs/feature31.md`.
 
@@ -339,9 +375,14 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`),
 - Champion selection script: `mvp/demand/scripts/run_champion_selection.py`
 - Clustering config: `mvp/demand/config/clustering_config.yaml`
 - Competition config: `mvp/demand/config/model_competition.yaml`
-- DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views)
+- Inventory normalize: `mvp/demand/scripts/normalize_inventory_csv.py`
+- Inventory DDL: `mvp/demand/sql/017_create_fact_inventory_snapshot.sql`
+- DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views, 017 inventory snapshot, 018 dashboard views)
 - Backtest cleanup: `mvp/demand/scripts/clean_backtest_models.py`
+- Theme configs: `mvp/demand/frontend/src/constants/themes/` (wineSpirits, general, obsidian)
+- Sidebar + filters: `mvp/demand/frontend/src/components/AppSidebar.tsx`, `GlobalFilterBar.tsx`
+- Dashboard: `mvp/demand/frontend/src/tabs/DashboardTab.tsx`
 - Backend tests: `mvp/demand/tests/` (unit/ + api/)
 - Frontend tests: `mvp/demand/frontend/src/**/__tests__/`
 - Test config: `mvp/demand/frontend/vitest.config.ts`
-- Design specs: `docs/design-specs/` (feature1–feature31)
+- Design specs: `docs/design-specs/` (feature1–feature36)

@@ -101,6 +101,8 @@ Build a scalable forecasting platform for:
 - **Feature 26:** Postgres vs Trino/Iceberg benchmarking — API endpoint to run identical queries against both backends with statistical latency comparison and winner determination
 - **Feature 28:** UI Architecture & Performance Refactoring — monolith decomposition (2,700→230 lines), TanStack Query caching, lazy-loaded tabs, error boundaries, virtualized data grid, keyboard shortcuts, ECharts, Vitest testing
 - **Feature 31:** Comprehensive Testing Strategy — full-stack testing spec covering backend (pytest), frontend (Vitest/RTL), integration, performance, security, and mandatory testing requirements for all new development
+- **Feature 34:** Inventory Planning Module (Phase 1) — 14-month inventory snapshot pipeline (190M+ rows), `fact_inventory_snapshot` table with B-tree + GIN indexes, `agg_inventory_monthly` materialized view, 4 API endpoints (position/KPIs/trend/item-detail), Inventory tab with KPI cards, trend chart, position table, item detail drill-down
+- **Feature 36:** Product-Grade UI Overhaul — Collapsible sidebar navigation (9 nav items, 5 sections), global filter bar (brand/category/market/channel), dashboard overview landing page (KPI cards with sparklines, alert panel, heatmap, top movers, forecast trend chart), 3 product themes (Wine & Spirits, General, Obsidian) with CSS variable palettes and light/dark modes, `mv_top_movers` materialized view, 5 new API endpoints (distinct, kpis, alerts, top-movers, heatmap)
 
 ## Deployment Notes
 - Run everything on a single MacBook using Docker Compose (no cloud services):

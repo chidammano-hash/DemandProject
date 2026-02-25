@@ -1,0 +1,238 @@
+"""Tests for GET /domains/{domain}/distinct endpoint."""
+
+import pytest
+from unittest.mock import patch, MagicMock
+import httpx
+from httpx import ASGITransport
+
+
+@pytest.fixture
+def mock_pool():
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = []
+    mock_cursor.fetchone.return_value = (0,)
+    mock_cursor.description = []
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+
+    pool = MagicMock()
+    pool.connection.return_value = mock_conn
+
+    return pool, mock_conn, mock_cursor
+
+
+# ---------------------------------------------------------------------------
+# Returns distinct values for allowed column
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_distinct_returns_values_for_allowed_column(mock_pool):
+    """GET /domains/item/distinct?column=brand_name returns distinct brand values."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("BrandA",), ("BrandB",), ("BrandC",)]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=brand_name")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "column" in data
+            assert "values" in data
+            assert "total" in data
+            assert data["column"] == "brand_name"
+            assert data["values"] == ["BrandA", "BrandB", "BrandC"]
+            assert data["total"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Returns error 400 for disallowed column
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_distinct_rejects_disallowed_column(mock_pool):
+    """GET /domains/item/distinct?column=item_no returns 400 — not in allowed list."""
+    pool, _, cursor = mock_pool
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=item_no")
+            assert resp.status_code == 400
+            data = resp.json()
+            assert "detail" in data
+
+
+@pytest.mark.asyncio
+async def test_distinct_rejects_column_on_domain_without_allowed(mock_pool):
+    """GET /domains/sales/distinct?column=qty returns 400 — sales has no allowed columns."""
+    pool, _, cursor = mock_pool
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/sales/distinct?column=qty")
+            assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Respects limit parameter
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_distinct_respects_limit_parameter(mock_pool):
+    """GET /domains/item/distinct?column=brand_name&limit=2 caps the result count."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("BrandA",), ("BrandB",)]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=brand_name&limit=2")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["total"] == 2
+            assert len(data["values"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_distinct_default_limit(mock_pool):
+    """Without explicit limit, default is 100 — endpoint should still work."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("BrandA",)]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=brand_name")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert isinstance(data["values"], list)
+
+
+# ---------------------------------------------------------------------------
+# Filters by search prefix
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_distinct_filters_by_search_prefix(mock_pool):
+    """GET /domains/item/distinct?column=brand_name&search=Br returns only matching brands."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("BrandA",), ("BrandB",)]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=brand_name&search=Br")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["column"] == "brand_name"
+            assert data["values"] == ["BrandA", "BrandB"]
+
+
+@pytest.mark.asyncio
+async def test_distinct_empty_search_returns_all(mock_pool):
+    """GET /domains/item/distinct?column=brand_name&search= is same as no search."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("X",), ("Y",)]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=brand_name&search=")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Response structure
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_distinct_response_structure(mock_pool):
+    """Response body must contain exactly {column, values, total}."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("state1",)]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/location/distinct?column=state_id")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert set(data.keys()) == {"column", "values", "total"}
+            assert isinstance(data["column"], str)
+            assert isinstance(data["values"], list)
+            assert isinstance(data["total"], int)
+
+
+@pytest.mark.asyncio
+async def test_distinct_empty_result(mock_pool):
+    """No matching values returns empty list with total 0."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = []
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=brand_name&search=zzz_nonexistent")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["values"] == []
+            assert data["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_distinct_missing_column_param(mock_pool):
+    """Missing required column param returns 422."""
+    pool, _, _ = mock_pool
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct")
+            assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_distinct_other_allowed_domains(mock_pool):
+    """Verify distinct works for other allowed domain/column combos."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("group1",)]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            # customer domain, rpt_channel_desc column
+            resp = await client.get("/domains/customer/distinct?column=rpt_channel_desc")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["column"] == "rpt_channel_desc"
+            assert data["values"] == ["group1"]
+
+            # dfu domain, cluster_assignment column
+            cursor.fetchall.return_value = [("high_volume_steady",)]
+            resp = await client.get("/domains/dfu/distinct?column=cluster_assignment")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["column"] == "cluster_assignment"
+
+
+@pytest.mark.asyncio
+async def test_distinct_values_are_strings(mock_pool):
+    """Even numeric DB values should be cast to strings in the response."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [(42,), (99,)]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=brand_name")
+            assert resp.status_code == 200
+            data = resp.json()
+            # Endpoint casts with str()
+            assert data["values"] == ["42", "99"]

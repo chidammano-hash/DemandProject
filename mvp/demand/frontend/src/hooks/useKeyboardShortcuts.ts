@@ -8,15 +8,19 @@ interface ShortcutConfig {
   onNextPage?: () => void;
   onToggleFields?: () => void;
   onCycleMotif?: () => void;
+  onToggleSidebar?: () => void;
+  onCycleTheme?: () => void;
+  onToggleColorMode?: () => void;
 }
 
 const TAB_MAP: Record<string, string> = {
-  "1": "explorer",
-  "2": "clusters",
+  "1": "overview",
+  "2": "explorer",
   "3": "dfuAnalysis",
   "4": "accuracy",
-  "5": "intel",
-  "6": "inventory",
+  "5": "inventory",
+  "6": "clusters",
+  "7": "intel",
 };
 
 export function useKeyboardShortcuts(config: ShortcutConfig) {
@@ -49,7 +53,28 @@ export function useKeyboardShortcuts(config: ShortcutConfig) {
       // Skip remaining shortcuts when in input
       if (isInput) return;
 
-      // 1-5: tab switching
+      // [ toggle sidebar
+      if (e.key === "[") {
+        e.preventDefault();
+        config.onToggleSidebar?.();
+        return;
+      }
+
+      // t cycle theme
+      if (e.key === "t" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        config.onCycleTheme?.();
+        return;
+      }
+
+      // d toggle dark/light mode
+      if (e.key === "d" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        config.onToggleColorMode?.();
+        return;
+      }
+
+      // 1-7: tab switching
       if (TAB_MAP[e.key]) {
         e.preventDefault();
         config.onTabSwitch(TAB_MAP[e.key]);

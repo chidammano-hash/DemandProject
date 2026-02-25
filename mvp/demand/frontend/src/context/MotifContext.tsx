@@ -12,3 +12,8 @@ export function useMotif(): UseMotifThemeReturn {
   if (!ctx) throw new Error("useMotif must be used inside MotifProvider");
   return ctx;
 }
+
+/** Safe variant — returns null outside MotifProvider instead of throwing. */
+export function useMotifOptional(): UseMotifThemeReturn | null {
+  return useContext(MotifContext);
+}

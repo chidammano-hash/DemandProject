@@ -29,6 +29,18 @@ make normalize-forecast
 make load-forecast
 ```
 
+Inventory fact only:
+```bash
+make normalize-inventory    # Merge 14 monthly CSVs into single clean CSV
+make load-inventory         # Load into Postgres + refresh agg view
+```
+
+Or use the full inventory pipeline:
+```bash
+make db-apply-inventory     # Create table + indexes + materialized view (one-time)
+make inventory-pipeline     # normalize + load + refresh aggregates
+```
+
 ## 3b) Setup chatbot (requires OPENAI_API_KEY in .env)
 ```bash
 make generate-embeddings
@@ -380,7 +392,7 @@ Run the full test suite to verify everything works:
 
 ### Backend tests (pytest)
 ```bash
-make test              # All backend tests (111 tests, ~0.7s)
+make test              # All backend tests (~0.7s)
 make test-unit         # Unit tests only (common/ modules)
 make test-api          # API endpoint tests only (mock DB, no infra needed)
 make test-cov          # With coverage report (api + common modules)
@@ -390,14 +402,14 @@ Backend tests require no running infrastructure — DB connections are mocked. D
 
 ### Frontend tests (Vitest + React Testing Library)
 ```bash
-make ui-test           # All frontend tests (86 tests, ~0.7s)
+make ui-test           # All frontend tests (218 tests, ~1.5s)
 ```
 
 Frontend tests require `make ui-init` to install npm dependencies (includes vitest, @testing-library/react, @testing-library/user-event).
 
 ### All tests
 ```bash
-make test-all          # Backend + frontend (197 total tests, <2s)
+make test-all          # Backend + frontend (485+ total tests, <3s)
 ```
 
 ### Test structure
@@ -407,7 +419,7 @@ tests/
 ├── unit/
 │   ├── test_metrics.py    # WAPE, bias, accuracy %
 │   ├── test_constants.py  # LAG_RANGE, ROLLING_WINDOWS, thresholds
-│   ├── test_domain_specs.py  # All 7 domains (parametrized)
+│   ├── test_domain_specs.py  # All 8 domains (parametrized)
 │   ├── test_backtest_framework.py  # Timeframe generation
 │   ├── test_mlflow_utils.py  # MLflow logging
 │   └── test_db.py         # DB connection parameters
@@ -418,14 +430,17 @@ tests/
     ├── test_forecast_accuracy.py  # Accuracy endpoints
     ├── test_dfu_analysis.py  # DFU analysis
     ├── test_competition.py  # Champion selection
-    └── test_clusters.py   # Cluster endpoints
+    ├── test_clusters.py   # Cluster endpoints
+    ├── test_inventory.py  # Inventory endpoints
+    ├── test_distinct.py   # Distinct values endpoint
+    └── test_dashboard.py  # Dashboard endpoints (kpis, alerts, top-movers, heatmap)
 
 frontend/src/
-├── hooks/__tests__/       # useTheme, useUrlState, useKeyboardShortcuts
+├── hooks/__tests__/       # useTheme, useUrlState, useKeyboardShortcuts, useSidebar, useGlobalFilters
 ├── lib/__tests__/         # formatters, export
 ├── api/__tests__/         # TanStack Query keys
-├── components/__tests__/  # Skeleton, KeyboardShortcutHelp, EChartContainer
-└── tabs/__tests__/        # ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, ChatPanel
+├── components/__tests__/  # Skeleton, KeyboardShortcutHelp, EChartContainer, AppSidebar, ThemeSelector, GlobalFilterBar, WidgetGrid, AlertPanel, TopMovers, HeatmapGrid
+└── tabs/__tests__/        # ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, ChatPanel, InventoryTab, WhatIfScenarios, DashboardTab
 ```
 
 **Important:** Run `make test-all` after any code changes to catch regressions. Every new feature must include corresponding tests (see `docs/design-specs/feature31.md`).
@@ -458,6 +473,7 @@ Notes:
 - Trend chart supports multiple measures via `Trend Measures` checkboxes.
 - Forecast domain has a **Model selector** dropdown to filter by `model_id` (e.g., `external`, `arima`).
 - **Chat panel** (below analytics grid) lets you ask natural language questions. Requires `OPENAI_API_KEY`.
+- **Inventory tab** shows inventory KPI cards (Total On-Hand, Total On-Order, Avg Lead Time), monthly trend chart, paginated position table, and item detail drill-down. Keyboard shortcut: `6`.
 
 ## 5) Validate
 ```bash
@@ -534,6 +550,18 @@ make down
   - Use `--dry-run` flag to preview changes: `make cluster-update` (with dry-run in script)
   - Verify DFU keys match: check `dfu_ck` format in assignments vs database
   - Check PostgreSQL connection: verify `.env` DB values
+- Inventory normalize fails:
+  - Ensure all 14 CSV files exist in `datafiles/`: `ls datafiles/Inventory_Snapshot_*.csv | wc -l` (should be 14)
+  - File format: comma-separated with columns `exec_date,item,loc,lead_time,tot_oh,tot_oh_oo,mtd_sls`
+  - Check for encoding issues: files should be UTF-8
+- Inventory load fails:
+  - Apply DDL first: `make db-apply-inventory` (creates table + indexes + materialized view)
+  - Verify normalized CSV exists: `ls -lh data/inventory_clean.csv`
+  - Check PostgreSQL connection: verify `.env` DB values
+- Inventory tab shows no data:
+  - Verify data was loaded: `docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "SELECT COUNT(*) FROM fact_inventory_snapshot"`
+  - Verify aggregate view: `docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "SELECT COUNT(*) FROM agg_inventory_monthly"`
+  - Refresh aggregate view: `make refresh-agg-inventory`
 - Champion selection finds no qualifying DFUs:
   - Ensure backtest predictions are loaded: `make backtest-load`
   - Check `min_dfu_rows` in `config/model_competition.yaml` (default 3); lower if DFUs have few forecast rows

@@ -35,6 +35,13 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - rule: `fcstdate` and `startdate` must be month-start
    - rule: `lag = month_diff(startdate, fcstdate)` and only lags `0..4`
    - rule: `model_id` defaults to `'external'` when absent from source
+3. `inventory` (`fact_inventory_snapshot`) from 14 monthly CSV files (`Inventory_Snapshot_YYYY_MM.csv`)
+   - grain: `item_no` + `loc` + `snapshot_date` (monthly)
+   - key: `inventory_ck` with `_` separator
+   - measures: `qty_on_hand`, `qty_on_hand_on_order`, `qty_on_order` (derived), `mtd_sales`, `lead_time_days`
+   - source columns: `exec_date` → `snapshot_date`, `item` → `item_no`, `loc` → `loc`, `lead_time` → `lead_time_days`, `tot_oh` → `qty_on_hand`, `tot_oh_oo` → `qty_on_hand_on_order`, `mtd_sls` → `mtd_sales`
+   - rule: `qty_on_order = qty_on_hand_on_order - qty_on_hand` (computed during normalization)
+   - materialized view: `agg_inventory_monthly` aggregates to monthly grain with avg/sum metrics
 
 ## Component technologies
 1. Source ingestion + normalization:
@@ -164,6 +171,8 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 ## Additional tables
 1. `chat_embeddings` — pgvector table storing schema metadata embeddings (1536-dim) for NL query context retrieval
 2. `backtest_lag_archive` — stores all-lag (0–4) backtest predictions for accuracy reporting at any horizon; grain: `(forecast_ck, model_id, lag)`; includes `timeframe` column (A–J) for traceability
+3. `fact_inventory_snapshot` — monthly inventory position snapshots (~190M rows across 14 months); grain: `(item_no, loc, snapshot_date)`; measures: qty_on_hand, qty_on_hand_on_order, qty_on_order, mtd_sales, lead_time_days
+4. `agg_inventory_monthly` — materialized view aggregating inventory to monthly grain (avg on-hand, avg on-order, avg lead time, total MTD sales)
 
 ## Accuracy Slice Materialized Views (feature10)
 Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-table joins:
@@ -282,12 +291,30 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_g
    - GPU support via PyTorch Lightning accelerator parameter (MPS/CUDA/CPU)
    - Uses shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`)
    - MLflow experiment tracking (`neuralprophet_backtest`)
-23. Backtest model cleanup (feature23):
+23. Inventory Planning — Phase 1 (feature34):
+   - Inventory position snapshots from 14 monthly CSV files (~190M rows total)
+   - DDL: `fact_inventory_snapshot` with B-tree + GIN trigram indexes, `agg_inventory_monthly` materialized view
+   - Custom normalize script (`normalize_inventory_csv.py`) merges multi-file CSVs with streaming (no pandas)
+   - 4 API endpoints: `GET /inventory/position` (latest per item-loc via DISTINCT ON), `GET /inventory/kpis` (aggregate metrics), `GET /inventory/trend` (monthly from agg view), `GET /inventory/item-detail` (full history for item-loc pair)
+   - Frontend: InventoryTab with KPI cards, filter controls (item/location debounce, months selector), trend chart (dual Y-axis), paginated position table, item detail panel
+   - Makefile: `normalize-inventory`, `load-inventory`, `refresh-agg-inventory`, `db-apply-inventory`, `inventory-pipeline`
+24. Backtest model cleanup (feature23):
    - CLI utility (`scripts/clean_backtest_models.py`) for selective removal of model predictions
    - Deletes from `fact_external_forecast_monthly` and `backtest_lag_archive` by `model_id`
    - Refreshes 5 materialized views: `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_dfu_coverage`, `agg_accuracy_lag_archive`, `agg_dfu_coverage_lag_archive`
    - Modes: `--list` (inventory), `--dry-run` (preview), `--all-backtest` (bulk cleanup excluding external)
    - Makefile targets: `backtest-clean`, `backtest-list`
+25. Product-grade UI overhaul (feature36):
+   - Collapsible sidebar navigation replacing horizontal tab bar (9 nav items across 5 sections, 64px collapsed / 240px expanded, mobile drawer)
+   - Global filter bar: brand, category, market, channel multi-select dropdowns with debounced URL sync via React context
+   - Dashboard overview landing page: 6 KPI cards with sparklines/trends, AlertPanel (severity-coded), HeatmapGrid (category × time accuracy), TopMovers (period-over-period), ForecastTrendChart (ECharts)
+   - Three product themes: Wine & Spirits ("The Reserve", burgundy+gold), General ("Demand Studio", blue SaaS), Obsidian ("Command", green+black dark-only)
+   - CSS variable-driven theming: 35 HSL custom properties applied at runtime on `<html>`, light/dark color modes per theme
+   - 5 new API endpoints: `GET /domains/{domain}/distinct`, `GET /dashboard/kpis`, `GET /dashboard/alerts`, `GET /dashboard/top-movers`, `GET /dashboard/heatmap`
+   - `mv_top_movers` materialized view for period-over-period volume changes
+   - New components: AppSidebar, ThemeSelector, GlobalFilterBar, WidgetGrid/WidgetCard, AlertPanel, HeatmapGrid, TopMovers, ForecastTrendChart, DashboardTab
+   - Enhanced KpiCard with sparkline SVG, trend delta, severity, icon support
+   - Keyboard shortcuts: `[` sidebar toggle, `t` theme cycle, `d` mode toggle, 1-7 tab switch
 
 ## Testing Infrastructure
 
@@ -311,7 +338,7 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 |-------|-------------------|-------|
 | `test_metrics.py` | `common/metrics.py` — WAPE, bias, accuracy % | 10 |
 | `test_constants.py` | `common/constants.py` — LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES | 11 |
-| `test_domain_specs.py` | `common/domain_specs.py` — all 7 domains, parametrized | 14+ |
+| `test_domain_specs.py` | `common/domain_specs.py` — all 8 domains, parametrized | 14+ |
 | `test_backtest_framework.py` | `common/backtest_framework.py` — timeframe generation | 9 |
 | `test_mlflow_utils.py` | `common/mlflow_utils.py` — experiment logging | 3 |
 | `test_db.py` | `common/db.py` — connection parameters | 5 |
@@ -321,6 +348,10 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_dfu_analysis.py` | `api/main.py` — DFU analysis endpoint | 2 |
 | `test_competition.py` | `api/main.py` — champion selection endpoints | 2 |
 | `test_clusters.py` | `api/main.py` — cluster endpoints | 2 |
+| `test_inventory.py` | `api/main.py` — inventory endpoints | 18 |
+| `test_inventory_domain.py` | `common/domain_specs.py` — inventory domain spec | 28 |
+| `test_distinct.py` | `api/main.py` — distinct values endpoint | 12 |
+| `test_dashboard.py` | `api/main.py` — dashboard endpoints (kpis, alerts, top-movers, heatmap) | 17 |
 
 **API test pattern:** httpx `AsyncClient` with `ASGITransport(app)` — no running server needed. DB connections mocked via `pool` fixture in `tests/api/conftest.py`.
 
@@ -337,9 +368,11 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 **Frontend test suites:**
 | Suite | Module Under Test | Tests |
 |-------|-------------------|-------|
-| `useTheme.test.ts` | Theme management hook | 7 |
-| `useUrlState.test.ts` | URL state synchronization | 11 |
-| `useKeyboardShortcuts.test.ts` | Keyboard shortcuts | 8 |
+| `useTheme.test.ts` | Theme management hook (product themes + color modes) | 9 |
+| `useUrlState.test.ts` | URL state synchronization (9 tabs, overview default) | 12 |
+| `useKeyboardShortcuts.test.ts` | Keyboard shortcuts (1-7 tabs, sidebar, theme) | 8 |
+| `useSidebar.test.ts` | Sidebar state management | 8 |
+| `useGlobalFilters.test.ts` | Global filter state + URL sync | 7 |
 | `export.test.ts` | CSV export (papaparse) | 4 |
 | `formatters.test.ts` | Number/cell formatting | 23 |
 | `queries.test.ts` | TanStack Query keys + stale times | 10 |
@@ -352,8 +385,18 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `ClustersTab.test.tsx` | Clusters tab | 1 |
 | `MarketIntelTab.test.tsx` | Market Intelligence tab | 1 |
 | `ChatPanel.test.tsx` | Chat panel | 1 |
+| `InventoryTab.test.tsx` | Inventory tab | 5 |
+| `WhatIfScenarios.test.tsx` | Clustering What-If scenarios | 8 |
+| `AppSidebar.test.tsx` | Sidebar navigation | 11 |
+| `ThemeSelector.test.tsx` | Theme + color mode picker | 9 |
+| `GlobalFilterBar.test.tsx` | Global filter bar | 7 |
+| `WidgetGrid.test.tsx` | Widget grid layout | 11 |
+| `AlertPanel.test.tsx` | Alert severity panel | 6 |
+| `TopMovers.test.tsx` | Top movers list | 5 |
+| `HeatmapGrid.test.tsx` | Heatmap grid | 13 |
+| `DashboardTab.test.tsx` | Dashboard overview tab | 4 |
 
-**Combined:** `make test-all` runs backend + frontend (197 total tests, <2s).
+**Combined:** `make test-all` runs backend + frontend.
 
 **Mandatory rule:** Every new feature, endpoint, component, or utility must include corresponding tests. See `docs/design-specs/feature31.md` for the full testing strategy.
 
@@ -364,6 +407,8 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
    - `normalize-<dataset>`
    - `load-<dataset>`
    - `spark-<dataset>` (calls generic spark script with `--dataset <dataset>`)
-4. API uses existing generic `/domains/{domain}/...` endpoints
-5. UI uses existing shared frontend tabs from `/domains`
+4. For generic dimension/fact domains: API uses existing generic `/domains/{domain}/...` endpoints
+5. For specialized domains (like inventory): Add dedicated API endpoints and frontend tab
 6. Run `make generate-embeddings` to update chat context with new schema metadata
+
+**Example: Inventory domain** — uses dedicated normalize script (`normalize_inventory_csv.py`) for multi-file merge, dedicated API endpoints (`/inventory/*`), and dedicated UI tab (`InventoryTab`). Domain spec still lives in `common/domain_specs.py` for schema metadata.

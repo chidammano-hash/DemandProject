@@ -15,6 +15,13 @@ import type {
   InventoryTrendPayload,
   InventoryItemDetailPayload,
 } from "@/types";
+import type {
+  DashboardKpis,
+  Alert,
+  Mover,
+  HeatmapRow,
+  DistinctValuesPayload,
+} from "@/types/theme";
 
 // ---------------------------------------------------------------------------
 // Query key factories
@@ -39,6 +46,12 @@ export const queryKeys = {
   inventoryKpis: (params: Record<string, unknown>) => ["inventory-kpis", params] as const,
   inventoryTrend: (params: Record<string, unknown>) => ["inventory-trend", params] as const,
   inventoryItemDetail: (params: Record<string, unknown>) => ["inventory-item-detail", params] as const,
+  // Dashboard & filter keys (Feature 36)
+  distinctValues: (domain: string, column: string) => ["distinct-values", domain, column] as const,
+  dashboardKpis: (params: Record<string, unknown>) => ["dashboard-kpis", params] as const,
+  dashboardAlerts: (params: Record<string, unknown>) => ["dashboard-alerts", params] as const,
+  dashboardTopMovers: (params: Record<string, unknown>) => ["dashboard-top-movers", params] as const,
+  dashboardHeatmap: (params: Record<string, unknown>) => ["dashboard-heatmap", params] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -398,4 +411,74 @@ export async function fetchInventoryItemDetail(params: { item: string; location:
   const qs = new URLSearchParams({ item: params.item.trim(), location: params.location.trim() });
   if (params.months) qs.set("months", String(params.months));
   return fetchJson(`/inventory/item-detail?${qs}`);
+}
+
+// ---------------------------------------------------------------------------
+// Distinct values (Feature 36 — global filter dropdowns)
+// ---------------------------------------------------------------------------
+export async function fetchDistinctValues(
+  domain: string,
+  column: string,
+  search?: string,
+  limit = 100,
+): Promise<DistinctValuesPayload> {
+  const qs = new URLSearchParams({ column, limit: String(limit) });
+  if (search) qs.set("search", search);
+  return fetchJson(`/domains/${encodeURIComponent(domain)}/distinct?${qs}`);
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard queries (Feature 36)
+// ---------------------------------------------------------------------------
+export interface DashboardFilterParams {
+  brand?: string[];
+  category?: string[];
+  market?: string[];
+  channel?: string[];
+}
+
+function appendFilterParams(qs: URLSearchParams, params?: DashboardFilterParams) {
+  if (!params) return;
+  if (params.brand?.length) qs.set("brand", params.brand.join(","));
+  if (params.category?.length) qs.set("category", params.category.join(","));
+  if (params.market?.length) qs.set("market", params.market.join(","));
+  if (params.channel?.length) qs.set("channel", params.channel.join(","));
+}
+
+export async function fetchDashboardKpis(
+  window = 3,
+  filters?: DashboardFilterParams,
+): Promise<DashboardKpis> {
+  const qs = new URLSearchParams({ window: String(window) });
+  appendFilterParams(qs, filters);
+  return fetchJson(`/dashboard/kpis?${qs}`);
+}
+
+export async function fetchDashboardAlerts(
+  limit = 10,
+  filters?: DashboardFilterParams,
+): Promise<{ alerts: Alert[] }> {
+  const qs = new URLSearchParams({ limit: String(limit) });
+  appendFilterParams(qs, filters);
+  return fetchJson(`/dashboard/alerts?${qs}`);
+}
+
+export async function fetchDashboardTopMovers(
+  limit = 5,
+  direction: "up" | "down" | "both" = "both",
+  filters?: DashboardFilterParams,
+): Promise<{ movers: Mover[] }> {
+  const qs = new URLSearchParams({ limit: String(limit), direction });
+  appendFilterParams(qs, filters);
+  return fetchJson(`/dashboard/top-movers?${qs}`);
+}
+
+export async function fetchDashboardHeatmap(
+  grain: "category" | "brand" | "location" = "category",
+  periods = 4,
+  filters?: DashboardFilterParams,
+): Promise<{ rows: HeatmapRow[]; period_labels: string[]; metric: string }> {
+  const qs = new URLSearchParams({ grain, periods: String(periods) });
+  appendFilterParams(qs, filters);
+  return fetchJson(`/dashboard/heatmap?${qs}`);
 }

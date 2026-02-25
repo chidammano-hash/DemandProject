@@ -7,109 +7,86 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ------------------------------------------------------------------ */
+/* Base / fallback variables (overridden at runtime by useTheme)       */
+/* ------------------------------------------------------------------ */
 :root {
-  --background: 220 15% 96%;
-  --foreground: 230 30% 14%;
+  --background: 0 0% 98%;
+  --foreground: 0 0% 9%;
   --card: 0 0% 100%;
-  --card-foreground: 230 30% 14%;
-  --primary: 230 65% 28%;
+  --card-foreground: 0 0% 9%;
+  --primary: 221 83% 53%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 45 80% 92%;
-  --secondary-foreground: 230 30% 20%;
-  --muted: 225 18% 93%;
-  --muted-foreground: 225 15% 35%;
-  --accent: 43 90% 55%;
-  --accent-foreground: 230 35% 16%;
-  --border: 225 14% 82%;
-  --input: 225 14% 82%;
-  --ring: 230 65% 28%;
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 220 9% 46%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 220 9% 46%;
+  --accent: 220 14% 96%;
+  --accent-foreground: 221 83% 53%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 221 83% 53%;
   --radius: 0.7rem;
-  --destructive: 0 72% 51%;
+  --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
-  --chart-1: #4f46e5;
-  --chart-2: #0d9488;
-  --chart-3: #d97706;
-  --chart-4: #7c3aed;
-  --chart-5: #dc2626;
-  --chart-6: #0284c7;
-  --kpi-best: #4338ca;
-  --kpi-warning: #dc2626;
-  --kpi-ceiling: #059669;
-  --bg-gradient-primary: rgba(79, 70, 229, 0.12);
-  --bg-gradient-secondary: rgba(217, 119, 6, 0.10);
-  --bg-gradient-base-start: #eef0f6;
-  --bg-gradient-base-mid: #f0eee8;
-  --bg-gradient-base-end: #eae8e2;
+  --chart-1: #3B82F6;
+  --chart-2: #10B981;
+  --chart-3: #F59E0B;
+  --chart-4: #8B5CF6;
+  --chart-5: #EF4444;
+  --chart-6: #06B6D4;
+  --kpi-best: #10B981;
+  --kpi-warning: #EF4444;
+  --kpi-ceiling: #8B5CF6;
+  --bg-gradient-primary: rgba(0, 0, 0, 0);
+  --bg-gradient-secondary: rgba(0, 0, 0, 0);
+  --bg-gradient-base-start: #FAFAFA;
+  --bg-gradient-base-mid: #FAFAFA;
+  --bg-gradient-base-end: #FAFAFA;
+  /* Sidebar tokens */
+  --sidebar-bg: 0 0% 100%;
+  --sidebar-foreground: 220 9% 46%;
+  --sidebar-active: 221 83% 53%;
+  --sidebar-hover: 220 14% 96%;
 }
 
-/* Dark theme */
+/* Dark palette defaults (overridden by useTheme at runtime) */
 .dark {
-  --background: 220 15% 10%;
-  --foreground: 220 10% 90%;
-  --card: 220 15% 13%;
-  --card-foreground: 220 10% 90%;
-  --primary: 230 55% 55%;
+  --background: 224 10% 10%;
+  --foreground: 210 20% 98%;
+  --card: 224 10% 12%;
+  --card-foreground: 210 20% 98%;
+  --primary: 217 91% 60%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 45 50% 20%;
-  --secondary-foreground: 45 60% 85%;
-  --accent: 43 80% 50%;
-  --accent-foreground: 0 0% 100%;
-  --muted: 220 12% 18%;
-  --muted-foreground: 220 10% 60%;
-  --border: 220 12% 22%;
-  --input: 220 12% 22%;
-  --ring: 230 55% 55%;
-  --destructive: 0 62% 60%;
+  --secondary: 217 10% 18%;
+  --secondary-foreground: 218 10% 75%;
+  --muted: 215 10% 16%;
+  --muted-foreground: 218 10% 55%;
+  --accent: 217 10% 18%;
+  --accent-foreground: 217 91% 60%;
+  --border: 215 10% 20%;
+  --input: 215 10% 20%;
+  --ring: 217 91% 60%;
+  --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
-  --chart-1: #818cf8;
-  --chart-2: #2dd4bf;
-  --chart-3: #fbbf24;
-  --chart-4: #a78bfa;
-  --chart-5: #fca5a5;
-  --chart-6: #7dd3fc;
-  --kpi-best: #a5b4fc;
-  --kpi-warning: #fca5a5;
-  --kpi-ceiling: #6ee7b7;
-  --bg-gradient-primary: rgba(79, 70, 229, 0.08);
-  --bg-gradient-secondary: rgba(217, 119, 6, 0.06);
-  --bg-gradient-base-start: #161a22;
-  --bg-gradient-base-mid: #181c24;
-  --bg-gradient-base-end: #1a1e26;
-}
-
-/* Midnight theme */
-.midnight {
-  --background: 230 25% 9%;
-  --foreground: 210 20% 88%;
-  --card: 230 22% 12%;
-  --card-foreground: 210 20% 88%;
-  --primary: 200 80% 55%;
-  --primary-foreground: 230 25% 9%;
-  --secondary: 260 40% 20%;
-  --secondary-foreground: 260 30% 80%;
-  --accent: 175 70% 45%;
-  --accent-foreground: 0 0% 100%;
-  --muted: 230 20% 15%;
-  --muted-foreground: 230 15% 55%;
-  --border: 230 18% 20%;
-  --input: 230 18% 20%;
-  --ring: 200 80% 55%;
-  --destructive: 0 55% 65%;
-  --destructive-foreground: 0 0% 100%;
-  --chart-1: #93c5fd;
-  --chart-2: #5eead4;
-  --chart-3: #fde68a;
-  --chart-4: #c4b5fd;
-  --chart-5: #fda4af;
-  --chart-6: #a5f3fc;
-  --kpi-best: #bfdbfe;
-  --kpi-warning: #fda4af;
-  --kpi-ceiling: #a7f3d0;
-  --bg-gradient-primary: rgba(56, 189, 248, 0.08);
-  --bg-gradient-secondary: rgba(139, 92, 246, 0.06);
-  --bg-gradient-base-start: #0f1525;
-  --bg-gradient-base-mid: #111729;
-  --bg-gradient-base-end: #10162a;
+  --chart-1: #60A5FA;
+  --chart-2: #34D399;
+  --chart-3: #FBBF24;
+  --chart-4: #A78BFA;
+  --chart-5: #F87171;
+  --chart-6: #22D3EE;
+  --kpi-best: #34D399;
+  --kpi-warning: #F87171;
+  --kpi-ceiling: #A78BFA;
+  --bg-gradient-primary: rgba(0, 0, 0, 0);
+  --bg-gradient-secondary: rgba(0, 0, 0, 0);
+  --bg-gradient-base-start: #18181B;
+  --bg-gradient-base-mid: #18181B;
+  --bg-gradient-base-end: #18181B;
+  --sidebar-bg: 224 10% 10%;
+  --sidebar-foreground: 218 10% 55%;
+  --sidebar-active: 217 91% 60%;
+  --sidebar-hover: 215 10% 16%;
 }
 
 * {
@@ -126,6 +103,7 @@ body,
 
 body {
   @apply text-foreground min-h-screen antialiased;
+  background-color: hsl(var(--background));
   background-image:
     radial-gradient(circle at 12% 10%, var(--bg-gradient-primary), transparent 36%),
     radial-gradient(circle at 86% 0%, var(--bg-gradient-secondary), transparent 30%),
@@ -145,6 +123,18 @@ html[data-transitioning] * {
   animation: fadeIn 200ms ease-out;
 }
 
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-pulse-glow,
+  .animate-pour-shimmer {
+    animation: none !important;
+  }
+  html[data-transitioning] * {
+    transition: none !important;
+  }
+}
+
 /* Print styles */
 @media print {
   body {
@@ -153,7 +143,8 @@ html[data-transitioning] * {
   }
   .no-print,
   [role="tablist"],
-  .md\\:hidden {
+  [role="navigation"],
+  .md\:hidden {
     display: none !important;
   }
   main {

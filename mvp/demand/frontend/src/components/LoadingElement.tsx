@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { useMotif } from "@/context/MotifContext";
+import { useMotifOptional } from "@/context/MotifContext";
 
 type LoadingElementProps = {
   /** Tab key into the motif tiles map (preferred) */
@@ -14,12 +14,7 @@ type LoadingElementProps = {
 };
 
 export function LoadingElement({ tabKey, config, message, overlay, size = "sm" }: LoadingElementProps) {
-  let motif: ReturnType<typeof useMotif> | null = null;
-  try {
-    motif = useMotif();
-  } catch {
-    // Outside MotifProvider — use legacy config
-  }
+  const motif = useMotifOptional();
 
   const tile = tabKey && motif ? motif.getTile(tabKey) : null;
   const animationName = motif?.motifConfig.loading.animationName ?? "pulse-glow";

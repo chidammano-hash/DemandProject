@@ -9,7 +9,6 @@ import {
 
 describe("useUrlState", () => {
   beforeEach(() => {
-    // Reset URL to clean state
     window.history.replaceState(null, "", "/");
   });
 
@@ -30,8 +29,8 @@ describe("useUrlState", () => {
   });
 
   describe("getInitialTab", () => {
-    it("defaults to explorer when no params", () => {
-      expect(getInitialTab()).toBe("explorer");
+    it("defaults to overview when no params", () => {
+      expect(getInitialTab()).toBe("overview");
     });
 
     it("reads tab from URL if valid", () => {
@@ -41,12 +40,17 @@ describe("useUrlState", () => {
 
     it("ignores invalid tab", () => {
       window.history.replaceState(null, "", "/?tab=bogus");
-      expect(getInitialTab()).toBe("explorer");
+      expect(getInitialTab()).toBe("overview");
     });
 
     it("returns domain for analytics domains", () => {
       window.history.replaceState(null, "", "/?domain=sales");
       expect(getInitialTab()).toBe("sales");
+    });
+
+    it("accepts overview tab from URL", () => {
+      window.history.replaceState(null, "", "/?tab=overview");
+      expect(getInitialTab()).toBe("overview");
     });
   });
 
@@ -66,8 +70,9 @@ describe("useUrlState", () => {
   });
 
   describe("exported constants", () => {
-    it("VALID_TABS has 6 entries", () => {
-      expect(VALID_TABS).toHaveLength(6);
+    it("VALID_TABS has 9 entries including overview", () => {
+      expect(VALID_TABS).toHaveLength(9);
+      expect(VALID_TABS).toContain("overview");
       expect(VALID_TABS).toContain("explorer");
       expect(VALID_TABS).toContain("accuracy");
       expect(VALID_TABS).toContain("inventory");
