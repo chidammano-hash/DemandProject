@@ -11,4 +11,5 @@ export const ELEMENT_CONFIG: Record<string, { symbol: string; number: number; na
   dfuAnalysis: { symbol: "Da", number: 7, name: "DFU Analysis", color: "bg-teal-50/90 text-teal-800 border-teal-200/60", activeColor: "bg-teal-100 text-teal-950 border-teal-300", glow: "shadow-[0_0_12px_rgba(20,184,166,0.3)]" },
   accuracy: { symbol: "Ac", number: 5, name: "Accuracy", color: "bg-purple-50/90 text-purple-800 border-purple-200/60", activeColor: "bg-purple-100 text-purple-950 border-purple-300", glow: "shadow-[0_0_12px_rgba(168,85,247,0.3)]" },
   intel: { symbol: "Mi", number: 6, name: "Intel", color: "bg-cyan-50/90 text-cyan-800 border-cyan-200/60", activeColor: "bg-cyan-100 text-cyan-950 border-cyan-300", glow: "shadow-[0_0_12px_rgba(6,182,212,0.3)]" },
+  inventory: { symbol: "In", number: 49, name: "Inventory", color: "bg-amber-50/90 text-amber-800 border-amber-200/60", activeColor: "bg-amber-100 text-amber-950 border-amber-300", glow: "shadow-[0_0_12px_rgba(245,158,11,0.3)]" },
 };

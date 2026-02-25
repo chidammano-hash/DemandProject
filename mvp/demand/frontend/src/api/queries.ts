@@ -10,6 +10,10 @@ import type {
   DfuAnalysisPayload,
   DfuAnalysisMode,
   MarketIntelPayload,
+  InventoryPositionPayload,
+  InventoryKpis,
+  InventoryTrendPayload,
+  InventoryItemDetailPayload,
 } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -31,6 +35,10 @@ export const queryKeys = {
   competitionConfig: () => ["competition-config"] as const,
   competitionSummary: () => ["competition-summary"] as const,
   dfuAnalysis: (params: Record<string, unknown>) => ["dfu-analysis", params] as const,
+  inventoryPosition: (params: Record<string, unknown>) => ["inventory-position", params] as const,
+  inventoryKpis: (params: Record<string, unknown>) => ["inventory-kpis", params] as const,
+  inventoryTrend: (params: Record<string, unknown>) => ["inventory-trend", params] as const,
+  inventoryItemDetail: (params: Record<string, unknown>) => ["inventory-item-detail", params] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -344,4 +352,50 @@ export async function sendChatMessage(question: string, domain: string): Promise
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, domain }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Inventory queries
+// ---------------------------------------------------------------------------
+export interface InventoryPositionParams {
+  item?: string;
+  location?: string;
+  limit: number;
+  offset: number;
+  sort_by: string;
+  sort_dir: string;
+}
+
+export async function fetchInventoryPosition(params: InventoryPositionParams): Promise<InventoryPositionPayload> {
+  const qs = new URLSearchParams({
+    limit: String(params.limit),
+    offset: String(params.offset),
+    sort_by: params.sort_by,
+    sort_dir: params.sort_dir,
+  });
+  if (params.item?.trim()) qs.set("item", params.item.trim());
+  if (params.location?.trim()) qs.set("location", params.location.trim());
+  return fetchJson(`/inventory/position?${qs}`);
+}
+
+export async function fetchInventoryKpis(params: { item?: string; location?: string; months?: number }): Promise<InventoryKpis> {
+  const qs = new URLSearchParams();
+  if (params.item?.trim()) qs.set("item", params.item.trim());
+  if (params.location?.trim()) qs.set("location", params.location.trim());
+  if (params.months) qs.set("months", String(params.months));
+  return fetchJson(`/inventory/kpis?${qs}`);
+}
+
+export async function fetchInventoryTrend(params: { item?: string; location?: string; months?: number }): Promise<InventoryTrendPayload> {
+  const qs = new URLSearchParams();
+  if (params.item?.trim()) qs.set("item", params.item.trim());
+  if (params.location?.trim()) qs.set("location", params.location.trim());
+  if (params.months) qs.set("months", String(params.months));
+  return fetchJson(`/inventory/trend?${qs}`);
+}
+
+export async function fetchInventoryItemDetail(params: { item: string; location: string; months?: number }): Promise<InventoryItemDetailPayload> {
+  const qs = new URLSearchParams({ item: params.item.trim(), location: params.location.trim() });
+  if (params.months) qs.set("months", String(params.months));
+  return fetchJson(`/inventory/item-detail?${qs}`);
 }

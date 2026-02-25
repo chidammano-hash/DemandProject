@@ -40,7 +40,8 @@ async def test_list_domains(mock_pool):
             assert "location" in domains
             assert "sales" in domains
             assert "forecast" in domains
-            assert len(domains) == 7
+            assert len(domains) == 8
+            assert "inventory" in domains
 
 
 @pytest.mark.asyncio

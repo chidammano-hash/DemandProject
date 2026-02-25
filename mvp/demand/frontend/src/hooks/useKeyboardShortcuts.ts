@@ -16,6 +16,7 @@ const TAB_MAP: Record<string, string> = {
   "3": "dfuAnalysis",
   "4": "accuracy",
   "5": "intel",
+  "6": "inventory",
 };
 
 export function useKeyboardShortcuts(config: ShortcutConfig) {

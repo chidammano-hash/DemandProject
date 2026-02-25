@@ -410,6 +410,43 @@ FORECAST_SPEC = DomainSpec(
 )
 
 
+INVENTORY_SPEC = DomainSpec(
+    name="inventory",
+    plural="inventories",
+    table="fact_inventory_snapshot",
+    ck_field="inventory_ck",
+    business_key_field="item_no",
+    business_key_fields=("item_no", "loc", "snapshot_date"),
+    business_key_separator="_",
+    columns=[
+        "item_no",
+        "loc",
+        "snapshot_date",
+        "lead_time_days",
+        "qty_on_hand",
+        "qty_on_hand_on_order",
+        "qty_on_order",
+        "mtd_sales",
+    ],
+    source_file="Inventory_Snapshot_*.csv",
+    clean_file="inventory_clean.csv",
+    search_fields=["item_no", "loc"],
+    int_fields=set(),
+    float_fields={"lead_time_days", "qty_on_hand", "qty_on_hand_on_order", "qty_on_order", "mtd_sales"},
+    date_fields={"snapshot_date"},
+    default_sort="snapshot_date",
+    source_delimiter=",",
+    source_columns={
+        "item_no": "item",
+        "snapshot_date": "exec_date",
+        "lead_time_days": "lead_time",
+        "qty_on_hand": "tot_oh",
+        "qty_on_hand_on_order": "tot_oh_oo",
+        "mtd_sales": "mtd_sls",
+    },
+)
+
+
 DOMAIN_SPECS: dict[str, DomainSpec] = {
     ITEM_SPEC.name: ITEM_SPEC,
     LOCATION_SPEC.name: LOCATION_SPEC,
@@ -418,6 +455,7 @@ DOMAIN_SPECS: dict[str, DomainSpec] = {
     DFU_SPEC.name: DFU_SPEC,
     SALES_SPEC.name: SALES_SPEC,
     FORECAST_SPEC.name: FORECAST_SPEC,
+    INVENTORY_SPEC.name: INVENTORY_SPEC,
 }
 
 

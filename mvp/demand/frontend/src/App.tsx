@@ -33,6 +33,7 @@ const ClustersTab = lazy(() => import("./tabs/ClustersTab"));
 const DfuAnalysisTab = lazy(() => import("./tabs/DfuAnalysisTab").then((m) => ({ default: m.DfuAnalysisTab })));
 const AccuracyTab = lazy(() => import("./tabs/AccuracyTab").then((m) => ({ default: m.AccuracyTab })));
 const MarketIntelTab = lazy(() => import("./tabs/MarketIntelTab"));
+const InventoryTab = lazy(() => import("./tabs/InventoryTab").then((m) => ({ default: m.InventoryTab })));
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -154,6 +155,7 @@ export default function App() {
               <option value="dfuAnalysis">DFU Analysis</option>
               <option value="accuracy">Accuracy</option>
               <option value="intel">Market Intelligence</option>
+              <option value="inventory">Inventory</option>
             </select>
           </div>
 
@@ -164,6 +166,7 @@ export default function App() {
             <ElementTab tabKey="dfuAnalysis" isActive={activeTab === "dfuAnalysis"} onClick={() => setActiveTab("dfuAnalysis")} />
             <ElementTab tabKey="accuracy" isActive={activeTab === "accuracy"} onClick={() => setActiveTab("accuracy")} />
             <ElementTab tabKey="intel" isActive={activeTab === "intel"} onClick={() => setActiveTab("intel")} />
+            <ElementTab tabKey="inventory" isActive={activeTab === "inventory"} onClick={() => setActiveTab("inventory")} />
 
             {/* Settings gear */}
             <div className="relative" ref={settingsRef}>
@@ -245,6 +248,13 @@ export default function App() {
         <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="intel" />} resetKeys={[activeTab]}>
           <Suspense fallback={<TabSuspenseFallback tabKey="intel" />}>
             <MarketIntelTab theme={theme} />
+          </Suspense>
+        </ErrorBoundary>
+      )}
+      {activeTab === "inventory" && (
+        <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="inventory" />} resetKeys={[activeTab]}>
+          <Suspense fallback={<TabSuspenseFallback tabKey="inventory" />}>
+            <InventoryTab theme={theme} />
           </Suspense>
         </ErrorBoundary>
       )}

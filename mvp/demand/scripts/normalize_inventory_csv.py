@@ -1,0 +1,220 @@
+"""Normalize 14 monthly inventory snapshot CSVs into a single clean CSV.
+
+Each source file contains 7-14 million rows with columns:
+    exec_date, item, loc, lead_time, tot_oh, tot_oh_oo, mtd_sls
+
+Output CSV columns:
+    item_no, loc, snapshot_date, lead_time_days,
+    qty_on_hand, qty_on_hand_on_order, qty_on_order, mtd_sales
+
+Usage:
+    python scripts/normalize_inventory_csv.py
+    python scripts/normalize_inventory_csv.py --datafiles-dir /path/to/csvs
+    python scripts/normalize_inventory_csv.py --output data/inventory_clean.csv
+"""
+
+import argparse
+import csv
+import glob
+import os
+import sys
+from datetime import date
+from pathlib import Path
+
+# Null sentinel values — consistent with normalize_dataset_csv.py
+NULL_SENTINELS = {"", "null", "none", "na"}
+
+# Output column order
+OUTPUT_COLUMNS = [
+    "item_no",
+    "loc",
+    "snapshot_date",
+    "lead_time_days",
+    "qty_on_hand",
+    "qty_on_hand_on_order",
+    "qty_on_order",
+    "mtd_sales",
+]
+
+# Source column index positions (by name)
+SRC_EXEC_DATE = "exec_date"
+SRC_ITEM = "item"
+SRC_LOC = "loc"
+SRC_LEAD_TIME = "lead_time"
+SRC_TOT_OH = "tot_oh"
+SRC_TOT_OH_OO = "tot_oh_oo"
+SRC_MTD_SLS = "mtd_sls"
+
+
+def is_null(value: str) -> bool:
+    """Return True if value should be treated as NULL."""
+    return value.strip().lower() in NULL_SENTINELS
+
+
+def parse_float(value: str, default: float = 0.0) -> float:
+    """Parse a string as float, returning default if empty/null/invalid."""
+    s = value.strip()
+    if is_null(s):
+        return default
+    try:
+        return float(s)
+    except ValueError:
+        return default
+
+
+def parse_iso_date(value: str) -> str:
+    """Parse and validate an ISO date string (YYYY-MM-DD).
+
+    Returns the ISO date string if valid, empty string otherwise.
+    """
+    s = value.strip()
+    if is_null(s):
+        return ""
+    # Try ISO format directly (YYYY-MM-DD)
+    if len(s) == 10 and s[4] == "-" and s[7] == "-":
+        try:
+            d = date.fromisoformat(s)
+            return d.isoformat()
+        except ValueError:
+            pass
+    # Try compact format (YYYYMMDD)
+    if len(s) == 8 and s.isdigit():
+        try:
+            d = date(int(s[0:4]), int(s[4:6]), int(s[6:8]))
+            return d.isoformat()
+        except ValueError:
+            pass
+    return ""
+
+
+def normalize_file(
+    source_path: Path,
+    writer: csv.writer,
+    header_idx: dict[str, int] | None,
+) -> tuple[int, dict[str, int] | None]:
+    """Stream-process a single inventory snapshot CSV.
+
+    Returns (rows_written, header_idx) where header_idx is populated on
+    first call and reused for subsequent files.
+    """
+    rows_written = 0
+
+    with source_path.open("r", encoding="utf-8-sig", newline="") as src:
+        reader = csv.reader(src)
+        raw_headers = next(reader)
+        file_header_idx = {h.strip().lower(): i for i, h in enumerate(raw_headers)}
+
+        # Validate expected columns exist
+        expected = [SRC_EXEC_DATE, SRC_ITEM, SRC_LOC, SRC_LEAD_TIME, SRC_TOT_OH, SRC_TOT_OH_OO, SRC_MTD_SLS]
+        missing = [c for c in expected if c not in file_header_idx]
+        if missing:
+            print(f"  WARNING: Missing columns {missing} in {source_path.name}, skipping file")
+            return 0, header_idx
+
+        idx_exec_date = file_header_idx[SRC_EXEC_DATE]
+        idx_item = file_header_idx[SRC_ITEM]
+        idx_loc = file_header_idx[SRC_LOC]
+        idx_lead_time = file_header_idx[SRC_LEAD_TIME]
+        idx_tot_oh = file_header_idx[SRC_TOT_OH]
+        idx_tot_oh_oo = file_header_idx[SRC_TOT_OH_OO]
+        idx_mtd_sls = file_header_idx[SRC_MTD_SLS]
+
+        for row in reader:
+            # Guard against short rows
+            if len(row) < len(expected):
+                continue
+
+            # exec_date -> snapshot_date
+            snapshot_date = parse_iso_date(row[idx_exec_date])
+            if not snapshot_date:
+                continue
+
+            # item -> item_no
+            item_no = row[idx_item].strip()
+            if is_null(item_no):
+                continue
+
+            # loc -> loc
+            loc = row[idx_loc].strip()
+            if is_null(loc):
+                continue
+
+            # Numeric fields
+            lead_time_days = parse_float(row[idx_lead_time], default=0.0)
+            qty_on_hand = parse_float(row[idx_tot_oh], default=0.0)
+            qty_on_hand_on_order = parse_float(row[idx_tot_oh_oo], default=0.0)
+            qty_on_order = qty_on_hand_on_order - qty_on_hand
+            mtd_sales = parse_float(row[idx_mtd_sls], default=0.0)
+
+            writer.writerow([
+                item_no,
+                loc,
+                snapshot_date,
+                lead_time_days,
+                qty_on_hand,
+                qty_on_hand_on_order,
+                qty_on_order,
+                mtd_sales,
+            ])
+            rows_written += 1
+
+    return rows_written, file_header_idx
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Normalize 14 monthly inventory snapshot CSVs into a single clean CSV"
+    )
+    parser.add_argument(
+        "--datafiles-dir",
+        default=str(Path(__file__).resolve().parents[3] / "datafiles"),
+        help="Directory containing Inventory_Snapshot_*.csv files (default: ../../datafiles)",
+    )
+    parser.add_argument(
+        "--output",
+        default=str(Path(__file__).resolve().parents[1] / "data" / "inventory_clean.csv"),
+        help="Output path for merged clean CSV (default: data/inventory_clean.csv)",
+    )
+    args = parser.parse_args()
+
+    datafiles_dir = Path(args.datafiles_dir).resolve()
+    output_path = Path(args.output).resolve()
+
+    # Find all inventory snapshot files, sorted by name (chronological)
+    pattern = str(datafiles_dir / "Inventory_Snapshot_*.csv")
+    source_files = sorted(glob.glob(pattern))
+
+    if not source_files:
+        print(f"No Inventory_Snapshot_*.csv files found in {datafiles_dir}")
+        sys.exit(1)
+
+    print(f"Found {len(source_files)} inventory snapshot file(s) in {datafiles_dir}")
+    print(f"Output: {output_path}")
+    print()
+
+    # Ensure output directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    total_rows = 0
+    header_idx: dict[str, int] | None = None
+
+    with output_path.open("w", encoding="utf-8", newline="") as dst:
+        writer = csv.writer(dst)
+        writer.writerow(OUTPUT_COLUMNS)
+
+        for filepath in source_files:
+            source_path = Path(filepath)
+            print(f"  Processing {source_path.name} ...", end=" ", flush=True)
+
+            rows_written, header_idx = normalize_file(source_path, writer, header_idx)
+            total_rows += rows_written
+
+            print(f"{rows_written:,} rows")
+
+    print()
+    print(f"Total rows written: {total_rows:,}")
+    print(f"Output file: {output_path}")
+
+
+if __name__ == "__main__":
+    main()

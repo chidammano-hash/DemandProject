@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-all refresh-agg-sales refresh-agg-forecast refresh-agg spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-all backtest-clean backtest-list accuracy-slice-refresh accuracy-slice-check champion-select test test-unit test-api test-cov test-all
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-all backtest-clean backtest-list accuracy-slice-refresh accuracy-slice-check champion-select test test-unit test-api test-cov test-all
 
 help:
 	@echo "Targets:"
@@ -17,6 +17,7 @@ help:
 	@echo "  normalize-dfu        - normalize dfu.txt"
 	@echo "  normalize-sales      - normalize dfu_lvl2_hist.txt (TYPE=1)"
 	@echo "  normalize-forecast   - normalize dfu_stat_fcst.txt (lags 0-4)"
+	@echo "  normalize-inventory  - normalize inventory snapshot CSV"
 	@echo "  normalize-all        - normalize all configured datasets"
 	@echo "  load-item            - load dim_item into Postgres"
 	@echo "  load-location        - load dim_location into Postgres"
@@ -25,8 +26,11 @@ help:
 	@echo "  load-dfu             - load dim_dfu into Postgres"
 	@echo "  load-sales           - load fact_sales_monthly into Postgres"
 	@echo "  load-forecast        - load fact_external_forecast_monthly into Postgres"
+	@echo "  load-inventory       - load fact_inventory_snapshot into Postgres"
 	@echo "  load-all             - load all configured datasets"
 	@echo "  refresh-agg          - refresh monthly aggregate materialized views"
+	@echo "  db-apply-inventory   - apply inventory snapshot DDL into Postgres"
+	@echo "  inventory-pipeline   - normalize + load inventory data"
 	@echo "  api                  - run unified FastAPI service on :8000"
 	@echo "  ui-init              - install frontend dependencies"
 	@echo "  ui                   - run shadcn React UI on :5173"
@@ -151,7 +155,10 @@ normalize-sales:
 normalize-forecast:
 	$(UV) python scripts/normalize_dataset_csv.py --dataset forecast
 
-normalize-all: normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast
+normalize-inventory:
+	$(UV) python scripts/normalize_inventory_csv.py
+
+normalize-all: normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory
 
 load-item:
 	$(UV) python scripts/load_dataset_postgres.py --dataset item
@@ -176,6 +183,10 @@ load-forecast:
 	$(UV) python scripts/load_dataset_postgres.py --dataset forecast
 	$(MAKE) refresh-agg-forecast
 
+load-inventory:
+	$(UV) python scripts/load_dataset_postgres.py --dataset inventory --fast
+	$(MAKE) refresh-agg-inventory
+
 load-all:
 	$(UV) python scripts/load_dataset_postgres.py --dataset item
 	$(UV) python scripts/load_dataset_postgres.py --dataset location
@@ -184,6 +195,7 @@ load-all:
 	$(UV) python scripts/load_dataset_postgres.py --dataset dfu
 	$(UV) python scripts/load_dataset_postgres.py --dataset sales
 	$(UV) python scripts/load_dataset_postgres.py --dataset forecast
+	$(UV) python scripts/load_dataset_postgres.py --dataset inventory --fast
 	$(MAKE) refresh-agg
 
 refresh-agg-sales:
@@ -192,7 +204,11 @@ refresh-agg-sales:
 refresh-agg-forecast:
 	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_forecast_monthly;" >/dev/null
 
-refresh-agg: refresh-agg-sales refresh-agg-forecast
+refresh-agg-inventory:
+	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp \
+		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_inventory_monthly;"
+
+refresh-agg: refresh-agg-sales refresh-agg-forecast refresh-agg-inventory
 
 api:
 	$(UV) uvicorn api.main:app --reload --port 8000
@@ -321,6 +337,11 @@ trino-check-forecast:
 
 db-apply-chat:
 	cat sql/009_create_chat_embeddings.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+
+db-apply-inventory:
+	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp < sql/017_create_fact_inventory_snapshot.sql
+
+inventory-pipeline: normalize-inventory load-inventory
 
 generate-embeddings:
 	$(UV) python scripts/generate_embeddings.py

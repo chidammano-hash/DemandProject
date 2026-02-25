@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-const VALID_TABS = ["explorer", "clusters", "dfuAnalysis", "accuracy", "intel"];
+const VALID_TABS = ["explorer", "clusters", "dfuAnalysis", "accuracy", "intel", "inventory"];
 const ANALYTICS_TAB_DOMAINS = new Set(["sales", "forecast"]);
 const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales", "forecast"];
 

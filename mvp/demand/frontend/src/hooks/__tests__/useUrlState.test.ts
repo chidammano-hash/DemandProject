@@ -66,10 +66,11 @@ describe("useUrlState", () => {
   });
 
   describe("exported constants", () => {
-    it("VALID_TABS has 5 entries", () => {
-      expect(VALID_TABS).toHaveLength(5);
+    it("VALID_TABS has 6 entries", () => {
+      expect(VALID_TABS).toHaveLength(6);
       expect(VALID_TABS).toContain("explorer");
       expect(VALID_TABS).toContain("accuracy");
+      expect(VALID_TABS).toContain("inventory");
     });
 
     it("DIMENSION_DOMAINS has 7 entries", () => {

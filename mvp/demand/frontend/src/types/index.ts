@@ -148,6 +148,53 @@ export type DfuAnalysisPayload = {
   dfu_attributes: Record<string, string | null>[];
 };
 
+export type InventoryPosition = {
+  item_no: string;
+  loc: string;
+  snapshot_date: string;
+  lead_time_days: number | null;
+  qty_on_hand: number;
+  qty_on_hand_on_order: number;
+  qty_on_order: number;
+  mtd_sales: number;
+};
+
+export type InventoryKpis = {
+  total_on_hand: number;
+  total_on_order: number;
+  total_inventory_value: number | null;
+  avg_lead_time_days: number | null;
+  distinct_items: number;
+  distinct_locations: number;
+  snapshot_count: number;
+  months_covered: number;
+};
+
+export type InventoryTrendPoint = {
+  month: string;
+  avg_on_hand: number;
+  avg_on_order: number;
+  avg_lead_time: number;
+  total_mtd_sales: number;
+};
+
+export type InventoryPositionPayload = {
+  total: number;
+  limit: number;
+  offset: number;
+  positions: InventoryPosition[];
+};
+
+export type InventoryTrendPayload = {
+  trend: InventoryTrendPoint[];
+};
+
+export type InventoryItemDetailPayload = {
+  item: string;
+  location: string;
+  snapshots: InventoryPosition[];
+};
+
 export type Theme = "light" | "dark" | "midnight";
 
 export type ElementConfig = {

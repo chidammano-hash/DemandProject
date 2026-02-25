@@ -2734,3 +2734,229 @@ def chat(req: ChatRequest):
     if error_msg:
         result["error"] = error_msg
     return result
+
+
+# --- Inventory endpoints ---------------------------------------------------
+
+
+@app.get("/inventory/position")
+def inventory_position(
+    response: FastAPIResponse,
+    item: str = Query(default="", max_length=120),
+    location: str = Query(default="", max_length=120),
+    limit: int = Query(default=50, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    sort_by: str = Query(default="snapshot_date", max_length=60),
+    sort_dir: str = Query(default="desc", max_length=4),
+):
+    """Latest inventory snapshot per item-location with optional filters."""
+    set_cache(response, max_age=120)
+
+    allowed_sort = {"item_no", "loc", "snapshot_date", "lead_time_days",
+                    "qty_on_hand", "qty_on_hand_on_order", "qty_on_order", "mtd_sales"}
+    order_col = sort_by if sort_by in allowed_sort else "snapshot_date"
+    order_dir = "DESC" if sort_dir.lower() == "desc" else "ASC"
+
+    where_parts: list[str] = []
+    params: list[Any] = []
+    if item.strip():
+        where_parts.append("item_no ILIKE %s")
+        params.append(f"%{item.strip()}%")
+    if location.strip():
+        where_parts.append("loc ILIKE %s")
+        params.append(f"%{location.strip()}%")
+    inner_where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+    # Subquery gets latest snapshot per item-location, outer query paginates.
+    count_sql = f"""
+        SELECT count(*) FROM (
+            SELECT DISTINCT ON (item_no, loc) 1
+            FROM fact_inventory_snapshot
+            {inner_where}
+            ORDER BY item_no, loc, snapshot_date DESC
+        ) _sub
+    """
+    data_sql = f"""
+        SELECT * FROM (
+            SELECT DISTINCT ON (item_no, loc)
+                   item_no, loc, snapshot_date,
+                   lead_time_days, qty_on_hand, qty_on_hand_on_order,
+                   qty_on_order, mtd_sales
+            FROM fact_inventory_snapshot
+            {inner_where}
+            ORDER BY item_no, loc, snapshot_date DESC
+        ) latest
+        ORDER BY {qident(order_col)} {order_dir}
+        LIMIT %s OFFSET %s
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(count_sql, params)
+        total = int(cur.fetchone()[0])
+        cur.execute(data_sql, [*params, limit, offset])
+        rows = cur.fetchall()
+
+    positions = [
+        {
+            "item_no": r[0],
+            "loc": r[1],
+            "snapshot_date": str(r[2]) if r[2] else None,
+            "lead_time_days": float(r[3]) if r[3] is not None else None,
+            "qty_on_hand": float(r[4]) if r[4] is not None else None,
+            "qty_on_hand_on_order": float(r[5]) if r[5] is not None else None,
+            "qty_on_order": float(r[6]) if r[6] is not None else None,
+            "mtd_sales": float(r[7]) if r[7] is not None else None,
+        }
+        for r in rows
+    ]
+    return {"total": total, "limit": limit, "offset": offset, "positions": positions}
+
+
+@app.get("/inventory/kpis")
+def inventory_kpis(
+    response: FastAPIResponse,
+    item: str = Query(default="", max_length=120),
+    location: str = Query(default="", max_length=120),
+    months: int = Query(default=3, ge=1, le=60),
+):
+    """Aggregate inventory KPIs over trailing N months."""
+    set_cache(response, max_age=120)
+
+    where_parts: list[str] = ["snapshot_date >= (CURRENT_DATE - (%s || ' months')::interval)"]
+    params: list[Any] = [months]
+    if item.strip():
+        where_parts.append("item_no ILIKE %s")
+        params.append(f"%{item.strip()}%")
+    if location.strip():
+        where_parts.append("loc ILIKE %s")
+        params.append(f"%{location.strip()}%")
+    where_sql = f"WHERE {' AND '.join(where_parts)}"
+
+    sql = f"""
+        SELECT
+            COALESCE(SUM(qty_on_hand), 0)::double precision           AS total_on_hand,
+            COALESCE(SUM(qty_on_order), 0)::double precision          AS total_on_order,
+            COALESCE(SUM(qty_on_hand * 1.0), 0)::double precision     AS total_inventory_value,
+            COALESCE(AVG(lead_time_days), 0)::double precision         AS avg_lead_time_days,
+            COUNT(DISTINCT item_no)::bigint                            AS distinct_items,
+            COUNT(DISTINCT loc)::bigint                                AS distinct_locations,
+            COUNT(*)::bigint                                           AS snapshot_count,
+            %s                                                         AS months_covered
+        FROM fact_inventory_snapshot
+        {where_sql}
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, [months, *params])
+        row = cur.fetchone()
+
+    if not row:
+        return {
+            "total_on_hand": 0.0,
+            "total_on_order": 0.0,
+            "total_inventory_value": 0.0,
+            "avg_lead_time_days": 0.0,
+            "distinct_items": 0,
+            "distinct_locations": 0,
+            "snapshot_count": 0,
+            "months_covered": months,
+        }
+
+    return {
+        "total_on_hand": float(row[0]),
+        "total_on_order": float(row[1]),
+        "total_inventory_value": float(row[2]),
+        "avg_lead_time_days": round(float(row[3]), 2),
+        "distinct_items": int(row[4]),
+        "distinct_locations": int(row[5]),
+        "snapshot_count": int(row[6]),
+        "months_covered": int(row[7]),
+    }
+
+
+@app.get("/inventory/trend")
+def inventory_trend(
+    response: FastAPIResponse,
+    item: str = Query(default="", max_length=120),
+    location: str = Query(default="", max_length=120),
+    months: int = Query(default=12, ge=1, le=120),
+):
+    """Monthly inventory trend from the pre-aggregated materialized view."""
+    set_cache(response, max_age=120)
+
+    where_parts: list[str] = ["month_start >= (CURRENT_DATE - (%s || ' months')::interval)"]
+    params: list[Any] = [months]
+    if item.strip():
+        where_parts.append("item_no ILIKE %s")
+        params.append(f"%{item.strip()}%")
+    if location.strip():
+        where_parts.append("loc ILIKE %s")
+        params.append(f"%{location.strip()}%")
+    where_sql = f"WHERE {' AND '.join(where_parts)}"
+
+    sql = f"""
+        SELECT
+            month_start,
+            COALESCE(SUM(avg_qty_on_hand), 0)::double precision       AS avg_on_hand,
+            COALESCE(SUM(avg_qty_on_hand_on_order - avg_qty_on_hand), 0)::double precision AS avg_on_order,
+            COALESCE(AVG(avg_lead_time_days), 0)::double precision     AS avg_lead_time,
+            COALESCE(SUM(total_mtd_sales), 0)::double precision        AS total_mtd_sales
+        FROM agg_inventory_monthly
+        {where_sql}
+        GROUP BY 1
+        ORDER BY 1 ASC
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+    trend = [
+        {
+            "month": str(r[0]),
+            "avg_on_hand": round(float(r[1]), 2),
+            "avg_on_order": round(float(r[2]), 2),
+            "avg_lead_time": round(float(r[3]), 2),
+            "total_mtd_sales": round(float(r[4]), 2),
+        }
+        for r in rows
+    ]
+    return {"trend": trend}
+
+
+@app.get("/inventory/item-detail")
+def inventory_item_detail(
+    response: FastAPIResponse,
+    item: str = Query(min_length=1, max_length=120),
+    location: str = Query(min_length=1, max_length=120),
+    months: int = Query(default=14, ge=1, le=120),
+):
+    """Full snapshot history for a specific item-location pair."""
+    set_cache(response, max_age=120)
+
+    sql = """
+        SELECT snapshot_date, lead_time_days, qty_on_hand,
+               qty_on_hand_on_order, qty_on_order, mtd_sales
+        FROM fact_inventory_snapshot
+        WHERE item_no = %s
+          AND loc = %s
+          AND snapshot_date >= (CURRENT_DATE - (%s || ' months')::interval)
+        ORDER BY snapshot_date ASC
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, [item.strip(), location.strip(), months])
+        rows = cur.fetchall()
+
+    snapshots = [
+        {
+            "snapshot_date": str(r[0]) if r[0] else None,
+            "lead_time_days": float(r[1]) if r[1] is not None else None,
+            "qty_on_hand": float(r[2]) if r[2] is not None else None,
+            "qty_on_hand_on_order": float(r[3]) if r[3] is not None else None,
+            "qty_on_order": float(r[4]) if r[4] is not None else None,
+            "mtd_sales": float(r[5]) if r[5] is not None else None,
+        }
+        for r in rows
+    ]
+    return {"item": item.strip(), "location": location.strip(), "snapshots": snapshots}
