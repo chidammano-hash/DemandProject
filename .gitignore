@@ -1,4 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Environment
+.env
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ML training artifacts
+lightning_logs/
+catboost_info/
+
+# IDE
+.idea/
+
+# Project data & archives
 reference/
 datafiles/
-mvp/item/.env
-mvp/item/data/

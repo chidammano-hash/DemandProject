@@ -1,0 +1,108 @@
+# Feature 32: Seasonality Profile Filtering
+
+## Summary
+
+Expose `seasonality_profile` (from `dim_dfu`) as a filter and slice dimension across the Accuracy Tab, DFU Analysis Tab, and Data Explorer. Allows users to compare forecast accuracy by seasonality tier (e.g., high_seasonal vs non_seasonal) and filter DFU-level analysis to specific seasonality profiles.
+
+## Prerequisites
+
+- Feature 30 (DFU Seasonality Detection) — populates `dim_dfu.seasonality_profile`
+- Feature 10 (Multi-dimensional accuracy slicing) — accuracy materialized views
+- Feature 17 (DFU Analysis tab) — DFU analysis endpoint
+
+## Database Changes
+
+### SQL Migration: `sql/016_add_seasonality_to_accuracy_views.sql`
+
+Drops and recreates all 4 accuracy materialized views with `seasonality_profile` as a new GROUP BY dimension:
+
+| View | Change |
+|------|--------|
+| `agg_accuracy_by_dim` | Added `COALESCE(d.seasonality_profile, '(unknown)') AS seasonality_profile` |
+| `agg_accuracy_lag_archive` | Same |
+| `agg_dfu_coverage` | Same |
+| `agg_dfu_coverage_lag_archive` | Same |
+
+Each view gets a new B-tree index on `seasonality_profile`.
+
+After applying, run `REFRESH MATERIALIZED VIEW` for each view.
+
+## API Changes
+
+### New Endpoint
+
+**`GET /domains/dfu/seasonality-profiles`**
+
+Returns distinct seasonality profiles with DFU counts, used to populate filter dropdowns.
+
+Response:
+```json
+{
+  "profiles": [
+    {"profile": "high_seasonal", "count": 1200},
+    {"profile": "non_seasonal", "count": 800}
+  ]
+}
+```
+
+### Modified Endpoints
+
+**`GET /forecast/accuracy/slice`**
+- New query param: `seasonality_profile` (string, optional)
+- New `group_by` value: `"seasonality_profile"`
+- When provided as filter, adds WHERE clause on the pre-aggregated view or raw fact table
+
+**`GET /forecast/accuracy/lag-curve`**
+- New query param: `seasonality_profile` (string, optional)
+- When provided, filters by seasonality profile
+
+**`GET /dfu/analysis`**
+- New query param: `seasonality_profile` (string, optional)
+- When provided, adds subquery filter: `(dmdunit, loc) IN (SELECT dmdunit, loc FROM dim_dfu WHERE seasonality_profile = %s)`
+- Response `dfu_attributes` now includes 6 seasonality columns
+
+## Frontend Changes
+
+### Types (`types/index.ts`)
+- `SeasonalityProfile`: `{ profile: string; count: number }`
+- `SeasonalityProfilesPayload`: `{ profiles: SeasonalityProfile[] }`
+
+### Query Layer (`api/queries.ts`)
+- `queryKeys.seasonalityProfiles()` — query key factory
+- `fetchSeasonalityProfiles()` — fetches profiles endpoint
+- `SliceParams.seasonality_profile?` — optional param
+- `LagCurveParams.seasonality_profile?` — optional param
+- `DfuAnalysisParams.seasonality_profile?` — optional param
+
+### Accuracy Tab (`tabs/AccuracyTab.tsx`)
+- Seasonality Profile dropdown filter (populated from profiles endpoint)
+- "Seasonality Profile" option in "Slice by" dropdown
+- `seasonality_profile` wired into both `sliceParams` and `lagCurveParams`
+
+### DFU Analysis Tab (`tabs/DfuAnalysisTab.tsx`)
+- Seasonality Profile dropdown filter in controls row
+- `seasonality_profile` passed in analysis query params and query key
+
+### Data Explorer (`tabs/ExplorerTab.tsx`)
+- Seasonality Profile dropdown shown when `domain === "dfu"`
+- Injects `{"seasonality_profile": "=<value>"}` into `effectiveFilters`
+
+## Tests
+
+### Backend (pytest)
+- `test_forecast_accuracy.py`: 3 new tests — seasonality as filter param, as group_by, and on lag-curve
+- `test_dfu_analysis.py`: 1 new test — seasonality_profile filter param
+- `test_seasonality.py`: 2 new tests — seasonality-profiles endpoint (with data + empty)
+
+### Frontend (vitest)
+- Updated mocks in `AccuracyTab.test.tsx`, `DfuAnalysisTab.test.tsx`, `ExplorerTab.test.tsx` to include `fetchSeasonalityProfiles` and `seasonalityProfiles` query key
+
+## Verification
+
+1. Apply migration: `psql -f sql/016_add_seasonality_to_accuracy_views.sql`
+2. Refresh views: `REFRESH MATERIALIZED VIEW agg_accuracy_by_dim` (and 3 others)
+3. Backend tests: `make test` — 189 tests pass
+4. Frontend tests: `make ui-test` — 108 tests pass
+5. Manual: Accuracy Tab → Slice by "Seasonality Profile" shows buckets; filter dropdown constrains data
+6. Manual: DFU Analysis → seasonality dropdown filters aggregated chart data
+7. Manual: Data Explorer → DFU domain shows seasonality dropdown, filters rows
