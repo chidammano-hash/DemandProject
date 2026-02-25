@@ -7,6 +7,7 @@ interface ShortcutConfig {
   onPrevPage?: () => void;
   onNextPage?: () => void;
   onToggleFields?: () => void;
+  onCycleMotif?: () => void;
 }
 
 const TAB_MAP: Record<string, string> = {
@@ -68,6 +69,13 @@ export function useKeyboardShortcuts(config: ShortcutConfig) {
       }
       if (e.key === "ArrowRight") {
         config.onNextPage?.();
+        return;
+      }
+
+      // Ctrl+M / Cmd+M: cycle motif theme
+      if (e.key === "m" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        config.onCycleMotif?.();
         return;
       }
 

@@ -23,6 +23,8 @@ export const queryKeys = {
   forecastModels: () => ["forecast-models"] as const,
   dfuClusters: (source: string) => ["dfu-clusters", source] as const,
   clusterProfiles: () => ["cluster-profiles"] as const,
+  clusteringDefaults: () => ["clustering-defaults"] as const,
+  clusteringScenario: (id: string) => ["clustering-scenario", id] as const,
   samplePair: (domain: string) => ["sample-pair", domain] as const,
   accuracySlice: (params: Record<string, unknown>) => ["accuracy-slice", params] as const,
   lagCurve: (params: Record<string, unknown>) => ["lag-curve", params] as const,
@@ -126,6 +128,86 @@ export async function fetchDfuClusters(source: string): Promise<DfuClustersPaylo
 
 export async function fetchClusterProfiles(): Promise<ClusterProfilesPayload> {
   return fetchJson("/domains/dfu/clusters/profiles");
+}
+
+export interface ClusteringDefaultsPayload {
+  feature_params: { time_window_months: number; min_months_history: number };
+  model_params: {
+    k_range: number[];
+    min_cluster_size_pct: number;
+    use_pca: boolean;
+    pca_components: number | null;
+    skip_gap: boolean;
+    all_features: boolean;
+  };
+  label_params: {
+    volume_high: number;
+    volume_low: number;
+    cv_steady: number;
+    cv_volatile: number;
+    seasonality_threshold: number;
+    zero_demand_threshold: number;
+  };
+}
+
+export async function fetchClusteringDefaults(): Promise<ClusteringDefaultsPayload> {
+  return fetchJson("/clustering/defaults");
+}
+
+export interface ClusteringScenarioParams {
+  feature_params?: ClusteringDefaultsPayload["feature_params"];
+  model_params?: ClusteringDefaultsPayload["model_params"];
+  label_params?: ClusteringDefaultsPayload["label_params"];
+  relabel_only?: boolean;
+  previous_scenario_id?: string;
+}
+
+export interface ScenarioProfile {
+  label: string;
+  count: number;
+  pct_of_total: number;
+  mean_demand: number;
+  cv_demand: number;
+  seasonality_strength: number;
+  trend_slope: number;
+  growth_rate: number;
+  zero_demand_pct: number;
+}
+
+export interface ClusteringScenarioResult {
+  scenario_id: string;
+  status: "completed" | "failed";
+  runtime_seconds: number;
+  params: Record<string, unknown>;
+  result: {
+    optimal_k: number;
+    silhouette_score: number;
+    inertia: number;
+    total_dfus: number;
+    k_selection_results: {
+      k_values: number[];
+      inertias: number[];
+      silhouette_scores: number[];
+    };
+    profiles: ScenarioProfile[];
+  } | null;
+  error: string | null;
+}
+
+export async function runClusteringScenario(
+  params: ClusteringScenarioParams,
+): Promise<ClusteringScenarioResult> {
+  return fetchJson("/clustering/scenario", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+}
+
+export async function promoteScenario(scenarioId: string): Promise<unknown> {
+  return fetchJson(`/clustering/scenario/${encodeURIComponent(scenarioId)}/promote`, {
+    method: "POST",
+  });
 }
 
 // ---------------------------------------------------------------------------

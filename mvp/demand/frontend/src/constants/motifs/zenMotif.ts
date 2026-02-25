@@ -1,0 +1,248 @@
+import { registerMotif } from "@/constants/motifRegistry";
+import type { MotifThemeConfig, TileConfig, MotifPalette, ColorMode } from "@/types/motif";
+
+// ---------------------------------------------------------------------------
+// Zen Garden motif -- "Enso"
+//
+// Japanese Karesansui (dry landscape) theme.  Each tab maps to a natural
+// element found in a traditional zen garden -- stone, water, bamboo, moss,
+// wind, pine, bridge, crane, moon, lantern, koi, cherry blossom.  Rendered
+// as card-style tiles with muted, natural tones evoking meditative calm.
+// ---------------------------------------------------------------------------
+
+const tile = (
+  primary: string,
+  superscript: string | number,
+  label: string,
+  restClasses: string,
+  activeClasses: string,
+  glowClass: string,
+  tagline: string,
+): TileConfig => ({
+  variant: "card",
+  primary,
+  superscript,
+  label,
+  restClasses,
+  activeClasses,
+  glowClass,
+  tagline,
+});
+
+const tiles: Record<string, TileConfig> = {
+  explorer: tile(
+    "\u77F3", "\u4E00", "Explorer",
+    "bg-stone-800/90 text-stone-300 border-stone-600/60",
+    "bg-stone-700 text-stone-100 border-stone-400",
+    "shadow-[0_0_12px_rgba(168,162,158,0.35)]",
+    "The first stone sets the path",
+  ),
+  accuracy: tile(
+    "\u6C34", "\u4E8C", "Accuracy",
+    "bg-sky-950/90 text-sky-300 border-sky-800/60",
+    "bg-sky-900 text-sky-100 border-sky-600",
+    "shadow-[0_0_12px_rgba(125,211,252,0.35)]",
+    "Water never argues with level",
+  ),
+  dfuAnalysis: tile(
+    "\u7AF9", "\u4E09", "DFU Analysis",
+    "bg-green-950/90 text-green-300 border-green-800/60",
+    "bg-green-900 text-green-100 border-green-600",
+    "shadow-[0_0_12px_rgba(134,239,172,0.35)]",
+    "Every node connects root to sky",
+  ),
+  clusters: tile(
+    "\u82D4", "\u56DB", "Clusters",
+    "bg-emerald-950/90 text-emerald-300 border-emerald-800/60",
+    "bg-emerald-900 text-emerald-100 border-emerald-600",
+    "shadow-[0_0_12px_rgba(110,231,183,0.3)]",
+    "Groupings that emerge, not imposed",
+  ),
+  intel: tile(
+    "\u98A8", "\u4E94", "Intel",
+    "bg-amber-950/90 text-amber-300 border-amber-800/60",
+    "bg-amber-900 text-amber-100 border-amber-600",
+    "shadow-[0_0_12px_rgba(252,211,77,0.35)]",
+    "The wind knows before the market",
+  ),
+  item: tile(
+    "\u677E", "\u516D", "Item",
+    "bg-teal-950/90 text-teal-300 border-teal-800/60",
+    "bg-teal-900 text-teal-100 border-teal-600",
+    "shadow-[0_0_12px_rgba(94,234,212,0.3)]",
+    "Evergreen endurance",
+  ),
+  location: tile(
+    "\u6A4B", "\u4E03", "Location",
+    "bg-orange-950/90 text-orange-300 border-orange-800/60",
+    "bg-orange-900 text-orange-100 border-orange-600",
+    "shadow-[0_0_12px_rgba(253,186,116,0.35)]",
+    "Connecting two shores",
+  ),
+  customer: tile(
+    "\u9DB4", "\u516B", "Customer",
+    "bg-violet-950/90 text-violet-300 border-violet-800/60",
+    "bg-violet-900 text-violet-100 border-violet-600",
+    "shadow-[0_0_12px_rgba(196,181,253,0.35)]",
+    "One call. Precisely enough.",
+  ),
+  time: tile(
+    "\u6708", "\u4E5D", "Time",
+    "bg-indigo-950/90 text-indigo-300 border-indigo-800/60",
+    "bg-indigo-900 text-indigo-100 border-indigo-600",
+    "shadow-[0_0_12px_rgba(165,180,252,0.35)]",
+    "Each phase in its season",
+  ),
+  dfu: tile(
+    "\u706F", "\u5341", "DFU",
+    "bg-yellow-950/90 text-yellow-300 border-yellow-800/60",
+    "bg-yellow-900 text-yellow-100 border-yellow-600",
+    "shadow-[0_0_12px_rgba(253,224,71,0.3)]",
+    "Light reveals the pattern",
+  ),
+  sales: tile(
+    "\u9CA4", "\u58F1", "Sales",
+    "bg-red-950/90 text-red-300 border-red-800/60",
+    "bg-red-900 text-red-100 border-red-600",
+    "shadow-[0_0_12px_rgba(252,165,165,0.3)]",
+    "Upstream with purpose",
+  ),
+  forecast: tile(
+    "\u685C", "\u5F10", "Forecast",
+    "bg-pink-950/90 text-pink-300 border-pink-800/60",
+    "bg-pink-900 text-pink-100 border-pink-600",
+    "shadow-[0_0_12px_rgba(249,168,212,0.35)]",
+    "Blooming at the predicted hour",
+  ),
+};
+
+// ---------------------------------------------------------------------------
+// Full UI palette — warm earth/stone, moss green, bamboo, sakura accents
+// ---------------------------------------------------------------------------
+const palette: Partial<Record<ColorMode, Partial<MotifPalette>>> = {
+  light: {
+    background: "40 20% 95%",
+    foreground: "30 25% 18%",
+    card: "40 15% 98%",
+    cardForeground: "30 25% 18%",
+    primary: "150 28% 36%",
+    primaryForeground: "0 0% 100%",
+    secondary: "40 30% 90%",
+    secondaryForeground: "40 30% 25%",
+    muted: "35 15% 91%",
+    mutedForeground: "30 12% 42%",
+    accent: "340 35% 55%",
+    accentForeground: "0 0% 100%",
+    border: "35 14% 82%",
+    input: "35 14% 82%",
+    ring: "150 28% 36%",
+    destructive: "0 72% 51%",
+    destructiveForeground: "0 0% 100%",
+    chart1: "#4d7c5a",
+    chart2: "#b8915a",
+    chart3: "#c97a8a",
+    chart4: "#4a8a9a",
+    chart5: "#8a7a6a",
+    chart6: "#3d7050",
+    kpiBest: "#4d7c5a",
+    kpiWarning: "#c97a8a",
+    kpiCeiling: "#b8915a",
+    bgGradientPrimary: "rgba(107,143,113,0.10)",
+    bgGradientSecondary: "rgba(212,165,116,0.08)",
+    bgGradientBaseStart: "#f0ece4",
+    bgGradientBaseMid: "#eee8de",
+    bgGradientBaseEnd: "#ece4d8",
+  },
+  dark: {
+    background: "30 10% 10%",
+    foreground: "40 15% 85%",
+    card: "30 10% 14%",
+    cardForeground: "40 15% 85%",
+    primary: "150 30% 42%",
+    primaryForeground: "0 0% 100%",
+    secondary: "40 35% 22%",
+    secondaryForeground: "40 30% 82%",
+    muted: "30 8% 18%",
+    mutedForeground: "35 10% 52%",
+    accent: "340 35% 55%",
+    accentForeground: "0 0% 100%",
+    border: "30 8% 22%",
+    input: "30 8% 22%",
+    ring: "150 30% 42%",
+    destructive: "0 55% 55%",
+    destructiveForeground: "0 0% 100%",
+    chart1: "#7aab82",
+    chart2: "#d4a574",
+    chart3: "#e8a5b8",
+    chart4: "#6aabb8",
+    chart5: "#b8a898",
+    chart6: "#5ea568",
+    kpiBest: "#8bab8f",
+    kpiWarning: "#e8a5b8",
+    kpiCeiling: "#c5a87a",
+    bgGradientPrimary: "rgba(107,143,113,0.06)",
+    bgGradientSecondary: "rgba(212,165,116,0.04)",
+    bgGradientBaseStart: "#171412",
+    bgGradientBaseMid: "#191614",
+    bgGradientBaseEnd: "#1b1816",
+  },
+  midnight: {
+    background: "30 15% 8%",
+    foreground: "40 12% 82%",
+    card: "30 12% 11%",
+    cardForeground: "40 12% 82%",
+    primary: "150 28% 38%",
+    primaryForeground: "0 0% 100%",
+    secondary: "40 30% 18%",
+    secondaryForeground: "40 25% 78%",
+    muted: "30 10% 15%",
+    mutedForeground: "35 8% 48%",
+    accent: "340 30% 50%",
+    accentForeground: "0 0% 100%",
+    border: "30 10% 18%",
+    input: "30 10% 18%",
+    ring: "150 28% 38%",
+    destructive: "0 50% 58%",
+    destructiveForeground: "0 0% 100%",
+    chart1: "#8fbf98",
+    chart2: "#debb8e",
+    chart3: "#f0b8c8",
+    chart4: "#7ebbc8",
+    chart5: "#c8b8a8",
+    chart6: "#72b87a",
+    kpiBest: "#a0c0a4",
+    kpiWarning: "#f0b8c8",
+    kpiCeiling: "#d4be90",
+    bgGradientPrimary: "rgba(107,143,113,0.04)",
+    bgGradientSecondary: "rgba(212,165,116,0.03)",
+    bgGradientBaseStart: "#12100c",
+    bgGradientBaseMid: "#14120e",
+    bgGradientBaseEnd: "#161410",
+  },
+};
+
+const zenMotif: MotifThemeConfig = {
+  id: "zen",
+  displayName: "Zen Garden",
+  description:
+    "Japanese karesansui garden tiles with muted natural tones, kanji elements, and meditative calm.",
+  previewTile: tiles.explorer,
+  tiles,
+  loading: {
+    animationName: "zen-breathe",
+    wrapperClasses: "rounded-2xl",
+    statusLabel: "Contemplating",
+  },
+  chrome: {
+    appName: "Ens\u014D",
+    appTagline: "Demand, Observed in Stillness",
+    logoSvgPath: null,
+    bgOverlay: "none",
+    tileRadius: "rounded-2xl",
+  },
+  palette,
+};
+
+registerMotif(zenMotif);
+
+export default zenMotif;

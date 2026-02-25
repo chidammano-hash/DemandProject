@@ -53,10 +53,33 @@ const config: Config = {
           "0%, 100%": { boxShadow: "0 0 0 0 rgba(99, 102, 241, 0.4)" },
           "50%": { boxShadow: "0 0 16px 4px rgba(99, 102, 241, 0.25)" },
         },
+        "orbit-spin": {
+          "0%": { transform: "rotate(0deg) scale(1)", opacity: "0.3" },
+          "50%": { transform: "rotate(180deg) scale(1.15)", opacity: "0.9" },
+          "100%": { transform: "rotate(360deg) scale(1)", opacity: "0.3" },
+        },
+        "flame-flicker": {
+          "0%, 100%": { opacity: "0.6", filter: "brightness(1)" },
+          "25%": { opacity: "1", filter: "brightness(1.3)" },
+          "50%": { opacity: "0.8", filter: "brightness(1.1)" },
+          "75%": { opacity: "1", filter: "brightness(1.2)" },
+        },
+        "zen-breathe": {
+          "0%, 100%": { opacity: "0.7", transform: "scale(1)" },
+          "50%": { opacity: "1", transform: "scale(1.04)" },
+        },
+        "pour-shimmer": {
+          "0%": { backgroundPosition: "-200% 0" },
+          "100%": { backgroundPosition: "200% 0" },
+        },
       },
       animation: {
         "fade-in": "fade-in 250ms ease-out",
         "pulse-glow": "pulse-glow 1.5s ease-in-out infinite",
+        "orbit-spin": "orbit-spin 3s linear infinite",
+        "flame-flicker": "flame-flicker 0.8s ease-in-out infinite",
+        "zen-breathe": "zen-breathe 4s ease-in-out infinite",
+        "pour-shimmer": "pour-shimmer 2s ease-in-out infinite",
       },
     },
   },

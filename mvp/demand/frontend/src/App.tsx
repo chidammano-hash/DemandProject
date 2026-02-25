@@ -8,8 +8,10 @@ import { cn } from "@/lib/utils";
 import { ElementTab } from "@/components/ElementTab";
 import { LoadingElement } from "@/components/LoadingElement";
 import { KeyboardShortcutHelp } from "@/components/KeyboardShortcutHelp";
-import { ELEMENT_CONFIG } from "@/constants/elements";
+import { MotifSettingsPanel } from "@/components/MotifSettingsPanel";
 import { useTheme } from "@/hooks/useTheme";
+import { useMotifTheme } from "@/hooks/useMotifTheme";
+import { MotifProvider } from "@/context/MotifContext";
 import {
   getInitialDomain,
   getInitialTab,
@@ -44,12 +46,13 @@ const THEME_OPTIONS: { value: Theme; label: string; icon: string }[] = [
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
 // ---------------------------------------------------------------------------
-function TabErrorFallback({ error, resetErrorBoundary, tabKey }: { error: Error; resetErrorBoundary: () => void; tabKey: string }) {
+function TabErrorFallback({ error, resetErrorBoundary, tabKey }: { error: unknown; resetErrorBoundary: () => void; tabKey: string }) {
+  const msg = error instanceof Error ? error.message : "An unexpected error occurred";
   return (
     <Card className="mt-4 border-destructive/30 bg-destructive/10">
       <CardContent className="pt-4 flex flex-col items-center gap-3">
-        <LoadingElement config={ELEMENT_CONFIG[tabKey] ?? ELEMENT_CONFIG.explorer} />
-        <p className="text-sm text-destructive">{error.message}</p>
+        <LoadingElement tabKey={tabKey} />
+        <p className="text-sm text-destructive">{msg}</p>
         <Button variant="outline" size="sm" onClick={resetErrorBoundary}>Retry</Button>
       </CardContent>
     </Card>
@@ -60,7 +63,7 @@ function TabErrorFallback({ error, resetErrorBoundary, tabKey }: { error: Error;
 // Suspense fallback
 // ---------------------------------------------------------------------------
 function TabSuspenseFallback({ tabKey }: { tabKey: string }) {
-  return <LoadingElement config={ELEMENT_CONFIG[tabKey] ?? ELEMENT_CONFIG.explorer} message="Loading tab..." />;
+  return <LoadingElement tabKey={tabKey} message="Loading tab..." />;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +71,8 @@ function TabSuspenseFallback({ tabKey }: { tabKey: string }) {
 // ---------------------------------------------------------------------------
 export default function App() {
   const { theme, setTheme } = useTheme();
+  const motifTheme = useMotifTheme(theme);
+  const { motifConfig, motifId, setMotif, cycleMotif } = motifTheme;
   const [domain, setDomain] = useState(getInitialDomain);
   const [activeTab, setActiveTab] = useState(getInitialTab);
   const [showSettings, setShowSettings] = useState(false);
@@ -91,6 +96,7 @@ export default function App() {
   const { showHelp, closeHelp } = useKeyboardShortcuts({
     onTabSwitch: handleTabSwitch,
     onClosePanel: () => setShowSettings(false),
+    onCycleMotif: cycleMotif,
   });
 
   // Click-outside dismiss for settings dropdown
@@ -104,6 +110,7 @@ export default function App() {
   }, [showSettings]);
 
   return (
+    <MotifProvider value={motifTheme}>
     <main className="mx-auto w-full max-w-[1800px] min-w-0 overflow-x-hidden p-4 md:p-6">
       {/* Skip to content link for accessibility */}
       <a href="#tab-content" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:rounded-md focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground">
@@ -124,9 +131,9 @@ export default function App() {
                   <circle cx="12" cy="12" r="3" /><ellipse cx="12" cy="12" rx="10" ry="4" /><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)" /><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)" />
                 </svg>
               </div>
-              <h1 className="text-2xl font-bold tracking-tight md:text-3xl text-foreground">Planthium</h1>
+              <h1 className="text-2xl font-bold tracking-tight md:text-3xl text-foreground">{motifConfig.chrome.appName}</h1>
             </div>
-            <p className="mt-1 ml-[46px] text-sm text-muted-foreground md:text-base">Periodic Analytics for Demand Forecasting</p>
+            <p className="mt-1 ml-[46px] text-sm text-muted-foreground md:text-base">{motifConfig.chrome.appTagline}</p>
           </div>
 
           {/* Mobile tab selector */}
@@ -152,11 +159,11 @@ export default function App() {
 
           {/* Desktop element tab buttons */}
           <div className="hidden md:flex flex-wrap gap-2.5" role="tablist" aria-label="Main navigation">
-            <ElementTab config={ELEMENT_CONFIG.explorer} isActive={activeTab === "explorer"} onClick={() => { setActiveTab("explorer"); if (ANALYTICS_TAB_DOMAINS.has(domain) || !DIMENSION_DOMAINS.includes(domain)) setDomain("item"); }} />
-            <ElementTab config={ELEMENT_CONFIG.clusters} isActive={activeTab === "clusters"} onClick={() => { setActiveTab("clusters"); if (domain !== "dfu") setDomain("dfu"); }} />
-            <ElementTab config={ELEMENT_CONFIG.dfuAnalysis} isActive={activeTab === "dfuAnalysis"} onClick={() => setActiveTab("dfuAnalysis")} />
-            <ElementTab config={ELEMENT_CONFIG.accuracy} isActive={activeTab === "accuracy"} onClick={() => setActiveTab("accuracy")} />
-            <ElementTab config={ELEMENT_CONFIG.intel} isActive={activeTab === "intel"} onClick={() => setActiveTab("intel")} />
+            <ElementTab tabKey="explorer" isActive={activeTab === "explorer"} onClick={() => { setActiveTab("explorer"); if (ANALYTICS_TAB_DOMAINS.has(domain) || !DIMENSION_DOMAINS.includes(domain)) setDomain("item"); }} />
+            <ElementTab tabKey="clusters" isActive={activeTab === "clusters"} onClick={() => { setActiveTab("clusters"); if (domain !== "dfu") setDomain("dfu"); }} />
+            <ElementTab tabKey="dfuAnalysis" isActive={activeTab === "dfuAnalysis"} onClick={() => setActiveTab("dfuAnalysis")} />
+            <ElementTab tabKey="accuracy" isActive={activeTab === "accuracy"} onClick={() => setActiveTab("accuracy")} />
+            <ElementTab tabKey="intel" isActive={activeTab === "intel"} onClick={() => setActiveTab("intel")} />
 
             {/* Settings gear */}
             <div className="relative" ref={settingsRef}>
@@ -176,14 +183,14 @@ export default function App() {
                 <span className="text-[11px] font-medium leading-none tracking-wide uppercase opacity-70">Settings</span>
               </button>
               {showSettings && (
-                <div className="absolute right-0 top-full mt-2 z-50 w-64 rounded-xl border border-border bg-card p-4 shadow-xl backdrop-blur-sm">
-                  <h3 className="text-sm font-semibold text-foreground mb-3">Theme</h3>
+                <div className="absolute right-0 top-full mt-2 z-50 w-64 rounded-xl border border-border bg-card p-3 shadow-xl backdrop-blur-sm max-h-[80vh] overflow-y-auto">
+                  <h3 className="text-sm font-semibold text-foreground mb-3">Color Mode</h3>
                   <div className="flex gap-2">
                     {THEME_OPTIONS.map((opt) => (
                       <button
                         key={opt.value}
                         aria-label={`Switch to ${opt.label} theme`}
-                        onClick={() => { setTheme(opt.value); setShowSettings(false); }}
+                        onClick={() => { setTheme(opt.value); }}
                         className={cn(
                           "flex-1 flex flex-col items-center gap-1 rounded-lg border p-3 transition-all duration-150",
                           theme === opt.value
@@ -196,6 +203,7 @@ export default function App() {
                       </button>
                     ))}
                   </div>
+                  <MotifSettingsPanel currentMotifId={motifId} onSelect={(id) => { setMotif(id); setShowSettings(false); }} />
                 </div>
               )}
             </div>
@@ -246,5 +254,6 @@ export default function App() {
       {/* ---- Chat panel (always mounted) ---- */}
       <ChatPanel domain={domain} theme={theme} />
     </main>
+    </MotifProvider>
   );
 }

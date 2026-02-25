@@ -6,23 +6,6 @@ import httpx
 from httpx import ASGITransport
 
 
-@pytest.fixture
-def mock_pool():
-    mock_conn = MagicMock()
-    mock_cursor = MagicMock()
-    mock_cursor.fetchall.return_value = []
-    mock_cursor.fetchone.return_value = None
-    mock_cursor.description = []
-    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-    mock_conn.__exit__ = MagicMock(return_value=False)
-
-    pool = MagicMock()
-    pool.connection.return_value = mock_conn
-
-    return pool, mock_conn, mock_cursor
-
 
 @pytest.mark.asyncio
 async def test_competition_config_get(mock_pool):
