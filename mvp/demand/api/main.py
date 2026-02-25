@@ -2759,36 +2759,53 @@ def inventory_position(
 
     where_parts: list[str] = []
     params: list[Any] = []
+    has_filter = bool(item.strip() or location.strip())
     if item.strip():
         where_parts.append("item_no ILIKE %s")
         params.append(f"%{item.strip()}%")
     if location.strip():
         where_parts.append("loc ILIKE %s")
         params.append(f"%{location.strip()}%")
-    inner_where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
-    # Subquery gets latest snapshot per item-location, outer query paginates.
-    count_sql = f"""
-        SELECT count(*) FROM (
-            SELECT DISTINCT ON (item_no, loc) 1
-            FROM fact_inventory_snapshot
-            {inner_where}
-            ORDER BY item_no, loc, snapshot_date DESC
-        ) _sub
-    """
-    data_sql = f"""
-        SELECT * FROM (
-            SELECT DISTINCT ON (item_no, loc)
-                   item_no, loc, snapshot_date,
+    if has_filter:
+        # Filtered: use DISTINCT ON to get latest snapshot per item-location.
+        inner_where = f"WHERE {' AND '.join(where_parts)}"
+        count_sql = f"""
+            SELECT count(*) FROM (
+                SELECT DISTINCT ON (item_no, loc) 1
+                FROM fact_inventory_snapshot
+                {inner_where}
+                ORDER BY item_no, loc, snapshot_date DESC
+            ) _sub
+        """
+        data_sql = f"""
+            SELECT * FROM (
+                SELECT DISTINCT ON (item_no, loc)
+                       item_no, loc, snapshot_date,
+                       lead_time_days, qty_on_hand, qty_on_hand_on_order,
+                       qty_on_order, mtd_sales
+                FROM fact_inventory_snapshot
+                {inner_where}
+                ORDER BY item_no, loc, snapshot_date DESC
+            ) latest
+            ORDER BY {qident(order_col)} {order_dir}
+            LIMIT %s OFFSET %s
+        """
+    else:
+        # Unfiltered: restrict to latest snapshot date only (fast index scan).
+        count_sql = """
+            SELECT count(*) FROM fact_inventory_snapshot
+            WHERE snapshot_date = (SELECT max(snapshot_date) FROM fact_inventory_snapshot)
+        """
+        data_sql = f"""
+            SELECT item_no, loc, snapshot_date,
                    lead_time_days, qty_on_hand, qty_on_hand_on_order,
                    qty_on_order, mtd_sales
             FROM fact_inventory_snapshot
-            {inner_where}
-            ORDER BY item_no, loc, snapshot_date DESC
-        ) latest
-        ORDER BY {qident(order_col)} {order_dir}
-        LIMIT %s OFFSET %s
-    """
+            WHERE snapshot_date = (SELECT max(snapshot_date) FROM fact_inventory_snapshot)
+            ORDER BY {qident(order_col)} {order_dir}
+            LIMIT %s OFFSET %s
+        """
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(count_sql, params)
@@ -2822,7 +2839,7 @@ def inventory_kpis(
     """Aggregate inventory KPIs over trailing N months."""
     set_cache(response, max_age=120)
 
-    where_parts: list[str] = ["snapshot_date >= (CURRENT_DATE - (%s || ' months')::interval)"]
+    where_parts: list[str] = ["month_start >= (CURRENT_DATE - (%s || ' months')::interval)"]
     params: list[Any] = [months]
     if item.strip():
         where_parts.append("item_no ILIKE %s")
@@ -2834,15 +2851,15 @@ def inventory_kpis(
 
     sql = f"""
         SELECT
-            COALESCE(SUM(qty_on_hand), 0)::double precision           AS total_on_hand,
-            COALESCE(SUM(qty_on_order), 0)::double precision          AS total_on_order,
-            COALESCE(SUM(qty_on_hand * 1.0), 0)::double precision     AS total_inventory_value,
-            COALESCE(AVG(lead_time_days), 0)::double precision         AS avg_lead_time_days,
-            COUNT(DISTINCT item_no)::bigint                            AS distinct_items,
-            COUNT(DISTINCT loc)::bigint                                AS distinct_locations,
-            COUNT(*)::bigint                                           AS snapshot_count,
-            %s                                                         AS months_covered
-        FROM fact_inventory_snapshot
+            COALESCE(SUM(avg_qty_on_hand * snapshot_count), 0)::double precision  AS total_on_hand,
+            COALESCE(SUM((avg_qty_on_hand_on_order - avg_qty_on_hand) * snapshot_count), 0)::double precision AS total_on_order,
+            COALESCE(SUM(avg_qty_on_hand * snapshot_count), 0)::double precision  AS total_inventory_value,
+            COALESCE(AVG(avg_lead_time_days), 0)::double precision                AS avg_lead_time_days,
+            COUNT(DISTINCT item_no)::bigint                                       AS distinct_items,
+            COUNT(DISTINCT loc)::bigint                                           AS distinct_locations,
+            COALESCE(SUM(snapshot_count), 0)::bigint                              AS snapshot_count,
+            %s                                                                    AS months_covered
+        FROM agg_inventory_monthly
         {where_sql}
     """
 

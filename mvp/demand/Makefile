@@ -206,7 +206,7 @@ refresh-agg-forecast:
 
 refresh-agg-inventory:
 	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp \
-		-c "REFRESH MATERIALIZED VIEW CONCURRENTLY agg_inventory_monthly;"
+		-c "REFRESH MATERIALIZED VIEW agg_inventory_monthly;"
 
 refresh-agg: refresh-agg-sales refresh-agg-forecast refresh-agg-inventory
 

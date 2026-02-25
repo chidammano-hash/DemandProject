@@ -60,3 +60,5 @@ May 2025 will have lag 0 and lag 1
 Aug 2025 to Jan 2025 will have all the 5 lags 0 to 4.
 
 Measure the forecast at those lags, and store it. But for get the accuracy we need it only at execution lag the execution lag number is in the dfu.txt that is already loaded. Use that and load the data for each dfu for every month from Aug 2025 to Jan 2026 in to the forecast table with the right measure id. For example LGBM or different LGBM model or catboost
+
+I need to implement the feature34.md. The inventory snapshots are in the dataafiles. therre are 14 files one for each month named that is Inventory_Snapshot_YYYY_MM.csv eg nventory_Snapshot_2025_01.csv. all needs to be loaded from datafiles allthe way similar to sales and external forecasts. Spin up 10 agents and manage this massive development.
