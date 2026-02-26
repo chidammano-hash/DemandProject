@@ -1,24 +1,12 @@
 competition:
   name: default
-  metric: wape
+  metric: accuracy_pct
   lag: execution
   min_dfu_rows: 3
   champion_model_id: champion
   models:
-  - lgbm_global
   - lgbm_cluster
-  - lgbm_transfer
-  - catboost_global
   - catboost_cluster
-  - xgboost_global
   - xgboost_cluster
-  - prophet_global
-  - prophet_pooled
-  - patchtst_global
-  - patchtst_cluster
-  - deepar_global
-  - deepar_cluster
-  - statsforecast_global
-  - statsforecast_cluster
-  - neuralprophet_global
   - neuralprophet_cluster
+  - statsforecast_global

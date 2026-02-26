@@ -730,7 +730,15 @@ export function AccuracyTab({ theme }: AccuracyTabProps) {
 
               {/* Champion KPI cards */}
               <div className="flex flex-wrap gap-4 text-sm">
-                <KpiCard label="DFUs Evaluated" value={championSummary.total_dfus.toLocaleString()} />
+                <KpiCard
+                  label="DFUs Evaluated"
+                  value={championSummary.total_dfus.toLocaleString()}
+                  sublabel={
+                    championSummary.total_dfu_months
+                      ? `${championSummary.total_dfu_months.toLocaleString()} DFU-months`
+                      : undefined
+                  }
+                />
                 <KpiCard
                   label="Champion Accuracy"
                   value={
@@ -793,10 +801,11 @@ export function AccuracyTab({ theme }: AccuracyTabProps) {
               {/* Champion model wins bar chart */}
               <div className="space-y-1.5">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Champion Model Wins (best model per DFU overall)
+                  Champion Model Wins (best model per DFU per month, before-the-fact)
                 </p>
                 {Object.entries(championSummary.model_wins).map(([model, wins]) => {
-                  const pct = championSummary.total_dfus > 0 ? (wins / championSummary.total_dfus) * 100 : 0;
+                  const total = championSummary.total_dfu_months ?? championSummary.total_dfus;
+                  const pct = total > 0 ? (wins / total) * 100 : 0;
                   return (
                     <div key={model} className="flex items-center gap-2 text-sm">
                       <span className="w-40 truncate font-mono text-xs text-right">{model}</span>
@@ -819,7 +828,7 @@ export function AccuracyTab({ theme }: AccuracyTabProps) {
                 Object.keys(championSummary.ceiling_model_wins).length > 0 && (
                   <div className="space-y-1.5">
                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Ceiling Model Wins &mdash; Oracle (best model per DFU per month)
+                      Ceiling Model Wins &mdash; Oracle (best model per DFU per month, after-the-fact)
                     </p>
                     {(() => {
                       const totalCeil = Object.values(championSummary.ceiling_model_wins!).reduce(

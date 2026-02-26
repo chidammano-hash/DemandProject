@@ -124,6 +124,9 @@ export function DfuAnalysisTab({ theme }: DfuAnalysisTabProps) {
     if (needsItem && !debouncedDfuItem.trim()) return;
     if (needsLoc && !debouncedDfuLocation.trim()) return;
 
+    // Clear stale data so the loading indicator shows during mode switches
+    setDfuData(null);
+
     let cancelled = false;
     async function loadAnalysis() {
       setDfuLoading(true);
@@ -655,6 +658,13 @@ export function DfuAnalysisTab({ theme }: DfuAnalysisTabProps) {
                   <CardTitle className="flex items-center gap-2 text-sm">
                     <ChartColumn className="h-4 w-4" /> Sales vs Forecast
                     Overlay
+                    {dfuData.scope_count != null && (
+                      <span className="ml-2 rounded bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                        {dfuData.mode === "item_at_all_locations"
+                          ? `${dfuData.scope_count} locations aggregated`
+                          : `${dfuData.scope_count} items aggregated`}
+                      </span>
+                    )}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="h-[380px] pt-2">

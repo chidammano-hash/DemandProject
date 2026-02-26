@@ -146,6 +146,7 @@ export type DfuAnalysisPayload = {
   series: Record<string, number | string>[];
   model_monthly: Record<string, DfuModelMonthly[]>;
   dfu_attributes: Record<string, string | null>[];
+  scope_count?: number;
 };
 
 export type InventoryPosition = {

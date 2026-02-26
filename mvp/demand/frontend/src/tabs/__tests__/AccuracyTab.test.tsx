@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor, screen } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 
 vi.mock("@/api/queries", () => ({
@@ -39,6 +39,60 @@ describe("AccuracyTab", () => {
 
     await waitFor(() => {
       expect(document.body.textContent).toBeDefined();
+    });
+  });
+
+  it("renders champion summary with DFU-months when data available", async () => {
+    const { fetchCompetitionSummary } = await import("@/api/queries");
+    (fetchCompetitionSummary as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      summary: {
+        total_dfus: 100,
+        total_dfu_months: 500,
+        total_champion_rows: 5000,
+        model_wins: { lgbm_global: 300, catboost_global: 200 },
+        overall_champion_wape: 30.0,
+        overall_champion_accuracy_pct: 70.0,
+        run_ts: "2026-02-25T10:00:00Z",
+        total_ceiling_rows: 6000,
+        ceiling_model_wins: { lgbm_global: 350, catboost_global: 150 },
+        overall_ceiling_wape: 20.0,
+        overall_ceiling_accuracy_pct: 80.0,
+      },
+    });
+
+    render(
+      <TestQueryWrapper>
+        <AccuracyTab theme="light" />
+      </TestQueryWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/500/)).toBeDefined();
+    });
+  });
+
+  it("renders before-the-fact label for champion model wins", async () => {
+    const { fetchCompetitionSummary } = await import("@/api/queries");
+    (fetchCompetitionSummary as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      summary: {
+        total_dfus: 50,
+        total_dfu_months: 200,
+        total_champion_rows: 2000,
+        model_wins: { lgbm_global: 200 },
+        overall_champion_wape: 25.0,
+        overall_champion_accuracy_pct: 75.0,
+        run_ts: "2026-02-25T10:00:00Z",
+      },
+    });
+
+    render(
+      <TestQueryWrapper>
+        <AccuracyTab theme="light" />
+      </TestQueryWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/before-the-fact/)).toBeDefined();
     });
   });
 });

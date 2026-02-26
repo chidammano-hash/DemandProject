@@ -44,6 +44,18 @@ export default defineConfig({
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
+      "/inventory": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/dashboard": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/clustering": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
     },
   },
   build: {

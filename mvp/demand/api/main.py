@@ -1433,7 +1433,6 @@ def run_competition():
     cfg = raw.get("competition", {})
 
     models = cfg.get("models", [])
-    metric = cfg.get("metric", "wape")
     lag_mode = str(cfg.get("lag", "execution"))
     min_rows = int(cfg.get("min_dfu_rows", 3))
     champion_id = cfg.get("champion_model_id", "champion")
@@ -1450,35 +1449,58 @@ def run_competition():
         lag_cond = "lag = %s"
         params.append(int(lag_mode))
 
-    # 2. Compute DFU-level winners
+    # 2. Compute rolling/expanding window champion winners (before-the-fact)
     winner_sql = f"""
-    WITH dfu_model_wape AS (
+    WITH monthly_errors AS (
         SELECT
-            dmdunit, dmdgroup, loc, model_id,
-            SUM(ABS(basefcst_pref - tothist_dmd))
-                / NULLIF(ABS(SUM(tothist_dmd)), 0) AS wape,
-            COUNT(*) AS n_rows
+            dmdunit, dmdgroup, loc, startdate, model_id,
+            basefcst_pref, tothist_dmd,
+            ABS(basefcst_pref - tothist_dmd) AS abs_err
         FROM fact_external_forecast_monthly
         WHERE model_id IN ({placeholders})
           AND {lag_cond}
           AND basefcst_pref IS NOT NULL
           AND tothist_dmd IS NOT NULL
-        GROUP BY dmdunit, dmdgroup, loc, model_id
-        HAVING COUNT(*) >= %s
+    ),
+    cumulative AS (
+        SELECT *,
+            SUM(abs_err) OVER (
+                PARTITION BY dmdunit, dmdgroup, loc, model_id
+                ORDER BY startdate
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) AS cum_abs_err,
+            SUM(tothist_dmd) OVER (
+                PARTITION BY dmdunit, dmdgroup, loc, model_id
+                ORDER BY startdate
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) AS cum_actual,
+            COUNT(*) OVER (
+                PARTITION BY dmdunit, dmdgroup, loc, model_id
+                ORDER BY startdate
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) AS prior_months
+        FROM monthly_errors
+    ),
+    with_wape AS (
+        SELECT *,
+            cum_abs_err / NULLIF(ABS(cum_actual), 0) AS prior_wape
+        FROM cumulative
+        WHERE prior_months >= %s
     ),
     ranked AS (
         SELECT *,
             ROW_NUMBER() OVER (
-                PARTITION BY dmdunit, dmdgroup, loc
-                ORDER BY wape ASC NULLS LAST
+                PARTITION BY dmdunit, dmdgroup, loc, startdate
+                ORDER BY prior_wape ASC NULLS LAST
             ) AS rn
-        FROM dfu_model_wape
-        WHERE wape IS NOT NULL
+        FROM with_wape
+        WHERE prior_wape IS NOT NULL
     )
-    SELECT dmdunit, dmdgroup, loc, model_id, wape, n_rows
+    SELECT dmdunit, dmdgroup, loc, startdate, model_id,
+           prior_wape, basefcst_pref, tothist_dmd
     FROM ranked
     WHERE rn = 1
-    ORDER BY dmdunit, dmdgroup, loc
+    ORDER BY dmdunit, dmdgroup, loc, startdate
     """
     params.append(min_rows)
 
@@ -1487,7 +1509,7 @@ def run_competition():
         winners = cur.fetchall()
 
     if not winners:
-        raise HTTPException(404, "No qualifying DFUs found with current config")
+        raise HTTPException(404, "No qualifying DFU-months found with current config")
 
     # 3. Bulk insert champion rows
     with get_conn() as conn, conn.cursor() as cur:
@@ -1497,19 +1519,20 @@ def run_competition():
             (champion_id,),
         )
 
-        # Temp table with winners
+        # Temp table with winners (DFU+month granularity)
         cur.execute("""
             CREATE TEMP TABLE _champion_winners (
                 dmdunit TEXT NOT NULL,
                 dmdgroup TEXT NOT NULL,
                 loc TEXT NOT NULL,
+                startdate DATE NOT NULL,
                 winning_model_id TEXT NOT NULL
             ) ON COMMIT DROP
         """)
 
         buf = io.StringIO()
-        for dmdunit, dmdgroup, loc, model_id, _wape, _n in winners:
-            buf.write(f"{dmdunit}\t{dmdgroup}\t{loc}\t{model_id}\n")
+        for dmdunit, dmdgroup, loc, startdate, model_id, *_ in winners:
+            buf.write(f"{dmdunit}\t{dmdgroup}\t{loc}\t{startdate}\t{model_id}\n")
         buf.seek(0)
         with cur.copy("COPY _champion_winners FROM STDIN") as copy:
             copy.write(buf.read())
@@ -1529,6 +1552,7 @@ def run_competition():
                 ON f.dmdunit = w.dmdunit
                AND f.dmdgroup = w.dmdgroup
                AND f.loc = w.loc
+               AND f.startdate = w.startdate
                AND f.model_id = w.winning_model_id
             """,
             (champion_id,),
@@ -1627,28 +1651,30 @@ def run_competition():
         cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
         conn.commit()
 
-    # 7. Build summary (champion)
+    # 7. Build summary (champion — rolling window)
     model_wins: dict[str, int] = {}
-    total_wape_num = 0.0
-    total_wape_denom = 0.0
-    for _u, _g, _l, mid, wape, n_rows in winners:
+    champ_abs_err_sum = 0.0
+    champ_actual_sum = 0.0
+    unique_dfus: set[tuple[str, str, str]] = set()
+    for u, g, l, _sd, mid, _prior_wape, fcst, actual in winners:
         model_wins[mid] = model_wins.get(mid, 0) + 1
-        if wape is not None:
-            total_wape_num += float(wape) * float(n_rows)
-            total_wape_denom += float(n_rows)
+        champ_abs_err_sum += abs(float(fcst) - float(actual))
+        champ_actual_sum += float(actual)
+        unique_dfus.add((u, g, l))
 
-    overall_wape = (total_wape_num / total_wape_denom * 100) if total_wape_denom else None
+    overall_wape = (champ_abs_err_sum / abs(champ_actual_sum) * 100) if champ_actual_sum else None
     overall_acc = (100.0 - overall_wape) if overall_wape is not None else None
 
     summary: dict[str, Any] = {
         "config": {
-            "metric": metric,
+            "metric": cfg.get("metric", "wape"),
             "lag": lag_mode,
             "min_dfu_rows": min_rows,
             "champion_model_id": champion_id,
             "models": models,
         },
-        "total_dfus": len(winners),
+        "total_dfus": len(unique_dfus),
+        "total_dfu_months": len(winners),
         "total_champion_rows": inserted,
         "model_wins": dict(sorted(model_wins.items(), key=lambda x: -x[1])),
         "overall_champion_wape": round(overall_wape, 4) if overall_wape is not None else None,
@@ -1664,9 +1690,9 @@ def run_competition():
         for _u, _g, _l, _sd, mid, abs_err, _fcst, actual in ceiling_rows:
             ceil_wins[mid] = ceil_wins.get(mid, 0) + 1
             ceil_abs_err_sum += float(abs_err)
-            ceil_actual_sum += abs(float(actual))
+            ceil_actual_sum += float(actual)
 
-        ceil_wape = (ceil_abs_err_sum / ceil_actual_sum * 100) if ceil_actual_sum else None
+        ceil_wape = (ceil_abs_err_sum / abs(ceil_actual_sum) * 100) if ceil_actual_sum else None
         ceil_acc = (100.0 - ceil_wape) if ceil_wape is not None else None
 
         summary["total_ceiling_rows"] = ceiling_inserted
@@ -1949,14 +1975,14 @@ def dfu_analysis(
                     "actual": vals["actual"],
                 })
 
-        # 5. DFU attributes from dim_dfu
+        # 5. DFU attributes from dim_dfu (mode-aware filtering)
         dfu_attrs: list[dict[str, Any]] = []
         dfu_where_parts: list[str] = []
         dfu_params: list[Any] = []
-        if item_val:
+        if mode in ("item_location", "item_at_all_locations") and item_val:
             dfu_where_parts.append("dmdunit = %s")
             dfu_params.append(item_val)
-        if loc_val:
+        if mode in ("item_location", "all_items_at_location") and loc_val:
             dfu_where_parts.append("loc = %s")
             dfu_params.append(loc_val)
         if dfu_where_parts:
@@ -1985,6 +2011,23 @@ def dfu_analysis(
                     for col, val in zip(dfu_cols, row)
                 })
 
+        # 6. Scope count for aggregated modes
+        scope_count: int | None = None
+        if mode == "item_at_all_locations" and item_val:
+            cur.execute(
+                "SELECT COUNT(DISTINCT loc) FROM agg_forecast_monthly WHERE dmdunit = %s",
+                [item_val],
+            )
+            row = cur.fetchone()
+            scope_count = int(row[0]) if row else None
+        elif mode == "all_items_at_location" and loc_val:
+            cur.execute(
+                "SELECT COUNT(DISTINCT dmdunit) FROM agg_forecast_monthly WHERE loc = %s",
+                [loc_val],
+            )
+            row = cur.fetchone()
+            scope_count = int(row[0]) if row else None
+
     return {
         "mode": mode,
         "item": item_val,
@@ -1994,6 +2037,7 @@ def dfu_analysis(
         "series": series,
         "model_monthly": model_monthly,
         "dfu_attributes": dfu_attrs,
+        **({"scope_count": scope_count} if scope_count is not None else {}),
     }
 
 

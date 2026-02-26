@@ -1,13 +1,14 @@
 """
-Champion model selection: pick the best-performing model per DFU.
+Champion model selection: rolling/expanding window best-model per DFU per month.
 
-For each DFU (dmdunit + dmdgroup + loc), evaluates competing models at
-the configured lag/metric and selects the winner.  All forecast rows from
-the winning model are copied into fact_external_forecast_monthly with
+For each DFU (dmdunit + dmdgroup + loc) at each month, evaluates competing
+models using cumulative WAPE from **prior months only** (before-the-fact)
+and selects the best model for that month.  The selected model's forecast
+rows are copied into fact_external_forecast_monthly with
 model_id = '<champion_model_id>' (default: 'champion').
 
-The champion composite automatically appears in all accuracy comparison
-views because it reuses the existing model_id mechanism.
+The ceiling (oracle) picks the best model per DFU per month using that
+month's actual error — the theoretical upper bound with perfect foresight.
 
 Usage:
     python scripts/run_champion_selection.py [--config config/model_competition.yaml]
@@ -80,18 +81,25 @@ def load_config(config_path: Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Champion selection logic
+# Champion selection logic — rolling/expanding window (before-the-fact)
 # ---------------------------------------------------------------------------
 
-def compute_dfu_winners(
+def compute_champion_winners(
     cur: psycopg.Cursor,
     models: list[str],
     lag_mode: str,
     min_rows: int,
-    metric: str,
-) -> list[tuple[str, str, str, str, float, int]]:
-    """Return (dmdunit, dmdgroup, loc, winning_model_id, wape, n_rows) per DFU."""
+) -> list[tuple[str, str, str, str, str, float, float, float]]:
+    """Return per-DFU per-month champion winners using expanding window.
 
+    For each (dmdunit, dmdgroup, loc, startdate), picks the model with
+    lowest cumulative WAPE computed from all **prior** months only
+    (before-the-fact selection).  Requires at least ``min_rows`` prior
+    months of history before a model can be selected.
+
+    Returns (dmdunit, dmdgroup, loc, startdate, model_id, prior_wape,
+             basefcst_pref, tothist_dmd).
+    """
     placeholders = ",".join(["%s"] * len(models))
 
     # Lag filter condition
@@ -103,38 +111,65 @@ def compute_dfu_winners(
         params = list(models) + [int(lag_mode)]
 
     sql = f"""
-    WITH dfu_model_wape AS (
+    WITH monthly_errors AS (
         SELECT
-            dmdunit, dmdgroup, loc, model_id,
-            SUM(ABS(basefcst_pref - tothist_dmd))
-                / NULLIF(ABS(SUM(tothist_dmd)), 0) AS wape,
-            COUNT(*) AS n_rows
+            dmdunit, dmdgroup, loc, startdate, model_id,
+            basefcst_pref, tothist_dmd,
+            ABS(basefcst_pref - tothist_dmd) AS abs_err
         FROM fact_external_forecast_monthly
         WHERE model_id IN ({placeholders})
           AND {lag_cond}
           AND basefcst_pref IS NOT NULL
           AND tothist_dmd IS NOT NULL
-        GROUP BY dmdunit, dmdgroup, loc, model_id
-        HAVING COUNT(*) >= %s
+    ),
+    cumulative AS (
+        SELECT *,
+            SUM(abs_err) OVER (
+                PARTITION BY dmdunit, dmdgroup, loc, model_id
+                ORDER BY startdate
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) AS cum_abs_err,
+            SUM(tothist_dmd) OVER (
+                PARTITION BY dmdunit, dmdgroup, loc, model_id
+                ORDER BY startdate
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) AS cum_actual,
+            COUNT(*) OVER (
+                PARTITION BY dmdunit, dmdgroup, loc, model_id
+                ORDER BY startdate
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) AS prior_months
+        FROM monthly_errors
+    ),
+    with_wape AS (
+        SELECT *,
+            cum_abs_err / NULLIF(ABS(cum_actual), 0) AS prior_wape
+        FROM cumulative
+        WHERE prior_months >= %s
     ),
     ranked AS (
         SELECT *,
             ROW_NUMBER() OVER (
-                PARTITION BY dmdunit, dmdgroup, loc
-                ORDER BY wape ASC NULLS LAST
+                PARTITION BY dmdunit, dmdgroup, loc, startdate
+                ORDER BY prior_wape ASC NULLS LAST
             ) AS rn
-        FROM dfu_model_wape
-        WHERE wape IS NOT NULL
+        FROM with_wape
+        WHERE prior_wape IS NOT NULL
     )
-    SELECT dmdunit, dmdgroup, loc, model_id, wape, n_rows
+    SELECT dmdunit, dmdgroup, loc, startdate, model_id,
+           prior_wape, basefcst_pref, tothist_dmd
     FROM ranked
     WHERE rn = 1
-    ORDER BY dmdunit, dmdgroup, loc
+    ORDER BY dmdunit, dmdgroup, loc, startdate
     """
     params.append(min_rows)
     cur.execute(sql, params)
     return cur.fetchall()
 
+
+# ---------------------------------------------------------------------------
+# Ceiling selection logic — oracle / perfect foresight (after-the-fact)
+# ---------------------------------------------------------------------------
 
 def compute_ceiling_winners(
     cur: psycopg.Cursor,
@@ -207,7 +242,7 @@ def insert_ceiling_forecasts(
     deleted = cur.rowcount
     print(f"  Deleted {deleted:,} existing ceiling rows")
 
-    # 2. Create temp table with DFU+month → winning model mapping
+    # 2. Create temp table with DFU+month -> winning model mapping
     cur.execute("""
         CREATE TEMP TABLE _ceiling_winners (
             dmdunit TEXT NOT NULL,
@@ -252,13 +287,14 @@ def insert_ceiling_forecasts(
 
 def insert_champion_forecasts(
     cur: psycopg.Cursor,
-    winners: list[tuple[str, str, str, str, float, int]],
+    winners: list[tuple[str, str, str, str, str, float, float, float]],
     champion_model_id: str,
 ) -> int:
-    """Bulk-insert champion forecast rows.
+    """Bulk-insert champion forecast rows using rolling window winners.
 
-    Uses temp table + INSERT ... SELECT for efficiency.
-    Returns number of rows inserted.
+    Uses temp table + INSERT ... SELECT.  The champion picks the best model
+    per DFU per month (before-the-fact), so the temp table key includes
+    startdate.  Returns number of rows inserted.
     """
     if not winners:
         return 0
@@ -271,20 +307,21 @@ def insert_champion_forecasts(
     deleted = cur.rowcount
     print(f"  Deleted {deleted:,} existing champion rows")
 
-    # 2. Create temp table with DFU → winning model mapping
+    # 2. Create temp table with DFU+month -> winning model mapping
     cur.execute("""
         CREATE TEMP TABLE _champion_winners (
             dmdunit TEXT NOT NULL,
             dmdgroup TEXT NOT NULL,
             loc TEXT NOT NULL,
+            startdate DATE NOT NULL,
             winning_model_id TEXT NOT NULL
         ) ON COMMIT DROP
     """)
 
-    # 3. COPY winners into temp table
+    # 3. COPY champion winners into temp table
     buf = io.StringIO()
-    for dmdunit, dmdgroup, loc, model_id, _wape, _n in winners:
-        buf.write(f"{dmdunit}\t{dmdgroup}\t{loc}\t{model_id}\n")
+    for dmdunit, dmdgroup, loc, startdate, model_id, *_ in winners:
+        buf.write(f"{dmdunit}\t{dmdgroup}\t{loc}\t{startdate}\t{model_id}\n")
     buf.seek(0)
     with cur.copy("COPY _champion_winners FROM STDIN") as copy:
         copy.write(buf.read())
@@ -304,6 +341,7 @@ def insert_champion_forecasts(
             ON f.dmdunit = w.dmdunit
            AND f.dmdgroup = w.dmdgroup
            AND f.loc = w.loc
+           AND f.startdate = w.startdate
            AND f.model_id = w.winning_model_id
         """,
         (champion_model_id,),
@@ -313,7 +351,7 @@ def insert_champion_forecasts(
 
 
 def generate_summary(
-    winners: list[tuple[str, str, str, str, float, int]],
+    winners: list[tuple[str, str, str, str, str, float, float, float]],
     champion_model_id: str,
     total_rows: int,
     config: dict[str, Any],
@@ -322,15 +360,17 @@ def generate_summary(
 ) -> dict[str, Any]:
     """Produce a summary dict from the winner list + optional ceiling data."""
     model_wins: dict[str, int] = {}
-    total_wape_num = 0.0
-    total_wape_denom = 0.0
-    for _dmdunit, _dmdgroup, _loc, model_id, wape, n_rows in winners:
-        model_wins[model_id] = model_wins.get(model_id, 0) + 1
-        if wape is not None:
-            total_wape_num += float(wape) * float(n_rows)
-            total_wape_denom += float(n_rows)
+    champ_abs_err_sum = 0.0
+    champ_actual_sum = 0.0
+    unique_dfus: set[tuple[str, str, str]] = set()
 
-    overall_wape = (total_wape_num / total_wape_denom * 100) if total_wape_denom else None
+    for dmdunit, dmdgroup, loc, _startdate, model_id, _prior_wape, basefcst_pref, tothist_dmd in winners:
+        model_wins[model_id] = model_wins.get(model_id, 0) + 1
+        champ_abs_err_sum += abs(float(basefcst_pref) - float(tothist_dmd))
+        champ_actual_sum += float(tothist_dmd)
+        unique_dfus.add((dmdunit, dmdgroup, loc))
+
+    overall_wape = (champ_abs_err_sum / abs(champ_actual_sum) * 100) if champ_actual_sum else None
     overall_acc = (100.0 - overall_wape) if overall_wape is not None else None
 
     # Sort model wins descending
@@ -344,7 +384,8 @@ def generate_summary(
             "champion_model_id": champion_model_id,
             "models": config.get("models", []),
         },
-        "total_dfus": len(winners),
+        "total_dfus": len(unique_dfus),
+        "total_dfu_months": len(winners),
         "total_champion_rows": total_rows,
         "model_wins": sorted_wins,
         "overall_champion_wape": round(overall_wape, 4) if overall_wape is not None else None,
@@ -360,9 +401,9 @@ def generate_summary(
         for _u, _g, _l, _sd, mid, abs_err, _fcst, actual in ceiling_rows:
             ceil_wins[mid] = ceil_wins.get(mid, 0) + 1
             ceil_abs_err_sum += float(abs_err)
-            ceil_actual_sum += abs(float(actual))
+            ceil_actual_sum += float(actual)
 
-        ceil_wape = (ceil_abs_err_sum / ceil_actual_sum * 100) if ceil_actual_sum else None
+        ceil_wape = (ceil_abs_err_sum / abs(ceil_actual_sum) * 100) if ceil_actual_sum else None
         ceil_acc = (100.0 - ceil_wape) if ceil_wape is not None else None
         sorted_ceil = dict(sorted(ceil_wins.items(), key=lambda x: -x[1]))
 
@@ -417,35 +458,36 @@ def main() -> None:
     cfg = load_config(config_path)
 
     models = cfg["models"]
-    metric = cfg["metric"]
     lag_mode = str(cfg["lag"])
     min_rows = int(cfg["min_dfu_rows"])
     champion_id = cfg["champion_model_id"]
 
-    print(f"Champion Selection — {len(models)} competing models")
-    print(f"  Metric: {metric}  |  Lag: {lag_mode}  |  Min rows: {min_rows}")
+    print(f"Champion Selection (rolling window) — {len(models)} competing models")
+    print(f"  Lag: {lag_mode}  |  Min prior months: {min_rows}")
     print(f"  Models: {', '.join(models)}")
     print(f"  Champion model_id: '{champion_id}'")
     print()
 
-    # Step 1: Compute DFU-level winners
+    # Step 1: Compute rolling window champion winners (before-the-fact)
     t0 = time.time()
-    print("Computing per-DFU WAPE for each model...")
+    print("Computing per-DFU per-month champion (expanding window, prior months only)...")
     with psycopg.connect(**db) as conn, conn.cursor() as cur:
-        winners = compute_dfu_winners(cur, models, lag_mode, min_rows, metric)
-    print(f"  {len(winners):,} DFUs evaluated ({time.time() - t0:.1f}s)")
+        winners = compute_champion_winners(cur, models, lag_mode, min_rows)
+    elapsed = time.time() - t0
+    unique_dfus = len({(u, g, l) for u, g, l, *_ in winners})
+    print(f"  {len(winners):,} DFU-month selections across {unique_dfus:,} DFUs ({elapsed:.1f}s)")
 
     if not winners:
-        print("No qualifying DFUs found. Aborting.")
+        print("No qualifying DFU-months found. Aborting.")
         sys.exit(1)
 
     # Print top model wins
     wins_count: dict[str, int] = {}
-    for _, _, _, mid, _, _ in winners:
+    for _, _, _, _, mid, *_ in winners:
         wins_count[mid] = wins_count.get(mid, 0) + 1
     for mid, cnt in sorted(wins_count.items(), key=lambda x: -x[1]):
         pct = 100.0 * cnt / len(winners)
-        print(f"    {mid:<25s} {cnt:>6,} DFUs ({pct:.1f}%)")
+        print(f"    {mid:<25s} {cnt:>6,} DFU-months ({pct:.1f}%)")
     print()
 
     # Step 2: Insert champion rows
@@ -459,7 +501,7 @@ def main() -> None:
 
     # Step 3: Compute ceiling (oracle) — best model per DFU per month
     ceiling_id = cfg.get("ceiling_model_id", "ceiling")
-    print("Computing ceiling (oracle) — best model per DFU per month...")
+    print("Computing ceiling (oracle) — best model per DFU per month (after-the-fact)...")
     t2 = time.time()
     with psycopg.connect(**db) as conn, conn.cursor() as cur:
         ceiling_rows = compute_ceiling_winners(cur, models, lag_mode)
@@ -499,11 +541,14 @@ def main() -> None:
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2, default=str)
     print(f"Summary saved to {summary_path}")
+    print(f"  Champion: {unique_dfus:,} DFUs, {len(winners):,} DFU-months")
     print(f"  Overall champion accuracy: {summary['overall_champion_accuracy_pct']}%")
     print(f"  Overall champion WAPE: {summary['overall_champion_wape']}%")
     if summary.get("overall_ceiling_accuracy_pct") is not None:
         print(f"  Overall ceiling accuracy: {summary['overall_ceiling_accuracy_pct']}%")
         print(f"  Overall ceiling WAPE: {summary['overall_ceiling_wape']}%")
+        gap = summary["overall_ceiling_accuracy_pct"] - summary["overall_champion_accuracy_pct"]
+        print(f"  Gap to ceiling: {gap:.2f} pp")
     print("\nDone.")
 
 

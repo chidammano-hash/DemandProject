@@ -281,6 +281,7 @@ export interface CompetitionConfig {
 
 export interface ChampionSummary {
   total_dfus: number;
+  total_dfu_months?: number;
   total_champion_rows: number;
   model_wins: Record<string, number>;
   overall_champion_wape: number | null;
