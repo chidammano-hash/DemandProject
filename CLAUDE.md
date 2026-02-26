@@ -35,7 +35,7 @@
 | File | Purpose |
 |---|---|
 | `mvp/demand/common/domain_specs.py` | Central config: all 8 datasets (dimensions + facts + inventory) with columns, types, keys |
-| `mvp/demand/api/main.py` | FastAPI backend — all endpoints live here |
+| `mvp/demand/api/main.py` | FastAPI backend — primary endpoints + mounts `api/routers/clusters` for What-If and seasonality routes |
 | `mvp/demand/frontend/src/App.tsx` | React UI — sidebar layout shell (~200 lines, lazy-loaded tabs) |
 | `mvp/demand/Makefile` | All dev commands |
 | `mvp/demand/docker-compose.yml` | 7-service infra cluster |
@@ -99,6 +99,30 @@
 | `mvp/demand/tests/api/conftest.py` | API test fixtures (mock DB pool, async httpx client) |
 | `mvp/demand/frontend/src/**/__tests__/` | Frontend test suites (Vitest + RTL) |
 | `docs/design-specs/` | Feature specs (feature1–feature36) |
+| `mvp/demand/api/core.py` | Shared API utilities: connection pool, OpenAI client, SQL helpers used by router modules |
+| `mvp/demand/api/auth.py` | Optional API key auth (`require_api_key` dependency; disabled when `API_KEY` env var unset) |
+| `mvp/demand/api/routers/` | Modular FastAPI router modules (clusters, accuracy, analysis, benchmark, chat, competition, domains, intel) |
+| `mvp/demand/config/seasonality_config.yaml` | Seasonality detection hyperparameters and profile labeling thresholds |
+| `mvp/demand/scripts/detect_seasonality.py` | Compute seasonality metrics per DFU (strength, profile, peak/trough month) |
+| `mvp/demand/scripts/update_seasonality_profiles.py` | Write seasonality profiles to `dim_dfu` in Postgres |
+| `mvp/demand/scripts/run_clustering_scenario.py` | What-If clustering: run trial KMeans with custom params + promote flow |
+| `mvp/demand/scripts/run_backtest_patchtst.py` | PatchTST backtest: deep-learning transformer model (Apple MPS GPU) |
+| `mvp/demand/scripts/run_backtest_deepar.py` | DeepAR backtest: LSTM probabilistic forecasting |
+| `mvp/demand/sql/013_add_composite_indexes.sql` | Composite B-tree indexes for multi-column query performance |
+| `mvp/demand/sql/015_add_seasonality_columns.sql` | DDL: 6 seasonality columns on `dim_dfu` (Feature 30) |
+| `mvp/demand/sql/016_add_seasonality_to_accuracy_views.sql` | DDL: seasonality joins in accuracy materialized views (Feature 32) |
+| `mvp/demand/frontend/src/hooks/useMotifTheme.ts` | Motif selection, localStorage + URL persistence, CSS data-attr injection |
+| `mvp/demand/frontend/src/hooks/useDebounce.ts` | Generic debounce hook used by filter inputs |
+| `mvp/demand/frontend/src/context/MotifContext.tsx` | React context provider for active motif theme |
+| `mvp/demand/frontend/src/constants/motifRegistry.ts` | Registry mapping motif IDs to motif config objects |
+| `mvp/demand/frontend/src/constants/motifs/` | 5 motif theme definitions: periodic, spirits, space, f1, zen |
+| `mvp/demand/frontend/src/constants/colors.ts` | Shared color palette constants |
+| `mvp/demand/frontend/src/constants/elements.ts` | Periodic table element definitions for loading overlay |
+| `mvp/demand/frontend/src/types/motif.ts` | TypeScript types for motif system (MotifId, MotifThemeConfig, TileConfig) |
+| `mvp/demand/frontend/src/components/MotifSettingsPanel.tsx` | Motif theme picker panel (opened by Ctrl+M) |
+| `mvp/demand/frontend/src/components/KeyboardShortcutHelp.tsx` | Keyboard shortcut help modal (triggered by `?` shortcut) |
+| `mvp/demand/frontend/src/components/KpiCard.tsx` | Reusable KPI metric card component |
+| `mvp/demand/frontend/src/lib/utils.ts` | Shared utilities: `cn()` Tailwind class merger and misc helpers |
 
 ---
 
@@ -179,6 +203,12 @@ make backtest-all           # backtest-lgbm + backtest-load
 
 # Champion model selection
 make champion-select        # Run per-DFU champion selection (best-of-models via WAPE)
+
+# Seasonality pipeline (feature 30)
+make seasonality-schema     # Apply DDL for seasonality columns on dim_dfu (one-time)
+make seasonality-detect     # Detect seasonality patterns per DFU from sales history
+make seasonality-update     # Write seasonality profiles back to dim_dfu
+make seasonality-all        # Full pipeline: schema + detect + update
 
 # Backtest cleanup
 make backtest-list          # List model_id row counts in forecast + archive tables
@@ -278,6 +308,9 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - ECharts integration for canvas-based charting
 - Inventory tab: KPI cards, trend chart, paginated position table, item detail drill-down
 - Clustering What-If Scenarios panel: parameter controls, scenario simulation, result charts, promote flow
+- Five motif themes: Periodic Table, Wine & Spirits, Space, Formula 1, Zen Garden — each with distinct tiles, icons, and loading animations; selectable independently of light/dark color mode
+- `MotifSettingsPanel` accessible via Ctrl+M keyboard shortcut
+- `?motif=<id>` URL parameter for deep-linking to a specific motif theme
 - Vitest testing infrastructure
 
 ---
@@ -336,6 +369,11 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Backtest cleanup:** `scripts/clean_backtest_models.py` selectively removes model predictions from `fact_external_forecast_monthly` and `backtest_lag_archive` by `model_id`, then refreshes 5 materialized views. Supports `--list`, `--dry-run`, `--all-backtest` (excludes `external`). Make targets: `backtest-clean`, `backtest-list`.
 - **Benchmarking:** `GET /bench/compare` runs identical queries (count, page, trend) against Postgres and Trino/Iceberg, returning per-query latency stats (min/max/avg/p50/p95) with winner determination and speedup factor. Requires Docker services running. Make target: `bench-compare`.
 - **Inventory snapshots:** 14 monthly CSV files (`datafiles/Inventory_Snapshot_YYYY_MM.csv`, ~190M rows total) merged by `scripts/normalize_inventory_csv.py` into a single clean CSV. Loaded into `fact_inventory_snapshot` via generic loader. `qty_on_order` derived as `qty_on_hand_on_order - qty_on_hand` during normalization. Dedicated API endpoints (`/inventory/*`) and frontend InventoryTab. `agg_inventory_monthly` materialized view for trend queries.
+- **DFU seasonality detection:** Pipeline in `scripts/detect_seasonality.py` + `update_seasonality_profiles.py` computes seasonality metrics (strength, profile label, peak/trough month, peak-to-trough ratio, is_yearly_seasonal flag) from sales history and writes them to `dim_dfu`. Config in `config/seasonality_config.yaml`. DDL in `sql/015_add_seasonality_columns.sql`. Make targets: `seasonality-detect`, `seasonality-update`, `seasonality-all`. These 6 columns (`seasonality_profile`, `seasonality_strength`, `is_yearly_seasonal`, `peak_month`, `trough_month`, `peak_trough_ratio`) are now part of `DFU_SPEC` and are exposed by the generic Data Explorer.
+- **What-If clustering scenarios:** `POST /clustering/scenario` runs a trial KMeans pipeline with custom `feature_params`, `model_params`, and `label_params` without overwriting production clustering. `POST /clustering/scenario/{id}/promote` applies the winning scenario to `dim_dfu.ml_cluster`. The UI panel is fully implemented in ClustersTab. Requires `API_KEY` env var to be set for auth (disabled when unset).
+- **Modular API router architecture:** `api/routers/` contains 8 FastAPI `APIRouter` modules (clusters, accuracy, analysis, benchmark, chat, competition, domains, intel). These are imported and mounted via `app.include_router()` at the end of `main.py`. Existing inline `@app.get` routes registered earlier take precedence for duplicate paths. The `clusters` router provides the What-If scenario and seasonality-profile endpoints not in the inline routes.
+- **API key authentication:** `api/auth.py` provides `require_api_key` FastAPI dependency. Auth is disabled when the `API_KEY` env var is unset (development default). When set, mutation endpoints (`POST /clustering/scenario`, `PUT /competition/config`, `POST /competition/run`, `POST /chat`, `POST /market-intelligence`) require `X-API-Key` header.
+- **Motif theme system:** 5 visual motifs (periodic, spirits, space, f1, zen) defined in `frontend/src/constants/motifs/`. Selected motif persists in localStorage and URL (`?motif=<id>`). `useMotifTheme` hook manages state; `MotifContext` provides it app-wide. Ctrl+M opens `MotifSettingsPanel`. Motif identity is separate from product theme (wine & spirits, general, obsidian) and color mode (light/dark).
 
 ---
 
@@ -368,10 +406,17 @@ Located in `docs/design-specs/`:
 - `feature24.md` — StatsForecast backtesting implementation (vectorized AutoARIMA + AutoETS)
 - `feature25.md` — NeuralProphet backtesting implementation (PyTorch-based Prophet with GPU)
 - `feature26.md` — Postgres vs Trino/Iceberg benchmarking (latency comparison API)
+- `feature27.md` — Figma MCP Integration: Design-to-Code & Code-to-Design Workflow *(not started)*
 - `feature28.md` — UI Architecture & Performance (component decomposition, TanStack Query, lazy loading, error boundaries, keyboard shortcuts, testing)
+- `feature29.md` — What-If / Scenario UI for Clustering (UI implemented; backend routes mounted via include_router)
+- `feature30.md` — DFU Seasonality Detection & Profile Assignment (scripts + DDL implemented; Makefile targets added)
 - `feature31.md` — Comprehensive Testing Strategy (full-stack testing spec, mandatory test requirements)
+- `feature32.md` — Seasonality Profile Filtering (backend router written; frontend UI pending)
+- `feature33.md` — Inventory Overlay in DFU Analysis *(not implemented)*
 - `feature34.md` — Inventory Planning Module Phase 1 (snapshot pipeline, API, UI tab)
+- `feature35.md` — Configurable Multi-Theme / Motif System (5 motifs implemented; `?motif=` URL param added)
 - `feature36.md` — Product-Grade UI Overhaul (sidebar, themes, dashboard, global filters, widgets)
+- `theme-testing-strategy.md` — Multi-Theme Testing Strategy (unit tests implemented; integration/a11y/perf tests pending)
 - `docs/REFACTORING_RECOMMENDATIONS.md` — Comprehensive codebase refactoring roadmap
 
 ---

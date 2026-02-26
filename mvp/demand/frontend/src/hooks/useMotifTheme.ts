@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ColorMode, MotifId, MotifThemeConfig, TileConfig } from "@/types/motif";
 import { getMotif, getAllMotifs, DEFAULT_MOTIF_ID } from "@/constants/motifs";
+import { getInitialMotif, updateMotifUrl } from "@/hooks/useUrlState";
 
 const STORAGE_KEY = "ds-motif";
 
 function readStoredMotif(): MotifId {
+  // URL param takes priority over localStorage (enables deep-linking via ?motif=space)
+  const urlMotif = getInitialMotif() as MotifId | null;
+  if (urlMotif) {
+    try {
+      getMotif(urlMotif);
+      return urlMotif;
+    } catch {
+      // ignore unknown motif in URL param
+    }
+  }
   try {
     const stored = localStorage.getItem(STORAGE_KEY) as MotifId | null;
     if (stored) {
@@ -31,6 +42,7 @@ export function useMotifTheme(_colorMode?: ColorMode): UseMotifThemeReturn {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, motifId);
     document.documentElement.setAttribute("data-motif", motifId);
+    updateMotifUrl(motifId);
   }, [motifId]);
 
   // CSS palette variables are now exclusively managed by useTheme (Feature 36).

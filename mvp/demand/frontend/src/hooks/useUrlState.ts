@@ -9,6 +9,10 @@ export function getInitialDomain(): string {
   return (queryDomain || "item").toLowerCase();
 }
 
+export function getInitialMotif(): string | null {
+  return new URLSearchParams(window.location.search).get("motif");
+}
+
 export function getInitialTab(): string {
   const params = new URLSearchParams(window.location.search);
   const urlTab = params.get("tab");
@@ -23,6 +27,16 @@ export function updateUrlState(domain: string, tab: string) {
   url.searchParams.set("domain", domain.toLowerCase());
   url.searchParams.set("tab", tab);
   window.history.pushState(null, "", url);
+}
+
+export function updateMotifUrl(motifId: string | null) {
+  const url = new URL(window.location.href);
+  if (motifId) {
+    url.searchParams.set("motif", motifId);
+  } else {
+    url.searchParams.delete("motif");
+  }
+  window.history.replaceState(null, "", url);
 }
 
 export function usePopstateSync(

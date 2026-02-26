@@ -847,6 +847,7 @@ _ACCURACY_SLICE_DIMS = {
     "month_start",
     "lag",
     "model_id",
+    "seasonality_profile",
 }
 
 # Column expressions for raw fact table queries (mirrors materialized view definitions)
@@ -858,6 +859,7 @@ _RAW_BUCKET_EXPR: dict[str, str] = {
     "region": "COALESCE(d.region, '(unknown)')",
     "brand_desc": "COALESCE(d.brand_desc, '(unknown)')",
     "dfu_execution_lag": "COALESCE(d.execution_lag::text, '(none)')",
+    "seasonality_profile": "COALESCE(d.seasonality_profile, '(unknown)')",
     "month_start": "date_trunc('month', f.startdate)::date",
     "lag": "f.lag",
     "model_id": "f.model_id",
@@ -890,6 +892,7 @@ def forecast_accuracy_slice(
     supplier_desc: str = Query(default="", max_length=120),
     abc_vol: str = Query(default="", max_length=40),
     region: str = Query(default="", max_length=120),
+    seasonality_profile: str = Query(default="", max_length=120),
     common_dfus: bool = Query(default=False),
     include_dfu_count: bool = Query(default=False),
     item: str = Query(default="", max_length=2000),
@@ -949,6 +952,9 @@ def forecast_accuracy_slice(
         if region.strip():
             where_parts.append("COALESCE(d.region, '(unknown)') = %s")
             main_params.append(region.strip())
+        if seasonality_profile.strip():
+            where_parts.append("COALESCE(d.seasonality_profile, '(unknown)') = %s")
+            main_params.append(seasonality_profile.strip())
         if item.strip():
             item_list = [it.strip() for it in item.split(",") if it.strip()]
             if item_list:
@@ -1069,6 +1075,9 @@ def forecast_accuracy_slice(
     if region.strip():
         where_parts.append("region = %s")
         params.append(region.strip())
+    if seasonality_profile.strip():
+        where_parts.append("seasonality_profile = %s")
+        params.append(seasonality_profile.strip())
 
     where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
@@ -1117,6 +1126,9 @@ def forecast_accuracy_slice(
         if region.strip():
             dfu_where.append("region = %s")
             dfu_params.append(region.strip())
+        if seasonality_profile.strip():
+            dfu_where.append("seasonality_profile = %s")
+            dfu_params.append(seasonality_profile.strip())
 
         dfu_where_sql = ("WHERE " + " AND ".join(dfu_where)) if dfu_where else ""
         dfu_sql = f"""
@@ -1161,6 +1173,7 @@ def forecast_accuracy_lag_curve(
     supplier_desc: str = Query(default="", max_length=120),
     abc_vol: str = Query(default="", max_length=40),
     region: str = Query(default="", max_length=120),
+    seasonality_profile: str = Query(default="", max_length=120),
     month_from: str = Query(default="", max_length=20),
     month_to: str = Query(default="", max_length=20),
     common_dfus: bool = Query(default=False),
@@ -1198,6 +1211,9 @@ def forecast_accuracy_lag_curve(
         if region.strip():
             where_parts.append("COALESCE(d.region, '(unknown)') = %s")
             main_params.append(region.strip())
+        if seasonality_profile.strip():
+            where_parts.append("COALESCE(d.seasonality_profile, '(unknown)') = %s")
+            main_params.append(seasonality_profile.strip())
         if month_from.strip():
             where_parts.append("date_trunc('month', a.startdate)::date >= %s::date")
             main_params.append(month_from.strip())
@@ -1285,6 +1301,9 @@ def forecast_accuracy_lag_curve(
     if region.strip():
         where_parts.append("region = %s")
         params.append(region.strip())
+    if seasonality_profile.strip():
+        where_parts.append("seasonality_profile = %s")
+        params.append(seasonality_profile.strip())
     if month_from.strip():
         where_parts.append("month_start >= %s::date")
         params.append(month_from.strip())
@@ -1328,6 +1347,9 @@ def forecast_accuracy_lag_curve(
         if region.strip():
             dfu_where.append("region = %s")
             dfu_params.append(region.strip())
+        if seasonality_profile.strip():
+            dfu_where.append("seasonality_profile = %s")
+            dfu_params.append(seasonality_profile.strip())
         if month_from.strip():
             dfu_where.append("max_month >= %s::date")
             dfu_params.append(month_from.strip())
@@ -1866,6 +1888,7 @@ def dfu_analysis(
     item: str = Query(default="", max_length=120),
     location: str = Query(default="", max_length=120),
     points: int = Query(default=36, ge=3, le=120),
+    seasonality_profile: str = Query(default="", max_length=120),
 ):
     """Unified DFU analysis: overlay sales history + multi-model forecasts with KPIs."""
     if mode not in _DFU_ANALYSIS_MODES:
@@ -1894,6 +1917,13 @@ def dfu_analysis(
     elif mode == "item_at_all_locations":
         where_parts.append("dmdunit = %s")
         params.append(item_val)
+
+    sp_val = seasonality_profile.strip()
+    if sp_val:
+        where_parts.append(
+            "(dmdunit, loc) IN (SELECT dmdunit, loc FROM dim_dfu WHERE seasonality_profile = %s)"
+        )
+        params.append(sp_val)
 
     where_sql = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
@@ -3543,3 +3573,21 @@ def dashboard_heatmap(
         result_rows.append({"label": label, "values": values})
 
     return {"rows": result_rows, "period_labels": period_set, "metric": "accuracy_pct"}
+
+
+# ---------------------------------------------------------------------------
+# Modular router registration (Features 29, 30, 32 new endpoints)
+#
+# The routers below add routes NOT implemented inline above:
+#   - GET  /domains/dfu/seasonality-profiles   (Feature 30)
+#   - GET  /clustering/defaults                 (Feature 29)
+#   - POST /clustering/scenario                 (Feature 29)
+#   - GET  /clustering/scenario/{scenario_id}   (Feature 29)
+#   - POST /clustering/scenario/{id}/promote    (Feature 29)
+#
+# Duplicate paths that already exist as inline @app.get decorators above
+# are shadowed by those earlier-registered routes and are never reached.
+# ---------------------------------------------------------------------------
+from api.routers import clusters as _clusters_router  # noqa: E402
+
+app.include_router(_clusters_router.router)
