@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, waitFor } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
+import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
+import type { GlobalFilterContextValue } from "@/context/GlobalFilterContext";
+import type { GlobalFilters } from "@/types/theme";
 
 vi.mock("@/api/queries", () => ({
   queryKeys: {
@@ -62,11 +65,31 @@ vi.mock("@/components/DataTable", () => ({
 
 const { ExplorerTab } = await import("@/tabs/ExplorerTab");
 
+function makeFilterContext(): GlobalFilterContextValue {
+  const filters: GlobalFilters = {
+    brand: [],
+    category: [],
+    market: [],
+    channel: [],
+    item: [],
+    location: [],
+    timeGrain: "month",
+  };
+  return {
+    filters,
+    setFilters: vi.fn(),
+    resetFilters: vi.fn(),
+    hasActiveFilters: false,
+  };
+}
+
 describe("ExplorerTab", () => {
   it("renders without crashing", async () => {
     render(
       <TestQueryWrapper>
-        <ExplorerTab domain="item" onDomainChange={vi.fn()} theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <ExplorerTab domain="item" onDomainChange={vi.fn()} theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
 
@@ -78,7 +101,9 @@ describe("ExplorerTab", () => {
   it("renders domain selector", async () => {
     render(
       <TestQueryWrapper>
-        <ExplorerTab domain="item" onDomainChange={vi.fn()} theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <ExplorerTab domain="item" onDomainChange={vi.fn()} theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
 

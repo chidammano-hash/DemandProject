@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, waitFor } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
+import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
+import type { GlobalFilterContextValue } from "@/context/GlobalFilterContext";
+import type { GlobalFilters } from "@/types/theme";
 
 vi.mock("@/api/queries", () => ({
   queryKeys: {
@@ -24,11 +27,31 @@ vi.mock("@/api/queries", () => ({
 
 const MarketIntelTab = (await import("@/tabs/MarketIntelTab")).default;
 
+function makeFilterContext(): GlobalFilterContextValue {
+  const filters: GlobalFilters = {
+    brand: [],
+    category: [],
+    market: [],
+    channel: [],
+    item: [],
+    location: [],
+    timeGrain: "month",
+  };
+  return {
+    filters,
+    setFilters: vi.fn(),
+    resetFilters: vi.fn(),
+    hasActiveFilters: false,
+  };
+}
+
 describe("MarketIntelTab", () => {
   it("renders without crashing", async () => {
     render(
       <TestQueryWrapper>
-        <MarketIntelTab theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <MarketIntelTab theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
 

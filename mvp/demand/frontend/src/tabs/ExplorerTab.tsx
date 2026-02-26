@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowDownWideNarrow,
@@ -45,6 +45,7 @@ import type {
   ClusterInfo,
 } from "@/types";
 import { ELEMENT_CONFIG } from "@/constants/elements";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useDebounce } from "@/hooks/useDebounce";
 import { titleCase, formatCell, formatNumber, formatCompactNumber } from "@/lib/formatters";
 
@@ -96,6 +97,21 @@ export function ExplorerTab({ domain, onDomainChange, theme }: ExplorerTabProps)
   const [clusterSource, setClusterSource] = useState<"ml" | "source">("ml");
   const [autoSampledDomain, setAutoSampledDomain] = useState("");
   const [columnSuggestions, setColumnSuggestions] = useState<Record<string, string[]>>({});
+
+  // -----------------------------------------------------------------------
+  // Global filter sync
+  // -----------------------------------------------------------------------
+  const { filters: globalFilters } = useGlobalFilterContext();
+
+  // Sync global item/location filter into local inputs
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setItemFilter(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setLocationFilter(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   // -----------------------------------------------------------------------
   // Derived values

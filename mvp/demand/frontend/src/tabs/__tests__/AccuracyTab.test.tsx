@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, waitFor, screen } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
+import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
+import type { GlobalFilterContextValue } from "@/context/GlobalFilterContext";
+import type { GlobalFilters } from "@/types/theme";
 
 vi.mock("@/api/queries", () => ({
   queryKeys: {
@@ -29,11 +32,31 @@ vi.mock("@/components/EChartContainer", () => ({
 
 const { AccuracyTab } = await import("@/tabs/AccuracyTab");
 
+function makeFilterContext(): GlobalFilterContextValue {
+  const filters: GlobalFilters = {
+    brand: [],
+    category: [],
+    market: [],
+    channel: [],
+    item: [],
+    location: [],
+    timeGrain: "month",
+  };
+  return {
+    filters,
+    setFilters: vi.fn(),
+    resetFilters: vi.fn(),
+    hasActiveFilters: false,
+  };
+}
+
 describe("AccuracyTab", () => {
   it("renders without crashing", async () => {
     render(
       <TestQueryWrapper>
-        <AccuracyTab theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <AccuracyTab theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
 
@@ -62,7 +85,9 @@ describe("AccuracyTab", () => {
 
     render(
       <TestQueryWrapper>
-        <AccuracyTab theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <AccuracyTab theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
 
@@ -87,7 +112,9 @@ describe("AccuracyTab", () => {
 
     render(
       <TestQueryWrapper>
-        <AccuracyTab theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <AccuracyTab theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
 

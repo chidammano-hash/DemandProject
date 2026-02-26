@@ -31,6 +31,8 @@ describe("useGlobalFilters", () => {
       category: [],
       market: [],
       channel: [],
+      item: [],
+      location: [],
       timeGrain: "month",
     });
     expect(result.current.hasActiveFilters).toBe(false);
@@ -92,6 +94,8 @@ describe("useGlobalFilters", () => {
       category: [],
       market: [],
       channel: [],
+      item: [],
+      location: [],
       timeGrain: "month",
     });
     expect(result.current.hasActiveFilters).toBe(false);
@@ -112,6 +116,35 @@ describe("useGlobalFilters", () => {
 
     act(() => {
       result.current.setFilters({ channel: ["Retail"] });
+    });
+    expect(result.current.hasActiveFilters).toBe(true);
+  });
+
+  it("setFilters updates item filter", () => {
+    const { result } = renderHook(() => useGlobalFilters());
+
+    act(() => {
+      result.current.setFilters({ item: ["100320"] });
+    });
+    expect(result.current.filters.item).toEqual(["100320"]);
+    expect(result.current.hasActiveFilters).toBe(true);
+  });
+
+  it("setFilters updates location filter", () => {
+    const { result } = renderHook(() => useGlobalFilters());
+
+    act(() => {
+      result.current.setFilters({ location: ["1401-BULK"] });
+    });
+    expect(result.current.filters.location).toEqual(["1401-BULK"]);
+    expect(result.current.hasActiveFilters).toBe(true);
+  });
+
+  it("hasActiveFilters is true when item array is non-empty", () => {
+    const { result } = renderHook(() => useGlobalFilters());
+
+    act(() => {
+      result.current.setFilters({ item: ["100320", "100321"] });
     });
     expect(result.current.hasActiveFilters).toBe(true);
   });

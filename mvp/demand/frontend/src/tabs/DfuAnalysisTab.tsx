@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -23,6 +23,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { LoadingElement } from "@/components/LoadingElement";
 
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useDebounce } from "@/hooks/useDebounce";
 import {
   CHART_COLORS,
@@ -84,9 +85,21 @@ export function DfuAnalysisTab({ theme }: DfuAnalysisTabProps) {
     string[]
   >([]);
 
+  const { filters: globalFilters } = useGlobalFilterContext();
+
   const debouncedDfuItem = useDebounce(dfuItem, 500);
   const debouncedDfuLocation = useDebounce(dfuLocation, 500);
   const trendColors = TREND_COLORS_BY_THEME[theme];
+
+  // ---- sync global item/location filter into local inputs (one-time when global changes) ----
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setDfuItem(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setDfuLocation(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   // ---- auto-sample on first visit ----
   useEffect(() => {

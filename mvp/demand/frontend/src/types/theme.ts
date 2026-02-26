@@ -113,6 +113,8 @@ export interface GlobalFilters {
   category: string[];
   market: string[];
   channel: string[];
+  item: string[];
+  location: string[];
   timeGrain: "month" | "quarter";
 }
 

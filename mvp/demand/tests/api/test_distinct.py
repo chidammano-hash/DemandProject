@@ -54,13 +54,13 @@ async def test_distinct_returns_values_for_allowed_column(mock_pool):
 
 @pytest.mark.asyncio
 async def test_distinct_rejects_disallowed_column(mock_pool):
-    """GET /domains/item/distinct?column=item_no returns 400 — not in allowed list."""
+    """GET /domains/item/distinct?column=item_status returns 400 — not in allowed list."""
     pool, _, cursor = mock_pool
     with patch("api.main._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/domains/item/distinct?column=item_no")
+            resp = await client.get("/domains/item/distinct?column=item_status")
             assert resp.status_code == 400
             data = resp.json()
             assert "detail" in data
@@ -236,3 +236,39 @@ async def test_distinct_values_are_strings(mock_pool):
             data = resp.json()
             # Endpoint casts with str()
             assert data["values"] == ["42", "99"]
+
+
+# ---------------------------------------------------------------------------
+# item_no and location_id are now allowed
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_distinct_allows_item_no(mock_pool):
+    """GET /domains/item/distinct?column=item_no returns 200 — now in allowed list."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("100320",), ("100321",)]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=item_no&search=100")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["column"] == "item_no"
+            assert data["values"] == ["100320", "100321"]
+
+
+@pytest.mark.asyncio
+async def test_distinct_allows_location_id(mock_pool):
+    """GET /domains/location/distinct?column=location_id returns 200."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("1401-BULK",), ("1402-BULK",)]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/location/distinct?column=location_id&search=14")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["column"] == "location_id"
+            assert data["values"] == ["1401-BULK", "1402-BULK"]

@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
+import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
+import type { GlobalFilterContextValue } from "@/context/GlobalFilterContext";
+import type { GlobalFilters } from "@/types/theme";
 
 // Mock recharts
 vi.mock("recharts", () => ({
@@ -59,11 +62,31 @@ vi.mock("@/api/queries", () => ({
 
 const { InventoryTab } = await import("@/tabs/InventoryTab");
 
+function makeFilterContext(): GlobalFilterContextValue {
+  const filters: GlobalFilters = {
+    brand: [],
+    category: [],
+    market: [],
+    channel: [],
+    item: [],
+    location: [],
+    timeGrain: "month",
+  };
+  return {
+    filters,
+    setFilters: vi.fn(),
+    resetFilters: vi.fn(),
+    hasActiveFilters: false,
+  };
+}
+
 describe("InventoryTab", () => {
   it("renders without crashing", async () => {
     render(
       <TestQueryWrapper>
-        <InventoryTab theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InventoryTab theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
     await waitFor(() => {
@@ -74,7 +97,9 @@ describe("InventoryTab", () => {
   it("renders KPI cards", async () => {
     render(
       <TestQueryWrapper>
-        <InventoryTab theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InventoryTab theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
     await waitFor(() => {
@@ -87,7 +112,9 @@ describe("InventoryTab", () => {
   it("renders inventory position table", async () => {
     render(
       <TestQueryWrapper>
-        <InventoryTab theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InventoryTab theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
     await waitFor(() => {
@@ -99,7 +126,9 @@ describe("InventoryTab", () => {
   it("renders trend chart", async () => {
     render(
       <TestQueryWrapper>
-        <InventoryTab theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InventoryTab theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
     await waitFor(() => {
@@ -110,7 +139,9 @@ describe("InventoryTab", () => {
   it("renders filter controls", async () => {
     render(
       <TestQueryWrapper>
-        <InventoryTab theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InventoryTab theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
     await waitFor(() => {

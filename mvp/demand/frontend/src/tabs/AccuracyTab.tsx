@@ -16,6 +16,7 @@ import {
 } from "recharts";
 import { ChartColumn, Loader2, Trophy } from "lucide-react";
 
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import {
   queryKeys,
   STALE,
@@ -89,6 +90,7 @@ type AccuracyTabProps = {
 export function AccuracyTab({ theme }: AccuracyTabProps) {
   const queryClient = useQueryClient();
   const trendColors = TREND_COLORS_BY_THEME[theme];
+  const { filters } = useGlobalFilterContext();
 
   // ---- Local state ----------------------------------------------------------
   const [sliceGroupBy, setSliceGroupBy] = useState("cluster_assignment");
@@ -112,6 +114,9 @@ export function AccuracyTab({ theme }: AccuracyTabProps) {
 
   const needDfuCount = sliceKpis.includes("dfu_count");
 
+  const globalItem = filters.item.length > 0 ? filters.item.join(",") : undefined;
+  const globalLocation = filters.location.length > 0 ? filters.location.join(",") : undefined;
+
   const sliceParams: SliceParams = useMemo(
     () => ({
       group_by: sliceGroupBy,
@@ -120,8 +125,10 @@ export function AccuracyTab({ theme }: AccuracyTabProps) {
       month_from: monthFrom,
       common_dfus: commonDfus,
       include_dfu_count: needDfuCount,
+      item: globalItem,
+      location: globalLocation,
     }),
-    [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount],
+    [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation],
   );
 
   const lagCurveParams: LagCurveParams = useMemo(
@@ -130,8 +137,10 @@ export function AccuracyTab({ theme }: AccuracyTabProps) {
       month_from: monthFrom,
       common_dfus: commonDfus,
       include_dfu_count: needDfuCount,
+      item: globalItem,
+      location: globalLocation,
     }),
-    [sliceModels, monthFrom, commonDfus, needDfuCount],
+    [sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation],
   );
 
   // ---- Data fetching: accuracy slice + lag curve ----------------------------

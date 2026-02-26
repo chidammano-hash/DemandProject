@@ -50,6 +50,8 @@ export default function DashboardTab({ theme }: DashboardTabProps) {
     category: filters.category,
     market: filters.market,
     channel: filters.channel,
+    item: filters.item,
+    location: filters.location,
   };
 
   // Cast for query keys (they only need serializable values)

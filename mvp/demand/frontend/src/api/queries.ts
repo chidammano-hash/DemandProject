@@ -241,6 +241,8 @@ export interface SliceParams {
   month_from: string;
   common_dfus: boolean;
   include_dfu_count: boolean;
+  item?: string;
+  location?: string;
 }
 
 export async function fetchAccuracySlice(params: SliceParams): Promise<AccuracySlicePayload> {
@@ -249,6 +251,8 @@ export async function fetchAccuracySlice(params: SliceParams): Promise<AccuracyS
   if (params.month_from) qs.set("month_from", params.month_from);
   if (params.common_dfus) qs.set("common_dfus", "true");
   if (params.include_dfu_count) qs.set("include_dfu_count", "true");
+  if (params.item) qs.set("item", params.item);
+  if (params.location) qs.set("location", params.location);
   return fetchJson(`/forecast/accuracy/slice?${qs}`);
 }
 
@@ -257,6 +261,8 @@ export interface LagCurveParams {
   month_from: string;
   common_dfus: boolean;
   include_dfu_count: boolean;
+  item?: string;
+  location?: string;
 }
 
 export async function fetchLagCurve(params: LagCurveParams): Promise<LagCurvePayload> {
@@ -265,6 +271,8 @@ export async function fetchLagCurve(params: LagCurveParams): Promise<LagCurvePay
   if (params.month_from) qs.set("month_from", params.month_from);
   if (params.common_dfus) qs.set("common_dfus", "true");
   if (params.include_dfu_count) qs.set("include_dfu_count", "true");
+  if (params.item) qs.set("item", params.item);
+  if (params.location) qs.set("location", params.location);
   return fetchJson(`/forecast/accuracy/lag-curve?${qs}`);
 }
 
@@ -436,6 +444,8 @@ export interface DashboardFilterParams {
   category?: string[];
   market?: string[];
   channel?: string[];
+  item?: string[];
+  location?: string[];
 }
 
 function appendFilterParams(qs: URLSearchParams, params?: DashboardFilterParams) {
@@ -444,6 +454,8 @@ function appendFilterParams(qs: URLSearchParams, params?: DashboardFilterParams)
   if (params.category?.length) qs.set("category", params.category.join(","));
   if (params.market?.length) qs.set("market", params.market.join(","));
   if (params.channel?.length) qs.set("channel", params.channel.join(","));
+  if (params.item?.length) qs.set("item", params.item.join(","));
+  if (params.location?.length) qs.set("location", params.location.join(","));
 }
 
 export async function fetchDashboardKpis(

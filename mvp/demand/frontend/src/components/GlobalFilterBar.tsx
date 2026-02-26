@@ -1,29 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, X, RotateCcw } from "lucide-react";
+import { ChevronDown, X, RotateCcw, Search } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { fetchDistinctValues, queryKeys, STALE } from "@/api/queries";
+import { useDebounce } from "@/hooks/useDebounce";
 
 // ---------------------------------------------------------------------------
 // Filter dropdown config
 // ---------------------------------------------------------------------------
 interface FilterConfig {
-  key: "brand" | "category" | "market" | "channel";
+  key: "brand" | "category" | "market" | "channel" | "item" | "location";
   label: string;
   domain: string;
   column: string;
+  searchable?: boolean;
 }
 
 const FILTERS: FilterConfig[] = [
   { key: "brand", label: "Brand", domain: "item", column: "brand_name" },
   { key: "category", label: "Category", domain: "item", column: "class_" },
+  { key: "item", label: "Item", domain: "item", column: "item_no", searchable: true },
+  { key: "location", label: "Location", domain: "location", column: "location_id", searchable: true },
   { key: "market", label: "Market", domain: "location", column: "state_id" },
   { key: "channel", label: "Channel", domain: "customer", column: "rpt_channel_desc" },
 ];
 
 // ---------------------------------------------------------------------------
-// Multi-select dropdown
+// Multi-select dropdown (low-cardinality — preloads all values)
 // ---------------------------------------------------------------------------
 function FilterDropdown({ config, selected, onSelect }: { config: FilterConfig; selected: string[]; onSelect: (vals: string[]) => void }) {
   const [open, setOpen] = useState(false);
@@ -115,6 +119,141 @@ function FilterDropdown({ config, selected, onSelect }: { config: FilterConfig; 
 }
 
 // ---------------------------------------------------------------------------
+// Searchable multi-select dropdown (high-cardinality — search-as-you-type)
+// ---------------------------------------------------------------------------
+function SearchableFilterDropdown({ config, selected, onSelect }: { config: FilterConfig; selected: string[]; onSelect: (vals: string[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const debouncedSearch = useDebounce(search, 250);
+
+  const { data, isFetching } = useQuery({
+    queryKey: queryKeys.distinctValues(config.domain, config.column + ":" + debouncedSearch),
+    queryFn: () => fetchDistinctValues(config.domain, config.column, debouncedSearch, 20),
+    enabled: open && debouncedSearch.length >= 1,
+    staleTime: STALE.THIRTY_SEC,
+  });
+  const suggestions = (data?.values ?? []).filter((v) => !selected.includes(v));
+
+  // Click outside to close
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  // Focus input when opening
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => inputRef.current?.focus(), 0);
+    } else {
+      setSearch("");
+    }
+  }, [open]);
+
+  const addItem = useCallback((val: string) => {
+    if (!selected.includes(val)) {
+      onSelect([...selected, val]);
+    }
+    setSearch("");
+  }, [selected, onSelect]);
+
+  const removeItem = useCallback((val: string) => {
+    onSelect(selected.filter((v) => v !== val));
+  }, [selected, onSelect]);
+
+  const label = selected.length === 0
+    ? config.label
+    : selected.length === 1
+      ? selected[0]
+      : `${config.label} (${selected.length})`;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className={cn(
+          "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors",
+          selected.length > 0
+            ? "border-primary/40 bg-primary/5 text-primary"
+            : "border-border bg-card text-muted-foreground hover:bg-muted/50",
+        )}
+      >
+        <span className="max-w-[120px] truncate">{label}</span>
+        <ChevronDown className="h-3 w-3 flex-shrink-0 opacity-60" />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 min-w-[220px] rounded-md border border-border bg-card shadow-lg">
+          {/* Search input */}
+          <div className="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
+            <Search className="h-3 w-3 text-muted-foreground" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={`Search ${config.label.toLowerCase()}...`}
+              className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
+            />
+            {isFetching && (
+              <span className="h-3 w-3 animate-spin rounded-full border border-primary/30 border-t-primary" />
+            )}
+          </div>
+
+          {/* Selected chips */}
+          {selected.length > 0 && (
+            <div className="flex flex-wrap gap-1 border-b border-border px-2 py-1.5">
+              {selected.map((val) => (
+                <span
+                  key={val}
+                  className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary"
+                >
+                  {val}
+                  <button onClick={() => removeItem(val)} className="hover:text-primary/70">
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              ))}
+              <button
+                onClick={() => { onSelect([]); }}
+                className="text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+
+          {/* Suggestions list */}
+          <div className="max-h-48 overflow-y-auto p-1">
+            {suggestions.map((val) => (
+              <button
+                key={val}
+                onClick={() => addItem(val)}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted/50"
+              >
+                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-sm border border-border" />
+                <span className="truncate">{val}</span>
+              </button>
+            ))}
+            {debouncedSearch.length >= 1 && suggestions.length === 0 && !isFetching && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">No matches</p>
+            )}
+            {debouncedSearch.length === 0 && selected.length === 0 && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">Type to search...</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Time grain toggle
 // ---------------------------------------------------------------------------
 function TimeGrainToggle({ value, onChange }: { value: "month" | "quarter"; onChange: (v: "month" | "quarter") => void }) {
@@ -150,14 +289,23 @@ export function GlobalFilterBar() {
 
   return (
     <div className="flex items-center gap-2 border-b border-border bg-card/80 px-4 py-2 backdrop-blur-sm" role="toolbar" aria-label="Global filters">
-      {FILTERS.map((cfg) => (
-        <FilterDropdown
-          key={cfg.key}
-          config={cfg}
-          selected={filters[cfg.key]}
-          onSelect={(vals) => setFilters({ [cfg.key]: vals })}
-        />
-      ))}
+      {FILTERS.map((cfg) =>
+        cfg.searchable ? (
+          <SearchableFilterDropdown
+            key={cfg.key}
+            config={cfg}
+            selected={filters[cfg.key]}
+            onSelect={(vals) => setFilters({ [cfg.key]: vals })}
+          />
+        ) : (
+          <FilterDropdown
+            key={cfg.key}
+            config={cfg}
+            selected={filters[cfg.key]}
+            onSelect={(vals) => setFilters({ [cfg.key]: vals })}
+          />
+        ),
+      )}
 
       <div className="mx-1 h-5 w-px bg-border" />
 

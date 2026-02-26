@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, waitFor } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
+import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
+import type { GlobalFilterContextValue } from "@/context/GlobalFilterContext";
+import type { GlobalFilters } from "@/types/theme";
 
 vi.mock("@/api/queries", () => ({
   queryKeys: {
@@ -29,11 +32,31 @@ vi.mock("@/components/EChartContainer", () => ({
 
 const { DfuAnalysisTab } = await import("@/tabs/DfuAnalysisTab");
 
+function makeFilterContext(): GlobalFilterContextValue {
+  const filters: GlobalFilters = {
+    brand: [],
+    category: [],
+    market: [],
+    channel: [],
+    item: [],
+    location: [],
+    timeGrain: "month",
+  };
+  return {
+    filters,
+    setFilters: vi.fn(),
+    resetFilters: vi.fn(),
+    hasActiveFilters: false,
+  };
+}
+
 describe("DfuAnalysisTab", () => {
   it("renders without crashing", async () => {
     render(
       <TestQueryWrapper>
-        <DfuAnalysisTab theme="light" />
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <DfuAnalysisTab theme="light" />
+        </GlobalFilterProvider>
       </TestQueryWrapper>
     );
 

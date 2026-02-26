@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   CartesianGrid,
@@ -46,6 +46,7 @@ import { KpiCard } from "@/components/KpiCard";
 import { LoadingElement } from "@/components/LoadingElement";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/hooks/useDebounce";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { CHART_COLORS, TREND_COLORS_BY_THEME } from "@/constants/colors";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 
@@ -90,6 +91,19 @@ export function InventoryTab({ theme }: InventoryTabProps) {
     item: string;
     location: string;
   } | null>(null);
+
+  // ---- Global filter sync --------------------------------------------------
+  const { filters: globalFilters } = useGlobalFilterContext();
+
+  // Sync global item/location filter into local inputs
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setItemFilter(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setLocationFilter(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   const debouncedItem = useDebounce(itemFilter, 400);
   const debouncedLocation = useDebounce(locationFilter, 400);

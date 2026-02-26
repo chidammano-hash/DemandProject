@@ -80,7 +80,7 @@
 | `mvp/demand/frontend/src/constants/themes/` | Product theme configs (wineSpirits, general, obsidian) |
 | `mvp/demand/frontend/src/components/AppSidebar.tsx` | Collapsible sidebar navigation (9 items, 5 sections) |
 | `mvp/demand/frontend/src/components/ThemeSelector.tsx` | Theme + color mode picker (sidebar footer) |
-| `mvp/demand/frontend/src/components/GlobalFilterBar.tsx` | Cross-tab filter bar (brand, category, market, channel) |
+| `mvp/demand/frontend/src/components/GlobalFilterBar.tsx` | Cross-tab filter bar (brand, category, item, location, market, channel) |
 | `mvp/demand/frontend/src/components/WidgetGrid.tsx` | CSS Grid dashboard layout (WidgetGrid + WidgetCard) |
 | `mvp/demand/frontend/src/components/AlertPanel.tsx` | Severity-coded alert list |
 | `mvp/demand/frontend/src/components/HeatmapGrid.tsx` | CSS Grid heatmap with color scale |
@@ -268,7 +268,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - DFU Analysis tab: unified sales vs multi-model forecast overlay chart, 3 scope modes, per-model KPI cards, toggleable measures
 - Collapsible sidebar navigation (9 items, 5 sections, mobile drawer, `[` toggle)
 - Dashboard overview landing page: KPI sparkline cards, alert panel, heatmap, top movers, forecast trend chart
-- Global filter bar: brand, category, market, channel multi-select dropdowns
+- Global filter bar: brand, category, item (searchable), location (searchable), market, channel multi-select dropdowns — applied to dashboard, accuracy, and auto-populated into tab-local inputs
 - Three product themes: Wine & Spirits, General, Obsidian (CSS variable palettes, light/dark modes)
 - Keyboard shortcuts (1-7 tab switch, `[` sidebar, `t` theme, `d` dark mode, / search, Esc close, ? help, Ctrl+E fields)
 - Lazy-loaded tab components with per-tab error boundaries

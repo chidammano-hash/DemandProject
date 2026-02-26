@@ -90,6 +90,8 @@ function makeFilterContext(): GlobalFilterContextValue {
     category: [],
     market: [],
     channel: [],
+    item: [],
+    location: [],
     timeGrain: "month",
   };
   return {

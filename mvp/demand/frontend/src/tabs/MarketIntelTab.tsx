@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   fetchMarketIntel,
@@ -6,6 +6,7 @@ import {
   STALE,
 } from "@/api/queries";
 import type { Theme, MarketIntelPayload } from "@/types";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { ELEMENT_CONFIG } from "@/constants/elements";
 import { LoadingElement } from "@/components/LoadingElement";
 
@@ -20,10 +21,21 @@ type MarketIntelTabProps = {
 };
 
 export default function MarketIntelTab({ theme }: MarketIntelTabProps) {
+  const { filters: globalFilters } = useGlobalFilterContext();
   const [miItemFilter, setMiItemFilter] = useState("");
   const [miLocationFilter, setMiLocationFilter] = useState("");
   const [miResult, setMiResult] = useState<MarketIntelPayload | null>(null);
   const [miError, setMiError] = useState("");
+
+  // Sync global item/location filter into local inputs
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setMiItemFilter(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setMiLocationFilter(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   // Item typeahead suggestions
   const { data: itemSuggestions = [] } = useQuery({
