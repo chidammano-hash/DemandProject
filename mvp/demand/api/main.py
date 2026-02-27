@@ -2934,58 +2934,101 @@ def inventory_kpis(
     location: str = Query(default="", max_length=120),
     months: int = Query(default=3, ge=1, le=60),
 ):
-    """Aggregate inventory KPIs over trailing N months."""
+    """Inventory KPIs: point-in-time totals from latest snapshot + supply chain metrics."""
     set_cache(response, max_age=120)
 
-    where_parts: list[str] = ["month_start >= (CURRENT_DATE - (%s || ' months')::interval)"]
-    params: list[Any] = [months]
+    # Build shared filter parts for both queries
+    filter_parts: list[str] = []
+    filter_params: list[Any] = []
     if item.strip():
-        where_parts.append("item_no ILIKE %s")
-        params.append(f"%{item.strip()}%")
+        filter_parts.append("item_no ILIKE %s")
+        filter_params.append(f"%{item.strip()}%")
     if location.strip():
-        where_parts.append("loc ILIKE %s")
-        params.append(f"%{location.strip()}%")
-    where_sql = f"WHERE {' AND '.join(where_parts)}"
+        filter_parts.append("loc ILIKE %s")
+        filter_params.append(f"%{location.strip()}%")
+    filter_sql = f"AND {' AND '.join(filter_parts)}" if filter_parts else ""
 
-    sql = f"""
+    # Query 1: Point-in-time totals from latest snapshot date
+    latest_sql = f"""
         SELECT
-            COALESCE(SUM(avg_qty_on_hand * snapshot_count), 0)::double precision  AS total_on_hand,
-            COALESCE(SUM((avg_qty_on_hand_on_order - avg_qty_on_hand) * snapshot_count), 0)::double precision AS total_on_order,
-            COALESCE(SUM(avg_qty_on_hand * snapshot_count), 0)::double precision  AS total_inventory_value,
-            COALESCE(AVG(avg_lead_time_days), 0)::double precision                AS avg_lead_time_days,
-            COUNT(DISTINCT item_no)::bigint                                       AS distinct_items,
-            COUNT(DISTINCT loc)::bigint                                           AS distinct_locations,
-            COALESCE(SUM(snapshot_count), 0)::bigint                              AS snapshot_count,
-            %s                                                                    AS months_covered
+            COALESCE(SUM(qty_on_hand), 0)::double precision   AS total_on_hand,
+            COALESCE(SUM(qty_on_order), 0)::double precision   AS total_on_order,
+            COUNT(DISTINCT item_no)::bigint                    AS distinct_items,
+            COUNT(DISTINCT loc)::bigint                        AS distinct_locations
+        FROM fact_inventory_snapshot
+        WHERE snapshot_date = (
+            SELECT MAX(snapshot_date) FROM fact_inventory_snapshot
+        )
+        {filter_sql}
+    """
+
+    # Query 2: Trailing N months from agg_inventory_monthly for computed KPIs
+    agg_parts: list[str] = ["month_start >= (CURRENT_DATE - (%s || ' months')::interval)"]
+    agg_params: list[Any] = [months]
+    if item.strip():
+        agg_parts.append("item_no ILIKE %s")
+        agg_params.append(f"%{item.strip()}%")
+    if location.strip():
+        agg_parts.append("loc ILIKE %s")
+        agg_params.append(f"%{location.strip()}%")
+    agg_where = f"WHERE {' AND '.join(agg_parts)}"
+
+    agg_sql = f"""
+        SELECT
+            COALESCE(SUM(avg_qty_on_hand), 0)::double precision   AS sum_avg_on_hand,
+            COALESCE(SUM(monthly_sales), 0)::double precision      AS sum_monthly_sales,
+            CASE WHEN SUM(monthly_sales) > 0
+                 THEN (SUM(latest_lead_time_days * monthly_sales)
+                       / SUM(monthly_sales))::double precision
+                 ELSE 0 END                                        AS weighted_lead_time,
+            COUNT(DISTINCT month_start)::integer                   AS count_months
         FROM agg_inventory_monthly
-        {where_sql}
+        {agg_where}
     """
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, [months, *params])
-        row = cur.fetchone()
+        cur.execute(latest_sql, filter_params)
+        latest_row = cur.fetchone()
+        cur.execute(agg_sql, agg_params)
+        agg_row = cur.fetchone()
 
-    if not row:
-        return {
-            "total_on_hand": 0.0,
-            "total_on_order": 0.0,
-            "total_inventory_value": 0.0,
-            "avg_lead_time_days": 0.0,
-            "distinct_items": 0,
-            "distinct_locations": 0,
-            "snapshot_count": 0,
-            "months_covered": months,
-        }
+    # Unpack latest snapshot totals
+    total_on_hand = float(latest_row[0]) if latest_row else 0.0
+    total_on_order = float(latest_row[1]) if latest_row else 0.0
+    distinct_items = int(latest_row[2]) if latest_row else 0
+    distinct_locations = int(latest_row[3]) if latest_row else 0
+
+    # Unpack aggregates for computed KPIs
+    sum_avg_oh = float(agg_row[0]) if agg_row and agg_row[0] else 0.0
+    sum_monthly = float(agg_row[1]) if agg_row and agg_row[1] else 0.0
+    w_lead_time = float(agg_row[2]) if agg_row and agg_row[2] else 0.0
+    count_months = int(agg_row[3]) if agg_row and agg_row[3] else 0
+
+    # Portfolio-level daily demand rate (total across all items, not per-item avg)
+    portfolio_daily = (sum_monthly / count_months / 30.44) if count_months > 0 else 0.0
+
+    # DOS = total on-hand / portfolio daily demand
+    dos = round(total_on_hand / portfolio_daily, 1) if portfolio_daily > 0 else None
+    woc = round(dos / 7, 1) if dos is not None else None
+    # Turns = annualized portfolio demand / average portfolio inventory
+    avg_inventory = sum_avg_oh / count_months if count_months > 0 else 0.0
+    annual_demand = (sum_monthly / count_months * 12) if count_months > 0 else 0.0
+    turns = round(annual_demand / avg_inventory, 1) if avg_inventory > 0 else None
+    # LT Coverage = (on-hand + on-order) / demand during one lead time
+    lt_demand = w_lead_time * portfolio_daily
+    lt_coverage = round((total_on_hand + total_on_order) / lt_demand, 2) if lt_demand > 0 else None
 
     return {
-        "total_on_hand": float(row[0]),
-        "total_on_order": float(row[1]),
-        "total_inventory_value": float(row[2]),
-        "avg_lead_time_days": round(float(row[3]), 2),
-        "distinct_items": int(row[4]),
-        "distinct_locations": int(row[5]),
-        "snapshot_count": int(row[6]),
-        "months_covered": int(row[7]),
+        "total_on_hand": total_on_hand,
+        "total_on_order": total_on_order,
+        "avg_lead_time_days": round(w_lead_time, 1) if w_lead_time else None,
+        "dos": dos,
+        "woc": woc,
+        "inventory_turns": turns,
+        "lt_coverage": lt_coverage,
+        "distinct_items": distinct_items,
+        "distinct_locations": distinct_locations,
+        "months_covered": months,
     }
 
 
@@ -2996,7 +3039,7 @@ def inventory_trend(
     location: str = Query(default="", max_length=120),
     months: int = Query(default=12, ge=1, le=120),
 ):
-    """Monthly inventory trend from the pre-aggregated materialized view."""
+    """Monthly inventory trend with DOS from rebuilt materialized view."""
     set_cache(response, max_age=120)
 
     where_parts: list[str] = ["month_start >= (CURRENT_DATE - (%s || ' months')::interval)"]
@@ -3012,10 +3055,18 @@ def inventory_trend(
     sql = f"""
         SELECT
             month_start,
-            COALESCE(SUM(avg_qty_on_hand), 0)::double precision       AS avg_on_hand,
-            COALESCE(SUM(avg_qty_on_hand_on_order - avg_qty_on_hand), 0)::double precision AS avg_on_order,
-            COALESCE(AVG(avg_lead_time_days), 0)::double precision     AS avg_lead_time,
-            COALESCE(SUM(total_mtd_sales), 0)::double precision        AS total_mtd_sales
+            COALESCE(SUM(eom_qty_on_hand), 0)::double precision           AS total_on_hand,
+            COALESCE(SUM(eom_qty_on_hand_on_order - eom_qty_on_hand), 0)::double precision AS total_on_order,
+            COALESCE(SUM(monthly_sales), 0)::double precision              AS monthly_sales,
+            CASE WHEN SUM(monthly_sales) > 0
+                 THEN (SUM(latest_lead_time_days * monthly_sales)
+                       / SUM(monthly_sales))::double precision
+                 ELSE 0 END                                                AS avg_lead_time,
+            CASE WHEN SUM(avg_daily_sls * snapshot_days) > 0
+                 THEN (SUM(eom_qty_on_hand)
+                       / (SUM(avg_daily_sls * snapshot_days)
+                          / NULLIF(SUM(snapshot_days), 0)))::double precision
+                 ELSE NULL END                                             AS dos
         FROM agg_inventory_monthly
         {where_sql}
         GROUP BY 1
@@ -3029,10 +3080,11 @@ def inventory_trend(
     trend = [
         {
             "month": str(r[0]),
-            "avg_on_hand": round(float(r[1]), 2),
-            "avg_on_order": round(float(r[2]), 2),
-            "avg_lead_time": round(float(r[3]), 2),
-            "total_mtd_sales": round(float(r[4]), 2),
+            "total_on_hand": round(float(r[1]), 2),
+            "total_on_order": round(float(r[2]), 2),
+            "monthly_sales": round(float(r[3]), 2),
+            "avg_lead_time": round(float(r[4]), 2),
+            "dos": round(float(r[5]), 1) if r[5] is not None else None,
         }
         for r in rows
     ]

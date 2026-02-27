@@ -36,18 +36,52 @@ CREATE INDEX IF NOT EXISTS idx_fact_inventory_snapshot_item_no_trgm
 CREATE INDEX IF NOT EXISTS idx_fact_inventory_snapshot_loc_trgm
   ON fact_inventory_snapshot USING gin (loc gin_trgm_ops);
 
--- Monthly aggregate materialized view for trend analytics.
-CREATE MATERIALIZED VIEW IF NOT EXISTS agg_inventory_monthly AS
+-- Drop old view so we can rebuild with enhanced columns.
+DROP MATERIALIZED VIEW IF EXISTS agg_inventory_monthly CASCADE;
+
+-- Monthly aggregate materialized view with daily sales derivation.
+-- daily_sls CTE derives actual daily sales from cumulative mtd_sales via LAG().
+-- Day 1 of each month: daily_sls = mtd_sales (counter just reset).
+-- Subsequent days: daily_sls = mtd_sales - prior day's mtd_sales.
+CREATE MATERIALIZED VIEW agg_inventory_monthly AS
+WITH daily AS (
+    SELECT
+        item_no,
+        loc,
+        snapshot_date,
+        lead_time_days,
+        qty_on_hand,
+        qty_on_hand_on_order,
+        qty_on_order,
+        mtd_sales,
+        CASE
+            WHEN EXTRACT(day FROM snapshot_date) = 1 THEN mtd_sales
+            ELSE mtd_sales - LAG(mtd_sales) OVER (
+                PARTITION BY item_no, loc, date_trunc('month', snapshot_date)
+                ORDER BY snapshot_date
+            )
+        END AS daily_sls
+    FROM fact_inventory_snapshot
+)
 SELECT
-  date_trunc('month', snapshot_date)::date AS month_start,
-  item_no,
-  loc,
-  coalesce(avg(qty_on_hand), 0)::double precision       AS avg_qty_on_hand,
-  coalesce(avg(qty_on_hand_on_order), 0)::double precision AS avg_qty_on_hand_on_order,
-  coalesce(avg(lead_time_days), 0)::double precision     AS avg_lead_time_days,
-  coalesce(sum(mtd_sales), 0)::double precision          AS total_mtd_sales,
-  count(*)::bigint                                       AS snapshot_count
-FROM fact_inventory_snapshot
+    date_trunc('month', snapshot_date)::date AS month_start,
+    item_no,
+    loc,
+    -- Averages over the month (smoothed position)
+    COALESCE(AVG(qty_on_hand), 0)::double precision               AS avg_qty_on_hand,
+    COALESCE(AVG(qty_on_hand_on_order), 0)::double precision       AS avg_qty_on_hand_on_order,
+    -- End-of-month snapshot (point-in-time position)
+    (ARRAY_AGG(qty_on_hand ORDER BY snapshot_date DESC))[1]::double precision     AS eom_qty_on_hand,
+    (ARRAY_AGG(qty_on_hand_on_order ORDER BY snapshot_date DESC))[1]::double precision AS eom_qty_on_hand_on_order,
+    -- Monthly sales = MAX(mtd_sales) = last cumulative value (NOT SUM)
+    COALESCE(MAX(mtd_sales), 0)::double precision                  AS monthly_sales,
+    -- Average daily sales rate for DOS/WOC (excludes zero-demand days)
+    COALESCE(AVG(NULLIF(daily_sls, 0)), 0)::double precision       AS avg_daily_sls,
+    -- Snapshot count for partial month handling
+    COUNT(*)::integer                                               AS snapshot_days,
+    -- Lead time: last known value per month (not average)
+    (ARRAY_AGG(lead_time_days ORDER BY snapshot_date DESC))[1]::double precision AS latest_lead_time_days
+FROM daily
 GROUP BY 1, 2, 3
 WITH NO DATA;
 

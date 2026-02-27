@@ -163,20 +163,23 @@ export type InventoryPosition = {
 export type InventoryKpis = {
   total_on_hand: number;
   total_on_order: number;
-  total_inventory_value: number | null;
   avg_lead_time_days: number | null;
+  dos: number | null;
+  woc: number | null;
+  inventory_turns: number | null;
+  lt_coverage: number | null;
   distinct_items: number;
   distinct_locations: number;
-  snapshot_count: number;
   months_covered: number;
 };
 
 export type InventoryTrendPoint = {
   month: string;
-  avg_on_hand: number;
-  avg_on_order: number;
+  total_on_hand: number;
+  total_on_order: number;
+  monthly_sales: number;
   avg_lead_time: number;
-  total_mtd_sales: number;
+  dos: number | null;
 };
 
 export type InventoryPositionPayload = {

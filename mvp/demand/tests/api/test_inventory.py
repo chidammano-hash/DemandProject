@@ -136,9 +136,14 @@ async def test_inventory_position_limit_validation(mock_pool):
 
 @pytest.mark.asyncio
 async def test_inventory_kpis_returns_200(mock_pool):
-    """GET /inventory/kpis returns 200 with aggregate KPIs."""
+    """GET /inventory/kpis returns 200 with supply chain KPIs."""
     pool, _, cursor = mock_pool
-    cursor.fetchone.return_value = (1000.0, 500.0, 1000.0, 30.5, 50, 10, 200, 3)
+    # Query 1: latest snapshot (on_hand, on_order, items, locations)
+    # Query 2: agg trailing months (sum_avg_oh, sum_monthly, w_lead_time, count_months)
+    cursor.fetchone.side_effect = [
+        (50000.0, 15000.0, 500, 50),
+        (40000.0, 120000.0, 30.5, 3),
+    ]
     with patch("api.main._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -148,21 +153,29 @@ async def test_inventory_kpis_returns_200(mock_pool):
             data = resp.json()
             assert "total_on_hand" in data
             assert "total_on_order" in data
-            assert "total_inventory_value" in data
             assert "avg_lead_time_days" in data
+            assert "dos" in data
+            assert "woc" in data
+            assert "inventory_turns" in data
+            assert "lt_coverage" in data
             assert "distinct_items" in data
             assert "distinct_locations" in data
-            assert "snapshot_count" in data
             assert "months_covered" in data
-            assert data["total_on_hand"] == 1000.0
-            assert data["distinct_items"] == 50
+            assert data["total_on_hand"] == 50000.0
+            assert data["distinct_items"] == 500
+            # Removed fields should NOT be present
+            assert "total_inventory_value" not in data
+            assert "snapshot_count" not in data
 
 
 @pytest.mark.asyncio
 async def test_inventory_kpis_with_filters(mock_pool):
     """GET /inventory/kpis with item, location, and months filters."""
     pool, _, cursor = mock_pool
-    cursor.fetchone.return_value = (200.0, 100.0, 200.0, 15.0, 5, 2, 30, 6)
+    cursor.fetchone.side_effect = [
+        (200.0, 100.0, 5, 2),
+        (180.0, 600.0, 15.0, 6),
+    ]
     with patch("api.main._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -175,9 +188,9 @@ async def test_inventory_kpis_with_filters(mock_pool):
 
 @pytest.mark.asyncio
 async def test_inventory_kpis_no_data(mock_pool):
-    """When fetchone returns None, endpoint should return zeros."""
+    """When fetchone returns None, endpoint should return zeros/nulls."""
     pool, _, cursor = mock_pool
-    cursor.fetchone.return_value = None
+    cursor.fetchone.side_effect = [None, None]
     with patch("api.main._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -187,8 +200,48 @@ async def test_inventory_kpis_no_data(mock_pool):
             data = resp.json()
             assert data["total_on_hand"] == 0.0
             assert data["distinct_items"] == 0
-            assert data["snapshot_count"] == 0
+            assert data["dos"] is None
+            assert data["woc"] is None
             assert data["months_covered"] == 3
+
+
+@pytest.mark.asyncio
+async def test_inventory_kpis_dos_calculation(mock_pool):
+    """DOS = total_on_hand / portfolio_daily_demand."""
+    pool, _, cursor = mock_pool
+    # on_hand = 1000, sum_monthly=608.8, count_months=1
+    # portfolio_daily = 608.8 / 1 / 30.44 = 20.0 => DOS = 1000 / 20 = 50
+    cursor.fetchone.side_effect = [
+        (1000.0, 200.0, 10, 5),
+        (900.0, 608.8, 14.0, 1),
+    ]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inventory/kpis")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["dos"] == 50.0
+            assert data["woc"] is not None
+
+
+@pytest.mark.asyncio
+async def test_inventory_kpis_zero_demand_null_dos(mock_pool):
+    """When daily sales is zero, DOS/WOC should be null."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.side_effect = [
+        (500.0, 100.0, 5, 2),
+        (400.0, 0.0, 15.0, 3),
+    ]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inventory/kpis")
+            data = resp.json()
+            assert data["dos"] is None
+            assert data["woc"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -200,8 +253,8 @@ async def test_inventory_trend_returns_200(mock_pool):
     """GET /inventory/trend returns 200 with monthly trend data."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [
-        ("2025-06-01", 100.0, 50.0, 30.0, 250.0),
-        ("2025-07-01", 110.0, 55.0, 31.0, 260.0),
+        ("2025-06-01", 100000.0, 50000.0, 250000.0, 30.0, 45.2),
+        ("2025-07-01", 110000.0, 55000.0, 260000.0, 31.0, 42.8),
     ]
     with patch("api.main._get_pool", return_value=pool):
         from api.main import app
@@ -214,10 +267,14 @@ async def test_inventory_trend_returns_200(mock_pool):
             assert len(data["trend"]) == 2
             point = data["trend"][0]
             assert "month" in point
-            assert "avg_on_hand" in point
-            assert "avg_on_order" in point
+            assert "total_on_hand" in point
+            assert "total_on_order" in point
+            assert "monthly_sales" in point
             assert "avg_lead_time" in point
-            assert "total_mtd_sales" in point
+            assert "dos" in point
+            # Old field names should NOT be present
+            assert "avg_on_hand" not in point
+            assert "total_mtd_sales" not in point
 
 
 @pytest.mark.asyncio
@@ -355,3 +412,39 @@ async def test_inventory_item_detail_null_values(mock_pool):
             assert snap["qty_on_hand"] is None
             assert snap["qty_on_order"] is None
             assert snap["mtd_sales"] is None
+
+
+# ---------------------------------------------------------------------------
+# /inventory/trend — DOS-specific tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_inventory_trend_includes_dos(mock_pool):
+    """Trend response should include dos field per month."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [
+        ("2025-06-01", 100000.0, 50000.0, 250000.0, 30.0, 45.2),
+    ]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inventory/trend")
+            data = resp.json()
+            assert data["trend"][0]["dos"] == 45.2
+
+
+@pytest.mark.asyncio
+async def test_inventory_trend_null_dos(mock_pool):
+    """When DOS is NULL in DB, it should be null in JSON."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [
+        ("2025-06-01", 100000.0, 50000.0, 250000.0, 30.0, None),
+    ]
+    with patch("api.main._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inventory/trend")
+            data = resp.json()
+            assert data["trend"][0]["dos"] is None

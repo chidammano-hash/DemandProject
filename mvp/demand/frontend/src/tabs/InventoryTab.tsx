@@ -264,9 +264,11 @@ export function InventoryTab({ theme }: InventoryTabProps) {
   const chartData = useMemo(() => {
     return trendData.map((pt) => ({
       month: pt.month,
-      avg_on_hand: pt.avg_on_hand,
-      avg_on_order: pt.avg_on_order,
+      total_on_hand: pt.total_on_hand,
+      total_on_order: pt.total_on_order,
+      monthly_sales: pt.monthly_sales,
       avg_lead_time: pt.avg_lead_time,
+      dos: pt.dos,
     }));
   }, [trendData]);
 
@@ -295,16 +297,67 @@ export function InventoryTab({ theme }: InventoryTabProps) {
             }
           />
           <KpiCard
-            label="Distinct Items"
-            value={formatCompactNumber(kpiData.distinct_items)}
+            label="Days of Supply"
+            value={kpiData.dos != null ? formatNumber(kpiData.dos) : "-"}
+            sublabel="days"
+            severity={
+              kpiData.dos != null
+                ? kpiData.dos >= 14 && kpiData.dos <= 60
+                  ? "best"
+                  : kpiData.dos < 7 || kpiData.dos > 90
+                    ? "warning"
+                    : "neutral"
+                : undefined
+            }
           />
           <KpiCard
-            label="Distinct Locations"
-            value={formatCompactNumber(kpiData.distinct_locations)}
+            label="Weeks of Cover"
+            value={kpiData.woc != null ? formatNumber(kpiData.woc) : "-"}
+            sublabel="weeks"
+            severity={
+              kpiData.woc != null
+                ? kpiData.woc >= 2 && kpiData.woc <= 8
+                  ? "best"
+                  : kpiData.woc < 1 || kpiData.woc > 12
+                    ? "warning"
+                    : "neutral"
+                : undefined
+            }
           />
           <KpiCard
-            label="Snapshot Count"
-            value={formatCompactNumber(kpiData.snapshot_count)}
+            label="Inventory Turns"
+            value={
+              kpiData.inventory_turns != null
+                ? formatNumber(kpiData.inventory_turns)
+                : "-"
+            }
+            sublabel="/yr"
+            severity={
+              kpiData.inventory_turns != null
+                ? kpiData.inventory_turns > 8
+                  ? "best"
+                  : kpiData.inventory_turns < 4
+                    ? "warning"
+                    : "neutral"
+                : undefined
+            }
+          />
+          <KpiCard
+            label="LT Coverage"
+            value={
+              kpiData.lt_coverage != null
+                ? `${formatNumber(kpiData.lt_coverage)}x`
+                : "-"
+            }
+            severity={
+              kpiData.lt_coverage != null
+                ? kpiData.lt_coverage > 1.5
+                  ? "best"
+                  : kpiData.lt_coverage < 1.0
+                    ? "warning"
+                    : "neutral"
+                : undefined
+            }
           />
         </div>
       ) : null}
@@ -395,30 +448,37 @@ export function InventoryTab({ theme }: InventoryTabProps) {
                       backgroundColor: CHART_COLORS[theme].tooltip_bg,
                       borderColor: CHART_COLORS[theme].tooltip_border,
                     }}
-                    formatter={(value: number, name: string) => [
-                      name === "avg_lead_time"
-                        ? `${Number(value).toFixed(1)} days`
-                        : formatCompactNumber(value),
-                      name === "avg_on_hand"
-                        ? "Avg On Hand"
-                        : name === "avg_on_order"
-                          ? "Avg On Order"
-                          : "Avg Lead Time",
-                    ]}
+                    formatter={(value: number, name: string) => {
+                      const labels: Record<string, string> = {
+                        total_on_hand: "On Hand",
+                        total_on_order: "On Order",
+                        monthly_sales: "Monthly Sales",
+                        avg_lead_time: "Avg Lead Time",
+                        dos: "Days of Supply",
+                      };
+                      const formatted =
+                        name === "avg_lead_time" || name === "dos"
+                          ? `${Number(value).toFixed(1)} days`
+                          : formatCompactNumber(value);
+                      return [formatted, labels[name] ?? name];
+                    }}
                   />
                   <Legend
                     wrapperStyle={{ fontSize: 11 }}
-                    formatter={(value: string) =>
-                      value === "avg_on_hand"
-                        ? "Avg On Hand"
-                        : value === "avg_on_order"
-                          ? "Avg On Order"
-                          : "Avg Lead Time"
-                    }
+                    formatter={(value: string) => {
+                      const labels: Record<string, string> = {
+                        total_on_hand: "On Hand",
+                        total_on_order: "On Order",
+                        monthly_sales: "Monthly Sales",
+                        avg_lead_time: "Avg Lead Time",
+                        dos: "Days of Supply",
+                      };
+                      return labels[value] ?? value;
+                    }}
                   />
                   <Line
                     type="monotone"
-                    dataKey="avg_on_hand"
+                    dataKey="total_on_hand"
                     yAxisId="left"
                     stroke={trendColors[0]}
                     strokeWidth={2}
@@ -427,10 +487,28 @@ export function InventoryTab({ theme }: InventoryTabProps) {
                   />
                   <Line
                     type="monotone"
-                    dataKey="avg_on_order"
+                    dataKey="total_on_order"
                     yAxisId="left"
                     stroke={trendColors[1]}
                     strokeWidth={2}
+                    dot={CHART_DOT}
+                    connectNulls
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="monthly_sales"
+                    yAxisId="left"
+                    stroke={trendColors[3]}
+                    strokeWidth={2}
+                    dot={CHART_DOT}
+                    connectNulls
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="dos"
+                    yAxisId="right"
+                    stroke={trendColors[4]}
+                    strokeWidth={2.5}
                     dot={CHART_DOT}
                     connectNulls
                   />

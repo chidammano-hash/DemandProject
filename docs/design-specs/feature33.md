@@ -863,3 +863,40 @@ Health Score = weighted combination of:
 15. **Monthly sales in view:** Verify `monthly_sls = MAX(mtd_sls)` for the item-location-month matches the last day's cumulative value.
 16. **Location filtering:** Verify `loc` column is present and non-null in all loaded rows. Verify inventory query respects all three DFU analysis modes (`item_location`, `all_items_at_location`, `item_at_all_locations`).
 17. **Cross-location aggregation:** In `item_at_all_locations` mode, verify inventory is SUM'd across all locations for the given item.
+
+---
+
+## Implementation Status
+
+**Status:** Partially Implemented
+
+### Phase 1 — Data Pipeline & Basic UI (Feature 34, completed earlier)
+- `fact_inventory_snapshot` table with 190M+ rows loaded from 14 monthly CSVs
+- Dedicated normalize script (`scripts/normalize_inventory_csv.py`)
+- Basic API endpoints: `/inventory/position`, `/inventory/kpis`, `/inventory/trend`, `/inventory/item-detail`
+- Basic InventoryTab with position table, trend chart, item detail drill-down
+
+### Phase 2 — Supply Chain KPIs & View Rebuild (completed)
+- Rebuilt `agg_inventory_monthly` materialized view with:
+  - `daily_sls` CTE via `LAG()` partitioned by item_no, loc, month (daily sales from cumulative mtd_sales)
+  - `eom_qty_on_hand` / `eom_qty_on_hand_on_order` via `ARRAY_AGG(ORDER BY snapshot_date DESC)[1]`
+  - `monthly_sales = MAX(mtd_sales)` (fixes SUM bug on cumulative data)
+  - `avg_daily_sls = AVG(NULLIF(daily_sls, 0))` (demand rate for DOS/WOC)
+  - `latest_lead_time_days` via `ARRAY_AGG` (last known, not average)
+  - `snapshot_days = COUNT(*)` for partial month handling
+- Fixed `/inventory/kpis`: two-query pattern (latest snapshot PIT totals + trailing-month agg for DOS/WOC/Turns/LT Coverage)
+- Fixed `/inventory/trend`: correct field names, added monthly_sales and DOS lines
+- 7 severity-coded KPI cards (On-Hand, On-Order, Lead Time, DOS, WOC, Turns, LT Coverage)
+- 5-line trend chart (On Hand, On Order, Monthly Sales, Lead Time, Days of Supply)
+
+### Not Yet Implemented
+- Inventory overlay in DFU Analysis tab (inventory chart below sales/forecast chart)
+- Inventory KPI cards on DFU Analysis tab
+- DFU attributes enrichment with latest inventory position
+- Forward-looking DOS using champion forecast
+- Demand-supply gap analysis
+- Safety stock computation
+- ABC-inventory cross analysis
+- Inventory health score
+- Bullwhip effect detection
+- Seasonal pre-build tracking

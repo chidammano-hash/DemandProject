@@ -37,18 +37,20 @@ vi.mock("@/api/queries", () => ({
   fetchInventoryKpis: vi.fn().mockResolvedValue({
     total_on_hand: 50000,
     total_on_order: 15000,
-    total_inventory_value: null,
     avg_lead_time_days: 35.5,
+    dos: 45.2,
+    woc: 6.5,
+    inventory_turns: 8.3,
+    lt_coverage: 2.1,
     distinct_items: 500,
     distinct_locations: 50,
-    snapshot_count: 10000,
     months_covered: 3,
   }),
   fetchInventoryTrend: vi.fn().mockResolvedValue({
     trend: [
-      { month: "2025-04-01", avg_on_hand: 90, avg_on_order: 40, avg_lead_time: 30, total_mtd_sales: 200 },
-      { month: "2025-05-01", avg_on_hand: 95, avg_on_order: 45, avg_lead_time: 31, total_mtd_sales: 220 },
-      { month: "2025-06-01", avg_on_hand: 100, avg_on_order: 50, avg_lead_time: 32, total_mtd_sales: 250 },
+      { month: "2025-04-01", total_on_hand: 90000, total_on_order: 40000, monthly_sales: 200000, avg_lead_time: 30, dos: 42.5 },
+      { month: "2025-05-01", total_on_hand: 95000, total_on_order: 45000, monthly_sales: 220000, avg_lead_time: 31, dos: 44.0 },
+      { month: "2025-06-01", total_on_hand: 100000, total_on_order: 50000, monthly_sales: 250000, avg_lead_time: 32, dos: 45.2 },
     ],
   }),
   fetchInventoryItemDetail: vi.fn().mockResolvedValue({
@@ -94,7 +96,7 @@ describe("InventoryTab", () => {
     });
   });
 
-  it("renders KPI cards", async () => {
+  it("renders KPI cards with supply chain metrics", async () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
@@ -106,6 +108,10 @@ describe("InventoryTab", () => {
       expect(screen.getByText("Total On-Hand")).toBeDefined();
       expect(screen.getByText("Total On-Order")).toBeDefined();
       expect(screen.getByText("Avg Lead Time")).toBeDefined();
+      expect(screen.getByText("Days of Supply")).toBeDefined();
+      expect(screen.getByText("Weeks of Cover")).toBeDefined();
+      expect(screen.getByText("Inventory Turns")).toBeDefined();
+      expect(screen.getByText("LT Coverage")).toBeDefined();
     });
   });
 
