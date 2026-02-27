@@ -14,6 +14,8 @@ import { useSidebar } from "@/hooks/useSidebar";
 import { useGlobalFilters } from "@/hooks/useGlobalFilters";
 import { MotifProvider } from "@/context/MotifContext";
 import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
+import { ScenarioNotificationProvider } from "@/context/ScenarioNotificationContext";
+import { JobNotificationProvider } from "@/context/JobNotificationContext";
 import {
   getInitialDomain,
   getInitialTab,
@@ -36,6 +38,8 @@ const DfuAnalysisTab = lazy(() => import("./tabs/DfuAnalysisTab").then((m) => ({
 const AccuracyTab = lazy(() => import("./tabs/AccuracyTab").then((m) => ({ default: m.AccuracyTab })));
 const MarketIntelTab = lazy(() => import("./tabs/MarketIntelTab"));
 const InventoryTab = lazy(() => import("./tabs/InventoryTab").then((m) => ({ default: m.InventoryTab })));
+const InvBacktestTab = lazy(() => import("./tabs/InvBacktestTab"));
+const JobsTab = lazy(() => import("./tabs/JobsTab"));
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -113,6 +117,8 @@ export default function App() {
   return (
     <MotifProvider value={motifTheme}>
       <GlobalFilterProvider value={globalFilters}>
+        <ScenarioNotificationProvider>
+        <JobNotificationProvider>
         <div className="flex h-screen overflow-hidden">
           {/* Skip to content link for accessibility */}
           <a href="#tab-content" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:rounded-md focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground">
@@ -189,6 +195,20 @@ export default function App() {
                     </Suspense>
                   </ErrorBoundary>
                 )}
+                {activeTab === "invBacktest" && (
+                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="invBacktest" />} resetKeys={[activeTab]}>
+                    <Suspense fallback={<TabSuspenseFallback tabKey="invBacktest" />}>
+                      <InvBacktestTab theme={theme} />
+                    </Suspense>
+                  </ErrorBoundary>
+                )}
+                {activeTab === "jobs" && (
+                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="jobs" />} resetKeys={[activeTab]}>
+                    <Suspense fallback={<TabSuspenseFallback tabKey="jobs" />}>
+                      <JobsTab theme={theme} />
+                    </Suspense>
+                  </ErrorBoundary>
+                )}
               </div>
             </div>
 
@@ -196,6 +216,8 @@ export default function App() {
             <ChatPanel domain={domain} theme={theme} />
           </div>
         </div>
+        </JobNotificationProvider>
+        </ScenarioNotificationProvider>
       </GlobalFilterProvider>
     </MotifProvider>
   );

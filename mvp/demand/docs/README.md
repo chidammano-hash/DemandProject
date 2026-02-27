@@ -64,6 +64,7 @@ Clustering:
 - StatsForecast (vectorized AutoARIMA + AutoETS statistical models)
 - scikit-learn (clustering algorithms)
 - OpenAI (GPT-4o + text-embedding-3-small) for NL→SQL chatbot
+- APScheduler 3.11 (job scheduling engine — BackgroundScheduler + ThreadPoolExecutor)
 - Docker Compose
 
 ## Performance defaults
@@ -329,6 +330,32 @@ Optional clustering path (for LGBM model support):
 make cluster-all  # Full pipeline: features -> train -> label -> update
 ```
 
+Optional job scheduler setup:
+```bash
+make db-apply-jobs         # Create job_history + job_schedule tables (one-time)
+```
+
+Job Scheduler/Monitor with APScheduler (feature39):
+- Powered by **APScheduler 3.11** (`BackgroundScheduler` + `ThreadPoolExecutor`)
+- Jobs tab (keyboard shortcut `9`) — professional automation dashboard
+- 7 job types: Clustering What-If, Full Clustering Pipeline, Seasonality Detection, LGBM/CatBoost/XGBoost Backtest, Champion Selection
+- Per-group concurrency control (one active job per group: clustering, backtest, seasonality, champion)
+- **Cron/interval scheduling**: create recurring schedules (e.g., daily 2AM backtest, weekly clustering refresh)
+- **Job pipelines**: chain multi-step workflows (cluster → backtest → champion select)
+- **Retry logic**: configurable max_retries with exponential backoff
+- KPI dashboard: Total Jobs, Active Now, Success Rate, Avg Duration
+- Grouped job type cards with category colors and "Run Now" / schedule buttons
+- Live active job monitoring with animated progress bars and elapsed timers
+- Schedule dialog with presets (hourly, 6h, daily 2AM, weekly Mon 2AM)
+- Recurring schedules section with cron expression badges
+- Expandable job history with params, results, and error detail
+- Cross-tab notifications: completed/failed jobs appear as Dashboard alerts
+- Sidebar active job count badge
+- ClustersTab: "Schedule Scenario Job" button delegates to job system
+- API: 12 endpoints — `POST /jobs` → 202, `GET /jobs`, `GET /jobs/active`, `GET /jobs/{id}`, `POST /jobs/{id}/cancel`, `DELETE /jobs/{id}`, `GET /jobs/types`, `GET /jobs/stats`, `POST /jobs/schedule`, `GET /jobs/schedules`, `DELETE /jobs/schedules/{id}`, `POST /jobs/pipeline`
+- Foundation for agentic AI automation
+- **CRITICAL:** `frontend/vite.config.ts` must include a `/jobs` proxy entry — without it, all job API calls from the UI return HTML instead of JSON. Restart `make ui` after adding proxy entries.
+
 ## Testing
 
 Full-stack automated testing (485+ tests, <3s total):
@@ -354,9 +381,9 @@ cd mvp/demand
 make test-all          # Backend + frontend
 ```
 
-Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters, dashboard, distinct values).
+Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters, dashboard, distinct values, jobs).
 
-Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, `useSidebar`, `useGlobalFilters`), utilities (`formatters`, `export`, `queries`), components (`Skeleton`, `KeyboardShortcutHelp`, `EChartContainer`, `AppSidebar`, `ThemeSelector`, `GlobalFilterBar`, `WidgetGrid`, `AlertPanel`, `TopMovers`, `HeatmapGrid`), and all tab components (including DashboardTab).
+Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, `useSidebar`, `useGlobalFilters`), utilities (`formatters`, `export`, `queries`), contexts (`JobNotificationContext`, `ScenarioNotificationContext`), components (`Skeleton`, `KeyboardShortcutHelp`, `EChartContainer`, `AppSidebar`, `ThemeSelector`, `GlobalFilterBar`, `WidgetGrid`, `AlertPanel`, `TopMovers`, `HeatmapGrid`), and all tab components (including DashboardTab, JobsTab).
 
 **Rule:** Every new feature must include tests. See `docs/design-specs/feature31.md`.
 
@@ -373,6 +400,9 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - Backtest scripts: `mvp/demand/scripts/run_backtest.py`, `run_backtest_catboost.py`, `run_backtest_xgboost.py`, `run_backtest_prophet.py`, `run_backtest_patchtst.py`, `run_backtest_deepar.py`, `run_backtest_statsforecast.py`, `run_backtest_neuralprophet.py`, `load_backtest_forecasts.py`
 - Deep learning models: `mvp/demand/scripts/patchtst_model.py`, `deepar_model.py`
 - Champion selection script: `mvp/demand/scripts/run_champion_selection.py`
+- Job engine: `mvp/demand/common/job_registry.py`
+- Jobs router: `mvp/demand/api/routers/jobs.py`
+- Jobs tab: `mvp/demand/frontend/src/tabs/JobsTab.tsx`
 - Clustering config: `mvp/demand/config/clustering_config.yaml`
 - Competition config: `mvp/demand/config/model_competition.yaml`
 - Inventory normalize: `mvp/demand/scripts/normalize_inventory_csv.py`
@@ -385,4 +415,4 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - Backend tests: `mvp/demand/tests/` (unit/ + api/)
 - Frontend tests: `mvp/demand/frontend/src/**/__tests__/`
 - Test config: `mvp/demand/frontend/vitest.config.ts`
-- Design specs: `docs/design-specs/` (feature1–feature36)
+- Design specs: `docs/design-specs/` (feature1–feature39)

@@ -1,13 +1,14 @@
-"""DFU clustering + what-if scenario endpoints (features 7, 29)."""
+"""DFU clustering + what-if scenario endpoints (features 7, 29, 38)."""
 from __future__ import annotations
 
 from typing import Any
 import json
+import time
 import threading
 
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from api.core import get_conn
@@ -244,45 +245,135 @@ def get_clustering_defaults():
     }
 
 
+_scenario_start_time: float | None = None
+_running_scenario_id: str | None = None
+
+
+@router.get("/clustering/scenario/estimate")
+def estimate_scenario_runtime(
+    scope: str = Query(default="all"),
+    k_min: int = Query(default=3),
+    k_max: int = Query(default=12),
+    skip_gap: bool = Query(default=True),
+):
+    """Estimate scenario runtime based on parameters."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM dim_dfu")
+        dfu_count = int(cur.fetchone()[0])
+
+    k_range = max(1, k_max - k_min + 1)
+    max_training_dfus = 20_000  # Pipeline samples if count exceeds this
+
+    # Empirical constants calibrated from observed runs:
+    # Feature generation: ~0.001s per DFU (per-DFU loop, runs on ALL DFUs)
+    feature_gen_per_dfu = 0.001
+    # KMeans training: ~0.002s per training DFU per K (runs on sample if large)
+    kmeans_per_dfu_per_k = 0.002
+    gap_multiplier = 2.5 if not skip_gap else 1.0
+    # Fixed overhead for SQL query + data loading
+    overhead_seconds = 10.0
+
+    training_dfus = min(dfu_count, max_training_dfus)
+    feature_gen_time = feature_gen_per_dfu * dfu_count
+    kmeans_time = kmeans_per_dfu_per_k * training_dfus * k_range * gap_multiplier
+    estimated = overhead_seconds + feature_gen_time + kmeans_time
+
+    return {
+        "estimated_seconds": round(estimated, 0),
+        "dfu_count": dfu_count,
+        "training_sample": training_dfus,
+        "sampled": dfu_count > max_training_dfus,
+        "k_range": k_range,
+        "skip_gap": skip_gap,
+    }
+
+
 @router.post("/clustering/scenario", dependencies=[Depends(require_api_key)])
 async def run_clustering_scenario(req: ClusteringScenarioRequest):
-    """Run a trial clustering pipeline with custom parameters."""
-    global _scenario_running
+    """Run a trial clustering pipeline with custom parameters (non-blocking).
 
-    if not _scenario_lock.acquire(blocking=False):
-        raise HTTPException(
-            status_code=409,
-            detail="A clustering scenario is already running. Please wait.",
-        )
+    Delegates to the JobManager so the scenario appears in the Jobs tab.
+    """
+    global _scenario_running, _scenario_start_time, _running_scenario_id
+    from common.job_registry import JobManager
 
-    if _scenario_running:
-        _scenario_lock.release()
-        raise HTTPException(
-            status_code=409,
-            detail="A clustering scenario is already running. Please wait.",
-        )
+    manager = JobManager()
 
-    _scenario_running = True
-    _scenario_lock.release()
+    # Build params from the request
+    params: dict[str, Any] = {
+        "feature_params": req.feature_params.model_dump() if req.feature_params else None,
+        "model_params": req.model_params.model_dump() if req.model_params else None,
+        "label_params": req.label_params.model_dump() if req.label_params else None,
+        "relabel_only": req.relabel_only,
+        "previous_scenario_id": req.previous_scenario_id,
+    }
+
+    # Also embed the scenario_id so _run_cluster_scenario uses it
+    from scripts.run_clustering_scenario import generate_scenario_id
+    scenario_id = generate_scenario_id()
+    params["scenario_id"] = scenario_id
 
     try:
-        import asyncio
-        loop = asyncio.get_event_loop()
+        job_id = manager.submit_job("cluster_scenario", params, label=f"What-If Scenario")
+    except RuntimeError:
+        raise HTTPException(
+            status_code=409,
+            detail="A clustering job is already running. Please wait.",
+        )
 
-        def _run():
-            from scripts.run_clustering_scenario import run_scenario
-            return run_scenario(
-                feature_params=req.feature_params.model_dump() if req.feature_params else None,
-                model_params=req.model_params.model_dump() if req.model_params else None,
-                label_params=req.label_params.model_dump() if req.label_params else None,
-                relabel_only=req.relabel_only,
-                previous_scenario_id=req.previous_scenario_id,
-            )
+    # Track for the legacy status polling endpoint
+    _running_scenario_id = scenario_id
+    _scenario_running = True
+    _scenario_start_time = time.time()
 
-        result = await loop.run_in_executor(None, _run)
-        return result
-    finally:
-        _scenario_running = False
+    # Wire up legacy state cleanup when job finishes
+    _original_start = manager.start_job_in_background
+
+    def _start_with_cleanup(jid: str) -> None:
+        """Wrap start to clear legacy globals on completion."""
+        _original_start(jid)
+
+        def _wait_and_cleanup():
+            import time as _t
+            while jid in manager._active_jobs:
+                _t.sleep(1)
+            global _scenario_running, _scenario_start_time, _running_scenario_id
+            _scenario_running = False
+            _scenario_start_time = None
+            _running_scenario_id = None
+
+        cleanup_thread = threading.Thread(target=_wait_and_cleanup, daemon=True)
+        cleanup_thread.start()
+
+    _start_with_cleanup(job_id)
+
+    return JSONResponse(
+        status_code=202,
+        content={"scenario_id": scenario_id, "status": "running", "job_id": job_id},
+    )
+
+
+@router.get("/clustering/scenario/{scenario_id}/status")
+def get_scenario_status(scenario_id: str):
+    """Poll scenario execution status."""
+    # Check if this scenario is currently running
+    if _running_scenario_id == scenario_id and _scenario_running:
+        elapsed = round(time.time() - (_scenario_start_time or time.time()), 1)
+        return {"scenario_id": scenario_id, "status": "running", "elapsed_seconds": elapsed}
+
+    # Check for completed/failed result on disk
+    from scripts.run_clustering_scenario import get_scenario_result
+
+    result = get_scenario_result(scenario_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found")
+
+    return {
+        "scenario_id": scenario_id,
+        "status": result.get("status", "completed"),
+        "runtime_seconds": result.get("runtime_seconds", 0),
+        "result": result,
+    }
 
 
 @router.get("/clustering/scenario/{scenario_id}")

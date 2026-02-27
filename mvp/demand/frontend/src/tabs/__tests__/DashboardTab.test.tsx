@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, waitFor } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
+import { ScenarioNotificationProvider } from "@/context/ScenarioNotificationContext";
+import { JobNotificationProvider } from "@/context/JobNotificationContext";
 import type { GlobalFilterContextValue } from "@/context/GlobalFilterContext";
 import type { GlobalFilters } from "@/types/theme";
 
@@ -106,7 +108,11 @@ function renderDashboard() {
   return render(
     <TestQueryWrapper>
       <GlobalFilterProvider value={makeFilterContext()}>
-        <DashboardTab theme="light" />
+        <ScenarioNotificationProvider>
+          <JobNotificationProvider>
+            <DashboardTab theme="light" />
+          </JobNotificationProvider>
+        </ScenarioNotificationProvider>
       </GlobalFilterProvider>
     </TestQueryWrapper>
   );

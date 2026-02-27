@@ -209,3 +209,74 @@ export type ElementConfig = {
   activeColor: string;
   glow: string;
 };
+
+// Feature 37: Inventory Backtest types
+
+export type InvBacktestModelMetrics = {
+  dfu_months: number;
+  stockout_count: number;
+  stockout_rate: number;
+  excess_count: number;
+  excess_rate: number;
+  service_level: number;
+  avg_dos: number | null;
+  wape: number | null;
+  bias: number | null;
+};
+
+export type InvBacktestSummaryPayload = {
+  models: string[];
+  excess_dos_threshold: number;
+  by_model: Record<string, InvBacktestModelMetrics>;
+};
+
+export type InvBacktestTrendPoint = {
+  month: string;
+  by_model: Record<
+    string,
+    {
+      stockout_rate: number;
+      excess_rate: number;
+      avg_dos: number | null;
+      wape: number | null;
+    }
+  >;
+};
+
+export type InvBacktestTrendPayload = {
+  trend: InvBacktestTrendPoint[];
+};
+
+export type InvBacktestRootCausePayload = {
+  model_id: string;
+  stockout_total: number;
+  stockout_under_forecast: number;
+  stockout_over_forecast: number;
+  stockout_exact: number;
+  excess_total: number;
+  excess_over_forecast: number;
+  excess_under_forecast: number;
+  excess_exact: number;
+};
+
+export type InvBacktestDetailRow = {
+  item_no: string;
+  loc: string;
+  month: string;
+  model_id: string;
+  forecast: number;
+  actual_demand: number;
+  eom_qty_on_hand: number;
+  dos: number | null;
+  event_type: string;
+  forecast_error: number;
+  pct_error: number | null;
+  bias_direction: string;
+};
+
+export type InvBacktestDetailPayload = {
+  total: number;
+  limit: number;
+  offset: number;
+  rows: InvBacktestDetailRow[];
+};

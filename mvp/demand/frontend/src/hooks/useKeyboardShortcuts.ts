@@ -19,8 +19,10 @@ const TAB_MAP: Record<string, string> = {
   "3": "dfuAnalysis",
   "4": "accuracy",
   "5": "inventory",
-  "6": "clusters",
-  "7": "intel",
+  "6": "invBacktest",
+  "7": "clusters",
+  "8": "intel",
+  "9": "jobs",
 };
 
 export function useKeyboardShortcuts(config: ShortcutConfig) {
@@ -74,7 +76,7 @@ export function useKeyboardShortcuts(config: ShortcutConfig) {
         return;
       }
 
-      // 1-7: tab switching
+      // 1-8: tab switching
       if (TAB_MAP[e.key]) {
         e.preventDefault();
         config.onTabSwitch(TAB_MAP[e.key]);

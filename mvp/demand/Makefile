@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-all backtest-clean backtest-list accuracy-slice-refresh accuracy-slice-check champion-select test test-unit test-api test-cov test-all
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-all backtest-clean backtest-list accuracy-slice-refresh accuracy-slice-check champion-select db-apply-jobs test test-unit test-api test-cov test-all
 
 help:
 	@echo "Targets:"
@@ -30,6 +30,8 @@ help:
 	@echo "  load-all             - load all configured datasets"
 	@echo "  refresh-agg          - refresh monthly aggregate materialized views"
 	@echo "  db-apply-inventory   - apply inventory snapshot DDL into Postgres"
+	@echo "  db-apply-inv-backtest - apply inventory-forecast bridge MV DDL"
+	@echo "  refresh-inv-backtest  - refresh inventory-forecast materialized view"
 	@echo "  inventory-pipeline   - normalize + load inventory data"
 	@echo "  api                  - run unified FastAPI service on :8000"
 	@echo "  ui-init              - install frontend dependencies"
@@ -344,6 +346,17 @@ db-apply-chat:
 
 db-apply-inventory:
 	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp < sql/017_create_fact_inventory_snapshot.sql
+
+db-apply-inv-backtest:
+	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp < sql/019_inventory_forecast_view.sql
+
+db-apply-jobs:
+	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp < sql/020_create_job_history.sql
+	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp < sql/021_alter_job_history_scheduling.sql
+
+refresh-inv-backtest:
+	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp \
+		-c "REFRESH MATERIALIZED VIEW mv_inventory_forecast_monthly;"
 
 inventory-pipeline: normalize-inventory load-inventory
 

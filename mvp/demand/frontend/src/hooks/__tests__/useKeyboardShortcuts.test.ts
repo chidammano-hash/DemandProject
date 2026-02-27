@@ -20,7 +20,7 @@ describe("useKeyboardShortcuts", () => {
     vi.clearAllMocks();
   });
 
-  it("switches tabs with 1-7 keys", () => {
+  it("switches tabs with 1-8 keys", () => {
     renderHook(() => useKeyboardShortcuts(defaultConfig));
 
     act(() => fireKey("1"));
@@ -35,7 +35,13 @@ describe("useKeyboardShortcuts", () => {
     act(() => fireKey("5"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("inventory");
 
+    act(() => fireKey("6"));
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("invBacktest");
+
     act(() => fireKey("7"));
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("clusters");
+
+    act(() => fireKey("8"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("intel");
   });
 

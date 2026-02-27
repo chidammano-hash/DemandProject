@@ -14,6 +14,10 @@ import type {
   InventoryKpis,
   InventoryTrendPayload,
   InventoryItemDetailPayload,
+  InvBacktestSummaryPayload,
+  InvBacktestTrendPayload,
+  InvBacktestRootCausePayload,
+  InvBacktestDetailPayload,
 } from "@/types";
 import type {
   DashboardKpis,
@@ -36,6 +40,8 @@ export const queryKeys = {
   clusterProfiles: () => ["cluster-profiles"] as const,
   clusteringDefaults: () => ["clustering-defaults"] as const,
   clusteringScenario: (id: string) => ["clustering-scenario", id] as const,
+  scenarioEstimate: (params: Record<string, unknown>) => ["scenario-estimate", params] as const,
+  scenarioStatus: (id: string) => ["scenario-status", id] as const,
   samplePair: (domain: string) => ["sample-pair", domain] as const,
   accuracySlice: (params: Record<string, unknown>) => ["accuracy-slice", params] as const,
   lagCurve: (params: Record<string, unknown>) => ["lag-curve", params] as const,
@@ -46,12 +52,24 @@ export const queryKeys = {
   inventoryKpis: (params: Record<string, unknown>) => ["inventory-kpis", params] as const,
   inventoryTrend: (params: Record<string, unknown>) => ["inventory-trend", params] as const,
   inventoryItemDetail: (params: Record<string, unknown>) => ["inventory-item-detail", params] as const,
+  // Inventory backtest keys (Feature 37)
+  invBacktestSummary: (params: Record<string, unknown>) => ["inv-backtest-summary", params] as const,
+  invBacktestTrend: (params: Record<string, unknown>) => ["inv-backtest-trend", params] as const,
+  invBacktestRootCause: (params: Record<string, unknown>) => ["inv-backtest-root-cause", params] as const,
+  invBacktestDetail: (params: Record<string, unknown>) => ["inv-backtest-detail", params] as const,
   // Dashboard & filter keys (Feature 36)
   distinctValues: (domain: string, column: string) => ["distinct-values", domain, column] as const,
   dashboardKpis: (params: Record<string, unknown>) => ["dashboard-kpis", params] as const,
   dashboardAlerts: (params: Record<string, unknown>) => ["dashboard-alerts", params] as const,
   dashboardTopMovers: (params: Record<string, unknown>) => ["dashboard-top-movers", params] as const,
   dashboardHeatmap: (params: Record<string, unknown>) => ["dashboard-heatmap", params] as const,
+  // Job scheduler keys (Feature 39)
+  jobTypes: () => ["job-types"] as const,
+  jobs: (params: Record<string, unknown>) => ["jobs", params] as const,
+  jobDetail: (id: string) => ["job-detail", id] as const,
+  activeJobs: () => ["active-jobs"] as const,
+  jobStats: () => ["job-stats"] as const,
+  jobSchedules: () => ["job-schedules"] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -209,15 +227,52 @@ export interface ClusteringScenarioResult {
       k_values: number[];
       inertias: number[];
       silhouette_scores: number[];
+      gap_stats?: number[] | null;
     };
     profiles: ScenarioProfile[];
+    feature_importance?: { feature: string; variance_ratio: number }[];
   } | null;
-  error: string | null;
+  error?: string | null;
+}
+
+export interface ScenarioEstimate {
+  estimated_seconds: number;
+  dfu_count: number;
+  training_sample: number;
+  sampled: boolean;
+  k_range: number;
+  skip_gap: boolean;
+}
+
+export interface ScenarioStatusResponse {
+  scenario_id: string;
+  status: "running" | "completed" | "failed";
+  elapsed_seconds?: number;
+  runtime_seconds?: number;
+  result?: ClusteringScenarioResult;
+  error?: string;
+}
+
+export async function fetchScenarioEstimate(params: {
+  k_min: number;
+  k_max: number;
+  skip_gap: boolean;
+}): Promise<ScenarioEstimate> {
+  const qs = new URLSearchParams({
+    k_min: String(params.k_min),
+    k_max: String(params.k_max),
+    skip_gap: String(params.skip_gap),
+  });
+  return fetchJson(`/clustering/scenario/estimate?${qs}`);
+}
+
+export async function fetchScenarioStatus(scenarioId: string): Promise<ScenarioStatusResponse> {
+  return fetchJson(`/clustering/scenario/${encodeURIComponent(scenarioId)}/status`);
 }
 
 export async function runClusteringScenario(
   params: ClusteringScenarioParams,
-): Promise<ClusteringScenarioResult> {
+): Promise<{ scenario_id: string; status: string; job_id?: string }> {
   return fetchJson("/clustering/scenario", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -494,4 +549,184 @@ export async function fetchDashboardHeatmap(
   const qs = new URLSearchParams({ grain, periods: String(periods) });
   appendFilterParams(qs, filters);
   return fetchJson(`/dashboard/heatmap?${qs}`);
+}
+
+// ---------------------------------------------------------------------------
+// Inventory Backtest queries (Feature 37)
+// ---------------------------------------------------------------------------
+export interface InvBacktestFilterParams {
+  models?: string;
+  month_from?: string;
+  month_to?: string;
+  item?: string;
+  location?: string;
+  cluster_assignment?: string;
+  abc_vol?: string;
+  region?: string;
+  excess_dos_threshold?: number;
+}
+
+function appendInvBacktestParams(qs: URLSearchParams, params: InvBacktestFilterParams) {
+  if (params.models?.trim()) qs.set("models", params.models.trim());
+  if (params.month_from?.trim()) qs.set("month_from", params.month_from.trim());
+  if (params.month_to?.trim()) qs.set("month_to", params.month_to.trim());
+  if (params.item?.trim()) qs.set("item", params.item.trim());
+  if (params.location?.trim()) qs.set("location", params.location.trim());
+  if (params.cluster_assignment?.trim()) qs.set("cluster_assignment", params.cluster_assignment.trim());
+  if (params.abc_vol?.trim()) qs.set("abc_vol", params.abc_vol.trim());
+  if (params.region?.trim()) qs.set("region", params.region.trim());
+  if (params.excess_dos_threshold != null) qs.set("excess_dos_threshold", String(params.excess_dos_threshold));
+}
+
+export async function fetchInvBacktestSummary(params: InvBacktestFilterParams): Promise<InvBacktestSummaryPayload> {
+  const qs = new URLSearchParams();
+  appendInvBacktestParams(qs, params);
+  return fetchJson(`/inventory-backtest/summary?${qs}`);
+}
+
+export async function fetchInvBacktestTrend(params: InvBacktestFilterParams): Promise<InvBacktestTrendPayload> {
+  const qs = new URLSearchParams();
+  appendInvBacktestParams(qs, params);
+  return fetchJson(`/inventory-backtest/trend?${qs}`);
+}
+
+export async function fetchInvBacktestRootCause(
+  params: InvBacktestFilterParams & { model_id: string },
+): Promise<InvBacktestRootCausePayload> {
+  const qs = new URLSearchParams({ model_id: params.model_id });
+  appendInvBacktestParams(qs, params);
+  return fetchJson(`/inventory-backtest/root-cause?${qs}`);
+}
+
+export interface InvBacktestDetailParams extends InvBacktestFilterParams {
+  event_type?: string;
+  limit: number;
+  offset: number;
+  sort_by: string;
+  sort_dir: string;
+}
+
+export async function fetchInvBacktestDetail(params: InvBacktestDetailParams): Promise<InvBacktestDetailPayload> {
+  const qs = new URLSearchParams({
+    limit: String(params.limit),
+    offset: String(params.offset),
+    sort_by: params.sort_by,
+    sort_dir: params.sort_dir,
+  });
+  if (params.event_type && params.event_type !== "all") qs.set("event_type", params.event_type);
+  appendInvBacktestParams(qs, params);
+  return fetchJson(`/inventory-backtest/detail?${qs}`);
+}
+
+// ---------------------------------------------------------------------------
+// Seasonality profiles
+// ---------------------------------------------------------------------------
+export interface SeasonalityProfilesPayload {
+  profiles: { profile: string; count: number }[];
+}
+
+export async function fetchSeasonalityProfiles(): Promise<SeasonalityProfilesPayload> {
+  return fetchJson("/domains/dfu/seasonality-profiles");
+}
+
+// ---------------------------------------------------------------------------
+// Job scheduler queries (Feature 39)
+// ---------------------------------------------------------------------------
+import type {
+  Job, JobType, JobListPayload, JobTypesPayload, ActiveJobsPayload,
+  JobStats, JobSchedule, JobSchedulesPayload,
+} from "@/types/jobs";
+
+export type {
+  Job, JobType, JobListPayload, JobTypesPayload, ActiveJobsPayload,
+  JobStats, JobSchedule, JobSchedulesPayload,
+};
+
+export async function fetchJobTypes(): Promise<JobTypesPayload> {
+  return fetchJson("/jobs/types");
+}
+
+export async function fetchJobs(params: {
+  status?: string;
+  job_type?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<JobListPayload> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.job_type) qs.set("job_type", params.job_type);
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  if (params.offset != null) qs.set("offset", String(params.offset));
+  return fetchJson(`/jobs?${qs}`);
+}
+
+export async function fetchJobDetail(jobId: string): Promise<Job> {
+  return fetchJson(`/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export async function fetchActiveJobs(): Promise<ActiveJobsPayload> {
+  return fetchJson("/jobs/active");
+}
+
+export async function submitJob(
+  jobType: string,
+  params: Record<string, unknown> = {},
+  label?: string,
+): Promise<{ job_id: string; status: string }> {
+  return fetchJson("/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_type: jobType, params, label }),
+  });
+}
+
+export async function cancelJob(jobId: string): Promise<{ job_id: string; status: string }> {
+  return fetchJson(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+}
+
+export async function deleteJob(jobId: string): Promise<{ deleted: boolean }> {
+  return fetchJson(`/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+}
+
+export async function fetchJobStats(): Promise<JobStats> {
+  return fetchJson("/jobs/stats");
+}
+
+export async function fetchJobSchedules(): Promise<JobSchedulesPayload> {
+  return fetchJson("/jobs/schedules");
+}
+
+export async function createSchedule(
+  jobType: string,
+  params: Record<string, unknown> = {},
+  label?: string,
+  cron?: string,
+  intervalMinutes?: number,
+): Promise<{ schedule_id: string; status: string }> {
+  return fetchJson("/jobs/schedule", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      job_type: jobType,
+      params,
+      label,
+      cron,
+      interval_minutes: intervalMinutes,
+    }),
+  });
+}
+
+export async function deleteSchedule(scheduleId: string): Promise<{ deleted: boolean }> {
+  return fetchJson(`/jobs/schedules/${encodeURIComponent(scheduleId)}`, { method: "DELETE" });
+}
+
+export async function submitPipeline(
+  steps: { job_type: string; params?: Record<string, unknown>; label?: string }[],
+  label?: string,
+): Promise<{ pipeline_id: string; status: string; steps: number }> {
+  return fetchJson("/jobs/pipeline", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ steps, label }),
+  });
 }

@@ -1,4 +1,4 @@
-import { AlertTriangle, AlertCircle, Info } from "lucide-react";
+import { AlertTriangle, AlertCircle, Info, FlaskConical, PlayCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Alert, AlertSeverity } from "@/types/theme";
 
@@ -9,12 +9,19 @@ const SEVERITY_CONFIG: Record<AlertSeverity, { icon: React.ElementType; borderCl
   low: { icon: Info, borderClass: "border-l-muted", iconClass: "text-muted-foreground" },
 };
 
+const TYPE_ICON_OVERRIDE: Partial<Record<string, React.ElementType>> = {
+  scenario_complete: FlaskConical,
+  job_complete: PlayCircle,
+};
+
 interface AlertPanelProps {
   alerts: Alert[];
   className?: string;
+  onDismiss?: (alertId: string) => void;
+  onAlertClick?: (alert: Alert) => void;
 }
 
-export function AlertPanel({ alerts, className }: AlertPanelProps) {
+export function AlertPanel({ alerts, className, onDismiss, onAlertClick }: AlertPanelProps) {
   if (alerts.length === 0) {
     return (
       <div className={cn("flex items-center justify-center py-8 text-sm text-muted-foreground", className)}>
@@ -31,14 +38,17 @@ export function AlertPanel({ alerts, className }: AlertPanelProps) {
     <div className={cn("space-y-1.5", className)}>
       {sorted.map((alert) => {
         const cfg = SEVERITY_CONFIG[alert.severity];
-        const Icon = cfg.icon;
+        const Icon = TYPE_ICON_OVERRIDE[alert.type] ?? cfg.icon;
+        const isClickable = !!onAlertClick;
         return (
           <div
             key={alert.id}
             className={cn(
               "flex items-start gap-2.5 rounded-md border border-border border-l-4 bg-card px-3 py-2",
               cfg.borderClass,
+              isClickable && "cursor-pointer hover:bg-muted/30 transition-colors",
             )}
+            onClick={onAlertClick ? () => onAlertClick(alert) : undefined}
           >
             <Icon className={cn("mt-0.5 h-4 w-4 flex-shrink-0", cfg.iconClass)} strokeWidth={1.5} />
             <div className="min-w-0 flex-1">
@@ -49,6 +59,18 @@ export function AlertPanel({ alerts, className }: AlertPanelProps) {
               <span className="flex-shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
                 {alert.count}
               </span>
+            )}
+            {onDismiss && (
+              <button
+                className="flex-shrink-0 rounded-sm p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDismiss(alert.id);
+                }}
+                aria-label="Dismiss alert"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             )}
           </div>
         );

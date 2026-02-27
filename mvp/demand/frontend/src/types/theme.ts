@@ -134,7 +134,7 @@ export interface DashboardKpis {
   };
 }
 
-export type AlertType = "oos_risk" | "bias_drift" | "low_accuracy" | "demand_spike" | "allocation_shortage";
+export type AlertType = "oos_risk" | "bias_drift" | "low_accuracy" | "demand_spike" | "allocation_shortage" | "scenario_complete" | "job_complete";
 export type AlertSeverity = "critical" | "high" | "medium" | "low";
 
 export interface Alert {

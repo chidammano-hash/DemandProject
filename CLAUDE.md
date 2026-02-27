@@ -24,6 +24,7 @@
 | Query Engine | Trino |
 | ML / Clustering | scikit-learn, pandas, scipy, matplotlib, seaborn, StatsForecast, NeuralProphet |
 | ML Tracking | MLflow |
+| Job Scheduling | APScheduler 3.11 (BackgroundScheduler + ThreadPoolExecutor) |
 | Python packaging | uv |
 | Build | Make |
 | Containers | Docker Compose |
@@ -35,7 +36,7 @@
 | File | Purpose |
 |---|---|
 | `mvp/demand/common/domain_specs.py` | Central config: all 8 datasets (dimensions + facts + inventory) with columns, types, keys |
-| `mvp/demand/api/main.py` | FastAPI backend — primary endpoints + mounts `api/routers/clusters` for What-If and seasonality routes |
+| `mvp/demand/api/main.py` | FastAPI backend — primary endpoints + mounts routers (clusters, jobs, etc.) |
 | `mvp/demand/frontend/src/App.tsx` | React UI — sidebar layout shell (~200 lines, lazy-loaded tabs) |
 | `mvp/demand/Makefile` | All dev commands |
 | `mvp/demand/docker-compose.yml` | 7-service infra cluster |
@@ -44,6 +45,7 @@
 | `mvp/demand/scripts/spark_dataset_to_iceberg.py` | Spark job: clean CSV → Iceberg |
 | `mvp/demand/sql/` | DDL for all tables, indexes, materialized views |
 | `mvp/demand/sql/017_create_fact_inventory_snapshot.sql` | Inventory snapshot table DDL, indexes, materialized view |
+| `mvp/demand/sql/019_inventory_forecast_view.sql` | Inventory-forecast bridge materialized view (Feature 37) |
 | `mvp/demand/scripts/normalize_inventory_csv.py` | Inventory ETL: merge 14 monthly CSVs → single clean CSV |
 | `mvp/demand/scripts/generate_clustering_features.py` | Feature engineering: sales history → clustering feature matrix |
 | `mvp/demand/scripts/train_clustering_model.py` | KMeans clustering with optimal K selection + MLflow logging |
@@ -69,16 +71,24 @@
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
 | `mvp/demand/sql/008_perf_indexes_and_agg.sql` | Performance indexes (B-tree, GIN trigram) + materialized views |
 | `mvp/demand/frontend/src/api/queries.ts` | Centralized TanStack Query layer (all fetch functions + query keys) |
-| `mvp/demand/frontend/src/tabs/` | Extracted tab components (DashboardTab, ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, ChatPanel) |
+| `mvp/demand/frontend/src/tabs/` | Extracted tab components (DashboardTab, ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, InvBacktestTab, ChatPanel, JobsTab) |
 | `mvp/demand/frontend/src/hooks/useTheme.ts` | Product theme + color mode management (3 themes, light/dark) |
-| `mvp/demand/frontend/src/hooks/useUrlState.ts` | URL state synchronization (9 tabs, overview default) |
-| `mvp/demand/frontend/src/hooks/useKeyboardShortcuts.ts` | Keyboard shortcuts handler (1-7 tabs, sidebar, theme) |
+| `mvp/demand/frontend/src/hooks/useUrlState.ts` | URL state synchronization (11 tabs, overview default) |
+| `mvp/demand/frontend/src/hooks/useKeyboardShortcuts.ts` | Keyboard shortcuts handler (1-9 tabs, sidebar, theme) |
 | `mvp/demand/frontend/src/hooks/useSidebar.ts` | Sidebar collapse/expand state + mobile drawer |
 | `mvp/demand/frontend/src/hooks/useGlobalFilters.ts` | Global filter state with debounced URL sync |
 | `mvp/demand/frontend/src/context/GlobalFilterContext.tsx` | Global filter React context provider |
+| `mvp/demand/frontend/src/context/ScenarioNotificationContext.tsx` | Cross-tab scenario notification context (Feature 38) |
+| `mvp/demand/common/job_registry.py` | APScheduler-powered job engine: BackgroundScheduler, JobManager singleton, per-group concurrency, scheduling, pipelines (Feature 39) |
+| `mvp/demand/api/routers/jobs.py` | Jobs REST API: 12 endpoints — CRUD, scheduling, pipelines, stats (Feature 39) |
+| `mvp/demand/sql/020_create_job_history.sql` | DDL for persistent job_history table (Feature 39) |
+| `mvp/demand/sql/021_alter_job_history_scheduling.sql` | DDL for scheduling columns + job_schedule table (Feature 39) |
+| `mvp/demand/frontend/src/tabs/JobsTab.tsx` | Automation dashboard UI: KPI cards, grouped job cards, schedules, history (Feature 39) |
+| `mvp/demand/frontend/src/types/jobs.ts` | TypeScript types: JobStats, JobSchedule, GROUP_CONFIG (Feature 39) |
+| `mvp/demand/frontend/src/context/JobNotificationContext.tsx` | Cross-tab job notification context (Feature 39) |
 | `mvp/demand/frontend/src/types/theme.ts` | TypeScript types for themes, sidebar, filters, dashboard |
 | `mvp/demand/frontend/src/constants/themes/` | Product theme configs (wineSpirits, general, obsidian) |
-| `mvp/demand/frontend/src/components/AppSidebar.tsx` | Collapsible sidebar navigation (9 items, 5 sections) |
+| `mvp/demand/frontend/src/components/AppSidebar.tsx` | Collapsible sidebar navigation (11 items, 5 sections) |
 | `mvp/demand/frontend/src/components/ThemeSelector.tsx` | Theme + color mode picker (sidebar footer) |
 | `mvp/demand/frontend/src/components/GlobalFilterBar.tsx` | Cross-tab filter bar (brand, category, item, location, market, channel) |
 | `mvp/demand/frontend/src/components/WidgetGrid.tsx` | CSS Grid dashboard layout (WidgetGrid + WidgetCard) |
@@ -92,13 +102,14 @@
 | `mvp/demand/frontend/src/components/DataTable.tsx` | Virtualized data grid (TanStack Table + Virtual) |
 | `mvp/demand/frontend/src/components/Skeleton.tsx` | Loading skeleton placeholder |
 | `mvp/demand/frontend/src/components/EChartContainer.tsx` | Theme-aware ECharts wrapper |
+| `mvp/demand/frontend/vite.config.ts` | Vite dev server config: API proxy rules (CRITICAL — every new API path prefix must be added here) |
 | `mvp/demand/frontend/vitest.config.ts` | Vitest test configuration |
 | `mvp/demand/frontend/tailwind.config.ts` | Tailwind config with custom `pulse-glow` animation |
 | `mvp/demand/tests/` | Backend test suite (pytest): unit/ + api/ |
 | `mvp/demand/tests/conftest.py` | Shared pytest fixtures (sample DataFrames) |
 | `mvp/demand/tests/api/conftest.py` | API test fixtures (mock DB pool, async httpx client) |
 | `mvp/demand/frontend/src/**/__tests__/` | Frontend test suites (Vitest + RTL) |
-| `docs/design-specs/` | Feature specs (feature1–feature36) |
+| `docs/design-specs/` | Feature specs (feature1–feature38) |
 | `mvp/demand/api/core.py` | Shared API utilities: connection pool, OpenAI client, SQL helpers used by router modules |
 | `mvp/demand/api/auth.py` | Optional API key auth (`require_api_key` dependency; disabled when `API_KEY` env var unset) |
 | `mvp/demand/api/routers/` | Modular FastAPI router modules (clusters, accuracy, analysis, benchmark, chat, competition, domains, intel) |
@@ -147,6 +158,13 @@ make db-apply-inventory     # Create inventory table + indexes + materialized vi
 make normalize-inventory    # Merge 14 monthly CSVs into single clean CSV
 make load-inventory         # Load into Postgres + refresh agg view
 make inventory-pipeline     # normalize + load + refresh (all-in-one)
+
+# Inventory backtest (Feature 37)
+make db-apply-inv-backtest  # Create mv_inventory_forecast_monthly materialized view
+make refresh-inv-backtest   # Refresh inventory-forecast bridge view with current data
+
+# Job scheduler (Feature 39)
+make db-apply-jobs          # Create job_history + job_schedule tables + indexes
 
 # Run services
 make api               # Start FastAPI on :8000
@@ -278,6 +296,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 ### Materialized Views
 - `agg_sales_monthly`, `agg_forecast_monthly` — pre-aggregated for O(1) KPI queries
 - `agg_inventory_monthly` — monthly EOM on-hand, EOM on-hand+on-order, avg on-hand, monthly sales (MAX of cumulative MTD), avg daily sales (via LAG CTE), snapshot days, latest lead time. Daily sales derived from cumulative `mtd_sales` via LAG() window function. Enables DOS, WOC, Turns, LT Coverage computation.
+- `mv_inventory_forecast_monthly` — inventory-forecast bridge: joins `agg_inventory_monthly` + `fact_external_forecast_monthly` + `dim_dfu`. Grain = item_no + loc + month_start + model_id. Computed: forecast_error, abs_error, dos, is_stockout, is_excess, bias_direction. Enables stockout/excess root cause attribution by forecast model.
 
 ---
 
@@ -296,18 +315,20 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - Champion Selection panel: model competition config, run, and FVA model-wins visualization
 - Market Intelligence tab: item/location selector with Google web search + GPT-4o narrative briefing
 - DFU Analysis tab: unified sales vs multi-model forecast overlay chart, 3 scope modes, per-model KPI cards, toggleable measures
-- Collapsible sidebar navigation (9 items, 5 sections, mobile drawer, `[` toggle)
+- Collapsible sidebar navigation (10 items, 5 sections, mobile drawer, `[` toggle)
 - Dashboard overview landing page: KPI sparkline cards, alert panel, heatmap, top movers, forecast trend chart
 - Global filter bar: brand, category, item (searchable), location (searchable), market, channel multi-select dropdowns — applied to dashboard, accuracy, and auto-populated into tab-local inputs
 - Three product themes: Wine & Spirits, General, Obsidian (CSS variable palettes, light/dark modes)
-- Keyboard shortcuts (1-7 tab switch, `[` sidebar, `t` theme, `d` dark mode, / search, Esc close, ? help, Ctrl+E fields)
+- Keyboard shortcuts (1-9 tab switch, `[` sidebar, `t` theme, `d` dark mode, / search, Esc close, ? help, Ctrl+E fields)
 - Lazy-loaded tab components with per-tab error boundaries
 - TanStack Query caching (stale-while-revalidate, instant tab switching)
 - Virtualized data grid with column resize, row selection, CSV export
 - Print-ready CSS (@media print rules)
 - ECharts integration for canvas-based charting
 - Inventory tab: KPI cards, trend chart, paginated position table, item detail drill-down
-- Clustering What-If Scenarios panel: parameter controls, scenario simulation, result charts, promote flow
+- Inventory backtest tab: model comparison (stockout/excess/service level/WAPE), root cause attribution (bias direction), monthly trend, DFU-level event detail table
+- Clustering What-If Scenarios panel: parameter controls, scenario simulation, result charts, promote flow, background execution with runtime estimation, dashboard completion alerts, enhanced charts (elbow with optimal K, silhouette with quality zones, feature importance, cluster size pie, gap statistic)
+- Job Scheduler/Monitor tab (APScheduler-powered): automation dashboard with KPI cards (Total Jobs, Active Now, Success Rate, Avg Duration), grouped job type cards with category colors (blue=clustering, violet=backtest, emerald=seasonality, amber=champion), "Run Now" and schedule buttons, live active job monitoring with animated progress bars and elapsed timers, schedule dialog with presets (hourly/6h/daily 2AM/weekly), recurring schedules section with cron badges, expandable job history with params/results/errors, sidebar active job count badge, cross-tab alerts via `JobNotificationContext`, ClustersTab "Schedule Scenario Job" integration
 - Five motif themes: Periodic Table, Wine & Spirits, Space, Formula 1, Zen Garden — each with distinct tiles, icons, and loading animations; selectable independently of light/dark color mode
 - `MotifSettingsPanel` accessible via Ctrl+M keyboard shortcut
 - `?motif=<id>` URL parameter for deep-linking to a specific motif theme
@@ -370,9 +391,11 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Benchmarking:** `GET /bench/compare` runs identical queries (count, page, trend) against Postgres and Trino/Iceberg, returning per-query latency stats (min/max/avg/p50/p95) with winner determination and speedup factor. Requires Docker services running. Make target: `bench-compare`.
 - **Inventory snapshots:** 14 monthly CSV files (`datafiles/Inventory_Snapshot_YYYY_MM.csv`, ~190M rows total) merged by `scripts/normalize_inventory_csv.py` into a single clean CSV. Loaded into `fact_inventory_snapshot` via generic loader. `qty_on_order` derived as `qty_on_hand_on_order - qty_on_hand` during normalization. Dedicated API endpoints (`/inventory/*`) and frontend InventoryTab. `agg_inventory_monthly` materialized view with daily sales derivation (LAG CTE), EOM snapshots, and proper monthly sales (MAX not SUM). `/inventory/kpis` uses two-query pattern: point-in-time totals from latest snapshot + trailing-month aggregates for supply chain KPIs (DOS, WOC, Inventory Turns, LT Coverage). KPI cards use severity color-coding (green/yellow/red thresholds). Trend chart renders 5 lines: On Hand, On Order, Monthly Sales, Lead Time, Days of Supply.
 - **DFU seasonality detection:** Pipeline in `scripts/detect_seasonality.py` + `update_seasonality_profiles.py` computes seasonality metrics (strength, profile label, peak/trough month, peak-to-trough ratio, is_yearly_seasonal flag) from sales history and writes them to `dim_dfu`. Config in `config/seasonality_config.yaml`. DDL in `sql/015_add_seasonality_columns.sql`. Make targets: `seasonality-detect`, `seasonality-update`, `seasonality-all`. These 6 columns (`seasonality_profile`, `seasonality_strength`, `is_yearly_seasonal`, `peak_month`, `trough_month`, `peak_trough_ratio`) are now part of `DFU_SPEC` and are exposed by the generic Data Explorer.
-- **What-If clustering scenarios:** `POST /clustering/scenario` runs a trial KMeans pipeline with custom `feature_params`, `model_params`, and `label_params` without overwriting production clustering. `POST /clustering/scenario/{id}/promote` applies the winning scenario to `dim_dfu.ml_cluster`. The UI panel is fully implemented in ClustersTab. Requires `API_KEY` env var to be set for auth (disabled when unset).
-- **Modular API router architecture:** `api/routers/` contains 8 FastAPI `APIRouter` modules (clusters, accuracy, analysis, benchmark, chat, competition, domains, intel). These are imported and mounted via `app.include_router()` at the end of `main.py`. Existing inline `@app.get` routes registered earlier take precedence for duplicate paths. The `clusters` router provides the What-If scenario and seasonality-profile endpoints not in the inline routes.
+- **What-If clustering scenarios:** `POST /clustering/scenario` runs a trial KMeans pipeline with custom `feature_params`, `model_params`, and `label_params` without overwriting production clustering. Returns HTTP 202 immediately and runs in background thread; `GET /clustering/scenario/{id}/status` polls for running/completed/failed. `GET /clustering/scenario/estimate` returns runtime estimate based on DFU count, K range, and gap flag. `POST /clustering/scenario/{id}/promote` applies the winning scenario to `dim_dfu.ml_cluster`. `ScenarioNotificationContext` tracks running/completed state across tabs; Dashboard injects completion alert. Enhanced charts: elbow with optimal K ReferenceLine, silhouette bar chart with quality zone thresholds (Strong/Reasonable/Weak/No structure), feature importance horizontal bars, cluster size pie chart, conditional gap statistic line chart. Requires `API_KEY` env var to be set for auth (disabled when unset).
+- **Modular API router architecture:** `api/routers/` contains 9 FastAPI `APIRouter` modules (clusters, accuracy, analysis, benchmark, chat, competition, domains, intel, jobs). These are imported and mounted via `app.include_router()` at the end of `main.py`. Existing inline `@app.get` routes registered earlier take precedence for duplicate paths. The `clusters` router provides the What-If scenario and seasonality-profile endpoints not in the inline routes. The `jobs` router provides the job scheduler/monitor endpoints.
+- **Job scheduler (APScheduler):** `common/job_registry.py` provides `JobManager` singleton powered by APScheduler 3.11 (`BackgroundScheduler` + `ThreadPoolExecutor(max_workers=4)`). `JOB_TYPE_REGISTRY` maps 7 job types across 4 groups. Per-group `threading.Lock()` concurrency control (one active job per group: clustering, backtest, seasonality, champion). Job callables wrap existing scripts via `subprocess.run()`. Progress updates written to `job_history` table. Supports cron/interval scheduling (`POST /jobs/schedule`, `GET /jobs/schedules`), job pipelines (`POST /jobs/pipeline` — sequential chaining), retry logic with exponential backoff (`max_retries`), and dashboard stats (`GET /jobs/stats`). 12 REST API endpoints total. Route ordering in `jobs.py`: literal paths (`/jobs/schedules`, `/jobs/pipeline`) must come before parameterized `{job_id}` paths. Frontend polls `GET /jobs/active` every 2s, stats every 5s, history every 10s. `JobNotificationContext` provides cross-tab completion alerts. Sidebar shows active job count badge. ClustersTab uses "Schedule Scenario Job" button. Dependencies: `apscheduler>=3.10`, `tzlocal>=5.0`.
 - **API key authentication:** `api/auth.py` provides `require_api_key` FastAPI dependency. Auth is disabled when the `API_KEY` env var is unset (development default). When set, mutation endpoints (`POST /clustering/scenario`, `PUT /competition/config`, `POST /competition/run`, `POST /chat`, `POST /market-intelligence`) require `X-API-Key` header.
+- **Vite dev server proxy:** `frontend/vite.config.ts` proxies all API path prefixes (`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`) to the FastAPI backend at `http://127.0.0.1:8000`. **CRITICAL:** When adding a new API path prefix, you MUST add a corresponding proxy entry in `vite.config.ts` or the frontend will receive HTML instead of JSON. Restart the Vite dev server (`make ui`) after changes.
 - **Motif theme system:** 5 visual motifs (periodic, spirits, space, f1, zen) defined in `frontend/src/constants/motifs/`. Selected motif persists in localStorage and URL (`?motif=<id>`). `useMotifTheme` hook manages state; `MotifContext` provides it app-wide. Ctrl+M opens `MotifSettingsPanel`. Motif identity is separate from product theme (wine & spirits, general, obsidian) and color mode (light/dark).
 
 ---
@@ -416,6 +439,9 @@ Located in `docs/design-specs/`:
 - `feature34.md` — Inventory Planning Module Phase 1 (snapshot pipeline, API, UI tab)
 - `feature35.md` — Configurable Multi-Theme / Motif System (5 motifs implemented; `?motif=` URL param added)
 - `feature36.md` — Product-Grade UI Overhaul (sidebar, themes, dashboard, global filters, widgets)
+- `feature37.md` — Inventory Planning Backtesting (forecast-inventory bridge, model comparison, root cause attribution)
+- `feature38.md` — Clustering What-If Scenario Enhancements (background execution, runtime estimation, dashboard alerts, enhanced charts)
+- `feature39.md` — Job Scheduler/Monitor with APScheduler (APScheduler 3.11 engine, 12 API endpoints, cron/interval scheduling, job pipelines, retry logic, automation dashboard UI, agentic AI foundation)
 - `theme-testing-strategy.md` — Multi-Theme Testing Strategy (unit tests implemented; integration/a11y/perf tests pending)
 - `docs/REFACTORING_RECOMMENDATIONS.md` — Comprehensive codebase refactoring roadmap
 

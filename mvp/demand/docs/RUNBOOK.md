@@ -386,7 +386,44 @@ make db-apply-sql
 
 This creates GIN `gin_trgm_ops` indexes on fact table text columns (`model_id`, `dmdunit`, `loc`, `dmdgroup`). One-time operation; takes 5–15 minutes on 66M+ row tables. Enables indexed `ILIKE` substring search instead of full table scans.
 
-## 3h) Run tests
+## 3h) Apply job scheduler schema (Feature 39)
+
+Create the `job_history` and `job_schedule` tables used by the Job Scheduler/Monitor:
+```bash
+make db-apply-jobs
+```
+
+This creates:
+- `job_history` table with scheduling columns (`scheduled_cron`, `retry_count`, `max_retries`, `pipeline_id`, `pipeline_step`, `triggered_by`) and indexes on `status`, `job_type`, `submitted_at`
+- `job_schedule` table for persistent recurring schedule records
+
+Required for the Jobs tab to function. One-time operation.
+
+The job scheduler is powered by **APScheduler 3.11** (`BackgroundScheduler` + `ThreadPoolExecutor`). It enables submitting, scheduling, and monitoring long-running operations from the UI. Jobs are tracked in Postgres with status, progress, params, results, retry counts, and pipeline metadata.
+
+**Core API endpoints:**
+- `GET /jobs/types` — List available job types (7 types across 4 groups)
+- `GET /jobs/stats` — Aggregate statistics for dashboard KPIs
+- `POST /jobs` — Submit a new job (returns HTTP 202)
+- `GET /jobs` — List jobs with optional filters and pagination
+- `GET /jobs/active` — Currently running/queued jobs
+- `GET /jobs/{id}` — Job detail with full result/error
+- `POST /jobs/{id}/cancel` — Cancel a running job
+- `DELETE /jobs/{id}` — Remove from history
+
+**Scheduling API endpoints:**
+- `POST /jobs/schedule` — Create recurring schedule (cron expression or interval minutes)
+- `GET /jobs/schedules` — List active recurring schedules
+- `DELETE /jobs/schedules/{id}` — Remove a recurring schedule
+
+**Pipeline API endpoint:**
+- `POST /jobs/pipeline` — Submit a chained job pipeline (sequential execution)
+
+**UI:** Jobs tab (keyboard shortcut `9`) — automation dashboard with KPI cards, grouped job type cards, "Run Now" and schedule buttons, live active job monitoring with animated progress bars, schedule dialog with presets (hourly, 6h, daily 2AM, weekly Mon 2AM), recurring schedules section, and paginated expandable job history.
+
+**Note:** Clustering What-If scenarios from ClustersTab use the "Schedule Scenario Job" button which delegates to the job system. Active job count is shown as a badge on the sidebar Jobs nav item.
+
+## 3i) Run tests
 
 Run the full test suite to verify everything works:
 
@@ -433,14 +470,16 @@ tests/
     ├── test_clusters.py   # Cluster endpoints
     ├── test_inventory.py  # Inventory endpoints
     ├── test_distinct.py   # Distinct values endpoint
-    └── test_dashboard.py  # Dashboard endpoints (kpis, alerts, top-movers, heatmap)
+    ├── test_dashboard.py  # Dashboard endpoints (kpis, alerts, top-movers, heatmap)
+    └── test_jobs.py       # Job scheduler endpoints (16 tests: types, submit, list, cancel, delete, stats, schedules, pipeline)
 
 frontend/src/
 ├── hooks/__tests__/       # useTheme, useUrlState, useKeyboardShortcuts, useSidebar, useGlobalFilters
 ├── lib/__tests__/         # formatters, export
 ├── api/__tests__/         # TanStack Query keys
+├── context/__tests__/     # JobNotificationContext, ScenarioNotificationContext
 ├── components/__tests__/  # Skeleton, KeyboardShortcutHelp, EChartContainer, AppSidebar, ThemeSelector, GlobalFilterBar, WidgetGrid, AlertPanel, TopMovers, HeatmapGrid
-└── tabs/__tests__/        # ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, ChatPanel, InventoryTab, WhatIfScenarios, DashboardTab
+└── tabs/__tests__/        # ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, ChatPanel, InventoryTab, WhatIfScenarios, DashboardTab, JobsTab
 ```
 
 **Important:** Run `make test-all` after any code changes to catch regressions. Every new feature must include corresponding tests (see `docs/design-specs/feature31.md`).
@@ -562,6 +601,12 @@ make down
   - Verify data was loaded: `docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "SELECT COUNT(*) FROM fact_inventory_snapshot"`
   - Verify aggregate view: `docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "SELECT COUNT(*) FROM agg_inventory_monthly"`
   - Refresh aggregate view: `make refresh-agg-inventory`
+- Jobs tab shows no data / API calls return HTML:
+  - The Vite dev server must proxy `/jobs` requests to the FastAPI backend
+  - Verify `frontend/vite.config.ts` has a `/jobs` proxy entry pointing to `http://127.0.0.1:8000`
+  - Restart the Vite dev server (`make ui`) after adding the proxy entry
+  - Verify backend is working directly: `curl http://localhost:8000/jobs/stats`
+  - If the backend returns valid JSON but the UI shows nothing, it's a missing proxy issue
 - Champion selection finds no qualifying DFUs:
   - Ensure backtest predictions are loaded: `make backtest-load`
   - Check `min_dfu_rows` in `config/model_competition.yaml` (default 3); lower if DFUs have few forecast rows

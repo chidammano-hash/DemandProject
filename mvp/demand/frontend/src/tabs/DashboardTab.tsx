@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Target, BarChart3, TrendingUp, Package, Activity, Scale } from "lucide-react";
 
@@ -10,6 +11,8 @@ import { WidgetGrid, WidgetCard } from "@/components/WidgetGrid";
 import { Skeleton } from "@/components/Skeleton";
 import { useTheme } from "@/hooks/useTheme";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
+import { useScenarioNotification } from "@/context/ScenarioNotificationContext";
+import { useJobNotification } from "@/context/JobNotificationContext";
 import {
   queryKeys,
   STALE,
@@ -19,6 +22,7 @@ import {
   fetchDashboardHeatmap,
 } from "@/api/queries";
 import type { DashboardFilterParams } from "@/api/queries";
+import type { Alert } from "@/types/theme";
 
 function formatNumber(n: number | null): string {
   if (n == null) return "N/A";
@@ -44,6 +48,8 @@ interface DashboardTabProps {
 export default function DashboardTab({ theme }: DashboardTabProps) {
   const { trendColors, chartColors, productTheme, colorMode } = useTheme();
   const { filters } = useGlobalFilterContext();
+  const { completedScenario, dismissNotification } = useScenarioNotification();
+  const { recentCompletions, dismissCompletion } = useJobNotification();
 
   const filterParams: DashboardFilterParams = {
     brand: filters.brand,
@@ -84,6 +90,33 @@ export default function DashboardTab({ theme }: DashboardTabProps) {
   const kpis = kpisQuery.data;
   const chartConfig = productTheme.charts[colorMode === "light" && productTheme.charts.light ? "light" : "dark"]!;
   const heatmapScale = makeHeatmapScale(chartConfig.heatmapScale);
+
+  // Merge scenario + job completion alerts into dashboard alerts
+  const mergedAlerts: Alert[] = useMemo(() => {
+    const base = alertsQuery.data?.alerts ?? [];
+    const injected: Alert[] = [];
+    if (completedScenario) {
+      injected.push({
+        id: `scenario-${completedScenario.id}`,
+        type: "scenario_complete",
+        severity: "low",
+        title: `Scenario ${completedScenario.label} Complete`,
+        detail: `What-If Scenario finished in ${completedScenario.runtimeSeconds.toFixed(0)}s. View results in Clusters tab.`,
+      });
+    }
+    for (const job of recentCompletions) {
+      injected.push({
+        id: `job-${job.id}`,
+        type: "job_complete",
+        severity: job.status === "failed" ? "high" : "low",
+        title: `${job.label} ${job.status === "completed" ? "Complete" : "Failed"}`,
+        detail: job.status === "completed"
+          ? `Job finished in ${job.runtimeSeconds.toFixed(0)}s. View details in Jobs tab.`
+          : `Job failed. Check Jobs tab for details.`,
+      });
+    }
+    return [...injected, ...base];
+  }, [alertsQuery.data, completedScenario, recentCompletions]);
 
   return (
     <div className="animate-fade-in space-y-4">
@@ -155,7 +188,13 @@ export default function DashboardTab({ theme }: DashboardTabProps) {
           {alertsQuery.isLoading ? (
             <Skeleton className="h-40 w-full" />
           ) : (
-            <AlertPanel alerts={alertsQuery.data?.alerts ?? []} />
+            <AlertPanel
+              alerts={mergedAlerts}
+              onDismiss={(completedScenario || recentCompletions.length > 0) ? (id) => {
+                if (id.startsWith("scenario-")) dismissNotification();
+                if (id.startsWith("job-")) dismissCompletion(id.replace("job-", ""));
+              } : undefined}
+            />
           )}
         </WidgetCard>
 

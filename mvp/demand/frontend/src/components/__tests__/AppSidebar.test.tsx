@@ -1,27 +1,36 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { AppSidebar, NAV_ITEMS } from "@/components/AppSidebar";
+import { JobNotificationProvider } from "@/context/JobNotificationContext";
 
-describe("AppSidebar", () => {
+function renderSidebar(props = {}) {
   const defaultProps = {
     activeTab: "overview",
     onNavigate: vi.fn(),
     collapsed: false,
     onToggle: vi.fn(),
     appName: "Demand Studio",
+    ...props,
   };
+  return render(
+    <JobNotificationProvider>
+      <AppSidebar {...defaultProps} />
+    </JobNotificationProvider>
+  );
+}
 
-  it("renders all 9 nav items", () => {
-    render(<AppSidebar {...defaultProps} />);
+describe("AppSidebar", () => {
+  it("renders all 11 nav items", () => {
+    renderSidebar();
     // Each nav item renders as a button with the item label text
     for (const item of NAV_ITEMS) {
       expect(screen.getByText(item.label)).toBeInTheDocument();
     }
-    expect(NAV_ITEMS.length).toBe(9);
+    expect(NAV_ITEMS.length).toBe(11);
   });
 
   it("active item has aria-current='page'", () => {
-    render(<AppSidebar {...defaultProps} activeTab="explorer" />);
+    renderSidebar({ activeTab: "explorer" });
     const activeButton = screen.getByText("Explorer").closest("button");
     expect(activeButton).toHaveAttribute("aria-current", "page");
 
@@ -31,13 +40,7 @@ describe("AppSidebar", () => {
   });
 
   it("collapsed state hides labels", () => {
-    const { container } = render(<AppSidebar {...defaultProps} collapsed={true} />);
-    // When collapsed, item labels should NOT render (conditional on !collapsed)
-    for (const item of NAV_ITEMS) {
-      const label = container.querySelector(`span.truncate`);
-      // In collapsed mode, the text labels are not rendered — only icons remain
-      // The app name is also hidden
-    }
+    renderSidebar({ collapsed: true });
     expect(screen.queryByText("Demand Studio")).not.toBeInTheDocument();
     // The nav item labels should not be rendered as visible text
     expect(screen.queryByText("Overview")).not.toBeInTheDocument();
@@ -46,27 +49,27 @@ describe("AppSidebar", () => {
 
   it("toggle button calls onToggle", () => {
     const onToggle = vi.fn();
-    render(<AppSidebar {...defaultProps} onToggle={onToggle} />);
+    renderSidebar({ onToggle });
     const toggleBtn = screen.getByLabelText("Collapse sidebar");
     fireEvent.click(toggleBtn);
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
   it("toggle button shows 'Expand sidebar' when collapsed", () => {
-    render(<AppSidebar {...defaultProps} collapsed={true} />);
+    renderSidebar({ collapsed: true });
     expect(screen.getByLabelText("Expand sidebar")).toBeInTheDocument();
   });
 
   it("navigation calls onNavigate with item key", () => {
     const onNavigate = vi.fn();
-    render(<AppSidebar {...defaultProps} onNavigate={onNavigate} collapsed={false} />);
+    renderSidebar({ onNavigate, collapsed: false });
     fireEvent.click(screen.getByText("Explorer"));
     expect(onNavigate).toHaveBeenCalledWith("explorer");
   });
 
   it("navigation calls onNavigate for each item", () => {
     const onNavigate = vi.fn();
-    render(<AppSidebar {...defaultProps} onNavigate={onNavigate} collapsed={false} />);
+    renderSidebar({ onNavigate, collapsed: false });
     fireEvent.click(screen.getByText("Accuracy"));
     expect(onNavigate).toHaveBeenCalledWith("accuracy");
     fireEvent.click(screen.getByText("Chat"));
@@ -74,27 +77,22 @@ describe("AppSidebar", () => {
   });
 
   it("renders app name when not collapsed", () => {
-    render(<AppSidebar {...defaultProps} appName="Test App" />);
+    renderSidebar({ appName: "Test App" });
     expect(screen.getByText("Test App")).toBeInTheDocument();
   });
 
   it("renders theme footer when provided", () => {
-    render(
-      <AppSidebar
-        {...defaultProps}
-        themeFooter={<div data-testid="theme-footer">Footer</div>}
-      />
-    );
+    renderSidebar({ themeFooter: <div data-testid="theme-footer">Footer</div> });
     expect(screen.getByTestId("theme-footer")).toBeInTheDocument();
   });
 
   it("does not render theme footer when not provided", () => {
-    render(<AppSidebar {...defaultProps} />);
+    renderSidebar();
     expect(screen.queryByTestId("theme-footer")).not.toBeInTheDocument();
   });
 
   it("renders mobile toggle button", () => {
-    render(<AppSidebar {...defaultProps} />);
+    renderSidebar();
     expect(screen.getByLabelText("Toggle navigation")).toBeInTheDocument();
   });
 });

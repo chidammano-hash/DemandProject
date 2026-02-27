@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
+import { ScenarioNotificationProvider } from "@/context/ScenarioNotificationContext";
 
 const mockRunScenario = vi.fn();
 const mockPromote = vi.fn();
@@ -11,6 +12,9 @@ vi.mock("@/api/queries", () => ({
     clusterProfiles: () => ["cluster-profiles"],
     clusteringDefaults: () => ["clustering-defaults"],
     clusteringScenario: (id: string) => ["clustering-scenario", id],
+    seasonalityProfiles: () => ["seasonality-profiles"],
+    scenarioEstimate: (p: Record<string, unknown>) => ["scenario-estimate", p],
+    scenarioStatus: (id: string) => ["scenario-status", id],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchDfuClusters: vi.fn().mockResolvedValue({
@@ -29,9 +33,14 @@ vi.mock("@/api/queries", () => ({
     model_params: { k_range: [3, 12], min_cluster_size_pct: 2.0, use_pca: false, pca_components: null, skip_gap: true, all_features: false },
     label_params: { volume_high: 0.75, volume_low: 0.25, cv_steady: 0.3, cv_volatile: 0.8, seasonality_threshold: 0.5, zero_demand_threshold: 0.2 },
   }),
+  fetchSeasonalityProfiles: vi.fn().mockResolvedValue({ profiles: [] }),
+  fetchScenarioEstimate: vi.fn().mockResolvedValue({ estimated_seconds: 45, dfu_count: 1200, k_range: 10, skip_gap: true }),
+  fetchScenarioStatus: vi.fn(),
   runClusteringScenario: mockRunScenario,
   promoteScenario: mockPromote,
 }));
+
+const { fetchScenarioStatus: mockFetchStatus } = await import("@/api/queries") as { fetchScenarioStatus: ReturnType<typeof vi.fn> };
 
 // Mock recharts to avoid rendering issues in test env
 vi.mock("recharts", () => ({
@@ -44,6 +53,10 @@ vi.mock("recharts", () => ({
   Legend: () => null,
   BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
   Bar: () => null,
+  Cell: () => null,
+  ReferenceLine: () => null,
+  PieChart: ({ children }: { children: React.ReactNode }) => <div data-testid="pie-chart">{children}</div>,
+  Pie: () => null,
   RadarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="radar-chart">{children}</div>,
   Radar: () => null,
   PolarGrid: () => null,
@@ -86,12 +99,15 @@ describe("WhatIfScenarios", () => {
   beforeEach(() => {
     mockRunScenario.mockReset();
     mockPromote.mockReset();
+    (mockFetchStatus as ReturnType<typeof vi.fn>).mockReset();
   });
 
   it("renders What-If Scenarios toggle button", async () => {
     render(
       <TestQueryWrapper>
-        <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        <ScenarioNotificationProvider>
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
     await waitFor(() => {
@@ -102,7 +118,9 @@ describe("WhatIfScenarios", () => {
   it("expands What-If panel on click", async () => {
     render(
       <TestQueryWrapper>
-        <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        <ScenarioNotificationProvider>
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
     const toggle = await screen.findByText("What-If Scenarios");
@@ -117,7 +135,9 @@ describe("WhatIfScenarios", () => {
   it("shows parameter controls when expanded", async () => {
     render(
       <TestQueryWrapper>
-        <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        <ScenarioNotificationProvider>
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
     fireEvent.click(await screen.findByText("What-If Scenarios"));
@@ -131,60 +151,61 @@ describe("WhatIfScenarios", () => {
     });
   });
 
-  it("shows Run Scenario and Reset buttons", async () => {
+  it("shows Schedule Scenario Job and Reset buttons", async () => {
     render(
       <TestQueryWrapper>
-        <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        <ScenarioNotificationProvider>
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
     fireEvent.click(await screen.findByText("What-If Scenarios"));
     await waitFor(() => {
-      expect(screen.getByText("Run Scenario")).toBeDefined();
+      expect(screen.getByText("Schedule Scenario Job")).toBeDefined();
       expect(screen.getByText("Reset to Defaults")).toBeDefined();
     });
   });
 
-  it("calls runClusteringScenario on Run click and renders results", async () => {
-    mockRunScenario.mockResolvedValue(MOCK_SCENARIO_RESULT);
+  it("calls runClusteringScenario on Run click", async () => {
+    mockRunScenario.mockResolvedValue({ scenario_id: "sc_20260223_120000_ab12", status: "running" });
+    (mockFetchStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      scenario_id: "sc_20260223_120000_ab12",
+      status: "completed",
+      runtime_seconds: 12.5,
+      result: MOCK_SCENARIO_RESULT,
+    });
 
     render(
       <TestQueryWrapper>
-        <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        <ScenarioNotificationProvider>
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
     fireEvent.click(await screen.findByText("What-If Scenarios"));
-    await waitFor(() => expect(screen.getByText("Run Scenario")).toBeDefined());
+    await waitFor(() => expect(screen.getByText("Schedule Scenario Job")).toBeDefined());
 
-    fireEvent.click(screen.getByText("Run Scenario"));
+    fireEvent.click(screen.getByText("Schedule Scenario Job"));
 
     await waitFor(() => {
       expect(mockRunScenario).toHaveBeenCalledTimes(1);
     });
-
-    await waitFor(() => {
-      expect(screen.getByText("Promote Scenario A")).toBeDefined();
-    });
   });
 
-  it("shows error when scenario fails", async () => {
-    mockRunScenario.mockResolvedValue({
-      scenario_id: "sc_err",
-      status: "failed",
-      error: "Pipeline blew up",
-      result: null,
-      runtime_seconds: 1,
-      params: {},
-    });
+  it("shows error when scenario POST fails", async () => {
+    mockRunScenario.mockRejectedValue(new Error("Pipeline blew up"));
 
     render(
       <TestQueryWrapper>
-        <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        <ScenarioNotificationProvider>
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
     fireEvent.click(await screen.findByText("What-If Scenarios"));
-    await waitFor(() => expect(screen.getByText("Run Scenario")).toBeDefined());
+    await waitFor(() => expect(screen.getByText("Schedule Scenario Job")).toBeDefined());
 
-    fireEvent.click(screen.getByText("Run Scenario"));
+    fireEvent.click(screen.getByText("Schedule Scenario Job"));
 
     await waitFor(() => {
       expect(screen.getByText("Pipeline blew up")).toBeDefined();
@@ -192,41 +213,56 @@ describe("WhatIfScenarios", () => {
   });
 
   it("shows promote confirmation dialog", async () => {
-    mockRunScenario.mockResolvedValue(MOCK_SCENARIO_RESULT);
+    mockRunScenario.mockResolvedValue({ scenario_id: "sc_promote", status: "running" });
+    (mockFetchStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      scenario_id: "sc_promote",
+      status: "completed",
+      runtime_seconds: 12.5,
+      result: MOCK_SCENARIO_RESULT,
+    });
 
     render(
       <TestQueryWrapper>
-        <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        <ScenarioNotificationProvider>
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
     fireEvent.click(await screen.findByText("What-If Scenarios"));
-    fireEvent.click(await screen.findByText("Run Scenario"));
+    fireEvent.click(await screen.findByText("Schedule Scenario Job"));
 
-    await waitFor(() => expect(screen.getByText("Promote Scenario A")).toBeDefined());
-    fireEvent.click(screen.getByText("Promote Scenario A"));
+    await waitFor(() => expect(screen.getByText(/Promote Scenario/)).toBeDefined());
+    fireEvent.click(screen.getByText(/Promote Scenario/));
 
     await waitFor(() => {
-      expect(screen.getByText("Promote Scenario A to Production?")).toBeDefined();
+      expect(screen.getByText(/Promote Scenario.*to Production\?/)).toBeDefined();
       expect(screen.getByText("Cancel")).toBeDefined();
     });
   });
 
   it("renders charts when scenario results are available", async () => {
-    mockRunScenario.mockResolvedValue(MOCK_SCENARIO_RESULT);
+    mockRunScenario.mockResolvedValue({ scenario_id: "sc_charts", status: "running" });
+    (mockFetchStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      scenario_id: "sc_charts",
+      status: "completed",
+      runtime_seconds: 12.5,
+      result: MOCK_SCENARIO_RESULT,
+    });
 
     render(
       <TestQueryWrapper>
-        <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        <ScenarioNotificationProvider>
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
     fireEvent.click(await screen.findByText("What-If Scenarios"));
-    fireEvent.click(await screen.findByText("Run Scenario"));
+    fireEvent.click(await screen.findByText("Schedule Scenario Job"));
 
     await waitFor(() => {
       expect(screen.getByText("Elbow (WCSS/Inertia)")).toBeDefined();
       expect(screen.getByText("Silhouette Score")).toBeDefined();
       expect(screen.getByText("Cluster Size Distribution")).toBeDefined();
-      expect(screen.getByText("Cluster Profile Radar")).toBeDefined();
     });
   });
 });

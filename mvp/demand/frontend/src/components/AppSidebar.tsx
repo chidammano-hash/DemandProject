@@ -5,9 +5,11 @@ import {
   TrendingUp,
   Target,
   Package,
+  Activity,
   Network,
   Globe,
   MessageSquare,
+  PlayCircle,
   Settings,
   PanelLeftClose,
   PanelLeft,
@@ -16,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SidebarSection } from "@/types/theme";
+import { useJobNotification } from "@/context/JobNotificationContext";
 
 // ---------------------------------------------------------------------------
 // Navigation config
@@ -34,8 +37,10 @@ const NAV_ITEMS: NavItem[] = [
   { key: "dfuAnalysis", label: "DFU Analysis", icon: TrendingUp, section: "demand", shortcut: "3" },
   { key: "accuracy", label: "Accuracy", icon: Target, section: "demand", shortcut: "4" },
   { key: "inventory", label: "Inventory", icon: Package, section: "supply", shortcut: "5" },
-  { key: "clusters", label: "Clusters", icon: Network, section: "intelligence", shortcut: "6" },
-  { key: "intel", label: "Market Intel", icon: Globe, section: "intelligence", shortcut: "7" },
+  { key: "invBacktest", label: "Inv. Backtest", icon: Activity, section: "supply", shortcut: "6" },
+  { key: "clusters", label: "Clusters", icon: Network, section: "intelligence", shortcut: "7" },
+  { key: "intel", label: "Market Intel", icon: Globe, section: "intelligence", shortcut: "8" },
+  { key: "jobs", label: "Jobs", icon: PlayCircle, section: "system", shortcut: "9" },
   { key: "chat", label: "Chat", icon: MessageSquare, section: "system" },
   { key: "settings", label: "Settings", icon: Settings, section: "system" },
 ];
@@ -65,6 +70,7 @@ export interface AppSidebarProps {
 // ---------------------------------------------------------------------------
 export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName, themeFooter }: AppSidebarProps) {
   let lastSection: SidebarSection | null = null;
+  const { activeJobCount } = useJobNotification();
 
   const handleNav = useCallback((key: string) => {
     onNavigate(key);
@@ -152,6 +158,16 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
                   />
                   {!collapsed && (
                     <span className="flex-1 truncate text-left">{item.label}</span>
+                  )}
+                  {/* Active job count badge */}
+                  {item.key === "jobs" && activeJobCount > 0 && (
+                    <span className={cn(
+                      "flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-bold text-white",
+                      !collapsed && "ml-auto mr-1",
+                      collapsed && "absolute -right-0.5 -top-0.5",
+                    )}>
+                      {activeJobCount}
+                    </span>
                   )}
                   {!collapsed && item.shortcut && (
                     <kbd className="hidden text-[10px] text-sidebar-foreground/40 lg:inline">{item.shortcut}</kbd>

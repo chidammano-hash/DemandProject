@@ -1,4 +1,4 @@
-"""Tests for clustering scenario API endpoints (Feature 29)."""
+"""Tests for clustering scenario API endpoints (Features 29, 38)."""
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -63,36 +63,15 @@ async def test_clustering_defaults_has_valid_ranges(mock_pool):
 
 @pytest.mark.asyncio
 async def test_clustering_scenario_post(mock_pool):
-    """Verify POST /clustering/scenario accepts params and runs scenario."""
+    """Verify POST /clustering/scenario returns 202 with scenario_id (async)."""
     pool, _, _ = mock_pool
-    mock_result = {
-        "scenario_id": "sc_test_123",
-        "status": "completed",
-        "runtime_seconds": 1.0,
-        "params": {},
-        "result": {
-            "optimal_k": 5,
-            "silhouette_score": 0.4,
-            "inertia": 1000,
-            "n_clusters": 5,
-            "total_dfus": 100,
-            "cluster_sizes": {"0": 20, "1": 30, "2": 25, "3": 15, "4": 10},
-            "k_selection_results": {
-                "k_values": [3, 4, 5],
-                "inertias": [2000, 1500, 1000],
-                "silhouette_scores": [0.3, 0.35, 0.4],
-                "gap_stats": None,
-            },
-            "profiles": [],
-            "feature_importance": [],
-        },
-    }
     with patch("api.core._get_pool", return_value=pool), \
-         patch("scripts.run_clustering_scenario.run_scenario", return_value=mock_result):
+         patch("scripts.run_clustering_scenario.run_scenario"), \
+         patch("scripts.run_clustering_scenario.generate_scenario_id", return_value="sc_test_123"):
         from api.main import app
-        # Reset the running state
         import api.routers.clusters as clusters_module
         clusters_module._scenario_running = False
+        clusters_module._running_scenario_id = None
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
@@ -102,10 +81,10 @@ async def test_clustering_scenario_post(mock_pool):
                     "label_params": {"volume_high": 0.8},
                 },
             )
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert data["status"] == "completed"
-            assert data["result"]["optimal_k"] == 5
+            assert data["status"] == "running"
+            assert data["scenario_id"] == "sc_test_123"
 
 
 @pytest.mark.asyncio
@@ -165,3 +144,156 @@ async def test_promote_scenario_success(mock_pool):
             data = response.json()
             assert data["status"] == "promoted"
             assert data["dfus_updated"] == 100
+
+
+# ---------------------------------------------------------------------------
+# Feature 38: Estimate + Status endpoints
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_estimate_returns_200(mock_pool):
+    """Verify /clustering/scenario/estimate returns estimate fields."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.return_value = (1200,)  # DFU count
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                "/clustering/scenario/estimate",
+                params={"k_min": 3, "k_max": 10, "skip_gap": "true"},
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert "estimated_seconds" in data
+            assert data["dfu_count"] == 1200
+            assert data["k_range"] == 8
+            assert data["skip_gap"] is True
+            assert data["estimated_seconds"] > 0
+
+
+@pytest.mark.asyncio
+async def test_estimate_with_gap(mock_pool):
+    """Verify skip_gap=false increases estimate."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.return_value = (100000,)  # Large enough for gap multiplier to be visible
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp_skip = await client.get(
+                "/clustering/scenario/estimate",
+                params={"k_min": 3, "k_max": 10, "skip_gap": "true"},
+            )
+            resp_gap = await client.get(
+                "/clustering/scenario/estimate",
+                params={"k_min": 3, "k_max": 10, "skip_gap": "false"},
+            )
+            assert resp_gap.json()["estimated_seconds"] > resp_skip.json()["estimated_seconds"]
+
+
+@pytest.mark.asyncio
+async def test_estimate_zero_dfus(mock_pool):
+    """Verify estimate with zero DFUs returns overhead only."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.return_value = (0,)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                "/clustering/scenario/estimate",
+                params={"k_min": 3, "k_max": 10, "skip_gap": "true"},
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["dfu_count"] == 0
+            assert data["estimated_seconds"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_scenario_status_running(mock_pool):
+    """Verify status returns running with elapsed time."""
+    pool, _, _ = mock_pool
+    import api.routers.clusters as clusters_module
+    import time as _time
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        # Simulate a running scenario
+        clusters_module._scenario_running = True
+        clusters_module._running_scenario_id = "sc_running"
+        clusters_module._scenario_start_time = _time.time() - 10  # started 10s ago
+        try:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get("/clustering/scenario/sc_running/status")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["status"] == "running"
+                assert data["elapsed_seconds"] >= 9
+        finally:
+            clusters_module._scenario_running = False
+            clusters_module._running_scenario_id = None
+            clusters_module._scenario_start_time = None
+
+
+@pytest.mark.asyncio
+async def test_scenario_status_completed(mock_pool):
+    """Verify status returns completed result."""
+    pool, _, _ = mock_pool
+    completed = {
+        "scenario_id": "sc_done",
+        "status": "completed",
+        "runtime_seconds": 42.5,
+        "result": {"optimal_k": 5},
+    }
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("scripts.run_clustering_scenario.get_scenario_result", return_value=completed):
+        from api.main import app
+        import api.routers.clusters as clusters_module
+        clusters_module._scenario_running = False
+        clusters_module._running_scenario_id = None
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/clustering/scenario/sc_done/status")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "completed"
+            assert data["runtime_seconds"] == 42.5
+
+
+@pytest.mark.asyncio
+async def test_scenario_status_not_found(mock_pool):
+    """Verify status returns 404 for unknown scenario."""
+    pool, _, _ = mock_pool
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("scripts.run_clustering_scenario.get_scenario_result", return_value=None):
+        from api.main import app
+        import api.routers.clusters as clusters_module
+        clusters_module._scenario_running = False
+        clusters_module._running_scenario_id = None
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/clustering/scenario/unknown_id/status")
+            assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_scenario_conflict(mock_pool):
+    """Verify POST returns 409 when scenario already running."""
+    pool, _, _ = mock_pool
+    import api.routers.clusters as clusters_module
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        clusters_module._scenario_running = True
+        clusters_module._running_scenario_id = "sc_existing"
+        try:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/clustering/scenario",
+                    json={},
+                )
+                assert response.status_code == 409
+        finally:
+            clusters_module._scenario_running = False
+            clusters_module._running_scenario_id = None

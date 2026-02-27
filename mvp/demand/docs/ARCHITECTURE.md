@@ -173,6 +173,8 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 2. `backtest_lag_archive` — stores all-lag (0–4) backtest predictions for accuracy reporting at any horizon; grain: `(forecast_ck, model_id, lag)`; includes `timeframe` column (A–J) for traceability
 3. `fact_inventory_snapshot` — monthly inventory position snapshots (~190M rows across 14 months); grain: `(item_no, loc, snapshot_date)`; measures: qty_on_hand, qty_on_hand_on_order, qty_on_order, mtd_sales, lead_time_days
 4. `agg_inventory_monthly` — materialized view aggregating inventory to monthly grain (avg on-hand, avg on-order, avg lead time, total MTD sales)
+5. `job_history` — persistent job tracking table for the APScheduler-powered job engine; includes scheduling columns (`scheduled_cron`, `retry_count`, `max_retries`, `pipeline_id`, `pipeline_step`, `triggered_by`); grain: `(job_id)` PK
+6. `job_schedule` — recurring schedule definitions for APScheduler cron/interval triggers; grain: `(schedule_id)` PK; columns: `job_type`, `params`, `cron_expr`, `interval_min`, `active`
 
 ## Accuracy Slice Materialized Views (feature10)
 Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-table joins:
@@ -314,7 +316,22 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_g
    - `mv_top_movers` materialized view for period-over-period volume changes
    - New components: AppSidebar, ThemeSelector, GlobalFilterBar, WidgetGrid/WidgetCard, AlertPanel, HeatmapGrid, TopMovers, ForecastTrendChart, DashboardTab
    - Enhanced KpiCard with sparkline SVG, trend delta, severity, icon support
-   - Keyboard shortcuts: `[` sidebar toggle, `t` theme cycle, `d` mode toggle, 1-7 tab switch
+   - Keyboard shortcuts: `[` sidebar toggle, `t` theme cycle, `d` mode toggle, 1-9 tab switch
+26. Job Scheduler/Monitor with APScheduler (feature39):
+   - Production-grade job execution powered by APScheduler 3.11 (`BackgroundScheduler` + `ThreadPoolExecutor(max_workers=4)`)
+   - Persistent `job_history` + `job_schedule` tables in Postgres
+   - `JobManager` singleton with per-group concurrency control (one active job per group)
+   - 7 job types across 4 groups: clustering (cluster_scenario, cluster_pipeline), backtest (lgbm, catboost, xgboost), seasonality (seasonality_pipeline), champion (champion_select)
+   - REST API: 12 endpoints — core CRUD (types, submit, list, active, detail, cancel, delete), scheduling (create schedule, list schedules, remove schedule), pipeline (submit pipeline), stats (dashboard aggregates)
+   - Cron/interval scheduling for recurring automation (e.g., daily 2AM backtest, weekly clustering refresh)
+   - Job pipelines: sequential chaining of multi-step workflows (cluster → backtest → champion select)
+   - Retry logic with exponential backoff (configurable max_retries per job)
+   - Professional automation dashboard UI: KPI cards, grouped job type cards with category colors, live active job monitoring with animated progress bars, schedule dialog, schedules section, expandable job history
+   - `JobNotificationContext` for cross-tab completion/failure alerts on Dashboard
+   - Clustering What-If scenarios from ClustersTab delegate to JobManager ("Schedule Scenario Job")
+   - Sidebar nav item with active job count badge, keyboard shortcut `9`
+   - Foundation for agentic AI automation
+   - **Vite proxy requirement:** `frontend/vite.config.ts` must include `/jobs` proxy entry to forward API calls to FastAPI backend; without it the UI receives HTML instead of JSON
 
 ## Testing Infrastructure
 
@@ -352,6 +369,7 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_inventory_domain.py` | `common/domain_specs.py` — inventory domain spec | 28 |
 | `test_distinct.py` | `api/main.py` — distinct values endpoint | 12 |
 | `test_dashboard.py` | `api/main.py` — dashboard endpoints (kpis, alerts, top-movers, heatmap) | 17 |
+| `test_jobs.py` | `api/routers/jobs.py` — job scheduler endpoints (types, submit, list, cancel, delete, stats, schedules, pipeline) | 16 |
 
 **API test pattern:** httpx `AsyncClient` with `ASGITransport(app)` — no running server needed. DB connections mocked via `pool` fixture in `tests/api/conftest.py`.
 
@@ -395,6 +413,7 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `TopMovers.test.tsx` | Top movers list | 5 |
 | `HeatmapGrid.test.tsx` | Heatmap grid | 13 |
 | `DashboardTab.test.tsx` | Dashboard overview tab | 4 |
+| `JobsTab.test.tsx` | Jobs automation dashboard tab | 7 |
 
 **Combined:** `make test-all` runs backend + frontend.
 

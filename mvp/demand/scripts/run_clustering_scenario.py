@@ -133,7 +133,7 @@ def run_scenario(
 
     except Exception as e:
         runtime = time.time() - start_time
-        return {
+        output = {
             "scenario_id": scenario_id,
             "status": "failed",
             "runtime_seconds": round(runtime, 1),
@@ -141,6 +141,18 @@ def run_scenario(
             "result": None,
             "error": str(e),
         }
+
+        # Save failed result to disk so status endpoint can return the error
+        try:
+            with open(scenario_dir / "scenario_result.json", "w") as f:
+                json.dump(output, f, indent=2, default=str)
+        except Exception:
+            pass  # best-effort
+
+        return output
+
+
+MAX_DFUS_FOR_TRAINING = 20_000  # Sample if DFU count exceeds this
 
 
 def _run_full_pipeline(
@@ -236,20 +248,32 @@ def _run_full_pipeline(
         pca = PCA(n_components=n_comp, random_state=42)
         X_scaled = pca.fit_transform(X_scaled)
 
-    # Step 4: Find optimal K
+    n_total = len(X_scaled)
+    sampled = n_total > MAX_DFUS_FOR_TRAINING
+
+    # Sample for training if dataset is large
+    if sampled:
+        rng = np.random.RandomState(42)
+        sample_idx = rng.choice(n_total, MAX_DFUS_FOR_TRAINING, replace=False)
+        X_train = X_scaled[sample_idx]
+    else:
+        X_train = X_scaled
+
+    # Step 4: Find optimal K (on sample if large)
     k_range = tuple(mp["k_range"])
     k_results = find_optimal_k(
-        X_scaled, k_range, mp["min_cluster_size_pct"], skip_gap=mp["skip_gap"]
+        X_train, k_range, mp["min_cluster_size_pct"], skip_gap=mp["skip_gap"]
     )
     optimal_k = k_results["optimal_k"]
 
-    # Train final model
+    # Train final model on sample, then predict all
     from sklearn.cluster import KMeans
-    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=20)
-    labels = kmeans.fit_predict(X_scaled)
+    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
+    kmeans.fit(X_train)
+    labels = kmeans.predict(X_scaled)  # Assign ALL DFUs
 
     # Merge small clusters
-    n_samples = len(X_scaled)
+    n_samples = n_total
     min_cluster_size = int(n_samples * mp["min_cluster_size_pct"] / 100)
     unique_pre, counts_pre = np.unique(labels, return_counts=True)
     if any(c < min_cluster_size for c in counts_pre):
@@ -260,8 +284,12 @@ def _run_full_pipeline(
     else:
         centroids_scaled = kmeans.cluster_centers_
 
-    # Metrics
-    silhouette = float(sk_silhouette(X_scaled, labels))
+    # Metrics (use sample for silhouette to avoid O(n^2) on full dataset)
+    if sampled:
+        sil_sample_idx = np.random.RandomState(42).choice(n_total, min(10000, n_total), replace=False)
+        silhouette = float(sk_silhouette(X_scaled[sil_sample_idx], labels[sil_sample_idx]))
+    else:
+        silhouette = float(sk_silhouette(X_scaled, labels))
     inertia = float(kmeans.inertia_)
 
     # Inverse transform centroids
@@ -334,6 +362,8 @@ def _run_full_pipeline(
         "inertia": inertia,
         "n_clusters": optimal_k,
         "total_dfus": total_dfus,
+        "training_sample_size": MAX_DFUS_FOR_TRAINING if sampled else total_dfus,
+        "sampled": sampled,
         "cluster_sizes": cluster_sizes,
         "k_selection_results": {
             "k_values": [int(k) for k in k_results["k_values"]],
