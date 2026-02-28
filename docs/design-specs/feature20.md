@@ -591,3 +591,24 @@ make champion-select
 | Gaussian assumption may not fit all DFUs | Log1p transform normalizes; champion selection filters poor performers |
 | Overfitting on small clusters | Transfer learning fallback; min_rows threshold |
 | Memory pressure with large batches | Default batch_size=512 (same as PatchTST); DataLoader num_workers=0 for MPS safety |
+
+---
+
+## Implementation Details
+
+### Transfer Learning Corrections
+- LR multiplier: `lr * 0.5` (not 0.1x as spec states)
+- Patience halved for fine-tuning: `max(patience // 2, 2)`
+
+### Parameter Count
+- Heading says ~40K but calculation shows ~67K — actual is ~67K trainable parameters
+
+### LSTM Dropout Guard
+- `dropout=dropout if num_layers > 1 else 0.0` (PyTorch requirement: dropout only valid with 2+ layers)
+
+### Weight Initialization
+- `DeepARModel` uses Xavier uniform for all linear layers
+
+### Shared Framework
+- Same as PatchTST: `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`, `common/constants.py`
+- `MIN_CLUSTER_ROWS` from constants for per-cluster minimum threshold

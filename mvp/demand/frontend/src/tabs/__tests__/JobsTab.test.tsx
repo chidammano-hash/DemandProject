@@ -150,4 +150,79 @@ describe("JobsTab", () => {
       expect(screen.getByText("APScheduler Engine")).toBeDefined();
     });
   });
+
+  it("renders View Results button for completed cluster_scenario jobs", async () => {
+    const { fetchJobs } = await import("@/api/queries");
+    (fetchJobs as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      jobs: [{
+        job_id: "j_cluster_done",
+        job_type: "cluster_scenario",
+        job_label: "What-If Scenario A",
+        status: "completed",
+        submitted_at: "2026-02-27T10:00:00Z",
+        completed_at: "2026-02-27T10:01:00Z",
+        progress_pct: 100,
+        progress_msg: "Done",
+        result: { scenario_id: "sc_abc", optimal_k: 5 },
+      }],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    const mockNavigate = vi.fn();
+    render(
+      <TestQueryWrapper>
+        <JobNotificationProvider>
+          <JobsTab theme="light" onNavigateToScenario={mockNavigate} />
+        </JobNotificationProvider>
+      </TestQueryWrapper>,
+    );
+    await waitFor(() => {
+      const btn = screen.getByTitle("View Results in Clusters Tab");
+      expect(btn).toBeDefined();
+    });
+  });
+
+  it("does NOT render View Results button for non-cluster or non-completed jobs", async () => {
+    const { fetchJobs } = await import("@/api/queries");
+    (fetchJobs as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      jobs: [
+        {
+          job_id: "j_lgbm",
+          job_type: "backtest_lgbm",
+          job_label: "LGBM Run",
+          status: "completed",
+          submitted_at: "2026-02-27T10:00:00Z",
+          completed_at: "2026-02-27T10:02:00Z",
+          progress_pct: 100,
+          progress_msg: "Done",
+          result: {},
+        },
+        {
+          job_id: "j_cluster_running",
+          job_type: "cluster_scenario",
+          job_label: "What-If Scenario B",
+          status: "running",
+          submitted_at: "2026-02-27T10:00:00Z",
+          progress_pct: 50,
+          progress_msg: "Running",
+        },
+      ],
+      total: 2,
+      limit: 50,
+      offset: 0,
+    });
+
+    render(
+      <TestQueryWrapper>
+        <JobNotificationProvider>
+          <JobsTab theme="light" onNavigateToScenario={vi.fn()} />
+        </JobNotificationProvider>
+      </TestQueryWrapper>,
+    );
+    await waitFor(() => {
+      expect(screen.queryByTitle("View Results in Clusters Tab")).toBeNull();
+    });
+  });
 });

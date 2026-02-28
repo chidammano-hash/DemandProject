@@ -80,3 +80,40 @@ generate-embeddings:    # Generate and store schema embeddings (requires OPENAI_
 - All prior features (reads from all tables for schema context)
 - OpenAI API (`OPENAI_API_KEY`)
 - pgvector extension
+
+---
+
+## Implementation Corrections
+
+### Actual Response Schema
+```json
+{"answer": "string", "sql": "string|null", "data": "[{...}]|null", "columns": "string[]", "row_count": "int|null", "error": "string (on failure only)"}
+```
+Note: `domains_used` field documented in original spec is NOT implemented.
+
+### Authentication
+- Requires `X-API-Key` header when `API_KEY` env var is set (via `require_api_key` dependency from `api/auth.py`)
+
+### LLM Configuration
+- `response_format={"type": "json_object"}` for structured output
+- `temperature=0.1`, `max_tokens=2000`
+
+### Router Module
+- Also implemented in `api/routers/chat.py`
+
+### Frontend
+- Extracted to `frontend/src/tabs/ChatPanel.tsx` (not in `App.tsx`)
+- Uses TanStack Query `useMutation`
+- Branded as "Chat with Planthium"
+- SQL shown in collapsible `<details>` section
+- Inline data table limited to 10 rows
+
+### Embeddings Optimization
+- IVFFlat index: `idx_chat_embeddings_vector` with `lists = max(1, chunk_count / 10)`
+
+### SQL Safety
+- Forbidden keywords: `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `GRANT`, `REVOKE`, `COPY`
+
+### TypeScript Types
+- `ChatMessage` type in `frontend/src/types/index.ts`
+- `sendChatMessage(question, domain)` in `api/queries.ts`

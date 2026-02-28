@@ -129,3 +129,25 @@ The placeholder text `"Filter (=exact)"` hints at this syntax. Dropdown selector
 | Exact match filter | `::text` cast prevents B-tree | Native type → B-tree (<100ms) |
 | Unfiltered row count | `COUNT(*)` scan | `pg_class.reltuples` (instant) |
 | Filtered row count (large table) | Full count scan | Capped at 100K rows |
+
+---
+
+## Implementation Corrections
+
+### Code Refactoring
+All type-aware helpers have been refactored from `api/main.py` to new locations:
+- `api/core.py`: `_typed_eq_clause()`, `_typed_like_clause()`, `fetch_page()`, `build_agg_trend_source()`, `parse_filters_json()`, `parse_filters_safe()`, `qident()`
+- `api/routers/domains.py`: `domain_suggest()` endpoint
+
+### Constants
+- `_LARGE_TABLES = {"fact_external_forecast_monthly", "fact_sales_monthly"}`
+- `_MAX_COUNT_SCAN = 100_001`
+
+### Three-Tier Count Strategy
+1. Unfiltered: `pg_class.reltuples` catalog estimate
+2. Filtered on large tables (`_LARGE_TABLES`): capped at 100,001 rows
+3. Filtered on small tables: full `COUNT(*)` scan
+
+### Key Files (updated locations)
+- `api/core.py` — type-aware helpers, pagination, SQL utilities
+- `api/routers/domains.py` — suggest endpoint, domain CRUD

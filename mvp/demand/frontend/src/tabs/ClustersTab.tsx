@@ -30,14 +30,19 @@ import {
   promoteScenario,
   fetchScenarioEstimate,
   fetchScenarioStatus,
+  fetchJobDetail,
+  fetchScenarioHistory,
   STALE,
 } from "@/api/queries";
 import type { ClusteringDefaultsPayload, ClusteringScenarioResult } from "@/api/queries";
+import type { Job } from "@/types/jobs";
+import { getScenarioJobParam, setScenarioJobParam } from "@/hooks/useUrlState";
 import type { Theme, ClusterInfo } from "@/types";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import { useScenarioNotification } from "@/context/ScenarioNotificationContext";
 
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -312,9 +317,13 @@ export default function ClustersTab({ domain, onDomainChange, theme }: ClustersT
   const [nextScenarioIdx, setNextScenarioIdx] = useState(1);
   const [showPromoteConfirm, setShowPromoteConfirm] = useState(false);
   const [scheduledJobId, setScheduledJobId] = useState<string | null>(null);
+  const [scenarioQueued, setScenarioQueued] = useState(false);
 
   const scenarioNotification = useScenarioNotification();
   const currentLabelRef = useRef("A");
+  const scenarioResultRef = useRef<HTMLDivElement>(null);
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
+  const [historyResult, setHistoryResult] = useState<ClusteringScenarioResult | null>(null);
 
   // Param state
   const [featureParams, setFeatureParams] = useState<ClusteringDefaultsPayload["feature_params"]>({
@@ -403,6 +412,10 @@ export default function ClustersTab({ domain, onDomainChange, theme }: ClustersT
     }
 
     if (!statusData) return;
+    // Clear queued flag once scenario actually starts running
+    if (statusData.status === "running" && scenarioQueued) {
+      setScenarioQueued(false);
+    }
     if (statusData.status === "completed" && statusData.result) {
       setScenarioRunning(false);
       setScenarioResult(statusData.result);
@@ -421,7 +434,7 @@ export default function ClustersTab({ domain, onDomainChange, theme }: ClustersT
       setPollingScenarioId(null);
       scenarioNotification.failScenario();
     }
-  }, [statusData, statusPollError, pollingScenarioId, scenarioNotification]);
+  }, [statusData, statusPollError, pollingScenarioId, scenarioNotification, scenarioQueued]);
 
   // Sync params from loaded defaults
   useEffect(() => {
@@ -432,6 +445,52 @@ export default function ClustersTab({ domain, onDomainChange, theme }: ClustersT
     }
   }, [defaults]);
 
+  // Past scenarios query (last 10 completed cluster_scenario jobs)
+  const { data: pastScenarios } = useQuery({
+    queryKey: queryKeys.scenarioHistory(),
+    queryFn: () => fetchScenarioHistory(10),
+    staleTime: STALE.THIRTY_SEC,
+    enabled: showWhatIf,
+  });
+
+  // Auto-load scenario result from URL param (navigation from JobsTab)
+  useEffect(() => {
+    const jobId = getScenarioJobParam();
+    if (!jobId) return;
+    setScenarioJobParam(null); // clear immediately to avoid re-fetch
+
+    fetchJobDetail(jobId)
+      .then((job: Job) => {
+        if (job.job_type !== "cluster_scenario" || job.status !== "completed" || !job.result) {
+          setScenarioError("Job is not a completed cluster scenario");
+          return;
+        }
+        // job.result shape: { scenario_id, status, runtime_seconds, params, result: { optimal_k, ... } }
+        const jr = job.result as Record<string, unknown>;
+        const innerResult = (jr.result ?? jr) as ClusteringScenarioResult["result"];
+        if (!innerResult) {
+          setScenarioError("Job result does not contain scenario data");
+          return;
+        }
+        const transformed: ClusteringScenarioResult = {
+          scenario_id: (jr.scenario_id as string) || jobId,
+          status: "completed",
+          runtime_seconds: (jr.runtime_seconds as number) || 0,
+          params: (jr.params as Record<string, unknown>) || {},
+          result: innerResult,
+        };
+        setScenarioResult(transformed);
+        setScenarioLabel(job.job_label?.replace("What-If Scenario ", "") || "R");
+        setShowWhatIf(true);
+        setTimeout(() => {
+          scenarioResultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 300);
+      })
+      .catch((err: unknown) => {
+        setScenarioError(`Failed to load scenario: ${err instanceof Error ? err.message : "Unknown error"}`);
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const clusterSummary: ClusterInfo[] = clustersPayload?.clusters ?? [];
   const clusterMeta = profilesPayload?.metadata ?? null;
 
@@ -440,6 +499,7 @@ export default function ClustersTab({ domain, onDomainChange, theme }: ClustersT
     setScenarioError(null);
     setScenarioResult(null);
     setScheduledJobId(null);
+    setScenarioQueued(false);
     const label = String.fromCharCode(64 + nextScenarioIdx); // A, B, C ...
     currentLabelRef.current = label;
     try {
@@ -450,6 +510,7 @@ export default function ClustersTab({ domain, onDomainChange, theme }: ClustersT
       });
       setPollingScenarioId(response.scenario_id);
       if (response.job_id) setScheduledJobId(response.job_id);
+      if (response.status === "queued") setScenarioQueued(true);
       scenarioNotification.startScenario(response.scenario_id, label);
     } catch (err) {
       setScenarioRunning(false);
@@ -767,7 +828,7 @@ export default function ClustersTab({ domain, onDomainChange, theme }: ClustersT
                 {scenarioRunning ? (
                   <span className="flex items-center gap-2">
                     <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
-                    Scheduled{statusData?.elapsed_seconds != null
+                    {scenarioQueued ? "Queued" : "Scheduled"}{statusData?.elapsed_seconds != null
                       ? ` (${statusData.elapsed_seconds >= 60
                           ? `${Math.floor(statusData.elapsed_seconds / 60)}m ${Math.round(statusData.elapsed_seconds % 60)}s`
                           : `${Math.round(statusData.elapsed_seconds)}s`})`
@@ -803,7 +864,9 @@ export default function ClustersTab({ domain, onDomainChange, theme }: ClustersT
             {scheduledJobId && scenarioRunning && (
               <div className="rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 p-3 text-sm flex items-center justify-between">
                 <span className="text-blue-700 dark:text-blue-300 text-xs">
-                  Job scheduled successfully. Track progress in the Jobs tab.
+                  {scenarioQueued
+                    ? "Your scenario is queued. A clustering job is currently running \u2014 yours will start automatically when it finishes."
+                    : "Job scheduled successfully. Track progress in the Jobs tab."}
                 </span>
                 <span className="text-[10px] font-mono text-blue-500 bg-blue-100 dark:bg-blue-900/50 rounded px-1.5 py-0.5">
                   {scheduledJobId}
@@ -820,7 +883,7 @@ export default function ClustersTab({ domain, onDomainChange, theme }: ClustersT
 
             {/* Scenario results */}
             {scenarioResult?.status === "completed" && scenarioResult.result && (
-              <div className="space-y-3 rounded-lg border border-border p-4">
+              <div ref={scenarioResultRef} className="space-y-3 rounded-lg border border-border p-4">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-semibold">
                     Scenario {scenarioLabel} &mdash; K={scenarioResult.result.optimal_k},{" "}
@@ -889,6 +952,122 @@ export default function ClustersTab({ domain, onDomainChange, theme }: ClustersT
                       Confirm Promote
                     </button>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Past Scenarios History (last 10 runs) */}
+            {pastScenarios && pastScenarios.length > 0 && (
+              <div className="space-y-2 mt-4">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Past Scenarios ({pastScenarios.length})
+                </p>
+                <div className="space-y-1.5">
+                  {pastScenarios.map((pj) => {
+                    const jr = pj.result as Record<string, unknown> | null;
+                    const inner = jr ? ((jr.result ?? jr) as Record<string, unknown>) : null;
+                    const optK = inner?.optimal_k as number | undefined;
+                    const totalDfus = inner?.total_dfus as number | undefined;
+                    const runtimeSec = (jr?.runtime_seconds as number) ?? 0;
+                    const scenId = (jr?.scenario_id as string) || pj.job_id;
+                    const isExpanded = expandedHistoryId === pj.job_id;
+
+                    return (
+                      <div key={pj.job_id} className="rounded-lg border border-border/60">
+                        <button
+                          className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-muted/20 transition-colors rounded-lg"
+                          onClick={() => {
+                            if (isExpanded) {
+                              setExpandedHistoryId(null);
+                              setHistoryResult(null);
+                            } else {
+                              setExpandedHistoryId(pj.job_id);
+                              if (inner) {
+                                setHistoryResult({
+                                  scenario_id: scenId,
+                                  status: "completed",
+                                  runtime_seconds: runtimeSec,
+                                  params: (jr?.params as Record<string, unknown>) || {},
+                                  result: inner as ClusteringScenarioResult["result"],
+                                });
+                              }
+                            }
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            {isExpanded ? (
+                              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                            ) : (
+                              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                            )}
+                            <span className="text-sm font-medium">
+                              {pj.job_label || "Scenario"}
+                              {optK != null && <span className="text-muted-foreground font-normal"> &mdash; K={optK}</span>}
+                              {totalDfus != null && <span className="text-muted-foreground font-normal">, {formatCompactNumber(totalDfus)} DFUs</span>}
+                              {runtimeSec > 0 && <span className="text-muted-foreground font-normal">, {runtimeSec.toFixed(1)}s</span>}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-muted-foreground">
+                              {new Date(pj.submitted_at).toLocaleString()}
+                            </span>
+                            {inner && (
+                              <button
+                                className="rounded-md px-2 py-0.5 text-[10px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setScenarioResult({
+                                    scenario_id: scenId,
+                                    status: "completed",
+                                    runtime_seconds: runtimeSec,
+                                    params: (jr?.params as Record<string, unknown>) || {},
+                                    result: inner as ClusteringScenarioResult["result"],
+                                  });
+                                  setScenarioLabel(pj.job_label?.replace("What-If Scenario ", "") || "H");
+                                  setTimeout(() => {
+                                    scenarioResultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                  }, 100);
+                                }}
+                              >
+                                Promote
+                              </button>
+                            )}
+                          </div>
+                        </button>
+                        {isExpanded && historyResult?.result && (
+                          <div className="px-3 pb-3 space-y-3">
+                            <div className="max-h-[180px] overflow-y-auto rounded-md border border-input">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow className="border-muted bg-muted/30">
+                                    <TableHead className="text-xs">Cluster</TableHead>
+                                    <TableHead className="text-xs text-right">DFUs</TableHead>
+                                    <TableHead className="text-xs text-right">%</TableHead>
+                                    <TableHead className="text-xs text-right">Avg demand</TableHead>
+                                    <TableHead className="text-xs text-right">CV</TableHead>
+                                    <TableHead className="text-xs text-right">Seasonality</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {historyResult.result.profiles.map((p) => (
+                                    <TableRow key={p.label}>
+                                      <TableCell className="text-xs font-medium">{p.label}</TableCell>
+                                      <TableCell className="text-right text-xs tabular-nums">{formatNumber(p.count)}</TableCell>
+                                      <TableCell className="text-right text-xs tabular-nums">{formatNumber(p.pct_of_total)}%</TableCell>
+                                      <TableCell className="text-right text-xs tabular-nums">{formatNumber(p.mean_demand)}</TableCell>
+                                      <TableCell className="text-right text-xs tabular-nums">{formatNumber(p.cv_demand)}</TableCell>
+                                      <TableCell className="text-right text-xs tabular-nums">{formatNumber(p.seasonality_strength)}</TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                            <ScenarioCharts result={historyResult.result} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

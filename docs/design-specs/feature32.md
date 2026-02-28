@@ -106,3 +106,17 @@ Response:
 5. Manual: Accuracy Tab → Slice by "Seasonality Profile" shows buckets; filter dropdown constrains data
 6. Manual: DFU Analysis → seasonality dropdown filters aggregated chart data
 7. Manual: Data Explorer → DFU domain shows seasonality dropdown, filters rows
+
+---
+
+## Implementation Details
+
+### Endpoint Locations
+- Accuracy endpoints: both `api/main.py` (inline) and `api/routers/accuracy.py` (router)
+- DFU Analysis endpoint: both `api/main.py` and `api/routers/analysis.py` (returns 6 seasonality columns in `dfu_attributes`)
+- Seasonality-profiles endpoint: `api/routers/clusters.py` (not a dedicated router)
+
+### Additional View Dimensions
+- `sql/016` also adds `brand_desc` as a dimension in all 4 views
+- `dfu_execution_lag` added to `agg_accuracy_by_dim` and `agg_dfu_coverage`
+- Full `agg_accuracy_by_dim` grain: 11 columns (model_id, lag, month_start, cluster_assignment, ml_cluster, supplier_desc, abc_vol, region, brand_desc, dfu_execution_lag, seasonality_profile)

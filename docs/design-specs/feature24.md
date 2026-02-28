@@ -196,3 +196,32 @@ make champion-select                                  # Include in competition
 | Feature 7 | Clustering (for per_cluster and pooled strategies) |
 | Feature 4 | Fact tables (sales data source) |
 | Feature 15 | Champion selection (model competition) |
+
+---
+
+## Implementation Details
+
+### Batch Fitting Details
+- Minimum observation threshold: series with < 3 observations filtered out
+- Zero-prediction fill: filtered DFUs get zero predictions added back (ensuring all DFUs have output rows)
+- Model column selection priority: AutoARIMA → AutoETS → SeasonalNaive → first available
+- Exception handling: batch fitting errors caught, return empty DataFrame with warning
+
+### Pooled Strategy
+- `__unknown__` clusters excluded
+- Clusters with < 3 observations filtered out
+- Proportion: `np.where` for safe division (zero cluster total yields zero)
+
+### Additional Shared Modules
+- `compute_accuracy_metrics()` from `common/metrics.py`
+- `OUTPUT_COLS`, `ARCHIVE_COLS`, `MAX_ARCHIVE_LAG` (4) from `common/constants.py`
+- `timeframe_idx` column added per prediction DataFrame
+
+### MLflow
+- `model_type`: `"statsforecast_backtest"`
+
+### Model Competition
+- Only `statsforecast_global` in actual `model_competition.yaml` (not `statsforecast_cluster`)
+
+### Logging Suppression
+- `logging.disable(logging.INFO)` and `warnings.filterwarnings("ignore")`

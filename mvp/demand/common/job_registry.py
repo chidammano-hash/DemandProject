@@ -301,6 +301,7 @@ class JobManager:
         self._group_locks: dict[str, threading.Lock] = {}
         self._active_jobs: dict[str, str] = {}  # job_id -> group
         self._cancel_flags: dict[str, threading.Event] = {}
+        self._pending_queues: dict[str, list[tuple[str, Any, dict, int, str | None]]] = {}  # group -> [(job_id, type_def, params, max_retries, pipeline_id)]
         self._initialized = True
         logger.info("JobManager initialised: APScheduler BackgroundScheduler started (4 workers)")
 
@@ -471,12 +472,25 @@ class JobManager:
 
         type_def = JOB_TYPE_REGISTRY[job_type]
 
-        if self._is_group_busy(type_def.group):
-            raise RuntimeError(f"A job in group '{type_def.group}' is already running")
-
         job_id = self._generate_id()
         job_label = label or type_def.label
         job_params = params or {}
+
+        if self._is_group_busy(type_def.group):
+            # Queue the job instead of rejecting
+            self._db_insert(
+                job_id, job_type, job_label, job_params,
+                triggered_by=triggered_by,
+                pipeline_id=pipeline_id,
+                pipeline_step=pipeline_step,
+                max_retries=max_retries,
+            )
+            # Mark as queued in DB
+            self._db_update_status(job_id, "queued", progress_msg="Waiting for group to be free")
+            queue = self._pending_queues.setdefault(type_def.group, [])
+            queue.append((job_id, type_def, job_params, max_retries, pipeline_id))
+            logger.info("Queued job %s (%s) — group '%s' is busy", job_id, job_type, type_def.group)
+            return job_id
 
         # Insert into DB
         self._db_insert(
@@ -814,6 +828,31 @@ class JobManager:
                 if job_id in self._active_jobs:
                     self._active_jobs.pop(job_id, None)
                     self._cancel_flags.pop(job_id, None)
+                    # Auto-dispatch next queued job for this group
+                    self._dispatch_next(type_def.group)
+
+    def _dispatch_next(self, group: str) -> None:
+        """Pop the next queued job for *group* and dispatch it to APScheduler."""
+        queue = self._pending_queues.get(group)
+        if not queue:
+            return
+
+        job_id, type_def, params, max_retries, pipeline_id = queue.pop(0)
+        logger.info("Auto-dispatching queued job %s for group '%s' (%d remaining in queue)",
+                     job_id, type_def.type_id, len(queue))
+
+        # Track as active
+        self._active_jobs[job_id] = group
+        self._cancel_flags[job_id] = threading.Event()
+
+        # Dispatch to APScheduler's thread pool
+        self._scheduler.add_job(
+            self._execute_job,
+            args=[job_id, type_def, params, max_retries, pipeline_id],
+            id=job_id,
+            name=f"{type_def.label}: {job_id}",
+            replace_existing=True,
+        )
 
     def _scheduled_execution(self, job_type: str, params: dict, label: str) -> None:
         """Execute a scheduled recurring job by submitting a new one-off instance."""

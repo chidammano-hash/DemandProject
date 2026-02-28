@@ -666,3 +666,49 @@ Backend: no new Python packages. Uses existing `scikit-learn`, `pandas`, `yaml`,
 5. **Cluster stability analysis** — bootstrap resampling to show how stable cluster assignments are across random seeds
 6. **Export** — download scenario results as CSV/PDF report
 7. **DFU preview** — click a cluster in results to see sample DFUs and their sales time series
+
+---
+
+## Implementation Corrections
+
+### Async Execution (major change from spec)
+- `POST /clustering/scenario` returns **HTTP 202 Accepted** and runs asynchronously via `JobManager` (Feature 39)
+- Response includes `job_id` for tracking in Jobs tab
+- Frontend polls `GET /clustering/scenario/{id}/status` every 3 seconds
+
+### Additional Endpoints (not in original spec)
+- `GET /clustering/scenario/{id}/status` — returns `running` + `elapsed_seconds` or `completed`/`failed` with full result
+- `GET /clustering/scenario/estimate` — runtime estimation based on DFU count, K range, gap flag
+
+### File Location
+- Endpoints in `api/routers/clusters.py` (not `api/main.py`), mounted via `include_router`
+
+### Additional Request Fields
+- `relabel_only: bool = False`
+- `previous_scenario_id: str | None = None`
+
+### Additional Response Fields
+- `training_sample_size`, `sampled` (bool), `job_id`
+
+### Large Dataset Sampling
+- `MAX_DFUS_FOR_TRAINING = 20,000` — samples for training but predicts all DFUs
+
+### Chart Differences
+- Silhouette: **BarChart** with per-bar colors and quality zone ReferenceLines (not LineChart)
+- Cluster sizes: **PieChart** (not horizontal BarChart)
+- Feature importance: horizontal BarChart (top 10 features by variance ratio)
+- Gap statistic: conditional LineChart (only when gap_stats present)
+
+### Cross-Tab Notifications
+- `ScenarioNotificationContext` (`context/ScenarioNotificationContext.tsx`) with `startScenario`, `completeScenario`, `failScenario`, `dismissNotification`
+- Dashboard injects completion alert
+
+### Backend State Directory
+- `/tmp/clustering_scenarios/<scenario_id>/` (note plural "scenarios")
+
+### Test Files
+- `tests/unit/test_scenario_runner.py` (5 tests)
+- `tests/api/test_clustering_scenario.py` (12 tests)
+- `frontend/src/tabs/__tests__/ClustersTab.test.tsx` (3 tests)
+- `frontend/src/tabs/__tests__/WhatIfScenarios.test.tsx` (7 tests)
+- `frontend/src/context/__tests__/ScenarioNotificationContext.test.tsx` (4 tests)

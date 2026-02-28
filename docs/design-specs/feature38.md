@@ -109,3 +109,40 @@ Now returns **HTTP 202** immediately instead of blocking:
 | `frontend/src/context/__tests__/ScenarioNotificationContext.test.tsx` | **Created** — 4 tests |
 | `frontend/src/tabs/__tests__/ClustersTab.test.tsx` | Edited — updated with provider |
 | `frontend/src/tabs/__tests__/DashboardTab.test.tsx` | Edited — updated with provider |
+
+---
+
+## Implementation Corrections
+
+### Estimate Response
+2 additional fields not in spec:
+- `training_sample` (int) — number of DFUs used for training (capped at 20,000)
+- `sampled` (boolean) — whether DFU count exceeds sampling threshold
+- Undocumented `scope` query parameter on estimate endpoint
+
+### POST Scenario Response
+- Additional field: `job_id` (for tracking in Jobs tab)
+
+### JobManager Integration (Feature 39)
+- POST handler delegates to `JobManager.submit_job("cluster_scenario", ...)` instead of running inline
+- Maintains legacy state tracking for backward compatibility with status polling
+- 409 conflict raised via `RuntimeError` from `manager.submit_job()` (not direct `_scenario_running` check)
+
+### Runtime Estimation Formula
+- `feature_gen_per_dfu = 0.001s`, `kmeans_per_dfu_per_k = 0.002s`
+- `gap_multiplier = 2.5x`, `overhead_seconds = 10.0`
+- `max_training_dfus = 20,000` sampling cap
+
+### ScenarioNotificationContext
+- `CompletedScenario` interface: `id`, `label`, `runtimeSeconds`, `result`
+- `useScenarioNotification()` hook with error if used outside provider
+- `failScenario()` method for error handling
+
+### Additional Endpoint
+- `GET /clustering/scenario/{scenario_id}` — retrieve scenario result directly (separate from `/status`)
+
+### Pydantic Models (not in spec)
+- `FeatureParams`: time_window_months, min_months_history
+- `ModelParams`: k_range, min_cluster_size_pct, use_pca, pca_components, skip_gap, all_features
+- `LabelParams`: volume_high, volume_low, cv_steady, cv_volatile, seasonality_threshold, zero_demand_threshold
+- `ClusteringScenarioRequest`: feature_params, model_params, label_params, relabel_only, previous_scenario_id

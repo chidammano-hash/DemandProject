@@ -491,7 +491,7 @@ function SchedulesSection({
 // ---------------------------------------------------------------------------
 // JobHistoryRow
 // ---------------------------------------------------------------------------
-function JobHistoryRow({ job, onDelete }: { job: Job; onDelete: (id: string) => void }) {
+function JobHistoryRow({ job, onDelete, onViewResults }: { job: Job; onDelete: (id: string) => void; onViewResults?: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const groupKey = getGroupKey(job.job_type);
   const cfg = GROUP_CONFIG[groupKey] || GROUP_CONFIG.clustering;
@@ -517,7 +517,16 @@ function JobHistoryRow({ job, onDelete }: { job: Job; onDelete: (id: string) => 
         <td className="px-3 py-2.5"><StatusBadge status={job.status} /></td>
         <td className="px-3 py-2.5 text-xs tabular-nums text-muted-foreground">{jobDuration(job)}</td>
         <td className="px-3 py-2.5 text-xs text-muted-foreground">{formatTimestamp(job.submitted_at)}</td>
-        <td className="px-3 py-2.5">
+        <td className="px-3 py-2.5 flex items-center gap-1">
+          {job.status === "completed" && job.job_type === "cluster_scenario" && onViewResults && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onViewResults(job.job_id); }}
+              className="rounded-md p-1 text-muted-foreground/50 hover:text-primary hover:bg-primary/10 transition-colors"
+              title="View Results in Clusters Tab"
+            >
+              <BarChart3 className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(job.job_id); }}
             className="rounded-md p-1 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
@@ -576,9 +585,9 @@ function JobHistoryRow({ job, onDelete }: { job: Job; onDelete: (id: string) => 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-type JobsTabProps = { theme: Theme };
+type JobsTabProps = { theme: Theme; onNavigateToScenario?: (jobId: string) => void };
 
-export default function JobsTab({ theme }: JobsTabProps) {
+export default function JobsTab({ theme, onNavigateToScenario }: JobsTabProps) {
   const queryClient = useQueryClient();
   const jobNotification = useJobNotification();
   const [historyFilter, setHistoryFilter] = useState<string>("");
@@ -842,7 +851,7 @@ export default function JobsTab({ theme }: JobsTabProps) {
               </thead>
               <tbody>
                 {historyJobs.map((job: Job) => (
-                  <JobHistoryRow key={job.job_id} job={job} onDelete={handleDelete} />
+                  <JobHistoryRow key={job.job_id} job={job} onDelete={handleDelete} onViewResults={onNavigateToScenario} />
                 ))}
               </tbody>
             </table>

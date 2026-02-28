@@ -70,6 +70,7 @@ export const queryKeys = {
   activeJobs: () => ["active-jobs"] as const,
   jobStats: () => ["job-stats"] as const,
   jobSchedules: () => ["job-schedules"] as const,
+  scenarioHistory: () => ["scenario-history"] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -686,6 +687,11 @@ export async function cancelJob(jobId: string): Promise<{ job_id: string; status
 
 export async function deleteJob(jobId: string): Promise<{ deleted: boolean }> {
   return fetchJson(`/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+}
+
+export async function fetchScenarioHistory(limit = 10): Promise<Job[]> {
+  const data = await fetchJson<JobListPayload>(`/jobs?job_type=cluster_scenario&status=completed&limit=${limit}`);
+  return data.jobs;
 }
 
 export async function fetchJobStats(): Promise<JobStats> {

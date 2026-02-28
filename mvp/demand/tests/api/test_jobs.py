@@ -103,21 +103,24 @@ async def test_submit_job_invalid_type(mock_pool, mock_manager):
 
 
 @pytest.mark.asyncio
-async def test_submit_job_conflict(mock_pool, mock_manager):
-    """POST /jobs returns 409 when group is busy."""
+async def test_submit_job_queued_when_busy(mock_pool, mock_manager):
+    """POST /jobs returns 202 with status=queued when group is busy (no 409)."""
     pool, _, _ = mock_pool
-    mock_manager.submit_job.side_effect = RuntimeError("A job in group 'clustering' is already running")
+    # submit_job no longer raises RuntimeError — it queues instead
+    mock_manager.submit_job.return_value = "job_20260227_120000_queued1"
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager), \
-         patch("common.job_registry.JOB_TYPE_REGISTRY", {"cluster_scenario": MagicMock()}):
+         patch("api.routers.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/jobs",
-                json={"job_type": "cluster_scenario", "params": {}},
+                json={"job_type": "cluster_scenario", "params": {}, "label": "Queued Job"},
             )
-            assert response.status_code == 409
+            assert response.status_code == 202
+            data = response.json()
+            assert data["job_id"] == "job_20260227_120000_queued1"
+            assert data["status"] == "queued"
 
 
 @pytest.mark.asyncio

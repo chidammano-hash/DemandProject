@@ -115,3 +115,35 @@ Pre-aggregated forecasts including `model_id` in GROUP BY for per-model analytic
 - Null normalization: `''`, `'null'`, `'none'`, `'NA'` treated as NULL during load
 - Type casting: integer/float/date fields auto-cast with null coercion
 - All domains served via generic API with pagination (offset/limit)
+
+---
+
+## Implementation Details
+
+### fact_sales_monthly
+- Additional column: `file_dt DATE`
+- CHECK constraints: `type = 1` (enforced at DB level), `startdate = date_trunc('month', startdate)` (month-start grain)
+- Indexes: 4 B-tree (`dmdunit`, `loc`, `startdate`, `type`) + 2 composite (`(dmdunit, loc, startdate)`, `startdate`) + 3 GIN trigram (`dmdunit`, `loc`, `dmdgroup`)
+- `pg_trgm` extension created for trigram-based substring search
+
+### fact_external_forecast_monthly
+- 4 CHECK constraints: lag 0-4, fcst month-start alignment, start month-start alignment, lag-matches-dates
+- UNIQUE constraint: `(forecast_ck, model_id)`
+- Indexes: 6 B-tree + 2 composite from `008` + 4 GIN trigram + 2 composite from `013` (`(dmdunit, dmdgroup, loc)`, `(model_id, lag)`)
+
+### Additional Fact Tables (not in original spec)
+- **backtest_lag_archive** (`sql/010`): All-lags (0-4) backtest predictions. Grain = `forecast_ck + model_id + lag`. Includes `timeframe` column. 4 CHECK constraints, `UNIQUE(forecast_ck, model_id, lag)`, 4 B-tree + 2 composite indexes.
+- **fact_inventory_snapshot** (`sql/017`): Grain = `item_no + loc + snapshot_date`. Columns: `inventory_sk`, `inventory_ck`, `item_no`, `loc`, `snapshot_date`, `lead_time_days`, `qty_on_hand`, `qty_on_hand_on_order`, `qty_on_order`, `mtd_sales`. 4 B-tree + 2 GIN trigram indexes.
+
+### Materialized Views (full list — 9 views)
+| View | Grain | Key Measures | DDL |
+|------|-------|-------------|-----|
+| `agg_sales_monthly` | month_start, dmdunit, loc | row_count, qty_shipped, qty_ordered, qty | sql/008 |
+| `agg_forecast_monthly` | month_start, dmdunit, loc, model_id | row_count, basefcst_pref, tothist_dmd | sql/008 |
+| `agg_inventory_monthly` | month_start, item_no, loc | eom_qty_on_hand, monthly_sales, avg_daily_sls, latest_lead_time_days | sql/017 |
+| `agg_accuracy_by_dim` | model_id, lag, month_start + 8 dims | sum_forecast, sum_actual, sum_abs_error | sql/011, sql/016 |
+| `agg_accuracy_lag_archive` | model_id, lag, month_start + dims | sum_forecast, sum_actual, sum_abs_error | sql/011, sql/016 |
+| `agg_dfu_coverage` | model_id, lag | dfu_count | sql/012 |
+| `agg_dfu_coverage_lag_archive` | model_id, lag | dfu_count | sql/012 |
+| `mv_top_movers` | dmdunit | current/prior period qty, pct_change | sql/018 |
+| `mv_inventory_forecast_monthly` | item_no, loc, month_start, model_id | forecast, actual, error, dos, stockout/excess flags | sql/019 |

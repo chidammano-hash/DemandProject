@@ -215,16 +215,24 @@ make bench-compare DOMAIN=forecast RUNS=10 START_DATE=2023-01-01 END_DATE=2024-1
 
 ### Helper Functions
 
+All benchmark helper functions live in `api/core.py` (shared utilities module), not in the endpoint file itself.
+
 | Function | Location | Purpose |
 |----------|----------|---------|
-| `timed_postgres_query()` | `api/main.py` | Execute SQL via psycopg with `perf_counter` timing |
-| `timed_trino_query()` | `api/main.py` | Execute SQL via `docker exec` into Trino CLI with timing |
-| `summary_stats_ms()` | `api/main.py` | Compute min/max/avg/p50/p95 from a timing array |
-| `percentile_ms()` | `api/main.py` | Linear interpolation percentile calculation |
-| `item_field_for_spec()` | `api/main.py` | Resolve item column name for a domain |
-| `location_field_for_spec()` | `api/main.py` | Resolve location column name for a domain |
-| `default_date_field_for_spec()` | `api/main.py` | Resolve date column name for a domain |
-| `default_trend_metric_for_spec()` | `api/main.py` | Choose the first non-excluded numeric column for trend aggregation |
+| `timed_postgres_query()` | `api/core.py` | Execute SQL via psycopg with `perf_counter` timing |
+| `timed_trino_query()` | `api/core.py` | Execute SQL via `docker exec` into Trino CLI with timing |
+| `summary_stats_ms()` | `api/core.py` | Compute min/max/avg/p50/p95 from a timing array |
+| `percentile_ms()` | `api/core.py` | Linear interpolation percentile calculation |
+| `item_field_for_spec()` | `api/core.py` | Resolve item column name for a domain |
+| `location_field_for_spec()` | `api/core.py` | Resolve location column name for a domain |
+| `default_date_field_for_spec()` | `api/core.py` | Resolve date column name for a domain |
+| `default_trend_metric_for_spec()` | `api/core.py` | Choose the first non-excluded numeric column for trend aggregation |
+| `get_spec_or_404()` | `api/core.py` | Look up DomainSpec by name or raise 404 |
+| `qident()` | `api/core.py` | Quote a single SQL identifier |
+| `dotted_qident()` | `api/core.py` | Build fully-qualified dotted identifier (catalog.schema.table) |
+| `to_api_col()` | `api/core.py` | Map internal column name to API column name (e.g., `class` -> `class_`) |
+| `quote_literal()` | `api/core.py` | Safely quote a SQL string literal for cross-engine compatibility |
+| `parse_optional_iso_date()` | `api/core.py` | Parse and validate optional ISO date string |
 
 ### SQL Generation
 
@@ -240,6 +248,19 @@ make bench-compare DOMAIN=forecast RUNS=10 START_DATE=2023-01-01 END_DATE=2024-1
 - `time.perf_counter` — high-resolution timing (stdlib)
 - No new dependencies required
 
+## Testing
+
+Backend API tests are in `mvp/demand/tests/api/test_benchmark.py`:
+
+| Test | Description |
+|------|-------------|
+| `test_benchmark_invalid_domain` | `GET /bench/compare?domain=nonexistent` returns 404 |
+| `test_benchmark_date_range_validation` | Inverted date range (`start_date > end_date`) returns 422 |
+| `test_benchmark_success` | Mocked timing functions return 200 with valid response structure |
+| `test_benchmark_trino_failure` | Trino `RuntimeError` returns 503 |
+
+Tests mock `timed_postgres_query` and `timed_trino_query` from `api.routers.benchmark` to avoid requiring live database and Docker services.
+
 ## Related Features
 
 - **Feature 1** — Infrastructure & platform setup (Docker Compose, Trino, Iceberg, MinIO)
@@ -250,5 +271,16 @@ make bench-compare DOMAIN=forecast RUNS=10 START_DATE=2023-01-01 END_DATE=2024-1
 
 | File | Role |
 |------|------|
-| `mvp/demand/api/main.py` | `GET /bench/compare` endpoint + timing helpers |
+| `mvp/demand/api/routers/benchmark.py` | `GET /bench/compare` endpoint (modular router) |
+| `mvp/demand/api/core.py` | Shared utilities: timing helpers, SQL helpers, domain spec resolution |
+| `mvp/demand/api/main.py` | Also contains an inline `@app.get("/bench/compare")` route (legacy; takes precedence over router) |
 | `mvp/demand/Makefile` | `bench-compare` target |
+| `mvp/demand/tests/api/test_benchmark.py` | API tests: invalid domain (404), date range validation (422), success (200), Trino failure (503) |
+
+### Dual Route Registration Note
+
+The benchmark endpoint exists in two places:
+1. **Inline route** in `api/main.py` (line ~692): `@app.get("/bench/compare")` -- registered first, takes precedence
+2. **Router module** in `api/routers/benchmark.py` -- extracted as part of modular router architecture
+
+Because FastAPI resolves routes in registration order, the inline `main.py` route handles requests. The router module (`benchmark.py`) exists as the canonical modular implementation but is not currently mounted via `app.include_router()`.

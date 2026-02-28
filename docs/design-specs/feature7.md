@@ -139,3 +139,34 @@ Index: `idx_dim_dfu_cluster_assignment` in `sql/005_create_dim_dfu.sql`.
 - Feature 3 (`dim_item`, `dim_dfu`)
 - Feature 4 (`fact_sales_monthly`)
 - scikit-learn, pandas, scipy, matplotlib, seaborn, mlflow, pyyaml
+
+---
+
+## Implementation Details
+
+### Additional API Endpoints (in `api/routers/clusters.py`)
+- `GET /domains/dfu/clusters/profiles` — cluster profiles with centroid features from JSON
+- `GET /domains/dfu/clusters/visualization/{image_name}` — clustering visualization PNGs
+- `GET /clustering/defaults` — current default parameters from YAML config
+- `GET /clustering/scenario/estimate` — runtime estimation (DFU count, K range, gap flag)
+- `POST /clustering/scenario` — trial clustering with custom params (HTTP 202, async via JobManager)
+- `GET /clustering/scenario/{id}/status` — poll execution status
+- `GET /clustering/scenario/{id}` — retrieve completed scenario result
+- `POST /clustering/scenario/{id}/promote` — promote to production (`dim_dfu.ml_cluster`)
+- `GET /domains/dfu/seasonality-profiles` — distinct seasonality profiles with DFU counts
+
+### Clusters Endpoint Enhancement
+- `source` parameter: `ml` (ml_cluster column) or `source` (cluster_assignment column)
+- Response includes `pct_of_total` per cluster
+
+### Training Script Enhancements
+- `CORE_FEATURES`: mean_demand, cv_demand, trend_slope, growth_rate, seasonality_strength, months_available, zero_demand_pct, demand_stability
+- `LOG_TRANSFORM_FEATURES`: mean_demand, median_demand, std_demand, total_demand, max_demand, min_demand, seasonal_index_std
+- `merge_small_clusters()` post-processing function
+- `gap_statistic()` function for K selection
+- `--skip-gap` and `--all-features` CLI flags
+
+### Integration
+- `POST /clustering/scenario` delegates to APScheduler-powered `JobManager` (Feature 39)
+- Pydantic models: `FeatureParams`, `ModelParams`, `LabelParams`, `ClusteringScenarioRequest`
+- `MAX_DFUS_FOR_TRAINING = 20,000` — samples for training if DFU count exceeds threshold

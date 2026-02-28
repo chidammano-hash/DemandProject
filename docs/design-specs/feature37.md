@@ -267,3 +267,42 @@ make refresh-inv-backtest    # Refresh with current data
 | `frontend/src/hooks/useKeyboardShortcuts.ts` | Edited — updated TAB_MAP (1-8) |
 | `tests/api/test_inventory_backtest.py` | **Created** — 12 backend tests |
 | `frontend/src/tabs/__tests__/InvBacktestTab.test.tsx` | **Created** — 6 frontend tests |
+
+---
+
+## Implementation Corrections
+
+### Materialized View Schema
+3 additional columns implemented but not in spec:
+- `eom_qty_on_hand_on_order` (from `i.eom_qty_on_hand_on_order`)
+- `monthly_sales` (from `i.monthly_sales`)
+- `snapshot_days` (from `i.snapshot_days`)
+
+### Source Column Names
+- Spec says `f.base_forecast` → actual: `f.basefcst_pref AS forecast`
+- Spec says `f.actual_demand` → actual: `f.tothist_dmd AS actual_demand`
+
+### SQL WHERE Filters (not in spec)
+```sql
+AND f.tothist_dmd IS NOT NULL
+AND f.basefcst_pref IS NOT NULL
+```
+
+### COALESCE Values
+- Actual uses `'(unassigned)'` and `'(unknown)'` (with parentheses, not plain `unassigned`/`unknown`)
+
+### View Creation
+- Created with `WITH NO DATA` — requires explicit `REFRESH MATERIALIZED VIEW`
+
+### Additional Index
+- `idx_mv_inv_fcst_abc` on `abc_vol` (7th index, not documented in spec's 6)
+
+### Caching
+- Summary/Trend/Root Cause: `max_age=120` (2 minutes)
+- Detail: `max_age=60` (1 minute)
+
+### Frontend Details
+- Uses `KpiCard`, `LoadingElement`, `useDebounce` (400ms), `useGlobalFilterContext`
+- Auto-selects first 5 models on initial load
+- KPI severity: service level `>=95` best, `<90` warning
+- Page size: 50 rows

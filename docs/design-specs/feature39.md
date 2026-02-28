@@ -320,3 +320,89 @@ This job system provides the groundwork for agentic AI automation:
 - WebSocket-based real-time progress updates (replacing polling)
 - Job result artifact storage (charts, reports, model artifacts)
 - APScheduler distributed backend (Redis/MongoDB for multi-worker deployments)
+
+---
+
+## Implementation Corrections
+
+### JobStats Response
+Additional fields not in spec:
+- `cancelled` (count of cancelled jobs)
+- `last_24h` is a nested object: `{submitted, completed, failed}` (not a single number)
+
+### JobTypeDef
+- `default_max_retries: int = 0` field not documented
+
+### Cancellation Mechanism
+- `_cancel_flags: dict[str, threading.Event]` for signal propagation
+
+### APScheduler Configuration
+- `coalesce: True`, `max_instances: 1`, `misfire_grace_time: 3600`, `timezone: "UTC"`
+
+### Lazy Initialization
+- `_ensure_init()` method — scheduler doesn't start until first method call
+- Router uses `_get_manager()` with global `_manager` for lazy init
+
+### Job Callable Details
+- `_run_subprocess()` shared helper captures stdout/stderr, raises `RuntimeError` on non-zero exit
+- `_run_cluster_pipeline`: 4 steps at 25%/50%/75%/95%, accepts `time_window_months`/`k_range`
+- `_run_seasonality`: 2 steps at 40%/90%, accepts `config` path
+- `_run_backtest`: accepts `cluster_strategy` (default `"global"`)
+
+### Recovery
+- `recover_stale_jobs()` auto-called in `_ensure_init()` — marks leftover `running`/`queued` as `failed` with "Interrupted by server restart"
+
+### Pipeline Internals
+- `__pipeline_remaining`, `__pipeline_label`, `__pipeline_step` keys in params
+- Step label format: `[Pipeline N/M] step_label`
+
+### Response Formats (not fully documented in spec)
+- POST `/jobs`: `{"job_id": ..., "status": "queued"}` (not "running")
+- POST `/jobs/schedule`: HTTP 201 with `{"schedule_id": ..., "status": "active"}`
+- DELETE endpoints: `{"deleted": true}`
+- Cancel: `{"job_id": ..., "status": "cancelled"}`
+- Pipeline: includes `"steps"` count in response
+
+### TypeScript Types (not in spec)
+- `GroupConfig`: label, color, bgColor, borderColor, iconBg
+- `JobListPayload`: jobs, total, limit, offset
+- `ActiveJobsPayload`: jobs
+- `JobSchedulesPayload`: schedules
+
+### Frontend Query Functions
+- `fetchJobs({status?, job_type?, limit?, offset?})`
+- `submitJob(jobType, params, label?)`
+- `createSchedule(jobType, params, label?, cron?, intervalMinutes?)`
+- `fetchScenarioHistory(limit?)` — returns last N completed cluster_scenario jobs
+- `fetchJobDetail(jobId)` — returns full job record with result data
+
+---
+
+## Enhancements (Post-Initial Implementation)
+
+### View Results Navigation (JobsTab → ClustersTab)
+- "View Results" button (BarChart3 icon) in JobsTab history rows for completed `cluster_scenario` jobs
+- Clicking navigates to ClustersTab via `?scenario_job=<job_id>` URL parameter
+- ClustersTab auto-loads the scenario result from DB on mount, expands What-If section, renders ScenarioCharts
+- URL param is immediately cleared after consumption to prevent stale state on refresh
+- `getScenarioJobParam()` / `setScenarioJobParam()` exported from `useUrlState.ts`
+- `App.tsx` wires `handleNavigateToScenario` callback through `JobsTab → setScenarioJobParam → handleTabSwitch("clusters")`
+
+### Scenario Queueing (replaces 409 rejection)
+- **Previous behavior:** `submit_job()` raised `RuntimeError` when group was busy → API returned HTTP 409 Conflict
+- **New behavior:** `submit_job()` creates the job in DB with `status="queued"` and appends to `_pending_queues[group]` FIFO queue
+- When the running job completes, `_dispatch_next(group)` pops the first queued job and dispatches it to APScheduler
+- `_pending_queues: dict[str, list[tuple]]` — per-group in-memory queue
+- `_dispatch_next(group)` — updates `_active_jobs`, `_cancel_flags`, schedules via APScheduler
+- API responses now include `"status": "queued"` or `"status": "running"` depending on whether the job started immediately
+- Frontend ClustersTab shows "Queued..." button text and a distinct info banner when scenario is queued
+- Queued → running transition detected via polling; banner updates automatically
+- All 409 error handlers removed from `jobs.py` (submit, pipeline) and `clusters.py` (scenario)
+
+### Past Scenarios History (ClustersTab)
+- "Past Scenarios" section in ClustersTab What-If panel showing last 10 completed cluster_scenario runs
+- Accordion pattern: clicking an entry expands it to show profile table + ScenarioCharts inline
+- Each entry displays: job label, optimal K, DFU count, runtime, timestamp
+- "Promote" button on each expanded entry triggers the existing promote flow
+- Data fetched via `fetchScenarioHistory(10)` with 30s stale time, refetches when What-If is expanded
+- Only one entry expanded at a time (expanding one collapses the previous)

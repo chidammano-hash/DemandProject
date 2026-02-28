@@ -4449,3 +4449,25 @@ Quick reference of all formulas used in the Inventory Planning Module.
 *Feature 34: Inventory Planning Module — World-Class Design Specification*
 *Demand Studio — February 2026*
 *Version 1.0*
+
+---
+
+## Implementation Status (MVP — Phase 1)
+
+The MVP implements a simplified version of this specification. Key differences from spec:
+
+### What was implemented:
+- **DDL**: `sql/017_create_fact_inventory_snapshot.sql` — column names differ from spec (`item_no` not `item`, `snapshot_date` not `exec_date`, `lead_time_days` as NUMERIC not INTEGER, `qty_on_hand`/`qty_on_hand_on_order`/`qty_on_order`/`mtd_sales`)
+- **Normalize script**: Dedicated `scripts/normalize_inventory_csv.py` for merging 14 monthly CSVs (not generic normalizer)
+- **Domain spec**: `INVENTORY_SPEC` in `common/domain_specs.py` with `source_columns` mapping
+- **API endpoints** (4 inline routes in `api/main.py`): `/inventory/position`, `/inventory/kpis`, `/inventory/trend`, `/inventory/item-detail`
+- **Materialized view**: `agg_inventory_monthly` with LAG() CTE for daily sales derivation, EOM snapshots, proper monthly sales (MAX not SUM)
+- **Frontend**: `InventoryTab.tsx` with KPI cards (severity color-coded), trend chart, position table, item detail drill-down
+- **Tests**: 22 tests in `tests/api/test_inventory.py`
+- **Makefile targets**: `normalize-inventory`, `load-inventory`, `refresh-agg-inventory`, `db-apply-inventory`, `inventory-pipeline`
+- **Inventory backtest** (Feature 37): 4 additional endpoints (`/inventory-backtest/*`) and `InvBacktestTab.tsx`
+
+### What remains from the full spec:
+- Phases 2-4 (safety stock optimization, ABC-XYZ classification engine, ML replenishment, S&OP integration)
+- Separate inventory router module (currently inline)
+- Advanced supply chain KPIs beyond DOS/WOC/Turns/LT Coverage

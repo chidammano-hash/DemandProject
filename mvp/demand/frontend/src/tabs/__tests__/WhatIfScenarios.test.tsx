@@ -15,6 +15,7 @@ vi.mock("@/api/queries", () => ({
     seasonalityProfiles: () => ["seasonality-profiles"],
     scenarioEstimate: (p: Record<string, unknown>) => ["scenario-estimate", p],
     scenarioStatus: (id: string) => ["scenario-status", id],
+    scenarioHistory: () => ["scenario-history"],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchDfuClusters: vi.fn().mockResolvedValue({
@@ -36,9 +37,20 @@ vi.mock("@/api/queries", () => ({
   fetchSeasonalityProfiles: vi.fn().mockResolvedValue({ profiles: [] }),
   fetchScenarioEstimate: vi.fn().mockResolvedValue({ estimated_seconds: 45, dfu_count: 1200, k_range: 10, skip_gap: true }),
   fetchScenarioStatus: vi.fn(),
+  fetchScenarioHistory: vi.fn().mockResolvedValue([]),
+  fetchJobDetail: vi.fn(),
   runClusteringScenario: mockRunScenario,
   promoteScenario: mockPromote,
 }));
+
+vi.mock("@/hooks/useUrlState", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useUrlState")>();
+  return {
+    ...actual,
+    getScenarioJobParam: vi.fn().mockReturnValue(null),
+    setScenarioJobParam: vi.fn(),
+  };
+});
 
 const { fetchScenarioStatus: mockFetchStatus } = await import("@/api/queries") as { fetchScenarioStatus: ReturnType<typeof vi.fn> };
 

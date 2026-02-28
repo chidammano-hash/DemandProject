@@ -227,3 +227,33 @@ Key mappings:
 - Full-text search via `pg_trgm` trigram indexes on configured fields
 - All domains served via generic API: `GET /domains/{domain}/rows`, `GET /domains/{domain}/search`
 - Reserved word workaround: `class` column aliased as `class_` in API responses
+
+---
+
+## Implementation Details
+
+### Indexes (implemented, per table)
+- **dim_item**: 3 B-tree (`brand_name`, `category`, `item_status`) + 2 GIN trigram (`item_desc`, `brand_name`)
+- **dim_location**: 3 B-tree (`site_id`, `state_id`, `primary_demand_location`) + 1 GIN trigram (`site_desc`)
+- **dim_customer**: 5 B-tree (`site`, `customer_no`, `state`, `status`, `channel`) + 1 GIN trigram (`customer_name`). Note: `customer_name` is nullable (DDL drops NOT NULL constraint)
+- **dim_time**: 5 B-tree (`date`, `week_bucket`, `month_bucket`, `quarter_bucket`, `year_number`)
+- **dim_dfu**: 6 B-tree (`dmdunit`, `loc`, `brand`, `region`, `cluster_assignment`, `ml_cluster`) + 1 GIN trigram (`brand_desc`) + 2 seasonality B-tree (`seasonality_profile`, `is_yearly_seasonal`)
+
+### Additional dim_dfu Columns (not in original spec)
+- `ml_cluster TEXT` — KMeans-assigned cluster label (Feature 7)
+- `seasonality_profile TEXT` — seasonal pattern label (Feature 30)
+- `seasonality_strength NUMERIC(10,4)` — ACF-based strength metric
+- `is_yearly_seasonal BOOLEAN` — yearly seasonal flag
+- `peak_month INTEGER`, `trough_month INTEGER` — seasonal peak/trough months
+- `peak_trough_ratio NUMERIC(10,4)` — peak-to-trough demand ratio
+
+### Additional API Endpoints (generic, all domains)
+- `GET /domains/{domain}/suggest` — column-level typeahead suggestions
+- `GET /domains/{domain}/sample-pair` — random item+location pair
+- `GET /domains/{domain}/meta` — domain metadata (columns, types, sort info)
+- `GET /domains/{domain}/analytics` — summary stats, trend, category distribution, KPIs
+- `GET /domains/{domain}/distinct` — distinct values for filter dropdowns
+- `GET /domains/forecast/models` — distinct model_id values
+
+### DomainSpec Type Classifications
+Each domain in `common/domain_specs.py` defines `search_fields` (for full-text search), `int_fields`, `float_fields`, `date_fields`, and `bool_fields` (for type-aware API filtering).

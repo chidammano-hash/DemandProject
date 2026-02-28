@@ -133,3 +133,27 @@ make backtest-load                 # Reload
 - Feature 7 (clustering)
 - Feature 4 (fact tables)
 - catboost >= 1.2.0, python-dateutil >= 2.8.0
+
+---
+
+## Implementation Details
+
+### Additional Model ID
+- Transfer strategy: `catboost_transfer` — global base model fine-tuned per cluster via `init_model`
+
+### Additional CLI Parameters
+- `--transfer-iterations` (default: 100) — additional iterations for fine-tuning
+- `--transfer-min-rows` (default: 20) — minimum cluster rows
+
+### Default Hyperparameters
+- `verbose: 0` (CatBoost silent mode, not in original spec)
+
+### `cat_dtype` Implementation
+- `cat_dtype="str"` passed to `run_tree_backtest()`, causing categoricals to use `.astype(str)`
+- CatBoost receives column indices via `cat_features=cat_indices` (not column names)
+
+### Makefile Target
+- `backtest-catboost-transfer` — CatBoost transfer learning backtest
+
+### Shared Modules
+- Same as Feature 9: `common/constants.py`, `common/metrics.py`, `common/mlflow_utils.py`, `common/db.py`

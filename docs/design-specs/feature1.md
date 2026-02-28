@@ -12,7 +12,7 @@ Build a scalable forecasting platform for:
 - `Trino` for low-latency SQL analytics powering the UI
 - `MLflow` for experiment tracking, model registry, and run comparison
 - `Postgres` (via `pgvector/pgvector:pg16`) for app metadata, workflow, and vector embeddings for NL queries
-- `FastAPI` backend and `React/Next.js` frontend
+- `FastAPI` backend and `React/Vite` frontend
 - `Pydantic` for canonical data structures, schema contracts, and validation
 - `uv` as the Python package/environment manager (`pyproject.toml` + `uv.lock`)
 
@@ -140,3 +140,30 @@ Build a scalable forecasting platform for:
 ## Final Recommendation
 For your requirement, use `Iceberg + Spark + Trino + MLflow` as the core platform, fully local on your MacBook.
 This gives the best balance of scale, speed, model governance, and simplicity for 500M+ record demand forecasting with both ML and traditional methods.
+
+---
+
+## Implementation Notes
+
+### FastAPI Backend Configuration
+- Middleware: `GZipMiddleware` (starlette), `CORSMiddleware` (fastapi)
+- Connection pool: `psycopg_pool.ConnectionPool` (min_size=2, max_size=10)
+- Central schema registry: `DomainSpec` frozen dataclass in `common/domain_specs.py` (not Pydantic models)
+- Optional API key auth via `api/auth.py` (`require_api_key` dependency; disabled when `API_KEY` env var unset)
+
+### Docker Compose Services (6 services)
+| Service | Image | Ports |
+|---------|-------|-------|
+| minio | minio/minio:latest | 9200, 9201 |
+| postgres | pgvector/pgvector:pg16 | 5440 |
+| mlflow | ghcr.io/mlflow/mlflow:v2.16.2 | 5003 |
+| iceberg-rest | tabulario/iceberg-rest:1.6.0 | 8381 |
+| spark | spark:3.5.7-java17-python3 | 7277, 8280 |
+| trino | trinodb/trino:451 | 8282 |
+
+### Postgres Tuning
+- `shared_buffers=512MB`, `work_mem=64MB`, `effective_cache_size=1536MB`
+- `max_connections=50`, `checkpoint_completion_target=0.9`, `random_page_cost=1.1`
+
+### Modular Router Architecture
+10 router modules in `api/routers/`: domains, clusters, accuracy, analysis, benchmark, chat, competition, intel, jobs. Mounted via `app.include_router()` in `main.py`.

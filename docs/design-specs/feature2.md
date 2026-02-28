@@ -260,3 +260,28 @@ Human overrides with approval and reason traceability.
 5. `gold.dim_algorithm`, `gold.dim_model_version`
 6. `gold.fact_forecast`, `gold.fact_forecast_archive_lag`, `gold.fact_forecast_accuracy`, `gold.fact_override_audit`
 7. Postgres `meta.*` tables
+
+---
+
+## Implementation Status (MVP)
+
+### What was implemented:
+- Flat dimension tables in Postgres: `dim_item`, `dim_location`, `dim_customer`, `dim_time`, `dim_dfu` (no SCD2, no effective dating)
+- Fact tables in Postgres: `fact_sales_monthly`, `fact_external_forecast_monthly`, `fact_inventory_snapshot`
+- Archive table: `backtest_lag_archive` (all-lags backtest predictions)
+- 9 materialized views: `agg_sales_monthly`, `agg_forecast_monthly`, `agg_inventory_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive`, `agg_dfu_coverage`, `agg_dfu_coverage_lag_archive`, `mv_top_movers`, `mv_inventory_forecast_monthly`
+- Iceberg mirror via Spark (optional, Postgres is primary)
+- `DomainSpec` dataclass in `common/domain_specs.py` as the central schema contract (8 domains: item, location, customer, time, dfu, sales, forecast, inventory)
+- Generic ETL pipeline: CSV → normalize → clean CSV → Postgres (+ optional Spark → Iceberg)
+- MLflow for clustering and backtest experiment tracking
+
+### What remains aspirational (not yet implemented):
+- SCD2 (slowly changing dimensions) with `effective_from` / `effective_to` / `is_current`
+- Source-to-canonical mapping tables (`map_*_source_to_canonical`)
+- Supersession bridge (`bridge_item_location_supersession`)
+- Silver/gold Iceberg layer separation (current implementation is single-layer)
+- Postgres `meta.*` operational metadata tables (source_system, ingestion_contract, scenario, workflow_state, dashboard_view)
+- `gold.dim_algorithm` and `gold.dim_model_version` registries
+- `gold.fact_override_audit` for human overrides
+- Weekly planning grain support (only monthly is implemented)
+- Data quality gates at layer boundaries

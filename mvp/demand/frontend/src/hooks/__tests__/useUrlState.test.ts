@@ -3,6 +3,8 @@ import {
   getInitialDomain,
   getInitialTab,
   updateUrlState,
+  getScenarioJobParam,
+  setScenarioJobParam,
   VALID_TABS,
   DIMENSION_DOMAINS,
 } from "@/hooks/useUrlState";
@@ -66,6 +68,32 @@ describe("useUrlState", () => {
       updateUrlState("ITEM", "explorer");
       const params = new URLSearchParams(window.location.search);
       expect(params.get("domain")).toBe("item");
+    });
+  });
+
+  describe("getScenarioJobParam", () => {
+    it("returns null when no scenario_job param", () => {
+      expect(getScenarioJobParam()).toBeNull();
+    });
+
+    it("reads scenario_job from URL", () => {
+      window.history.replaceState(null, "", "/?scenario_job=job_abc123");
+      expect(getScenarioJobParam()).toBe("job_abc123");
+    });
+  });
+
+  describe("setScenarioJobParam", () => {
+    it("sets scenario_job param in URL", () => {
+      setScenarioJobParam("job_xyz789");
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("scenario_job")).toBe("job_xyz789");
+    });
+
+    it("removes scenario_job param when null", () => {
+      setScenarioJobParam("job_abc123");
+      expect(new URLSearchParams(window.location.search).get("scenario_job")).toBe("job_abc123");
+      setScenarioJobParam(null);
+      expect(new URLSearchParams(window.location.search).get("scenario_job")).toBeNull();
     });
   });
 

@@ -236,3 +236,27 @@ uv run python scripts/run_champion_selection.py --config config/model_competitio
 - `psycopg` (already in pyproject.toml)
 - Existing `fact_external_forecast_monthly` table with `UNIQUE(forecast_ck, model_id)` constraint
 - Existing materialized views (`agg_accuracy_by_dim`, `agg_forecast_monthly`, `agg_dfu_coverage`)
+
+---
+
+## Implementation Details
+
+### Config YAML
+- `ceiling_model_id` field exists in actual `config/model_competition.yaml` (missing from spec's example block)
+
+### Router Module
+- `api/routers/competition.py` (354 lines) implements same 4 endpoints
+- Not mounted via `include_router` (inline routes in `main.py` take precedence)
+
+### API Authentication
+- `PUT /competition/config` and `POST /competition/run` require `X-API-Key` header (`require_api_key` dependency)
+
+### Request Body
+- `CompetitionConfigUpdate` Pydantic model: `metric`, `lag`, `min_dfu_rows`, `champion_model_id`, `models`
+
+### View Refresh
+- `refresh_views()` refreshes 3 views: `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_dfu_coverage`
+
+### Test Files
+- `tests/unit/test_champion_selection.py` — unit tests for `generate_summary()` and `load_config()`
+- `tests/api/test_competition.py` — API tests for `/competition/config` and `/competition/summary`

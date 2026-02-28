@@ -1,6 +1,6 @@
 # Feature 35 — Configurable Multi-Theme System
 
-**Status:** Design Spec (not yet implemented)
+**Status:** Implemented
 **Priority:** Enhancement
 **Dependencies:** Feature 22 (dark mode + midnight theme), Feature 28 (UI architecture)
 
@@ -883,3 +883,25 @@ Add optional `motif` URL param via `useUrlState.ts` for shareable links:
 - **Team/org themes:** Shared motifs via API for enterprise deployments
 - **Animated transitions:** Smooth morph animation when switching between motifs
 - **Sound effects:** Optional subtle audio on tab switch (per motif)
+
+---
+
+## Implementation Details
+
+### Additional Types (`types/motif.ts`)
+- `ColorMode = "light" | "dark" | "midnight"`
+- `MotifPalette` interface with 31 CSS variable fields
+- `MotifThemeConfig.palette` optional field: `Partial<Record<ColorMode, Partial<MotifPalette>>>`
+
+### Hook Enhancements
+- `useMotifTheme` returns `cycleMotif()` method
+- `useMotifOptional()` safe variant in `MotifContext.tsx` — returns null instead of throwing outside provider
+
+### Component Notes
+- `MotifTilePreview` is inlined inside `MotifSettingsPanel.tsx` (not a separate component file)
+- Ctrl+M cycles through motifs (not opens panel as stated in some docs)
+
+### Test Files (implemented)
+- `frontend/src/constants/__tests__/motifRegistry.test.ts`
+- `frontend/src/hooks/__tests__/useMotifTheme.test.ts`
+- `frontend/src/components/__tests__/MotifSettingsPanel.test.tsx`

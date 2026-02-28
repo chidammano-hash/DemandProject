@@ -379,3 +379,17 @@ Actual distribution will vary — the detection script prints a summary table af
 4. **Threshold sensitivity:** Re-run with `low: 0.10` and `low: 0.20` to check that profile counts shift predictably
 5. **Consistency with clustering:** Compare `seasonality_strength` values from this pipeline vs. `generate_clustering_features.py` — they should be identical (same formula, same data)
 6. **Database verification:** After `seasonality-update`, query `SELECT seasonality_profile, COUNT(*) FROM dim_dfu GROUP BY 1` and confirm totals match the CSV output
+
+---
+
+## Implementation Details
+
+### Makefile
+- `seasonality-all` target includes `seasonality-schema` step (schema + detect + update)
+
+### Update Script Performance
+- Uses temp table + `COPY ... FROM STDIN` + single `UPDATE ... FROM` join (not `executemany` batch updates)
+
+### Automated Tests
+- `tests/unit/test_seasonality.py` — 12 tests: `compute_acf_lag12` (4), `compute_seasonality_metrics` (7), `DfuSpecSeasonalityColumns` (4)
+- `tests/api/test_seasonality.py` — 7 tests: DFU meta includes seasonality columns, numeric fields, typeahead, page filtering, sorting, seasonality-profiles endpoint, empty profiles

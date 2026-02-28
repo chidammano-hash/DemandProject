@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, waitFor, screen } from "@testing-library/react";
+import { render, waitFor, screen, fireEvent } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 import { ScenarioNotificationProvider } from "@/context/ScenarioNotificationContext";
 
@@ -11,6 +11,7 @@ vi.mock("@/api/queries", () => ({
     clusteringScenario: (id: string) => ["clustering-scenario", id],
     scenarioEstimate: (p: Record<string, unknown>) => ["scenario-estimate", p],
     scenarioStatus: (id: string) => ["scenario-status", id],
+    scenarioHistory: () => ["scenario-history"],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchDfuClusters: vi.fn().mockResolvedValue({
@@ -40,8 +41,42 @@ vi.mock("@/api/queries", () => ({
     status: "running",
     elapsed_seconds: 5,
   }),
+  fetchScenarioHistory: vi.fn().mockResolvedValue([]),
+  fetchJobDetail: vi.fn(),
   runClusteringScenario: vi.fn(),
   promoteScenario: vi.fn(),
+}));
+
+vi.mock("@/hooks/useUrlState", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useUrlState")>();
+  return {
+    ...actual,
+    getScenarioJobParam: vi.fn().mockReturnValue(null),
+    setScenarioJobParam: vi.fn(),
+  };
+});
+
+// Mock recharts to avoid rendering issues in test env
+vi.mock("recharts", () => ({
+  LineChart: ({ children }: { children: React.ReactNode }) => <div data-testid="line-chart">{children}</div>,
+  Line: () => null,
+  XAxis: () => null,
+  YAxis: () => null,
+  CartesianGrid: () => null,
+  Tooltip: () => null,
+  Legend: () => null,
+  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
+  Bar: () => null,
+  Cell: () => null,
+  ReferenceLine: () => null,
+  PieChart: ({ children }: { children: React.ReactNode }) => <div data-testid="pie-chart">{children}</div>,
+  Pie: () => null,
+  RadarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="radar-chart">{children}</div>,
+  Radar: () => null,
+  PolarGrid: () => null,
+  PolarAngleAxis: () => null,
+  PolarRadiusAxis: () => null,
+  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 const ClustersTab = (await import("@/tabs/ClustersTab")).default;
@@ -75,6 +110,78 @@ describe("ClustersTab", () => {
     renderTab();
     await waitFor(() => {
       expect(screen.getByText("What-If Scenarios")).toBeDefined();
+    });
+  });
+
+  it("auto-loads scenario result from scenario_job URL param", async () => {
+    const { getScenarioJobParam } = await import("@/hooks/useUrlState");
+    const { fetchJobDetail } = await import("@/api/queries");
+    (getScenarioJobParam as ReturnType<typeof vi.fn>).mockReturnValueOnce("job_test123");
+    (fetchJobDetail as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      job_id: "job_test123",
+      job_type: "cluster_scenario",
+      job_label: "What-If Scenario A",
+      status: "completed",
+      result: {
+        scenario_id: "sc_fromurl",
+        status: "completed",
+        runtime_seconds: 42,
+        result: {
+          optimal_k: 5,
+          silhouette_score: 0.45,
+          inertia: 20000,
+          total_dfus: 500,
+          profiles: [
+            { label: "high_volume_steady", count: 200, pct_of_total: 40, mean_demand: 1000, cv_demand: 0.2, seasonality_strength: 0.1, trend_slope: 0.02, growth_rate: 0.05, zero_demand_pct: 0.0 },
+          ],
+          k_selection_results: {
+            k_values: [3, 4, 5],
+            inertias: [50000, 30000, 20000],
+            silhouette_scores: [0.35, 0.40, 0.45],
+          },
+          feature_importance: [
+            { feature: "mean_demand", importance: 0.8 },
+          ],
+        },
+      },
+    });
+
+    renderTab();
+    await waitFor(() => {
+      expect(fetchJobDetail).toHaveBeenCalledWith("job_test123");
+    });
+  });
+
+  it("renders Past Scenarios section when What-If is expanded and history exists", async () => {
+    const { fetchScenarioHistory } = await import("@/api/queries");
+    (fetchScenarioHistory as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        job_id: "j_past1",
+        job_type: "cluster_scenario",
+        job_label: "What-If Scenario G",
+        status: "completed",
+        submitted_at: "2026-02-27T14:15:00Z",
+        completed_at: "2026-02-27T14:15:45Z",
+        result: {
+          scenario_id: "sc_past1",
+          status: "completed",
+          runtime_seconds: 45.2,
+          result: {
+            optimal_k: 5,
+            profiles: [],
+            k_selection_results: { k_values: [3, 4, 5], inertias: [50000, 30000, 20000], silhouette_scores: [0.35, 0.40, 0.45] },
+            feature_importance: [],
+          },
+        },
+      },
+    ]);
+
+    renderTab();
+    // The Past Scenarios section is inside the What-If panel — expand it first
+    const toggle = await screen.findByText("What-If Scenarios");
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(screen.getByText(/Past Scenarios/)).toBeDefined();
     });
   });
 });

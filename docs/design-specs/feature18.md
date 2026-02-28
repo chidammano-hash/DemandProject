@@ -146,4 +146,44 @@ GOOGLE_CSE_ID=<your-custom-search-engine-id>
 | `mvp/demand/api/main.py` | `POST /market-intelligence` endpoint + helpers |
 | `mvp/demand/frontend/src/App.tsx` | Intel tab button, panel UI, state, effects |
 | `mvp/demand/frontend/vite.config.ts` | `/market-intelligence` proxy route |
-| `mvp/demand/.env.example` | `GOOGLE_API_KEY`, `GOOGLE_CSE_ID` |
+| `mvp/demand/.env.example` | `GOOGLE_API_KEY`, `GOOGLE_CX` |
+
+---
+
+## Implementation Corrections
+
+### Environment Variable
+- Actual env var is `GOOGLE_CX` (not `GOOGLE_CSE_ID` as spec states above)
+
+### LLM Model
+- Uses `gpt-4o-mini` (not `gpt-4o`)
+- `temperature=0.7` (not 0.4)
+- `max_tokens=1500` (not 2000)
+
+### Sales Context
+- Gathers recent 12-month sales data from `agg_sales_monthly` and includes in LLM prompt
+
+### OpenAI Web Search Fallback
+- When Google search not configured, falls back to OpenAI `responses.create()` with `web_search_preview` tool
+- Extracts URL citations from response and adds to `search_results`
+
+### Error Codes
+- HTTP 502 for AI generation failures (not in original spec)
+
+### Authentication
+- Router uses `require_api_key` dependency
+
+### File Locations
+- Router: `api/routers/intel.py`
+- Tab: `frontend/src/tabs/MarketIntelTab.tsx` (not `App.tsx`)
+- Uses TanStack Query `useMutation` and `useQuery`
+- Global filter integration: syncs item/location from `GlobalFilterContext`
+- Retry button on error card
+
+### Key Files
+| File | Purpose |
+|------|---------|
+| `mvp/demand/api/routers/intel.py` | Router version of endpoint |
+| `mvp/demand/frontend/src/tabs/MarketIntelTab.tsx` | Extracted tab component |
+| `mvp/demand/tests/api/test_intel.py` | Backend API tests |
+| `mvp/demand/frontend/src/tabs/__tests__/MarketIntelTab.test.tsx` | Frontend smoke test |

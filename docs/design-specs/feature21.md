@@ -481,3 +481,35 @@ make champion-select
 3. **Multiplicative seasonality** — Auto-detect when to use multiplicative vs additive based on coefficient of variation
 4. **Prophet hyperparameter tuning** — Per-cluster or per-DFU hyperparameter optimization via cross-validation
 5. **Ensemble blending** — Weighted average of Prophet + best tree model (beyond simple champion pick)
+
+---
+
+## Implementation Corrections
+
+### CLI Arguments (actual vs documented)
+| Spec Says | Actually Implemented |
+|-----------|---------------------|
+| `--parallel 4` | `--n-workers` (default: all CPU cores via `cpu_count()`) |
+| `--min-history 12` | Not a CLI arg; hardcoded `len(train_series) < 2` |
+| `--n-changepoints 25` | Not a CLI arg |
+| `--seasonality-mode additive` | Not a CLI arg |
+| `--cap` for logistic growth | Not a CLI arg |
+| Not documented | `--daily-seasonality` (flag, default False) |
+| Not documented | `--output-dir` (default `data/backtest`) |
+| `--growth linear/logistic` | `--growth linear/logistic/flat` (added `flat`) |
+
+### Algorithm Behavior Differences
+- Returns zero predictions for all predict months when history insufficient (never skips a DFU)
+- Uses `pool.imap_unordered()` with `chunksize=10` (not `pool.starmap()`)
+- Does NOT add custom monthly seasonality — just passes `prophet_kwargs` to `Prophet()`
+- Worker init silences logging (`CMDSTAN_VERBOSE=false`)
+- Progress reporting with ETA estimation per timeframe
+
+### Makefile Targets
+- Uses `--cluster-strategy` flag (not `--model-id`): `backtest-prophet --cluster-strategy global`
+
+### Model Competition
+- Prophet models NOT in `model_competition.yaml`. Actual competing: `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster`, `neuralprophet_cluster`, `statsforecast_global`
+
+### Shared Modules
+- `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`

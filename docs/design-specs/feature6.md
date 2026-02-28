@@ -94,3 +94,17 @@ When `model` is empty (default):
 ## Dependencies
 - Feature 4 (`fact_external_forecast_monthly`)
 - Feature 5 (KPI engine)
+
+---
+
+## Implementation Details
+
+### Optimizations
+- `forecast_accuracy_expr()` in `api/core.py` generates SQL for `accuracy_pct` as a virtual metric selectable in trend charts
+- `build_agg_trend_source()` in `api/core.py` detects when pre-aggregated `agg_forecast_monthly` can serve the query instead of the raw fact table, with `model_id` as an allowed filter column
+
+### agg_forecast_monthly Materialized View
+- DDL in `sql/008_perf_indexes_and_agg.sql`
+- Grain: `(month_start, dmdunit, loc, model_id)`
+- Columns: `row_count`, `basefcst_pref`, `tothist_dmd`
+- 3 indexes including unique on grain

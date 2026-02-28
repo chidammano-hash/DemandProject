@@ -21,6 +21,7 @@ import {
   getInitialTab,
   updateUrlState,
   usePopstateSync,
+  setScenarioJobParam,
   ANALYTICS_TAB_DOMAINS,
   DIMENSION_DOMAINS,
 } from "@/hooks/useUrlState";
@@ -92,6 +93,12 @@ export default function App() {
     },
     [domain],
   );
+
+  // Navigate from JobsTab to ClustersTab with scenario result
+  const handleNavigateToScenario = useCallback((jobId: string) => {
+    setScenarioJobParam(jobId);
+    handleTabSwitch("clusters");
+  }, [handleTabSwitch]);
 
   // Keyboard shortcuts
   const { showHelp, closeHelp } = useKeyboardShortcuts({
@@ -205,7 +212,7 @@ export default function App() {
                 {activeTab === "jobs" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="jobs" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="jobs" />}>
-                      <JobsTab theme={theme} />
+                      <JobsTab theme={theme} onNavigateToScenario={handleNavigateToScenario} />
                     </Suspense>
                   </ErrorBoundary>
                 )}

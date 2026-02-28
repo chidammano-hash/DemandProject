@@ -65,7 +65,12 @@ async def test_clustering_defaults_has_valid_ranges(mock_pool):
 async def test_clustering_scenario_post(mock_pool):
     """Verify POST /clustering/scenario returns 202 with scenario_id (async)."""
     pool, _, _ = mock_pool
+    mock_mgr = MagicMock()
+    mock_mgr.submit_job.return_value = "job_test_abc"
+    mock_mgr.get_status.return_value = {"status": "running"}
+    mock_mgr.start_job_in_background = MagicMock()
     with patch("api.core._get_pool", return_value=pool), \
+         patch("common.job_registry.JobManager", return_value=mock_mgr), \
          patch("scripts.run_clustering_scenario.run_scenario"), \
          patch("scripts.run_clustering_scenario.generate_scenario_id", return_value="sc_test_123"):
         from api.main import app
@@ -85,6 +90,7 @@ async def test_clustering_scenario_post(mock_pool):
             data = response.json()
             assert data["status"] == "running"
             assert data["scenario_id"] == "sc_test_123"
+            assert "job_id" in data
 
 
 @pytest.mark.asyncio
@@ -278,22 +284,26 @@ async def test_scenario_status_not_found(mock_pool):
 
 
 @pytest.mark.asyncio
-async def test_scenario_conflict(mock_pool):
-    """Verify POST returns 409 when scenario already running."""
+async def test_scenario_queued_when_busy(mock_pool):
+    """Verify POST returns 202 with status=queued when group is busy (no 409)."""
     pool, _, _ = mock_pool
+    mock_mgr = MagicMock()
+    mock_mgr.submit_job.return_value = "job_queued_xyz"
+    mock_mgr.get_status.return_value = {"status": "queued"}
     import api.routers.clusters as clusters_module
-    with patch("api.core._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("common.job_registry.JobManager", return_value=mock_mgr), \
+         patch("scripts.run_clustering_scenario.generate_scenario_id", return_value="sc_queued_123"):
         from api.main import app
-        clusters_module._scenario_running = True
-        clusters_module._running_scenario_id = "sc_existing"
-        try:
-            transport = ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                response = await client.post(
-                    "/clustering/scenario",
-                    json={},
-                )
-                assert response.status_code == 409
-        finally:
-            clusters_module._scenario_running = False
-            clusters_module._running_scenario_id = None
+        clusters_module._scenario_running = False
+        clusters_module._running_scenario_id = None
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/clustering/scenario",
+                json={},
+            )
+            assert response.status_code == 202
+            data = response.json()
+            assert data["status"] == "queued"
+            assert data["job_id"] == "job_queued_xyz"

@@ -133,4 +133,24 @@ make champion-select                            # Re-run with PatchTST models
 - Feature 8 (backtesting framework)
 - Feature 7 (clustering)
 - Feature 4 (fact tables)
-- torch >= 2.0.0 (includes MPS support), python-dateutil >= 2.8.0
+- torch >= 2.0.0 (includes MPS support), python-dateutil >= 2.8.0, sklearn (LabelEncoder)
+
+---
+
+## Implementation Details
+
+### Transfer Learning Corrections
+- LR multiplier: `lr * 0.5` (not 0.1x as spec states)
+- Patience halved for fine-tuning: `max(patience // 2, 2)`
+- `transfer_min_rows` configurable via `--transfer-min-rows` CLI arg (default 20)
+
+### Weight Initialization
+- `PatchTSTModel` uses Xavier uniform for all linear layers
+
+### Shared Framework
+- `load_backtest_data(include_item_attrs=False)`, `generate_timeframes()`, `postprocess_predictions()`, `save_backtest_output()` from `common/backtest_framework.py`
+- MLflow via `log_backtest_run()` with `model_type_tag="patchtst_backtest"`
+- `MIN_CLUSTER_ROWS` from `common/constants.py`
+
+### Train/Validation Split
+- 80/20 split via `random_split` for early stopping

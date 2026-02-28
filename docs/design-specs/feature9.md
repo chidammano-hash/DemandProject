@@ -135,3 +135,33 @@ make backtest-load                 # Reload
 - Feature 7 (clustering)
 - Feature 4 (fact tables)
 - lightgbm >= 4.0.0, python-dateutil >= 2.8.0
+
+---
+
+## Implementation Details
+
+### Additional Model ID
+- Transfer strategy: `lgbm_transfer` — global base model fine-tuned per cluster via `init_model`
+
+### Additional CLI Parameters
+- `--transfer-n-estimators` (default: 100) — additional trees for per-cluster fine-tuning
+- `--transfer-min-rows` (default: 20) — minimum cluster rows for fine-tuning
+- `--verbosity` (default: -1) — LightGBM verbosity level
+
+### Apple GPU (OpenCL) Auto-Detection
+- macOS: auto-detects OpenCL GPU availability; if found, `device="gpu"` added to model params
+
+### Shared Module Dependencies
+- `common/constants.py`: `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, `OUTPUT_COLS`, `ARCHIVE_COLS`, `MIN_TRAINING_MONTHS` (13), `MIN_CLUSTER_ROWS` (50), `MAX_ARCHIVE_LAG` (4)
+- `common/metrics.py`: `compute_accuracy_metrics()`
+- `common/mlflow_utils.py`: `log_backtest_run()`
+- `common/db.py`: `get_db_params()`
+
+### Makefile Target
+- `backtest-lgbm-transfer` — LGBM transfer learning backtest
+
+### Load Script Details (`load_backtest_forecasts.py`)
+- `BATCH_SIZE = 2,000,000` for batched inserts
+- Drops secondary indexes/constraints before bulk insert (`--replace`), recreates after
+- Refreshes 5 materialized views: `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_dfu_coverage`, `agg_accuracy_lag_archive`, `agg_dfu_coverage_lag_archive`
+- Uses upsert (`ON CONFLICT DO UPDATE`) when not in replace mode

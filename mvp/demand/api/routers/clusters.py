@@ -313,43 +313,46 @@ async def run_clustering_scenario(req: ClusteringScenarioRequest):
     scenario_id = generate_scenario_id()
     params["scenario_id"] = scenario_id
 
-    try:
-        job_id = manager.submit_job("cluster_scenario", params, label=f"What-If Scenario")
-    except RuntimeError:
-        raise HTTPException(
-            status_code=409,
-            detail="A clustering job is already running. Please wait.",
-        )
+    job_id = manager.submit_job("cluster_scenario", params, label=f"What-If Scenario")
 
-    # Track for the legacy status polling endpoint
-    _running_scenario_id = scenario_id
-    _scenario_running = True
-    _scenario_start_time = time.time()
+    # Determine if the job is queued or running immediately
+    job_status = manager.get_status(job_id)
+    is_queued = job_status and job_status.get("status") == "queued"
 
-    # Wire up legacy state cleanup when job finishes
-    _original_start = manager.start_job_in_background
+    if not is_queued:
+        # Track for the legacy status polling endpoint
+        _running_scenario_id = scenario_id
+        _scenario_running = True
+        _scenario_start_time = time.time()
 
-    def _start_with_cleanup(jid: str) -> None:
-        """Wrap start to clear legacy globals on completion."""
-        _original_start(jid)
+        # Wire up legacy state cleanup when job finishes
+        _original_start = manager.start_job_in_background
 
-        def _wait_and_cleanup():
-            import time as _t
-            while jid in manager._active_jobs:
-                _t.sleep(1)
-            global _scenario_running, _scenario_start_time, _running_scenario_id
-            _scenario_running = False
-            _scenario_start_time = None
-            _running_scenario_id = None
+        def _start_with_cleanup(jid: str) -> None:
+            """Wrap start to clear legacy globals on completion."""
+            _original_start(jid)
 
-        cleanup_thread = threading.Thread(target=_wait_and_cleanup, daemon=True)
-        cleanup_thread.start()
+            def _wait_and_cleanup():
+                import time as _t
+                while jid in manager._active_jobs:
+                    _t.sleep(1)
+                global _scenario_running, _scenario_start_time, _running_scenario_id
+                _scenario_running = False
+                _scenario_start_time = None
+                _running_scenario_id = None
 
-    _start_with_cleanup(job_id)
+            cleanup_thread = threading.Thread(target=_wait_and_cleanup, daemon=True)
+            cleanup_thread.start()
+
+        _start_with_cleanup(job_id)
 
     return JSONResponse(
         status_code=202,
-        content={"scenario_id": scenario_id, "status": "running", "job_id": job_id},
+        content={
+            "scenario_id": scenario_id,
+            "status": "queued" if is_queued else "running",
+            "job_id": job_id,
+        },
     )
 
 

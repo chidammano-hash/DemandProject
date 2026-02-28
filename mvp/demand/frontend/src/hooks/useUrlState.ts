@@ -56,4 +56,15 @@ export function usePopstateSync(
   }, [setActiveTab, setDomain]);
 }
 
+export function getScenarioJobParam(): string | null {
+  return new URLSearchParams(window.location.search).get("scenario_job");
+}
+
+export function setScenarioJobParam(jobId: string | null) {
+  const url = new URL(window.location.href);
+  if (jobId) url.searchParams.set("scenario_job", jobId);
+  else url.searchParams.delete("scenario_job");
+  window.history.replaceState(null, "", url);
+}
+
 export { VALID_TABS, ANALYTICS_TAB_DOMAINS, DIMENSION_DOMAINS };

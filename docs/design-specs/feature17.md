@@ -99,3 +99,44 @@ Response shape:
 - Reuses existing `/domains/sales/suggest` and `/domains/sales/sample-pair` endpoints for typeahead and auto-sampling
 - Reuses existing `/domains/forecast/models` for model discovery
 - Requires `agg_sales_monthly` and `agg_forecast_monthly` materialized views to be populated
+
+---
+
+## Implementation Corrections
+
+### Actual Backend Parameters
+- `mode`, `item`, `location`, `points`, `seasonality_profile` (NOT `kpi_months` or `sales_metric`)
+
+### Actual Response Shape
+- Series keys: `tothist_dmd`, `qty_shipped`, `qty_ordered` (not single `sales` key)
+- `model_monthly`: raw monthly forecast/actual pairs for client-side KPI computation (not server-side `kpis`)
+- `dfu_attributes`: up to 20 DFU attribute records from `dim_dfu` (34+ columns including seasonality)
+- `scope_count`: count of distinct locations or items for aggregated modes
+- `points` included in response
+
+### KPI Computation
+- KPIs computed client-side in `DfuAnalysisTab.tsx` via `useMemo` with configurable `dfuKpiMonths` window (NOT server-side)
+
+### File Locations
+- Tab: `frontend/src/tabs/DfuAnalysisTab.tsx` (not `App.tsx`)
+- Router: `api/routers/analysis.py` (also in `api/main.py` inline)
+
+### Frontend Features (not in original spec)
+- Global Filter Integration: syncs item/location from `GlobalFilterContext`
+- Auto-Sampling: fetches sample pair from `/domains/sales/sample-pair` on first visit
+- DFU Attributes Panel: collapsible `<details>` section showing all DFU attributes
+- Time Range Filter: From/To month selectors with "Show All" and "Default" buttons
+- Visible Measures Toggles: checkboxes for sales measures AND forecast models with Select All/Deselect All
+- Cross-filtered typeahead: item suggestions filtered by selected location and vice versa
+- Scope count badge on chart title for aggregated modes
+
+### Key Files
+| File | Purpose |
+|------|---------|
+| `mvp/demand/api/routers/analysis.py` | Router version of the endpoint |
+| `mvp/demand/frontend/src/tabs/DfuAnalysisTab.tsx` | Extracted tab component |
+| `mvp/demand/frontend/src/types/index.ts` | `DfuAnalysisMode`, `DfuAnalysisKpis`, `DfuModelMonthly`, `DfuAnalysisPayload` |
+| `mvp/demand/frontend/src/api/queries.ts` | `fetchDfuAnalysis()` |
+| `mvp/demand/frontend/src/constants/colors.ts` | `DFU_SALES_COLORS`, `dfuModelColor()` |
+| `mvp/demand/tests/api/test_dfu_analysis.py` | Backend API tests |
+| `mvp/demand/frontend/src/tabs/__tests__/DfuAnalysisTab.test.tsx` | Frontend smoke test |

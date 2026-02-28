@@ -136,3 +136,31 @@ make backtest-load                 # Reload
 - Feature 7 (clustering)
 - Feature 4 (fact tables)
 - xgboost >= 2.0.0, python-dateutil >= 2.8.0
+
+---
+
+## Implementation Details
+
+### Additional Model ID
+- Transfer strategy: `xgboost_transfer` — global base model fine-tuned per cluster
+
+### Missing Default Hyperparameters
+- `n_jobs: -1` (all CPU cores)
+- `verbosity: 0` (silent)
+
+### Additional CLI Parameters
+- `--transfer-n-estimators` (default: 100) — additional trees for fine-tuning
+- `--transfer-min-rows` (default: 20) — minimum cluster rows
+
+### Makefile Target
+- `backtest-xgboost-transfer`
+
+### Shared Module Dependencies
+- `common/constants.py`: `MIN_CLUSTER_ROWS` (50), `CAT_FEATURES`, `LAG_RANGE`
+- `common/metrics.py`: `compute_accuracy_metrics()`
+- `common/mlflow_utils.py`: `log_backtest_run()`
+- `common/db.py`: `get_db_params()`
+
+### Framework Integration
+- `model_params_key="xgboost_params"`, `model_type_tag="xgboost_backtest"`, `cat_dtype="category"`
+- Prediction clipping: `np.maximum(preds, 0)` — demand cannot be negative

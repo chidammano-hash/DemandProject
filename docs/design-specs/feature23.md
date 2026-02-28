@@ -186,3 +186,14 @@ The following model_ids may exist in the database and can be cleaned:
 - **Feature 8** — Backtesting framework (generates the predictions this utility cleans)
 - **Feature 10** — Accuracy slicing (materialized views refreshed by this utility)
 - **Feature 15** — Champion selection (champion/ceiling rows can be cleaned)
+
+---
+
+## Implementation Details
+
+### Additional Valid Model IDs (not in original table)
+- `neuralprophet_global`, `neuralprophet_cluster`, `neuralprophet_pooled`
+- `statsforecast_global`, `statsforecast_cluster`, `statsforecast_pooled`
+
+### Status
+Fully implemented.

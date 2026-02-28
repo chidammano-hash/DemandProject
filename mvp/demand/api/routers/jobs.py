@@ -97,14 +97,11 @@ def submit_job(req: SubmitJobRequest):
     if req.job_type not in JOB_TYPE_REGISTRY:
         raise HTTPException(status_code=422, detail=f"Unknown job type: {req.job_type}")
 
-    try:
-        job_id = mgr.submit_job(
-            req.job_type, req.params, req.label,
-            triggered_by="api",
-            max_retries=req.max_retries,
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+    job_id = mgr.submit_job(
+        req.job_type, req.params, req.label,
+        triggered_by="api",
+        max_retries=req.max_retries,
+    )
 
     return JSONResponse(
         status_code=202,
@@ -210,14 +207,11 @@ def submit_pipeline(req: SubmitPipelineRequest):
         for s in req.steps
     ]
 
-    try:
-        pipeline_id = mgr.submit_pipeline(
-            steps=steps_dicts,
-            label=req.label,
-            triggered_by="api",
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+    pipeline_id = mgr.submit_pipeline(
+        steps=steps_dicts,
+        label=req.label,
+        triggered_by="api",
+    )
 
     return JSONResponse(
         status_code=202,

@@ -1234,3 +1234,45 @@ CREATE INDEX IF NOT EXISTS idx_mv_top_movers_delta ON mv_top_movers (delta DESC)
 | Mobile sidebar UX regression | Medium | Use Sheet drawer — proven pattern; test at 375px |
 | Obsidian theme hard to read for some users | Low | Elevated "light" fallback still maintains >4.5:1 contrast ratio |
 | Theme CSS specificity conflicts with motif palette | Medium | Theme `[data-theme]` selector has higher specificity than motif inline styles; motif overrides theme when active |
+
+---
+
+## Implementation Corrections
+
+### Sidebar Navigation Items
+Actual `AppSidebar.tsx` has **11 nav items** (spec lists 9):
+- Missing from spec: `invBacktest` ("Inv. Backtest", icon: `Activity`, section: "supply", shortcut: "6")
+- Missing from spec: `jobs` ("Jobs", icon: `PlayCircle`, section: "system", shortcut: "9")
+- `AppSidebarProps` includes `appName: string` and `themeFooter?: React.ReactNode`
+
+### Global Filters
+Actual implementation has **6 filters** (spec lists 5):
+- Missing from spec: `item: string[]` (searchable) and `location: string[]` (searchable)
+- Column names: `brand_name`, `class_`, `item_no`, `location_id`, `state_id`, `rpt_channel_desc`
+- `useGlobalFilters` exposes `hasActiveFilters` boolean
+
+### Dashboard Widgets
+- `RecentForecastTable.tsx` listed in spec does NOT exist
+
+### KpiCard Props (actual vs spec)
+- `value` is `string` type (not `string | number` — pre-formatted by caller)
+- Has `sublabel?`, `colorClass?`, `borderClass?` (not in spec)
+- `format?` property from spec is NOT implemented
+
+### AlertPanel
+- Additional alert types: `"scenario_complete"` (Feature 38), `"job_complete"` (Feature 39)
+
+### URL State
+- 11 valid tabs: overview, explorer, clusters, dfuAnalysis, accuracy, inventory, invBacktest, intel, jobs, chat, settings
+
+### Keyboard Shortcuts
+- `1-9` for tab switching (not `1-7`), shortcut 8 = Market Intel, 9 = Jobs
+
+### Theme Implementation
+- `applyPalette()` sets 30 CSS custom properties on `document.documentElement.style` (not just `[data-theme]` selectors)
+- `ProductTheme.charts` has separate light/dark configs: `{ light?: ChartThemeConfig; dark: ChartThemeConfig }`
+- `ThemePalette` has gradient fields: `bgGradientPrimary`, `bgGradientSecondary`, `bgGradientBaseStart/Mid/End`
+
+### Additional Files (not in spec)
+- `src/components/EChartContainer.tsx` — theme-aware ECharts wrapper
+- `src/hooks/useDebounce.ts` — generic debounce hook

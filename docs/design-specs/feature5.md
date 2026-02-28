@@ -70,3 +70,31 @@ These cards are computed on the backend using the same active filters used for t
 
 ## Dependencies
 - Feature 4 (fact tables: `fact_sales_monthly`, `fact_external_forecast_monthly`)
+- Feature 6 (`model_id` for multi-model support)
+- Feature 7 (cluster dimensions for accuracy slicing)
+- Feature 30 (`seasonality_profile` dimension)
+
+---
+
+## Implementation Details
+
+### Backend
+- `common/metrics.py`: `compute_accuracy_metrics(forecast_col, actual_col)` — shared function returning `n_rows`, `wape`, `bias`, `accuracy_pct`
+- `api/core.py`: `compute_kpis()` and `forecast_accuracy_expr()` — API-level KPI computation and SQL expression generation
+
+### Accuracy Slicing Endpoints (Feature 10 integration)
+- `GET /forecast/accuracy/slice` — groups accuracy by 11 dimensions (`cluster_assignment`, `ml_cluster`, `supplier_desc`, `abc_vol`, `region`, `brand_desc`, `dfu_execution_lag`, `month_start`, `lag`, `model_id`, `seasonality_profile`)
+- `GET /forecast/accuracy/lag-curve` — accuracy by lag (0-4) per model
+- Both exist inline in `api/main.py` and in `api/routers/accuracy.py`
+- `common_dfus` mode: when true with 2+ models, restricts to DFUs present in ALL models for fair comparison
+
+### Pre-aggregated Materialized Views
+- `agg_accuracy_by_dim` (`sql/011`) — forecast+dim_dfu join with 11-column grain
+- `agg_accuracy_lag_archive` (`sql/011`) — same for backtest archive
+- `agg_dfu_coverage` (`sql/012`) — distinct DFU count per model/lag
+- `agg_dfu_coverage_lag_archive` (`sql/012`) — same for archive
+- All 4 recreated with `seasonality_profile` in `sql/016`
+
+### Makefile Targets
+- `accuracy-slice-refresh` — refresh all 4 views
+- `accuracy-slice-check` — verify view data

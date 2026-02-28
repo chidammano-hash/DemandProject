@@ -444,3 +444,42 @@ All theme combinations should maintain WCAG AA minimum contrast ratios:
 3. **Per-chart color palettes** — Theme-aware multi-series chart colors
 4. **High contrast mode** — Accessibility-focused theme with maximum contrast
 5. **Theme scheduling** — Auto-switch between light (day) and dark (night) on a schedule
+
+---
+
+## Implementation Corrections
+
+### Architecture Redesign
+The theming system has been completely redesigned from the spec's 3-theme approach (light/dark/midnight):
+
+### Actual Implementation
+- 3 **product themes**: `wine-spirits`, `general`, `obsidian` — each with **light AND dark** palettes
+- `useTheme()` returns `themeId`, `colorMode`, `effectiveClass`, `productTheme`, plus methods (`cycleTheme`, etc.)
+- Two localStorage keys: `ds-product-theme` and `ds-color-mode`
+- `ThemeSelector` in sidebar footer (not header settings gear)
+- Radio group with 3 theme options + separate Light/Dark toggle
+
+### Type System (`types/theme.ts`)
+- `ProductThemeId = "wine-spirits" | "general" | "obsidian"`
+- `ThemePalette`: 33 CSS variable tokens including sidebar, chart, KPI, and gradient tokens
+- `SidebarThemeConfig`, `CardThemeConfig`, `ChartThemeConfig`, `TypographyConfig`
+- `ProductTheme`: composite interface with id, displayName, tagline, palette, sidebar, cards, charts, typography
+
+### Additional CSS Variables
+- `--sidebar-bg`, `--sidebar-foreground`, `--sidebar-active`, `--sidebar-hover`
+- `--chart-1` through `--chart-6`
+- `--kpi-best`, `--kpi-warning`, `--kpi-ceiling`
+- `--bg-gradient-primary`, `--bg-gradient-secondary`, `--bg-gradient-base-start/mid/end`
+
+### Behavior
+- Obsidian theme always stays in dark mode
+- `cycleTheme()` cycles: wine-spirits → general → obsidian
+- Runtime palette via `applyPalette()` setting CSS vars on `document.documentElement` (not static CSS selectors)
+- Keyboard shortcuts: `t` cycles theme, `d` toggles dark mode
+
+### Midnight Theme — Obsolete
+- `.midnight` CSS class NO LONGER EXISTS — replaced by product theme system
+
+### File Locations
+- `hooks/useTheme.ts`, `components/ThemeSelector.tsx`, `constants/themes/*.ts`, `types/theme.ts`
+- Tests: `useTheme.test.ts` (8 tests), `ThemeSelector.test.tsx` (8 tests)

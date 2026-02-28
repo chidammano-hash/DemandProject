@@ -90,3 +90,26 @@ curl "http://localhost:8000/forecast/accuracy/slice?group_by=cluster_assignment&
 docker exec demand-mvp-postgres psql -U demand -d demand_mvp \
   -c "SELECT model_id, lag, COUNT(*) FROM backtest_lag_archive GROUP BY 1,2 ORDER BY 1,2"
 ```
+
+---
+
+## Implementation Details
+
+### Metadata Recording
+- `extra_metadata` parameter passes transfer params (`transfer_n_estimators`, `transfer_min_rows`/`transfer_iterations`) to `backtest_metadata.json`
+
+### MLflow Tags
+- LGBM: `model_type_tag="lgbm_backtest"`
+- CatBoost: `model_type_tag="catboost_backtest"`
+- XGBoost: `model_type_tag="xgboost_backtest"`
+
+### `cat_dtype` Difference
+- CatBoost: `cat_dtype="str"` (categoricals as strings)
+- LGBM/XGBoost: `cat_dtype="category"` (pandas category type)
+
+### `__unknown__` Cluster Handling
+- Explicitly filtered from fine-tuning loop: `clusters = [c for c in clusters if c != "__unknown__"]`
+- Both `NaN` and `__unknown__` cluster DFUs use base model fallback
+
+### Prediction Clipping
+- All transfer functions use `np.maximum(preds, 0)` for non-negative predictions

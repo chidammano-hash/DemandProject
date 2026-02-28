@@ -147,3 +147,42 @@ Experiment: `dfu_backtest`. Logs parameters, metrics (WAPE, bias, accuracy), art
 - Feature 5 (KPI engine), Feature 6 (multi-model)
 - Feature 7 (clustering)
 - lightgbm, catboost (optional), xgboost (optional)
+
+---
+
+## Implementation Details
+
+### Additional Model Scripts
+| Model | Script | Strategy |
+|-------|--------|----------|
+| StatsForecast | `scripts/run_backtest_statsforecast.py` | Vectorized AutoARIMA + AutoETS (~100x faster) |
+| NeuralProphet | `scripts/run_backtest_neuralprophet.py` | PyTorch GPU |
+| PatchTST | `scripts/run_backtest_patchtst.py` | Transformer (Apple MPS) |
+| DeepAR | `scripts/run_backtest_deepar.py` | LSTM probabilistic |
+
+### Additional Cluster Strategy
+- `pooled`: aggregate by cluster, fit single model, disaggregate proportionally. Used by Prophet, StatsForecast, NeuralProphet.
+
+### Additional Makefile Targets
+- Prophet: `backtest-prophet`, `backtest-prophet-cluster`, `backtest-prophet-pooled`
+- PatchTST: `backtest-patchtst`, `backtest-patchtst-cluster`, `backtest-patchtst-transfer`
+- DeepAR: `backtest-deepar`, `backtest-deepar-cluster`, `backtest-deepar-transfer`
+- StatsForecast: `backtest-statsforecast`, `backtest-statsforecast-cluster`, `backtest-statsforecast-pooled`
+- NeuralProphet: `backtest-neuralprophet`, `backtest-neuralprophet-cluster`, `backtest-neuralprophet-pooled`
+- Cleanup: `backtest-clean`, `backtest-list`
+
+### Feature Engineering
+- Rolling std features: `rolling_std_3m`, `rolling_std_6m`, `rolling_std_12m` (in addition to means)
+- `cat_dtype` parameter: `"category"` for LGBM/XGBoost, `"str"` for CatBoost
+
+### MLflow
+- Experiment name: `demand_backtest` (not `dfu_backtest` as originally spec'd)
+
+### Constants (`common/constants.py`)
+- `MIN_TRAINING_MONTHS = 13`, `MIN_CLUSTER_ROWS = 50`, `MAX_ARCHIVE_LAG = 4`
+
+### Cleanup Script
+- `scripts/clean_backtest_models.py`: selective model removal with `--list`, `--dry-run`, `--all-backtest` flags
+
+### Framework
+- `save_feature_importance()` function for exporting feature importance CSV from trained models
