@@ -37,7 +37,7 @@ async def test_summary_returns_200(mock_pool):
         ("external", 5000, 150, 400, 28.5, 3.2, 42.0),
         ("lgbm_cluster", 5000, 100, 350, 22.1, -1.5, 38.5),
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -69,7 +69,7 @@ async def test_summary_with_filters(mock_pool):
     cursor.fetchall.return_value = [
         ("external", 200, 10, 20, 30.0, 2.0, 40.0),
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -89,7 +89,7 @@ async def test_summary_empty(mock_pool):
     """Empty data returns empty by_model dict."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -107,7 +107,7 @@ async def test_summary_custom_threshold(mock_pool):
     cursor.fetchall.return_value = [
         ("external", 1000, 50, 600, 25.0, 1.0, 30.0),
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -131,7 +131,7 @@ async def test_trend_returns_200(mock_pool):
         ("2025-03-01", "lgbm_cluster", 500, 10, 35, 38.0, 22.0),
         ("2025-04-01", "external", 500, 18, 42, 43.0, 28.5),
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -156,7 +156,7 @@ async def test_trend_empty(mock_pool):
     """Empty trend data returns empty list."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -177,7 +177,7 @@ async def test_root_cause_returns_200(mock_pool):
     # stockout_total, stockout_under, stockout_over, stockout_exact,
     # excess_total, excess_over, excess_under, excess_exact
     cursor.fetchone.return_value = (450, 320, 80, 50, 1200, 950, 150, 100)
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -199,7 +199,7 @@ async def test_root_cause_returns_200(mock_pool):
 async def test_root_cause_missing_model(mock_pool):
     """Omitting model_id should return 422."""
     pool, _, _ = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -221,7 +221,7 @@ async def test_detail_returns_200(mock_pool):
     cursor.fetchall.return_value = [
         ("100320", "1401-BULK", "2025-06-01", "lgbm_cluster", 120.5, 150.0, 0, None, -29.5, 29.5, "under"),
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -248,7 +248,7 @@ async def test_detail_event_filter(mock_pool):
     pool, _, cursor = mock_pool
     cursor.fetchone.return_value = (0,)
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -262,7 +262,7 @@ async def test_detail_pagination(mock_pool):
     pool, _, cursor = mock_pool
     cursor.fetchone.return_value = (500,)
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -280,7 +280,7 @@ async def test_detail_sort(mock_pool):
     pool, _, cursor = mock_pool
     cursor.fetchone.return_value = (0,)
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

@@ -14,6 +14,7 @@ import { useSidebar } from "@/hooks/useSidebar";
 import { useGlobalFilters } from "@/hooks/useGlobalFilters";
 import { MotifProvider } from "@/context/MotifContext";
 import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
+import { ThemeProvider } from "@/context/ThemeContext";
 import { ScenarioNotificationProvider } from "@/context/ScenarioNotificationContext";
 import { JobNotificationProvider } from "@/context/JobNotificationContext";
 import {
@@ -123,6 +124,7 @@ export default function App() {
 
   return (
     <MotifProvider value={motifTheme}>
+      <ThemeProvider value={{ theme }}>
       <GlobalFilterProvider value={globalFilters}>
         <ScenarioNotificationProvider>
         <JobNotificationProvider>
@@ -156,63 +158,63 @@ export default function App() {
                 {activeTab === "overview" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="overview" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="overview" />}>
-                      <DashboardTab theme={theme} />
+                      <DashboardTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}
                 {activeTab === "explorer" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="explorer" />} resetKeys={[activeTab, domain]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="explorer" />}>
-                      <ExplorerTab domain={domain} onDomainChange={setDomain} theme={theme} />
+                      <ExplorerTab domain={domain} onDomainChange={setDomain} />
                     </Suspense>
                   </ErrorBoundary>
                 )}
                 {activeTab === "clusters" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="clusters" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="clusters" />}>
-                      <ClustersTab domain={domain} onDomainChange={setDomain} theme={theme} />
+                      <ClustersTab domain={domain} onDomainChange={setDomain} />
                     </Suspense>
                   </ErrorBoundary>
                 )}
                 {activeTab === "dfuAnalysis" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="dfuAnalysis" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="dfuAnalysis" />}>
-                      <DfuAnalysisTab theme={theme} />
+                      <DfuAnalysisTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}
                 {activeTab === "accuracy" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="accuracy" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="accuracy" />}>
-                      <AccuracyTab theme={theme} />
+                      <AccuracyTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}
                 {activeTab === "intel" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="intel" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="intel" />}>
-                      <MarketIntelTab theme={theme} />
+                      <MarketIntelTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}
                 {activeTab === "inventory" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="inventory" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="inventory" />}>
-                      <InventoryTab theme={theme} />
+                      <InventoryTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}
                 {activeTab === "invBacktest" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="invBacktest" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="invBacktest" />}>
-                      <InvBacktestTab theme={theme} />
+                      <InvBacktestTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}
                 {activeTab === "jobs" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="jobs" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="jobs" />}>
-                      <JobsTab theme={theme} onNavigateToScenario={handleNavigateToScenario} />
+                      <JobsTab onNavigateToScenario={handleNavigateToScenario} />
                     </Suspense>
                   </ErrorBoundary>
                 )}
@@ -220,12 +222,13 @@ export default function App() {
             </div>
 
             {/* Chat panel (always mounted) */}
-            <ChatPanel domain={domain} theme={theme} />
+            <ChatPanel domain={domain} />
           </div>
         </div>
         </JobNotificationProvider>
         </ScenarioNotificationProvider>
       </GlobalFilterProvider>
+      </ThemeProvider>
     </MotifProvider>
   );
 }

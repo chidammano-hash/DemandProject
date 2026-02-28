@@ -39,7 +39,7 @@ async def test_dashboard_kpis_returns_structure(mock_pool):
         (85.5, 14.5, 3.2, 50000.0, 48500.0),   # current window
         (82.0, 18.0, 5.1, None, None),            # prior window (only first 3 used)
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -80,7 +80,7 @@ async def test_dashboard_kpis_null_for_empty_data(mock_pool):
         (None, None, None, None, None),  # current window
         (None, None, None, None, None),  # prior window
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -106,7 +106,7 @@ async def test_dashboard_kpis_respects_window_parameter(mock_pool):
         (90.0, 10.0, 1.0, 100000.0, 99000.0),
         (88.0, 12.0, 2.0, None, None),
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -124,7 +124,7 @@ async def test_dashboard_kpis_with_filter_params(mock_pool):
         (70.0, 30.0, -5.0, 20000.0, 21000.0),
         (None, None, None, None, None),
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -171,7 +171,7 @@ async def test_dashboard_alerts_returns_sorted_list(mock_pool):
 
     pool.connection.side_effect = [conn1, conn2, conn3]
 
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -221,7 +221,7 @@ async def test_dashboard_alerts_empty_when_no_thresholds_breached(mock_pool):
 
     pool.connection.side_effect = [conn1, conn2, conn3]
 
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -254,7 +254,7 @@ async def test_dashboard_alerts_respects_limit(mock_pool):
 
     pool.connection.side_effect = [conn1, conn2, conn3]
 
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -276,7 +276,7 @@ async def test_dashboard_top_movers_returns_movers_with_direction(mock_pool):
         ("ITEM-001", "Widget Alpha", 150.0, 100.0),   # up: +50
         ("ITEM-002", "Gadget Beta",   60.0, 120.0),   # down: -60
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -312,7 +312,7 @@ async def test_dashboard_top_movers_respects_direction_filter(mock_pool):
         ("ITEM-002", "Gadget Beta",   30.0, 120.0),   # down: -90
         ("ITEM-003", "Doohickey",    180.0, 150.0),    # up: +30
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -333,7 +333,7 @@ async def test_dashboard_top_movers_respects_direction_down(mock_pool):
         ("ITEM-001", "Widget Alpha", 200.0, 100.0),   # up
         ("ITEM-002", "Gadget Beta",   30.0, 120.0),   # down
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -350,7 +350,7 @@ async def test_dashboard_top_movers_empty(mock_pool):
     """GET /dashboard/top-movers returns empty movers list when no data."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -369,7 +369,7 @@ async def test_dashboard_top_movers_respects_limit(mock_pool):
         ("ITEM-002", "Gadget Beta",  150.0, 100.0),
         ("ITEM-003", "Doohickey",    130.0, 100.0),
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -393,7 +393,7 @@ async def test_dashboard_heatmap_returns_rows_with_period_labels(mock_pool):
         ("Furniture",   "Jan 25", 72.0),
         ("Furniture",   "Feb 25", 75.5),
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -420,7 +420,7 @@ async def test_dashboard_heatmap_empty_data(mock_pool):
     """GET /dashboard/heatmap returns empty rows when no data."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -438,7 +438,7 @@ async def test_dashboard_heatmap_respects_grain_parameter(mock_pool):
     cursor.fetchall.return_value = [
         ("BrandX", "Mar 25", 90.0),
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -456,7 +456,7 @@ async def test_dashboard_heatmap_null_accuracy_replaced_with_zero(mock_pool):
     cursor.fetchall.return_value = [
         ("Electronics", "Jan 25", None),
     ]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -471,7 +471,7 @@ async def test_dashboard_heatmap_respects_periods_parameter(mock_pool):
     """GET /dashboard/heatmap?periods=6 returns 200 with custom window."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

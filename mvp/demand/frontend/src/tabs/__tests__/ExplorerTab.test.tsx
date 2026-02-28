@@ -88,7 +88,7 @@ describe("ExplorerTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <ExplorerTab domain="item" onDomainChange={vi.fn()} theme="light" />
+          <ExplorerTab domain="item" onDomainChange={vi.fn()} />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -102,7 +102,7 @@ describe("ExplorerTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <ExplorerTab domain="item" onDomainChange={vi.fn()} theme="light" />
+          <ExplorerTab domain="item" onDomainChange={vi.fn()} />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );

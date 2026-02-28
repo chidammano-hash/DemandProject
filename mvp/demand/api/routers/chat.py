@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 import json
+import logging
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +12,8 @@ from pydantic import BaseModel
 from common.domain_specs import DOMAIN_SPECS
 from api.core import get_conn, get_openai
 from api.auth import require_api_key
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -52,6 +55,7 @@ def _vector_search(question_embedding: list[float], top_k: int = 10) -> list[str
             cur.execute(sql, (str(question_embedding), top_k))
             return [r[0] for r in cur.fetchall()]
     except Exception:
+        logger.warning("pgvector embedding search failed", exc_info=True)
         return []
 
 

@@ -18,7 +18,7 @@ describe("ChatPanel", () => {
   it("renders without crashing", async () => {
     render(
       <TestQueryWrapper>
-        <ChatPanel domain="item" theme="light" />
+        <ChatPanel domain="item" />
       </TestQueryWrapper>
     );
 

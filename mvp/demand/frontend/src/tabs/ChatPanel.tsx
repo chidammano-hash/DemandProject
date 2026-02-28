@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { sendChatMessage } from "@/api/queries";
-import type { Theme, ChatMessage } from "@/types";
+import type { ChatMessage } from "@/types";
 import { formatCell } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 
@@ -14,10 +14,9 @@ import { Loader2, MessageSquare, Send } from "lucide-react";
 
 type ChatPanelProps = {
   domain: string;
-  theme: Theme;
 };
 
-export default function ChatPanel({ domain, theme }: ChatPanelProps) {
+export default function ChatPanel({ domain }: ChatPanelProps) {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");

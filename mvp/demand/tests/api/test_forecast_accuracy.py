@@ -28,7 +28,7 @@ def mock_pool():
 async def test_forecast_models_endpoint(mock_pool):
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("external",), ("lgbm_global",)]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -42,7 +42,7 @@ async def test_forecast_models_endpoint(mock_pool):
 async def test_accuracy_slice_endpoint(mock_pool):
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -57,7 +57,7 @@ async def test_accuracy_slice_endpoint(mock_pool):
 async def test_lag_curve_endpoint(mock_pool):
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

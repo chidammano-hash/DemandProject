@@ -1,6 +1,7 @@
 """Market Intelligence endpoint (feature 18) — web search + LLM narrative briefings."""
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +9,8 @@ from pydantic import BaseModel
 
 from api.core import get_conn, get_openai
 from api.auth import require_api_key
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -114,7 +117,7 @@ def market_intelligence(req: MarketIntelRequest):
                         "snippet": hit.get("snippet", ""),
                     })
         except Exception:
-            pass  # Non-blocking — proceed without search results
+            logger.warning("Google Custom Search failed for query %r", search_query, exc_info=True)
 
     # 6. Generate narrative with OpenAI
     client = get_openai()
@@ -161,6 +164,7 @@ Be specific and actionable. Focus on factors that would help a demand planner ma
                                     "snippet": getattr(ann, "title", ""),
                                 })
         except Exception:
+            logger.warning("OpenAI web search fallback failed", exc_info=True)
             use_web_search = False
 
     if not narrative:

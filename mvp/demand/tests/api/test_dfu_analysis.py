@@ -11,7 +11,7 @@ from httpx import ASGITransport
 async def test_dfu_analysis_missing_params(mock_pool):
     """Should return 422 when item/location missing."""
     pool, _, _ = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -24,7 +24,7 @@ async def test_dfu_analysis_with_params(mock_pool):
     """Should return 200 with required params (even if no data)."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

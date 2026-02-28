@@ -129,7 +129,7 @@ describe("InvBacktestTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <InvBacktestTab theme="light" />
+          <InvBacktestTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -142,7 +142,7 @@ describe("InvBacktestTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <InvBacktestTab theme="light" />
+          <InvBacktestTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -157,7 +157,7 @@ describe("InvBacktestTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <InvBacktestTab theme="light" />
+          <InvBacktestTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -170,7 +170,7 @@ describe("InvBacktestTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <InvBacktestTab theme="light" />
+          <InvBacktestTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -185,7 +185,7 @@ describe("InvBacktestTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <InvBacktestTab theme="light" />
+          <InvBacktestTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -199,7 +199,7 @@ describe("InvBacktestTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <InvBacktestTab theme="light" />
+          <InvBacktestTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );

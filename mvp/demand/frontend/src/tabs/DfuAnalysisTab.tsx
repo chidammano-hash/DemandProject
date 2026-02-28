@@ -26,11 +26,10 @@ import { LoadingElement } from "@/components/LoadingElement";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useDebounce } from "@/hooks/useDebounce";
 import {
-  CHART_COLORS,
   DFU_SALES_COLORS,
   dfuModelColor,
-  TREND_COLORS_BY_THEME,
 } from "@/constants/colors";
+import { useChartColors } from "@/hooks/useChartColors";
 import { ELEMENT_CONFIG } from "@/constants/elements";
 import {
   formatNumber,
@@ -39,7 +38,6 @@ import {
   titleCase,
 } from "@/lib/formatters";
 import type {
-  Theme,
   DfuAnalysisMode,
   DfuAnalysisPayload,
   DfuAnalysisKpis,
@@ -57,14 +55,10 @@ const ACTIVE_DOT_MD = { r: 5 };
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
-type DfuAnalysisTabProps = {
-  theme: Theme;
-};
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export function DfuAnalysisTab({ theme }: DfuAnalysisTabProps) {
+export function DfuAnalysisTab() {
   // ---- state ----
   const [dfuMode, setDfuMode] = useState<DfuAnalysisMode>("item_location");
   const [dfuItem, setDfuItem] = useState("");
@@ -86,10 +80,10 @@ export function DfuAnalysisTab({ theme }: DfuAnalysisTabProps) {
   >([]);
 
   const { filters: globalFilters } = useGlobalFilterContext();
+  const { chartColors, trendColors } = useChartColors();
 
   const debouncedDfuItem = useDebounce(dfuItem, 500);
   const debouncedDfuLocation = useDebounce(dfuLocation, 500);
-  const trendColors = TREND_COLORS_BY_THEME[theme];
 
   // ---- sync global item/location filter into local inputs (one-time when global changes) ----
   const syncedGlobalRef = useRef<string>("");
@@ -695,25 +689,25 @@ export function DfuAnalysisTab({ theme }: DfuAnalysisTabProps) {
                         >
                           <CartesianGrid
                             strokeDasharray="3 3"
-                            stroke={CHART_COLORS[theme].grid}
+                            stroke={chartColors.grid}
                           />
                           <XAxis
                             dataKey="month"
-                            tick={{ fill: CHART_COLORS[theme].axis }}
+                            tick={{ fill: chartColors.axis }}
                           />
                           <YAxis
                             yAxisId="left"
                             width={84}
                             tickFormatter={formatCompactNumber}
                             tickMargin={10}
-                            tick={{ fill: CHART_COLORS[theme].axis }}
+                            tick={{ fill: chartColors.axis }}
                           />
                           <Tooltip
                             contentStyle={{
                               backgroundColor:
-                                CHART_COLORS[theme].tooltip_bg,
+                                chartColors.tooltip_bg,
                               borderColor:
-                                CHART_COLORS[theme].tooltip_border,
+                                chartColors.tooltip_border,
                             }}
                             formatter={(
                               value: number,

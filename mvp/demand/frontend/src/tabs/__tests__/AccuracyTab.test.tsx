@@ -55,7 +55,7 @@ describe("AccuracyTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <AccuracyTab theme="light" />
+          <AccuracyTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -86,7 +86,7 @@ describe("AccuracyTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <AccuracyTab theme="light" />
+          <AccuracyTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -113,7 +113,7 @@ describe("AccuracyTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <AccuracyTab theme="light" />
+          <AccuracyTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );

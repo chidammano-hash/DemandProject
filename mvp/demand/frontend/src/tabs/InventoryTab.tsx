@@ -21,7 +21,6 @@ import {
   fetchInventoryItemDetail,
 } from "@/api/queries";
 import type {
-  Theme,
   InventoryPosition,
   InventoryKpis,
   InventoryTrendPoint,
@@ -47,7 +46,7 @@ import { LoadingElement } from "@/components/LoadingElement";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
-import { CHART_COLORS, TREND_COLORS_BY_THEME } from "@/constants/colors";
+import { useChartColors } from "@/hooks/useChartColors";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 
 // ---------------------------------------------------------------------------
@@ -70,15 +69,11 @@ type SortCol =
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
-type InventoryTabProps = {
-  theme: Theme;
-};
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export function InventoryTab({ theme }: InventoryTabProps) {
-  const trendColors = TREND_COLORS_BY_THEME[theme];
+export function InventoryTab() {
+  const { chartColors, trendColors } = useChartColors();
 
   // ---- Local state --------------------------------------------------------
   const [itemFilter, setItemFilter] = useState("");
@@ -424,29 +419,29 @@ export function InventoryTab({ theme }: InventoryTabProps) {
                 <LineChart data={chartData} margin={CHART_MARGIN}>
                   <CartesianGrid
                     strokeDasharray="3 3"
-                    stroke={CHART_COLORS[theme].grid}
+                    stroke={chartColors.grid}
                   />
                   <XAxis
                     dataKey="month"
-                    tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }}
+                    tick={{ fontSize: 11, fill: chartColors.axis }}
                   />
                   <YAxis
                     yAxisId="left"
-                    tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }}
+                    tick={{ fontSize: 11, fill: chartColors.axis }}
                     tickFormatter={(v: number) => formatCompactNumber(v)}
                   />
                   <YAxis
                     yAxisId="right"
                     orientation="right"
-                    tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }}
+                    tick={{ fontSize: 11, fill: chartColors.axis }}
                     tickFormatter={(v: number) =>
                       `${Number(v).toFixed(0)}d`
                     }
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: CHART_COLORS[theme].tooltip_bg,
-                      borderColor: CHART_COLORS[theme].tooltip_border,
+                      backgroundColor: chartColors.tooltip_bg,
+                      borderColor: chartColors.tooltip_border,
                     }}
                     formatter={(value: number, name: string) => {
                       const labels: Record<string, string> = {

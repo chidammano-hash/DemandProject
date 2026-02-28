@@ -10,6 +10,7 @@ import { ForecastTrendChart } from "@/components/ForecastTrendChart";
 import { WidgetGrid, WidgetCard } from "@/components/WidgetGrid";
 import { Skeleton } from "@/components/Skeleton";
 import { useTheme } from "@/hooks/useTheme";
+import { useThemeContext } from "@/context/ThemeContext";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useScenarioNotification } from "@/context/ScenarioNotificationContext";
 import { useJobNotification } from "@/context/JobNotificationContext";
@@ -41,11 +42,8 @@ function trendDirection(delta: number | null): "up" | "down" | "flat" {
   return delta > 0 ? "up" : "down";
 }
 
-interface DashboardTabProps {
-  theme: "light" | "dark";
-}
-
-export default function DashboardTab({ theme }: DashboardTabProps) {
+export default function DashboardTab() {
+  const { theme } = useThemeContext();
   const { trendColors, chartColors, productTheme, colorMode } = useTheme();
   const { filters } = useGlobalFilterContext();
   const { completedScenario, dismissNotification } = useScenarioNotification();

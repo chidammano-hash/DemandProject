@@ -87,7 +87,7 @@ describe("InventoryTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <InventoryTab theme="light" />
+          <InventoryTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -100,7 +100,7 @@ describe("InventoryTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <InventoryTab theme="light" />
+          <InventoryTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -119,7 +119,7 @@ describe("InventoryTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <InventoryTab theme="light" />
+          <InventoryTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -133,7 +133,7 @@ describe("InventoryTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <InventoryTab theme="light" />
+          <InventoryTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
@@ -146,7 +146,7 @@ describe("InventoryTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <InventoryTab theme="light" />
+          <InventoryTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );

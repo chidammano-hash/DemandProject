@@ -26,7 +26,6 @@ import {
   fetchInvBacktestDetail,
 } from "@/api/queries";
 import type {
-  Theme,
   InvBacktestModelMetrics,
   InvBacktestDetailRow,
 } from "@/types";
@@ -51,7 +50,8 @@ import { LoadingElement } from "@/components/LoadingElement";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
-import { CHART_COLORS, TREND_COLORS_BY_THEME, dfuModelColor } from "@/constants/colors";
+import { dfuModelColor } from "@/constants/colors";
+import { useChartColors } from "@/hooks/useChartColors";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 
 // ---------------------------------------------------------------------------
@@ -80,15 +80,11 @@ type DetailSortCol =
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
-type InvBacktestTabProps = {
-  theme: Theme;
-};
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export default function InvBacktestTab({ theme }: InvBacktestTabProps) {
-  const trendColors = TREND_COLORS_BY_THEME[theme];
+export default function InvBacktestTab() {
+  const { chartColors, trendColors } = useChartColors();
 
   // ---- State ---------------------------------------------------------------
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
@@ -409,29 +405,29 @@ export default function InvBacktestTab({ theme }: InvBacktestTabProps) {
               </p>
               <ResponsiveContainer width="100%" height={260}>
                 <ComposedChart data={comparisonData} margin={CHART_MARGIN}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS[theme].grid} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
                   <XAxis
                     dataKey="model"
-                    tick={{ fontSize: 10, fill: CHART_COLORS[theme].axis }}
+                    tick={{ fontSize: 10, fill: chartColors.axis }}
                     angle={-20}
                     textAnchor="end"
                     height={50}
                   />
                   <YAxis
                     yAxisId="left"
-                    tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }}
+                    tick={{ fontSize: 11, fill: chartColors.axis }}
                     tickFormatter={(v: number) => `${v}%`}
                   />
                   <YAxis
                     yAxisId="right"
                     orientation="right"
-                    tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }}
+                    tick={{ fontSize: 11, fill: chartColors.axis }}
                     tickFormatter={(v: number) => `${v}%`}
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: CHART_COLORS[theme].tooltip_bg,
-                      borderColor: CHART_COLORS[theme].tooltip_border,
+                      backgroundColor: chartColors.tooltip_bg,
+                      borderColor: chartColors.tooltip_border,
                     }}
                     formatter={(value: number, name: string) => [
                       `${formatNumber(value)}%`,
@@ -490,18 +486,18 @@ export default function InvBacktestTab({ theme }: InvBacktestTabProps) {
             ) : rootCauseChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={rootCauseChartData} layout="vertical" margin={CHART_MARGIN}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS[theme].grid} />
-                  <XAxis type="number" tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
+                  <XAxis type="number" tick={{ fontSize: 11, fill: chartColors.axis }} />
                   <YAxis
                     dataKey="event"
                     type="category"
-                    tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }}
+                    tick={{ fontSize: 11, fill: chartColors.axis }}
                     width={60}
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: CHART_COLORS[theme].tooltip_bg,
-                      borderColor: CHART_COLORS[theme].tooltip_border,
+                      backgroundColor: chartColors.tooltip_bg,
+                      borderColor: chartColors.tooltip_border,
                     }}
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -534,18 +530,18 @@ export default function InvBacktestTab({ theme }: InvBacktestTabProps) {
               </div>
               <ResponsiveContainer width="100%" height={260}>
                 <LineChart data={trendChartData} margin={CHART_MARGIN}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS[theme].grid} />
-                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
+                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: chartColors.axis }} />
                   <YAxis
-                    tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }}
+                    tick={{ fontSize: 11, fill: chartColors.axis }}
                     tickFormatter={(v: number) =>
                       trendMetric === "avg_dos" ? `${v}d` : `${v}%`
                     }
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: CHART_COLORS[theme].tooltip_bg,
-                      borderColor: CHART_COLORS[theme].tooltip_border,
+                      backgroundColor: chartColors.tooltip_bg,
+                      borderColor: chartColors.tooltip_border,
                     }}
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />

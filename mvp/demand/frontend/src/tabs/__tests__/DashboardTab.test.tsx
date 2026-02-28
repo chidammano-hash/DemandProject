@@ -110,7 +110,7 @@ function renderDashboard() {
       <GlobalFilterProvider value={makeFilterContext()}>
         <ScenarioNotificationProvider>
           <JobNotificationProvider>
-            <DashboardTab theme="light" />
+            <DashboardTab />
           </JobNotificationProvider>
         </ScenarioNotificationProvider>
       </GlobalFilterProvider>

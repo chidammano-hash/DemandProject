@@ -590,3 +590,47 @@ def list_forecasts_page(
     sort_dir: str = Query(default="asc"),
 ):
     return fetch_page(get_spec_or_404("forecast"), limit, offset, q, filters, sort_by, sort_dir)
+
+
+# ---------------------------------------------------------------------------
+# Distinct values (used by global filter dropdowns)
+# ---------------------------------------------------------------------------
+
+_DISTINCT_ALLOWED: dict[str, list[str]] = {
+    "item": ["brand_name", "class", "item_desc", "item_no"],
+    "location": ["state_id", "site_desc", "location_id"],
+    "customer": ["rpt_channel_desc"],
+    "dfu": ["cluster_assignment"],
+}
+
+
+@router.get("/domains/{domain}/distinct")
+def domain_distinct(
+    domain: str,
+    response: FastAPIResponse,
+    column: str = Query(..., min_length=1, max_length=120),
+    limit: int = Query(default=100, ge=1, le=500),
+    search: str = Query(default="", max_length=120),
+):
+    """Distinct values for a column -- used by global filter dropdowns."""
+    set_cache(response, max_age=300)
+    spec = get_spec_or_404(domain)
+    allowed = _DISTINCT_ALLOWED.get(spec.name, [])
+    sql_col = to_sql_col(spec, column)
+    if sql_col not in allowed:
+        raise HTTPException(400, f"Column '{column}' not allowed for distinct on domain '{domain}'")
+
+    where = f"WHERE {sql_col} IS NOT NULL"
+    params: list[Any] = []
+    if search.strip():
+        where += f" AND {sql_col}::text ILIKE %s"
+        params.append(f"{search.strip()}%")
+
+    sql = f"SELECT DISTINCT {sql_col} FROM {spec.table} {where} ORDER BY {sql_col} LIMIT %s"
+    params.append(limit)
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        values = [str(r[0]) for r in cur.fetchall()]
+
+    return {"column": column, "values": values, "total": len(values)}

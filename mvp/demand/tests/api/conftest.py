@@ -31,7 +31,7 @@ def mock_pool():
 async def client(mock_pool):
     """Async test client with mocked DB pool."""
     pool, _, _ = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:

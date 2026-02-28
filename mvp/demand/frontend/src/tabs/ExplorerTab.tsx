@@ -40,7 +40,6 @@ import {
   fetchDomainSuggest,
 } from "@/api/queries";
 import type {
-  Theme,
   DomainMeta,
   ClusterInfo,
 } from "@/types";
@@ -70,14 +69,13 @@ const DIMENSION_DOMAINS = [
 type ExplorerTabProps = {
   domain: string;
   onDomainChange: (domain: string) => void;
-  theme: Theme;
 };
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function ExplorerTab({ domain, onDomainChange, theme }: ExplorerTabProps) {
+export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
   // -----------------------------------------------------------------------
   // Local state
   // -----------------------------------------------------------------------

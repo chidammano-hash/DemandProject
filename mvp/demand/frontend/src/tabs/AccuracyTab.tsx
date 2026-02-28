@@ -31,7 +31,7 @@ import {
   type SliceParams,
   type LagCurveParams,
 } from "@/api/queries";
-import type { Theme, AccuracyKpis, AccuracySliceRow, LagPoint } from "@/types";
+import type { AccuracyKpis, AccuracySliceRow, LagPoint } from "@/types";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,7 +52,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { ELEMENT_CONFIG } from "@/constants/elements";
-import { TREND_COLORS_BY_THEME, CHART_COLORS } from "@/constants/colors";
+import { useChartColors } from "@/hooks/useChartColors";
 import { KpiCard } from "@/components/KpiCard";
 import { LoadingElement } from "@/components/LoadingElement";
 import { titleCase, formatPercent } from "@/lib/formatters";
@@ -79,17 +79,13 @@ const CHART_DOT_SM = { r: 4 };
 // Props
 // ---------------------------------------------------------------------------
 
-type AccuracyTabProps = {
-  theme: Theme;
-};
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function AccuracyTab({ theme }: AccuracyTabProps) {
+export function AccuracyTab() {
   const queryClient = useQueryClient();
-  const trendColors = TREND_COLORS_BY_THEME[theme];
+  const { chartColors, trendColors } = useChartColors();
   const { filters } = useGlobalFilterContext();
 
   // ---- Local state ----------------------------------------------------------
@@ -593,21 +589,21 @@ export function AccuracyTab({ theme }: AccuracyTabProps) {
               </div>
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={chartData} margin={CHART_MARGIN}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS[theme].grid} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
                   <XAxis
                     dataKey="lag"
-                    tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }}
+                    tick={{ fontSize: 11, fill: chartColors.axis }}
                   />
                   <YAxis
                     domain={["auto", "auto"]}
-                    tick={{ fontSize: 11, fill: CHART_COLORS[theme].axis }}
+                    tick={{ fontSize: 11, fill: chartColors.axis }}
                     tickFormatter={yFormatter}
                   />
                   <Tooltip
                     formatter={tooltipFormatter}
                     contentStyle={{
-                      backgroundColor: CHART_COLORS[theme].tooltip_bg,
-                      borderColor: CHART_COLORS[theme].tooltip_border,
+                      backgroundColor: chartColors.tooltip_bg,
+                      borderColor: chartColors.tooltip_border,
                     }}
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />

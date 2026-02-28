@@ -9,7 +9,7 @@ from httpx import ASGITransport
 @pytest.mark.asyncio
 async def test_health_returns_200(mock_pool):
     pool, _, _ = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

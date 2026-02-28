@@ -281,34 +281,40 @@ class JobManager:
         return cls._instance
 
     def _ensure_init(self) -> None:
-        """Lazily initialise APScheduler and internal state."""
+        """Lazily initialise APScheduler and internal state.
+
+        Thread-safe: uses _init_lock to prevent double initialisation.
+        """
         if self._initialized:
             return
-        executors = {
-            "default": ThreadPoolExecutor(max_workers=4),
-        }
-        job_defaults = {
-            "coalesce": True,
-            "max_instances": 1,
-            "misfire_grace_time": 3600,
-        }
-        self._scheduler = BackgroundScheduler(
-            executors=executors,
-            job_defaults=job_defaults,
-            timezone="UTC",
-        )
-        self._scheduler.start()
-        self._group_locks: dict[str, threading.Lock] = {}
-        self._active_jobs: dict[str, str] = {}  # job_id -> group
-        self._cancel_flags: dict[str, threading.Event] = {}
-        self._pending_queues: dict[str, list[tuple[str, Any, dict, int, str | None]]] = {}  # group -> [(job_id, type_def, params, max_retries, pipeline_id)]
-        self._initialized = True
-        logger.info("JobManager initialised: APScheduler BackgroundScheduler started (4 workers)")
+        with self._init_lock:
+            if self._initialized:
+                return
+            executors = {
+                "default": ThreadPoolExecutor(max_workers=4),
+            }
+            job_defaults = {
+                "coalesce": True,
+                "max_instances": 1,
+                "misfire_grace_time": 3600,
+            }
+            self._scheduler = BackgroundScheduler(
+                executors=executors,
+                job_defaults=job_defaults,
+                timezone="UTC",
+            )
+            self._scheduler.start()
+            self._state_lock = threading.Lock()  # guards _active_jobs, _pending_queues, _cancel_flags
+            self._active_jobs: dict[str, str] = {}  # job_id -> group
+            self._cancel_flags: dict[str, threading.Event] = {}
+            self._pending_queues: dict[str, list[tuple[str, Any, dict, int, str | None]]] = {}  # group -> [(job_id, type_def, params, max_retries, pipeline_id)]
+            self._initialized = True
+            logger.info("JobManager initialised: APScheduler BackgroundScheduler started (4 workers)")
 
-        # Recover stale jobs on startup
-        recovered = self.recover_stale_jobs()
-        if recovered:
-            logger.info("Recovered %d stale jobs on startup", recovered)
+            # Recover stale jobs on startup
+            recovered = self.recover_stale_jobs()
+            if recovered:
+                logger.info("Recovered %d stale jobs on startup", recovered)
 
     # ---- helpers ----
 
@@ -316,12 +322,8 @@ class JobManager:
     def _generate_id() -> str:
         return f"job_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
-    def _get_group_lock(self, group: str) -> threading.Lock:
-        if group not in self._group_locks:
-            self._group_locks[group] = threading.Lock()
-        return self._group_locks[group]
-
     def _is_group_busy(self, group: str) -> bool:
+        """Check if a group has an active job. Must be called under _state_lock."""
         return any(g == group for g in self._active_jobs.values())
 
     # ---- DB operations ----
@@ -476,23 +478,27 @@ class JobManager:
         job_label = label or type_def.label
         job_params = params or {}
 
-        if self._is_group_busy(type_def.group):
-            # Queue the job instead of rejecting
-            self._db_insert(
-                job_id, job_type, job_label, job_params,
-                triggered_by=triggered_by,
-                pipeline_id=pipeline_id,
-                pipeline_step=pipeline_step,
-                max_retries=max_retries,
-            )
-            # Mark as queued in DB
-            self._db_update_status(job_id, "queued", progress_msg="Waiting for group to be free")
-            queue = self._pending_queues.setdefault(type_def.group, [])
-            queue.append((job_id, type_def, job_params, max_retries, pipeline_id))
-            logger.info("Queued job %s (%s) — group '%s' is busy", job_id, job_type, type_def.group)
-            return job_id
+        with self._state_lock:
+            if self._is_group_busy(type_def.group):
+                # Queue the job instead of rejecting
+                self._db_insert(
+                    job_id, job_type, job_label, job_params,
+                    triggered_by=triggered_by,
+                    pipeline_id=pipeline_id,
+                    pipeline_step=pipeline_step,
+                    max_retries=max_retries,
+                )
+                self._db_update_status(job_id, "queued", progress_msg="Waiting for group to be free")
+                queue = self._pending_queues.setdefault(type_def.group, [])
+                queue.append((job_id, type_def, job_params, max_retries, pipeline_id))
+                logger.info("Queued job %s (%s) — group '%s' is busy", job_id, job_type, type_def.group)
+                return job_id
 
-        # Insert into DB
+            # Track as active (inside lock to prevent race with _dispatch_next)
+            self._active_jobs[job_id] = type_def.group
+            self._cancel_flags[job_id] = threading.Event()
+
+        # DB insert and APScheduler dispatch outside lock (no contention on I/O)
         self._db_insert(
             job_id, job_type, job_label, job_params,
             triggered_by=triggered_by,
@@ -501,11 +507,6 @@ class JobManager:
             max_retries=max_retries,
         )
 
-        # Track as active
-        self._active_jobs[job_id] = type_def.group
-        self._cancel_flags[job_id] = threading.Event()
-
-        # Dispatch to APScheduler's thread pool
         self._scheduler.add_job(
             self._execute_job,
             args=[job_id, type_def, job_params, max_retries, pipeline_id],
@@ -703,9 +704,12 @@ class JobManager:
             return False
         if job["status"] not in ("queued", "running"):
             return False
-        cancel_event = self._cancel_flags.get(job_id)
-        if cancel_event:
-            cancel_event.set()
+        with self._state_lock:
+            cancel_event = self._cancel_flags.get(job_id)
+            if cancel_event:
+                cancel_event.set()
+            self._active_jobs.pop(job_id, None)
+            self._cancel_flags.pop(job_id, None)
         # Remove from APScheduler if still pending
         try:
             self._scheduler.remove_job(job_id)
@@ -716,8 +720,6 @@ class JobManager:
             completed_at=datetime.now(timezone.utc),
             progress_msg="Cancelled by user",
         )
-        self._active_jobs.pop(job_id, None)
-        self._cancel_flags.pop(job_id, None)
         return True
 
     def delete_job(self, job_id: str) -> bool:
@@ -725,15 +727,50 @@ class JobManager:
         return self._db_delete(job_id)
 
     def recover_stale_jobs(self) -> int:
-        """Mark any leftover 'running'/'queued' jobs as failed (after restart)."""
+        """On startup: fail stale 'running' jobs, re-enqueue 'queued' jobs."""
+        recovered = 0
+
+        # 1. Mark running jobs as failed (they were interrupted mid-execution)
         with _get_conn() as conn:
             result = conn.execute(
                 """UPDATE job_history SET status = 'failed',
                           error = 'Interrupted by server restart',
                           completed_at = NOW()
-                   WHERE status IN ('running', 'queued')"""
+                   WHERE status = 'running'"""
             )
-            return result.rowcount
+            recovered += result.rowcount
+
+        # 2. Re-enqueue queued jobs into memory (in submission order)
+        try:
+            with _get_conn() as conn:
+                rows = conn.execute(
+                    """SELECT job_id, job_type, params, max_retries, pipeline_id
+                       FROM job_history
+                       WHERE status = 'queued'
+                       ORDER BY submitted_at ASC"""
+                ).fetchall()
+            for row in rows:
+                job_id, job_type, params_raw, max_retries, pipeline_id = row
+                type_def = JOB_TYPE_REGISTRY.get(job_type)
+                if not type_def:
+                    # Unknown job type — mark as failed
+                    self._db_update_status(
+                        job_id, "failed",
+                        error=f"Unknown job type '{job_type}' on restart",
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                    recovered += 1
+                    continue
+                params = params_raw if isinstance(params_raw, dict) else json.loads(params_raw or "{}")
+                with self._state_lock:
+                    queue = self._pending_queues.setdefault(type_def.group, [])
+                    queue.append((job_id, type_def, params, max_retries or 0, pipeline_id))
+                recovered += 1
+                logger.info("Re-enqueued job %s (%s) from DB on startup", job_id, job_type)
+        except Exception:
+            logger.exception("Failed to re-enqueue queued jobs on startup")
+
+        return recovered
 
     def get_types(self) -> list[dict[str, Any]]:
         """List all registered job types with metadata."""
@@ -825,27 +862,31 @@ class JobManager:
                 break
 
             finally:
-                if job_id in self._active_jobs:
+                with self._state_lock:
+                    was_active = job_id in self._active_jobs
                     self._active_jobs.pop(job_id, None)
                     self._cancel_flags.pop(job_id, None)
-                    # Auto-dispatch next queued job for this group
+                # Auto-dispatch next queued job (outside lock to avoid deadlock)
+                if was_active:
                     self._dispatch_next(type_def.group)
 
     def _dispatch_next(self, group: str) -> None:
         """Pop the next queued job for *group* and dispatch it to APScheduler."""
-        queue = self._pending_queues.get(group)
-        if not queue:
-            return
+        with self._state_lock:
+            queue = self._pending_queues.get(group)
+            if not queue:
+                return
 
-        job_id, type_def, params, max_retries, pipeline_id = queue.pop(0)
+            job_id, type_def, params, max_retries, pipeline_id = queue.pop(0)
+            remaining = len(queue)
+
+            # Track as active (inside lock)
+            self._active_jobs[job_id] = group
+            self._cancel_flags[job_id] = threading.Event()
+
+        # APScheduler dispatch outside lock (I/O operation)
         logger.info("Auto-dispatching queued job %s for group '%s' (%d remaining in queue)",
-                     job_id, type_def.type_id, len(queue))
-
-        # Track as active
-        self._active_jobs[job_id] = group
-        self._cancel_flags[job_id] = threading.Event()
-
-        # Dispatch to APScheduler's thread pool
+                     job_id, type_def.type_id, remaining)
         self._scheduler.add_job(
             self._execute_job,
             args=[job_id, type_def, params, max_retries, pipeline_id],
@@ -860,7 +901,9 @@ class JobManager:
         if not type_def:
             logger.error("Scheduled job type %s not in registry", job_type)
             return
-        if self._is_group_busy(type_def.group):
+        with self._state_lock:
+            busy = self._is_group_busy(type_def.group)
+        if busy:
             logger.warning("Skipping scheduled %s — group '%s' is busy", job_type, type_def.group)
             return
         try:

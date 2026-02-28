@@ -85,7 +85,7 @@ function renderTab() {
   return render(
     <TestQueryWrapper>
       <ScenarioNotificationProvider>
-        <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+        <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
       </ScenarioNotificationProvider>
     </TestQueryWrapper>
   );

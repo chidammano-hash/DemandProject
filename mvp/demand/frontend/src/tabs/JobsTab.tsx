@@ -16,7 +16,6 @@ import {
 } from "@/api/queries";
 import type { Job, JobType, JobSchedule } from "@/types/jobs";
 import { GROUP_CONFIG } from "@/types/jobs";
-import type { Theme } from "@/types";
 import { useJobNotification } from "@/context/JobNotificationContext";
 import { cn } from "@/lib/utils";
 import {
@@ -585,9 +584,9 @@ function JobHistoryRow({ job, onDelete, onViewResults }: { job: Job; onDelete: (
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-type JobsTabProps = { theme: Theme; onNavigateToScenario?: (jobId: string) => void };
+type JobsTabProps = { onNavigateToScenario?: (jobId: string) => void };
 
-export default function JobsTab({ theme, onNavigateToScenario }: JobsTabProps) {
+export default function JobsTab({ onNavigateToScenario }: JobsTabProps) {
   const queryClient = useQueryClient();
   const jobNotification = useJobNotification();
   const [historyFilter, setHistoryFilter] = useState<string>("");

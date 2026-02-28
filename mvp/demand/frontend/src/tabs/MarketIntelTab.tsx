@@ -5,7 +5,7 @@ import {
   fetchDomainSuggest,
   STALE,
 } from "@/api/queries";
-import type { Theme, MarketIntelPayload } from "@/types";
+import type { MarketIntelPayload } from "@/types";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { ELEMENT_CONFIG } from "@/constants/elements";
 import { LoadingElement } from "@/components/LoadingElement";
@@ -16,11 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Globe, Loader2, RefreshCcw, Send } from "lucide-react";
 
-type MarketIntelTabProps = {
-  theme: Theme;
-};
-
-export default function MarketIntelTab({ theme }: MarketIntelTabProps) {
+export default function MarketIntelTab() {
   const { filters: globalFilters } = useGlobalFilterContext();
   const [miItemFilter, setMiItemFilter] = useState("");
   const [miLocationFilter, setMiLocationFilter] = useState("");

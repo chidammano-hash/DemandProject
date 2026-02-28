@@ -50,7 +50,7 @@ describe("MarketIntelTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <MarketIntelTab theme="light" />
+          <MarketIntelTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );

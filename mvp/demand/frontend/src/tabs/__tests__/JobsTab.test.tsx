@@ -58,7 +58,7 @@ describe("JobsTab", () => {
     render(
       <TestQueryWrapper>
         <JobNotificationProvider>
-          <JobsTab theme="light" />
+          <JobsTab />
         </JobNotificationProvider>
       </TestQueryWrapper>,
     );
@@ -71,7 +71,7 @@ describe("JobsTab", () => {
     render(
       <TestQueryWrapper>
         <JobNotificationProvider>
-          <JobsTab theme="light" />
+          <JobsTab />
         </JobNotificationProvider>
       </TestQueryWrapper>,
     );
@@ -86,7 +86,7 @@ describe("JobsTab", () => {
     render(
       <TestQueryWrapper>
         <JobNotificationProvider>
-          <JobsTab theme="light" />
+          <JobsTab />
         </JobNotificationProvider>
       </TestQueryWrapper>,
     );
@@ -100,7 +100,7 @@ describe("JobsTab", () => {
     render(
       <TestQueryWrapper>
         <JobNotificationProvider>
-          <JobsTab theme="light" />
+          <JobsTab />
         </JobNotificationProvider>
       </TestQueryWrapper>,
     );
@@ -113,7 +113,7 @@ describe("JobsTab", () => {
     render(
       <TestQueryWrapper>
         <JobNotificationProvider>
-          <JobsTab theme="light" />
+          <JobsTab />
         </JobNotificationProvider>
       </TestQueryWrapper>,
     );
@@ -126,7 +126,7 @@ describe("JobsTab", () => {
     render(
       <TestQueryWrapper>
         <JobNotificationProvider>
-          <JobsTab theme="light" />
+          <JobsTab />
         </JobNotificationProvider>
       </TestQueryWrapper>,
     );
@@ -142,7 +142,7 @@ describe("JobsTab", () => {
     render(
       <TestQueryWrapper>
         <JobNotificationProvider>
-          <JobsTab theme="light" />
+          <JobsTab />
         </JobNotificationProvider>
       </TestQueryWrapper>,
     );
@@ -174,7 +174,7 @@ describe("JobsTab", () => {
     render(
       <TestQueryWrapper>
         <JobNotificationProvider>
-          <JobsTab theme="light" onNavigateToScenario={mockNavigate} />
+          <JobsTab onNavigateToScenario={mockNavigate} />
         </JobNotificationProvider>
       </TestQueryWrapper>,
     );
@@ -217,7 +217,7 @@ describe("JobsTab", () => {
     render(
       <TestQueryWrapper>
         <JobNotificationProvider>
-          <JobsTab theme="light" onNavigateToScenario={vi.fn()} />
+          <JobsTab onNavigateToScenario={vi.fn()} />
         </JobNotificationProvider>
       </TestQueryWrapper>,
     );

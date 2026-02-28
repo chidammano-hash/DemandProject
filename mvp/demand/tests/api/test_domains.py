@@ -27,7 +27,7 @@ def mock_pool():
 @pytest.mark.asyncio
 async def test_list_domains(mock_pool):
     pool, _, _ = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -47,7 +47,7 @@ async def test_list_domains(mock_pool):
 @pytest.mark.asyncio
 async def test_domain_meta_item(mock_pool):
     pool, _, _ = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -63,21 +63,21 @@ async def test_domain_meta_item(mock_pool):
 
 @pytest.mark.asyncio
 async def test_domain_meta_invalid_domain(mock_pool):
-    """Invalid domain raises ValueError (unhandled → 500 or propagated exception)."""
+    """Invalid domain returns 404."""
     pool, _, _ = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get("/domains/nonexistent/meta")
-            assert response.status_code == 500
+            assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_domain_meta_all_domains(mock_pool):
     """Every valid domain should return meta successfully."""
     pool, _, _ = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -93,7 +93,7 @@ async def test_domain_page_returns_structure(mock_pool):
     pool, _, cursor = mock_pool
     cursor.fetchone.return_value = (0,)
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -108,7 +108,7 @@ async def test_domain_page_returns_structure(mock_pool):
 @pytest.mark.asyncio
 async def test_domain_suggest_missing_field(mock_pool):
     pool, _, _ = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

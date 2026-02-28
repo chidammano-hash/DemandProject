@@ -55,7 +55,7 @@ describe("DfuAnalysisTab", () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
-          <DfuAnalysisTab theme="light" />
+          <DfuAnalysisTab />
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );

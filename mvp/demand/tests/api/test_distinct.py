@@ -33,7 +33,7 @@ async def test_distinct_returns_values_for_allowed_column(mock_pool):
     """GET /domains/item/distinct?column=brand_name returns distinct brand values."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("BrandA",), ("BrandB",), ("BrandC",)]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -56,7 +56,7 @@ async def test_distinct_returns_values_for_allowed_column(mock_pool):
 async def test_distinct_rejects_disallowed_column(mock_pool):
     """GET /domains/item/distinct?column=item_status returns 400 — not in allowed list."""
     pool, _, cursor = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -70,7 +70,7 @@ async def test_distinct_rejects_disallowed_column(mock_pool):
 async def test_distinct_rejects_column_on_domain_without_allowed(mock_pool):
     """GET /domains/sales/distinct?column=qty returns 400 — sales has no allowed columns."""
     pool, _, cursor = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -87,7 +87,7 @@ async def test_distinct_respects_limit_parameter(mock_pool):
     """GET /domains/item/distinct?column=brand_name&limit=2 caps the result count."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("BrandA",), ("BrandB",)]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -103,7 +103,7 @@ async def test_distinct_default_limit(mock_pool):
     """Without explicit limit, default is 100 — endpoint should still work."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("BrandA",)]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -122,7 +122,7 @@ async def test_distinct_filters_by_search_prefix(mock_pool):
     """GET /domains/item/distinct?column=brand_name&search=Br returns only matching brands."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("BrandA",), ("BrandB",)]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -138,7 +138,7 @@ async def test_distinct_empty_search_returns_all(mock_pool):
     """GET /domains/item/distinct?column=brand_name&search= is same as no search."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("X",), ("Y",)]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -157,7 +157,7 @@ async def test_distinct_response_structure(mock_pool):
     """Response body must contain exactly {column, values, total}."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("state1",)]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -175,7 +175,7 @@ async def test_distinct_empty_result(mock_pool):
     """No matching values returns empty list with total 0."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -190,7 +190,7 @@ async def test_distinct_empty_result(mock_pool):
 async def test_distinct_missing_column_param(mock_pool):
     """Missing required column param returns 422."""
     pool, _, _ = mock_pool
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -203,7 +203,7 @@ async def test_distinct_other_allowed_domains(mock_pool):
     """Verify distinct works for other allowed domain/column combos."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("group1",)]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -227,7 +227,7 @@ async def test_distinct_values_are_strings(mock_pool):
     """Even numeric DB values should be cast to strings in the response."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [(42,), (99,)]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -247,7 +247,7 @@ async def test_distinct_allows_item_no(mock_pool):
     """GET /domains/item/distinct?column=item_no returns 200 — now in allowed list."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("100320",), ("100321",)]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -263,7 +263,7 @@ async def test_distinct_allows_location_id(mock_pool):
     """GET /domains/location/distinct?column=location_id returns 200."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("1401-BULK",), ("1402-BULK",)]
-    with patch("api.main._get_pool", return_value=pool):
+    with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

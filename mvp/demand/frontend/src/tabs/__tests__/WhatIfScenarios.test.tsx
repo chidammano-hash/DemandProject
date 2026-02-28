@@ -118,7 +118,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -131,7 +131,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -148,7 +148,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -167,7 +167,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -190,7 +190,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -210,7 +210,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -236,7 +236,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -264,7 +264,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} theme="light" />
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
