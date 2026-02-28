@@ -1,8 +1,7 @@
 import { cn } from "@/lib/utils";
-import { useMotifOptional } from "@/context/MotifContext";
 
 type LoadingElementProps = {
-  /** Tab key into the motif tiles map (preferred) */
+  /** Tab key (unused after motif removal, kept for API compat) */
   tabKey?: string;
   /** Legacy config prop */
   config?: { symbol: string; number: number; name: string; color: string; activeColor: string; glow: string };
@@ -13,26 +12,17 @@ type LoadingElementProps = {
   size?: "sm" | "md";
 };
 
-export function LoadingElement({ tabKey, config, message, overlay, size = "sm" }: LoadingElementProps) {
-  const motif = useMotifOptional();
-
-  const tile = tabKey && motif ? motif.getTile(tabKey) : null;
-  const animationName = motif?.motifConfig.loading.animationName ?? "pulse-glow";
-  const statusLabel = motif?.motifConfig.loading.statusLabel ?? "Loading";
-  const wrapperClasses = motif?.motifConfig.loading.wrapperClasses ?? "rounded-lg";
-
-  const primary = tile ? tile.primary : config?.symbol ?? "?";
-  const superscript = tile ? tile.superscript : config?.number ?? 0;
-  const activeCls = tile ? tile.activeClasses : config?.activeColor ?? "";
-  const glowCls = tile ? tile.glowClass : config?.glow ?? "";
+export function LoadingElement({ config, message, overlay, size = "sm" }: LoadingElementProps) {
+  const primary = config?.symbol ?? "?";
+  const superscript = config?.number ?? 0;
+  const activeCls = config?.activeColor ?? "";
+  const glowCls = config?.glow ?? "";
 
   const tileEl = (
     <div className="flex flex-col items-center gap-2">
       <div
         className={cn(
-          "flex flex-col items-center justify-center border-2 shadow-md",
-          wrapperClasses,
-          `animate-${animationName}`,
+          "flex flex-col items-center justify-center border-2 shadow-md rounded-lg animate-pulse-glow",
           activeCls,
           glowCls,
           size === "md" ? "px-5 py-2.5" : "px-4 py-2"
@@ -44,7 +34,7 @@ export function LoadingElement({ tabKey, config, message, overlay, size = "sm" }
         <span className={cn("font-bold leading-tight font-mono", size === "md" ? "text-2xl" : "text-lg")}>
           {primary}
         </span>
-        <span className={cn("leading-none opacity-70", size === "md" ? "text-xs" : "text-[11px]")}>{statusLabel}</span>
+        <span className={cn("leading-none opacity-70", size === "md" ? "text-xs" : "text-[11px]")}>Loading</span>
       </div>
       {message && <span className="text-xs text-muted-foreground">{message}</span>}
     </div>

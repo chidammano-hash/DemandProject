@@ -199,7 +199,7 @@ export type InventoryItemDetailPayload = {
   snapshots: InventoryPosition[];
 };
 
-export type Theme = "light" | "dark" | "midnight";
+export type Theme = "light" | "soft" | "dark";
 
 export type ElementConfig = {
   symbol: string;

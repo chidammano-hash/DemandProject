@@ -72,9 +72,9 @@
 | `mvp/demand/sql/008_perf_indexes_and_agg.sql` | Performance indexes (B-tree, GIN trigram) + materialized views |
 | `mvp/demand/frontend/src/api/queries.ts` | Centralized TanStack Query layer (all fetch functions + query keys) |
 | `mvp/demand/frontend/src/tabs/` | Extracted tab components (DashboardTab, ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, InvBacktestTab, ChatPanel, JobsTab) |
-| `mvp/demand/frontend/src/hooks/useTheme.ts` | Product theme + color mode management (3 themes, light/dark) |
+| `mvp/demand/frontend/src/hooks/useTheme.ts` | Color mode management (light/dark) for the General theme |
 | `mvp/demand/frontend/src/hooks/useUrlState.ts` | URL state synchronization (11 tabs, overview default) |
-| `mvp/demand/frontend/src/hooks/useKeyboardShortcuts.ts` | Keyboard shortcuts handler (1-9 tabs, sidebar, theme) |
+| `mvp/demand/frontend/src/hooks/useKeyboardShortcuts.ts` | Keyboard shortcuts handler (1-9 tabs, sidebar, dark mode) |
 | `mvp/demand/frontend/src/hooks/useSidebar.ts` | Sidebar collapse/expand state + mobile drawer |
 | `mvp/demand/frontend/src/hooks/useGlobalFilters.ts` | Global filter state with debounced URL sync |
 | `mvp/demand/frontend/src/context/GlobalFilterContext.tsx` | Global filter React context provider |
@@ -86,10 +86,10 @@
 | `mvp/demand/frontend/src/tabs/JobsTab.tsx` | Automation dashboard UI: KPI cards, grouped job cards, schedules, history (Feature 39) |
 | `mvp/demand/frontend/src/types/jobs.ts` | TypeScript types: JobStats, JobSchedule, GROUP_CONFIG (Feature 39) |
 | `mvp/demand/frontend/src/context/JobNotificationContext.tsx` | Cross-tab job notification context (Feature 39) |
-| `mvp/demand/frontend/src/types/theme.ts` | TypeScript types for themes, sidebar, filters, dashboard |
-| `mvp/demand/frontend/src/constants/themes/` | Product theme configs (wineSpirits, general, obsidian) |
+| `mvp/demand/frontend/src/types/theme.ts` | TypeScript types for theme, sidebar, filters, dashboard |
+| `mvp/demand/frontend/src/constants/themes/general.ts` | Single professional theme config (Demand Studio, light + dark) |
 | `mvp/demand/frontend/src/components/AppSidebar.tsx` | Collapsible sidebar navigation (11 items, 5 sections) |
-| `mvp/demand/frontend/src/components/ThemeSelector.tsx` | Theme + color mode picker (sidebar footer) |
+| `mvp/demand/frontend/src/components/ThemeSelector.tsx` | Light/dark mode toggle (sidebar footer) |
 | `mvp/demand/frontend/src/components/GlobalFilterBar.tsx` | Cross-tab filter bar (brand, category, item, location, market, channel) |
 | `mvp/demand/frontend/src/components/WidgetGrid.tsx` | CSS Grid dashboard layout (WidgetGrid + WidgetCard) |
 | `mvp/demand/frontend/src/components/AlertPanel.tsx` | Severity-coded alert list |
@@ -128,15 +128,9 @@
 | `mvp/demand/sql/013_add_composite_indexes.sql` | Composite B-tree indexes for multi-column query performance |
 | `mvp/demand/sql/015_add_seasonality_columns.sql` | DDL: 6 seasonality columns on `dim_dfu` (Feature 30) |
 | `mvp/demand/sql/016_add_seasonality_to_accuracy_views.sql` | DDL: seasonality joins in accuracy materialized views (Feature 32) |
-| `mvp/demand/frontend/src/hooks/useMotifTheme.ts` | Motif selection, localStorage + URL persistence, CSS data-attr injection |
 | `mvp/demand/frontend/src/hooks/useDebounce.ts` | Generic debounce hook used by filter inputs |
-| `mvp/demand/frontend/src/context/MotifContext.tsx` | React context provider for active motif theme |
-| `mvp/demand/frontend/src/constants/motifRegistry.ts` | Registry mapping motif IDs to motif config objects |
-| `mvp/demand/frontend/src/constants/motifs/` | 5 motif theme definitions: periodic, spirits, space, f1, zen |
 | `mvp/demand/frontend/src/constants/colors.ts` | Shared color palette constants |
 | `mvp/demand/frontend/src/constants/elements.ts` | Periodic table element definitions for loading overlay |
-| `mvp/demand/frontend/src/types/motif.ts` | TypeScript types for motif system (MotifId, MotifThemeConfig, TileConfig) |
-| `mvp/demand/frontend/src/components/MotifSettingsPanel.tsx` | Motif theme picker panel (opened by Ctrl+M) |
 | `mvp/demand/frontend/src/components/KeyboardShortcutHelp.tsx` | Keyboard shortcut help modal (triggered by `?` shortcut) |
 | `mvp/demand/frontend/src/components/KpiCard.tsx` | Reusable KPI metric card component |
 | `mvp/demand/frontend/src/lib/utils.ts` | Shared utilities: `cn()` Tailwind class merger and misc helpers |
@@ -324,8 +318,8 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - Collapsible sidebar navigation (10 items, 5 sections, mobile drawer, `[` toggle)
 - Dashboard overview landing page: KPI sparkline cards, alert panel, heatmap, top movers, forecast trend chart
 - Global filter bar: brand, category, item (searchable), location (searchable), market, channel multi-select dropdowns — applied to dashboard, accuracy, and auto-populated into tab-local inputs
-- Three product themes: Wine & Spirits, General, Obsidian (CSS variable palettes, light/dark modes)
-- Keyboard shortcuts (1-9 tab switch, `[` sidebar, `t` theme, `d` dark mode, / search, Esc close, ? help, Ctrl+E fields)
+- Single professional theme (Demand Studio) with light/dark modes via CSS variable palettes
+- Keyboard shortcuts (1-9 tab switch, `[` sidebar, `d` dark mode, / search, Esc close, ? help, Ctrl+E fields)
 - Lazy-loaded tab components with per-tab error boundaries
 - TanStack Query caching (stale-while-revalidate, instant tab switching)
 - Virtualized data grid with column resize, row selection, CSV export
@@ -335,9 +329,6 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - Inventory backtest tab: model comparison (stockout/excess/service level/WAPE), root cause attribution (bias direction), monthly trend, DFU-level event detail table
 - Clustering What-If Scenarios panel: parameter controls, scenario simulation, result charts, promote flow, background execution with runtime estimation, dashboard completion alerts, enhanced charts (elbow with optimal K, silhouette with quality zones, feature importance, cluster size pie, gap statistic), scenario queueing (queued status when group busy), "View Results" navigation from JobsTab, Past Scenarios history (last 10 completed runs with inline charts)
 - Job Scheduler/Monitor tab (APScheduler-powered): automation dashboard with KPI cards (Total Jobs, Active Now, Success Rate, Avg Duration), grouped job type cards with category colors (blue=clustering, violet=backtest, emerald=seasonality, amber=champion), "Run Now" and schedule buttons, live active job monitoring with animated progress bars and elapsed timers, schedule dialog with presets (hourly/6h/daily 2AM/weekly), recurring schedules section with cron badges, expandable job history with params/results/errors, sidebar active job count badge, cross-tab alerts via `JobNotificationContext`, ClustersTab "Schedule Scenario Job" integration
-- Five motif themes: Periodic Table, Wine & Spirits, Space, Formula 1, Zen Garden — each with distinct tiles, icons, and loading animations; selectable independently of light/dark color mode
-- `MotifSettingsPanel` accessible via Ctrl+M keyboard shortcut
-- `?motif=<id>` URL parameter for deep-linking to a specific motif theme
 - Vitest testing infrastructure
 
 ---
@@ -402,8 +393,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Job scheduler (APScheduler):** `common/job_registry.py` provides `JobManager` singleton powered by APScheduler 3.11 (`BackgroundScheduler` + `ThreadPoolExecutor(max_workers=4)`). Thread-safe: `_state_lock` guards `_active_jobs`, `_pending_queues`, `_cancel_flags`; `_init_lock` with double-checked locking protects `_ensure_init()`. `JOB_TYPE_REGISTRY` maps 7 job types across 4 groups. Per-group concurrency control with FIFO queueing (one active job per group: clustering, backtest, seasonality, champion; busy groups queue jobs instead of rejecting). Job callables wrap existing scripts via `subprocess.run()`. Progress updates written to `job_history` table. `recover_stale_jobs()` re-enqueues queued jobs from DB on restart and marks running jobs as failed. Supports cron/interval scheduling (`POST /jobs/schedule`, `GET /jobs/schedules`), job pipelines (`POST /jobs/pipeline` — sequential chaining), retry logic with exponential backoff (`max_retries`), and dashboard stats (`GET /jobs/stats`). 12 REST API endpoints total. Route ordering in `jobs.py`: literal paths (`/jobs/schedules`, `/jobs/pipeline`) must come before parameterized `{job_id}` paths. Frontend polls `GET /jobs/active` every 2s, stats every 5s, history every 10s. `JobNotificationContext` provides cross-tab completion alerts. Sidebar shows active job count badge. ClustersTab uses "Schedule Scenario Job" button. Dependencies: `apscheduler>=3.10`, `tzlocal>=5.0`.
 - **API key authentication:** `api/auth.py` provides `require_api_key` FastAPI dependency. Auth is disabled when the `API_KEY` env var is unset (development default). When set, mutation endpoints (`POST /clustering/scenario`, `PUT /competition/config`, `POST /competition/run`, `POST /chat`, `POST /market-intelligence`) require `X-API-Key` header.
 - **Vite dev server proxy:** `frontend/vite.config.ts` proxies all API path prefixes (`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`) to the FastAPI backend at `http://127.0.0.1:8000`. **CRITICAL:** When adding a new API path prefix, you MUST add a corresponding proxy entry in `vite.config.ts` or the frontend will receive HTML instead of JSON. Restart the Vite dev server (`make ui`) after changes.
-- **Motif theme system:** 5 visual motifs (periodic, spirits, space, f1, zen) defined in `frontend/src/constants/motifs/`. Selected motif persists in localStorage and URL (`?motif=<id>`). `useMotifTheme` hook manages state; `MotifContext` provides it app-wide. Ctrl+M opens `MotifSettingsPanel`. Motif identity is separate from product theme (wine & spirits, general, obsidian) and color mode (light/dark).
-
+- **Single theme with light/dark modes:** Only the "General" (Demand Studio) product theme remains. `useTheme()` manages light/dark color mode. `ThemeSelector` in sidebar footer provides light/dark toggle. No theme cycling, no motifs.
 - **Theme context (no prop-drilling):** Tab components access the current theme via `useThemeContext()` from `context/ThemeContext.tsx` or `useChartColors()` from `hooks/useChartColors.ts` — NOT via a `theme` prop from `App.tsx`. `ThemeProvider` wraps the app tree in `App.tsx`. `useChartColors()` returns `{ theme, chartColors, trendColors }` for Recharts styling. `ScenarioCharts` component extracted to `components/ScenarioCharts.tsx` (elbow, silhouette, radar, pie, gap charts).
 
 ---
@@ -445,7 +435,7 @@ Located in `docs/design-specs/`:
 - `feature32.md` — Seasonality Profile Filtering (backend router written; frontend UI pending)
 - `feature33.md` — Inventory Overlay in DFU Analysis *(not implemented)*
 - `feature34.md` — Inventory Planning Module Phase 1 (snapshot pipeline, API, UI tab)
-- `feature35.md` — Configurable Multi-Theme / Motif System (5 motifs implemented; `?motif=` URL param added)
+- `feature35.md` — Configurable Multi-Theme / Motif System (motifs removed; simplified to single professional theme with light/dark modes)
 - `feature36.md` — Product-Grade UI Overhaul (sidebar, themes, dashboard, global filters, widgets)
 - `feature37.md` — Inventory Planning Backtesting (forecast-inventory bridge, model comparison, root cause attribution)
 - `feature38.md` — Clustering What-If Scenario Enhancements (background execution, runtime estimation, dashboard alerts, enhanced charts)

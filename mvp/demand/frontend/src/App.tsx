@@ -9,10 +9,8 @@ import { GlobalFilterBar } from "@/components/GlobalFilterBar";
 import { LoadingElement } from "@/components/LoadingElement";
 import { KeyboardShortcutHelp } from "@/components/KeyboardShortcutHelp";
 import { useTheme } from "@/hooks/useTheme";
-import { useMotifTheme } from "@/hooks/useMotifTheme";
 import { useSidebar } from "@/hooks/useSidebar";
 import { useGlobalFilters } from "@/hooks/useGlobalFilters";
-import { MotifProvider } from "@/context/MotifContext";
 import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { ScenarioNotificationProvider } from "@/context/ScenarioNotificationContext";
@@ -71,9 +69,7 @@ function TabSuspenseFallback({ tabKey }: { tabKey: string }) {
 // ---------------------------------------------------------------------------
 export default function App() {
   const themeHook = useTheme();
-  const { theme, themeId, colorMode, productTheme, setProductTheme, setColorMode, toggleColorMode, cycleTheme } = themeHook;
-  const motifTheme = useMotifTheme(theme);
-  const { cycleMotif } = motifTheme;
+  const { theme, colorMode, productTheme, setColorMode, toggleColorMode } = themeHook;
   const sidebar = useSidebar();
   const globalFilters = useGlobalFilters();
 
@@ -105,26 +101,21 @@ export default function App() {
   const { showHelp, closeHelp } = useKeyboardShortcuts({
     onTabSwitch: handleTabSwitch,
     onClosePanel: sidebar.closeMobile,
-    onCycleMotif: cycleMotif,
     onToggleSidebar: sidebar.toggle,
-    onCycleTheme: cycleTheme,
     onToggleColorMode: toggleColorMode,
   });
 
   // Theme footer for sidebar
   const themeFooter = (
     <ThemeSelector
-      themeId={themeId}
       colorMode={colorMode}
-      onThemeChange={setProductTheme}
       onModeChange={setColorMode}
       collapsed={sidebar.collapsed}
     />
   );
 
   return (
-    <MotifProvider value={motifTheme}>
-      <ThemeProvider value={{ theme }}>
+    <ThemeProvider value={{ theme }}>
       <GlobalFilterProvider value={globalFilters}>
         <ScenarioNotificationProvider>
         <JobNotificationProvider>
@@ -228,7 +219,6 @@ export default function App() {
         </JobNotificationProvider>
         </ScenarioNotificationProvider>
       </GlobalFilterProvider>
-      </ThemeProvider>
-    </MotifProvider>
+    </ThemeProvider>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect } from "react";
 
 const VALID_TABS = ["overview", "explorer", "clusters", "dfuAnalysis", "accuracy", "inventory", "invBacktest", "intel", "jobs", "chat", "settings"];
 const ANALYTICS_TAB_DOMAINS = new Set(["sales", "forecast"]);
@@ -7,10 +7,6 @@ const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales
 export function getInitialDomain(): string {
   const queryDomain = new URLSearchParams(window.location.search).get("domain");
   return (queryDomain || "item").toLowerCase();
-}
-
-export function getInitialMotif(): string | null {
-  return new URLSearchParams(window.location.search).get("motif");
 }
 
 export function getInitialTab(): string {
@@ -27,16 +23,6 @@ export function updateUrlState(domain: string, tab: string) {
   url.searchParams.set("domain", domain.toLowerCase());
   url.searchParams.set("tab", tab);
   window.history.pushState(null, "", url);
-}
-
-export function updateMotifUrl(motifId: string | null) {
-  const url = new URL(window.location.href);
-  if (motifId) {
-    url.searchParams.set("motif", motifId);
-  } else {
-    url.searchParams.delete("motif");
-  }
-  window.history.replaceState(null, "", url);
 }
 
 export function usePopstateSync(

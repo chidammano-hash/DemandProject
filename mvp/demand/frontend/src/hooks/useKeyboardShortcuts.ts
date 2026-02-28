@@ -7,9 +7,7 @@ interface ShortcutConfig {
   onPrevPage?: () => void;
   onNextPage?: () => void;
   onToggleFields?: () => void;
-  onCycleMotif?: () => void;
   onToggleSidebar?: () => void;
-  onCycleTheme?: () => void;
   onToggleColorMode?: () => void;
 }
 
@@ -62,13 +60,6 @@ export function useKeyboardShortcuts(config: ShortcutConfig) {
         return;
       }
 
-      // t cycle theme
-      if (e.key === "t" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        config.onCycleTheme?.();
-        return;
-      }
-
       // d toggle dark/light mode
       if (e.key === "d" && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
@@ -97,13 +88,6 @@ export function useKeyboardShortcuts(config: ShortcutConfig) {
       }
       if (e.key === "ArrowRight") {
         config.onNextPage?.();
-        return;
-      }
-
-      // Ctrl+M / Cmd+M: cycle motif theme
-      if (e.key === "m" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        config.onCycleMotif?.();
         return;
       }
 

@@ -3,13 +3,13 @@ import type { Theme } from "@/types";
 export const TREND_COLORS_BY_THEME: Record<Theme, string[]> = {
   light: ["#4f46e5", "#0d9488", "#d97706", "#7c3aed", "#dc2626", "#0284c7"],
   dark: ["#818cf8", "#2dd4bf", "#fbbf24", "#a78bfa", "#fca5a5", "#7dd3fc"],
-  midnight: ["#93c5fd", "#5eead4", "#fde68a", "#c4b5fd", "#fda4af", "#a5f3fc"],
+  soft: ["#3574C4", "#0E9E72", "#D4890A", "#7A4ED4", "#D44040", "#0598B0"],
 };
 
 export const CHART_COLORS: Record<Theme, { grid: string; axis: string; tooltip_bg: string; tooltip_border: string }> = {
   light: { grid: "#e2e8f0", axis: "#64748b", tooltip_bg: "#ffffff", tooltip_border: "#e2e8f0" },
   dark: { grid: "#2d3548", axis: "#94a3b8", tooltip_bg: "#1e2433", tooltip_border: "#2d3548" },
-  midnight: { grid: "#1e2744", axis: "#7b8db5", tooltip_bg: "#141c33", tooltip_border: "#1e2744" },
+  soft: { grid: "#DDD8D0", axis: "#8A8078", tooltip_bg: "#FDFCFA", tooltip_border: "#DDD8D0" },
 };
 
 export const DFU_SALES_COLORS: Record<string, string> = {

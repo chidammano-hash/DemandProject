@@ -31,7 +31,7 @@ type EChartContainerProps = {
 
 function EChartContainerInner({ option, theme, height = 380, className }: EChartContainerProps) {
   const colors = CHART_COLORS[theme];
-  const isDark = theme === "dark" || theme === "midnight";
+  const isDark = theme === "dark";
 
   const mergedOption = useMemo(
     () => ({

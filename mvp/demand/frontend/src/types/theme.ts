@@ -2,7 +2,7 @@
 // Product theme type system (Feature 36)
 // ---------------------------------------------------------------------------
 
-export type ProductThemeId = "wine-spirits" | "general" | "obsidian";
+export type ProductThemeId = "general";
 
 export interface ThemePalette {
   background: string;
@@ -77,16 +77,18 @@ export interface ProductTheme {
   displayName: string;
   tagline: string;
   description: string;
-  supportedModes: ("light" | "dark")[];
-  defaultMode: "light" | "dark";
+  supportedModes: ("light" | "soft" | "dark")[];
+  defaultMode: "light" | "soft" | "dark";
   palette: {
     light?: ThemePalette;
+    soft?: ThemePalette;
     dark: ThemePalette;
   };
   sidebar: SidebarThemeConfig;
   cards: CardThemeConfig;
   charts: {
     light?: ChartThemeConfig;
+    soft?: ChartThemeConfig;
     dark: ChartThemeConfig;
   };
   typography: TypographyConfig;

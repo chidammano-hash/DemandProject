@@ -751,7 +751,7 @@ export function AccuracyTab() {
                       ? `${championSummary.overall_champion_accuracy_pct.toFixed(2)}%`
                       : "-"
                   }
-                  colorClass="text-indigo-700 dark:text-indigo-400 midnight:text-indigo-300"
+                  colorClass="text-indigo-700 dark:text-indigo-400"
                 />
                 <KpiCard
                   label="Champion WAPE"

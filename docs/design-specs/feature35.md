@@ -1,8 +1,10 @@
 # Feature 35 — Configurable Multi-Theme System
 
-**Status:** Implemented
+**Status:** Removed (motifs stripped; simplified to single professional theme with light/dark modes)
 **Priority:** Enhancement
 **Dependencies:** Feature 22 (dark mode + midnight theme), Feature 28 (UI architecture)
+
+> **Note (2026-02):** The 5 motif themes (periodic, spirits, space, f1, zen) and the extra product themes (Wine & Spirits, Obsidian) were removed after critic feedback identified them as unnecessary complexity. The system was simplified to a single "Demand Studio" professional theme with light/dark modes only. All motif-related files, hooks, context, types, and test files were deleted. The `ThemeSelector` was reduced to a light/dark toggle. See `CLAUDE.md` for current architecture.
 
 ---
 

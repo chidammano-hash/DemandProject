@@ -19,7 +19,7 @@ Object.defineProperty(window, "localStorage", { value: localStorageMock });
 describe("useTheme", () => {
   beforeEach(() => {
     localStorageMock.clear();
-    document.documentElement.classList.remove("light", "dark", "midnight");
+    document.documentElement.classList.remove("light", "dark");
     document.documentElement.removeAttribute("data-transitioning");
     document.documentElement.removeAttribute("data-theme");
   });
@@ -30,24 +30,36 @@ describe("useTheme", () => {
     expect(result.current.themeId).toBe("general");
   });
 
-  it("reads product theme from localStorage", () => {
-    localStorageMock.setItem("ds-product-theme", "obsidian");
+  it("reads color mode from localStorage", () => {
     localStorageMock.setItem("ds-color-mode", "dark");
     const { result } = renderHook(() => useTheme());
-    expect(result.current.themeId).toBe("obsidian");
     expect(result.current.theme).toBe("dark");
+    expect(result.current.colorMode).toBe("dark");
   });
 
-  it("falls back to general for invalid stored value", () => {
-    localStorageMock.setItem("ds-product-theme", "invalid");
+  it("reads soft color mode from localStorage", () => {
+    localStorageMock.setItem("ds-color-mode", "soft");
     const { result } = renderHook(() => useTheme());
-    expect(result.current.themeId).toBe("general");
+    expect(result.current.theme).toBe("soft");
+    expect(result.current.colorMode).toBe("soft");
   });
 
-  it("persists theme to localStorage on change", () => {
+  it("falls back to light for invalid stored color mode", () => {
+    localStorageMock.setItem("ds-color-mode", "invalid");
     const { result } = renderHook(() => useTheme());
-    act(() => result.current.setProductTheme("wine-spirits"));
-    expect(localStorageMock.getItem("ds-product-theme")).toBe("wine-spirits");
+    expect(result.current.colorMode).toBe("light");
+  });
+
+  it("persists color mode to localStorage on change", () => {
+    const { result } = renderHook(() => useTheme());
+    act(() => result.current.setColorMode("dark"));
+    expect(localStorageMock.getItem("ds-color-mode")).toBe("dark");
+  });
+
+  it("persists soft mode to localStorage", () => {
+    const { result } = renderHook(() => useTheme());
+    act(() => result.current.setColorMode("soft"));
+    expect(localStorageMock.getItem("ds-color-mode")).toBe("soft");
   });
 
   it("applies theme class to document root", () => {
@@ -57,26 +69,22 @@ describe("useTheme", () => {
     expect(document.documentElement.classList.contains("light")).toBe(false);
   });
 
-  it("obsidian forces dark mode", () => {
+  it("soft mode applies light CSS class (not dark)", () => {
     const { result } = renderHook(() => useTheme());
-    act(() => result.current.setProductTheme("obsidian"));
-    expect(result.current.colorMode).toBe("dark");
-    expect(result.current.effectiveClass).toBe("dark");
-    // Trying to set light should be ignored
-    act(() => result.current.setColorMode("light"));
-    expect(result.current.effectiveClass).toBe("dark");
+    act(() => result.current.setColorMode("soft"));
+    expect(document.documentElement.classList.contains("light")).toBe(true);
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
 
-  it("cycles themes in order", () => {
+  it("toggleColorMode cycles light → soft → dark → light", () => {
     const { result } = renderHook(() => useTheme());
-    // Default is general
-    expect(result.current.themeId).toBe("general");
-    act(() => result.current.cycleTheme());
-    expect(result.current.themeId).toBe("obsidian");
-    act(() => result.current.cycleTheme());
-    expect(result.current.themeId).toBe("wine-spirits");
-    act(() => result.current.cycleTheme());
-    expect(result.current.themeId).toBe("general");
+    expect(result.current.colorMode).toBe("light");
+    act(() => result.current.toggleColorMode());
+    expect(result.current.colorMode).toBe("soft");
+    act(() => result.current.toggleColorMode());
+    expect(result.current.colorMode).toBe("dark");
+    act(() => result.current.toggleColorMode());
+    expect(result.current.colorMode).toBe("light");
   });
 
   it("returns trendColors and chartColors", () => {
@@ -87,9 +95,17 @@ describe("useTheme", () => {
     expect(result.current.chartColors.grid).toBeDefined();
   });
 
-  it("sets data-theme attribute", () => {
+  it("sets data-theme attribute to general", () => {
+    renderHook(() => useTheme());
+    expect(document.documentElement.getAttribute("data-theme")).toBe("general");
+  });
+
+  it("effectiveClass is light for both light and soft modes", () => {
     const { result } = renderHook(() => useTheme());
-    act(() => result.current.setProductTheme("wine-spirits"));
-    expect(document.documentElement.getAttribute("data-theme")).toBe("wine-spirits");
+    expect(result.current.effectiveClass).toBe("light");
+    act(() => result.current.setColorMode("soft"));
+    expect(result.current.effectiveClass).toBe("light");
+    act(() => result.current.setColorMode("dark"));
+    expect(result.current.effectiveClass).toBe("dark");
   });
 });

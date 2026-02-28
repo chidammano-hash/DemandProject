@@ -121,7 +121,7 @@ function renderDashboard() {
 describe("DashboardTab", () => {
   beforeEach(() => {
     localStorageMock.clear();
-    document.documentElement.classList.remove("light", "dark", "midnight");
+    document.documentElement.classList.remove("light", "dark");
     document.documentElement.removeAttribute("data-transitioning");
     document.documentElement.removeAttribute("data-theme");
   });
