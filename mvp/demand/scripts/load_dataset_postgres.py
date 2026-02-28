@@ -123,6 +123,104 @@ def _recreate_unique_constraints(cur, table: str,
         )
 
 
+def _resolve_forecast_execution_lag(cur, stg_table: str) -> tuple[int, int]:
+    """For forecast domain: update staging execution_lag from dim_dfu.
+
+    The normalized CSV sets execution_lag = lag for every row (since the source
+    file doesn't have an execution_lag column).  We resolve the actual DFU
+    execution lag from dim_dfu so we can filter to execution-lag rows only
+    for the main table INSERT.
+
+    IMPORTANT: This MUST be called AFTER the archive load, because the archive
+    needs the untouched staging data where each row's execution_lag = its own lag.
+
+    Returns (matched_rows, unmatched_rows).
+    """
+    # Check if dim_dfu exists
+    cur.execute("""
+        SELECT EXISTS(
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'dim_dfu' AND table_schema = 'public'
+        )
+    """)
+    if not cur.fetchone()[0]:
+        print("       dim_dfu table not found — defaulting execution_lag to 0")
+        cur.execute(f'UPDATE {qident(stg_table)} SET "execution_lag" = \'0\'')
+        return (0, cur.rowcount)
+
+    # Update staging execution_lag from dim_dfu (all rows for matched DFUs)
+    cur.execute(f"""
+        UPDATE {qident(stg_table)} s
+        SET "execution_lag" = COALESCE(d.execution_lag, 0)::text
+        FROM dim_dfu d
+        WHERE d.dfu_ck = trim(s."dmdunit") || '_' || trim(s."dmdgroup") || '_' || trim(s."loc")
+    """)
+    matched_rows = cur.rowcount
+
+    # Default execution_lag to 0 for DFUs not in dim_dfu
+    cur.execute(f"""
+        UPDATE {qident(stg_table)} s
+        SET "execution_lag" = '0'
+        WHERE NOT EXISTS (
+            SELECT 1 FROM dim_dfu d
+            WHERE d.dfu_ck = trim(s."dmdunit") || '_' || trim(s."dmdgroup") || '_' || trim(s."loc")
+        )
+    """)
+    unmatched_rows = cur.rowcount
+    return (matched_rows, unmatched_rows)
+
+
+def _load_forecast_archive(cur, stg_table: str, stg_alias: str) -> int:
+    """Load ALL forecast rows from staging into backtest_lag_archive.
+
+    This preserves all 5 lags (0-4) for multi-lag accuracy analysis while
+    the main table holds only execution-lag rows.
+    """
+    archive_table = "backtest_lag_archive"
+
+    # Delete existing external rows from archive
+    cur.execute(f"DELETE FROM {archive_table} WHERE model_id = 'external'")
+    deleted = cur.rowcount
+    if deleted:
+        print(f"       Deleted {deleted:,} existing 'external' archive rows")
+
+    # Build forecast_ck expression (same separator as FORECAST_SPEC)
+    ck_expr = (
+        f"trim({stg_alias}.\"dmdunit\") || '_' || trim({stg_alias}.\"dmdgroup\") || '_' || "
+        f"trim({stg_alias}.\"loc\") || '_' || trim({stg_alias}.\"fcstdate\") || '_' || "
+        f"trim({stg_alias}.\"startdate\")"
+    )
+
+    insert_sql = f"""
+        INSERT INTO {archive_table}
+            (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+             lag, execution_lag, basefcst_pref, tothist_dmd, model_id, timeframe)
+        SELECT
+            {ck_expr},
+            {stg_alias}."dmdunit",
+            {stg_alias}."dmdgroup",
+            {stg_alias}."loc",
+            {stg_alias}."fcstdate"::date,
+            {stg_alias}."startdate"::date,
+            {stg_alias}."lag"::integer,
+            CASE WHEN lower(trim({stg_alias}."execution_lag")) IN ({NULL_SQL})
+                 THEN NULL ELSE {stg_alias}."execution_lag"::integer END,
+            CASE WHEN lower(trim({stg_alias}."basefcst_pref")) IN ({NULL_SQL})
+                 THEN NULL ELSE {stg_alias}."basefcst_pref"::numeric END,
+            CASE WHEN lower(trim({stg_alias}."tothist_dmd")) IN ({NULL_SQL})
+                 THEN NULL ELSE {stg_alias}."tothist_dmd"::numeric END,
+            {stg_alias}."model_id",
+            NULL
+        FROM {qident(stg_table)} {stg_alias}
+        ON CONFLICT (forecast_ck, model_id, lag) DO UPDATE SET
+            basefcst_pref = EXCLUDED.basefcst_pref,
+            tothist_dmd   = EXCLUDED.tothist_dmd,
+            execution_lag = EXCLUDED.execution_lag
+    """
+    cur.execute(insert_sql)
+    return cur.rowcount
+
+
 def main() -> None:
     allowed = ", ".join(sorted(DOMAIN_SPECS))
     parser = argparse.ArgumentParser(description="Load normalized dataset CSV into Postgres")
@@ -132,12 +230,27 @@ def main() -> None:
     parser.add_argument("--fast", action="store_true",
                         help="Optimize for large datasets: drop indexes during load, "
                              "increase work_mem, implies --no-dedup")
+    parser.add_argument("--replace", action="store_true",
+                        help="(forecast only) Replace only model_id='external' rows "
+                             "instead of truncating the whole table. Preserves backtest data.")
+    parser.add_argument("--skip-archive", action="store_true",
+                        help="(forecast only) Skip loading all lags into backtest_lag_archive. "
+                             "Loads only the execution-lag row into the main table.")
     args = parser.parse_args()
 
     no_dedup = args.no_dedup or args.fast
     fast_mode = args.fast
+    replace_mode = args.replace
+    skip_archive = args.skip_archive
 
     spec = get_spec(args.dataset)
+
+    if replace_mode and spec.name != "forecast":
+        parser.error("--replace is only supported for --dataset forecast")
+    if skip_archive and spec.name != "forecast":
+        parser.error("--skip-archive is only supported for --dataset forecast")
+    if replace_mode and fast_mode:
+        parser.error("--replace and --fast are mutually exclusive")
 
     root = Path(__file__).resolve().parents[1]
     load_dotenv(root / ".env")
@@ -225,6 +338,10 @@ def main() -> None:
     # ---- Header ----
     t_total = time.time()
     mode_flags = []
+    if replace_mode:
+        mode_flags.append("replace external only")
+    if skip_archive:
+        mode_flags.append("skip-archive")
     if no_dedup:
         mode_flags.append("no-dedup")
     if fast_mode:
@@ -266,17 +383,53 @@ def main() -> None:
         print(f"       Done in {_elapsed(t0)} ({rate_mb:,.0f} MB/s)\n", flush=True)
 
         # ---- Phase 3: Count staging rows ----
-        print("[3/6] Counting staging rows ...", flush=True)
+        is_forecast = spec.name == "forecast"
+        load_archive = is_forecast and not skip_archive
+        total_phases = 8 if is_forecast else 6
+
+        print(f"[3/{total_phases}] Counting staging rows ...", flush=True)
         t0 = time.time()
         cur.execute(f"SELECT count(*) FROM {qident(stg_table)};")
         stg_rows = cur.fetchone()[0]
         print(f"       {stg_rows:,} rows in staging ({_elapsed(t0)})\n", flush=True)
 
-        # ---- Phase 4: TRUNCATE + drop indexes/constraints (fast mode) ----
-        # TRUNCATE first so index drops are instant (no data to de-index)
-        print(f"[4/6] TRUNCATE {spec.table}", end="", flush=True)
-        t0 = time.time()
-        cur.execute(truncate_sql)
+        # ---- Phase 3b (forecast only): Load ALL lags into archive BEFORE staging mutation ----
+        archive_count = 0
+        if load_archive:
+            print(f"[3b/{total_phases}] Loading ALL lags → backtest_lag_archive (before staging mutation) ...", flush=True)
+            t0 = time.time()
+            archive_count = _load_forecast_archive(cur, stg_table, stg_alias)
+            print(f"       Inserted {archive_count:,} archive rows in {_elapsed(t0)}")
+            print(f"       Archive preserves each row's original lag as execution_lag\n", flush=True)
+        elif is_forecast and skip_archive:
+            print(f"[3b/{total_phases}] Skipping archive load (--skip-archive)\n", flush=True)
+
+        # ---- Phase 3c (forecast only): Resolve execution lag from dim_dfu ----
+        if is_forecast:
+            print(f"[3c/{total_phases}] Resolving execution lag from dim_dfu ...", flush=True)
+            t0 = time.time()
+            matched, unmatched = _resolve_forecast_execution_lag(cur, stg_table)
+            print(f"       Matched {matched:,} rows from dim_dfu, "
+                  f"defaulted {unmatched:,} rows to lag 0 ({_elapsed(t0)})")
+            # Add WHERE clause to main INSERT: keep only execution-lag rows
+            insert_sql = insert_sql.rstrip(";") + (
+                f" WHERE {src_alias}.\"lag\" = {src_alias}.\"execution_lag\";"
+            )
+            print(f"       Main table will receive execution-lag rows only\n", flush=True)
+
+        # ---- Phase 4: Clear target rows ----
+        if replace_mode:
+            # Replace mode: only delete external rows (preserve backtest data)
+            print(f"[4/{total_phases}] DELETE model_id='external' from {spec.table} ...", flush=True)
+            t0 = time.time()
+            cur.execute(f"DELETE FROM {qident(spec.table)} WHERE model_id = 'external'")
+            deleted = cur.rowcount
+            print(f"       Deleted {deleted:,} external rows ({_elapsed(t0)})\n", flush=True)
+        else:
+            # Full mode: truncate entire table
+            print(f"[4/{total_phases}] TRUNCATE {spec.table}", end="", flush=True)
+            t0 = time.time()
+            cur.execute(truncate_sql)
         if fast_mode:
             print(f" + dropping indexes & constraints ...", flush=True)
             # Save index/constraint definitions before dropping
@@ -295,14 +448,15 @@ def main() -> None:
                 print(f"       Truncated + dropped {total_dropped} indexes/constraints ({_elapsed(t0)})\n", flush=True)
             else:
                 print(f"       Truncated (no indexes to drop) ({_elapsed(t0)})\n", flush=True)
-        else:
+        elif not replace_mode:
             print(f" ({_elapsed(t0)})\n", flush=True)
 
         # ---- Phase 5: INSERT into bare table ----
-        print(f"[5/6] INSERT → {spec.table} ...", flush=True)
+        print(f"[5/{total_phases}] INSERT → {spec.table} ...", flush=True)
         t0 = time.time()
         dedup_label = "no dedup" if no_dedup else "with dedup sort"
-        print(f"       Inserting {stg_rows:,} rows ({dedup_label}) ...", flush=True)
+        extra_label = " (execution-lag only)" if is_forecast else ""
+        print(f"       Inserting {stg_rows:,} rows ({dedup_label}{extra_label}) ...", flush=True)
         cur.execute(insert_sql)
         row_count = cur.rowcount
         t_insert = time.time() - t0
@@ -312,7 +466,7 @@ def main() -> None:
         # ---- Phase 6: Recreate indexes + constraints (fast mode) ----
         total_rebuild = len(saved_indexes) + len(saved_constraints)
         if fast_mode and total_rebuild > 0:
-            print(f"[6/6] Recreating {total_rebuild} indexes/constraints ...", flush=True)
+            print(f"[6/{total_phases}] Recreating {total_rebuild} indexes/constraints ...", flush=True)
             t0 = time.time()
             step = 0
             # Recreate unique constraints first
@@ -329,17 +483,36 @@ def main() -> None:
                 print(f"       [{step}/{total_rebuild}] {idx_name} ({_elapsed(t_idx)})", flush=True)
             print(f"       All indexes rebuilt in {_elapsed(t0)}\n", flush=True)
         else:
-            print("[6/6] No index rebuild needed\n", flush=True)
+            print(f"[6/{total_phases}] No index rebuild needed\n", flush=True)
+
+        # ---- Phase 7: (archive already loaded in Phase 3b) ----
 
         # ---- Commit ----
         print("Committing ...", flush=True)
         conn.commit()
+
+        # ---- Phase 8 (forecast only): Refresh archive views ----
+        if load_archive:
+            print(f"[8/{total_phases}] Refreshing archive accuracy views ...", flush=True)
+            t0 = time.time()
+            cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive")
+            cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive")
+            conn.commit()
+            print(f"       agg_accuracy_lag_archive + agg_dfu_coverage_lag_archive refreshed ({_elapsed(t0)})\n", flush=True)
+        elif is_forecast and skip_archive:
+            print(f"[8/{total_phases}] Skipping archive view refresh (--skip-archive)\n", flush=True)
 
     # ---- Summary ----
     entity_type = "fact" if spec.table.startswith("fact_") else "dimension"
     total = _elapsed(t_total)
     print(f"\n{'='*60}")
     print(f"Done: loaded {row_count:,} rows into {entity_type} table {spec.table}")
+    if is_forecast:
+        print(f"  Main table (execution-lag): {row_count:,} rows")
+        if skip_archive:
+            print(f"  Archive: skipped (--skip-archive)")
+        else:
+            print(f"  Archive (all lags):         {archive_count:,} rows")
     print(f"Total time: {total}")
     print(f"{'='*60}\n")
 

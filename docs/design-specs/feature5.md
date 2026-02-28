@@ -98,3 +98,44 @@ These cards are computed on the backend using the same active filters used for t
 ### Makefile Targets
 - `accuracy-slice-refresh` — refresh all 4 views
 - `accuracy-slice-check` — verify view data
+
+
+---
+
+## Examples
+
+### Example: Compute all KPIs in SQL
+
+```sql
+SELECT
+    ROUND(100.0 - 100.0 * SUM(ABS(basefcst_pref - tothist_dmd))
+               / NULLIF(ABS(SUM(tothist_dmd)), 0), 2)   AS accuracy_pct,
+    ROUND(100.0 * SUM(ABS(basefcst_pref - tothist_dmd))
+               / NULLIF(ABS(SUM(tothist_dmd)), 0), 2)   AS wape,
+    ROUND((SUM(basefcst_pref) / NULLIF(SUM(tothist_dmd),0)) - 1, 4) AS bias
+FROM fact_external_forecast_monthly
+WHERE dmdunit='100320' AND loc='1401-BULK'
+  AND model_id='external' AND lag=2
+  AND startdate >= '2025-08-01';
+-- accuracy_pct: 92.53 | wape: 7.47 | bias: 0.0143
+```
+
+### Example: KPI API endpoint
+
+```bash
+curl -s "http://localhost:8000/forecast/accuracy?item=100320&loc=1401-BULK&model=external&lag=2&window=6" \
+  | jq '{accuracy_pct, wape, bias}'
+# {"accuracy_pct": 92.53, "wape": 7.47, "bias": 0.014}
+```
+
+### Example: Lag curve — accuracy degrades at longer horizons
+
+```bash
+curl -s "http://localhost:8000/forecast/accuracy/lag-curve?model=external" \
+  | jq '.rows[] | {lag, accuracy_pct}'
+# {"lag": 0, "accuracy_pct": 97.1}
+# {"lag": 1, "accuracy_pct": 94.3}
+# {"lag": 2, "accuracy_pct": 91.8}
+# {"lag": 3, "accuracy_pct": 88.6}
+# {"lag": 4, "accuracy_pct": 84.2}
+```

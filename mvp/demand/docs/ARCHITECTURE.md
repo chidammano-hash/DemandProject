@@ -35,6 +35,9 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - rule: `fcstdate` and `startdate` must be month-start
    - rule: `lag = month_diff(startdate, fcstdate)` and only lags `0..4`
    - rule: `model_id` defaults to `'external'` when absent from source
+   - loading: dual-path insert with **phase ordering** — archive loads FIRST from untouched staging (each row's original `lag` preserved as `execution_lag`), THEN staging is mutated from `dim_dfu`, THEN main table receives **execution-lag rows only** via `WHERE lag = execution_lag` (matched DFUs get dim_dfu value, unmatched default to 0)
+   - `--replace` flag: deletes only `model_id='external'` rows instead of truncating (preserves backtest/champion/ceiling data)
+   - `--skip-archive` flag: skips archive load entirely (Phase 3b) — only loads execution-lag row into main table for faster external forecast reloads
 3. `inventory` (`fact_inventory_snapshot`) from 14 monthly CSV files (`Inventory_Snapshot_YYYY_MM.csv`)
    - grain: `item_no` + `loc` + `snapshot_date` (monthly)
    - key: `inventory_ck` with `_` separator
@@ -133,17 +136,27 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - UI Accuracy Comparison panel: model comparison pivot table + lag curve chart
    - Views refreshed automatically by `backtest-load`; also manually via `make accuracy-slice-refresh`
 17. Champion model selection (feature15):
-   - Per-DFU best-model selection using Forecast Value Added (FVA) approach
+   - Per-DFU per-month best-model selection using Forecast Value Added (FVA) approach
+   - 5 configurable strategies via `common/champion_strategies.py` strategy registry:
+     - `expanding` — cumulative WAPE, all prior months equal weight (default)
+     - `rolling` — last N months only (configurable `window_months`)
+     - `decay` — exponential decay weighting recent months more (`decay_factor`)
+     - `ensemble` — blend top-K models by inverse-WAPE weights
+     - `meta_learner` — ML classifier predicts best model from DFU features + performance stats
+   - All strategies enforce **exec-lag-aware strict causality**: selection for month T with execution_lag=L uses ONLY data from `startdate < T − L` (= `startdate < fcstdate`), implemented as `shift(exec_lag + 1)` per DFU-model group — prevents using actuals not available at forecast issuance time
+   - **Fallback model** (`fallback_model_id`, default `lgbm_cluster`): fills warm-up DFU-months so every DFU-month always has a champion row
    - WAPE-based DFU-level evaluation: `SUM(ABS(F-A)) / ABS(SUM(A))` per DFU per model
    - Champion composite stored as `model_id='champion'` in `fact_external_forecast_monthly` — auto-appears in all accuracy views
    - Ceiling (oracle) model: per-DFU per-month best model selection — theoretical upper bound with perfect foresight
    - Ceiling stored as `model_id='ceiling'` — provides accuracy benchmark alongside champion
    - Gap-to-ceiling metric shows how far champion is from theoretical best (in percentage points)
-   - YAML config (`config/model_competition.yaml`): competing models, metric (wape/accuracy_pct), lag mode, min DFU rows, ceiling_model_id
-   - CLI: `make champion-select` runs both champion + ceiling
+   - Meta-learner trained on ceiling labels as ground truth with strict temporal train/test split
+   - Simulation script (`simulate_champion_strategies.py`) runs all strategies and compares accuracy vs ceiling
+   - YAML config (`config/model_competition.yaml`): competing models, metric, lag mode, min DFU rows, fallback_model_id, strategy, strategy_params, meta_learner config
+   - CLI: `make champion-select`, `make champion-simulate`, `make champion-train-meta`, `make champion-all`
    - API endpoints: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
-   - UI: Champion Selection panel in Accuracy tab with model checkboxes, metric/lag selectors, champion + ceiling KPI cards, gap indicator, and dual model wins bar charts
-   - Summary saved to `data/champion/champion_summary.json`
+   - UI: Champion Selection panel in Accuracy tab with model checkboxes, metric/lag selectors, strategy selector, champion + ceiling KPI cards, gap indicator, and dual model wins bar charts
+   - Summary saved to `data/champion/champion_summary.json` (includes `fallback_rows_inserted` count)
 18. Data Explorer performance & UX (feature16):
    - Type-aware SQL filtering: `_col_type()` dispatches to native-type clauses instead of universal `::text` casts
    - GIN trigram indexes (`gin_trgm_ops`) on fact table text columns (model_id, dmdunit, loc, dmdgroup) for indexed `ILIKE` substring search
@@ -170,7 +183,7 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 
 ## Additional tables
 1. `chat_embeddings` — pgvector table storing schema metadata embeddings (1536-dim) for NL query context retrieval
-2. `backtest_lag_archive` — stores all-lag (0–4) backtest predictions for accuracy reporting at any horizon; grain: `(forecast_ck, model_id, lag)`; includes `timeframe` column (A–J) for traceability
+2. `backtest_lag_archive` — stores all-lag (0–4) backtest predictions for accuracy reporting at any horizon; grain: `(forecast_ck, model_id, lag)`; includes `timeframe` column (A–J) for traceability; each row preserves its original `lag` as `execution_lag` (staging table is never mutated during loading)
 3. `fact_inventory_snapshot` — monthly inventory position snapshots (~190M rows across 14 months); grain: `(item_no, loc, snapshot_date)`; measures: qty_on_hand, qty_on_hand_on_order, qty_on_order, mtd_sales, lead_time_days
 4. `agg_inventory_monthly` — materialized view aggregating inventory to monthly grain (avg on-hand, avg on-order, avg lead time, total MTD sales)
 5. `job_history` — persistent job tracking table for the APScheduler-powered job engine; includes scheduling columns (`scheduled_cron`, `retry_count`, `max_retries`, `pipeline_id`, `pipeline_step`, `triggered_by`); grain: `(job_id)` PK
@@ -267,14 +280,18 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_g
    - Loads all-lag rows into `backtest_lag_archive` via same pattern
    - `--replace` scoped to `model_id` in CSV (safe for multi-model coexistence)
    - Refreshes `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` materialized views
-12. **Champion Selection** (`run_champion_selection.py`):
-   - Evaluates all competing models per DFU using WAPE (industry-standard Forecast Value Added)
-   - Selects best model per DFU: `ROW_NUMBER() OVER (PARTITION BY dmdunit, dmdgroup, loc ORDER BY wape ASC)`
+12. **Champion Selection** (`run_champion_selection.py` + `common/champion_strategies.py`):
+   - 5 configurable strategies: expanding, rolling, decay, ensemble, meta_learner
+   - Strategy registry in `common/champion_strategies.py` — all strategies operate on pandas DataFrames (testable without DB)
+   - All strategies enforce **exec-lag-aware causality** via `shift(exec_lag + 1)` per DFU-model group — selection for month T excludes last exec_lag months whose actuals weren't available at issuance time; backward compatible with exec_lag=0
+   - **Fallback model** fills warm-up DFU-months (NOT EXISTS + ON CONFLICT DO NOTHING insert) so every DFU-month has a champion row
    - Bulk inserts champion rows via temp table + COPY + INSERT...SELECT with `model_id='champion'`
    - Also computes ceiling (oracle): best model per DFU per month via `ABS(basefcst_pref - tothist_dmd)` ranking
    - Ceiling rows stored as `model_id='ceiling'` — theoretical upper bound with perfect foresight
    - Refreshes materialized views so champion + ceiling auto-appear in all accuracy comparisons
    - Config-driven via `config/model_competition.yaml`; also callable via API
+   - Meta-learner (`scripts/train_meta_learner.py`): RandomForest/XGBoost classifier trained on ceiling labels with temporal split
+   - Simulation (`scripts/simulate_champion_strategies.py`): runs all strategies, compares accuracy vs ceiling
 
 21. StatsForecast backtesting (feature24):
    - Vectorized statistical models (AutoARIMA + AutoETS) from Nixtla's StatsForecast library
@@ -306,6 +323,8 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_g
    - Refreshes 5 materialized views: `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_dfu_coverage`, `agg_accuracy_lag_archive`, `agg_dfu_coverage_lag_archive`
    - Modes: `--list` (inventory), `--dry-run` (preview), `--all-backtest` (bulk cleanup excluding external)
    - Makefile targets: `backtest-clean`, `backtest-list`
+   - Date-range cleanup: `scripts/clean_forecasts_by_date.py` deletes by time bucket (`--before`, `--after`, `--between`, `--months`) on `startdate` or `fcstdate`, with optional `--model` filter, `--forecast-only`/`--archive-only` scope
+   - Makefile targets: `forecast-clean`, `forecast-clean-list`
 25. Product-grade UI overhaul (feature36):
    - Collapsible sidebar navigation replacing horizontal tab bar (9 nav items across 5 sections, 64px collapsed / 240px expanded, mobile drawer)
    - Global filter bar: brand, category, market, channel multi-select dropdowns with debounced URL sync via React context
@@ -362,6 +381,7 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_backtest_framework.py` | `common/backtest_framework.py` — timeframe generation | 9 |
 | `test_mlflow_utils.py` | `common/mlflow_utils.py` — experiment logging | 3 |
 | `test_db.py` | `common/db.py` — connection parameters | 5 |
+| `test_load_dataset_postgres.py` | `scripts/load_dataset_postgres.py` — forecast execution-lag loading (JOIN-based filter, no staging mutation), archive loading, SQL generation | 24 |
 | `test_health.py` | `api/main.py` — health endpoint | 1 |
 | `test_domains.py` | `api/main.py` — domain CRUD endpoints | 6 |
 | `test_forecast_accuracy.py` | `api/main.py` — accuracy/lag endpoints | 3 |

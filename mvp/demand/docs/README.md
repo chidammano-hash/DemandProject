@@ -25,6 +25,9 @@ Forecast source details (MVP):
 - monthly grain dates: `fcstdate`, `startdate` (both month-start)
 - lag rule: `lag = month_diff(startdate, fcstdate)` with allowed range `0..4`
 - `model_id`: identifies forecasting algorithm (default `'external'`); uniqueness is `(forecast_ck, model_id)`
+- loading: dual-path insert with **phase ordering** — archive (`backtest_lag_archive`) loads FIRST from untouched staging (each row's original `lag` preserved as `execution_lag`), THEN staging is mutated from `dim_dfu`, THEN main table (`fact_external_forecast_monthly`) receives **execution-lag rows only** via `WHERE lag = execution_lag`
+- `--replace` flag (or `make load-forecast-replace`): replaces only `model_id='external'` rows, preserving backtest/champion/ceiling data
+- `--skip-archive` flag (or `make load-forecast-replace-no-archive`): skips the 45M-row archive load — only loads execution-lag row into main table for faster reloads
 
 Inventory source details (MVP):
 - input files: 14 monthly CSVs `datafiles/Inventory_Snapshot_YYYY_MM.csv` (~190M rows total)
@@ -235,15 +238,20 @@ Accuracy Comparison (feature10):
 - Refresh manually: `make accuracy-slice-refresh`
 
 Champion Model Selection (feature15):
-- Automatically selects the best-performing model per DFU using industry-standard Forecast Value Added (FVA)
-- Per-DFU WAPE evaluation: picks the lowest-WAPE model for each DFU (dmdunit + dmdgroup + loc)
+- Automatically selects the best-performing model per DFU per month using 5 configurable strategies
+- **Strategies:** expanding (default), rolling (last N months), decay (exponential weighting), ensemble (blend top-K models), meta_learner (ML classifier)
+- All strategies enforce **exec-lag-aware strict causality** — selection for month T with execution_lag=L uses ONLY data from `startdate < T − L` (= `startdate < fcstdate`), implemented as `shift(exec_lag + 1)` per DFU-model group. Prevents using actuals not yet available at forecast issuance time. Fully backward compatible (exec_lag=0 → shift(1)).
+- **Fallback model** (`fallback_model_id: lgbm_cluster` by default): fills warm-up DFU-months that lack sufficient prior history so every DFU-month always has a champion row (idempotent NOT EXISTS insert)
+- Strategy registry in `common/champion_strategies.py` — all strategies operate on pandas DataFrames
 - Champion composite stored as `model_id='champion'` — auto-appears in all accuracy views
 - **Ceiling (oracle) model**: picks the best model per DFU **per month** — theoretical upper bound with perfect foresight
 - Ceiling stored as `model_id='ceiling'` — benchmarks how close champion gets to the theoretical best
 - Gap-to-ceiling metric in the UI shows improvement opportunity (in percentage points)
+- **Meta-learner:** train a classifier on ceiling labels as ground truth with temporal split (`make champion-train-meta`)
+- **Simulation:** compare all strategies vs ceiling in one run (`make champion-simulate`)
 - Configurable via YAML (`config/model_competition.yaml`) or UI panel in Accuracy tab
-- UI: model checkboxes, metric/lag selectors, Run Competition button, champion + ceiling KPI cards, gap indicator, dual model wins bar charts
-- CLI: `make champion-select` (runs both champion + ceiling)
+- UI: model checkboxes, metric/lag selectors, strategy selector, Run Competition button, champion + ceiling KPI cards, gap indicator, dual model wins bar charts
+- CLI: `make champion-select`, `make champion-simulate`, `make champion-train-meta`, `make champion-all`
 - API: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
 
 DFU Analysis (feature17):
@@ -289,6 +297,15 @@ Backtest Cleanup (feature23):
 - Removes from `fact_external_forecast_monthly` + `backtest_lag_archive`, refreshes all materialized views
 - `--all-backtest` protects `model_id='external'` (source-system forecasts)
 - Always `--dry-run` first to preview row counts before deleting
+
+Forecast Date-Range Cleanup:
+- List row counts by model + month: `make forecast-clean-list`
+- Delete by date: `make forecast-clean ARGS="--before 2025-04-01 --model external"`
+- Date range: `make forecast-clean ARGS="--between 2024-01-01 2024-07-01"`
+- Specific months: `make forecast-clean ARGS="--months 2024-03 2024-06 2024-09"`
+- Dry run: add `--dry-run` flag to preview without deleting
+- Scope: `--forecast-only` or `--archive-only` to limit to one table
+- Date column: `--date-column fcstdate` to filter by forecast generation date instead of target month
 
 Benchmark Postgres vs Iceberg/Trino:
 - endpoint: `GET /bench/compare`
@@ -400,6 +417,9 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - Backtest scripts: `mvp/demand/scripts/run_backtest.py`, `run_backtest_catboost.py`, `run_backtest_xgboost.py`, `run_backtest_prophet.py`, `run_backtest_patchtst.py`, `run_backtest_deepar.py`, `run_backtest_statsforecast.py`, `run_backtest_neuralprophet.py`, `load_backtest_forecasts.py`
 - Deep learning models: `mvp/demand/scripts/patchtst_model.py`, `deepar_model.py`
 - Champion selection script: `mvp/demand/scripts/run_champion_selection.py`
+- Champion strategies module: `mvp/demand/common/champion_strategies.py`
+- Champion simulation: `mvp/demand/scripts/simulate_champion_strategies.py`
+- Meta-learner training: `mvp/demand/scripts/train_meta_learner.py`
 - Job engine: `mvp/demand/common/job_registry.py`
 - Jobs router: `mvp/demand/api/routers/jobs.py`
 - Jobs tab: `mvp/demand/frontend/src/tabs/JobsTab.tsx`

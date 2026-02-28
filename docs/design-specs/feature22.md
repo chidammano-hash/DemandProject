@@ -483,3 +483,61 @@ The theming system has been completely redesigned from the spec's 3-theme approa
 ### File Locations
 - `hooks/useTheme.ts`, `components/ThemeSelector.tsx`, `constants/themes/*.ts`, `types/theme.ts`
 - Tests: `useTheme.test.ts` (8 tests), `ThemeSelector.test.tsx` (8 tests)
+
+
+---
+
+## Examples
+
+### Example: Toggle dark mode via keyboard shortcut
+
+```
+Keyboard shortcut: Press 'd' to toggle dark/light mode
+```
+
+### Example: CSS variable palette (light vs dark)
+
+```css
+/* Light mode (default) */
+:root {
+  --bg-primary: #ffffff;
+  --text-primary: #111827;
+  --sidebar-bg: #1e293b;
+  --chart-1: #3b82f6;
+  --chart-2: #10b981;
+  --chart-3: #f59e0b;
+}
+
+/* Dark mode override */
+.dark {
+  --bg-primary: #0f172a;
+  --text-primary: #f1f5f9;
+  --chart-1: #60a5fa;
+  --chart-2: #34d399;
+}
+```
+
+### Example: useThemeContext hook
+
+```typescript
+import { useThemeContext } from '@/context/ThemeContext'
+
+function ThemeToggle() {
+  const { colorMode, toggleColorMode, theme } = useThemeContext()
+  return (
+    <button onClick={toggleColorMode}>
+      {colorMode === 'dark' ? 'Light Mode' : 'Dark Mode'}
+    </button>
+  )
+}
+// theme.name = "Demand Studio"  (single theme, light/dark only)
+```
+
+### Example: Chart colors via useChartColors
+
+```typescript
+import { useChartColors } from '@/hooks/useChartColors'
+const { chartColors, trendColors } = useChartColors()
+// chartColors[0] = '#3b82f6' (light) or '#60a5fa' (dark)
+// Use in Recharts: <Line stroke={chartColors[0]} />
+```

@@ -164,3 +164,132 @@ make backtest-load                 # Reload
 ### Framework Integration
 - `model_params_key="xgboost_params"`, `model_type_tag="xgboost_backtest"`, `cat_dtype="category"`
 - Prediction clipping: `np.maximum(preds, 0)` — demand cannot be negative
+
+
+---
+
+## Examples
+
+### Example: Run XGBoost backtest
+
+```bash
+make backtest-xgboost
+# XGBRegressor(tree_method='hist', enable_categorical=True, n_estimators=500)
+# cat_dtype='category' — pandas Category dtype for native XGBoost categorical support
+# Output: data/backtest_xgboost_global.csv
+make backtest-load  # load as model_id='xgboost_global'
+```
+
+### Example: XGBoost training function
+
+```python
+from xgboost import XGBRegressor
+import numpy as np
+
+# cat_dtype='category' needed for enable_categorical=True
+model = XGBRegressor(
+    tree_method='hist',
+    enable_categorical=True,
+    n_estimators=500,
+    max_depth=6,
+    learning_rate=0.05,
+    device='cuda' if gpu_available else 'cpu',
+)
+model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+preds = np.maximum(model.predict(X_test), 0)
+```
+
+### Example: Per-cluster XGBoost
+
+```bash
+make backtest-xgboost-cluster
+# Trains separate XGBoost model per cluster (7 clusters)
+# Each model only sees DFUs from its cluster → better fit for cluster-specific patterns
+make backtest-load
+```
+
+
+---
+
+## Additional Examples
+
+#### Example — Categorical feature handling (XGBoost-specific)
+
+```python
+from xgboost import XGBRegressor
+from common.constants import CAT_FEATURES
+import pandas as pd
+
+# cat_dtype='category' — XGBoost >= 2.0 reads pandas Category dtype natively
+# No manual encoding needed when tree_method='hist' + enable_categorical=True
+X_train = X_train.copy()
+for col in CAT_FEATURES:
+    if col in X_train.columns:
+        X_train[col] = X_train[col].astype("category")
+
+model = XGBRegressor(
+    tree_method="hist",
+    enable_categorical=True,
+    n_estimators=500,
+    n_jobs=-1,
+    verbosity=0,
+)
+model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+# XGBoost handles category dtype directly — no cat_features index list needed
+```
+
+#### Example — GPU auto-detection for XGBoost
+
+```python
+import subprocess, platform
+
+def _detect_xgboost_device() -> str:
+    """Return 'cuda' if NVIDIA GPU available, else 'cpu'."""
+    if platform.system() == "Linux":
+        result = subprocess.run(["nvidia-smi"], capture_output=True)
+        if result.returncode == 0:
+            return "cuda"
+    # macOS: XGBoost Metal support is experimental; default to cpu
+    return "cpu"
+
+device = _detect_xgboost_device()
+model = XGBRegressor(tree_method="hist", enable_categorical=True,
+                     device=device, verbosity=0)
+```
+
+#### Example — Lag Strategy archive verification for XGBoost
+
+```sql
+-- Confirm all 5 lags are stored for xgboost_global
+SELECT lag, COUNT(*) AS rows
+FROM backtest_lag_archive
+WHERE model_id = 'xgboost_global'
+GROUP BY lag ORDER BY lag;
+-- lag | rows
+--   0 | 95621
+--   1 | 95621
+--   2 | 95621
+--   3 | 95621
+--   4 | 95621
+
+-- Main table has only execution-lag rows
+SELECT COUNT(*) FROM fact_external_forecast_monthly
+WHERE model_id = 'xgboost_global';
+-- 95621  (one row per DFU-month at its execution_lag)
+```
+
+#### Example — Three model strategies comparison
+
+```bash
+make backtest-xgboost          # model_id=xgboost_global
+make backtest-xgboost-cluster  # model_id=xgboost_cluster
+make backtest-xgboost-transfer # model_id=xgboost_transfer
+make backtest-load             # load all three into Postgres
+
+# Compare accuracy across strategies
+curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=model_id&models=xgboost_global,xgboost_cluster,xgboost_transfer&lag=2" \
+  | jq '.rows[] | {model_id, accuracy_pct, wape}'
+# {"model_id": "xgboost_transfer", "accuracy_pct": 93.1, "wape": 6.9}
+# {"model_id": "xgboost_cluster",  "accuracy_pct": 93.0, "wape": 7.0}
+# {"model_id": "xgboost_global",   "accuracy_pct": 91.8, "wape": 8.2}
+```

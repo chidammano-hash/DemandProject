@@ -117,3 +117,137 @@ Note: `domains_used` field documented in original spec is NOT implemented.
 ### TypeScript Types
 - `ChatMessage` type in `frontend/src/types/index.ts`
 - `sendChatMessage(question, domain)` in `api/queries.ts`
+
+
+---
+
+## Examples
+
+### Example: Natural language query via chatbot
+
+```bash
+curl -s -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What is the forecast accuracy for wine items in California for the last 3 months?"}' \
+  | jq '{sql, answer, row_count}'
+# {
+#   "sql": "SELECT ROUND(100.0 - 100.0 * SUM(ABS(basefcst_pref - tothist_dmd)) / ...",
+#   "answer": "Wine items in CA show 91.3% accuracy at lag 2 over the last 3 months.",
+#   "row_count": 1
+# }
+```
+
+### Example: pgvector schema retrieval (context for NL→SQL)
+
+```sql
+-- Embeddings stored in chat_embeddings table
+SELECT table_name, column_name, embedding <=> $1 AS distance
+FROM chat_embeddings
+ORDER BY embedding <=> $1 LIMIT 5;
+-- Returns most relevant schema context for the user's question
+```
+
+### Example: Frontend chat panel (TypeScript)
+
+```typescript
+const { mutateAsync: sendMessage } = useMutation({
+  mutationFn: (question: string) =>
+    fetch('/chat', { method: 'POST', body: JSON.stringify({ question }) })
+      .then(r => r.json()),
+})
+// Usage: await sendMessage("Show top 10 DFUs by forecast error")
+```
+
+
+---
+
+## Additional Examples
+
+#### Example — End-to-end architecture flow
+
+```
+1. User types: "Top 10 DFUs by forecast error last 3 months"
+2. Backend embeds question using text-embedding-3-small (1536-dim vector)
+3. pgvector cosine similarity retrieves top-10 schema chunks from chat_embeddings:
+     - fact_external_forecast_monthly.tothist_dmd  (distance=0.12)
+     - fact_external_forecast_monthly.basefcst_pref (distance=0.14)
+     - dim_dfu.dmdunit / dmdgroup / loc             (distance=0.18)
+4. GPT-4o generates SQL:
+     SELECT dmdunit, SUM(ABS(basefcst_pref - tothist_dmd)) AS total_error
+     FROM fact_external_forecast_monthly
+     WHERE startdate >= NOW() - INTERVAL '3 months'
+       AND model_id = 'external' AND lag = 0
+     GROUP BY dmdunit ORDER BY total_error DESC LIMIT 10;
+5. Backend validates: starts with SELECT, no forbidden keywords
+6. Executes in read-only transaction with 5s timeout, 500-row cap
+7. Returns: answer (narrative), sql (the query), data (10 rows), columns, row_count
+```
+
+#### Example — Safety guardrails in action
+
+```bash
+# Attempt a forbidden write query via the chat endpoint
+curl -s -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Delete all forecast records"}' \
+  | jq '{answer, error}'
+# {"answer": "I can only run read-only queries on this database.",
+#  "error": "SQL safety check failed: forbidden keyword DELETE"}
+
+# SQL timeout guard — a slow aggregation is cut off at 5 seconds
+curl -s -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Count every row in every table"}' \
+  | jq '{answer, error}'
+# {"answer": "Query timed out. Try a more specific question.",
+#  "error": "canceling statement due to statement timeout"}
+```
+
+#### Example — Schema context strategy (system prompt excerpt)
+
+```
+System prompt sent to GPT-4o:
+---
+Tables available:
+  fact_external_forecast_monthly(forecast_ck, dmdunit, dmdgroup, loc, fcstdate,
+    startdate, lag, execution_lag, basefcst_pref, tothist_dmd, model_id, ...)
+  fact_sales_monthly(...)
+  dim_dfu(dmdunit, dmdgroup, loc, ml_cluster, execution_lag, ...)
+
+Business rules:
+  - Forecast accuracy = 100 - (100 * SUM(ABS(F-A)) / ABS(SUM(A)))
+  - Bias = (SUM(F) / SUM(A)) - 1
+  - Sales rows: TYPE=1 only
+  - lag 0 = same-month forecast; lag 4 = 4-month-ahead forecast
+  - Always add LIMIT 500
+
+Relevant schema context (from pgvector retrieval):
+  [top-10 semantically similar chunks from chat_embeddings]
+
+Generate a PostgreSQL SELECT query. Return JSON: {answer, sql}
+---
+```
+
+#### Example — One-time setup and embedding generation
+
+```bash
+# Apply pgvector DDL (one-time)
+make db-apply-chat
+# Creates: pgvector extension, chat_embeddings table,
+#          IVFFlat index idx_chat_embeddings_vector
+
+# Generate and store schema embeddings
+OPENAI_API_KEY=sk-... make generate-embeddings
+# Reads domain_specs.py → generates ~150 chunks (table_desc, column_desc,
+#   example_query, relationship) → upserts into chat_embeddings
+# Elapsed: ~10 seconds, ~$0.001 in API cost
+
+# Verify embeddings stored
+docker exec demand-mvp-postgres psql -U demand -d demand_mvp \
+  -c "SELECT content_type, COUNT(*) FROM chat_embeddings GROUP BY 1;"
+# content_type   | count
+# table_desc     |     8
+# column_desc    |   112
+# example_query  |    24
+# relationship   |     6
+```

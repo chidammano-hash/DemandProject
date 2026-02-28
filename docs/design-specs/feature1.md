@@ -87,7 +87,7 @@ Build a scalable forecasting platform for:
 - **Feature 12:** CatBoost backtesting implementation — global + per-cluster models, native categorical support, same feature engineering as LGBM
 - **Feature 13:** XGBoost backtesting implementation — global + per-cluster models, histogram-based with native categorical support
 - **Feature 14:** Transfer learning backtest strategy — global base model → per-cluster fine-tune via warm-start for all three frameworks
-- **Feature 15:** Champion model selection — per-DFU best-of-models pick via WAPE, ceiling (oracle) model for theoretical upper bound, gap-to-ceiling analysis, UI-editable competition config, FVA analysis
+- **Feature 15:** Champion model selection — per-DFU per-month best-of-models via 5 configurable strategies (expanding, rolling, decay, ensemble, meta_learner), exec-lag-aware strict causality (`shift(exec_lag+1)` per DFU-model group), fallback model for warm-up gaps (default: lgbm_cluster), strategy registry in `common/champion_strategies.py`, ceiling (oracle) model for theoretical upper bound, gap-to-ceiling analysis, meta-learner training on ceiling labels, simulation framework comparing all strategies, UI-editable competition config, FVA analysis
 - **Feature 16:** Data Explorer performance & UX — type-aware SQL filtering, GIN trigram indexes, capped COUNT, column-level typeahead suggestions, chemistry-themed loading overlay, debounce stability fix
 - **Feature 17:** DFU Analysis tab — unified sales vs multi-model forecast overlay chart, 3 analysis modes (item@location, all items@location, item@all locations), per-model KPI cards, toggleable measures
 - **Feature 18:** Market intelligence — AI-powered market briefings combining Google web search + GPT-4o narrative synthesis for item + location pairs, with demographic context and demand insights
@@ -167,3 +167,44 @@ This gives the best balance of scale, speed, model governance, and simplicity fo
 
 ### Modular Router Architecture
 10 router modules in `api/routers/`: domains, clusters, accuracy, analysis, benchmark, chat, competition, intel, jobs. Mounted via `app.include_router()` in `main.py`.
+
+
+---
+
+## Examples
+
+### Example: Start all infrastructure services
+
+```bash
+make up       # Start 7 Docker services
+make api      # FastAPI on :8000
+make ui       # React on :5173
+curl -s http://localhost:8000/health | jq .
+# {"status": "ok", "db": "connected"}
+```
+
+### Example: End-to-end data pipeline
+
+```bash
+make normalize-sales   # datafiles/dfu_lvl2_hist.txt → data/dfu_lvl2_hist_clean.csv
+make load-sales        # clean CSV → fact_sales_monthly
+make check-db
+# fact_sales_monthly   | 2,847,362 rows
+# agg_sales_monthly    |    94,221 rows
+```
+
+### Example: Query actuals vs forecast in PostgreSQL
+
+```sql
+SELECT s.startdate, s.qty_shipped AS actual, f.basefcst_pref AS forecast,
+       ABS(f.basefcst_pref - s.qty_shipped) AS abs_error
+FROM fact_sales_monthly s
+JOIN fact_external_forecast_monthly f
+     ON s.dmdunit=f.dmdunit AND s.loc=f.loc AND s.startdate=f.startdate
+WHERE s.dmdunit='100320' AND s.loc='1401-BULK'
+  AND s.type=1 AND f.model_id='external' AND f.lag=2
+ORDER BY s.startdate DESC LIMIT 3;
+-- 2026-01-01 | 788 | 820 | 32
+-- 2025-12-01 | 910 | 875 | 35
+-- 2025-11-01 | 842 | 891 | 49
+```

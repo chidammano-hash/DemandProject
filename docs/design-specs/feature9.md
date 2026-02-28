@@ -41,6 +41,26 @@ All features are **strictly causal** — only data available before the target m
 - Complete (DFU x month) grid ensures lag features work for zero-demand months
 - Sales data masked at `train_end` cutoff to prevent future leakage
 
+#### Example
+
+```python
+import pandas as pd
+import numpy as np
+
+# Build lag features for item 100320 at 1401-BULK
+df = sales_df[sales_df.dmdunit == '100320'].sort_values('startdate')
+for lag in [1, 2, 3, 6, 12]:
+    df[f'qty_lag_{lag}'] = df['qty_shipped'].shift(lag)
+
+# Rolling stats — ALWAYS shift(1) before rolling to prevent data leakage
+df['rolling_mean_3m'] = df['qty_shipped'].shift(1).rolling(3).mean()
+df['rolling_std_6m']  = df['qty_shipped'].shift(1).rolling(6).std()
+
+# Calendar cyclical features
+df['month_sin'] = np.sin(2 * np.pi * df['startdate'].dt.month / 12)
+df['month_cos'] = np.cos(2 * np.pi * df['startdate'].dt.month / 12)
+```
+
 ## Lag Strategy
 
 ### Main Table (`fact_external_forecast_monthly`)
@@ -90,6 +110,25 @@ backtest-load:          # Load predictions into Postgres (main + archive)
 backtest-all:           # backtest-lgbm + backtest-load
 ```
 
+#### Example
+
+```bash
+# Run the global LGBM backtest (10 expanding timeframes A-J)
+cd mvp/demand
+make backtest-lgbm
+# Output: data/backtest_predictions.csv (~95k rows at execution lag)
+#         data/backtest_predictions_all_lags.csv (~475k rows, lags 0-4)
+
+# Load into Postgres and refresh materialized views
+make backtest-load
+# Inserts into fact_external_forecast_monthly WHERE model_id='lgbm_global'
+# Refreshes: agg_forecast_monthly, agg_accuracy_by_dim, agg_dfu_coverage,
+#            agg_accuracy_lag_archive, agg_dfu_coverage_lag_archive
+
+# Verify predictions loaded
+curl -s "http://localhost:8000/domains/forecast/rows?model_id==lgbm_global&limit=5" | python3 -m json.tool
+```
+
 ## Schema
 
 ### Main table
@@ -130,6 +169,28 @@ make backtest-lgbm-cluster         # Per-cluster backtest
 make backtest-load                 # Reload
 ```
 
+#### Example: Archive Table Query
+
+```sql
+-- Verify all 5 lags are stored for lgbm_global
+SELECT lag, COUNT(*) AS rows, ROUND(AVG(basefcst_pref),2) AS avg_fcst
+FROM backtest_lag_archive
+WHERE model_id = 'lgbm_global'
+GROUP BY lag ORDER BY lag;
+-- lag | rows   | avg_fcst
+--   0 | 95621  |  1243.50
+--   1 | 95621  |  1231.80
+--   2 | 95621  |  1218.40
+--   3 | 95621  |  1205.20
+--   4 | 95621  |  1198.70
+
+-- Check per-cluster model coverage
+SELECT model_id, COUNT(DISTINCT dmdunit || dmdgroup || loc) AS dfus, COUNT(*) AS rows
+FROM fact_external_forecast_monthly
+WHERE model_id IN ('lgbm_global', 'lgbm_cluster')
+GROUP BY model_id;
+```
+
 ## Dependencies
 - Feature 8 (backtesting framework)
 - Feature 7 (clustering)
@@ -165,3 +226,74 @@ make backtest-load                 # Reload
 - Drops secondary indexes/constraints before bulk insert (`--replace`), recreates after
 - Refreshes 5 materialized views: `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_dfu_coverage`, `agg_accuracy_lag_archive`, `agg_dfu_coverage_lag_archive`
 - Uses upsert (`ON CONFLICT DO UPDATE`) when not in replace mode
+
+
+---
+
+## Additional Examples
+
+#### Example — Lag Strategy Row Expansion
+
+```python
+import pandas as pd
+
+# For a DFU with execution_lag=2, one prediction becomes:
+#   Main table : 1 row  (lag=2, fcstdate = startdate - 2 months)
+#   Archive    : 5 rows (lag=0 through lag=4)
+
+base_row = {
+    "dmdunit": "100320", "loc": "1401-BULK",
+    "startdate": pd.Timestamp("2025-04-01"),
+    "basefcst_pref": 1200, "tothist_dmd": 1100,
+    "model_id": "lgbm_global", "timeframe": "G",
+}
+
+archive_rows = [
+    {**base_row,
+     "lag": lag,
+     "fcstdate": base_row["startdate"] - pd.DateOffset(months=lag),
+     "execution_lag": lag}        # original lag preserved per row in archive
+    for lag in range(5)            # 0, 1, 2, 3, 4
+]
+# Phase 3b loads archive BEFORE staging mutation → each row keeps its own lag
+# Phase 5 inserts main table WHERE lag = execution_lag (only lag=2 row enters)
+```
+
+#### Example — Apple GPU (OpenCL) Auto-Detection
+
+```python
+import platform, subprocess
+
+def _detect_lgbm_device() -> str:
+    """Return 'gpu' if OpenCL GPU is available on macOS, else 'cpu'."""
+    if platform.system() != "Darwin":
+        return "cpu"
+    try:
+        result = subprocess.run(
+            ["system_profiler", "SPDisplaysDataType"],
+            capture_output=True, text=True, timeout=5
+        )
+        if "Metal" in result.stdout or "OpenCL" in result.stdout:
+            return "gpu"
+    except Exception:
+        pass
+    return "cpu"
+
+# Usage in run_backtest.py
+device = _detect_lgbm_device()
+model_params = {"device": device, "verbosity": -1, "n_estimators": 500}
+# LightGBM silently falls back to CPU if GPU driver is missing
+```
+
+#### Example — Load Script Batch Insert
+
+```bash
+# Bulk-load 475k archive rows using BATCH_SIZE=2,000,000 with index drop/recreate
+uv run python scripts/load_backtest_forecasts.py \
+  --input data/backtest_predictions_all_lags.csv \
+  --model-id lgbm_global \
+  --replace
+# Drops secondary indexes before COPY (faster bulk insert)
+# Recreates indexes + refreshes 5 materialized views on completion
+# Elapsed: ~45 seconds for 475k archive rows on local Postgres
+```

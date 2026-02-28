@@ -1276,3 +1276,49 @@ Actual implementation has **6 filters** (spec lists 5):
 ### Additional Files (not in spec)
 - `src/components/EChartContainer.tsx` — theme-aware ECharts wrapper
 - `src/hooks/useDebounce.ts` — generic debounce hook
+
+
+---
+
+## Examples
+
+### Example: Collapsible sidebar toggle
+
+```typescript
+// components/AppSidebar.tsx
+const { collapsed, toggleSidebar } = useSidebar()
+// Keyboard shortcut: '[' to toggle sidebar
+// Mobile: drawer pattern (slides in from left on button tap)
+
+// Collapsed state: shows icons only (no labels)
+// Expanded state: shows icons + labels + section headers
+```
+
+### Example: Global filter bar — cross-tab state
+
+```typescript
+// context/GlobalFilterContext.tsx
+import { useGlobalFilters } from '@/context/GlobalFilterContext'
+
+function MyTab() {
+  const { brand, category, item, location, setFilter } = useGlobalFilters()
+
+  // Filters applied in dashboard, accuracy, explorer tabs
+  // setFilter('item', '100320') → URL: ?item=100320
+  // setFilter('location', '1401-BULK') → URL: ?item=100320&loc=1401-BULK
+}
+```
+
+### Example: Dashboard KPI sparkline cards
+
+```bash
+curl -s "http://localhost:8000/dashboard/kpis" | jq '{accuracy_pct, total_forecast, total_actual, wape}'
+# {"accuracy_pct": 91.8, "total_forecast": 18420300, "total_actual": 17950100, "wape": 8.2}
+```
+
+### Example: Top movers widget
+
+```bash
+curl -s "http://localhost:8000/dashboard/top-movers?window=3&limit=5" | jq '.rows[0]'
+# {"item_no":"100320","loc":"1401-BULK","pct_change": 18.4, "direction": "up", "qty_delta": 127}
+```

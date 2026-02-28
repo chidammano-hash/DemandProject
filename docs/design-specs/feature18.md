@@ -187,3 +187,90 @@ GOOGLE_CSE_ID=<your-custom-search-engine-id>
 | `mvp/demand/frontend/src/tabs/MarketIntelTab.tsx` | Extracted tab component |
 | `mvp/demand/tests/api/test_intel.py` | Backend API tests |
 | `mvp/demand/frontend/src/tabs/__tests__/MarketIntelTab.test.tsx` | Frontend smoke test |
+
+
+---
+
+## Examples
+
+### Example: Market intelligence request
+
+```bash
+curl -s -X POST http://localhost:8000/market-intelligence \
+  -H "Content-Type: application/json" \
+  -d '{"item_no": "100320", "location_id": "1401-BULK"}' \
+  | jq '{item_desc, narrative_preview: .narrative[0:120]}'
+# {
+#   "item_desc": "CABERNET SAUV 750ML",
+#   "narrative_preview": "California wine demand remains resilient heading into Q1 2026..."
+# }
+```
+
+### Example: Required environment variables
+
+```bash
+# .env
+OPENAI_API_KEY=sk-...        # Required for GPT-4o narrative synthesis
+GOOGLE_API_KEY=AIza...       # Optional: Google Custom Search API
+GOOGLE_CSE_ID=abc123...      # Optional: Google Custom Search Engine ID
+```
+
+### Example: Sample narrative response structure
+
+```json
+{
+  "item_no": "100320",
+  "item_desc": "CABERNET SAUV 750ML",
+  "brand": "COASTAL RIDGE",
+  "location_id": "1401-BULK",
+  "state": "CA",
+  "search_results": [
+    {"title": "CA Wine Sales Outlook 2026", "snippet": "..."}
+  ],
+  "narrative": "**Market Overview**: Coastal Ridge Cabernet demand in CA remains strong...",
+  "generated_at": "2026-02-28T14:30:00Z"
+}
+```
+
+### Example: Error handling — Google API unavailable, fallback to OpenAI web search
+
+```python
+# api/routers/intel.py — graceful fallback when Google CSE not configured
+try:
+    search_results = google_search(query, api_key=GOOGLE_API_KEY, cx=GOOGLE_CX)
+except Exception as exc:
+    # Fallback: use OpenAI web_search_preview tool instead of Google
+    logger.warning(f"Google search failed ({exc}), falling back to OpenAI web search")
+    response = openai_client.responses.create(
+        model="gpt-4o-mini",
+        tools=[{"type": "web_search_preview"}],
+        input=f"Search for: {query}"
+    )
+    # Extract URL citations from response
+    search_results = [
+        {"title": ann.title, "link": ann.url, "snippet": ""}
+        for ann in response.output[0].content
+        if hasattr(ann, "url")
+    ]
+
+# If BOTH Google and OpenAI web search fail → HTTP 503
+if not search_results and not openai_available:
+    raise HTTPException(503, detail="No search provider configured (GOOGLE_API_KEY or OPENAI_API_KEY required)")
+```
+
+### Example: Verify env config and test the endpoint
+
+```bash
+# Check which search provider is active
+grep -E "GOOGLE_API_KEY|GOOGLE_CX|OPENAI_API_KEY" mvp/demand/.env
+
+# Test market intelligence with curl (requires API_KEY if set)
+curl -s -X POST http://localhost:8000/market-intelligence \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{"item_no": "100320", "location_id": "1401-BULK"}' | jq '.narrative | .[0:200]'
+# "## Market Overview\nCabernet Sauvignon from California remains..."
+
+# 503 response if neither search provider configured:
+# {"detail": "No search provider configured"}
+```

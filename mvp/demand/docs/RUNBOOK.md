@@ -26,7 +26,9 @@ make load-sales
 Forecast fact only:
 ```bash
 make normalize-forecast
-make load-forecast
+make load-forecast              # TRUNCATE all + reload external (exec-lag row → main via JOIN, all lags → archive untouched)
+make load-forecast-replace      # Replace external only (preserves backtest/champion/ceiling rows)
+make load-forecast-replace-no-archive  # Replace external only, skip archive load (fast, no 45M archive INSERT)
 ```
 
 Inventory fact only:
@@ -260,7 +262,7 @@ Predictions are stored in `fact_external_forecast_monthly` with model_id values:
 - StatsForecast: `statsforecast_global` / `statsforecast_cluster` / `statsforecast_pooled`
 - NeuralProphet: `neuralprophet_global` / `neuralprophet_cluster` / `neuralprophet_pooled`
 
-All-lag predictions are archived in `backtest_lag_archive` for accuracy reporting at any horizon. Results appear automatically in the forecast model selector UI and accuracy KPIs.
+All-lag predictions are archived in `backtest_lag_archive` for accuracy reporting at any horizon, with each row's original `lag` preserved as `execution_lag` (staging data is never mutated). Results appear automatically in the forecast model selector UI and accuracy KPIs.
 
 `make backtest-load` also automatically refreshes the accuracy slice views (`agg_accuracy_by_dim`, `agg_accuracy_lag_archive`) after loading — no additional step needed.
 
@@ -301,6 +303,54 @@ This removes rows from both `fact_external_forecast_monthly` and `backtest_lag_a
 - Always use `--dry-run` first to preview row counts before deleting
 - After cleanup, re-run `make champion-select` if champion/ceiling rows are affected
 
+## 3d-2) Clean up forecasts by date range
+
+To remove forecast data for specific time periods:
+
+### List row counts by model and month
+```bash
+make forecast-clean-list
+```
+
+### Preview what would be deleted (dry run)
+```bash
+make forecast-clean ARGS="--before 2025-04-01 --model external --dry-run"
+```
+
+### Delete all external model data before April 2025
+```bash
+make forecast-clean ARGS="--before 2025-04-01 --model external"
+```
+
+### Delete all models between Jan-Jun 2024
+```bash
+make forecast-clean ARGS="--between 2024-01-01 2024-07-01"
+```
+
+### Delete specific months
+```bash
+make forecast-clean ARGS="--months 2024-03 2024-06 2024-09"
+```
+
+### Delete a single month for one model
+```bash
+make forecast-clean ARGS="--months 2025-01 --model external"
+```
+
+### Delete from archive only, using fcstdate column
+```bash
+make forecast-clean ARGS="--before 2025-01-01 --date-column fcstdate --archive-only"
+```
+
+This removes matching rows from `fact_external_forecast_monthly` and/or `backtest_lag_archive`, then refreshes all 5 dependent materialized views.
+
+**Date formats accepted:** `YYYY-MM-DD`, `YYYY-MM`, `MM/DD/YYYY` (all normalized to month-start)
+
+**Safety notes:**
+- Always use `--dry-run` first to preview row counts before deleting
+- Use `--model external` carefully — this removes source-system forecasts
+- After cleanup, re-run `make champion-select` if champion/ceiling rows are affected
+
 ## 3e) Multi-dimensional accuracy comparison (feature10)
 
 After running `make backtest-load`, the accuracy slice views are automatically populated. To view accuracy sliced by DFU attributes:
@@ -331,14 +381,40 @@ API endpoints:
 
 ## 3f) Champion model selection (feature15)
 
-After loading backtest predictions for multiple models, run champion selection to identify the best model per DFU:
+After loading backtest predictions for multiple models, run champion selection to identify the best model per DFU per month.
+
+### Selection Strategies
+
+The system supports 5 configurable strategies via `config/model_competition.yaml`. All strategies enforce **strict causality** — selection for month T uses ONLY data from months < T (no data leak).
+
+| Strategy | Key Idea | Default |
+|---|---|---|
+| `expanding` | Cumulative WAPE, all prior months equal weight | **Default** |
+| `rolling` | Last N months only (`window_months`, default 6) | |
+| `decay` | Exponential decay — recent months weighted more (`decay_factor`, default 0.9) | |
+| `ensemble` | Blend top-K models by inverse-WAPE weights (`top_k`, default 3) | |
+| `meta_learner` | ML classifier predicts best model from DFU features + performance stats | |
+
+Strategy registry lives in `common/champion_strategies.py`. Each strategy operates on a pandas DataFrame (testable without DB).
 
 ### Via CLI
-```bash
-make champion-select
-```
 
-This reads `config/model_competition.yaml`, computes per-DFU WAPE for each competing model, picks the lowest-WAPE winner per DFU, inserts champion forecast rows with `model_id='champion'`, and also computes the ceiling (oracle) model — the per-DFU per-month best pick stored as `model_id='ceiling'`.
+```bash
+# Run with default strategy (from config YAML)
+make champion-select
+
+# Override strategy on command line
+cd mvp/demand && .venv/bin/python -m scripts.run_champion_selection --strategy rolling
+
+# Train meta-learner classifier (required before using meta_learner strategy)
+make champion-train-meta
+
+# Simulate all strategies and compare accuracy vs ceiling
+make champion-simulate
+
+# Full pipeline: train meta-learner + simulate + select
+make champion-all
+```
 
 ### Via UI
 1. Open the Forecast domain in the UI.
@@ -346,19 +422,20 @@ This reads `config/model_competition.yaml`, computes per-DFU WAPE for each compe
 3. Scroll to the **Champion Selection** panel.
 4. Check/uncheck models to include in the competition.
 5. Select metric (WAPE or Accuracy %) and lag mode (Execution Lag or fixed 0–4).
-6. Click **Save Config** to persist changes to YAML.
-7. Click **Run Competition** to execute champion selection + ceiling computation.
-8. Results show: DFUs evaluated, champion accuracy/WAPE, ceiling accuracy/WAPE (oracle), gap-to-ceiling, and model wins breakdown for both champion and ceiling.
+6. Select strategy (expanding, rolling, decay, ensemble, meta_learner).
+7. Click **Save Config** to persist changes to YAML.
+8. Click **Run Competition** to execute champion selection + ceiling computation.
+9. Results show: DFUs evaluated, champion accuracy/WAPE, ceiling accuracy/WAPE (oracle), gap-to-ceiling, and model wins breakdown for both champion and ceiling.
 
 ### Via API
 ```bash
 # Get current config + available models
 curl http://localhost:8000/competition/config
 
-# Update config
+# Update config (with strategy)
 curl -X PUT http://localhost:8000/competition/config \
   -H "Content-Type: application/json" \
-  -d '{"metric": "wape", "lag": "execution", "min_dfu_rows": 3, "models": ["external", "lgbm_global", "catboost_global"]}'
+  -d '{"metric": "wape", "lag": "execution", "min_dfu_rows": 3, "models": ["lgbm_cluster", "catboost_cluster", "xgboost_cluster"], "strategy": "rolling", "strategy_params": {"window_months": 6}}'
 
 # Run champion selection
 curl -X POST http://localhost:8000/competition/run
@@ -373,9 +450,39 @@ curl http://localhost:8000/competition/summary
 - Summary saved to `data/champion/champion_summary.json` (includes both champion and ceiling metrics)
 - Materialized views refreshed automatically — champion + ceiling appear in all accuracy comparisons
 - Running again is idempotent (old champion and ceiling rows replaced)
+- Simulation results saved to `data/champion/simulation_results.json`
 
 ### Config file
-`config/model_competition.yaml` controls which models compete, the selection metric, lag mode, and minimum DFU rows. Editable from the UI or directly on disk.
+`config/model_competition.yaml` controls which models compete, the selection metric, lag mode, minimum DFU rows, strategy, and strategy parameters. Editable from the UI or directly on disk.
+
+```yaml
+competition:
+  metric: accuracy_pct
+  lag: execution
+  min_dfu_rows: 3
+  models: [lgbm_cluster, catboost_cluster, xgboost_cluster, neuralprophet_cluster, statsforecast_global]
+  strategy: expanding          # expanding | rolling | decay | ensemble | meta_learner
+  strategy_params:
+    window_months: 6           # rolling strategy window
+    decay_factor: 0.90         # decay strategy weighting
+    top_k: 3                   # ensemble: blend top-K models
+    performance_window: 6      # meta-learner feature window
+  meta_learner:
+    model_type: random_forest  # random_forest | xgboost
+    n_estimators: 200
+    max_depth: 15
+    test_months: 3
+    performance_window: 6
+```
+
+### Key files
+| File | Purpose |
+|---|---|
+| `common/champion_strategies.py` | 5 strategy functions + registry + accuracy helper + leak guards |
+| `scripts/run_champion_selection.py` | CLI: per-DFU champion selection via configurable strategy |
+| `scripts/train_meta_learner.py` | Train meta-learner classifier (ceiling labels as ground truth) |
+| `scripts/simulate_champion_strategies.py` | Diagnostic: run all strategies, compare accuracy vs ceiling |
+| `config/model_competition.yaml` | Strategy + model + metric configuration |
 
 ## 3g) Apply performance indexes (recommended for large tables)
 
@@ -459,7 +566,8 @@ tests/
 │   ├── test_domain_specs.py  # All 8 domains (parametrized)
 │   ├── test_backtest_framework.py  # Timeframe generation
 │   ├── test_mlflow_utils.py  # MLflow logging
-│   └── test_db.py         # DB connection parameters
+│   ├── test_db.py         # DB connection parameters
+│   └── test_load_dataset_postgres.py  # Forecast execution-lag loading (JOIN-based, no staging mutation) + archive
 └── api/
     ├── conftest.py        # Mock pool + async httpx client
     ├── test_health.py     # Health endpoint

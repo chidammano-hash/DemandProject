@@ -712,3 +712,52 @@ Backend: no new Python packages. Uses existing `scikit-learn`, `pandas`, `yaml`,
 - `frontend/src/tabs/__tests__/ClustersTab.test.tsx` (3 tests)
 - `frontend/src/tabs/__tests__/WhatIfScenarios.test.tsx` (7 tests)
 - `frontend/src/context/__tests__/ScenarioNotificationContext.test.tsx` (4 tests)
+
+---
+
+## Examples
+
+### Example: Full What-If scenario workflow
+
+```bash
+# Step 1: Get runtime estimate
+curl -s "http://localhost:8000/clustering/scenario/estimate?k_max=8&gap=true" | jq .
+# {"estimated_seconds": 72, "dfu_count": 18432, "k_range": 5}
+
+# Step 2: Submit scenario (202 Accepted — runs in background)
+SCENARIO_ID=$(curl -s -X POST http://localhost:8000/clustering/scenario \
+  -H "Content-Type: application/json" \
+  -d '{"model_params": {"k_range": [3, 8]}, "feature_params": {}, "label_params": {}}' \
+  | jq -r '.id')
+echo $SCENARIO_ID
+# scen_20260228_143021
+
+# Step 3: Poll for completion
+curl -s "http://localhost:8000/clustering/scenario/$SCENARIO_ID/status" | jq .
+# {"status": "completed", "elapsed_seconds": 68, "best_k": 6, "silhouette": 0.71}
+
+# Step 4: Promote to production
+curl -s -X POST "http://localhost:8000/clustering/scenario/$SCENARIO_ID/promote"
+# {"promoted": true, "dfus_updated": 18432}
+```
+
+### Example: TypeScript status polling with TanStack Query
+
+```typescript
+const { data: statusData } = useQuery({
+  queryKey: ['scenario-status', scenarioId],
+  queryFn: () => fetchScenarioStatus(scenarioId),
+  refetchInterval: (data) =>
+    data?.status === 'running' ? 3000 : false,  // poll every 3s while running
+  enabled: !!scenarioId,
+})
+```
+
+### Example: Scenario queueing (when clustering group is busy)
+
+```bash
+# Second scenario submitted while first is running → status: "queued"
+curl -s -X POST http://localhost:8000/clustering/scenario \
+  -d '{"model_params": {"k_range": [4, 6]}, ...}' | jq .status
+# "queued"  ← auto-dispatched when active job completes
+```

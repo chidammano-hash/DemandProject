@@ -406,3 +406,76 @@ Additional fields not in spec:
 - "Promote" button on each expanded entry triggers the existing promote flow
 - Data fetched via `fetchScenarioHistory(10)` with 30s stale time, refetches when What-If is expanded
 - Only one entry expanded at a time (expanding one collapses the previous)
+
+
+---
+
+## Examples
+
+### Example: Job scheduler — complete workflow
+
+```bash
+# Submit a job
+curl -s -X POST http://localhost:8000/jobs \
+  -H "Content-Type: application/json" \
+  -d '{"job_type": "champion_select", "label": "Monthly Champion Feb 2026"}' \
+  | jq '{job_id, status}'
+# {"job_id": "job_20260228_020000_abc1", "status": "queued"}
+
+# Dashboard stats
+curl -s http://localhost:8000/jobs/stats | jq .
+# {"total": 47, "active": 1, "completed": 44, "failed": 2, "success_rate": 95.7, "avg_duration_seconds": 142}
+
+# List active jobs
+curl -s http://localhost:8000/jobs/active | jq '.[0] | {job_id, job_type, elapsed_seconds}'
+# {"job_id": "job_20260228_020000_abc1", "job_type": "champion_select", "elapsed_seconds": 38}
+```
+
+### Example: Schedule nightly jobs
+
+```bash
+# Schedule clustering at 2AM daily
+curl -s -X POST http://localhost:8000/jobs/schedule \
+  -H "Content-Type: application/json" \
+  -d '{"job_type": "clustering", "cron": "0 2 * * *", "label": "Nightly Cluster Refresh"}'
+
+# Schedule weekly backtest on Sunday 3AM
+curl -s -X POST http://localhost:8000/jobs/schedule \
+  -d '{"job_type": "backtest_lgbm", "cron": "0 3 * * 0", "label": "Weekly LGBM Backtest"}'
+
+# View all schedules
+curl -s http://localhost:8000/jobs/schedules | jq '.[].label'
+# "Nightly Cluster Refresh"
+# "Weekly LGBM Backtest"
+```
+
+### Example: Run a pipeline (sequential job chaining)
+
+```bash
+curl -s -X POST http://localhost:8000/jobs/pipeline \
+  -H "Content-Type: application/json" \
+  -d '{"steps": [
+    {"job_type": "backtest_lgbm",   "label": "Step 1: LGBM Backtest"},
+    {"job_type": "champion_select", "label": "Step 2: Champion Selection"}
+  ], "label": "Full Forecast Pipeline"}' \
+  | jq '{pipeline_id, n_steps, status}'
+# {"pipeline_id": "pipe_20260228_abc", "n_steps": 2, "status": "running"}
+```
+
+### Example: Python JobManager usage
+
+```python
+from common.job_registry import JobManager
+
+mgr = JobManager()  # singleton — same instance across all calls
+
+# Submit a job
+job_id = mgr.submit_job(job_type='clustering', params={})
+
+# Check status
+status = mgr.get_status(job_id)
+print(status)  # {'status': 'completed', 'elapsed': 68, 'result': {...}}
+
+# Cancel a queued job
+mgr.cancel_job(job_id)
+```

@@ -151,3 +151,173 @@ All type-aware helpers have been refactored from `api/main.py` to new locations:
 ### Key Files (updated locations)
 - `api/core.py` — type-aware helpers, pagination, SQL utilities
 - `api/routers/domains.py` — suggest endpoint, domain CRUD
+
+
+---
+
+## Examples
+
+### Example: Type-aware column filtering
+
+```bash
+# GIN trigram search (partial match, no = prefix) — uses pg_trgm index
+curl -s "http://localhost:8000/domains/item/page?description=cabernet&limit=20" | jq '.total_rows'
+# 47
+
+# B-tree exact match (= prefix) — uses native type index
+curl -s "http://localhost:8000/domains/item/page?brand==COASTAL+RIDGE&limit=50" | jq '.total_rows'
+# 312
+
+# Numeric range filter
+curl -s "http://localhost:8000/domains/item/page?item_proof=>13&limit=50" | jq '.total_rows'
+# 1,847
+```
+
+### Example: Column typeahead suggestions
+
+```bash
+curl -s "http://localhost:8000/domains/item/suggest?col=brand&q=coast" | jq .
+# {"suggestions": ["COASTAL RIDGE", "COASTAL HIGHWAY", "COAST MOUNTAINS"]}
+```
+
+### Example: Approximate row count for large queries
+
+```bash
+curl -s "http://localhost:8000/domains/sales/page?limit=50" | jq '{total_rows, approximate}'
+# {"total_rows": 2847362, "approximate": true}
+# Badge shown as "2,800,000+" in the UI
+```
+
+### Example: GIN index performance comparison
+
+```sql
+EXPLAIN ANALYZE
+SELECT item_no, description FROM dim_item
+WHERE description ILIKE '%cabernet%';
+-- "Bitmap Heap Scan on dim_item (cost=12.50..48.31 rows=47)"
+-- "  Recheck Cond: (description % 'cabernet'::text)"
+-- "  ->  Bitmap Index Scan on idx_dim_item_description_trgm"
+-- Planning time: 0.3ms  Execution time: 0.8ms
+```
+
+
+---
+
+## Additional Examples
+
+#### Example — Filter syntax: = prefix vs plain text
+
+```bash
+# Plain text (no prefix) → GIN trigram ILIKE search (substring match)
+curl -s "http://localhost:8000/domains/item/page?brand=coastal&limit=20"
+# SQL: WHERE brand ILIKE '%coastal%'
+# Uses: GIN trigram index → fast even on 10M rows
+
+# = prefix → exact B-tree match (fastest, case-sensitive)
+curl -s "http://localhost:8000/domains/item/page?brand==COASTAL+RIDGE&limit=20"
+# SQL: WHERE brand = 'COASTAL RIDGE'
+# Uses: B-tree index → sub-millisecond lookup
+
+# Dropdown selectors auto-apply = prefix for known categorical columns
+# e.g. Model selector: "lgbm_global" → sent as "=lgbm_global" to the API
+# Filter placeholder text "Filter (=exact)" hints at this syntax to users
+```
+
+#### Example — Three-tier COUNT strategy
+
+```python
+# From api/core.py fetch_page()
+_LARGE_TABLES = {"fact_external_forecast_monthly", "fact_sales_monthly"}
+_MAX_COUNT_SCAN = 100_001
+
+def count_rows(conn, table, where_clause, params):
+    if not where_clause:
+        # Tier 1: unfiltered → instant catalog estimate
+        row = conn.execute(
+            "SELECT reltuples::bigint FROM pg_class WHERE relname = %s", (table,)
+        ).fetchone()
+        return int(row[0]), True   # (count, approximate=True)
+
+    if table in _LARGE_TABLES:
+        # Tier 2: large filtered table → cap at 100,001 to limit scan cost
+        row = conn.execute(
+            f"SELECT COUNT(*) FROM (SELECT 1 FROM {table} WHERE {where_clause} LIMIT {_MAX_COUNT_SCAN}) _sub",
+            params
+        ).fetchone()
+        count = int(row[0])
+        return count, count >= _MAX_COUNT_SCAN  # approximate=True when capped
+
+    # Tier 3: small table → full COUNT(*) scan (accurate)
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE {where_clause}", params
+    ).fetchone()
+    return int(row[0]), False
+```
+
+#### Example — Debounce stability fix (preventing infinite re-renders)
+
+```typescript
+// BEFORE (broken): object reference changes every render → debounce resets forever
+const debouncedFilters = useDebounce(columnFilters, 300);
+// columnFilters = { brand: "coastal", model_id: "lgbm_global" }
+// React creates new object reference on every render → triggers useEffect → infinite loop
+
+// AFTER (fixed): serialize objects to JSON for stable deep comparison
+function useDebounce<T>(value: T, delay: number): T {
+  const serialized = typeof value === "object" && value !== null
+    ? JSON.stringify(value)
+    : undefined;
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [serialized ?? value, delay]);   // strings compare by value; objects by content
+}
+// Now the debounce timer only resets when filter CONTENT changes, not object identity
+```
+
+#### Example — Chemistry-themed loading overlay
+
+```tsx
+// From frontend/src/App.tsx (simplified)
+// Domain-specific element symbols:
+// "Fc" (Forecast), "Sl" (Sales), "Iv" (Inventory), "Df" (DFU), etc.
+
+{isLoading && (
+  <div className="absolute inset-0 bg-background/70 backdrop-blur-sm
+                  flex flex-col items-center justify-center z-10">
+    <div className="periodic-tile animate-pulse-glow
+                    border-2 border-indigo-400 rounded p-4 text-center">
+      <div className="text-xs text-indigo-300">26</div>
+      <div className="text-3xl font-bold text-indigo-100">Fc</div>
+      <div className="text-xs text-indigo-300">Forecast</div>
+    </div>
+    <p className="mt-3 text-sm text-muted-foreground">Querying Forecast...</p>
+  </div>
+)}
+```
+
+```css
+/* tailwind.config.ts — custom pulse-glow animation */
+keyframes: {
+  'pulse-glow': {
+    '0%, 100%': { boxShadow: '0 0 5px rgba(99,102,241,0.4)' },
+    '50%':      { boxShadow: '0 0 20px rgba(99,102,241,0.9), 0 0 40px rgba(99,102,241,0.5)' },
+  }
+},
+animation: { 'pulse-glow': 'pulse-glow 1.5s ease-in-out infinite' }
+```
+
+#### Example — Column typeahead suggestions in action
+
+```bash
+# User types "cab" in the description column filter of the Item domain
+# Frontend calls: GET /domains/item/suggest?field=description&q=cab&limit=12
+curl -s "http://localhost:8000/domains/item/suggest?field=description&q=cab&limit=12" | jq .
+# {"suggestions": ["CABERNET SAUVIGNON", "CABERNET FRANC", "CAB BLEND 2024"]}
+
+# Suggestions render as <datalist> options in the filter input
+# Selecting "CABERNET SAUVIGNON" auto-fills the filter input
+# If user adds = prefix → GET /domains/item/suggest?field=description&q==CABERNET...
+# No suggestions returned for = prefix (exact match — no typeahead needed)
+```

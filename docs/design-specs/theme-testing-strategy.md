@@ -830,3 +830,69 @@ type ElementConfig = {
 |---------|------|--------|
 | 1.0 | 2026-02-24 | Initial design specification |
 
+
+
+---
+
+## Examples
+
+### Example: Vitest dark mode CSS variable test
+
+```typescript
+// src/hooks/__tests__/useTheme.test.ts
+import { renderHook, act } from '@testing-library/react'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { useTheme } from '@/hooks/useTheme'
+
+describe('useTheme dark mode', () => {
+  beforeEach(() => {
+    document.documentElement.className = ''
+    localStorage.clear()
+  })
+
+  it('applies dark class to documentElement', () => {
+    const { result } = renderHook(() => useTheme())
+    act(() => result.current.setColorMode('dark'))
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+  })
+
+  it('persists color mode in localStorage', () => {
+    const { result } = renderHook(() => useTheme())
+    act(() => result.current.setColorMode('dark'))
+    expect(localStorage.getItem('ds-color-mode')).toBe('dark')
+  })
+})
+```
+
+### Example: CSS variable assertion
+
+```typescript
+it('sets correct CSS variable for dark background', () => {
+  const { result } = renderHook(() => useTheme())
+  act(() => result.current.setColorMode('dark'))
+  const bgPrimary = document.documentElement.style.getPropertyValue('--bg-primary')
+  expect(bgPrimary).toBe('#0f172a')
+})
+```
+
+### Example: Run theme tests
+
+```bash
+make ui-test -- --reporter verbose src/hooks/__tests__/useTheme.test.ts
+# ✓ useTheme dark mode > applies dark class (2ms)
+# ✓ useTheme dark mode > persists in localStorage (1ms)
+# ✓ useTheme dark mode > sets correct CSS variables (3ms)
+```
+
+### Example: Playwright visual regression (when implemented)
+
+```typescript
+// tests/visual/dark-mode.spec.ts
+import { test, expect } from '@playwright/test'
+
+test('dark mode dashboard matches baseline', async ({ page }) => {
+  await page.goto('http://localhost:5173?colorMode=dark')
+  await page.waitForSelector('[data-testid="dashboard"]')
+  await expect(page).toHaveScreenshot('dark-mode-dashboard.png', { threshold: 0.01 })
+})
+```

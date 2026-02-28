@@ -306,3 +306,48 @@ AND f.basefcst_pref IS NOT NULL
 - Auto-selects first 5 models on initial load
 - KPI severity: service level `>=95` best, `<90` warning
 - Page size: 50 rows
+
+
+---
+
+## Examples
+
+### Example: Inventory backtest summary — model comparison
+
+```bash
+curl -s "http://localhost:8000/inv-backtest/summary" | jq '.rows[] | {model_id, stockout_pct, excess_pct, wape}'
+# {"model_id": "lgbm_cluster", "stockout_pct": 2.1, "excess_pct":  8.3, "wape":  6.9}
+# {"model_id": "lgbm_global",  "stockout_pct": 3.4, "excess_pct":  9.8, "wape":  8.5}
+# {"model_id": "external",     "stockout_pct": 4.7, "excess_pct": 12.1, "wape": 12.8}
+```
+
+### Example: Root cause attribution — bias direction vs stockouts
+
+```sql
+-- Which model causes most stockouts due to systematic under-forecasting?
+SELECT model_id, bias_direction, COUNT(*) AS n_events, AVG(abs_error) AS avg_abs_error
+FROM mv_inventory_forecast_monthly
+WHERE is_stockout = TRUE AND month_start >= '2025-08-01'
+GROUP BY model_id, bias_direction
+ORDER BY n_events DESC LIMIT 5;
+-- external  | under | 847 | 142.3
+-- external  | over  |  12 |  18.7
+-- lgbm_global | under | 321 |  87.1
+```
+
+### Example: Refresh inventory-forecast bridge
+
+```bash
+make refresh-inv-backtest
+# REFRESH MATERIALIZED VIEW mv_inventory_forecast_monthly
+# Joins agg_inventory_monthly + fact_external_forecast_monthly + dim_dfu
+# Computes: forecast_error, abs_error, dos, is_stockout, is_excess, bias_direction
+# Result: 42,847 rows (DFU × month × model grain)
+```
+
+### Example: Monthly trend endpoint
+
+```bash
+curl -s "http://localhost:8000/inv-backtest/trend?model=lgbm_cluster&months=6" | jq '.rows[0]'
+# {"month": "2025-08-01", "stockout_pct": 1.8, "excess_pct": 7.2, "service_level": 98.2}
+```

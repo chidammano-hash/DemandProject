@@ -907,3 +907,54 @@ Add optional `motif` URL param via `useUrlState.ts` for shareable links:
 - `frontend/src/constants/__tests__/motifRegistry.test.ts`
 - `frontend/src/hooks/__tests__/useMotifTheme.test.ts`
 - `frontend/src/components/__tests__/MotifSettingsPanel.test.tsx`
+
+
+---
+
+## Examples
+
+### Example: Single Demand Studio theme with light/dark
+
+```typescript
+// context/ThemeContext.tsx
+import { useThemeContext } from '@/context/ThemeContext'
+
+function MyComponent() {
+  const { colorMode, toggleColorMode, theme } = useThemeContext()
+  // theme.name = "Demand Studio"  (only one theme now)
+  // colorMode = "light" | "dark"
+  console.log(theme.palette.light['--bg-primary'])  // "#ffffff"
+  console.log(theme.palette.dark['--bg-primary'])   // "#0f172a"
+}
+```
+
+### Example: ThemeSelector component in sidebar footer
+
+```typescript
+// components/ThemeSelector.tsx — light/dark toggle only
+import { useThemeContext } from '@/context/ThemeContext'
+import { Sun, Moon } from 'lucide-react'
+
+export function ThemeSelector() {
+  const { colorMode, toggleColorMode } = useThemeContext()
+  return (
+    <button onClick={toggleColorMode} title="Toggle dark mode (d)">
+      {colorMode === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+    </button>
+  )
+}
+// Keyboard shortcut: press 'd' to toggle
+```
+
+### Example: CSS variable application at runtime
+
+```typescript
+// hooks/useTheme.ts — applies palette on colorMode change
+function applyPalette(palette: Record<string, string>) {
+  Object.entries(palette).forEach(([key, value]) => {
+    document.documentElement.style.setProperty(key, value)
+  })
+}
+// Dark mode: document.documentElement.classList.add('dark')
+// Light mode: document.documentElement.classList.remove('dark')
+```

@@ -13,6 +13,20 @@ Prophet is CPU-only (Stan backend) and cannot leverage the Apple MPS GPU already
 3. **Modern optimizer** — AdamW with learning rate scheduling instead of Stan's L-BFGS
 4. **Global model option** — Can train one model across all DFUs (vs Prophet's per-DFU only)
 
+#### Example
+
+```python
+# Verify PyTorch device detection before running backtest
+import torch
+
+if torch.backends.mps.is_available():
+    print("Apple MPS GPU available — workers use CPU via PYTORCH_MPS_FORCE_CPU=1")
+elif torch.cuda.is_available():
+    print(f"CUDA GPU available: {torch.cuda.get_device_name(0)}")
+else:
+    print("No GPU detected — using CPU only")
+```
+
 ## Architecture
 
 ### Why NeuralProphet Differs from Prophet
@@ -85,6 +99,45 @@ fact_sales_monthly + dim_dfu
 | `n_lags` | `0` | AR lags (0 = pure decomposition like Prophet) |
 | `accelerator` | `auto` | Hardware: auto, cpu, gpu, mps |
 
+#### Example
+
+```python
+from neuralprophet import NeuralProphet
+import pandas as pd
+
+# Minimal single-DFU fit for item 100320 at loc 1401-BULK
+train_df = pd.DataFrame({
+    "ds": pd.date_range("2022-01-01", periods=36, freq="MS"),
+    "y": [120, 95, 110, 130, 140, 155, 160, 148, 135, 125, 115, 145,
+          130, 100, 118, 138, 148, 163, 168, 155, 142, 132, 122, 153,
+          128,  98, 115, 135, 146, 161, 165, 152, 140, 130, 120, 150],
+})
+
+model = NeuralProphet(
+    growth="linear",
+    yearly_seasonality="auto",
+    weekly_seasonality=False,
+    daily_seasonality=False,
+    epochs=100,
+    learning_rate=0.1,
+    batch_size=64,
+    n_lags=0,
+    trainer_config={"accelerator": "cpu"},  # always CPU in workers
+)
+model.fit(train_df, freq="MS")
+future = model.make_future_dataframe(train_df, periods=5)
+forecast = model.predict(future)
+
+# NeuralProphet uses yhat1 (not yhat like Prophet)
+yhat_col = "yhat1" if "yhat1" in forecast.columns else "yhat"
+preds = forecast[["ds", yhat_col]].tail(5)
+preds[yhat_col] = preds[yhat_col].clip(lower=0)  # floor at zero
+print(preds)
+# ds       yhat1
+# 2025-01-01  147.3
+# 2025-02-01  102.1
+```
+
 ## GPU / Device Support
 
 | Device | Detection | Performance |
@@ -108,6 +161,26 @@ Workers set these environment variables:
 - `trainer_config={"accelerator": "cpu"}` is passed to NeuralProphet constructor
 
 The `--accelerator` flag is preserved in kwargs and metadata but not used for actual training in the current multiprocessing implementation.
+
+#### Example
+
+```python
+import os
+import multiprocessing
+
+def worker_init():
+    """Called once per worker process at pool startup."""
+    os.environ["PYTORCH_MPS_FORCE_CPU"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+    import logging
+    for logger_name in ("neuralprophet", "pytorch_lightning", "lightning"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+ctx = multiprocessing.get_context("spawn")  # Required on macOS (not fork)
+with ctx.Pool(processes=4, initializer=worker_init) as pool:
+    results = list(pool.imap_unordered(fit_one_dfu, dfu_tasks, chunksize=10))
+```
 
 ## CLI Interface
 
@@ -138,6 +211,34 @@ uv run python scripts/run_backtest_neuralprophet.py \
 | `--n-workers` | all CPUs | Parallel workers |
 | `--n-timeframes` | `10` | Expanding windows |
 | `--output-dir` | `data/backtest` | Output directory |
+
+#### Example — Running the Global Backtest
+
+```bash
+cd mvp/demand
+
+# Run global NeuralProphet backtest (10 timeframes, all DFUs)
+make backtest-neuralprophet
+
+# Sample console output:
+# [NeuralProphet Global] Strategy: global | Model ID: neuralprophet_global
+# [NeuralProphet Global] Workers: 8 | Timeframes: 10
+# [TF A] Training 4821 DFUs...
+# [TF A] Timeframe A complete: 4821 predictions
+# ...
+# [NeuralProphet Global] All timeframes complete in 4h 23m
+# Saved: data/backtest/backtest_predictions.csv (48,210 rows)
+# WAPE: 28.4% | Accuracy: 71.6% | Bias: -0.03
+
+# Per-cluster strategy
+make backtest-neuralprophet-cluster
+
+# Pooled cluster strategy
+make backtest-neuralprophet-pooled
+
+# Load predictions into Postgres
+make backtest-load
+```
 
 ## Cluster Strategies
 
@@ -181,6 +282,31 @@ DFUs with fewer than 2 historical data points (`len(train_series) < 2`) skip Neu
 
 Failed DFU fits emit zero forecasts (not skipped) to maintain complete coverage. Only the first error per worker is logged (via `_logged_error` attribute on the fitting function) to avoid log flooding.
 
+#### Example — Zero Fallback for Failed/Short DFUs
+
+```python
+def fit_one_dfu(args):
+    dfu_ck, train_series, predict_months, np_kwargs = args
+    if len(train_series) < 2:
+        # Insufficient history — emit zero forecasts (not skipped)
+        return [(dfu_ck, month, 0.0) for month in predict_months]
+    try:
+        df = pd.DataFrame({"ds": train_series.index, "y": train_series.values})
+        model = NeuralProphet(**np_kwargs)
+        model.fit(df, freq="MS")
+        future = model.make_future_dataframe(df, periods=len(predict_months))
+        forecast = model.predict(future)
+        yhat_col = "yhat1" if "yhat1" in forecast.columns else "yhat"
+        preds = forecast.tail(len(predict_months))
+        return [(dfu_ck, row["ds"], max(float(row[yhat_col]), 0))
+                for _, row in preds.iterrows()]
+    except Exception as e:
+        if not getattr(fit_one_dfu, "_logged_error", False):
+            print(f"[WARN] DFU {dfu_ck} failed: {e}")
+            fit_one_dfu._logged_error = True
+        return [(dfu_ck, month, 0.0) for month in predict_months]
+```
+
 ## Output Format (Identical to All Models)
 
 **Main CSV (`backtest_predictions.csv`):**
@@ -191,6 +317,49 @@ forecast_ck,dmdunit,dmdgroup,loc,fcstdate,startdate,lag,execution_lag,basefcst_p
 **Archive CSV (`backtest_predictions_all_lags.csv`):** Same + `timeframe` column, expanded to lags 0-4.
 
 **Metadata JSON (`backtest_metadata.json`):** Model ID, strategy, timeframes, neuralprophet_kwargs, n_workers, date range, and accuracy metrics (WAPE, bias, accuracy_pct at execution lag).
+
+#### Example — Output Files
+
+```bash
+ls -lh data/backtest/
+# -rw-r--r--  18M  data/backtest/backtest_predictions.csv
+# -rw-r--r--  91M  data/backtest/backtest_predictions_all_lags.csv
+# -rw-r--r--  2.1K data/backtest/backtest_metadata.json
+
+cat data/backtest/backtest_metadata.json
+```
+
+```json
+{
+  "model_id": "neuralprophet_global",
+  "strategy": "global",
+  "n_timeframes": 10,
+  "n_workers": 8,
+  "neuralprophet_kwargs": {
+    "epochs": 100,
+    "learning_rate": 0.1,
+    "batch_size": 64,
+    "growth": "linear",
+    "n_lags": 0,
+    "yearly_seasonality": "auto",
+    "weekly_seasonality": false,
+    "daily_seasonality": false
+  },
+  "date_range": {"train_start": "2022-01-01", "train_end": "2024-12-01"},
+  "metrics": {
+    "wape": 28.4,
+    "bias": -0.03,
+    "accuracy_pct": 71.6,
+    "n_rows": 48210
+  }
+}
+```
+
+```bash
+head -3 data/backtest/backtest_predictions.csv
+# forecast_ck,dmdunit,dmdgroup,loc,fcstdate,startdate,lag,execution_lag,basefcst_pref,tothist_dmd,model_id
+# 100320|A|1401-BULK|2025-01-01|2025-01-01,100320,A,1401-BULK,2025-01-01,2025-01-01,0,0,147.3,1820.0,neuralprophet_global
+```
 
 ## Shared Infrastructure Reuse
 
@@ -247,6 +416,26 @@ Add to `mvp/demand/pyproject.toml`:
 
 NeuralProphet depends on PyTorch (already installed for PatchTST/DeepAR) and PyTorch Lightning.
 
+#### Example — Install and Verify
+
+```bash
+cd mvp/demand
+uv sync   # picks up neuralprophet from pyproject.toml
+
+python -c "import neuralprophet; print('NeuralProphet', neuralprophet.__version__)"
+# NeuralProphet 0.9.1
+
+# Quick smoke test: fit 24-month series in ~5 epochs
+python -c "
+from neuralprophet import NeuralProphet
+import pandas as pd
+m = NeuralProphet(epochs=5, trainer_config={'accelerator': 'cpu'})
+df = pd.DataFrame({'ds': pd.date_range('2023-01-01', periods=24, freq='MS'), 'y': range(24)})
+m.fit(df, freq='MS')
+print('NeuralProphet smoke test passed')
+"
+```
+
 ## Key Files
 
 | File | Purpose |
@@ -287,3 +476,43 @@ make champion-select                                  # Include in competition
 | Feature 4 | Fact tables (sales data source) |
 | Feature 15 | Champion selection (model competition) |
 | Feature 19 | PyTorch already in dependencies (for PatchTST) |
+
+
+#### Example — Pooled Cluster Strategy
+
+```bash
+# Pooled strategy: aggregates sales by cluster, fits one NeuralProphet model per cluster,
+# then disaggregates predictions back to individual DFUs proportionally.
+
+cd mvp/demand
+make backtest-neuralprophet-pooled
+
+# Sample console output:
+# [NeuralProphet Pooled] Strategy: pooled | Model ID: neuralprophet_pooled
+# [NeuralProphet Pooled] Workers: 8 | Timeframes: 10
+# [TF A] Pooling sales for 6 clusters...
+# [TF A] Fitting NeuralProphet for cluster high_volume_steady (1203 DFUs)...
+# [TF A] Fitting NeuralProphet for cluster medium_volume_seasonal (892 DFUs)...
+# [TF A] Disaggregating predictions → 4,821 DFU rows
+# [TF A] Timeframe A complete: 4821 predictions
+# ...
+# [NeuralProphet Pooled] All timeframes complete in 1h 12m
+# Saved: data/backtest/backtest_predictions.csv (48,210 rows)
+# WAPE: 31.2% | Accuracy: 68.8% | Bias: -0.05
+# Note: pooled WAPE higher than global (31.2% vs 28.4%) — aggregation loses DFU-level nuance
+
+# The disaggregation step: each DFU gets a share of its cluster's pooled forecast
+# proportional to its historical share of cluster total demand:
+#   dfu_forecast = cluster_forecast * (dfu_hist_avg / cluster_hist_avg)
+```
+
+```python
+# Disaggregation logic in run_backtest_neuralprophet.py (pooled strategy):
+# 1. Compute each DFU's share of cluster total demand (historical mean)
+# 2. Fit one NeuralProphet per cluster on aggregated demand
+# 3. Multiply cluster forecast by each DFU's share ratio
+
+# cluster_sums = sales.groupby(['cluster', 'startdate'])['qty'].sum()
+# dfu_shares   = sales.groupby(['dfu_ck'])['qty'].mean() / cluster_avgs
+# dfu_forecast = cluster_forecast[cluster] * dfu_shares[dfu_ck]
+```

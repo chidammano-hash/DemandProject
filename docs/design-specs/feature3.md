@@ -257,3 +257,48 @@ Key mappings:
 
 ### DomainSpec Type Classifications
 Each domain in `common/domain_specs.py` defines `search_fields` (for full-text search), `int_fields`, `float_fields`, `date_fields`, and `bool_fields` (for type-aware API filtering).
+
+
+---
+
+## Examples
+
+### Example: Query item dimension
+
+```sql
+SELECT item_no, description, brand, category, class_
+FROM dim_item WHERE item_no = '100320';
+-- 100320 | CABERNET SAUV 750ML | COASTAL RIDGE | WINE | RED
+```
+
+### Example: Query location dimension
+
+```sql
+SELECT loc, loc_desc, state, region
+FROM dim_location WHERE loc = '1401-BULK';
+-- 1401-BULK | CALIFORNIA DC BULK | CA | WEST
+```
+
+### Example: DFU dimension with all extended attributes
+
+```sql
+SELECT dfu_ck, dmdunit, loc, execution_lag, cluster_assignment,
+       seasonality_profile, seasonality_strength, peak_month
+FROM dim_dfu WHERE dmdunit='100320' AND loc='1401-BULK';
+-- 100320_ALL_1401-BULK | 100320 | 1401-BULK | 2 | high_volume_steady | yearly_strong | 0.78 | 11
+```
+
+### Example: Load all dimensions
+
+```bash
+make normalize-all   # normalize all 8 datasets
+make load-all        # load into Postgres + refresh materialized views
+make check-db        # verify row counts
+```
+
+### Example: Typeahead suggestions for explorer
+
+```bash
+curl -s "http://localhost:8000/domains/item/suggest?col=brand&q=coast" | jq .
+# {"suggestions": ["COASTAL RIDGE", "COASTAL HIGHWAY", "COAST MOUNTAINS"]}
+```

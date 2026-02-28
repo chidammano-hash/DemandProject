@@ -113,3 +113,129 @@ docker exec demand-mvp-postgres psql -U demand -d demand_mvp \
 
 ### Prediction Clipping
 - All transfer functions use `np.maximum(preds, 0)` for non-negative predictions
+
+
+---
+
+## Examples
+
+### Example: Transfer learning — two-phase training
+
+```python
+import lightgbm as lgb
+
+# Phase 1: global base model (trained on ALL DFUs, ml_cluster excluded)
+base_model = lgb.LGBMRegressor(n_estimators=500)
+base_model.fit(X_global, y_global, categorical_feature=cat_features)
+
+# Phase 2: per-cluster fine-tune using warm start (additive trees)
+for cluster_id, (X_c, y_c) in cluster_data.items():
+    if len(X_c) < transfer_min_rows:   # fallback if too few rows
+        continue
+    cluster_model = lgb.LGBMRegressor(n_estimators=100)
+    cluster_model.fit(X_c, y_c,
+                      categorical_feature=cat_features,
+                      init_model=base_model.booster_)
+    predictions[cluster_id] = cluster_model.predict(X_test_c)
+```
+
+### Example: Run all three LGBM strategies
+
+```bash
+make backtest-lgbm           # global: model_id=lgbm_global
+make backtest-lgbm-cluster   # per-cluster: model_id=lgbm_cluster
+make backtest-lgbm-transfer  # transfer: model_id=lgbm_transfer
+make backtest-load           # load all three into Postgres
+
+# Compare strategies
+curl -s "http://localhost:8000/forecast/accuracy/slice?lag=2&dim=model_id" \
+  | jq '[.rows[] | select(.model_id | startswith("lgbm")) | {model_id, accuracy_pct}]'
+# [{"model_id": "lgbm_transfer", "accuracy_pct": 92.4},
+#  {"model_id": "lgbm_cluster",  "accuracy_pct": 93.1},
+#  {"model_id": "lgbm_global",   "accuracy_pct": 91.5}]
+```
+
+
+---
+
+## Additional Examples
+
+#### Example — Why ml_cluster is excluded from base model
+
+```python
+import lightgbm as lgb
+
+# WRONG: include ml_cluster in base model
+# Fine-tuning then also trains WITHOUT ml_cluster → feature mismatch
+# → warm-start (init_model) raises ValueError: incompatible feature sets
+base_wrong = lgb.LGBMRegressor()
+base_wrong.fit(X_with_cluster, y)   # includes ml_cluster feature
+
+fine_tuned = lgb.LGBMRegressor(n_estimators=100)
+fine_tuned.fit(X_no_cluster, y_cluster,
+               init_model=base_wrong.booster_)  # ERROR: feature count mismatch
+
+# CORRECT: exclude ml_cluster from both base AND fine-tuned models
+FEATURES_NO_CLUSTER = [f for f in ALL_FEATURES if f != "ml_cluster"]
+
+base = lgb.LGBMRegressor(n_estimators=500)
+base.fit(X_all[FEATURES_NO_CLUSTER], y_all)
+
+fine_tuned = lgb.LGBMRegressor(n_estimators=100)
+fine_tuned.fit(X_cluster[FEATURES_NO_CLUSTER], y_cluster,
+               init_model=base.booster_)   # OK: same feature set
+```
+
+#### Example — Transfer min rows threshold in practice
+
+```python
+# Clusters with rows between 20-49 get predictions from transfer (not possible in per_cluster)
+cluster_summary = X_train.groupby("ml_cluster").size().reset_index(name="rows")
+# cluster       | rows | per_cluster action  | transfer action
+# high_vol_st.  | 8240 | model trained (>=50)| fine-tuned (>=20)
+# seasonal_med  | 3120 | model trained       | fine-tuned
+# niche_export  |   31 | model trained       | fine-tuned (31 >= 20)
+# micro_test    |   12 | SKIPPED → 0 preds   | base model fallback
+# __unknown__   |   87 | model trained       | excluded, base fallback
+
+# Transfer ensures micro_test DFUs get meaningful predictions (not zeros)
+```
+
+#### Example — __unknown__ cluster handling in transfer loop
+
+```python
+# From run_backtest.py train_and_predict_transfer()
+clusters = X_train["ml_cluster"].dropna().unique().tolist()
+clusters = [c for c in clusters if c != "__unknown__"]  # exclude unassigned DFUs
+
+for cluster_id in clusters:
+    X_c = X_train[X_train["ml_cluster"] == cluster_id]
+    if len(X_c) < transfer_min_rows:      # default: 20
+        # Use base model predictions for this cluster
+        preds_cluster = np.maximum(base_model.predict(X_test_c), 0)
+    else:
+        fine_tuned = lgb.LGBMRegressor(n_estimators=transfer_n_estimators)
+        fine_tuned.fit(X_c, y_c, categorical_feature=cat_features,
+                       init_model=base_model.booster_)
+        preds_cluster = np.maximum(fine_tuned.predict(X_test_c), 0)
+
+# DFUs with ml_cluster=NaN or '__unknown__' use base_model predictions directly
+mask_fallback = X_test["ml_cluster"].isna() | (X_test["ml_cluster"] == "__unknown__")
+preds[mask_fallback] = np.maximum(base_model.predict(X_test[mask_fallback]), 0)
+```
+
+#### Example — Verify transfer coverage (no zeroed DFUs)
+
+```sql
+-- Confirm transfer model has no DFU-months with zero/null predictions
+-- (per_cluster would have gaps for small clusters)
+SELECT model_id,
+       COUNT(*) FILTER (WHERE basefcst_pref = 0 OR basefcst_pref IS NULL) AS zero_preds,
+       COUNT(*)                                                             AS total_rows
+FROM fact_external_forecast_monthly
+WHERE model_id IN ('lgbm_cluster', 'lgbm_transfer')
+GROUP BY model_id;
+-- model_id       | zero_preds | total_rows
+-- lgbm_cluster   |       4320 |      91301   (small clusters zeroed out)
+-- lgbm_transfer  |          0 |      95621   (full coverage — no zeros)
+```

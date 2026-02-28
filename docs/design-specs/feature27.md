@@ -71,6 +71,27 @@ Once connected, Claude Code gains access to these Figma MCP tools:
 | `generate_figma_design` | Push UI from Claude Code into Figma as editable frames (Code → Canvas) | Remote only |
 | `get_figjam` | Convert FigJam diagrams to XML for architectural context | Both |
 | `generate_diagram` | Create FigJam diagrams from Mermaid syntax | Both |
+
+| `whoami` | Return authenticated user identity | Remote only |
+
+#### Example — Querying MCP Tools from Claude Code
+
+```
+# Inside Claude Code, after connecting the Figma MCP server:
+
+# Verify connection
+/mcp
+# Output: figma-desktop [connected] — 12 tools available
+
+# Extract design context from a selected Figma frame
+Claude: "Use get_design_context to extract the layout and styles of the selected KpiCard frame"
+
+# Get design token definitions
+Claude: "Use get_variable_defs to list all color variables in the Planthium Figma file"
+
+# Get metadata for a Figma node URL
+Claude: "Use get_metadata to get the layer structure of https://www.figma.com/design/ABC123/Demand-Studio?node-id=0:1"
+```
 | `whoami` | Return authenticated user identity | Remote only |
 
 ---
@@ -91,6 +112,23 @@ Register with Claude Code:
 claude mcp add --transport http figma-desktop http://127.0.0.1:3845/mcp
 ```
 
+
+#### Example — Verifying Desktop Server Connection
+
+```bash
+# After enabling Dev Mode MCP in Figma desktop app:
+claude mcp add --transport http figma-desktop http://127.0.0.1:3845/mcp
+
+# Verify all MCP servers
+claude mcp list
+# figma-desktop  http  http://127.0.0.1:3845/mcp  connected
+
+# Inside Claude Code session
+/mcp
+# Active MCP Servers:
+#   figma-desktop (http://127.0.0.1:3845/mcp) — 12 tools
+```
+
 #### Step 1.2: Configure Remote MCP Server (Optional)
 
 ```bash
@@ -98,6 +136,25 @@ claude mcp add --transport http --scope user figma https://mcp.figma.com/mcp
 ```
 
 On first use, Claude Code will prompt OAuth authentication. Follow the redirect to authorize Figma access.
+
+
+#### Example — Remote Server OAuth Flow
+
+```bash
+# Add remote server
+claude mcp add --transport http --scope user figma https://mcp.figma.com/mcp
+
+# First use triggers OAuth — Claude Code outputs:
+# "Please open the following URL to authenticate with Figma:"
+# https://www.figma.com/oauth?client_id=...&redirect_uri=...&scope=files:read
+#
+# After approving in browser:
+# "Authentication successful. figma MCP server connected."
+
+# Confirm identity
+Claude: "Use whoami to confirm the authenticated Figma user"
+# Response: {"id": "...", "email": "dev@example.com", "handle": "developer"}
+```
 
 #### Step 1.3: Verify Connection
 
@@ -196,6 +253,25 @@ npm install --save-dev @figma/code-connect
 ```json
 {
   "codeConnect": {
+#### Example — figma.config.json
+
+```json
+{
+  "codeConnect": {
+    "include": ["src/components/**/*.tsx"],
+    "parser": "react",
+    "paths": {
+      "src/*": ["src/*"]
+    }
+  }
+}
+```
+
+#### Step 4.2: Create `figma.config.json`
+
+```json
+{
+  "codeConnect": {
     "include": ["src/components/**/*.tsx"],
     "parser": "react",
     "paths": {
@@ -240,6 +316,29 @@ figma.connect(KpiCard, "<FIGMA_COMPONENT_URL>", {
   },
   example: (props) => <KpiCard label={props.label} value={props.value} sublabel={props.sublabel} />,
 });
+```
+
+**`src/components/LoadingElement.figma.tsx`**
+#### Example — Publishing Code Connect Mappings
+
+```bash
+cd mvp/demand/frontend
+
+# Validate .figma.tsx files without publishing (dry run)
+npx figma connect parse --dry-run
+# Parsed 3 Code Connect files:
+#   src/components/KpiCard.figma.tsx → KpiCard (Figma node: ABC:123)
+#   src/components/ElementTab.figma.tsx → ElementTab (Figma node: DEF:456)
+#   src/components/ui/button.figma.tsx → Button (Figma node: GHI:789)
+# No errors found.
+
+# Publish to Figma
+npx figma connect publish
+# Publishing 3 Code Connect definitions...
+# Published: KpiCard → Figma component "KPI Card"
+# Published: ElementTab → Figma component "Element Tab"
+# Published: Button → Figma component "Button/Primary"
+# Done.
 ```
 
 **`src/components/LoadingElement.figma.tsx`**
@@ -304,6 +403,36 @@ With all infrastructure in place, the day-to-day workflow becomes:
 5. Claude Code calls get_code_connect_map → finds matching components
 6. Claude Code generates React + Tailwind code using existing components
 7. Developer reviews and commits
+```
+
+#### Updating Figma After Code Changes
+#### Example — Design-to-Code Prompt
+
+```
+# Developer selects a Figma frame "KPI Overview Card" and runs in Claude Code:
+
+Claude: "Implement the selected Figma frame as a React component.
+         Use our existing KpiCard component and Tailwind semantic tokens.
+         Follow the Planthium design rules."
+
+# Claude Code calls:
+# 1. get_design_context → returns layout: 140px card, background=bg-card,
+#    title text=text-muted-foreground, value text=text-foreground 2xl font-bold
+# 2. get_code_connect_map → finds KpiCard mapped to Figma "KPI Card" component
+# 3. Generates:
+
+import { KpiCard } from "@/components/KpiCard";
+
+export function KpiOverviewSection() {
+  return (
+    <div className="grid grid-cols-4 gap-4">
+      <KpiCard label="Accuracy" value="71.6%" sublabel="vs prior month +2.1pp" />
+      <KpiCard label="WAPE" value="28.4%" sublabel="rolling 12 months" />
+      <KpiCard label="Bias" value="-3.0%" sublabel="slight under-forecast" />
+      <KpiCard label="Champion" value="lgbm_global" sublabel="wins 43% of DFUs" />
+    </div>
+  );
+}
 ```
 
 #### Updating Figma After Code Changes
@@ -439,6 +568,29 @@ Planthium Design System
 
 ### Token Sync Validation
 1. Prompt: "Use get_variable_defs to list all Figma color variables"
+#### Example — Token Sync Validation
+
+```bash
+# Inside Claude Code:
+Claude: "Use get_variable_defs to list all color variables in the Figma file and
+         compare them to the :root variables in src/index.css"
+
+# Claude Code output:
+# Figma variable 'background' (Light): hsl(220, 15%, 96%)
+# CSS :root --background: 220 15% 96%        ✓ MATCH
+#
+# Figma variable 'primary' (Light): hsl(230, 65%, 28%)
+# CSS :root --primary: 230 65% 28%           ✓ MATCH
+#
+# Figma variable 'accent' (Dark): hsl(43, 80%, 50%)
+# CSS .dark --accent: 43 80% 50%             ✓ MATCH
+#
+# All 9 color primitives match across Light and Dark modes.
+# No token drift detected.
+```
+
+### Token Sync Validation
+1. Prompt: "Use get_variable_defs to list all Figma color variables"
 2. Compare output against `src/index.css` `:root` / `.dark` / `.midnight` values
 3. All values should match — any drift indicates a sync issue
 
@@ -458,3 +610,98 @@ Planthium Design System
 3. **Figma plugin for theme preview** — custom plugin to preview all 3 themes side-by-side in Figma
 4. **Design lint CI** — validate that new components use Figma variables (not hardcoded colors) before merge
 5. **FigJam architecture diagrams** — use `generate_diagram` to push Mermaid architecture diagrams from code docs into FigJam automatically
+
+
+---
+
+## Additional Examples
+
+#### Example — Code-to-Canvas: Pushing Live UI into Figma
+
+```bash
+# Prerequisites: make ui (frontend dev server at localhost:5173)
+#                remote Figma MCP server connected (Claude Code)
+
+# Step 1 — Start the dev server
+cd mvp/demand
+make ui     # React dev server at http://localhost:5173
+
+# Step 2 — In a Claude Code session with the remote Figma MCP connected:
+# Claude: "Use generate_figma_design to capture the Accuracy tab at localhost:5173
+#          and push it into the Planthium Figma file as a new frame named 'Accuracy - Light'"
+
+# Claude Code calls generate_figma_design:
+# → navigates to localhost:5173, switches to Accuracy tab
+# → captures layout, component tree, and applied styles
+# → creates editable Figma frame with:
+#     - Layer groups matching component hierarchy (AccuracyTab > ModelSelector > KpiCards)
+#     - Text layers with actual content (not images)
+#     - Colors resolved to Figma variable references (bg-card → card variable)
+# Output: "Frame 'Accuracy - Light' created in Planthium Design System file."
+
+# Step 3 — Switch to Dark mode, repeat for dark-mode capture
+# Claude: "Toggle dark mode in the browser at localhost:5173 and capture the same Accuracy tab
+#          as 'Accuracy - Dark'"
+```
+
+#### Example — Design-to-Code: Implementing a New Figma Component
+
+```
+# A designer adds a new "Forecast Alert Card" component in Figma.
+# The designer shares the Figma link:
+# https://www.figma.com/design/ABC123/Planthium?node-id=42:1
+
+# In Claude Code:
+Claude: "Use get_design_context for https://www.figma.com/design/ABC123/Planthium?node-id=42:1
+         and implement the Forecast Alert Card as a React component using our design system."
+
+# Claude Code calls:
+# 1. get_metadata(node_id="42:1")     → sparse XML of layer structure
+# 2. get_design_context(node_id="42:1") → full styling + layout + component props
+# 3. get_code_connect_map()           → finds AlertPanel already mapped to Figma "Alert Panel"
+
+# Claude Code generates:
+import { cn } from "@/lib/utils";
+
+interface ForecastAlertCardProps {
+  severity: "critical" | "warning" | "info";
+  title: string;
+  description: string;
+  dfu: string;
+}
+
+export function ForecastAlertCard({ severity, title, description, dfu }: ForecastAlertCardProps) {
+  return (
+    <div className={cn(
+      "rounded-lg border p-4 flex gap-3",
+      severity === "critical" && "border-destructive bg-destructive/10",
+      severity === "warning"  && "border-amber-500 bg-amber-500/10",
+      severity === "info"     && "border-border bg-muted",
+    )}>
+      <div className="flex-1">
+        <p className="text-sm font-semibold text-foreground">{title}</p>
+        <p className="text-xs text-muted-foreground mt-1">{description}</p>
+        <p className="text-xs text-muted-foreground mt-1">DFU: {dfu}</p>
+      </div>
+    </div>
+  );
+}
+# → Component uses semantic Tailwind tokens (not hardcoded hex colors)
+# → Matches Figma layout exactly: border-radius, padding, gap, text hierarchy
+```
+
+#### Example — FigJam Architecture Diagram from Mermaid
+
+```
+# Convert the existing Mermaid architecture diagram to a FigJam board:
+Claude: "Use generate_diagram to create a FigJam diagram from the Mermaid flow in
+         docs/architecture-diagram.md"
+
+# Claude Code reads docs/architecture-diagram.md → extracts Mermaid flowchart
+# → calls generate_diagram with the Mermaid source
+# → FigJam board created: 'Demand Studio Architecture' with:
+#     - Rectangular nodes per layer (React UI, FastAPI, PostgreSQL, Iceberg, etc.)
+#     - Arrows matching data flow (CSV → normalize → load → Postgres → API → React)
+#     - Color coding: green=data sources, blue=processing, purple=storage, orange=UI
+# Output: "FigJam board 'Demand Studio Architecture' created. Link: https://www.figma.com/board/..."
+```

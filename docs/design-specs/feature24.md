@@ -225,3 +225,46 @@ make champion-select                                  # Include in competition
 
 ### Logging Suppression
 - `logging.disable(logging.INFO)` and `warnings.filterwarnings("ignore")`
+
+
+---
+
+## Examples
+
+### Example: Run StatsForecast backtest (fastest)
+
+```bash
+make backtest-statsforecast
+# StatsForecast: vectorized AutoARIMA + AutoETS across ALL 18,432 DFUs simultaneously
+# ~15-30 minutes (vs ~14 hours for Prophet — ~100x faster)
+# Output: data/backtest_statsforecast_global.csv
+make backtest-load  # load as model_id='statsforecast_global'
+```
+
+### Example: StatsForecast Python call
+
+```python
+from statsforecast import StatsForecast
+from statsforecast.models import AutoARIMA, AutoETS
+import pandas as pd
+
+# Build (unique_id, ds, y) format
+sf_df = sales_masked.rename(columns={'dmdunit': 'unique_id', 'startdate': 'ds', 'qty_shipped': 'y'})
+
+sf = StatsForecast(
+    models=[AutoARIMA(season_length=12), AutoETS(season_length=12)],
+    freq='MS',
+    n_jobs=-1,     # use all CPU cores
+)
+forecasts = sf.forecast(df=sf_df, h=10)  # predict 10 months ahead for all DFUs at once
+# Returns DataFrame with columns: unique_id, ds, AutoARIMA, AutoETS
+```
+
+### Example: Performance comparison table
+
+| Model         | Fit Time  | Method                | Accuracy (lag=2) |
+|---------------|-----------|----------------------|-----------------|
+| StatsForecast | ~20 min   | Vectorized batch      | 88.3%           |
+| Prophet       | ~14 hours | Per-DFU multiprocess  | 87.9%           |
+| LGBM global   | ~2 hours  | Feature-based         | 91.5%           |
+| LGBM cluster  | ~2.5 hrs  | Feature-based         | 93.1%           |

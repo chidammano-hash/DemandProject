@@ -121,6 +121,41 @@ class TestGenerateSummaryCeiling:
         assert "ceiling_model_wins" not in summary
 
 
+class TestGenerateSummaryFallback:
+    """Test fallback_rows_inserted is reflected in summary output."""
+
+    def test_fallback_rows_in_summary(self):
+        winners = [
+            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_cluster",
+             0.1, 110.0, 100.0),
+        ]
+        cfg = {
+            "metric": "wape",
+            "lag": "execution",
+            "min_dfu_rows": 3,
+            "fallback_model_id": "lgbm_cluster",
+            "models": ["lgbm_cluster", "catboost_cluster"],
+        }
+        summary = generate_summary(winners, "champion", 1, cfg, fallback_inserted=5)
+        assert summary["fallback_rows_inserted"] == 5
+        assert summary["config"]["fallback_model_id"] == "lgbm_cluster"
+
+    def test_fallback_rows_zero_by_default(self):
+        winners = [
+            ("ITEM1", "GRP1", "LOC1", date(2024, 3, 1), "lgbm_cluster",
+             0.1, 100.0, 100.0),
+        ]
+        cfg = {"models": ["lgbm_cluster", "catboost_cluster"]}
+        summary = generate_summary(winners, "champion", 1, cfg)
+        assert summary["fallback_rows_inserted"] == 0
+
+    def test_fallback_model_id_none_when_not_configured(self):
+        winners = []
+        cfg = {"models": ["lgbm_cluster", "catboost_cluster"]}
+        summary = generate_summary(winners, "champion", 0, cfg)
+        assert summary["config"]["fallback_model_id"] is None
+
+
 class TestLoadConfig:
     """Test config loading and validation."""
 
@@ -166,3 +201,66 @@ class TestLoadConfig:
         assert cfg["min_dfu_rows"] == 5
         assert len(cfg["models"]) == 2
         assert cfg["champion_model_id"] == "champion"  # default
+
+    def test_load_config_default_strategy(self, tmp_path):
+        import yaml
+        from scripts.run_champion_selection import load_config
+        cfg_path = tmp_path / "test.yaml"
+        cfg_path.write_text(yaml.dump({"competition": {
+            "metric": "wape",
+            "models": ["a", "b"],
+        }}))
+        cfg = load_config(cfg_path)
+        assert cfg["strategy"] == "expanding"  # default
+        assert cfg["strategy_params"] == {}  # default
+
+    def test_load_config_valid_strategy(self, tmp_path):
+        import yaml
+        from scripts.run_champion_selection import load_config
+        cfg_path = tmp_path / "test.yaml"
+        cfg_path.write_text(yaml.dump({"competition": {
+            "metric": "wape",
+            "models": ["a", "b"],
+            "strategy": "rolling",
+            "strategy_params": {"window_months": 6},
+        }}))
+        cfg = load_config(cfg_path)
+        assert cfg["strategy"] == "rolling"
+        assert cfg["strategy_params"]["window_months"] == 6
+
+    def test_load_config_invalid_strategy(self, tmp_path):
+        import yaml
+        from scripts.run_champion_selection import load_config
+        cfg_path = tmp_path / "test.yaml"
+        cfg_path.write_text(yaml.dump({"competition": {
+            "metric": "wape",
+            "models": ["a", "b"],
+            "strategy": "invalid_strategy",
+        }}))
+        with pytest.raises(ValueError, match="Invalid strategy"):
+            load_config(cfg_path)
+
+    def test_load_config_fallback_model_id_default(self, tmp_path):
+        """fallback_model_id defaults to lgbm_cluster when not specified."""
+        import yaml
+        from scripts.run_champion_selection import load_config
+        cfg_path = tmp_path / "test.yaml"
+        cfg_path.write_text(yaml.dump({"competition": {
+            "metric": "wape",
+            "models": ["lgbm_cluster", "catboost_cluster"],
+        }}))
+        cfg = load_config(cfg_path)
+        assert cfg["fallback_model_id"] == "lgbm_cluster"
+
+    def test_load_config_fallback_model_id_custom(self, tmp_path):
+        """fallback_model_id can be overridden in the YAML."""
+        import yaml
+        from scripts.run_champion_selection import load_config
+        cfg_path = tmp_path / "test.yaml"
+        cfg_path.write_text(yaml.dump({"competition": {
+            "metric": "wape",
+            "models": ["lgbm_cluster", "catboost_cluster"],
+            "fallback_model_id": "catboost_cluster",
+        }}))
+        cfg = load_config(cfg_path)
+        assert cfg["fallback_model_id"] == "catboost_cluster"

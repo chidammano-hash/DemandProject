@@ -146,3 +146,49 @@ Now returns **HTTP 202** immediately instead of blocking:
 - `ModelParams`: k_range, min_cluster_size_pct, use_pca, pca_components, skip_gap, all_features
 - `LabelParams`: volume_high, volume_low, cv_steady, cv_volatile, seasonality_threshold, zero_demand_threshold
 - `ClusteringScenarioRequest`: feature_params, model_params, label_params, relabel_only, previous_scenario_id
+
+
+---
+
+## Examples
+
+### Example: Full enhanced scenario workflow
+
+```bash
+# 1. Get runtime estimate
+curl -s "http://localhost:8000/clustering/scenario/estimate?k_max=8&gap=true" | jq .
+# {"estimated_seconds": 72, "dfu_count": 18432, "k_range": 5, "skip_gap": false}
+
+# 2. Submit (202 Accepted — non-blocking)
+SCENARIO_ID=$(curl -s -X POST http://localhost:8000/clustering/scenario \
+  -H "Content-Type: application/json" \
+  -d '{"model_params": {"k_range": [3, 8], "use_pca": false}, "feature_params": {}, "label_params": {}}' \
+  | jq -r '.id')
+
+# 3. Poll until complete (check every 3s)
+until curl -s "http://localhost:8000/clustering/scenario/$SCENARIO_ID/status" | jq -e '.status == "completed"' > /dev/null; do
+  sleep 3
+done
+
+# 4. Promote winning scenario to production
+curl -s -X POST "http://localhost:8000/clustering/scenario/$SCENARIO_ID/promote"
+# {"promoted": true, "dfus_updated": 18432, "best_k": 6, "silhouette": 0.71}
+```
+
+### Example: Enhanced chart descriptions
+
+- **Elbow chart**: WCSS vs K with `ReferenceLine` at optimal K (red dashed vertical line)
+- **Silhouette chart**: Bar chart with quality zones: Strong (≥0.7), Reasonable (0.5-0.7), Weak (0.25-0.5)
+- **Feature importance**: Horizontal bars showing top 10 features driving cluster separation
+- **Cluster size pie**: Pie chart with percentage labels, n_dfus per cluster
+- **Gap statistic**: Line chart comparing gap statistic vs reference — shown only when `skip_gap=False`
+
+### Example: Scenario queueing when group is busy
+
+```bash
+# Submit 2 scenarios while one is running → second gets queued
+curl -s -X POST http://localhost:8000/clustering/scenario -d '{"model_params": {}}' | jq .status
+# "running"
+curl -s -X POST http://localhost:8000/clustering/scenario -d '{"model_params": {"k_range": [4,6]}}' | jq .status
+# "queued"  ← auto-dispatched when running job completes
+```

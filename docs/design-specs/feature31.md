@@ -1149,3 +1149,55 @@ The testing infrastructure is fully operational. Actual test count: **485+ tests
 
 ### Domain Count
 - 8 domains (not 7): item, location, customer, time, dfu, sales, forecast, inventory
+
+
+---
+
+## Examples
+
+### Example: Backend API test with ASGI transport
+
+```python
+# tests/api/test_competition.py
+import pytest
+from httpx import AsyncClient, ASGITransport
+from api.main import app
+
+@pytest.mark.asyncio
+async def test_competition_results(mock_pool):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/competition/results?lag=2&model=lgbm_global")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "rows" in data
+    assert all("accuracy_pct" in r for r in data["rows"])
+```
+
+### Example: Frontend component test (Vitest + RTL)
+
+```typescript
+// src/components/__tests__/KpiCard.test.tsx
+import { render, screen } from '@testing-library/react'
+import { describe, it, expect } from 'vitest'
+import { KpiCard } from '@/components/KpiCard'
+
+describe('KpiCard', () => {
+  it('renders accuracy metric with correct value', () => {
+    render(<KpiCard label="Accuracy" value={92.5} unit="%" trend="up" />)
+    expect(screen.getByText('92.5%')).toBeInTheDocument()
+    expect(screen.getByText('Accuracy')).toBeInTheDocument()
+  })
+})
+```
+
+### Example: Run all tests
+
+```bash
+make test-all
+# Backend:  pytest tests/ -x  (~0.7s, no infra needed — DB mocked)
+# Frontend: vitest run         (~1.5s, 218 tests)
+# Total: ~2.2 seconds
+
+make test-cov   # backend coverage report
+# Coverage: 87% (common/), 84% (api/routers/)
+```

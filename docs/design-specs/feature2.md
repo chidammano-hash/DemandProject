@@ -274,6 +274,81 @@ Human overrides with approval and reason traceability.
 - `DomainSpec` dataclass in `common/domain_specs.py` as the central schema contract (8 domains: item, location, customer, time, dfu, sales, forecast, inventory)
 - Generic ETL pipeline: CSV → normalize → clean CSV → Postgres (+ optional Spark → Iceberg)
 - MLflow for clustering and backtest experiment tracking
+- Dual-path forecast loading with execution-lag filtering (see illustration below)
+
+---
+
+### Forecast Loading: Dual-Path with Phase Ordering
+
+The source CSV contains 5 rows per DFU per forecast date (lags 0–4). During normalization, each row's `execution_lag` is set equal to its own `lag` (the source has no `execution_lag` column). The loader performs a dual-path insert using **phase ordering** to preserve archive integrity:
+
+```
+Phase 3b: Archive load (BEFORE staging mutation)
+  → backtest_lag_archive receives ALL 5 lag rows
+  → each row's original lag preserved as execution_lag
+
+Phase 3c: Staging mutation
+  → UPDATE staging SET execution_lag = dim_dfu.execution_lag
+  → all 5 rows now have execution_lag = 2 (the DFU-level value)
+
+Phase 5: Main table insert
+  → WHERE lag = execution_lag
+  → only lag=2 row enters fact_external_forecast_monthly
+```
+
+**Critical design:** The archive loads FIRST (Phase 3b) before the staging mutation (Phase 3c). This ensures the archive reads untouched staging data where each row's `execution_lag` equals its own `lag`. The staging mutation is only needed for the main table's `WHERE lag = execution_lag` filter.
+
+#### Concrete Example
+
+**DFU:** `ITEM-X_GRP-A_LOC-1` with `dim_dfu.execution_lag = 2`
+
+**Source CSV rows (after normalization, before any mutation):**
+
+| row | dmdunit | loc | fcstdate | startdate | lag | execution_lag | basefcst | tothist_dmd |
+|-----|---------|-----|----------|-----------|-----|---------------|----------|-------------|
+| 1   | ITEM-X  | 1   | 2024-01  | 2024-01   | 0   | 0             | 100      | 90          |
+| 2   | ITEM-X  | 1   | 2024-01  | 2024-02   | 1   | 1             | 105      | 95          |
+| 3   | ITEM-X  | 1   | 2024-01  | 2024-03   | 2   | 2             | 110      | 88          |
+| 4   | ITEM-X  | 1   | 2024-01  | 2024-04   | 3   | 3             | 108      | 92          |
+| 5   | ITEM-X  | 1   | 2024-01  | 2024-05   | 4   | 4             | 112      | 87          |
+
+**Phase 3b — Archive INSERT** (reads untouched staging):
+
+| row | lag | execution_lag (preserved) | basefcst | tothist_dmd |
+|-----|-----|--------------------------|----------|-------------|
+| 1   | 0   | 0                        | 100      | 90          |
+| 2   | 1   | 1                        | 105      | 95          |
+| 3   | 2   | 2                        | 110      | 88          |
+| 4   | 3   | 3                        | 108      | 92          |
+| 5   | 4   | 4                        | 112      | 87          |
+
+All 5 lags are preserved in the archive for multi-horizon accuracy analysis.
+
+**Phase 3c — Staging mutation** (overwrites execution_lag from dim_dfu):
+
+| row | lag | execution_lag (after mutation) |
+|-----|-----|-------------------------------|
+| 1   | 0   | **2** ← was 0                 |
+| 2   | 1   | **2** ← was 1                 |
+| 3   | 2   | 2 (unchanged)                 |
+| 4   | 3   | **2** ← was 3                 |
+| 5   | 4   | **2** ← was 4                 |
+
+**Phase 5 — Main table INSERT** with `WHERE lag = execution_lag`:
+
+| row | lag | execution_lag | lag = exec_lag? | Inserted? |
+|-----|-----|---------------|-----------------|-----------|
+| 1   | 0   | 2             | 0 != 2          | No        |
+| 2   | 1   | 2             | 1 != 2          | No        |
+| 3   | 2   | 2             | **2 = 2**       | **Yes**   |
+| 4   | 3   | 2             | 3 != 2          | No        |
+| 5   | 4   | 2             | 4 != 2          | No        |
+
+Only row 3 (lag=2) enters `fact_external_forecast_monthly`.
+
+**Unmatched DFUs** (not found in `dim_dfu`): execution_lag defaults to `0` during staging mutation, so only the lag-0 row enters the main table. The archive still receives all 5 rows with their original lag values (loaded in Phase 3b before mutation).
+
+**`--skip-archive` flag:** When `--skip-archive` is passed (or via `make load-forecast-replace-no-archive`), Phase 3b (archive load) and Phase 8 (archive view refresh) are skipped entirely. Only the execution-lag row is loaded into the main table. This is useful for fast external forecast reloads when the 45M-row archive INSERT is not needed.
 
 ### What remains aspirational (not yet implemented):
 - SCD2 (slowly changing dimensions) with `effective_from` / `effective_to` / `is_current`
@@ -285,3 +360,38 @@ Human overrides with approval and reason traceability.
 - `gold.fact_override_audit` for human overrides
 - Weekly planning grain support (only monthly is implemented)
 - Data quality gates at layer boundaries
+
+
+---
+
+## Examples
+
+### Example: Canonical DFU composite key
+
+```sql
+SELECT dfu_ck, dmdunit, loc, execution_lag, cluster_assignment
+FROM dim_dfu WHERE dmdunit = '100320' AND loc = '1401-BULK';
+-- dfu_ck: '100320_ALL_1401-BULK' | execution_lag: 2 | cluster: high_volume_steady
+```
+
+### Example: Dual-path forecast load (archive before main table)
+
+```bash
+# Phase 3b: load ALL lags (0-4) into archive FIRST (before execution_lag mutation)
+# Phase 3c: mutate staging table execution_lag from dim_dfu
+# Phase 5:  insert only WHERE lag = execution_lag into main table
+
+# Fast reload (preserves backtest, skips archive):
+make load-forecast-replace-no-archive
+# Loaded 1,842,310 rows into fact_external_forecast_monthly (model: external)
+```
+
+### Example: Archive vs main table row counts
+
+```sql
+SELECT 'archive' AS tbl, COUNT(*) FROM backtest_lag_archive WHERE model_id='lgbm_global'
+UNION ALL
+SELECT 'main',           COUNT(*) FROM fact_external_forecast_monthly WHERE model_id='lgbm_global';
+-- archive | 478,105  (5 lags × 95,621 DFU-months)
+-- main    |  95,621  (only execution-lag rows)
+```

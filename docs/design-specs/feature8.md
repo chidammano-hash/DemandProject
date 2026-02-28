@@ -186,3 +186,47 @@ Experiment: `dfu_backtest`. Logs parameters, metrics (WAPE, bias, accuracy), art
 
 ### Framework
 - `save_feature_importance()` function for exporting feature importance CSV from trained models
+
+
+---
+
+## Examples
+
+### Example: Timeframe logic — expanding window
+
+```python
+from dateutil.relativedelta import relativedelta
+from datetime import date
+
+latest = date(2026, 1, 1)
+for i, label in enumerate("ABCDEFGHIJ"):
+    train_end = latest - relativedelta(months=(10 - i))
+    pred_start = train_end + relativedelta(months=1)
+    n_months = (latest.year - pred_start.year)*12 + (latest.month - pred_start.month) + 1
+    print(f"{label}: train→{train_end:%Y-%m}  predict {pred_start:%Y-%m}–{latest:%Y-%m} ({n_months}mo)")
+# A: train→2025-03  predict 2025-04–2026-01 (10mo)
+# B: train→2025-04  predict 2025-05–2026-01  (9mo)
+# J: train→2025-12  predict 2026-01–2026-01  (1mo)
+```
+
+### Example: Archive coverage for item 100320
+
+```sql
+SELECT lag, COUNT(*) AS n_rows, MIN(startdate) AS first_month, MAX(startdate) AS last_month
+FROM backtest_lag_archive
+WHERE dmdunit='100320' AND loc='1401-BULK' AND model_id='lgbm_global'
+GROUP BY lag ORDER BY lag;
+-- lag=0: 10 rows  (Apr 2025 – Jan 2026)
+-- lag=1:  9 rows  (May 2025 – Jan 2026)
+-- lag=2:  8 rows  (Jun 2025 – Jan 2026)   ← execution_lag for this DFU
+-- lag=3:  7 rows  (Jul 2025 – Jan 2026)
+-- lag=4:  6 rows  (Aug 2025 – Jan 2026)
+```
+
+### Example: Run LGBM backtest and load
+
+```bash
+make backtest-lgbm      # 10 timeframes A-J, ~2 hours for 18,432 DFUs
+make backtest-load      # load into Postgres + refresh 5 materialized views
+make backtest-list      # verify row counts per model
+```

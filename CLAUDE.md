@@ -52,8 +52,11 @@
 | `mvp/demand/scripts/label_clusters.py` | Assign business labels to clusters based on feature centroids |
 | `mvp/demand/scripts/update_cluster_assignments.py` | Write cluster labels to `dim_dfu.cluster_assignment` in Postgres |
 | `mvp/demand/config/clustering_config.yaml` | Clustering hyperparameters and labeling thresholds |
-| `mvp/demand/config/model_competition.yaml` | Champion model selection: competing models, metric, lag |
-| `mvp/demand/scripts/run_champion_selection.py` | Per-DFU champion selection: best-of-models via WAPE |
+| `mvp/demand/config/model_competition.yaml` | Champion model selection: competing models, metric, lag, strategy |
+| `mvp/demand/scripts/run_champion_selection.py` | Per-DFU champion selection: best-of-models via configurable strategy |
+| `mvp/demand/common/champion_strategies.py` | 5 champion strategies (expanding, rolling, decay, ensemble, meta_learner) + registry + leak guards |
+| `mvp/demand/scripts/simulate_champion_strategies.py` | Diagnostic: simulate all strategies, compare accuracy vs ceiling |
+| `mvp/demand/scripts/train_meta_learner.py` | Meta-learner training: ceiling labels as ground truth, temporal split |
 | `mvp/demand/common/backtest_framework.py` | Shared backtest orchestrator: `run_tree_backtest()`, timeframes, data loading, output saving |
 | `mvp/demand/common/feature_engineering.py` | Shared feature matrix: lag/rolling features, future masking, `cat_dtype` parameter |
 | `mvp/demand/common/metrics.py` | Shared accuracy metrics: WAPE, bias, accuracy % |
@@ -68,6 +71,7 @@
 | `mvp/demand/scripts/run_backtest_neuralprophet.py` | NeuralProphet backtest: PyTorch-based per-DFU fitting with GPU support (uses shared utilities) |
 | `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load backtest predictions into Postgres (main + archive) |
 | `mvp/demand/scripts/clean_backtest_models.py` | Selective cleanup of model predictions from Postgres + view refresh |
+| `mvp/demand/scripts/clean_forecasts_by_date.py` | Date-range forecast cleanup: delete rows by time bucket from forecast + archive tables |
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
 | `mvp/demand/sql/008_perf_indexes_and_agg.sql` | Performance indexes (B-tree, GIN trigram) + materialized views |
 | `mvp/demand/frontend/src/api/queries.ts` | Centralized TanStack Query layer (all fetch functions + query keys) |
@@ -109,6 +113,7 @@
 | `mvp/demand/tests/conftest.py` | Shared pytest fixtures (sample DataFrames) |
 | `mvp/demand/tests/api/conftest.py` | API test fixtures (mock DB pool, async httpx client) |
 | `mvp/demand/frontend/src/**/__tests__/` | Frontend test suites (Vitest + RTL) |
+| `docs/architecture-diagram.md` | Full-stack architecture diagram (layers, data flow, ML pipeline) |
 | `docs/design-specs/` | Feature specs (feature1–feature38) |
 | `mvp/demand/api/core.py` | Shared API utilities: connection pool, OpenAI client, SQL helpers used by router modules |
 | `mvp/demand/api/auth.py` | Optional API key auth (`require_api_key` dependency; disabled when `API_KEY` env var unset) |
@@ -151,6 +156,8 @@ make db-apply-sql      # Apply DDL schemas to Postgres
 # Data pipeline
 make normalize-all     # Normalize all 8 datasets (CSV → clean CSV)
 make load-all          # Load cleaned data into Postgres + refresh materialized views
+make load-forecast-replace  # Reload external forecast only (preserves backtest data)
+make load-forecast-replace-no-archive  # Reload external forecast, skip archive (fast)
 make spark-all         # Publish datasets to Iceberg (optional)
 
 # Inventory pipeline
@@ -220,7 +227,10 @@ make backtest-load          # Load backtest predictions into Postgres + refresh 
 make backtest-all           # backtest-lgbm + backtest-load
 
 # Champion model selection
-make champion-select        # Run per-DFU champion selection (best-of-models via WAPE)
+make champion-select        # Run per-DFU champion selection (best-of-models via configurable strategy)
+make champion-simulate      # Simulate all strategies, compare accuracy vs ceiling
+make champion-train-meta    # Train meta-learner classifier for champion selection
+make champion-all           # train-meta + simulate + select (full pipeline)
 
 # Seasonality pipeline (feature 30)
 make seasonality-schema     # Apply DDL for seasonality columns on dim_dfu (one-time)
@@ -231,6 +241,16 @@ make seasonality-all        # Full pipeline: schema + detect + update
 # Backtest cleanup
 make backtest-list          # List model_id row counts in forecast + archive tables
 make backtest-clean MODELS="lgbm_global deepar_global"  # Remove specific model predictions
+
+# Forecast date-range cleanup
+make forecast-clean-list                                             # List row counts by model + month
+make forecast-clean ARGS="--before 2025-04-01 --model external"     # Delete external forecasts before Apr 2025
+make forecast-clean ARGS="--between 2024-01-01 2024-07-01"          # Delete all models between Jan-Jun 2024
+make forecast-clean ARGS="--months 2024-03 2024-06 2024-09"         # Delete specific months
+make forecast-clean ARGS="--months 2025-01 --model external"        # Delete one month for one model
+make forecast-clean ARGS="--before 2025-01-01 --dry-run"            # Preview without deleting
+make forecast-clean ARGS="--after 2025-06-01 --forecast-only"       # Only clean main table
+make forecast-clean ARGS="--before 2025-01-01 --date-column fcstdate --archive-only"  # Archive only, by fcstdate
 
 # Testing
 make test              # Run all backend pytest tests
@@ -379,12 +399,14 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Sales filtering:** Only rows with `TYPE=1` are loaded into `fact_sales_monthly`
 - **Time dimension:** Auto-generated 2020–2035, not sourced from a file
 - **Forecast model_id:** Identifies the forecasting algorithm; default `'external'` for source-system forecasts. `UNIQUE(forecast_ck, model_id)` constraint prevents duplicates within a model. Not part of the business key.
+- **Forecast execution-lag loading:** `load_dataset_postgres.py` uses a **dual-path insert with phase ordering** to preserve archive integrity. **Phase 3b** loads the archive FIRST from untouched staging data — each row's original `lag` is preserved as `execution_lag` in `backtest_lag_archive`. **Phase 3c** THEN mutates the staging table's `execution_lag` column from `dim_dfu` (matched DFUs get the DFU-level value, unmatched default to 0). **Phase 5** inserts into the main table with `WHERE lag = execution_lag` — only execution-lag rows enter `fact_external_forecast_monthly`. This ordering is critical: the archive must read staging before the mutation, otherwise all rows for a DFU would have the same `execution_lag` value, corrupting multi-horizon accuracy analysis. Use `--replace` flag (or `make load-forecast-replace`) to only delete+reload `model_id='external'` rows without truncating the whole table (preserves backtest/champion/ceiling data). Use `--skip-archive` flag (or `make load-forecast-replace-no-archive`) to skip the archive load entirely — only the execution-lag row is loaded into the main table, bypassing the 45M-row archive INSERT for faster external forecast reloads. See `feature2.md` § "Forecast Loading: Dual-Path with Execution-Lag Filtering" for a worked example.
 - **Chat endpoint:** `POST /chat` — OpenAI-powered NL→SQL with pgvector context retrieval. Read-only execution with 5s timeout and 500-row limit. Requires `OPENAI_API_KEY` in `.env`.
 - **DFU clustering:** KMeans-based clustering pipeline groups DFUs by demand patterns. Feature engineering extracts time series, item, and DFU features. Cluster labels (e.g., `high_volume_steady`, `seasonal_medium_volume`) stored in `dim_dfu.cluster_assignment`. MLflow tracks experiments under `dfu_clustering`. Config in `config/clustering_config.yaml`.
-- **Champion model selection:** Rolling/expanding window per-DFU per-month champion selection via WAPE (Forecast Value Added). At each month, picks the model with lowest cumulative WAPE from prior months only (before-the-fact). Config in `config/model_competition.yaml` controls competing models, metric, lag, and `min_dfu_rows` (minimum prior months required). Champion rows stored as `model_id='champion'` in `fact_external_forecast_monthly`. Ceiling (oracle) picks the best model per DFU per month with perfect foresight (after-the-fact), stored as `model_id='ceiling'`. Both at DFU-month granularity with consistent WAPE formula `SUM(|F-A|) / |SUM(A)|`. Gap-to-ceiling quantifies improvement opportunity. UI panel in Accuracy tab shows champion + ceiling KPI cards, gap-to-ceiling indicator, and dual model wins bar charts.
+- **Champion model selection:** Configurable per-DFU per-month champion selection via 5 strategies: expanding (cumulative WAPE), rolling (last N months), decay (exponential weighting), ensemble (blend top-K models), meta_learner (ML classifier). All strategies enforce **exec-lag-aware strict causality** — selection for month T with execution_lag=L uses ONLY data from months where `startdate < T − L` (i.e. `startdate < fcstdate`), implemented as `shift(exec_lag + 1)` per DFU-model group. This prevents using actuals that weren't available when the forecast was issued. With `exec_lag=0` the behaviour is identical to `shift(1)` (backward compatible). **Fallback model** (`fallback_model_id: lgbm_cluster` by default): DFU-months in the warm-up period (first `exec_lag + min_dfu_rows` months with insufficient prior history) are filled with the fallback model's forecast so every DFU-month always has a champion row. Strategy registry in `common/champion_strategies.py`. Config in `config/model_competition.yaml` controls competing models, metric, lag, `min_dfu_rows`, `fallback_model_id`, `strategy`, and `strategy_params`. Champion rows stored as `model_id='champion'` in `fact_external_forecast_monthly`. Ceiling (oracle) picks the best model per DFU per month with perfect foresight (after-the-fact), stored as `model_id='ceiling'`. Both at DFU-month granularity with consistent WAPE formula `SUM(|F-A|) / |SUM(A)|`. Gap-to-ceiling quantifies improvement opportunity. Meta-learner uses ceiling labels as ground truth with strict temporal train/test split. Simulation script (`scripts/simulate_champion_strategies.py`) runs all strategies and compares accuracy vs ceiling. UI panel in Accuracy tab shows champion + ceiling KPI cards, gap-to-ceiling indicator, and dual model wins bar charts.
 - **Shared backtest framework:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) use `common/backtest_framework.py` as a shared orchestrator via `run_tree_backtest()`. Each script implements only model-specific training functions passed as callables. Prophet and NeuralProphet use shared utilities but orchestrate their own per-DFU fitting loops. StatsForecast uses shared utilities with vectorized batch fitting (no per-DFU loop, ~100x faster than Prophet). Shared modules in `common/`: `backtest_framework.py`, `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`.
 - **Market intelligence:** `POST /market-intelligence` — combines Google Custom Search API (product news/trends) + GPT-4o narrative synthesis for item + location pairs. Looks up item metadata (description, brand, category) from `dim_item` and location state from `dim_location`. Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` in `.env`.
 - **Backtest cleanup:** `scripts/clean_backtest_models.py` selectively removes model predictions from `fact_external_forecast_monthly` and `backtest_lag_archive` by `model_id`, then refreshes 5 materialized views. Supports `--list`, `--dry-run`, `--all-backtest` (excludes `external`). Make targets: `backtest-clean`, `backtest-list`.
+- **Forecast date-range cleanup:** `scripts/clean_forecasts_by_date.py` deletes rows from `fact_external_forecast_monthly` and/or `backtest_lag_archive` by time bucket. Supports `--before`, `--after`, `--between` date range filters and `--months` for specific month(s) on `startdate` (default) or `fcstdate`, optional `--model` filter, `--forecast-only`/`--archive-only` scope, `--dry-run` preview, and `--list` for row counts by model+month. All dates normalized to month-start. Refreshes same 5 materialized views as `clean_backtest_models.py`. Make targets: `forecast-clean`, `forecast-clean-list`.
 - **Benchmarking:** `GET /bench/compare` runs identical queries (count, page, trend) against Postgres and Trino/Iceberg, returning per-query latency stats (min/max/avg/p50/p95) with winner determination and speedup factor. Requires Docker services running. Make target: `bench-compare`.
 - **Inventory snapshots:** 14 monthly CSV files (`datafiles/Inventory_Snapshot_YYYY_MM.csv`, ~190M rows total) merged by `scripts/normalize_inventory_csv.py` into a single clean CSV. Loaded into `fact_inventory_snapshot` via generic loader. `qty_on_order` derived as `qty_on_hand_on_order - qty_on_hand` during normalization. Dedicated API endpoints (`/inventory/*`) and frontend InventoryTab. `agg_inventory_monthly` materialized view with daily sales derivation (LAG CTE), EOM snapshots, and proper monthly sales (MAX not SUM). `/inventory/kpis` uses two-query pattern: point-in-time totals from latest snapshot + trailing-month aggregates for supply chain KPIs (DOS, WOC, Inventory Turns, LT Coverage). KPI cards use severity color-coding (green/yellow/red thresholds). Trend chart renders 5 lines: On Hand, On Order, Monthly Sales, Lead Time, Days of Supply.
 - **DFU seasonality detection:** Pipeline in `scripts/detect_seasonality.py` + `update_seasonality_profiles.py` computes seasonality metrics (strength, profile label, peak/trough month, peak-to-trough ratio, is_yearly_seasonal flag) from sales history and writes them to `dim_dfu`. Config in `config/seasonality_config.yaml`. DDL in `sql/015_add_seasonality_columns.sql`. Make targets: `seasonality-detect`, `seasonality-update`, `seasonality-all`. These 6 columns (`seasonality_profile`, `seasonality_strength`, `is_yearly_seasonal`, `peak_month`, `trough_month`, `peak_trough_ratio`) are now part of `DFU_SPEC` and are exposed by the generic Data Explorer.
@@ -415,7 +437,7 @@ Located in `docs/design-specs/`:
 - `feature12.md` — CatBoost backtesting implementation
 - `feature13.md` — XGBoost backtesting implementation
 - `feature14.md` — Transfer learning backtest strategy
-- `feature15.md` — Champion model selection (rolling window best-of-models per DFU per month)
+- `feature15.md` — Champion model selection (exec-lag-aware best-of-models per DFU per month, fallback for warm-up gaps)
 - `feature16.md` — Data Explorer performance & UX (type-aware filtering, GIN indexes, column typeahead, loading overlay)
 - `feature17.md` — DFU Analysis tab (sales vs multi-model forecast overlay)
 - `feature18.md` — Market intelligence (web search + LLM narrative briefings)
@@ -447,32 +469,37 @@ Located in `docs/design-specs/`:
 
 ## Documentation Update Rules
 
-**Whenever you implement a new feature or make significant changes, you MUST update the following files:**
+**Whenever ANY code is added, changed, or deleted in the codebase, you MUST update ALL of the following documentation files to keep them in sync:**
 
-1. **`docs/design-specs/feature<N>.md`** — Create or update the design spec for the feature
-2. **`docs/design-specs/feature1.md`** — Add the feature to the "Implemented Features (MVP)" list
-3. **`mvp/demand/docs/ARCHITECTURE.md`** — Update architecture, component technologies, tables, or data flow if affected
-4. **`mvp/demand/docs/README.md`** — Update stack, datasets, analytics behavior, quick start, or key paths if affected
-5. **`mvp/demand/docs/RUNBOOK.md`** — Update setup steps, notes, or troubleshooting if affected
-6. **`CLAUDE.md`** (this file) — Update Key Files, Common Commands, Data Models, Frontend Features, Important Conventions, or Design Specs list if affected
+1. **`docs/architecture-diagram.md`** — Update the architecture diagram (layers, components, data flow, ML pipeline) to reflect any structural changes — new/removed modules, routers, tabs, scripts, services, tables, or data flows
+2. **`mvp/demand/docs/ARCHITECTURE.md`** — Update architecture, component technologies, tables, or data flow if affected
+3. **`mvp/demand/docs/README.md`** — Update stack, datasets, analytics behavior, quick start, or key paths if affected
+4. **`mvp/demand/docs/RUNBOOK.md`** — Update setup steps, notes, or troubleshooting if affected
+5. **`docs/design-specs/feature<N>.md`** — Create or update the design spec for the feature
+6. **`docs/design-specs/feature1.md`** — Add the feature to the "Implemented Features (MVP)" list
+7. **`CLAUDE.md`** (this file) — Update Key Files, Common Commands, Data Models, Frontend Features, Important Conventions, or Design Specs list if affected
+
+**This applies to ALL changes — additions, modifications, AND deletions. When code is removed, the corresponding references in ALL documentation files above must also be removed or updated.**
 
 **Additionally, you MUST write tests for every change and run `make test-all` to verify they pass:**
 
-7. **`mvp/demand/tests/`** — Add or update backend tests for any new/modified Python modules or API endpoints
-8. **`mvp/demand/frontend/src/**/__tests__/`** — Add or update frontend tests for any new/modified components, hooks, or utilities
-9. **Run `make test-all`** — Verify all 485+ tests pass (both backend and frontend) before considering the work complete
+8. **`mvp/demand/tests/`** — Add or update backend tests for any new/modified Python modules or API endpoints
+9. **`mvp/demand/frontend/src/**/__tests__/`** — Add or update frontend tests for any new/modified components, hooks, or utilities
+10. **Run `make test-all`** — Verify all 485+ tests pass (both backend and frontend) before considering the work complete
 
-**What counts as "significant changes":**
+**What counts as changes requiring doc updates:**
 - New feature implementation (new endpoints, UI panels, tables, scripts)
 - Schema changes (new columns, tables, indexes, materialized views)
 - New dependencies or infrastructure changes (docker images, pyproject.toml)
 - New Make targets or CLI commands
 - Changes to data flow or pipeline behavior
+- Removal or renaming of any module, endpoint, component, table, or script
+- Refactors that change architecture, file structure, or public interfaces
 
 **What does NOT require doc updates:**
 - Bug fixes that don't change behavior or interfaces
-- Minor code refactors that don't change architecture
-- Typo corrections
+- Minor internal code refactors that don't change architecture or file structure
+- Typo corrections within code (not in docs)
 
 **What ALWAYS requires tests (even for bug fixes):**
 - Any new Python function or class

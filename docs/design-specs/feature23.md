@@ -197,3 +197,52 @@ The following model_ids may exist in the database and can be cleaned:
 
 ### Status
 Fully implemented.
+
+
+---
+
+## Examples
+
+### Example: List current model row counts
+
+```bash
+make backtest-list
+# model_id           | fact_rows | archive_rows
+# -------------------+-----------+-------------
+# external           | 1,842,310 | 9,211,550
+# lgbm_global        |    95,621 |   478,105
+# lgbm_cluster       |    94,803 |   474,015
+# catboost_global    |    94,812 |   474,060
+# deepar_global      |    93,107 |   465,535
+# champion           |    95,621 |         0
+# ceiling            |    95,621 |         0
+```
+
+### Example: Dry run before deletion
+
+```bash
+make backtest-clean MODELS="deepar_global catboost_global" -- --dry-run
+# [DRY RUN] Would delete 93,107 rows from fact_external_forecast_monthly (deepar_global)
+# [DRY RUN] Would delete 465,535 rows from backtest_lag_archive (deepar_global)
+# [DRY RUN] Would delete 94,812 rows from fact_external_forecast_monthly (catboost_global)
+# [DRY RUN] No changes made.
+```
+
+### Example: Actual deletion with view refresh
+
+```bash
+make backtest-clean MODELS="deepar_global"
+# Deleted 93,107 rows from fact_external_forecast_monthly
+# Deleted 465,535 rows from backtest_lag_archive
+# REFRESH MATERIALIZED VIEW agg_forecast_monthly        ... OK
+# REFRESH MATERIALIZED VIEW agg_accuracy_by_dim         ... OK
+# REFRESH MATERIALIZED VIEW agg_dfu_coverage            ... OK
+# REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive    ... OK
+# REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive... OK
+```
+
+### Example: Clean all non-external models
+
+```bash
+make backtest-clean -- --all-backtest  # removes lgbm*, catboost*, deepar* etc. but NOT 'external'
+```

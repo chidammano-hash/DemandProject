@@ -147,3 +147,44 @@ Pre-aggregated forecasts including `model_id` in GROUP BY for per-model analytic
 | `agg_dfu_coverage_lag_archive` | model_id, lag | dfu_count | sql/012 |
 | `mv_top_movers` | dmdunit | current/prior period qty, pct_change | sql/018 |
 | `mv_inventory_forecast_monthly` | item_no, loc, month_start, model_id | forecast, actual, error, dos, stockout/excess flags | sql/019 |
+
+
+---
+
+## Examples
+
+### Example: Sales fact — recent months for item 100320
+
+```sql
+SELECT startdate, qty_shipped, qty_ordered
+FROM fact_sales_monthly
+WHERE dmdunit='100320' AND loc='1401-BULK' AND type=1
+ORDER BY startdate DESC LIMIT 4;
+-- 2026-01-01 | 788 | 801
+-- 2025-12-01 | 910 | 928
+-- 2025-11-01 | 842 | 860
+-- 2025-10-01 | 875 | 891
+```
+
+### Example: Forecast fact — 5 lags for one forecast date
+
+```sql
+SELECT fcstdate, startdate, lag, model_id, basefcst_pref, tothist_dmd
+FROM fact_external_forecast_monthly
+WHERE dmdunit='100320' AND loc='1401-BULK'
+  AND fcstdate='2025-01-01' AND model_id='external'
+ORDER BY lag;
+-- 2025-01-01 | 2025-01-01 | 0 | external | 920 | 921
+-- 2025-01-01 | 2025-02-01 | 1 | external | 905 | 895
+-- 2025-01-01 | 2025-03-01 | 2 | external | 910 | 875  ← execution-lag row
+-- 2025-01-01 | 2025-04-01 | 3 | external | 895 | 842
+-- 2025-01-01 | 2025-05-01 | 4 | external | 880 | 788
+```
+
+### Example: Load sales and forecast
+
+```bash
+make load-sales                       # load fact_sales_monthly
+make load-forecast-replace            # reload external forecast, preserve backtest
+make load-forecast-replace-no-archive # faster: skip 45M-row archive insert
+```

@@ -900,3 +900,119 @@ Health Score = weighted combination of:
 - Inventory health score
 - Bullwhip effect detection
 - Seasonal pre-build tracking
+
+
+---
+
+## Examples
+
+### Example: Planned inventory overlay API contract
+
+```bash
+# When implemented, inventory data will be served alongside forecast in DFU Analysis:
+curl -s "http://localhost:8000/dfu/analysis?item=100320&loc=1401-BULK&include_inventory=true" \
+  | jq '.inventory_overlay[] | {month: .startdate, dos, woc, qty_on_hand, stockout_risk}'
+# {"month": "2025-11-01", "dos": 52.3, "woc": 7.5, "qty_on_hand": 5020, "stockout_risk": false}
+# {"month": "2025-12-01", "dos": 45.2, "woc": 6.4, "qty_on_hand": 4320, "stockout_risk": false}
+# {"month": "2026-01-01", "dos": 12.4, "woc": 1.8, "qty_on_hand":  980, "stockout_risk": true}
+```
+
+### Example: Planned dual-axis chart design
+
+```
+Forecast vs Sales chart (existing):
+  Left Y-axis:  Volume (cases)  — sales line + model forecast lines
+  Right Y-axis: Accuracy %      — WAPE trend per model
+
+Inventory Overlay (planned addition):
+  Second chart below (same X-axis, linked zoom):
+  Left Y-axis:  Inventory (cases on hand, on order)
+  Right Y-axis: Days of Supply  — dos threshold line at 30 days
+  Markers:      Red dot when DOS < 14 (stockout risk)
+```
+
+### Example: Data source for overlay
+
+```sql
+-- agg_inventory_monthly already has DOS, WOC, avg_on_hand
+SELECT item_no, loc, month_start, eom_on_hand, dos, woc
+FROM agg_inventory_monthly
+WHERE item_no='100320' AND loc='1401-BULK'
+  AND month_start >= '2025-08-01'
+ORDER BY month_start;
+-- 2025-08-01 | 100320 | 1401-BULK | 4891 | 50.8 | 7.3
+-- 2025-09-01 | 100320 | 1401-BULK | 4210 | 43.9 | 6.3
+```
+
+
+#### Example — Planned Make Pipeline Commands
+
+```bash
+# One-time setup: apply DDL for fact_inventory_snapshot and agg_inventory_monthly
+make db-apply-sql   # includes 016_create_fact_inventory_snapshot.sql
+
+# Full inventory pipeline (normalize → load → refresh view)
+make inventory-pipeline
+
+# Individual steps:
+make normalize-inventory
+# → reads datafiles/inventory_snapshot.csv
+# → drops excluded columns (site_allocation, dc_oh, ssc_oh, national_oos, etc.)
+# → parses exec_date from YYYYMMDD to YYYY-MM-DD
+# → derives qty_on_order = qty_on_hand_on_order - qty_on_hand
+# → writes data/inventory_snapshot_clean.csv
+
+make load-inventory
+# → stages clean CSV into Postgres staging table
+# → deduplicates by (item_no, loc, snapshot_date) composite key
+# → inserts ~190M rows into fact_inventory_snapshot
+# → refreshes agg_inventory_monthly materialized view
+
+# Verify load:
+make check-db
+# fact_inventory_snapshot  | 190,000,000 rows
+# agg_inventory_monthly    |      18,432 rows (one per DFU-month)
+
+# Query DOS for a specific DFU after loading:
+psql -h localhost -p 5440 -U demand -d demand -c "
+  SELECT month_start, eom_on_hand, dos, woc, avg_daily_sales
+  FROM agg_inventory_monthly
+  WHERE item_no='100320' AND loc='1401-BULK'
+  ORDER BY month_start DESC LIMIT 6;
+"
+# month_start | eom_on_hand |  dos  | woc  | avg_daily_sales
+# 2025-12-01  |    4320     | 45.2  | 6.4  |      95.6
+# 2025-11-01  |    5020     | 52.3  | 7.5  |      95.9
+# 2025-10-01  |    4891     | 50.8  | 7.3  |      96.3
+# 2025-09-01  |    4210     | 43.9  | 6.3  |      95.9
+# 2025-08-01  |    3980     | 41.5  | 5.9  |      95.9
+# 2025-07-01  |    4100     | 42.7  | 6.1  |      96.0
+```
+
+#### Example — Planned Inventory KPI API Response
+
+```bash
+# When the DFU Analysis endpoint is extended with inventory overlay:
+curl -s "http://localhost:8000/dfu/analysis?item=100320&loc=1401-BULK&mode=overlay&include_inventory=true"   | jq '{
+      dfu_attributes: .dfu_attributes | {qty_on_hand, qty_on_order, lead_time_days, dos, woc},
+      inventory_kpis: .inventory_kpis,
+      inventory_series_count: (.inventory_series | length)
+    }'
+# {
+#   "dfu_attributes": {
+#     "qty_on_hand": 4320,
+#     "qty_on_order": 1200,
+#     "lead_time_days": 14,
+#     "dos": 45.2,
+#     "woc": 6.4
+#   },
+#   "inventory_kpis": {
+#     "avg_dos_12m": 47.8,
+#     "stockout_months": 1,
+#     "excess_months": 2,
+#     "inv_turns_annual": 8.1,
+#     "lt_coverage_ratio": 3.2
+#   },
+#   "inventory_series_count": 12
+# }
+```

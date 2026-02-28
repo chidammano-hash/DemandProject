@@ -4471,3 +4471,96 @@ The MVP implements a simplified version of this specification. Key differences f
 - Phases 2-4 (safety stock optimization, ABC-XYZ classification engine, ML replenishment, S&OP integration)
 - Separate inventory router module (currently inline)
 - Advanced supply chain KPIs beyond DOS/WOC/Turns/LT Coverage
+
+
+---
+
+## Examples
+
+### Example: Inventory KPI endpoint
+
+```bash
+curl -s "http://localhost:8000/inventory/kpis?item_no=100320&loc=1401-BULK" | jq .
+# {
+#   "dos": 45.2,           "woc": 6.4,    "turns": 8.1,
+#   "avg_on_hand": 4320,   "avg_daily_sales": 96.0,
+#   "lt_coverage_days": 38, "service_level_pct": 97.3,
+#   "eom_on_hand": 3980,   "eom_on_order": 2100
+# }
+```
+
+### Example: Inventory position (paginated)
+
+```bash
+curl -s "http://localhost:8000/inventory/position?item_no=100320&limit=3" | jq '.rows[0]'
+# {
+#   "item_no": "100320", "loc": "1401-BULK",
+#   "snapshot_date": "2026-01-31",
+#   "qty_on_hand": 3980, "qty_on_order": 2100,
+#   "mtd_sales": 788, "lead_time_days": 42
+# }
+```
+
+### Example: Load 190M-row inventory dataset
+
+```bash
+make inventory-pipeline
+# Step 1: normalize-inventory → merge 14 monthly CSVs into single clean CSV
+#   Reads: datafiles/Inventory_Snapshot_2024_12.csv ... Inventory_Snapshot_2026_01.csv
+#   Derives: qty_on_order = qty_on_hand_on_order - qty_on_hand
+#   Output: data/inventory_snapshot_clean.csv (~190M rows)
+# Step 2: load-inventory → PostgreSQL COPY → fact_inventory_snapshot
+# Step 3: refresh agg_inventory_monthly materialized view
+```
+
+### Example: DOS and WOC thresholds for KPI color-coding
+
+| KPI             | Green (OK)   | Yellow (Warning) | Red (Critical) |
+|-----------------|-------------|-----------------|----------------|
+| Days of Supply  | DOS ≥ 30    | 14 ≤ DOS < 30   | DOS < 14       |
+| Weeks of Cover  | WOC ≥ 4.3   | 2.0 ≤ WOC < 4.3 | WOC < 2.0      |
+| Inventory Turns | Turns ≥ 6   | 3 ≤ Turns < 6   | Turns < 3      |
+
+### Example: Inventory trend endpoint
+
+```bash
+curl -s "http://localhost:8000/inventory/trend?item_no=100320&loc=1401-BULK&months=6" | jq '.rows[0]'
+# {
+#   "month_start": "2025-08-01",
+#   "eom_qty_on_hand": 4120,
+#   "eom_qty_on_hand_on_order": 6220,
+#   "monthly_sales": 788,
+#   "avg_daily_sls": 25.4,
+#   "dos": 162.2,
+#   "latest_lead_time_days": 42,
+#   "snapshot_days": 31
+# }
+```
+
+### Example: Inventory item-detail endpoint
+
+```bash
+curl -s "http://localhost:8000/inventory/item-detail?item_no=100320&loc=1401-BULK" | jq .
+# {
+#   "item_no": "100320",
+#   "loc": "1401-BULK",
+#   "item_desc": "CABERNET SAUV 750ML",
+#   "brand": "Acme Wines",
+#   "category": "Red Wine",
+#   "cluster_assignment": "high_volume_steady",
+#   "seasonality_profile": "non_seasonal",
+#   "latest_snapshot": {
+#     "snapshot_date": "2026-01-31",
+#     "qty_on_hand": 3980,
+#     "qty_on_order": 2100,
+#     "lead_time_days": 42,
+#     "mtd_sales": 788
+#   },
+#   "kpis": {
+#     "dos": 45.2,
+#     "woc": 6.4,
+#     "turns": 8.1,
+#     "lt_coverage_days": 38
+#   }
+# }
+```

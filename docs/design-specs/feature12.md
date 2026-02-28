@@ -157,3 +157,122 @@ make backtest-load                 # Reload
 
 ### Shared Modules
 - Same as Feature 9: `common/constants.py`, `common/metrics.py`, `common/mlflow_utils.py`, `common/db.py`
+
+
+---
+
+## Examples
+
+### Example: Run CatBoost backtest
+
+```bash
+make backtest-catboost
+# CatBoostRegressor(iterations=500, depth=6, learning_rate=0.05)
+# cat_dtype='str' for CatBoost (uses ordered target encoding internally)
+# Training on 10 expanding timeframes A-J
+# Output: data/backtest_catboost_global.csv  (95,621 rows)
+make backtest-load  # load into Postgres as model_id='catboost_global'
+```
+
+### Example: CatBoost training function
+
+```python
+from catboost import CatBoostRegressor
+import numpy as np
+
+cat_cols = [X_train.columns.get_loc(c) for c in CAT_FEATURES if c in X_train.columns]
+model = CatBoostRegressor(
+    iterations=500, depth=6, learning_rate=0.05,
+    loss_function='RMSE', verbose=0
+)
+model.fit(X_train, y_train, cat_features=cat_cols, eval_set=(X_val, y_val))
+preds = np.maximum(model.predict(X_test), 0)  # clip negatives
+```
+
+### Example: Compare CatBoost vs LGBM accuracy
+
+```bash
+curl -s "http://localhost:8000/forecast/accuracy/slice?lag=2&dim=model_id" \
+  | jq '.rows[] | select(.model_id | test("catboost|lgbm")) | {model_id, accuracy_pct}'
+# {"model_id": "catboost_global", "accuracy_pct": 92.1}
+# {"model_id": "lgbm_global",     "accuracy_pct": 91.5}
+```
+
+
+---
+
+## Additional Examples
+
+#### Example — Categorical feature handling (CatBoost-specific)
+
+```python
+from catboost import CatBoostRegressor, Pool
+from common.constants import CAT_FEATURES
+
+# CatBoost requires column INDICES (not names) for cat_features
+# cat_dtype='str' ensures columns are string dtype before index lookup
+X_train = X_train.astype({c: str for c in CAT_FEATURES if c in X_train.columns})
+
+cat_indices = [X_train.columns.get_loc(c) for c in CAT_FEATURES if c in X_train.columns]
+# e.g. [3, 7, 12, 15] — positional indices for ml_cluster, region, brand, abc_vol
+
+pool = Pool(X_train, y_train, cat_features=cat_indices)
+model = CatBoostRegressor(iterations=500, depth=6, verbose=0)
+model.fit(pool)
+# CatBoost applies ordered target encoding internally — no one-hot encoding needed
+```
+
+#### Example — GPU auto-detection for CatBoost
+
+```python
+import subprocess, platform
+
+def _detect_catboost_task_type() -> str:
+    """Return 'GPU' if a CUDA-capable device is found, else 'CPU'."""
+    if platform.system() == "Linux":
+        result = subprocess.run(["nvidia-smi"], capture_output=True)
+        if result.returncode == 0:
+            return "GPU"
+    # macOS: CatBoost GPU via Metal is experimental; default to CPU
+    return "CPU"
+
+task_type = _detect_catboost_task_type()
+model = CatBoostRegressor(task_type=task_type, iterations=500, verbose=0)
+# Falls back to CPU silently if GPU driver unavailable
+```
+
+#### Example — Lag Strategy archive expansion for CatBoost
+
+```sql
+-- Verify CatBoost archive has all 5 lags
+SELECT lag, COUNT(*) AS rows, ROUND(AVG(basefcst_pref), 2) AS avg_fcst
+FROM backtest_lag_archive
+WHERE model_id = 'catboost_global'
+GROUP BY lag ORDER BY lag;
+-- lag | rows   | avg_fcst
+--   0 | 95621  |  1251.30
+--   1 | 95621  |  1243.10
+--   2 | 95621  |  1229.50
+--   3 | 95621  |  1214.80
+--   4 | 95621  |  1208.20
+-- Each prediction is expanded to 5 rows in the archive (shared load script)
+```
+
+#### Example — Transfer learning for CatBoost
+
+```python
+from catboost import CatBoostRegressor
+
+# Phase 1: global base model
+base_model = CatBoostRegressor(iterations=500, depth=6, verbose=0)
+base_model.fit(X_all, y_all, cat_features=cat_indices)
+
+# Phase 2: per-cluster fine-tune (CatBoost uses init_model=regressor directly)
+for cluster_id, (X_c, y_c) in cluster_data.items():
+    if len(X_c) < transfer_min_rows:   # default: 20
+        continue
+    fine_tuned = CatBoostRegressor(iterations=100, depth=6, verbose=0)
+    fine_tuned.fit(X_c, y_c, cat_features=cat_indices,
+                   init_model=base_model)   # <-- regressor object, not booster_
+    predictions[cluster_id] = fine_tuned.predict(X_test_c)
+```

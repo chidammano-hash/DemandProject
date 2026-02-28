@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-all backtest-clean backtest-list accuracy-slice-refresh accuracy-slice-check champion-select db-apply-jobs test test-unit test-api test-cov test-all
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-all backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all db-apply-jobs test test-unit test-api test-cov test-all
 
 help:
 	@echo "Targets:"
@@ -26,6 +26,8 @@ help:
 	@echo "  load-dfu             - load dim_dfu into Postgres"
 	@echo "  load-sales           - load fact_sales_monthly into Postgres"
 	@echo "  load-forecast        - load fact_external_forecast_monthly into Postgres"
+	@echo "  load-forecast-replace - reload external forecast only (preserves backtest data)"
+	@echo "  load-forecast-replace-no-archive - reload external, skip archive (fast)"
 	@echo "  load-inventory       - load fact_inventory_snapshot into Postgres"
 	@echo "  load-all             - load all configured datasets"
 	@echo "  refresh-agg          - refresh monthly aggregate materialized views"
@@ -71,10 +73,15 @@ help:
 	@echo "  backtest-load        - load backtest predictions into Postgres"
 	@echo "  backtest-clean       - remove model predictions (MODELS='lgbm_global deepar_global')"
 	@echo "  backtest-list        - list model_id row counts in database"
+	@echo "  forecast-clean       - delete forecasts by date range (ARGS='--before 2025-04-01 --model external')"
+	@echo "  forecast-clean-list  - list forecast row counts by model + month"
 	@echo "  backtest-all         - backtest-lgbm + backtest-load"
 	@echo "  accuracy-slice-refresh - refresh agg_accuracy_by_dim + agg_accuracy_lag_archive"
 	@echo "  accuracy-slice-check - curl accuracy slice + lag-curve endpoints"
 	@echo "  champion-select      - run champion model selection (best-of-models per DFU)"
+	@echo "  champion-simulate    - simulate all strategies, compare accuracy vs ceiling"
+	@echo "  champion-train-meta  - train meta-learner classifier for champion selection"
+	@echo "  champion-all         - train-meta + simulate + select (full pipeline)"
 	@echo "  seasonality-schema   - apply DDL for seasonality columns on dim_dfu (one-time)"
 	@echo "  seasonality-detect   - run seasonality detection pipeline (detect + profile)"
 	@echo "  seasonality-update   - write seasonality profiles to dim_dfu"
@@ -187,6 +194,14 @@ load-sales:
 
 load-forecast:
 	$(UV) python scripts/load_dataset_postgres.py --dataset forecast
+	$(MAKE) refresh-agg-forecast
+
+load-forecast-replace:
+	$(UV) python scripts/load_dataset_postgres.py --dataset forecast --replace
+	$(MAKE) refresh-agg-forecast
+
+load-forecast-replace-no-archive:
+	$(UV) python scripts/load_dataset_postgres.py --dataset forecast --replace --skip-archive
 	$(MAKE) refresh-agg-forecast
 
 load-inventory:
@@ -490,6 +505,15 @@ backtest-clean:
 backtest-list:
 	$(UV) python scripts/clean_backtest_models.py --list
 
+# ---------------------------------------------------------------------------
+# Forecast date-range cleanup
+# ---------------------------------------------------------------------------
+forecast-clean:
+	$(UV) python scripts/clean_forecasts_by_date.py $(ARGS)
+
+forecast-clean-list:
+	$(UV) python scripts/clean_forecasts_by_date.py --list
+
 accuracy-slice-refresh:
 	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 \
 		-c "REFRESH MATERIALIZED VIEW agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW agg_dfu_coverage; REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive;"
@@ -500,6 +524,14 @@ accuracy-slice-check:
 
 champion-select:
 	$(UV) python scripts/run_champion_selection.py --config config/model_competition.yaml
+
+champion-simulate:
+	$(UV) python scripts/simulate_champion_strategies.py --config config/model_competition.yaml
+
+champion-train-meta:
+	$(UV) python scripts/train_meta_learner.py --config config/model_competition.yaml
+
+champion-all: champion-train-meta champion-simulate champion-select
 
 test:
 	$(UV) pytest tests/ -v --tb=short

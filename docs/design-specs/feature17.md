@@ -140,3 +140,87 @@ Response shape:
 | `mvp/demand/frontend/src/constants/colors.ts` | `DFU_SALES_COLORS`, `dfuModelColor()` |
 | `mvp/demand/tests/api/test_dfu_analysis.py` | Backend API tests |
 | `mvp/demand/frontend/src/tabs/__tests__/DfuAnalysisTab.test.tsx` | Frontend smoke test |
+
+
+---
+
+## Examples
+
+### Example: DFU Analysis endpoint — item+location overlay
+
+```bash
+curl -s "http://localhost:8000/dfu/analysis?item=100320&loc=1401-BULK&mode=item_location&window=12" \
+  | jq '{series_count: (.series | length), models: [.model_monthly[].model_id] | unique}'
+# {"series_count": 6, "models": ["ceiling","champion","external","lgbm_cluster","lgbm_global"]}
+```
+
+### Example: Three analysis scope modes
+
+```typescript
+// Mode 1: single DFU
+fetchDfuAnalysis({ item: '100320', loc: '1401-BULK', mode: 'item_location' })
+
+// Mode 2: item across all locations
+fetchDfuAnalysis({ item: '100320', loc: '', mode: 'all_locations_for_item' })
+
+// Mode 3: all items at one location
+fetchDfuAnalysis({ item: '', loc: '1401-BULK', mode: 'all_items_at_location' })
+```
+
+### Example: Per-model KPI cards computed client-side
+
+```typescript
+// useMemo computes WAPE, bias, accuracy% from model_monthly data
+const kpis = useMemo(() => {
+  return modelMonthly
+    .filter(r => r.model_id === selectedModel)
+    .reduce((acc, r) => ({
+      totalForecast: acc.totalForecast + r.basefcst_pref,
+      totalActual: acc.totalActual + r.tothist_dmd,
+      absError: acc.absError + Math.abs(r.basefcst_pref - r.tothist_dmd),
+    }), { totalForecast: 0, totalActual: 0, absError: 0 })
+}, [modelMonthly, selectedModel])
+// accuracy_pct = 100 - (100 * absError / Math.abs(totalActual))
+```
+
+### Example: Toggleable measure checkboxes — Recharts series visibility
+
+```typescript
+// DfuAnalysisTab.tsx — visible measures state drives chart rendering
+const [visibleMeasures, setVisibleMeasures] = useState<Set<string>>(
+  new Set(['tothist_dmd', 'forecast_external', 'forecast_champion'])
+)
+
+// Recharts LineChart: only render Lines for visible measures
+{series.length > 0 && visibleMeasures.has('tothist_dmd') && (
+  <Line dataKey="tothist_dmd" stroke="#4ade80" strokeWidth={2.5}
+        dot={false} name="Sales (History)" />
+)}
+{models.map(model =>
+  visibleMeasures.has(`forecast_${model}`) && (
+    <Line key={model} dataKey={`forecast_${model}`}
+          stroke={dfuModelColor(model)} strokeWidth={1.5}
+          strokeDasharray={model === 'champion' ? undefined : '4 2'}
+          dot={false} name={model} />
+  )
+)}
+
+// Checkbox panel — "Select All" / "Deselect All"
+<button onClick={() => setVisibleMeasures(new Set(allKeys))}>Select All</button>
+<button onClick={() => setVisibleMeasures(new Set())}>Deselect All</button>
+```
+
+### Example: Error boundary wrapping for DFU Analysis tab
+
+```typescript
+// App.tsx — each tab is wrapped in a Suspense + ErrorBoundary
+<ErrorBoundary fallback={<TabErrorFallback tab="DFU Analysis" />}>
+  <Suspense fallback={<ChemistryLoader element="Da" label="DFU Analysis" />}>
+    <DfuAnalysisTab />
+  </Suspense>
+</ErrorBoundary>
+
+// If /dfu/analysis throws 500, error boundary catches and renders:
+// "DFU Analysis tab failed to load. Check API connection."
+// User can click "Retry" to reset the boundary and re-fetch.
+```

@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import psycopg
 import yaml
 from dotenv import load_dotenv
@@ -31,6 +32,8 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from common.champion_strategies import STRATEGY_REGISTRY
 
 
 # ---------------------------------------------------------------------------
@@ -56,8 +59,13 @@ _DEFAULTS = {
     "lag": "execution",
     "min_dfu_rows": 3,
     "champion_model_id": "champion",
+    "fallback_model_id": "lgbm_cluster",
     "models": [],
+    "strategy": "expanding",
+    "strategy_params": {},
 }
+
+_VALID_STRATEGIES = {"expanding", "rolling", "decay", "ensemble", "meta_learner"}
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
@@ -77,7 +85,75 @@ def load_config(config_path: Path) -> dict[str, Any]:
         raise ValueError(f"Invalid lag '{cfg['lag']}'; must be one of {sorted(valid_lags)}")
     if len(cfg["models"]) < 2:
         raise ValueError("At least 2 models required for competition")
+    if cfg["strategy"] not in _VALID_STRATEGIES:
+        raise ValueError(
+            f"Invalid strategy '{cfg['strategy']}'; "
+            f"must be one of {sorted(_VALID_STRATEGIES)}"
+        )
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# DataFrame-based data loading (for strategy registry)
+# ---------------------------------------------------------------------------
+
+def load_monthly_errors_df(
+    db: dict[str, Any],
+    models: list[str],
+    lag_mode: str,
+) -> pd.DataFrame:
+    """Load per-DFU per-month per-model errors as a DataFrame.
+
+    Includes fcstdate and execution_lag so strategies can compute the
+    correct causal prior window (startdate < fcstdate = T - exec_lag).
+    """
+    placeholders = ",".join(["%s"] * len(models))
+    params: list[Any] = list(models)
+
+    if lag_mode == "execution":
+        lag_cond = "lag::text = execution_lag::text"
+    else:
+        lag_cond = "lag = %s"
+        params.append(int(lag_mode))
+
+    sql = f"""
+        SELECT dmdunit, dmdgroup, loc, startdate, fcstdate, execution_lag,
+               model_id, basefcst_pref, tothist_dmd,
+               ABS(basefcst_pref - tothist_dmd) AS abs_err
+        FROM fact_external_forecast_monthly
+        WHERE model_id IN ({placeholders})
+          AND {lag_cond}
+          AND basefcst_pref IS NOT NULL
+          AND tothist_dmd IS NOT NULL
+        ORDER BY dmdunit, dmdgroup, loc, model_id, startdate
+    """
+    with psycopg.connect(**db) as conn:
+        df = pd.read_sql(sql, conn, params=params)
+    df["startdate"] = pd.to_datetime(df["startdate"])
+    df["fcstdate"] = pd.to_datetime(df["fcstdate"])
+    for col in ["basefcst_pref", "tothist_dmd", "abs_err"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["execution_lag"] = pd.to_numeric(df["execution_lag"], errors="coerce").fillna(0).astype(int)
+    return df
+
+
+def load_dfu_features(db: dict[str, Any]) -> pd.DataFrame:
+    """Load DFU static features for meta-learner strategy."""
+    sql = """
+        SELECT dmdunit, dmdgroup, loc,
+               ml_cluster, abc_vol, execution_lag, total_lt,
+               brand, region,
+               seasonality_profile, seasonality_strength,
+               is_yearly_seasonal, peak_month, trough_month,
+               peak_trough_ratio
+        FROM dim_dfu
+    """
+    with psycopg.connect(**db) as conn:
+        df = pd.read_sql(sql, conn)
+    for col in ["ml_cluster", "abc_vol", "brand", "region", "seasonality_profile"]:
+        if col in df.columns:
+            df[col] = df[col].astype("category").cat.codes
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -110,11 +186,15 @@ def compute_champion_winners(
         lag_cond = "lag = %s"
         params = list(models) + [int(lag_mode)]
 
+    # fcstdate = startdate - execution_lag months = the calendar date the
+    # forecast was issued.  Prior data for month T = rows where
+    # startdate < fcstdate(T), i.e. actuals that existed at issuance time.
     sql = f"""
     WITH monthly_errors AS (
         SELECT
             dmdunit, dmdgroup, loc, startdate, model_id,
-            basefcst_pref, tothist_dmd,
+            basefcst_pref, tothist_dmd, execution_lag,
+            fcstdate,
             ABS(basefcst_pref - tothist_dmd) AS abs_err
         FROM fact_external_forecast_monthly
         WHERE model_id IN ({placeholders})
@@ -123,23 +203,26 @@ def compute_champion_winners(
           AND tothist_dmd IS NOT NULL
     ),
     cumulative AS (
-        SELECT *,
-            SUM(abs_err) OVER (
-                PARTITION BY dmdunit, dmdgroup, loc, model_id
-                ORDER BY startdate
-                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-            ) AS cum_abs_err,
-            SUM(tothist_dmd) OVER (
-                PARTITION BY dmdunit, dmdgroup, loc, model_id
-                ORDER BY startdate
-                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-            ) AS cum_actual,
-            COUNT(*) OVER (
-                PARTITION BY dmdunit, dmdgroup, loc, model_id
-                ORDER BY startdate
-                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-            ) AS prior_months
-        FROM monthly_errors
+        -- Self-join: for each row A at issuance date fcstdate(A),
+        -- sum errors from rows B whose startdate < fcstdate(A).
+        -- This enforces exec-lag causality: excludes the last exec_lag
+        -- months that weren't available when the forecast was issued.
+        SELECT
+            a.dmdunit, a.dmdgroup, a.loc, a.startdate, a.model_id,
+            a.basefcst_pref, a.tothist_dmd,
+            SUM(b.abs_err)     AS cum_abs_err,
+            SUM(b.tothist_dmd) AS cum_actual,
+            COUNT(b.startdate) AS prior_months
+        FROM monthly_errors a
+        LEFT JOIN monthly_errors b
+            ON  a.dmdunit  = b.dmdunit
+            AND a.dmdgroup = b.dmdgroup
+            AND a.loc      = b.loc
+            AND a.model_id = b.model_id
+            AND b.startdate < a.fcstdate   -- causal cutoff: prior to issuance
+        GROUP BY
+            a.dmdunit, a.dmdgroup, a.loc, a.startdate, a.model_id,
+            a.basefcst_pref, a.tothist_dmd
     ),
     with_wape AS (
         SELECT *,
@@ -350,6 +433,128 @@ def insert_champion_forecasts(
     return inserted
 
 
+def insert_ensemble_forecasts(
+    cur: psycopg.Cursor,
+    winners_df: pd.DataFrame,
+    champion_model_id: str,
+) -> int:
+    """Bulk-insert ensemble (blended) forecast rows.
+
+    The ensemble strategy produces synthetic blended forecast values.
+    We find a reference model row for each DFU-month and override
+    basefcst_pref with the blended value.
+    """
+    if winners_df.empty:
+        return 0
+
+    # 1. Delete existing champion rows
+    cur.execute(
+        "DELETE FROM fact_external_forecast_monthly WHERE model_id = %s",
+        (champion_model_id,),
+    )
+    deleted = cur.rowcount
+    print(f"  Deleted {deleted:,} existing champion rows")
+
+    # 2. Create temp table with blended forecast values
+    cur.execute("""
+        CREATE TEMP TABLE _ensemble_winners (
+            dmdunit TEXT NOT NULL,
+            dmdgroup TEXT NOT NULL,
+            loc TEXT NOT NULL,
+            startdate DATE NOT NULL,
+            blended_fcst DOUBLE PRECISION NOT NULL
+        ) ON COMMIT DROP
+    """)
+
+    # 3. COPY ensemble data
+    buf = io.StringIO()
+    for _, row in winners_df.iterrows():
+        buf.write(
+            f"{row['dmdunit']}\t{row['dmdgroup']}\t{row['loc']}\t"
+            f"{row['startdate'].date()}\t{row['basefcst_pref']}\n"
+        )
+    buf.seek(0)
+    with cur.copy("COPY _ensemble_winners FROM STDIN") as copy:
+        copy.write(buf.read())
+
+    # 4. Insert using a reference model row for metadata, override basefcst_pref
+    cur.execute(
+        """
+        INSERT INTO fact_external_forecast_monthly
+            (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+             lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+        SELECT DISTINCT ON (f.dmdunit, f.dmdgroup, f.loc, f.startdate)
+            f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
+            f.lag, f.execution_lag, w.blended_fcst, f.tothist_dmd,
+            %s
+        FROM fact_external_forecast_monthly f
+        INNER JOIN _ensemble_winners w
+            ON f.dmdunit = w.dmdunit
+           AND f.dmdgroup = w.dmdgroup
+           AND f.loc = w.loc
+           AND f.startdate = w.startdate
+        WHERE f.model_id != %s AND f.model_id != 'ceiling'
+        ORDER BY f.dmdunit, f.dmdgroup, f.loc, f.startdate, f.model_id
+        """,
+        (champion_model_id, champion_model_id),
+    )
+    inserted = cur.rowcount
+    return inserted
+
+
+def insert_fallback_champions(
+    cur: psycopg.Cursor,
+    lag_mode: str,
+    champion_model_id: str,
+    fallback_model_id: str,
+) -> int:
+    """Insert champion rows using the fallback model for DFU-months without a champion.
+
+    During the warm-up period — the first (exec_lag + min_dfu_rows) months per DFU —
+    no strategy can pick a winner because there is insufficient prior history.
+    This function fills those gaps with the fallback model's forecast (default:
+    lgbm_cluster), so every DFU-month that has a backtest row always has a champion.
+
+    The insert is idempotent: only fills DFU-months where no champion row already
+    exists (NOT EXISTS sub-select + ON CONFLICT DO NOTHING).
+
+    Returns the number of fallback rows inserted.
+    """
+    if lag_mode == "execution":
+        lag_cond = "lag::text = execution_lag::text"
+        params: list[Any] = [champion_model_id, fallback_model_id, champion_model_id]
+    else:
+        lag_cond = "lag = %s"
+        params = [champion_model_id, fallback_model_id, int(lag_mode), champion_model_id]
+
+    sql = f"""
+    INSERT INTO fact_external_forecast_monthly
+        (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+         lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+    SELECT
+        f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
+        f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
+        %s
+    FROM fact_external_forecast_monthly f
+    WHERE f.model_id = %s
+      AND {lag_cond}
+      AND f.basefcst_pref IS NOT NULL
+      AND f.tothist_dmd IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1
+          FROM fact_external_forecast_monthly c
+          WHERE c.model_id = %s
+            AND c.dmdunit    = f.dmdunit
+            AND c.dmdgroup   = f.dmdgroup
+            AND c.loc        = f.loc
+            AND c.startdate  = f.startdate
+      )
+    ON CONFLICT (forecast_ck, model_id) DO NOTHING
+    """
+    cur.execute(sql, params)
+    return cur.rowcount
+
+
 def generate_summary(
     winners: list[tuple[str, str, str, str, str, float, float, float]],
     champion_model_id: str,
@@ -357,6 +562,7 @@ def generate_summary(
     config: dict[str, Any],
     ceiling_rows: list[tuple] | None = None,
     ceiling_inserted: int = 0,
+    fallback_inserted: int = 0,
 ) -> dict[str, Any]:
     """Produce a summary dict from the winner list + optional ceiling data."""
     model_wins: dict[str, int] = {}
@@ -382,11 +588,13 @@ def generate_summary(
             "lag": config.get("lag"),
             "min_dfu_rows": config.get("min_dfu_rows"),
             "champion_model_id": champion_model_id,
+            "fallback_model_id": config.get("fallback_model_id"),
             "models": config.get("models", []),
         },
         "total_dfus": len(unique_dfus),
         "total_dfu_months": len(winners),
         "total_champion_rows": total_rows,
+        "fallback_rows_inserted": fallback_inserted,
         "model_wins": sorted_wins,
         "overall_champion_wape": round(overall_wape, 4) if overall_wape is not None else None,
         "overall_champion_accuracy_pct": round(overall_acc, 4) if overall_acc is not None else None,
@@ -449,6 +657,13 @@ def main() -> None:
         default="config/model_competition.yaml",
         help="Path to competition config YAML",
     )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default=None,
+        help="Selection strategy (overrides config): "
+             "expanding, rolling, decay, ensemble, meta_learner",
+    )
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
@@ -461,20 +676,54 @@ def main() -> None:
     lag_mode = str(cfg["lag"])
     min_rows = int(cfg["min_dfu_rows"])
     champion_id = cfg["champion_model_id"]
+    fallback_id = cfg.get("fallback_model_id", "lgbm_cluster")
+    strategy_name = args.strategy or cfg.get("strategy", "expanding")
+    strategy_params = cfg.get("strategy_params", {})
 
-    print(f"Champion Selection (rolling window) — {len(models)} competing models")
+    print(f"Champion Selection ({strategy_name}) — {len(models)} competing models")
     print(f"  Lag: {lag_mode}  |  Min prior months: {min_rows}")
     print(f"  Models: {', '.join(models)}")
     print(f"  Champion model_id: '{champion_id}'")
     print()
 
-    # Step 1: Compute rolling window champion winners (before-the-fact)
+    # Step 1: Run strategy to compute champion winners
     t0 = time.time()
-    print("Computing per-DFU per-month champion (expanding window, prior months only)...")
-    with psycopg.connect(**db) as conn, conn.cursor() as cur:
-        winners = compute_champion_winners(cur, models, lag_mode, min_rows)
+    strategy_fn = STRATEGY_REGISTRY.get(strategy_name)
+
+    if strategy_fn:
+        # Use DataFrame-based strategy from registry
+        print(f"Loading monthly errors for strategy '{strategy_name}'...")
+        monthly_errors_df = load_monthly_errors_df(db, models, lag_mode)
+        print(f"  {len(monthly_errors_df):,} rows loaded")
+
+        # Build kwargs
+        strat_kwargs = {
+            "min_prior_months": min_rows,
+            **strategy_params,
+        }
+        if strategy_name == "meta_learner":
+            strat_kwargs["dfu_features"] = load_dfu_features(db)
+            strat_kwargs.setdefault(
+                "meta_model_path",
+                str(ROOT / "data" / "champion" / "meta_learner.joblib"),
+            )
+
+        print(f"Computing champion winners ({strategy_name}, prior months only)...")
+        winners_df = strategy_fn(monthly_errors_df, **strat_kwargs)
+
+        # Convert to tuple list for existing insert/summary logic
+        winners = list(winners_df.itertuples(index=False, name=None))
+        is_ensemble = strategy_name == "ensemble"
+    else:
+        # Fallback to SQL-based expanding window
+        print("Computing per-DFU per-month champion (expanding window, prior months only)...")
+        with psycopg.connect(**db) as conn, conn.cursor() as cur:
+            winners = compute_champion_winners(cur, models, lag_mode, min_rows)
+        winners_df = pd.DataFrame()
+        is_ensemble = False
+
     elapsed = time.time() - t0
-    unique_dfus = len({(u, g, l) for u, g, l, *_ in winners})
+    unique_dfus = len({(w[0], w[1], w[2]) for w in winners})
     print(f"  {len(winners):,} DFU-month selections across {unique_dfus:,} DFUs ({elapsed:.1f}s)")
 
     if not winners:
@@ -483,7 +732,8 @@ def main() -> None:
 
     # Print top model wins
     wins_count: dict[str, int] = {}
-    for _, _, _, _, mid, *_ in winners:
+    for w in winners:
+        mid = w[4]
         wins_count[mid] = wins_count.get(mid, 0) + 1
     for mid, cnt in sorted(wins_count.items(), key=lambda x: -x[1]):
         pct = 100.0 * cnt / len(winners)
@@ -494,9 +744,24 @@ def main() -> None:
     print("Inserting champion forecast rows...")
     t1 = time.time()
     with psycopg.connect(**db) as conn, conn.cursor() as cur:
-        inserted = insert_champion_forecasts(cur, winners, champion_id)
+        if is_ensemble and not winners_df.empty:
+            inserted = insert_ensemble_forecasts(cur, winners_df, champion_id)
+        else:
+            inserted = insert_champion_forecasts(cur, winners, champion_id)
         conn.commit()
     print(f"  Inserted {inserted:,} champion rows ({time.time() - t1:.1f}s)")
+
+    # Step 2b: Fill warm-up gaps with fallback model
+    fallback_inserted = 0
+    if fallback_id:
+        print(f"Filling warm-up gaps with fallback model '{fallback_id}'...")
+        t1b = time.time()
+        with psycopg.connect(**db) as conn, conn.cursor() as cur:
+            fallback_inserted = insert_fallback_champions(
+                cur, lag_mode, champion_id, fallback_id,
+            )
+            conn.commit()
+        print(f"  Inserted {fallback_inserted:,} fallback rows ({time.time() - t1b:.1f}s)")
     print()
 
     # Step 3: Compute ceiling (oracle) — best model per DFU per month
@@ -534,6 +799,7 @@ def main() -> None:
     summary = generate_summary(
         winners, champion_id, inserted, cfg,
         ceiling_rows=ceiling_rows, ceiling_inserted=ceiling_inserted,
+        fallback_inserted=fallback_inserted,
     )
     summary_dir = ROOT / "data" / "champion"
     summary_dir.mkdir(parents=True, exist_ok=True)
@@ -542,6 +808,7 @@ def main() -> None:
         json.dump(summary, f, indent=2, default=str)
     print(f"Summary saved to {summary_path}")
     print(f"  Champion: {unique_dfus:,} DFUs, {len(winners):,} DFU-months")
+    print(f"  Fallback rows (warm-up gaps): {fallback_inserted:,}")
     print(f"  Overall champion accuracy: {summary['overall_champion_accuracy_pct']}%")
     print(f"  Overall champion WAPE: {summary['overall_champion_wape']}%")
     if summary.get("overall_ceiling_accuracy_pct") is not None:

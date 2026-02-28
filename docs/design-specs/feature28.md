@@ -257,3 +257,68 @@ src/
 5. Error resilience -- Kill API, verify error boundaries catch gracefully per tab
 6. `make ui-test` -- Vitest tests pass (218+ tests)
 7. `make test-all` -- All backend + frontend tests pass
+
+
+---
+
+## Examples
+
+### Example: Lazy-loaded tab with error boundary
+
+```typescript
+// App.tsx — lazy loading prevents loading all tab JS upfront
+import { lazy, Suspense } from 'react'
+import { ErrorBoundary } from 'react-error-boundary'
+
+const DfuAnalysisTab = lazy(() => import('./tabs/DfuAnalysisTab'))
+const JobsTab        = lazy(() => import('./tabs/JobsTab'))
+
+// Usage:
+<ErrorBoundary fallback={<div>Tab failed to load</div>}>
+  <Suspense fallback={<LoadingSpinner />}>
+    <DfuAnalysisTab />
+  </Suspense>
+</ErrorBoundary>
+```
+
+### Example: TanStack Query stale-while-revalidate pattern
+
+```typescript
+import { useQuery } from '@tanstack/react-query'
+import { fetchDfuAnalysis } from '@/api/queries'
+
+const { data, isLoading, isFetching } = useQuery({
+  queryKey: ['dfu-analysis', item, loc, mode, window],
+  queryFn: () => fetchDfuAnalysis({ item, loc, mode, window }),
+  staleTime: 5 * 60 * 1000,   // show cached data for 5 minutes
+  gcTime:    10 * 60 * 1000,  // keep in cache for 10 minutes
+  enabled: !!(item || loc),
+})
+// isFetching=true means background refresh; data still shows stale value
+```
+
+### Example: Keyboard shortcuts
+
+```typescript
+// useKeyboardShortcuts.ts
+useEffect(() => {
+  const handler = (e: KeyboardEvent) => {
+    if (e.key >= '1' && e.key <= '9') switchTab(parseInt(e.key) - 1)
+    if (e.key === '[') toggleSidebar()
+    if (e.key === 'd') toggleDarkMode()
+    if (e.key === '?') showHelpModal()
+    if (e.key === '/') focusSearchInput()
+    if (e.key === 'Escape') closeModal()
+  }
+  window.addEventListener('keydown', handler)
+  return () => window.removeEventListener('keydown', handler)
+}, [])
+```
+
+### Example: Frontend tests — run all
+
+```bash
+make ui-test
+# Runs 218 Vitest tests across components, hooks, tabs, and utilities
+# ~1.5 seconds total
+```

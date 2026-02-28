@@ -108,3 +108,39 @@ When `model` is empty (default):
 - Grain: `(month_start, dmdunit, loc, model_id)`
 - Columns: `row_count`, `basefcst_pref`, `tothist_dmd`
 - 3 indexes including unique on grain
+
+
+---
+
+## Examples
+
+### Example: List all model_ids in the forecast table
+
+```bash
+curl -s http://localhost:8000/domains/forecast/models | jq .
+# {"models": ["external", "lgbm_global", "lgbm_cluster", "catboost_global", "champion", "ceiling"]}
+```
+
+### Example: Compare models at portfolio level
+
+```sql
+SELECT model_id,
+       ROUND(100.0 - 100.0 * SUM(ABS(basefcst_pref - tothist_dmd))
+             / NULLIF(ABS(SUM(tothist_dmd)), 0), 2) AS accuracy_pct
+FROM agg_forecast_monthly
+WHERE month_start = '2025-11-01'
+GROUP BY model_id ORDER BY accuracy_pct DESC;
+-- lgbm_cluster   | 93.2
+-- lgbm_global    | 91.5
+-- external       | 87.2
+```
+
+### Example: UI model selector (TypeScript)
+
+```typescript
+const { data } = useQuery({
+  queryKey: ['forecastModels'],
+  queryFn: () => fetch('/domains/forecast/models').then(r => r.json()),
+})
+// modelsData.models = ["external", "lgbm_global", "champion", ...]
+```

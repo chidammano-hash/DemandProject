@@ -393,3 +393,48 @@ Actual distribution will vary — the detection script prints a summary table af
 ### Automated Tests
 - `tests/unit/test_seasonality.py` — 12 tests: `compute_acf_lag12` (4), `compute_seasonality_metrics` (7), `DfuSpecSeasonalityColumns` (4)
 - `tests/api/test_seasonality.py` — 7 tests: DFU meta includes seasonality columns, numeric fields, typeahead, page filtering, sorting, seasonality-profiles endpoint, empty profiles
+
+---
+
+## Examples
+
+### Example: Run seasonality detection pipeline
+
+```bash
+make seasonality-all
+# Step 1: detect_seasonality.py → computes strength, profile, peak/trough for 18,432 DFUs
+# Step 2: update_seasonality_profiles.py → writes to dim_dfu
+# Updated 18,432 rows
+
+# Verify distribution:
+psql -h localhost -p 5440 -U demand -d demand \
+  -c "SELECT seasonality_profile, COUNT(*) FROM dim_dfu GROUP BY 1 ORDER BY 2 DESC;"
+# yearly_strong    | 4821
+# yearly_moderate  | 6103
+# non_seasonal     | 7508
+```
+
+### Example: Seasonality config
+
+```yaml
+# config/seasonality_config.yaml
+seasonality:
+  min_months_history: 24
+  strength_thresholds:
+    strong:   0.60
+    moderate: 0.30
+  labeling:
+    yearly_strong:   {min_strength: 0.60, is_yearly_seasonal: true}
+    yearly_moderate: {min_strength: 0.30, is_yearly_seasonal: true}
+    non_seasonal:    {max_strength: 0.30, is_yearly_seasonal: false}
+```
+
+### Example: Query seasonality attributes for a DFU
+
+```sql
+SELECT dmdunit, loc, seasonality_profile, seasonality_strength,
+       peak_month, trough_month, peak_trough_ratio, is_yearly_seasonal
+FROM dim_dfu WHERE dmdunit='100320' AND loc='1401-BULK';
+-- 100320 | 1401-BULK | yearly_strong | 0.78 | 11 | 2 | 3.4 | true
+-- Peak in November (holiday season), trough in February
+```

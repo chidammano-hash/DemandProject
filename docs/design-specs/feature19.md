@@ -154,3 +154,78 @@ make champion-select                            # Re-run with PatchTST models
 
 ### Train/Validation Split
 - 80/20 split via `random_split` for early stopping
+
+
+---
+
+## Examples
+
+### Example: Run PatchTST backtest
+
+```bash
+make backtest-patchtst
+# PatchTST transformer: 12-month input → 4 patches of 3 months → Transformer → forecast
+# Device detection: MPS (Apple Silicon) > CUDA > CPU
+# Optimizer: AdamW, loss: HuberLoss, early stopping patience=10
+# Output: data/backtest_patchtst_global.csv
+make backtest-load  # load as model_id='patchtst_global'
+```
+
+### Example: Device detection and model architecture
+
+```python
+import torch
+
+device = (
+    'mps'  if torch.backends.mps.is_available() else
+    'cuda' if torch.cuda.is_available()         else
+    'cpu'
+)
+print(f"PatchTST running on: {device}")
+# PatchTST running on: mps
+
+# Architecture: input_len=12, patch_len=3, n_patches=4, d_model=128, nhead=4, n_layers=2
+# → predicts n_months_ahead (1..max_lag) in a single forward pass
+```
+
+### Example: Compare PatchTST vs tree models
+
+```bash
+curl -s "http://localhost:8000/forecast/accuracy/slice?lag=2&dim=model_id" \
+  | jq '[.rows[] | {model_id, accuracy_pct}] | sort_by(-.accuracy_pct)'
+# [{"model_id": "lgbm_cluster",  "accuracy_pct": 93.1},
+#  {"model_id": "patchtst_global","accuracy_pct": 90.7},
+#  {"model_id": "lgbm_global",   "accuracy_pct": 91.5}]
+```
+
+### Example: Transfer learning — freeze base layers, fine-tune on cluster
+
+```python
+# run_backtest_patchtst.py — transfer learning flow
+def train_and_predict_transfer(sales_df, dfu_attrs, predict_months, model_params, train_params):
+    # Phase 1: Train global base model on all DFUs
+    base_model = PatchTSTModel(**model_params)
+    train_model(base_model, global_train_loader, val_loader, device, **train_params)
+
+    # Phase 2: Fine-tune per cluster — freeze early layers, halve LR
+    for cluster_id in dfu_attrs.ml_cluster.unique():
+        cluster_dfus = dfu_attrs[dfu_attrs.ml_cluster == cluster_id].dfu_ck.tolist()
+        cluster_train = build_dataset(sales_df[sales_df.dfu_ck.isin(cluster_dfus)], ...)
+
+        import copy
+        cluster_model = copy.deepcopy(base_model)
+
+        # Freeze patch embedding + first transformer layer
+        for name, param in cluster_model.named_parameters():
+            if 'patch_embedding' in name or 'encoder.layers.0' in name:
+                param.requires_grad = False
+
+        # Fine-tune with halved learning rate
+        fine_tune_params = {**train_params, 'lr': train_params['lr'] * 0.5, 'epochs': 20}
+        train_model(cluster_model, cluster_train, val_loader, device, **fine_tune_params)
+
+        predictions[cluster_id] = predict_model(cluster_model, cluster_predict, device)
+
+# Make target
+# make backtest-patchtst-transfer → model_id='patchtst_transfer'
+```

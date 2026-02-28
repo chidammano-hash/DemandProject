@@ -513,3 +513,90 @@ make champion-select
 
 ### Shared Modules
 - `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`
+
+---
+
+## Examples
+
+### Example: Run Prophet backtest
+
+```bash
+make backtest-prophet
+# Per-DFU fitting via multiprocessing pool (chunksize=10)
+# Additive seasonality, US holidays, changepoint_prior_scale=0.05
+# ~14 hours for 18,432 DFUs on 8 cores
+# Output: data/backtest_prophet_global.csv
+
+make backtest-load  # load as model_id='prophet_global'
+```
+
+### Example: Prophet fit for single DFU
+
+```python
+from prophet import Prophet
+import pandas as pd
+
+# Prepare Prophet-format DataFrame
+dfu_df = sales[sales.dmdunit=='100320'].copy()
+prophet_df = dfu_df[['startdate','qty_shipped']].rename(columns={'startdate':'ds','qty_shipped':'y'})
+prophet_df = prophet_df[prophet_df.ds <= train_cutoff]
+
+model = Prophet(seasonality_mode='additive', changepoint_prior_scale=0.05)
+model.add_country_holidays(country_name='US')
+model.fit(prophet_df)
+
+future = model.make_future_dataframe(periods=10, freq='MS', include_history=False)
+forecast = model.predict(future)[['ds', 'yhat']].rename(columns={'ds':'startdate','yhat':'basefcst_pref'})
+```
+
+### Example: Faster smoke test
+
+```bash
+# Test with 3 timeframes, 50 DFUs only
+uv run python scripts/run_backtest_prophet.py \
+  --n-timeframes 3 --max-dfus 50 --model-id prophet_test
+# Completes in ~5 minutes for validation
+```
+
+### Example: Pooled cluster strategy — aggregate → fit → disaggregate
+
+```python
+# run_backtest_prophet.py — pooled strategy walkthrough
+# Step 1: Aggregate DFU sales to cluster level
+cluster_sales = (
+    sales_df
+    .merge(dfu_attrs[['dfu_ck', 'ml_cluster']], on='dfu_ck')
+    .groupby(['ml_cluster', 'startdate'])['qty_shipped']
+    .sum().reset_index()
+)
+
+# Step 2: Fit one Prophet per cluster on aggregated series
+cluster_models = {}
+for cluster_id, grp in cluster_sales.groupby('ml_cluster'):
+    m = Prophet(seasonality_mode='additive', changepoint_prior_scale=0.05)
+    m.add_country_holidays(country_name='US')
+    m.fit(grp.rename(columns={'startdate': 'ds', 'qty_shipped': 'y'}))
+    cluster_models[cluster_id] = m
+
+# Step 3: Disaggregate cluster forecast back to DFU level
+# Each DFU gets its historical share of cluster total
+for cluster_id, model in cluster_models.items():
+    future = model.make_future_dataframe(periods=forecast_horizon, freq='MS', include_history=False)
+    cluster_fcst = model.predict(future)[['ds', 'yhat']]
+
+    # Compute each DFU's share of cluster total (from last 12 months of actuals)
+    dfu_share = (
+        sales_df[sales_df.dfu_ck.isin(cluster_dfus)]
+        .groupby('dfu_ck')['qty_shipped'].sum()
+        / cluster_sales[cluster_sales.ml_cluster == cluster_id]['qty_shipped'].sum()
+    )
+
+    for dfu_ck, share in dfu_share.items():
+        dfu_fcst = cluster_fcst.copy()
+        dfu_fcst['basefcst_pref'] = (dfu_fcst['yhat'] * share).clip(lower=0)
+        dfu_fcst['dfu_ck'] = dfu_ck
+        results.append(dfu_fcst)
+
+# Run pooled backtest:
+# make backtest-prophet-pooled → model_id='prophet_pooled'
+```

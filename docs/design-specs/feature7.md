@@ -170,3 +170,55 @@ Index: `idx_dim_dfu_cluster_assignment` in `sql/005_create_dim_dfu.sql`.
 - `POST /clustering/scenario` delegates to APScheduler-powered `JobManager` (Feature 39)
 - Pydantic models: `FeatureParams`, `ModelParams`, `LabelParams`, `ClusteringScenarioRequest`
 - `MAX_DFUS_FOR_TRAINING = 20,000` — samples for training if DFU count exceeds threshold
+
+
+---
+
+## Examples
+
+### Example: Run full clustering pipeline
+
+```bash
+make cluster-all
+# cluster-features → data/clustering_features.csv  (18,432 DFUs × 42 features)
+# cluster-train   → best K=7, silhouette=0.68 (MLflow: experiment dfu_clustering)
+# cluster-label   → high_volume_steady(3102), seasonal_medium_volume(2841), ...
+# cluster-update  → Updated 18,432 DFU rows in dim_dfu
+```
+
+### Example: Verify cluster distribution
+
+```sql
+SELECT cluster_assignment, COUNT(*) AS n_dfus
+FROM dim_dfu GROUP BY 1 ORDER BY 2 DESC LIMIT 5;
+-- high_volume_steady       | 3102
+-- seasonal_medium_volume   | 2841
+-- medium_volume_steady     | 1620
+-- seasonal_high_volume     | 1847
+-- intermittent_low_volume  |  562
+```
+
+### Example: Clustering config YAML
+
+```yaml
+# config/clustering_config.yaml
+clustering:
+  k_range: [3, 12]
+  min_cluster_size_pct: 1.0
+  feature_scaling: standard
+  labeling:
+    volume_thresholds: {high: 0.75, low: 0.25}
+    cv_thresholds: {steady: 0.3, volatile: 0.8}
+    seasonality_threshold: 0.5
+    zero_demand_threshold: 0.2
+```
+
+### Example: What-If scenario — test K=5
+
+```bash
+curl -s -X POST http://localhost:8000/clustering/scenario \
+  -H "Content-Type: application/json" \
+  -d '{"model_params": {"k_range": [5, 5]}, "feature_params": {}, "label_params": {}}' \
+  | jq '{id, status}'
+# {"id": "scen_20260228_143021", "status": "running"}
+```

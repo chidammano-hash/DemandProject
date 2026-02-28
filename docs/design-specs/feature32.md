@@ -120,3 +120,44 @@ Response:
 - `sql/016` also adds `brand_desc` as a dimension in all 4 views
 - `dfu_execution_lag` added to `agg_accuracy_by_dim` and `agg_dfu_coverage`
 - Full `agg_accuracy_by_dim` grain: 11 columns (model_id, lag, month_start, cluster_assignment, ml_cluster, supplier_desc, abc_vol, region, brand_desc, dfu_execution_lag, seasonality_profile)
+
+
+---
+
+## Examples
+
+### Example: Accuracy slice by seasonality profile
+
+```bash
+curl -s "http://localhost:8000/forecast/accuracy/slice?lag=2&dim=seasonality_profile&model=lgbm_global" \
+  | jq '.rows[] | {seasonality_profile, accuracy_pct, n_dfus}'
+# {"seasonality_profile": "yearly_strong",   "accuracy_pct": 88.4, "n_dfus": 4821}
+# {"seasonality_profile": "yearly_moderate", "accuracy_pct": 91.2, "n_dfus": 6103}
+# {"seasonality_profile": "non_seasonal",    "accuracy_pct": 94.1, "n_dfus": 7508}
+# Key insight: non-seasonal DFUs have 5.7pp better accuracy than seasonal ones
+```
+
+### Example: Filter DFU explorer by seasonality profile
+
+```bash
+# Show only strongly seasonal DFUs in data explorer
+curl -s "http://localhost:8000/domains/dfu/page?seasonality_profile==yearly_strong&limit=20" \
+  | jq '{total_rows, first_item: .rows[0] | {dmdunit, loc, peak_month}}'
+# {"total_rows": 4821, "first_item": {"dmdunit": "100320", "loc": "1401-BULK", "peak_month": 11}}
+```
+
+### Example: Seasonality filter dropdown in AccuracyTab
+
+```typescript
+// Seasonality profile filter (uses B-tree exact match with = prefix)
+const [seasonalityFilter, setSeasonalityFilter] = useState<string>('')
+
+const { data } = useQuery({
+  queryKey: ['accuracy-slice', 'seasonality_profile', seasonalityFilter, model, lag],
+  queryFn: () => fetchAccuracySlice({
+    dim: 'seasonality_profile',
+    filter: seasonalityFilter ? `seasonality_profile==${seasonalityFilter}` : undefined,
+    model, lag
+  }),
+})
+```

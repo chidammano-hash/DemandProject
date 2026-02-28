@@ -30,12 +30,45 @@ Parameters: `model_id`, `lag`, `cluster`, `supplier`, `abc_vol`, `region`, `bran
 
 Returns accuracy metrics grouped by the requested dimension.
 
+#### Example
+
+```bash
+# Slice accuracy by cluster assignment for lgbm_global at execution lag
+curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=cluster_assignment&models=lgbm_global&lag=-1" | python3 -m json.tool
+# {"rows": [
+#   {"cluster_assignment": "high_volume_steady",    "accuracy_pct": 94.2, "wape": 5.8,  "dfu_count": 312},
+#   {"cluster_assignment": "seasonal_high_volume",  "accuracy_pct": 89.1, "wape": 10.9, "dfu_count": 187},
+#   {"cluster_assignment": "low_volume_erratic",    "accuracy_pct": 71.3, "wape": 28.7, "dfu_count": 94}
+# ]}
+
+# Compare models on common DFUs only (fair comparison)
+curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=model_id&models=lgbm_global,catboost_global,external&common_dfus=true&lag=2" | python3 -m json.tool
+
+# Filter by ABC volume classification and date range
+curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=abc_vol&models=lgbm_cluster&month_from=2025-01-01&month_to=2025-06-01" | python3 -m json.tool
+```
+
 ### Lag-Horizon Curve
 `GET /domains/forecast/lag-curve`
 
 Parameters: `model_id`, optional dimension filters
 
 Returns accuracy at each lag (0-4) for the selected model/filters — used to plot how accuracy degrades with forecast horizon.
+
+#### Example
+
+```bash
+# Get accuracy degradation across lags 0-4 for two models
+curl -s "http://localhost:8000/forecast/accuracy/lag-curve?models=lgbm_global,external" | python3 -m json.tool
+# {"rows": [
+#   {"model_id": "lgbm_global",  "lag": 0, "accuracy_pct": 96.1, "wape": 3.9},
+#   {"model_id": "lgbm_global",  "lag": 1, "accuracy_pct": 93.8, "wape": 6.2},
+#   {"model_id": "lgbm_global",  "lag": 2, "accuracy_pct": 91.2, "wape": 8.8},
+#   {"model_id": "external",     "lag": 0, "accuracy_pct": 88.5, "wape": 11.5},
+#   {"model_id": "external",     "lag": 2, "accuracy_pct": 82.3, "wape": 17.7}
+# ]}
+# Accuracy degrades with longer horizons — use this chart to pick the optimal execution lag
+```
 
 ## UI Components
 
@@ -98,3 +131,71 @@ accuracy-slice-check:    # Curl accuracy slice + lag-curve endpoints
 - Model comparison pivot table with best-accuracy star and high-bias warning
 - Lag-horizon line chart with metric selector
 - Champion Selection panel (Feature 15) integrated into same tab
+
+
+---
+
+## Additional Examples
+
+#### Example — Materialized View Refresh
+
+```bash
+# Refresh both accuracy slice views after loading new backtest predictions
+docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "
+  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim;
+  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_lag_archive;
+"
+# Automatically triggered by: make backtest-load
+```
+
+#### Example — Query agg_accuracy_by_dim directly
+
+```sql
+-- Accuracy by cluster for lgbm_global at lag 2
+SELECT cluster_assignment,
+       ROUND(100.0 - 100.0 * SUM(sum_abs_err) / NULLIF(ABS(SUM(sum_actual)), 0), 2) AS accuracy_pct,
+       COUNT(DISTINCT dmdunit || dmdgroup || loc)                                      AS dfu_count
+FROM agg_accuracy_by_dim
+WHERE model_id = 'lgbm_global' AND lag = 2
+GROUP BY cluster_assignment
+ORDER BY accuracy_pct DESC;
+-- cluster_assignment          | accuracy_pct | dfu_count
+-- high_volume_steady          |        94.20 |       312
+-- seasonal_high_volume        |        89.10 |       187
+-- low_volume_erratic          |        71.30 |        94
+```
+
+#### Example — Accuracy Comparison Panel (UI interaction)
+
+```
+User opens Accuracy tab → selects "Cluster" from the slice-by dropdown
+→ selects models: lgbm_global, catboost_global, external
+→ sets lag = 2, date range = 2024-07 to 2025-06
+→ checks "Common DFUs Only" to ensure a fair comparison
+→ pivot table renders: rows = clusters, cols = models, best accuracy highlighted with a star
+→ lag-horizon chart shows accuracy at lags 0-4 for all three models
+```
+
+#### Example — Makefile targets for accuracy views
+
+```bash
+# After backtest-load, manually refresh and validate accuracy slice views
+make accuracy-slice-refresh
+# REFRESH MATERIALIZED VIEW agg_accuracy_by_dim;
+# REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive;
+
+make accuracy-slice-check
+# curl http://localhost:8000/forecast/accuracy/slice?group_by=cluster_assignment
+# curl http://localhost:8000/forecast/accuracy/lag-curve?models=lgbm_global,external
+```
+
+#### Example — seasonality_profile filter (Feature 32)
+
+```bash
+# Filter accuracy slice to only seasonal DFUs
+curl -s "http://localhost:8000/forecast/accuracy/slice?group_by=model_id&seasonality_profile=strong_yearly&lag=2" \
+  | jq '.rows[] | {model_id, accuracy_pct}'
+# {"model_id": "lgbm_global",  "accuracy_pct": 87.4}
+# {"model_id": "catboost_global", "accuracy_pct": 88.1}
+# Seasonal DFUs are typically harder to forecast — accuracy is lower than overall
+```

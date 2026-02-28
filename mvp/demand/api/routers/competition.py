@@ -1,4 +1,9 @@
-"""Champion / Model Competition endpoints (feature 15)."""
+"""Champion / Model Competition endpoints (feature 15).
+
+Uses shared strategy module for leak-free per-DFU per-month selection.
+All strategies enforce strict causality: selection for month T uses only
+data from months < T.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,6 +11,7 @@ import io
 import json
 import os
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -24,6 +30,8 @@ _CHAMPION_SUMMARY_PATH = os.path.join(
     "data", "champion", "champion_summary.json",
 )
 
+_VALID_STRATEGIES = {"expanding", "rolling", "decay", "ensemble", "meta_learner"}
+
 
 class CompetitionConfigUpdate(BaseModel):
     metric: str = "wape"
@@ -31,6 +39,44 @@ class CompetitionConfigUpdate(BaseModel):
     min_dfu_rows: int = 3
     champion_model_id: str = "champion"
     models: list[str]
+    strategy: str = "expanding"
+    strategy_params: dict[str, Any] = {}
+
+
+def _load_monthly_errors(
+    models: list[str], lag_mode: str,
+) -> pd.DataFrame:
+    """Load per-DFU per-month per-model forecast errors as DataFrame."""
+    placeholders = ",".join(["%s"] * len(models))
+    params: list[Any] = list(models)
+
+    if lag_mode == "execution":
+        lag_cond = "lag::text = execution_lag::text"
+    else:
+        lag_cond = "lag = %s"
+        params.append(int(lag_mode))
+
+    sql = f"""
+        SELECT dmdunit, dmdgroup, loc, startdate, model_id,
+               basefcst_pref, tothist_dmd,
+               ABS(basefcst_pref - tothist_dmd) AS abs_err
+        FROM fact_external_forecast_monthly
+        WHERE model_id IN ({placeholders})
+          AND {lag_cond}
+          AND basefcst_pref IS NOT NULL
+          AND tothist_dmd IS NOT NULL
+        ORDER BY dmdunit, dmdgroup, loc, model_id, startdate
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            cols = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+    df = pd.DataFrame(rows, columns=cols)
+    df["startdate"] = pd.to_datetime(df["startdate"])
+    for col in ["basefcst_pref", "tothist_dmd", "abs_err"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
 
 
 @router.get("/competition/config")
@@ -65,6 +111,8 @@ def update_competition_config(body: CompetitionConfigUpdate):
         raise HTTPException(422, f"lag must be one of: {sorted(valid_lags)}")
     if len(body.models) < 2:
         raise HTTPException(422, "At least 2 models required for competition")
+    if body.strategy not in _VALID_STRATEGIES:
+        raise HTTPException(422, f"strategy must be one of: {sorted(_VALID_STRATEGIES)}")
 
     cfg = {
         "competition": {
@@ -74,6 +122,8 @@ def update_competition_config(body: CompetitionConfigUpdate):
             "min_dfu_rows": body.min_dfu_rows,
             "champion_model_id": body.champion_model_id,
             "models": body.models,
+            "strategy": body.strategy,
+            "strategy_params": body.strategy_params,
         }
     }
     os.makedirs(os.path.dirname(_COMPETITION_CONFIG_PATH), exist_ok=True)
@@ -85,9 +135,19 @@ def update_competition_config(body: CompetitionConfigUpdate):
 
 @router.post("/competition/run", dependencies=[Depends(require_api_key)])
 def run_competition():
-    """Execute champion model selection and return summary."""
+    """Execute champion model selection using configured strategy.
+
+    Uses shared strategy module for leak-free per-DFU per-month selection.
+    All strategies enforce strict causality: selection for month T uses only
+    data from months < T.
+    """
     import yaml
     from datetime import datetime, timezone
+    from common.champion_strategies import (
+        STRATEGY_REGISTRY,
+        compute_ceiling,
+        compute_strategy_accuracy,
+    )
 
     if not os.path.exists(_COMPETITION_CONFIG_PATH):
         raise HTTPException(404, "Competition config not found")
@@ -96,60 +156,36 @@ def run_competition():
     cfg = raw.get("competition", {})
 
     models = cfg.get("models", [])
-    metric = cfg.get("metric", "wape")
     lag_mode = str(cfg.get("lag", "execution"))
     min_rows = int(cfg.get("min_dfu_rows", 3))
     champion_id = cfg.get("champion_model_id", "champion")
+    strategy_name = cfg.get("strategy", "expanding")
+    strategy_params = cfg.get("strategy_params", {})
 
     if len(models) < 2:
         raise HTTPException(422, "At least 2 models required for competition")
 
-    placeholders = ",".join(["%s"] * len(models))
-    params: list[Any] = list(models)
+    strategy_fn = STRATEGY_REGISTRY.get(strategy_name)
+    if strategy_fn is None:
+        raise HTTPException(422, f"Unknown strategy: {strategy_name}")
 
-    if lag_mode == "execution":
-        lag_cond = "lag::text = execution_lag::text"
-    else:
-        lag_cond = "lag = %s"
-        params.append(int(lag_mode))
+    # Load monthly errors as DataFrame
+    monthly_errors = _load_monthly_errors(models, lag_mode)
+    if monthly_errors.empty:
+        raise HTTPException(404, "No forecast data found for configured models")
 
-    winner_sql = f"""
-    WITH dfu_model_wape AS (
-        SELECT
-            dmdunit, dmdgroup, loc, model_id,
-            SUM(ABS(basefcst_pref - tothist_dmd))
-                / NULLIF(ABS(SUM(tothist_dmd)), 0) AS wape,
-            COUNT(*) AS n_rows
-        FROM fact_external_forecast_monthly
-        WHERE model_id IN ({placeholders})
-          AND {lag_cond}
-          AND basefcst_pref IS NOT NULL
-          AND tothist_dmd IS NOT NULL
-        GROUP BY dmdunit, dmdgroup, loc, model_id
-        HAVING COUNT(*) >= %s
-    ),
-    ranked AS (
-        SELECT *,
-            ROW_NUMBER() OVER (
-                PARTITION BY dmdunit, dmdgroup, loc
-                ORDER BY wape ASC NULLS LAST
-            ) AS rn
-        FROM dfu_model_wape
-        WHERE wape IS NOT NULL
-    )
-    SELECT dmdunit, dmdgroup, loc, model_id, wape, n_rows
-    FROM ranked
-    WHERE rn = 1
-    ORDER BY dmdunit, dmdgroup, loc
-    """
-    params.append(min_rows)
+    # Run strategy — all strategies enforce strict causality
+    strat_kwargs: dict[str, Any] = {
+        "min_prior_months": min_rows,
+        **strategy_params,
+    }
+    winners_df = strategy_fn(monthly_errors, **strat_kwargs)
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(winner_sql, params)
-        winners = cur.fetchall()
-
-    if not winners:
+    if winners_df.empty:
         raise HTTPException(404, "No qualifying DFUs found with current config")
+
+    is_ensemble = strategy_name == "ensemble"
+    champion_acc = compute_strategy_accuracy(winners_df)
 
     # Bulk insert champion rows
     with get_conn() as conn, conn.cursor() as cur:
@@ -158,82 +194,102 @@ def run_competition():
             (champion_id,),
         )
 
-        cur.execute("""
-            CREATE TEMP TABLE _champion_winners (
-                dmdunit TEXT NOT NULL,
-                dmdgroup TEXT NOT NULL,
-                loc TEXT NOT NULL,
-                winning_model_id TEXT NOT NULL
-            ) ON COMMIT DROP
-        """)
+        if is_ensemble:
+            # Ensemble: insert blended forecasts directly
+            cur.execute("""
+                CREATE TEMP TABLE _champion_ensemble (
+                    dmdunit TEXT NOT NULL,
+                    dmdgroup TEXT NOT NULL,
+                    loc TEXT NOT NULL,
+                    startdate DATE NOT NULL,
+                    basefcst_pref DOUBLE PRECISION NOT NULL,
+                    tothist_dmd DOUBLE PRECISION NOT NULL
+                ) ON COMMIT DROP
+            """)
 
-        buf = io.StringIO()
-        for dmdunit, dmdgroup, loc, model_id, _wape, _n in winners:
-            buf.write(f"{dmdunit}\t{dmdgroup}\t{loc}\t{model_id}\n")
-        buf.seek(0)
-        with cur.copy("COPY _champion_winners FROM STDIN") as copy:
-            copy.write(buf.read())
+            buf = io.StringIO()
+            for _, r in winners_df.iterrows():
+                buf.write(
+                    f"{r['dmdunit']}\t{r['dmdgroup']}\t{r['loc']}\t"
+                    f"{r['startdate'].date()}\t{r['basefcst_pref']}\t"
+                    f"{r['tothist_dmd']}\n"
+                )
+            buf.seek(0)
+            with cur.copy("COPY _champion_ensemble FROM STDIN") as copy:
+                copy.write(buf.read())
 
-        cur.execute(
-            """
-            INSERT INTO fact_external_forecast_monthly
-                (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
-                 lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
-            SELECT
-                f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
-                f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
-                %s
-            FROM fact_external_forecast_monthly f
-            INNER JOIN _champion_winners w
-                ON f.dmdunit = w.dmdunit
-               AND f.dmdgroup = w.dmdgroup
-               AND f.loc = w.loc
-               AND f.model_id = w.winning_model_id
-            """,
-            (champion_id,),
-        )
+            # For ensemble: copy metadata (forecast_ck, lag, etc.) from any
+            # competing model's row for the same DFU-month, then override
+            # basefcst_pref with the blended value.
+            cur.execute(f"""
+                INSERT INTO fact_external_forecast_monthly
+                    (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+                     lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+                SELECT DISTINCT ON (e.dmdunit, e.dmdgroup, e.loc, e.startdate)
+                    f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate,
+                    f.startdate, f.lag, f.execution_lag,
+                    e.basefcst_pref, e.tothist_dmd,
+                    %s
+                FROM _champion_ensemble e
+                INNER JOIN fact_external_forecast_monthly f
+                    ON f.dmdunit = e.dmdunit
+                   AND f.dmdgroup = e.dmdgroup
+                   AND f.loc = e.loc
+                   AND f.startdate = e.startdate
+                   AND f.model_id IN ({",".join(["%s"] * len(models))})
+                ORDER BY e.dmdunit, e.dmdgroup, e.loc, e.startdate, f.model_id
+            """, [champion_id] + models)
+        else:
+            # Pick-one: copy winning model's rows per DFU per month
+            cur.execute("""
+                CREATE TEMP TABLE _champion_winners (
+                    dmdunit TEXT NOT NULL,
+                    dmdgroup TEXT NOT NULL,
+                    loc TEXT NOT NULL,
+                    startdate DATE NOT NULL,
+                    winning_model_id TEXT NOT NULL
+                ) ON COMMIT DROP
+            """)
+
+            buf = io.StringIO()
+            for _, r in winners_df.iterrows():
+                buf.write(
+                    f"{r['dmdunit']}\t{r['dmdgroup']}\t{r['loc']}\t"
+                    f"{r['startdate'].date()}\t{r['model_id']}\n"
+                )
+            buf.seek(0)
+            with cur.copy("COPY _champion_winners FROM STDIN") as copy:
+                copy.write(buf.read())
+
+            cur.execute(
+                """
+                INSERT INTO fact_external_forecast_monthly
+                    (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+                     lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+                SELECT
+                    f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate,
+                    f.startdate, f.lag, f.execution_lag, f.basefcst_pref,
+                    f.tothist_dmd, %s
+                FROM fact_external_forecast_monthly f
+                INNER JOIN _champion_winners w
+                    ON f.dmdunit = w.dmdunit
+                   AND f.dmdgroup = w.dmdgroup
+                   AND f.loc = w.loc
+                   AND f.startdate = w.startdate
+                   AND f.model_id = w.winning_model_id
+                """,
+                (champion_id,),
+            )
         inserted = cur.rowcount
         conn.commit()
 
     # Compute ceiling (oracle)
     ceiling_id = cfg.get("ceiling_model_id", "ceiling")
-    ceil_placeholders = ",".join(["%s"] * len(models))
-    ceil_params: list[Any] = list(models)
-    if lag_mode == "execution":
-        ceil_lag_cond = "lag::text = execution_lag::text"
-    else:
-        ceil_lag_cond = "lag = %s"
-        ceil_params.append(int(lag_mode))
-
-    ceiling_sql = f"""
-    WITH monthly_ranked AS (
-        SELECT
-            dmdunit, dmdgroup, loc, startdate, model_id,
-            ABS(basefcst_pref - tothist_dmd) AS abs_err,
-            basefcst_pref, tothist_dmd,
-            ROW_NUMBER() OVER (
-                PARTITION BY dmdunit, dmdgroup, loc, startdate
-                ORDER BY ABS(basefcst_pref - tothist_dmd) ASC NULLS LAST
-            ) AS rn
-        FROM fact_external_forecast_monthly
-        WHERE model_id IN ({ceil_placeholders})
-          AND {ceil_lag_cond}
-          AND basefcst_pref IS NOT NULL
-          AND tothist_dmd IS NOT NULL
-    )
-    SELECT dmdunit, dmdgroup, loc, startdate, model_id,
-           abs_err, basefcst_pref, tothist_dmd
-    FROM monthly_ranked
-    WHERE rn = 1
-    ORDER BY dmdunit, dmdgroup, loc, startdate
-    """
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(ceiling_sql, ceil_params)
-        ceiling_rows = cur.fetchall()
-
-    # Bulk insert ceiling rows
+    ceiling_df = compute_ceiling(monthly_errors)
+    ceiling_acc = compute_strategy_accuracy(ceiling_df)
     ceiling_inserted = 0
-    if ceiling_rows:
+
+    if not ceiling_df.empty:
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM fact_external_forecast_monthly WHERE model_id = %s",
@@ -250,8 +306,11 @@ def run_competition():
             """)
 
             buf2 = io.StringIO()
-            for dmdunit, dmdgroup, loc, startdate, model_id, *_ in ceiling_rows:
-                buf2.write(f"{dmdunit}\t{dmdgroup}\t{loc}\t{startdate}\t{model_id}\n")
+            for _, r in ceiling_df.iterrows():
+                buf2.write(
+                    f"{r['dmdunit']}\t{r['dmdgroup']}\t{r['loc']}\t"
+                    f"{r['startdate'].date()}\t{r['model_id']}\n"
+                )
             buf2.seek(0)
             with cur.copy("COPY _ceiling_winners FROM STDIN") as copy:
                 copy.write(buf2.read())
@@ -262,9 +321,9 @@ def run_competition():
                     (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
                      lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
                 SELECT
-                    f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
-                    f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
-                    %s
+                    f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate,
+                    f.startdate, f.lag, f.execution_lag, f.basefcst_pref,
+                    f.tothist_dmd, %s
                 FROM fact_external_forecast_monthly f
                 INNER JOIN _ceiling_winners w
                     ON f.dmdunit = w.dmdunit
@@ -286,54 +345,43 @@ def run_competition():
         cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
         conn.commit()
 
-    # Build summary (champion)
+    # Build summary
     model_wins: dict[str, int] = {}
-    total_wape_num = 0.0
-    total_wape_denom = 0.0
-    for _u, _g, _l, mid, wape, n_rows in winners:
+    for mid in winners_df["model_id"]:
         model_wins[mid] = model_wins.get(mid, 0) + 1
-        if wape is not None:
-            total_wape_num += float(wape) * float(n_rows)
-            total_wape_denom += float(n_rows)
 
-    overall_wape = (total_wape_num / total_wape_denom * 100) if total_wape_denom else None
-    overall_acc = (100.0 - overall_wape) if overall_wape is not None else None
+    n_unique_dfus = winners_df[["dmdunit", "dmdgroup", "loc"]].drop_duplicates().shape[0]
 
     from datetime import datetime, timezone
 
     summary: dict[str, Any] = {
         "config": {
-            "metric": metric,
+            "metric": cfg.get("metric", "wape"),
             "lag": lag_mode,
             "min_dfu_rows": min_rows,
             "champion_model_id": champion_id,
             "models": models,
+            "strategy": strategy_name,
         },
-        "total_dfus": len(winners),
+        "total_dfus": n_unique_dfus,
+        "total_dfu_months": len(winners_df),
         "total_champion_rows": inserted,
         "model_wins": dict(sorted(model_wins.items(), key=lambda x: -x[1])),
-        "overall_champion_wape": round(overall_wape, 4) if overall_wape is not None else None,
-        "overall_champion_accuracy_pct": round(overall_acc, 4) if overall_acc is not None else None,
+        "overall_champion_wape": champion_acc.get("wape"),
+        "overall_champion_accuracy_pct": champion_acc.get("accuracy_pct"),
         "run_ts": datetime.now(timezone.utc).isoformat(),
     }
 
     # Ceiling metrics
-    if ceiling_rows:
+    if not ceiling_df.empty:
         ceil_wins: dict[str, int] = {}
-        ceil_abs_err_sum = 0.0
-        ceil_actual_sum = 0.0
-        for _u, _g, _l, _sd, mid, abs_err, _fcst, actual in ceiling_rows:
+        for mid in ceiling_df["model_id"]:
             ceil_wins[mid] = ceil_wins.get(mid, 0) + 1
-            ceil_abs_err_sum += float(abs_err)
-            ceil_actual_sum += abs(float(actual))
-
-        ceil_wape = (ceil_abs_err_sum / ceil_actual_sum * 100) if ceil_actual_sum else None
-        ceil_acc = (100.0 - ceil_wape) if ceil_wape is not None else None
 
         summary["total_ceiling_rows"] = ceiling_inserted
         summary["ceiling_model_wins"] = dict(sorted(ceil_wins.items(), key=lambda x: -x[1]))
-        summary["overall_ceiling_wape"] = round(ceil_wape, 4) if ceil_wape is not None else None
-        summary["overall_ceiling_accuracy_pct"] = round(ceil_acc, 4) if ceil_acc is not None else None
+        summary["overall_ceiling_wape"] = ceiling_acc.get("wape")
+        summary["overall_ceiling_accuracy_pct"] = ceiling_acc.get("accuracy_pct")
 
     # Save summary to disk
     summary_dir = os.path.dirname(_CHAMPION_SUMMARY_PATH)

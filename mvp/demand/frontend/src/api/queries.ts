@@ -341,6 +341,8 @@ export interface CompetitionConfig {
   min_dfu_rows: number;
   champion_model_id: string;
   models: string[];
+  strategy?: string;
+  strategy_params?: Record<string, unknown>;
 }
 
 export interface ChampionSummary {

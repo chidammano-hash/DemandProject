@@ -612,3 +612,80 @@ make champion-select
 ### Shared Framework
 - Same as PatchTST: `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`, `common/constants.py`
 - `MIN_CLUSTER_ROWS` from constants for per-cluster minimum threshold
+
+
+---
+
+## Examples
+
+### Example: Run DeepAR backtest
+
+```bash
+make backtest-deepar
+# DeepAR LSTM: Gaussian NLL loss, per-DFU fitting
+# Point forecast: expm1(mu), prediction intervals: mu ± 1.96σ (95% PI)
+# Output: data/backtest_deepar_global.csv
+make backtest-load  # load as model_id='deepar_global'
+```
+
+### Example: DeepAR training loop
+
+```python
+from torch.nn import GaussianNLLLoss
+import torch.optim as optim
+
+criterion = GaussianNLLLoss()
+optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
+
+for epoch in range(max_epochs):
+    mu, log_sigma = model(X_train)
+    sigma = torch.exp(log_sigma).clamp(min=1e-3)
+    loss = criterion(mu, y_train, sigma**2)
+    optimizer.zero_grad(); loss.backward(); optimizer.step()
+    # Point forecast: torch.expm1(mu).clamp(min=0)
+```
+
+### Example: Per-cluster DeepAR with transfer learning
+
+```bash
+make backtest-deepar-cluster   # per-cluster fine-tuning from global base
+make backtest-load
+# model_ids: deepar_global, deepar_cluster, deepar_transfer
+```
+
+### Example: Probabilistic prediction intervals (mu ± z·σ)
+
+```python
+# run_backtest_deepar.py — generate point forecast + 90%/95% prediction intervals
+def predict_model(model, dataset, device, batch_size=256):
+    model.eval()
+    all_mu, all_sigma = [], []
+    with torch.no_grad():
+        for X_seq, X_cov, _ in DataLoader(dataset, batch_size=batch_size):
+            mu, sigma = model(X_seq.to(device), X_cov.to(device))
+            all_mu.append(mu.cpu().numpy())
+            all_sigma.append(sigma.cpu().numpy())
+
+    mu_arr = np.expm1(np.concatenate(all_mu))      # undo log1p transform
+    sigma_arr = np.concatenate(all_sigma)
+
+    # Point forecast
+    point_forecast = mu_arr.clip(min=0)
+
+    # Prediction intervals (in log1p space, then expm1 back)
+    Z_90, Z_95 = 1.645, 1.960
+    pi_90_lo = np.expm1((np.log1p(mu_arr) - Z_90 * sigma_arr).clip(min=0))
+    pi_90_hi = np.expm1((np.log1p(mu_arr) + Z_90 * sigma_arr).clip(min=0))
+    pi_95_lo = np.expm1((np.log1p(mu_arr) - Z_95 * sigma_arr).clip(min=0))
+    pi_95_hi = np.expm1((np.log1p(mu_arr) + Z_95 * sigma_arr).clip(min=0))
+
+    return pd.DataFrame({
+        'basefcst_pref': point_forecast,
+        'pi_90_lo': pi_90_lo, 'pi_90_hi': pi_90_hi,
+        'pi_95_lo': pi_95_lo, 'pi_95_hi': pi_95_hi,
+    })
+
+# Example output row:
+# basefcst_pref=812.3, pi_90_lo=640.1, pi_90_hi=1024.7, pi_95_lo=590.3, pi_95_hi=1124.9
+```
