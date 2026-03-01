@@ -304,42 +304,78 @@ def _load_archive(db: dict, archive_path: Path, model_ids: list[str], replace: b
     print("Archive load complete.")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Load backtest predictions into Postgres")
-    parser.add_argument("--input", type=str, default="data/backtest/backtest_predictions.csv",
-                        help="Predictions CSV path")
-    parser.add_argument("--model-id", type=str, default=None,
-                        help="Filter to specific model_id (default: load all from CSV)")
-    parser.add_argument("--replace", action="store_true",
-                        help="Delete existing rows for model_id(s) before inserting")
-    args = parser.parse_args()
+def _resolve_input_files(
+    args_input: str | None,
+    args_model: str | None,
+    args_all: bool,
+    backtest_dir: Path,
+) -> list[Path]:
+    """Return list of prediction CSVs to load based on CLI flags.
 
-    load_dotenv(ROOT / ".env")
-    db = get_db_conn()
+    Priority order:
+      --all            → scan data/backtest/*/backtest_predictions.csv
+      --model MODEL_ID → data/backtest/<MODEL_ID>/backtest_predictions.csv
+      --input PATH     → explicit path (backward-compatible)
+    """
+    if args_all:
+        found = sorted(backtest_dir.glob("*/backtest_predictions.csv"))
+        if not found:
+            print(f"No backtest_predictions.csv files found under {backtest_dir}/*/")
+            print("  Run a backtest first: make backtest-lgbm-cluster")
+            sys.exit(1)
+        return found
 
-    csv_path = ROOT / args.input
-    if not csv_path.exists():
-        print(f"Error: Input file not found: {csv_path}")
-        sys.exit(1)
+    if args_model:
+        p = backtest_dir / args_model / "backtest_predictions.csv"
+        if not p.exists():
+            available = [d.name for d in backtest_dir.iterdir() if d.is_dir() and
+                         (d / "backtest_predictions.csv").exists()] if backtest_dir.exists() else []
+            print(f"Error: No predictions found for model '{args_model}' at {p}")
+            if available:
+                print(f"  Available models: {available}")
+            else:
+                print("  No backtest output directories found — run a backtest first.")
+            sys.exit(1)
+        return [p]
 
-    # Peek at CSV to determine model_ids
+    if args_input:
+        p = ROOT / args_input
+        if not p.exists():
+            print(f"Error: Input file not found: {p}")
+            sys.exit(1)
+        return [p]
+
+    print("Error: Specify one of:")
+    print("  --model MODEL_ID     load a specific model  (e.g. --model lgbm_cluster)")
+    print("  --all                load all models from data/backtest/*/")
+    print("  --input PATH         explicit CSV path (legacy)")
+    sys.exit(1)
+
+
+def _load_one(db: dict, csv_path: Path, replace: bool, model_id_filter: str | None) -> None:
+    """Load one backtest_predictions.csv + its sibling all_lags CSV into Postgres.
+
+    Refreshes all 5 materialized views after each model load.
+    The archive CSV is expected at csv_path.parent / backtest_predictions_all_lags.csv.
+    """
+    # Peek at CSV to determine model_ids present
     sample = pd.read_csv(csv_path, nrows=100)
     csv_model_ids = sample["model_id"].unique().tolist()
-    if args.model_id:
-        csv_model_ids = [args.model_id]
-    print(f"Loading predictions from {csv_path}")
-    print(f"  Model IDs: {csv_model_ids}")
+    if model_id_filter:
+        csv_model_ids = [model_id_filter]
+
+    print(f"\n{'='*60}")
+    print(f"Loading {csv_path}")
+    print(f"  Model IDs in file: {csv_model_ids}")
 
     col_list = ", ".join(LOAD_COLS)
 
     with psycopg.connect(**db) as conn:
         with conn.cursor() as cur:
-            # Session-level tuning for bulk load
             cur.execute("SET synchronous_commit = off")
             cur.execute("SET work_mem = '256MB'")
             cur.execute("SET maintenance_work_mem = '512MB'")
 
-            # Step 1: Create temp staging table (with row_id for batching)
             cur.execute(f"""
                 CREATE TEMP TABLE _stg_backtest (
                     _row_id SERIAL,
@@ -347,7 +383,6 @@ def main() -> None:
                 ) ON COMMIT DROP
             """)
 
-            # Step 2: Stream CSV into staging with progress
             copy_sql = f"COPY _stg_backtest ({col_list}) FROM STDIN WITH (FORMAT CSV, HEADER TRUE)"
             print("  Streaming CSV to staging table...")
             t0 = time.time()
@@ -364,14 +399,9 @@ def main() -> None:
                         print(f"    COPY progress: {pct}% ({bytes_read / (1024*1024):.0f} MB / {file_size / (1024*1024):.0f} MB)")
             print(f"  Staged {bytes_read / (1024*1024):.0f} MB in {time.time() - t0:.1f}s")
 
-            # Filter by model_id if specified
-            if args.model_id:
-                cur.execute(
-                    "DELETE FROM _stg_backtest WHERE model_id != %s",
-                    (args.model_id,),
-                )
+            if model_id_filter:
+                cur.execute("DELETE FROM _stg_backtest WHERE model_id != %s", (model_id_filter,))
 
-            # Count staged rows
             cur.execute("SELECT COUNT(*) FROM _stg_backtest")
             staged_count = cur.fetchone()[0]
             print(f"  Staged rows: {staged_count:,}")
@@ -381,26 +411,20 @@ def main() -> None:
                 conn.rollback()
                 return
 
-            # Step 3: Delete existing rows if --replace
-            if args.replace:
+            if replace:
                 t0 = time.time()
                 for mid in csv_model_ids:
-                    cur.execute(
-                        f"DELETE FROM {_TABLE} WHERE model_id = %s",
-                        (mid,),
-                    )
+                    cur.execute(f"DELETE FROM {_TABLE} WHERE model_id = %s", (mid,))
                     deleted = cur.rowcount
                     print(f"  Deleted {deleted:,} existing rows for model_id='{mid}' ({time.time() - t0:.1f}s)")
 
-            # Step 4: Drop indexes/constraints for fast bulk insert (--replace only)
-            bulk_fast = args.replace
+            bulk_fast = replace
             if bulk_fast:
                 print("  Dropping indexes & constraints for bulk load...")
                 t0 = time.time()
                 _drop_indexes_and_constraints(cur)
                 print(f"    Done ({time.time() - t0:.1f}s)")
 
-            # Step 5: Batched INSERT with type casting
             print(f"  Inserting {staged_count:,} rows in batches of {BATCH_SIZE:,}...")
             select_expr = """
                     s.forecast_ck,
@@ -456,35 +480,34 @@ def main() -> None:
 
             print(f"  Inserted {loaded_total:,} rows in {time.time() - t_insert:.1f}s")
 
-            # Step 6: Rebuild indexes/constraints
             if bulk_fast:
                 _recreate_indexes_and_constraints(cur)
 
         conn.commit()
 
-    # Step 7: Refresh materialized views
-    print("Refreshing materialized views...")
+    # Refresh forecast materialized views
+    print("  Refreshing forecast materialized views...")
     t0 = time.time()
     with psycopg.connect(**db) as conn:
         with conn.cursor() as cur:
             cur.execute("SET maintenance_work_mem = '512MB'")
             cur.execute("REFRESH MATERIALIZED VIEW agg_forecast_monthly")
-            print(f"  agg_forecast_monthly refreshed ({time.time() - t0:.1f}s)")
+            print(f"    agg_forecast_monthly refreshed ({time.time() - t0:.1f}s)")
             t1 = time.time()
             cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
-            print(f"  agg_accuracy_by_dim refreshed ({time.time() - t1:.1f}s)")
+            print(f"    agg_accuracy_by_dim refreshed ({time.time() - t1:.1f}s)")
             t2 = time.time()
             cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
-            print(f"  agg_dfu_coverage refreshed ({time.time() - t2:.1f}s)")
+            print(f"    agg_dfu_coverage refreshed ({time.time() - t2:.1f}s)")
         conn.commit()
-    print(f"  All forecast views refreshed in {time.time() - t0:.1f}s")
+    print(f"  Forecast views refreshed in {time.time() - t0:.1f}s")
 
-    # Step 8: Load archive table (all lags)
+    # Load archive (sibling file lives in the same model subdirectory)
     archive_path = csv_path.parent / "backtest_predictions_all_lags.csv"
-    _load_archive(db, archive_path, csv_model_ids, args.replace, args.model_id)
+    _load_archive(db, archive_path, csv_model_ids, replace, model_id_filter)
 
-    # Step 9: Refresh archive accuracy slice view (depends on backtest_lag_archive)
-    print("Refreshing agg_accuracy_lag_archive + agg_dfu_coverage_lag_archive...")
+    # Refresh archive accuracy views
+    print("  Refreshing archive accuracy views...")
     t0 = time.time()
     with psycopg.connect(**db) as conn:
         with conn.cursor() as cur:
@@ -492,9 +515,63 @@ def main() -> None:
             cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive")
             cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive")
         conn.commit()
-    print(f"  agg_accuracy_lag_archive + agg_dfu_coverage_lag_archive refreshed in {time.time() - t0:.1f}s")
+    print(f"  Archive views refreshed in {time.time() - t0:.1f}s")
+    print(f"  Done: {csv_path.parent.name}")
 
-    print("\nDone.")
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Load backtest predictions into Postgres",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Load one model (output written to data/backtest/lgbm_cluster/)
+  %(prog)s --model lgbm_cluster --replace
+
+  # Load all models that have been run (scans data/backtest/*/)
+  %(prog)s --all --replace
+
+  # Backward-compatible explicit path
+  %(prog)s --input data/backtest/lgbm_cluster/backtest_predictions.csv --replace
+        """,
+    )
+    parser.add_argument(
+        "--model", type=str, default=None, metavar="MODEL_ID",
+        help="Load from data/backtest/<MODEL_ID>/backtest_predictions.csv "
+             "(e.g. lgbm_cluster, catboost_cluster, xgboost_cluster)",
+    )
+    parser.add_argument(
+        "--all", action="store_true",
+        help="Load every model found under data/backtest/*/backtest_predictions.csv",
+    )
+    parser.add_argument(
+        "--input", type=str, default=None,
+        help="Explicit CSV path (backward-compatible; prefer --model or --all)",
+    )
+    parser.add_argument(
+        "--model-id", type=str, default=None,
+        help="Filter rows to this model_id when using --input (legacy flag)",
+    )
+    parser.add_argument(
+        "--replace", action="store_true",
+        help="Delete existing rows for the model_id(s) before inserting (recommended)",
+    )
+    args = parser.parse_args()
+
+    load_dotenv(ROOT / ".env")
+    db = get_db_conn()
+
+    backtest_dir = ROOT / "data" / "backtest"
+    csv_files = _resolve_input_files(args.input, args.model, args.all, backtest_dir)
+
+    model_labels = [f.parent.name for f in csv_files]
+    print(f"Loading {len(csv_files)} model(s): {model_labels}")
+
+    for csv_path in csv_files:
+        _load_one(db, csv_path, args.replace, args.model_id)
+
+    print(f"\n{'='*60}")
+    print(f"All done. Loaded: {model_labels}")
 
 
 if __name__ == "__main__":

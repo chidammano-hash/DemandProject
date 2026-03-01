@@ -69,7 +69,10 @@
 | `mvp/demand/scripts/run_backtest_prophet.py` | Prophet backtest: per-DFU fitting with multiprocessing (uses shared utilities) |
 | `mvp/demand/scripts/run_backtest_statsforecast.py` | StatsForecast backtest: vectorized AutoARIMA + AutoETS (uses shared utilities) |
 | `mvp/demand/scripts/run_backtest_neuralprophet.py` | NeuralProphet backtest: PyTorch-based per-DFU fitting with GPU support (uses shared utilities) |
-| `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load backtest predictions into Postgres (main + archive) |
+| `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load backtest predictions into Postgres (main + archive); supports `--model MODEL_ID`, `--all` (scan all subdirs), `--input PATH` |
+| `mvp/demand/scripts/tune_hyperparams.py` | Bayesian hyperparameter tuning via Optuna: walk-forward CV, TPE sampler, early stopping, outputs `data/tuning/best_params_<model>.json` |
+| `mvp/demand/common/tuning.py` | Shared tuning utilities: `generate_cv_month_splits`, `compute_wape_stabilised`, `suggest_params`, `save_best_params`, `load_best_params`, `best_rounds_to_n_estimators` |
+| `mvp/demand/config/hyperparameter_tuning.yaml` | Search spaces (LGBM 8 params, CatBoost 5 params, XGBoost 8 params), CV settings, trial budget, pruner config |
 | `mvp/demand/scripts/clean_backtest_models.py` | Selective cleanup of model predictions from Postgres + view refresh |
 | `mvp/demand/scripts/clean_forecasts_by_date.py` | Date-range forecast cleanup: delete rows by time bucket from forecast + archive tables |
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
@@ -114,7 +117,7 @@
 | `mvp/demand/tests/api/conftest.py` | API test fixtures (mock DB pool, async httpx client) |
 | `mvp/demand/frontend/src/**/__tests__/` | Frontend test suites (Vitest + RTL) |
 | `docs/architecture-diagram.md` | Full-stack architecture diagram (layers, data flow, ML pipeline) |
-| `docs/design-specs/` | Feature specs (feature1–feature38) |
+| `docs/design-specs/` | Feature specs (feature1–feature41) |
 | `mvp/demand/api/core.py` | Shared API utilities: connection pool, OpenAI client, SQL helpers used by router modules |
 | `mvp/demand/api/auth.py` | Optional API key auth (`require_api_key` dependency; disabled when `API_KEY` env var unset) |
 | `mvp/demand/api/routers/` | Modular FastAPI router modules: 12 routers (accuracy, analysis, benchmark, chat, clusters, competition, dashboard, domains, intel, inv_backtest, inventory, jobs) |
@@ -222,9 +225,23 @@ make backtest-neuralprophet          # Run global NeuralProphet backtest (PyTorc
 make backtest-neuralprophet-cluster  # Run per-cluster NeuralProphet backtest
 make backtest-neuralprophet-pooled   # Run NeuralProphet pooled cluster backtest
 
+# Hyperparameter tuning (Feature 41)
+make tune-lgbm              # Tune LGBM hyperparameters via Optuna (50 trials, ~20-40 min) → data/tuning/best_params_lgbm.json
+make tune-catboost          # Tune CatBoost hyperparameters (~30-60 min) → data/tuning/best_params_catboost.json
+make tune-xgboost           # Tune XGBoost hyperparameters (~25-50 min) → data/tuning/best_params_xgboost.json
+make tune-all               # Run all three tuning jobs sequentially
+
+# Backtesting with tuned parameters (Feature 41)
+make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"
+make backtest-catboost-cluster ARGS="--params-file data/tuning/best_params_catboost.json"
+make backtest-xgboost-cluster ARGS="--params-file data/tuning/best_params_xgboost.json"
+
 # Backtest loading (shared across all models)
-make backtest-load          # Load backtest predictions into Postgres + refresh agg
-make backtest-all           # backtest-lgbm + backtest-load
+make backtest-load MODEL=lgbm_cluster   # Load one model from data/backtest/lgbm_cluster/
+make backtest-load MODEL=catboost_cluster
+make backtest-load MODEL=xgboost_cluster
+make backtest-load-all      # Load ALL models found under data/backtest/*/
+make backtest-all           # backtest-lgbm + backtest-load (lgbm_global)
 
 # Champion model selection
 make champion-select        # Run per-DFU champion selection (best-of-models via configurable strategy)
@@ -404,6 +421,8 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **DFU clustering:** KMeans-based clustering pipeline groups DFUs by demand patterns. Feature engineering extracts time series, item, and DFU features. Cluster labels (e.g., `high_volume_steady`, `seasonal_medium_volume`) stored in `dim_dfu.cluster_assignment`. MLflow tracks experiments under `dfu_clustering`. Config in `config/clustering_config.yaml`.
 - **Champion model selection:** Configurable per-DFU per-month champion selection via 5 strategies: expanding (cumulative WAPE), rolling (last N months), decay (exponential weighting), ensemble (blend top-K models), meta_learner (ML classifier). All strategies enforce **exec-lag-aware strict causality** — selection for month T with execution_lag=L uses ONLY data from months where `startdate < T − L` (i.e. `startdate < fcstdate`), implemented as `shift(exec_lag + 1)` per DFU-model group. This prevents using actuals that weren't available when the forecast was issued. With `exec_lag=0` the behaviour is identical to `shift(1)` (backward compatible). **Fallback model** (`fallback_model_id: lgbm_cluster` by default): DFU-months in the warm-up period (first `exec_lag + min_dfu_rows` months with insufficient prior history) are filled with the fallback model's forecast so every DFU-month always has a champion row. Strategy registry in `common/champion_strategies.py`. Config in `config/model_competition.yaml` controls competing models, metric, lag, `min_dfu_rows`, `fallback_model_id`, `strategy`, and `strategy_params`. Champion rows stored as `model_id='champion'` in `fact_external_forecast_monthly`. Ceiling (oracle) picks the best model per DFU per month with perfect foresight (after-the-fact), stored as `model_id='ceiling'`. Both at DFU-month granularity with consistent WAPE formula `SUM(|F-A|) / |SUM(A)|`. Gap-to-ceiling quantifies improvement opportunity. Meta-learner uses ceiling labels as ground truth with strict temporal train/test split. Simulation script (`scripts/simulate_champion_strategies.py`) runs all strategies and compares accuracy vs ceiling. UI panel in Accuracy tab shows champion + ceiling KPI cards, gap-to-ceiling indicator, and dual model wins bar charts.
 - **Shared backtest framework:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) use `common/backtest_framework.py` as a shared orchestrator via `run_tree_backtest()`. Each script implements only model-specific training functions passed as callables. Prophet and NeuralProphet use shared utilities but orchestrate their own per-DFU fitting loops. StatsForecast uses shared utilities with vectorized batch fitting (no per-DFU loop, ~100x faster than Prophet). Shared modules in `common/`: `backtest_framework.py`, `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`.
+- **Backtest output paths (model-scoped subdirectories):** Each backtest run writes output to `data/backtest/<model_id>/` (e.g., `data/backtest/lgbm_cluster/backtest_predictions.csv`). Multiple models can be run sequentially without overwriting each other. Load with `make backtest-load MODEL=<model_id>` or `make backtest-load-all` (scans all subdirs). See PL-001 in `docs/PARKING_LOT.md` for history.
+- **Hyperparameter tuning (Feature 41):** Bayesian Optuna tuning for LGBM, CatBoost, XGBoost cluster models. Walk-forward CV with causal masking (`mask_future_sales()` inside every fold). WAPE stabilised with denominator floor. `n_estimators` determined by early stopping (not in search space). Outputs `data/tuning/best_params_<model>.json` with `best_params` + `best_n_estimators` + per-cluster WAPEs. Backtest scripts accept `--params-file` to override defaults: `make backtest-catboost-cluster ARGS="--params-file data/tuning/best_params_catboost.json"`. Make targets: `tune-lgbm`, `tune-catboost`, `tune-xgboost`, `tune-all`. MLflow experiment: `hyperparameter_tuning`. Config: `config/hyperparameter_tuning.yaml`. Shared utilities: `common/tuning.py`.
 - **Market intelligence:** `POST /market-intelligence` — combines Google Custom Search API (product news/trends) + GPT-4o narrative synthesis for item + location pairs. Looks up item metadata (description, brand, category) from `dim_item` and location state from `dim_location`. Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` in `.env`.
 - **Backtest cleanup:** `scripts/clean_backtest_models.py` selectively removes model predictions from `fact_external_forecast_monthly` and `backtest_lag_archive` by `model_id`, then refreshes 5 materialized views. Supports `--list`, `--dry-run`, `--all-backtest` (excludes `external`). Make targets: `backtest-clean`, `backtest-list`.
 - **Forecast date-range cleanup:** `scripts/clean_forecasts_by_date.py` deletes rows from `fact_external_forecast_monthly` and/or `backtest_lag_archive` by time bucket. Supports `--before`, `--after`, `--between` date range filters and `--months` for specific month(s) on `startdate` (default) or `fcstdate`, optional `--model` filter, `--forecast-only`/`--archive-only` scope, `--dry-run` preview, and `--list` for row counts by model+month. All dates normalized to month-start. Refreshes same 5 materialized views as `clean_backtest_models.py`. Make targets: `forecast-clean`, `forecast-clean-list`.
@@ -462,6 +481,7 @@ Located in `docs/design-specs/`:
 - `feature37.md` — Inventory Planning Backtesting (forecast-inventory bridge, model comparison, root cause attribution)
 - `feature38.md` — Clustering What-If Scenario Enhancements (background execution, runtime estimation, dashboard alerts, enhanced charts)
 - `feature39.md` — Job Scheduler/Monitor with APScheduler (APScheduler 3.11 engine, 12 API endpoints, cron/interval scheduling, job pipelines, retry logic, automation dashboard UI, agentic AI foundation, scenario queueing, View Results navigation, Past Scenarios history)
+- `feature41.md` — Hyperparameter Tuning for Tree-Based Cluster Models (Optuna Bayesian optimization, walk-forward CV, early stopping, model-scoped output dirs, --params-file integration)
 - `theme-testing-strategy.md` — Multi-Theme Testing Strategy (unit tests implemented; integration/a11y/perf tests pending)
 - `docs/REFACTORING_RECOMMENDATIONS.md` — Comprehensive codebase refactoring roadmap
 

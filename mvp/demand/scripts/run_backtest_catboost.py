@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
 
 from common.backtest_framework import run_tree_backtest
 from common.constants import MIN_CLUSTER_ROWS
+from common.tuning import load_best_params
 
 
 def _ts() -> str:
@@ -224,6 +225,8 @@ def main() -> None:
     parser.add_argument("--depth", type=int, default=6)
     parser.add_argument("--l2-leaf-reg", type=float, default=3.0)
     parser.add_argument("--random-seed", type=int, default=42)
+    parser.add_argument("--params-file", type=str, default=None,
+                        help="Path to tuning JSON from tune_hyperparams.py (overrides defaults)")
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
@@ -254,8 +257,23 @@ def main() -> None:
         "loss_function": "RMSE",
         "verbose": 0,
     }
+
+    params_source = "defaults"
+    if args.params_file:
+        tuning_data = load_best_params(Path(args.params_file))
+        tuned = tuning_data.get("best_params", {})
+        n_est_tuned = tuning_data.get("best_n_estimators", None)
+        cb_params.update(tuned)
+        if n_est_tuned:
+            cb_params["iterations"] = n_est_tuned
+        params_source = f"tuning_file:{args.params_file}"
+        print(f"[{_ts()}] Loaded tuned params from {args.params_file} "
+              f"(best_wape={tuning_data.get('best_wape')}%, n_est={cb_params['iterations']})")
+
     if _use_gpu:
         cb_params["task_type"] = "GPU"
+
+    print(f"[{_ts()}] Params source: {params_source}")
 
     run_tree_backtest(
         model_id=model_id,
@@ -273,9 +291,11 @@ def main() -> None:
             "transfer_min_rows": args.transfer_min_rows,
         } if args.cluster_strategy == "transfer" else None,
         extra_metadata={
-            "transfer_iterations": args.transfer_iterations,
-            "transfer_min_rows": args.transfer_min_rows,
-        } if args.cluster_strategy == "transfer" else None,
+            **({"transfer_iterations": args.transfer_iterations,
+                "transfer_min_rows": args.transfer_min_rows}
+               if args.cluster_strategy == "transfer" else {}),
+            "params_source": params_source,
+        },
         cat_dtype="str",
     )
 

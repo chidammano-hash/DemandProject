@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-all backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all db-apply-jobs test test-unit test-api test-cov test-all
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-load-all backtest-all backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all
 
 help:
 	@echo "Targets:"
@@ -70,18 +70,23 @@ help:
 	@echo "  backtest-neuralprophet - run NeuralProphet global backtest (PyTorch GPU)"
 	@echo "  backtest-neuralprophet-cluster - run NeuralProphet per-cluster backtest"
 	@echo "  backtest-neuralprophet-pooled - run NeuralProphet pooled cluster backtest"
-	@echo "  backtest-load        - load backtest predictions into Postgres"
+	@echo "  backtest-load        - load one model: make backtest-load MODEL=lgbm_cluster"
+	@echo "  backtest-load-all    - load ALL models from data/backtest/*/ (run after multiple backtests)"
 	@echo "  backtest-clean       - remove model predictions (MODELS='lgbm_global deepar_global')"
 	@echo "  backtest-list        - list model_id row counts in database"
 	@echo "  forecast-clean       - delete forecasts by date range (ARGS='--before 2025-04-01 --model external')"
 	@echo "  forecast-clean-list  - list forecast row counts by model + month"
-	@echo "  backtest-all         - backtest-lgbm + backtest-load"
+	@echo "  backtest-all         - backtest-lgbm + load lgbm_global"
 	@echo "  accuracy-slice-refresh - refresh agg_accuracy_by_dim + agg_accuracy_lag_archive"
 	@echo "  accuracy-slice-check - curl accuracy slice + lag-curve endpoints"
 	@echo "  champion-select      - run champion model selection (best-of-models per DFU)"
 	@echo "  champion-simulate    - simulate all strategies, compare accuracy vs ceiling"
 	@echo "  champion-train-meta  - train meta-learner classifier for champion selection"
 	@echo "  champion-all         - train-meta + simulate + select (full pipeline)"
+	@echo "  tune-lgbm            - Bayesian hyperparameter tuning for LGBM (50 trials)"
+	@echo "  tune-catboost        - Bayesian hyperparameter tuning for CatBoost (50 trials)"
+	@echo "  tune-xgboost         - Bayesian hyperparameter tuning for XGBoost (50 trials)"
+	@echo "  tune-all             - Run all three tuning jobs sequentially"
 	@echo "  seasonality-schema   - apply DDL for seasonality columns on dim_dfu (one-time)"
 	@echo "  seasonality-detect   - run seasonality detection pipeline (detect + profile)"
 	@echo "  seasonality-update   - write seasonality profiles to dim_dfu"
@@ -495,9 +500,13 @@ backtest-neuralprophet-pooled:
 	$(UV) python scripts/run_backtest_neuralprophet.py --cluster-strategy pooled
 
 backtest-load:
-	$(UV) python scripts/load_backtest_forecasts.py --replace
+	$(UV) python scripts/load_backtest_forecasts.py --model $(MODEL) --replace
 
-backtest-all: backtest-lgbm backtest-load
+backtest-load-all:
+	$(UV) python scripts/load_backtest_forecasts.py --all --replace
+
+backtest-all: backtest-lgbm
+	$(UV) python scripts/load_backtest_forecasts.py --model lgbm_global --replace
 
 backtest-clean:
 	$(UV) python scripts/clean_backtest_models.py $(MODELS)
@@ -532,6 +541,21 @@ champion-train-meta:
 	$(UV) python scripts/train_meta_learner.py --config config/model_competition.yaml
 
 champion-all: champion-train-meta champion-simulate champion-select
+
+tune-lgbm:
+	$(UV) python scripts/tune_hyperparams.py --model lgbm
+
+tune-catboost:
+	$(UV) python scripts/tune_hyperparams.py --model catboost
+
+tune-xgboost:
+	$(UV) python scripts/tune_hyperparams.py --model xgboost
+
+tune-all: tune-lgbm tune-catboost tune-xgboost
+
+commit:
+	@if [ -z "$(MSG)" ]; then echo "Usage: make commit MSG=\"your message\""; exit 1; fi
+	cd ../.. && git add -A && git commit -m "$(MSG)" && git push
 
 test:
 	$(UV) pytest tests/ -v --tb=short

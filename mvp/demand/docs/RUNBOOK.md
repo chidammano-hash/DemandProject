@@ -64,55 +64,82 @@ make cluster-update    # Update dim_dfu.cluster_assignment in database
 
 This groups DFUs by historical demand patterns for improved global LGBM model performance. Results are logged to MLflow experiment `dfu_clustering`. Cluster assignments can be filtered via `/domains/dfu/page` using the `cluster_assignment` filter, or viewed via `/domains/dfu/clusters` endpoint.
 
+## 3c-1) Hyperparameter tuning (optional, Feature 41)
+
+Tune LGBM, CatBoost, and/or XGBoost parameters using Bayesian optimisation (Optuna) before running backtests. Uses walk-forward CV with causal masking.
+
+```bash
+make tune-lgbm      # ~20–40 min → data/tuning/best_params_lgbm.json
+make tune-catboost  # ~30–60 min → data/tuning/best_params_catboost.json
+make tune-xgboost   # ~25–50 min → data/tuning/best_params_xgboost.json
+
+# Or all three sequentially
+make tune-all
+```
+
+The JSON files contain `best_params`, `best_n_estimators`, per-cluster WAPEs, and CV fold metrics. Pass them to backtest scripts via `--params-file` in step 3d.
+
 ## 3d) Run backtesting (optional, requires clustering)
 
-> **Architecture note:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) share a common framework in `common/`. Each script contains only model-specific training functions (~280 lines) and delegates orchestration to `common/backtest_framework.py` via `run_tree_backtest()`. Shared modules: `backtest_framework.py` (orchestrator), `feature_engineering.py` (lag/rolling features), `metrics.py` (WAPE/accuracy), `mlflow_utils.py` (experiment logging), `db.py` (connection params), `constants.py` (thresholds). Prophet and NeuralProphet use shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrate their own per-DFU fitting loops. StatsForecast uses the same shared utilities with vectorized batch fitting (no per-DFU loop).
+> **Architecture note:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) share a common framework in `common/`. Each script contains only model-specific training functions (~280 lines) and delegates orchestration to `common/backtest_framework.py` via `run_tree_backtest()`. Shared modules: `backtest_framework.py` (orchestrator), `feature_engineering.py` (lag/rolling features), `metrics.py` (WAPE/accuracy), `mlflow_utils.py` (experiment logging), `db.py` (connection params), `constants.py` (thresholds), `tuning.py` (CV splits, WAPE, param loading). Each backtest writes to `data/backtest/<model_id>/` — multiple models can be run without overwriting each other. Prophet and NeuralProphet use shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrate their own per-DFU fitting loops. StatsForecast uses the same shared utilities with vectorized batch fitting (no per-DFU loop).
 
 ### LGBM
 
 Global model (one LGBM for all DFUs, `ml_cluster` as feature):
 ```bash
-make backtest-lgbm          # Global LGBM backtest (10 timeframes)
-make backtest-load          # Load predictions into Postgres
+make backtest-lgbm                  # Global LGBM backtest (10 timeframes)
+make backtest-load MODEL=lgbm_global  # Load predictions into Postgres
 ```
 
 Per-cluster model (separate LGBM per cluster):
 ```bash
-make backtest-lgbm-cluster  # Per-cluster LGBM backtest
-make backtest-load          # Load predictions into Postgres
+make backtest-lgbm-cluster          # Per-cluster LGBM backtest (default params)
+make backtest-load MODEL=lgbm_cluster
+
+# With tuned params:
+make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"
+make backtest-load MODEL=lgbm_cluster
 ```
 
 Or run global + load in one shot:
 ```bash
-make backtest-all           # backtest-lgbm + backtest-load
+make backtest-all           # backtest-lgbm + backtest-load (lgbm_global)
 ```
 
 ### CatBoost
 
 Global model:
 ```bash
-make backtest-catboost          # Global CatBoost backtest (10 timeframes)
-make backtest-load              # Load predictions into Postgres
+make backtest-catboost                    # Global CatBoost backtest (10 timeframes)
+make backtest-load MODEL=catboost_global
 ```
 
 Per-cluster model:
 ```bash
-make backtest-catboost-cluster  # Per-cluster CatBoost backtest
-make backtest-load              # Load predictions into Postgres
+make backtest-catboost-cluster            # Per-cluster CatBoost backtest (default params)
+make backtest-load MODEL=catboost_cluster
+
+# With tuned params:
+make backtest-catboost-cluster ARGS="--params-file data/tuning/best_params_catboost.json"
+make backtest-load MODEL=catboost_cluster
 ```
 
 ### XGBoost
 
 Global model:
 ```bash
-make backtest-xgboost          # Global XGBoost backtest (10 timeframes)
-make backtest-load             # Load predictions into Postgres
+make backtest-xgboost                    # Global XGBoost backtest (10 timeframes)
+make backtest-load MODEL=xgboost_global
 ```
 
 Per-cluster model:
 ```bash
-make backtest-xgboost-cluster  # Per-cluster XGBoost backtest
-make backtest-load             # Load predictions into Postgres
+make backtest-xgboost-cluster            # Per-cluster XGBoost backtest (default params)
+make backtest-load MODEL=xgboost_cluster
+
+# With tuned params:
+make backtest-xgboost-cluster ARGS="--params-file data/tuning/best_params_xgboost.json"
+make backtest-load MODEL=xgboost_cluster
 ```
 
 ### Prophet
@@ -121,20 +148,20 @@ Prophet fits individual time series models per DFU (unlike global tree models). 
 
 Global (per-DFU fits across all DFUs):
 ```bash
-make backtest-prophet            # Global Prophet backtest (per-DFU fits)
-make backtest-load               # Load predictions into Postgres
+make backtest-prophet                    # Global Prophet backtest (per-DFU fits)
+make backtest-load MODEL=prophet_global  # Load predictions into Postgres
 ```
 
 Per-cluster (only clustered DFUs):
 ```bash
-make backtest-prophet-cluster    # Per-cluster Prophet backtest
-make backtest-load               # Load predictions into Postgres
+make backtest-prophet-cluster              # Per-cluster Prophet backtest
+make backtest-load MODEL=prophet_cluster
 ```
 
 Pooled (aggregate by cluster → fit → disaggregate proportionally):
 ```bash
-make backtest-prophet-pooled     # Pooled cluster Prophet backtest
-make backtest-load               # Load predictions into Postgres
+make backtest-prophet-pooled              # Pooled cluster Prophet backtest
+make backtest-load MODEL=prophet_pooled
 ```
 
 ### PatchTST (Deep Learning)
@@ -143,20 +170,20 @@ PatchTST is a Transformer-based model using patched time series input. Supports 
 
 Global model:
 ```bash
-make backtest-patchtst           # Global PatchTST backtest (Apple MPS GPU)
-make backtest-load               # Load predictions into Postgres
+make backtest-patchtst                    # Global PatchTST backtest (Apple MPS GPU)
+make backtest-load MODEL=patchtst_global
 ```
 
 Per-cluster model:
 ```bash
-make backtest-patchtst-cluster   # Per-cluster PatchTST backtest
-make backtest-load               # Load predictions into Postgres
+make backtest-patchtst-cluster              # Per-cluster PatchTST backtest
+make backtest-load MODEL=patchtst_cluster
 ```
 
 Transfer learning (global base → per-cluster fine-tune):
 ```bash
-make backtest-patchtst-transfer  # Transfer learning PatchTST backtest
-make backtest-load               # Load predictions into Postgres
+make backtest-patchtst-transfer               # Transfer learning PatchTST backtest
+make backtest-load MODEL=patchtst_transfer
 ```
 
 ### DeepAR (Deep Learning)
@@ -165,20 +192,20 @@ DeepAR is an LSTM-based autoregressive probabilistic model. Produces point forec
 
 Global model:
 ```bash
-make backtest-deepar             # Global DeepAR backtest
-make backtest-load               # Load predictions into Postgres
+make backtest-deepar                    # Global DeepAR backtest
+make backtest-load MODEL=deepar_global
 ```
 
 Per-cluster model:
 ```bash
-make backtest-deepar-cluster     # Per-cluster DeepAR backtest
-make backtest-load               # Load predictions into Postgres
+make backtest-deepar-cluster              # Per-cluster DeepAR backtest
+make backtest-load MODEL=deepar_cluster
 ```
 
 Transfer learning:
 ```bash
-make backtest-deepar-transfer    # Transfer learning DeepAR backtest
-make backtest-load               # Load predictions into Postgres
+make backtest-deepar-transfer               # Transfer learning DeepAR backtest
+make backtest-load MODEL=deepar_transfer
 ```
 
 ### StatsForecast (Fast Statistical Models)
@@ -187,20 +214,20 @@ StatsForecast uses vectorized AutoARIMA + AutoETS models — ~100x faster than P
 
 Global (batch all DFUs at once):
 ```bash
-make backtest-statsforecast          # Global StatsForecast backtest (AutoARIMA+AutoETS)
-make backtest-load                   # Load predictions into Postgres
+make backtest-statsforecast                         # Global StatsForecast backtest (AutoARIMA+AutoETS)
+make backtest-load MODEL=statsforecast_global
 ```
 
 Per-cluster (only clustered DFUs):
 ```bash
-make backtest-statsforecast-cluster  # Per-cluster StatsForecast backtest
-make backtest-load                   # Load predictions into Postgres
+make backtest-statsforecast-cluster                   # Per-cluster StatsForecast backtest
+make backtest-load MODEL=statsforecast_cluster
 ```
 
 Pooled (aggregate by cluster → fit → disaggregate):
 ```bash
-make backtest-statsforecast-pooled   # Pooled cluster StatsForecast backtest
-make backtest-load                   # Load predictions into Postgres
+make backtest-statsforecast-pooled                   # Pooled cluster StatsForecast backtest
+make backtest-load MODEL=statsforecast_pooled
 ```
 
 ### NeuralProphet (PyTorch-based Prophet)
@@ -209,20 +236,20 @@ NeuralProphet is a PyTorch-based Prophet successor with Apple MPS GPU accelerati
 
 Global (per-DFU fits with GPU):
 ```bash
-make backtest-neuralprophet          # Global NeuralProphet backtest (PyTorch GPU)
-make backtest-load                   # Load predictions into Postgres
+make backtest-neuralprophet                         # Global NeuralProphet backtest (PyTorch GPU)
+make backtest-load MODEL=neuralprophet_global
 ```
 
 Per-cluster (only clustered DFUs):
 ```bash
-make backtest-neuralprophet-cluster  # Per-cluster NeuralProphet backtest
-make backtest-load                   # Load predictions into Postgres
+make backtest-neuralprophet-cluster                   # Per-cluster NeuralProphet backtest
+make backtest-load MODEL=neuralprophet_cluster
 ```
 
 Pooled (aggregate by cluster → fit → disaggregate):
 ```bash
-make backtest-neuralprophet-pooled   # Pooled cluster NeuralProphet backtest
-make backtest-load                   # Load predictions into Postgres
+make backtest-neuralprophet-pooled                   # Pooled cluster NeuralProphet backtest
+make backtest-load MODEL=neuralprophet_pooled
 ```
 
 ### Transfer Learning (all frameworks)
@@ -230,27 +257,46 @@ make backtest-load                   # Load predictions into Postgres
 Transfer learning trains a global base model (no `ml_cluster`), then fine-tunes per cluster with warm-start. Small clusters and unassigned DFUs fall back to the base model (never zeroed).
 
 ```bash
-make backtest-lgbm-transfer      # LGBM transfer backtest
-make backtest-load               # Load predictions into Postgres
+make backtest-lgbm-transfer                   # LGBM transfer backtest
+make backtest-load MODEL=lgbm_transfer
 
-make backtest-catboost-transfer  # CatBoost transfer backtest
-make backtest-load               # Load predictions into Postgres
+make backtest-catboost-transfer               # CatBoost transfer backtest
+make backtest-load MODEL=catboost_transfer
 
-make backtest-xgboost-transfer   # XGBoost transfer backtest
-make backtest-load               # Load predictions into Postgres
+make backtest-xgboost-transfer                # XGBoost transfer backtest
+make backtest-load MODEL=xgboost_transfer
 ```
 
 Transfer model IDs: `lgbm_transfer`, `catboost_transfer`, `xgboost_transfer`
 
 ### Backtest output
 
-Each backtest run produces two CSV files:
-- `data/backtest/backtest_predictions.csv` — execution-lag only (loaded into `fact_external_forecast_monthly`)
-- `data/backtest/backtest_predictions_all_lags.csv` — lag 0–4 archive (loaded into `backtest_lag_archive`)
+Each backtest run writes to a **model-scoped subdirectory**:
+- `data/backtest/<model_id>/backtest_predictions.csv` — execution-lag only (loaded into `fact_external_forecast_monthly`)
+- `data/backtest/<model_id>/backtest_predictions_all_lags.csv` — lag 0–4 archive (loaded into `backtest_lag_archive`)
 
-`make backtest-load` has `--replace` built in. It only deletes rows matching the `model_id` in the CSV, so running different models does **not** affect each other's results in Postgres.
+For example:
+```
+data/backtest/lgbm_cluster/backtest_predictions.csv
+data/backtest/catboost_cluster/backtest_predictions.csv
+data/backtest/xgboost_cluster/backtest_predictions.csv
+```
 
-Note: each backtest run overwrites the CSV files on disk. To load multiple models, run and load each one sequentially (e.g., LGBM → load → CatBoost → load → XGBoost → load).
+Multiple backtests can be run back-to-back without overwriting each other. Load all at once:
+
+```bash
+make backtest-lgbm-cluster
+make backtest-catboost-cluster
+make backtest-xgboost-cluster
+make backtest-load-all          # scans data/backtest/*/ and loads each model
+```
+
+Or load one model at a time:
+```bash
+make backtest-load MODEL=lgbm_cluster
+```
+
+`--replace` is built into `backtest-load`. It only deletes rows matching the `model_id` in the CSV, so running different models does **not** affect each other's results in Postgres.
 
 Predictions are stored in `fact_external_forecast_monthly` with model_id values:
 - LGBM: `lgbm_global` / `lgbm_cluster` / `lgbm_transfer`

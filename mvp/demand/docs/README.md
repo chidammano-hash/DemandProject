@@ -150,30 +150,42 @@ Clustering:
 - API endpoint: `GET /domains/dfu/clusters` returns cluster summary statistics
 - Filter DFUs by cluster: use `cluster_assignment` filter in `/domains/dfu/page` endpoint
 
+Hyperparameter Tuning (feature41):
+- Tune LGBM: `make tune-lgbm` → `data/tuning/best_params_lgbm.json` (~20–40 min, 50 Optuna trials)
+- Tune CatBoost: `make tune-catboost` → `data/tuning/best_params_catboost.json` (~30–60 min)
+- Tune XGBoost: `make tune-xgboost` → `data/tuning/best_params_xgboost.json` (~25–50 min)
+- Tune all: `make tune-all` (runs all three sequentially)
+- Use tuned params in backtest: `make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"`
+- Walk-forward CV with causal masking; `n_estimators` set by early stopping (not searched)
+- Per-cluster WAPE breakdown in output JSON; MLflow experiment: `hyperparameter_tuning`
+
 LGBM Backtesting:
 - Run global backtest: `make backtest-lgbm` (trains LightGBM across 10 expanding windows)
 - Run per-cluster backtest: `make backtest-lgbm-cluster` (separate model per cluster)
+- Run with tuned params: `make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"`
 - Run transfer backtest: `make backtest-lgbm-transfer` (global base → per-cluster fine-tune)
-- Load predictions: `make backtest-load` (loads execution-lag rows into `fact_external_forecast_monthly`, all-lag rows into `backtest_lag_archive`, refreshes accuracy slice views)
+- Load predictions: `make backtest-load MODEL=lgbm_cluster` (or `make backtest-load-all` for all models)
 - Or all at once: `make backtest-all`
 - Models appear as `lgbm_global` / `lgbm_cluster` / `lgbm_transfer` in the forecast model selector
 - Existing accuracy KPIs and trend charts work automatically for LGBM models
 - `backtest_lag_archive` stores lag 0–4 predictions for accuracy reporting at any horizon
-- `make backtest-load` only replaces rows for the model_id in the CSV (safe to run per-cluster after global)
+- Each backtest writes to `data/backtest/<model_id>/` — multiple models can run without overwriting each other
 
 CatBoost Backtesting:
 - Run global backtest: `make backtest-catboost` (trains CatBoost across 10 expanding windows)
 - Run per-cluster backtest: `make backtest-catboost-cluster` (separate model per cluster)
+- Run with tuned params: `make backtest-catboost-cluster ARGS="--params-file data/tuning/best_params_catboost.json"`
 - Run transfer backtest: `make backtest-catboost-transfer` (global base → per-cluster fine-tune)
-- Load predictions: `make backtest-load` (same shared loader as LGBM)
+- Load predictions: `make backtest-load MODEL=catboost_cluster`
 - Models appear as `catboost_global` / `catboost_cluster` / `catboost_transfer` in the forecast model selector
 - Same feature engineering, lag strategy, and output format as LGBM
 
 XGBoost Backtesting:
 - Run global backtest: `make backtest-xgboost` (trains XGBoost across 10 expanding windows)
 - Run per-cluster backtest: `make backtest-xgboost-cluster` (separate model per cluster)
+- Run with tuned params: `make backtest-xgboost-cluster ARGS="--params-file data/tuning/best_params_xgboost.json"`
 - Run transfer backtest: `make backtest-xgboost-transfer` (global base → per-cluster fine-tune)
-- Load predictions: `make backtest-load` (same shared loader as LGBM)
+- Load predictions: `make backtest-load MODEL=xgboost_cluster`
 - Models appear as `xgboost_global` / `xgboost_cluster` / `xgboost_transfer` in the forecast model selector
 - Same feature engineering, lag strategy, and output format as LGBM
 
@@ -435,4 +447,8 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - Backend tests: `mvp/demand/tests/` (unit/ + api/)
 - Frontend tests: `mvp/demand/frontend/src/**/__tests__/`
 - Test config: `mvp/demand/frontend/vitest.config.ts`
-- Design specs: `docs/design-specs/` (feature1–feature39)
+- Tuning script: `mvp/demand/scripts/tune_hyperparams.py`
+- Tuning utilities: `mvp/demand/common/tuning.py`
+- Tuning config: `mvp/demand/config/hyperparameter_tuning.yaml`
+- Tuning output: `mvp/demand/data/tuning/best_params_<model>.json`
+- Design specs: `docs/design-specs/` (feature1–feature41)

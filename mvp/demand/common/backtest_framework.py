@@ -266,16 +266,21 @@ def save_backtest_output(
 ) -> tuple[Path, Path, Path, dict]:
     """Save predictions CSV, archive CSV, and metadata JSON.
 
+    Writes into a model-scoped subdirectory: output_dir / model_id /
+    This prevents multiple backtest runs from overwriting each other (PL-001).
+
     Returns (output_path, archive_path, meta_path, metadata_dict).
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Model-scoped subdirectory — each model_id gets its own folder
+    model_dir = output_dir / model_id
+    model_dir.mkdir(parents=True, exist_ok=True)
 
     # Select and order columns for fact_external_forecast_monthly
     out = output_df[OUTPUT_COLS].copy()
     out["fcstdate"] = out["fcstdate"].dt.strftime("%Y-%m-%d")
     out["startdate"] = out["startdate"].dt.strftime("%Y-%m-%d")
 
-    output_path = output_dir / "backtest_predictions.csv"
+    output_path = model_dir / "backtest_predictions.csv"
     out.to_csv(output_path, index=False)
     print(f"  [{_ts()}] Saved {len(out):,} predictions to {output_path}")
 
@@ -284,7 +289,7 @@ def save_backtest_output(
     arch["fcstdate"] = arch["fcstdate"].dt.strftime("%Y-%m-%d")
     arch["startdate"] = arch["startdate"].dt.strftime("%Y-%m-%d")
 
-    archive_path = output_dir / "backtest_predictions_all_lags.csv"
+    archive_path = model_dir / "backtest_predictions_all_lags.csv"
     arch.to_csv(archive_path, index=False)
     print(f"  [{_ts()}] Saved {len(arch):,} archive rows to {archive_path}")
 
@@ -324,7 +329,7 @@ def save_backtest_output(
         print(f"    Bias: {acc['bias']:.4f}")
         print(f"    Accuracy: {acc['accuracy_pct']:.2f}%")
 
-    meta_path = output_dir / "backtest_metadata.json"
+    meta_path = model_dir / "backtest_metadata.json"
     with open(meta_path, "w") as f:
         json.dump(metadata, f, indent=2, default=str)
     print(f"  [{_ts()}] Saved metadata to {meta_path}")
@@ -530,8 +535,9 @@ def run_tree_backtest(
     )
 
     # Feature importance (from last timeframe's global model)
+    # output_path.parent is the model-scoped subdirectory (output_dir / model_id)
     if cluster_strategy == "global" and last_global_model is not None:
-        save_feature_importance(last_global_model, feature_cols, output_dir)
+        save_feature_importance(last_global_model, feature_cols, output_path.parent)
 
     # ── Step 7: MLflow logging ───────────────────────────────────────────────
     mlflow_params = {

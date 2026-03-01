@@ -202,12 +202,13 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 
 | Module | Purpose |
 |--------|---------|
-| `common/backtest_framework.py` | `run_tree_backtest()` orchestrator, timeframe generation, data loading, execution-lag assignment, all-lag expansion, post-processing, output saving, feature importance |
+| `common/backtest_framework.py` | `run_tree_backtest()` orchestrator, timeframe generation, data loading, execution-lag assignment, all-lag expansion, post-processing, model-scoped output saving (`data/backtest/<model_id>/`), feature importance |
 | `common/feature_engineering.py` | `build_feature_matrix()`, `get_feature_columns()`, `mask_future_sales()` with `cat_dtype` parameter for framework-specific categorical handling |
 | `common/metrics.py` | `compute_accuracy_metrics()`: WAPE, bias, accuracy % |
 | `common/mlflow_utils.py` | `log_backtest_run()`: generic MLflow experiment logging |
 | `common/db.py` | `get_db_params()`: shared DB connection parameters |
 | `common/constants.py` | `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output column ordering, thresholds |
+| `common/tuning.py` | Shared tuning utilities: `generate_cv_month_splits`, `compute_wape_stabilised`, `suggest_params`, `save_best_params`, `load_best_params`, `best_rounds_to_n_estimators` (Feature 41) |
 
 Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_global()`, `train_and_predict_per_cluster()`, and `train_and_predict_transfer()`, passed as callables to `run_tree_backtest()`. Non-tree models (Prophet, StatsForecast, NeuralProphet, PatchTST, DeepAR) use shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrate their own training loops. Deep learning models (PatchTST, DeepAR) have separate model files (`patchtst_model.py`, `deepar_model.py`) containing the PyTorch nn.Module, Dataset, and train/predict functions. StatsForecast uses vectorized batch fitting (no per-DFU loop). NeuralProphet follows the Prophet per-DFU pattern with PyTorch GPU support.
 
@@ -278,8 +279,18 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_g
 13. **Backtest Loader** (`load_backtest_forecasts.py`):
    - Loads execution-lag rows into `fact_external_forecast_monthly` via COPY + staging + upsert
    - Loads all-lag rows into `backtest_lag_archive` via same pattern
+   - Supports `--model MODEL_ID` (load from `data/backtest/<MODEL_ID>/`), `--all` (scan all model subdirs), `--input PATH` (legacy)
    - `--replace` scoped to `model_id` in CSV (safe for multi-model coexistence)
    - Refreshes `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` materialized views
+   - Each backtest writes to `data/backtest/<model_id>/` subdirectory (prevents CSV overwrites — PL-001 fix)
+14. **Hyperparameter Tuning** (`scripts/tune_hyperparams.py` + `common/tuning.py`):
+   - Bayesian optimisation via Optuna (TPESampler + MedianPruner) for LGBM, CatBoost, XGBoost
+   - Walk-forward expanding CV with causal masking (`mask_future_sales()` inside each fold)
+   - `n_estimators` determined by early stopping (excluded from search space)
+   - Per-cluster WAPE breakdown logged in output JSON and MLflow
+   - Search spaces and CV settings in `config/hyperparameter_tuning.yaml`
+   - Output: `data/tuning/best_params_<model>.json` consumed via `--params-file` backtest flag
+   - MLflow experiment: `hyperparameter_tuning`
 12. **Champion Selection** (`run_champion_selection.py` + `common/champion_strategies.py`):
    - 5 configurable strategies: expanding, rolling, decay, ensemble, meta_learner
    - Strategy registry in `common/champion_strategies.py` — all strategies operate on pandas DataFrames (testable without DB)

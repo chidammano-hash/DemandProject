@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
 
 from common.backtest_framework import run_tree_backtest
 from common.constants import MIN_CLUSTER_ROWS
+from common.tuning import load_best_params
 
 
 def _ts() -> str:
@@ -218,6 +219,8 @@ def main() -> None:
     parser.add_argument("--subsample", type=float, default=0.8)
     parser.add_argument("--colsample-bytree", type=float, default=0.8)
     parser.add_argument("--verbosity", type=int, default=0, help="XGBoost verbosity (0=silent)")
+    parser.add_argument("--params-file", type=str, default=None,
+                        help="Path to tuning JSON from tune_hyperparams.py (overrides defaults)")
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
@@ -252,8 +255,23 @@ def main() -> None:
         "enable_categorical": True,
         "tree_method": "hist",
     }
+
+    params_source = "defaults"
+    if args.params_file:
+        tuning_data = load_best_params(Path(args.params_file))
+        tuned = tuning_data.get("best_params", {})
+        n_est_tuned = tuning_data.get("best_n_estimators", None)
+        xgb_params.update(tuned)
+        if n_est_tuned:
+            xgb_params["n_estimators"] = n_est_tuned
+        params_source = f"tuning_file:{args.params_file}"
+        print(f"[{_ts()}] Loaded tuned params from {args.params_file} "
+              f"(best_wape={tuning_data.get('best_wape')}%, n_est={xgb_params['n_estimators']})")
+
     if _use_gpu:
         xgb_params["device"] = "cuda"
+
+    print(f"[{_ts()}] Params source: {params_source}")
 
     run_tree_backtest(
         model_id=model_id,
@@ -271,9 +289,11 @@ def main() -> None:
             "transfer_min_rows": args.transfer_min_rows,
         } if args.cluster_strategy == "transfer" else None,
         extra_metadata={
-            "transfer_n_estimators": args.transfer_n_estimators,
-            "transfer_min_rows": args.transfer_min_rows,
-        } if args.cluster_strategy == "transfer" else None,
+            **({"transfer_n_estimators": args.transfer_n_estimators,
+                "transfer_min_rows": args.transfer_min_rows}
+               if args.cluster_strategy == "transfer" else {}),
+            "params_source": params_source,
+        },
         cat_dtype="category",
     )
 
