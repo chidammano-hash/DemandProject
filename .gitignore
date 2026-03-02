@@ -38,7 +38,3 @@ mvp/demand/data/**/*.joblib
 # Claude Code settings
 .claude/
 
-# Personal documents
-Manohar_Chidambaram_Resume_*.md
-McKesson_Interview_Call_Playbook.md
-VP_DataScience_AI_Interview_Call_Playbook.md
