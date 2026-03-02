@@ -29,3 +29,16 @@ catboost_info/
 # Project data & archives
 reference/
 datafiles/
+
+# Generated data files (large CSVs, ML outputs, Optuna DBs)
+mvp/demand/data/**/*.csv
+mvp/demand/data/**/*.db
+mvp/demand/data/**/*.joblib
+
+# Claude Code settings
+.claude/
+
+# Personal documents
+Manohar_Chidambaram_Resume_*.md
+McKesson_Interview_Call_Playbook.md
+VP_DataScience_AI_Interview_Call_Playbook.md
