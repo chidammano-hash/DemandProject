@@ -565,7 +565,7 @@ backtest-xgboost-cluster-tuned:
 
 commit:
 	@if [ -z "$(MSG)" ]; then echo "Usage: make commit MSG=\"your message\""; exit 1; fi
-	cd ../.. && git add -A && git commit -m "$(MSG)" && git push
+	cd ../.. && git add -A && (git diff --staged --quiet || git commit -m "$(MSG)"); git push
 
 test:
 	$(UV) pytest tests/ -v --tb=short
