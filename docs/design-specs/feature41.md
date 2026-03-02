@@ -142,18 +142,19 @@ This gives the optimal tree count automatically and reduces effective search spa
 | File | Purpose |
 |------|---------|
 | `mvp/demand/scripts/tune_hyperparams.py` | Main Optuna tuning script (CLI entry point) |
-| `mvp/demand/common/tuning.py` | Shared tuning utilities: CV splits, WAPE objective, early stopping, param suggestion |
-| `mvp/demand/config/hyperparameter_tuning.yaml` | Search spaces, CV settings, trial budget |
-| `mvp/demand/tests/unit/test_tuning.py` | Unit tests for CV split logic, WAPE computation |
+| `mvp/demand/common/tuning.py` | Shared tuning utilities: CV splits, WAPE objective, early stopping, param suggestion, per-timeframe causal tuning, fold training functions |
+| `mvp/demand/config/hyperparameter_tuning.yaml` | Search spaces, CV settings, trial budget, inline tuning settings |
+| `mvp/demand/tests/unit/test_tuning.py` | Unit tests for CV split logic, WAPE computation, fold function registry, per-timeframe causality |
 
 ### Modified Files
 
 | File | Change |
 |------|--------|
-| `mvp/demand/scripts/run_backtest.py` | Add `--params-file` argument (optional) |
-| `mvp/demand/scripts/run_backtest_catboost.py` | Add `--params-file` argument (optional) |
-| `mvp/demand/scripts/run_backtest_xgboost.py` | Add `--params-file` argument (optional) |
-| `mvp/demand/Makefile` | Add `tune-lgbm`, `tune-catboost`, `tune-xgboost`, `tune-all` targets |
+| `mvp/demand/scripts/run_backtest.py` | Add `--params-file` argument (optional); add `--tune-inline`, `--tune-n-trials`, `--tune-config` (PL-002) |
+| `mvp/demand/scripts/run_backtest_catboost.py` | Add `--params-file` argument (optional); add `--tune-inline`, `--tune-n-trials`, `--tune-config` (PL-002) |
+| `mvp/demand/scripts/run_backtest_xgboost.py` | Add `--params-file` argument (optional); add `--tune-inline`, `--tune-n-trials`, `--tune-config` (PL-002) |
+| `mvp/demand/common/backtest_framework.py` | Add `inline_tuner_fn` optional parameter to `run_tree_backtest()` (PL-002) |
+| `mvp/demand/Makefile` | Add `tune-lgbm`, `tune-catboost`, `tune-xgboost`, `tune-all` targets; add `backtest-lgbm-cluster-tuned`, `backtest-catboost-cluster-tuned`, `backtest-xgboost-cluster-tuned` targets |
 
 ---
 
@@ -260,7 +261,91 @@ tune-lgbm:       # Tune LGBM hyperparameters (50 trials, ~20–40 min)
 tune-catboost:   # Tune CatBoost hyperparameters (~30–60 min)
 tune-xgboost:    # Tune XGBoost hyperparameters (~25–50 min)
 tune-all:        # Run all three tuning jobs sequentially
+
+# Honest backtesting: per-timeframe causal tuning (PL-002 fix)
+backtest-lgbm-cluster-tuned:       # LGBM per-cluster with inline per-timeframe tuning
+backtest-catboost-cluster-tuned:   # CatBoost per-cluster with inline per-timeframe tuning
+backtest-xgboost-cluster-tuned:    # XGBoost per-cluster with inline per-timeframe tuning
 ```
+
+---
+
+## Causal Per-Timeframe Tuning (PL-002 Fix)
+
+### Problem: Temporal Data Leakage
+
+The global tuning workflow (`make tune-lgbm` → `--params-file`) tunes on the **full sales history** and applies those parameters to all 10 backtest timeframes. This introduces **temporal data leakage**: the tuner has already seen observations from future timeframes (e.g. timeframe J) when selecting parameters that are then applied to earlier timeframes (e.g. timeframe A). Backtest accuracy numbers are therefore optimistically biased.
+
+### Solution: `tune_for_timeframe()`
+
+`common/tuning.py` exposes:
+
+```python
+def tune_for_timeframe(
+    model_name: str,           # "lgbm" | "catboost" | "xgboost"
+    train_fold_fn: Callable,   # from TRAIN_FOLD_FNS registry
+    full_grid: pd.DataFrame,   # full feature matrix (pre-filtered inside)
+    feature_cols: list[str],
+    cat_cols: list[str],
+    cutoff_date: pd.Timestamp, # = train_end for that timeframe
+    config: dict,              # loaded from hyperparameter_tuning.yaml
+    n_trials: int | None,      # override inline_n_trials (default: 20)
+) -> tuple[dict[str, Any], int]:
+    # filters full_grid to months <= cutoff_date
+    # runs in-memory Optuna study (no SQLite)
+    # returns (best_params_dict, best_n_estimators) or ({}, 500) if insufficient data
+```
+
+### `TRAIN_FOLD_FNS` Registry
+
+Fold training functions are now public in `common/tuning.py` and shared between the global tuning script and the inline tuner:
+
+```python
+TRAIN_FOLD_FNS: dict[str, Callable] = {
+    "lgbm": train_lgbm_fold,
+    "catboost": train_catboost_fold,
+    "xgboost": train_xgboost_fold,
+}
+```
+
+### `inline_tuner_fn` in `run_tree_backtest()`
+
+`common/backtest_framework.py`'s `run_tree_backtest()` accepts a new optional parameter:
+
+```python
+inline_tuner_fn: Callable[[full_grid, feature_cols, cat_cols, train_end], dict] | None = None
+```
+
+When provided, each timeframe calls the tuner before training and uses the resulting `effective_params` instead of static `model_params`.
+
+### CLI Flags Added to All Three Backtest Scripts
+
+```
+--tune-inline           Enable per-timeframe causal tuning (mutually exclusive with --params-file)
+--tune-n-trials N       Override trial count per timeframe (default: from YAML inline_n_trials)
+--tune-config PATH      Override tuning YAML path
+```
+
+### Config Additions (`config/hyperparameter_tuning.yaml`)
+
+```yaml
+tuning:
+  inline_n_trials: 20    # Optuna trials per timeframe (fewer than global 50)
+  inline_n_splits: 3     # CV folds per timeframe (fewer than global 5)
+```
+
+### Two-Mode Workflow
+
+| Mode | Command | Use Case |
+|------|---------|----------|
+| **Production scoring** | `make tune-lgbm && make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"` | Tune once on full history, apply to future production forecasts |
+| **Honest backtesting** | `make backtest-lgbm-cluster-tuned` | Per-timeframe causal tuning; no future leakage; genuine OOS accuracy |
+
+### Performance Note
+
+Per-timeframe inline tuning: 10 timeframes × 20 trials × 3 CV folds = **600 model fits** (vs. 250 for global one-shot tuning). Expect ~2–3× longer runtime than an untuned backtest. The trade-off is genuine out-of-sample accuracy with no future leakage.
+
+---
 
 ## Full Tuned Backtest Workflow
 
@@ -331,6 +416,16 @@ make backtest-load-all
 make champion-select
 ```
 
+### Honest backtest pipeline (per-timeframe inline tuning, no leakage)
+
+```bash
+make backtest-lgbm-cluster-tuned      # per-cluster LGBM with inline per-timeframe tuning
+make backtest-catboost-cluster-tuned  # per-cluster CatBoost with inline per-timeframe tuning
+make backtest-xgboost-cluster-tuned   # per-cluster XGBoost with inline per-timeframe tuning
+make backtest-load-all
+make champion-select
+```
+
 ---
 
 ## MLflow Tracking
@@ -345,6 +440,8 @@ Each tuning run logs:
 ---
 
 ## Algorithm Flow
+
+### Global Tuning (`tune_hyperparams.py`)
 
 ```
 tune_hyperparams.py
@@ -371,9 +468,35 @@ tune_hyperparams.py
 └── 8. Save best_params_<model>.json
 ```
 
+### Inline Per-Timeframe Tuning (`--tune-inline` in backtest scripts)
+
+```
+run_backtest.py --tune-inline
+│
+├── 1. Load data, build full feature matrix
+│
+├── For each timeframe A–J (10 timeframes):
+│   ├── a. Derive train_end (cutoff date for this timeframe)
+│   │
+│   ├── b. Call inline_tuner_fn(full_grid, feature_cols, cat_cols, train_end)
+│   │      └── tune_for_timeframe():
+│   │           ├── filter full_grid to months <= cutoff_date  ← no future leakage
+│   │           ├── generate_cv_month_splits (3 folds, in-memory Optuna study)
+│   │           ├── For each trial (20 trials):
+│   │           │   └── TRAIN_FOLD_FNS[model_name](train_fold, val_fold, params)
+│   │           └── return (best_params, best_n_estimators)
+│   │
+│   ├── c. Merge tuned params → effective_params
+│   └── d. Train model with effective_params on this timeframe's training data
+│
+└── Save predictions to data/backtest/<model_id>/
+```
+
 ---
 
 ## Estimated Runtime
+
+### Global tuning (`make tune-*`)
 
 | Model | Trials | Approx time (CPU) |
 |-------|--------|-------------------|
@@ -382,6 +505,17 @@ tune_hyperparams.py
 | XGBoost | 50 | 25–50 min |
 
 Runtime scales with dataset size. GPU acceleration (if available) reduces by ~3–5×. Use `--n-trials 20` for a fast exploratory run.
+
+### Inline per-timeframe tuning (`--tune-inline`)
+
+| Step | Count | Model fits |
+|------|-------|-----------|
+| Timeframes | 10 | — |
+| Trials per timeframe | 20 | — |
+| CV folds per trial | 3 | — |
+| **Total model fits** | — | **600** |
+
+Expect ~2–3× longer runtime than an untuned backtest (vs. 250 fits for global tuning). This is the cost of genuine out-of-sample accuracy with no future leakage.
 
 ---
 
@@ -401,11 +535,13 @@ Fold 5: train M1–M45  (45 months), gap M46, val M47–M48 (2 months)
 
 ## Testing
 
-- `tests/unit/test_tuning.py` covers:
+- `tests/unit/test_tuning.py` covers (39 tests total):
   - `generate_cv_month_splits`: correct fold count, expanding windows, gap enforcement, min_train_months filtering
   - `compute_wape_stabilised`: normal case, zero actuals → inf, near-zero denominator clamping
   - `load_best_params`: JSON round-trip, missing file raises FileNotFoundError
   - `suggest_params`: valid keys returned for each model name
+  - `TRAIN_FOLD_FNS`: registry has all 3 models (`lgbm`, `catboost`, `xgboost`), all are callable
+  - `tune_for_timeframe`: returns `(dict, int)` tuple; best params keys match search space; **only causal months used** (core PL-002 test — verifies `full_grid` filtered to `months <= cutoff_date`); insufficient data returns `({}, 500)`; cutoff before all data returns empty; different cutoffs produce different results
 
 ---
 

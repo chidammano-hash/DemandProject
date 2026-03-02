@@ -392,6 +392,7 @@ def run_tree_backtest(
     extra_metadata: dict[str, Any] | None = None,
     cat_dtype: str = "category",
     min_training_months: int = MIN_TRAINING_MONTHS,
+    inline_tuner_fn: Callable[[Any, list[str], list[str], Any], dict[str, Any]] | None = None,
 ) -> None:
     """Run a complete tree-based backtest (LGBM, CatBoost, XGBoost).
 
@@ -485,20 +486,29 @@ def run_tree_backtest(
             print(f"  [{_ts()}] Empty train or predict — skipping")
             continue
 
+        # Resolve hyperparams: per-timeframe inline tuning (PL-002) or static defaults
+        if inline_tuner_fn is not None:
+            print(f"  [{_ts()}] Inline hyperparameter tuning (cutoff={train_end.date()})...")
+            t_tune = time.time()
+            effective_params = inline_tuner_fn(full_grid, feature_cols, cat_cols, train_end)
+            print(f"  [{_ts()}] Inline tuning done ({time.time() - t_tune:.1f}s)")
+        else:
+            effective_params = model_params
+
         # Train & predict based on strategy
         if cluster_strategy == "global":
             preds, model = train_fn_global(
-                train_data, predict_data, feature_cols, cat_cols, model_params
+                train_data, predict_data, feature_cols, cat_cols, effective_params
             )
             last_global_model = model
         elif cluster_strategy == "transfer":
             preds, models = train_fn_transfer(
-                train_data, predict_data, feature_cols, cat_cols, model_params,
+                train_data, predict_data, feature_cols, cat_cols, effective_params,
                 **(transfer_kwargs or {}),
             )
         else:
             preds, models = train_fn_per_cluster(
-                train_data, predict_data, feature_cols, cat_cols, model_params
+                train_data, predict_data, feature_cols, cat_cols, effective_params
             )
 
         preds["model_id"] = model_id

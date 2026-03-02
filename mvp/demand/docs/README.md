@@ -155,9 +155,11 @@ Hyperparameter Tuning (feature41):
 - Tune CatBoost: `make tune-catboost` → `data/tuning/best_params_catboost.json` (~30–60 min)
 - Tune XGBoost: `make tune-xgboost` → `data/tuning/best_params_xgboost.json` (~25–50 min)
 - Tune all: `make tune-all` (runs all three sequentially)
-- Use tuned params in backtest: `make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"`
+- **Production scoring mode**: use tuned params via `--params-file`: `make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"`
+- **Honest backtesting mode** (PL-002 fix — no data leakage): `make backtest-lgbm-cluster-tuned` — each of the 10 timeframes tunes on only the data available up to that cutoff. Also: `make backtest-catboost-cluster-tuned`, `make backtest-xgboost-cluster-tuned`
 - Walk-forward CV with causal masking; `n_estimators` set by early stopping (not searched)
 - Per-cluster WAPE breakdown in output JSON; MLflow experiment: `hyperparameter_tuning`
+- `TRAIN_FOLD_FNS` registry in `common/tuning.py` exposes fold training functions for both global and inline tuning
 
 LGBM Backtesting:
 - Run global backtest: `make backtest-lgbm` (trains LightGBM across 10 expanding windows)

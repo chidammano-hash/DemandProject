@@ -18,6 +18,9 @@ tuning:
   # Pruner settings (MedianPruner)
   pruner_n_startup_trials: 15   # Full trials required before any pruning
   pruner_n_warmup_steps: 3      # Folds required before pruning within a trial
+  # Inline (per-timeframe) tuning settings — used by --tune-inline in backtest scripts
+  inline_n_trials: 20           # Optuna trials per timeframe (fewer than global tuning)
+  inline_n_splits: 3            # CV folds per timeframe (fewer than global tuning)
 
 # LightGBM search space
 # n_estimators is excluded — determined by early stopping

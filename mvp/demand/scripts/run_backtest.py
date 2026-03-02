@@ -29,7 +29,7 @@ if str(ROOT) not in sys.path:
 
 from common.backtest_framework import run_tree_backtest
 from common.constants import MIN_CLUSTER_ROWS
-from common.tuning import load_best_params
+from common.tuning import TRAIN_FOLD_FNS, load_best_params, tune_for_timeframe
 
 
 def _ts() -> str:
@@ -227,7 +227,19 @@ def main() -> None:
     parser.add_argument("--verbosity", type=int, default=-1, help="LightGBM verbosity (-1=silent)")
     parser.add_argument("--params-file", type=str, default=None,
                         help="Path to tuning JSON from tune_hyperparams.py (overrides defaults)")
+    parser.add_argument("--tune-inline", action="store_true",
+                        help="Run per-timeframe hyperparameter tuning (causal, no future data leakage). "
+                             "Mutually exclusive with --params-file.")
+    parser.add_argument("--tune-n-trials", type=int, default=None,
+                        help="Optuna trials per timeframe for --tune-inline "
+                             "(default: inline_n_trials from config)")
+    parser.add_argument("--tune-config", type=str, default=None,
+                        help="Path to hyperparameter_tuning.yaml for --tune-inline")
     args = parser.parse_args()
+
+    if args.params_file and args.tune_inline:
+        print("ERROR: --params-file and --tune-inline are mutually exclusive")
+        sys.exit(1)
 
     load_dotenv(ROOT / ".env")
 
@@ -276,6 +288,42 @@ def main() -> None:
     if _use_gpu:
         lgbm_params["device"] = "gpu"
 
+    # Build causal per-timeframe tuner when --tune-inline is set (PL-002 fix)
+    inline_tuner_fn = None
+    if args.tune_inline:
+        import yaml
+        _tune_config_path = Path(args.tune_config) if args.tune_config else (
+            ROOT / "config" / "hyperparameter_tuning.yaml"
+        )
+        with open(_tune_config_path) as _f:
+            _tune_config = yaml.safe_load(_f)
+        _fold_fn = TRAIN_FOLD_FNS["lgbm"]
+        _n_trials = args.tune_n_trials
+        _base_params = lgbm_params.copy()
+
+        def inline_tuner_fn(full_grid, feature_cols, cat_cols, train_end):
+            tuned, n_est = tune_for_timeframe(
+                model_name="lgbm",
+                train_fold_fn=_fold_fn,
+                full_grid=full_grid,
+                feature_cols=feature_cols,
+                cat_cols=cat_cols,
+                cutoff_date=train_end,
+                config=_tune_config,
+                n_trials=_n_trials,
+            )
+            if not tuned:
+                return _base_params.copy()
+            result = {**_base_params, **tuned, "n_estimators": n_est}
+            print(f"    [{_ts()}] Inline tuned: n_estimators={n_est}, "
+                  f"lr={tuned.get('learning_rate', 'n/a'):.4f}")
+            return result
+
+        params_source = "inline_tuning"
+        print(f"[{_ts()}] Inline tuning enabled: {_tune_config_path} "
+              f"(inline_n_trials={_tune_config['tuning'].get('inline_n_trials', 20)}, "
+              f"inline_n_splits={_tune_config['tuning'].get('inline_n_splits', 3)})")
+
     print(f"[{_ts()}] Params source: {params_source}")
 
     run_tree_backtest(
@@ -300,6 +348,7 @@ def main() -> None:
             "params_source": params_source,
         },
         cat_dtype="category",
+        inline_tuner_fn=inline_tuner_fn,
     )
 
 

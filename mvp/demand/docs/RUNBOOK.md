@@ -66,7 +66,11 @@ This groups DFUs by historical demand patterns for improved global LGBM model pe
 
 ## 3c-1) Hyperparameter tuning (optional, Feature 41)
 
-Tune LGBM, CatBoost, and/or XGBoost parameters using Bayesian optimisation (Optuna) before running backtests. Uses walk-forward CV with causal masking.
+Two modes are available. Choose based on your goal:
+
+### Mode A — Production scoring (tune once on full history)
+
+Tune LGBM, CatBoost, and/or XGBoost parameters using Bayesian optimisation (Optuna). Uses walk-forward CV with causal masking across the full sales history. Best for production forecasting — tune once, apply indefinitely.
 
 ```bash
 make tune-lgbm      # ~20–40 min → data/tuning/best_params_lgbm.json
@@ -79,9 +83,27 @@ make tune-all
 
 The JSON files contain `best_params`, `best_n_estimators`, per-cluster WAPEs, and CV fold metrics. Pass them to backtest scripts via `--params-file` in step 3d.
 
+> **Warning:** Using `--params-file` with backtesting introduces temporal data leakage — the tuner sees all history including future timeframes. Use Mode B for honest backtest accuracy evaluation.
+
+### Mode B — Honest backtesting (per-timeframe causal tuning, PL-002 fix)
+
+Run backtests with inline per-timeframe tuning: each of the 10 expanding timeframes tunes on only the data available up to its training cutoff. No future leakage into backtest accuracy metrics. ~2–3× slower than untuned backtests (600 model fits vs. 250).
+
+```bash
+make backtest-lgbm-cluster-tuned       # LGBM — 10 timeframes × 20 trials × 3 folds
+make backtest-catboost-cluster-tuned   # CatBoost — same
+make backtest-xgboost-cluster-tuned    # XGBoost — same
+```
+
+Then load and compare as usual:
+```bash
+make backtest-load-all
+make champion-select
+```
+
 ## 3d) Run backtesting (optional, requires clustering)
 
-> **Architecture note:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) share a common framework in `common/`. Each script contains only model-specific training functions (~280 lines) and delegates orchestration to `common/backtest_framework.py` via `run_tree_backtest()`. Shared modules: `backtest_framework.py` (orchestrator), `feature_engineering.py` (lag/rolling features), `metrics.py` (WAPE/accuracy), `mlflow_utils.py` (experiment logging), `db.py` (connection params), `constants.py` (thresholds), `tuning.py` (CV splits, WAPE, param loading). Each backtest writes to `data/backtest/<model_id>/` — multiple models can be run without overwriting each other. Prophet and NeuralProphet use shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrate their own per-DFU fitting loops. StatsForecast uses the same shared utilities with vectorized batch fitting (no per-DFU loop).
+> **Architecture note:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) share a common framework in `common/`. Each script contains only model-specific training functions (~280 lines) and delegates orchestration to `common/backtest_framework.py` via `run_tree_backtest()`. Shared modules: `backtest_framework.py` (orchestrator), `feature_engineering.py` (lag/rolling features), `metrics.py` (WAPE/accuracy), `mlflow_utils.py` (experiment logging), `db.py` (connection params), `constants.py` (thresholds), `tuning.py` (CV splits, WAPE, param loading, `tune_for_timeframe()`, `TRAIN_FOLD_FNS` registry). `run_tree_backtest()` accepts an optional `inline_tuner_fn` parameter — when provided, each timeframe performs per-timeframe causal tuning using only historically available data (PL-002 fix). Each backtest writes to `data/backtest/<model_id>/` — multiple models can be run without overwriting each other. Prophet and NeuralProphet use shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrate their own per-DFU fitting loops. StatsForecast uses the same shared utilities with vectorized batch fitting (no per-DFU loop).
 
 ### LGBM
 
@@ -96,8 +118,12 @@ Per-cluster model (separate LGBM per cluster):
 make backtest-lgbm-cluster          # Per-cluster LGBM backtest (default params)
 make backtest-load MODEL=lgbm_cluster
 
-# With tuned params:
+# With globally tuned params (production scoring mode):
 make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"
+make backtest-load MODEL=lgbm_cluster
+
+# With per-timeframe inline tuning (honest backtesting, no data leakage — PL-002):
+make backtest-lgbm-cluster-tuned
 make backtest-load MODEL=lgbm_cluster
 ```
 
@@ -119,8 +145,12 @@ Per-cluster model:
 make backtest-catboost-cluster            # Per-cluster CatBoost backtest (default params)
 make backtest-load MODEL=catboost_cluster
 
-# With tuned params:
+# With globally tuned params (production scoring mode):
 make backtest-catboost-cluster ARGS="--params-file data/tuning/best_params_catboost.json"
+make backtest-load MODEL=catboost_cluster
+
+# With per-timeframe inline tuning (honest backtesting, no data leakage — PL-002):
+make backtest-catboost-cluster-tuned
 make backtest-load MODEL=catboost_cluster
 ```
 
@@ -137,8 +167,12 @@ Per-cluster model:
 make backtest-xgboost-cluster            # Per-cluster XGBoost backtest (default params)
 make backtest-load MODEL=xgboost_cluster
 
-# With tuned params:
+# With globally tuned params (production scoring mode):
 make backtest-xgboost-cluster ARGS="--params-file data/tuning/best_params_xgboost.json"
+make backtest-load MODEL=xgboost_cluster
+
+# With per-timeframe inline tuning (honest backtesting, no data leakage — PL-002):
+make backtest-xgboost-cluster-tuned
 make backtest-load MODEL=xgboost_cluster
 ```
 

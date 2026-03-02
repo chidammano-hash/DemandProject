@@ -142,6 +142,8 @@
 ║  WAPE stable     ║
 ║  Optuna suggest  ║
 ║  save/load JSON  ║
+║  tune_for_tf()   ║
+║  TRAIN_FOLD_FNS  ║
 ╚══════════════════╝
            │
            ▼
@@ -181,6 +183,8 @@
 ║  │ tune_hyperparams.py  (Optuna TPE+Prune)  │  ║
 ║  │ Walk-forward CV + causal masking         │  ║
 ║  │ → data/tuning/best_params_<model>.json   │  ║
+║  │ --tune-inline: tune_for_timeframe()      │  ║
+║  │  per-timeframe causal tuning (PL-002)    │  ║
 ║  └──────────────────────────────────────────┘  ║
 ║  │ label_clusters.py       │  └─────────────────────┘  └─────────────────────────────────────────┘  ║
 ║  │ update_cluster_         │                                                                        ║

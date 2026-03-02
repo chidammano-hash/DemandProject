@@ -39,6 +39,7 @@ from common.db import get_db_params
 from common.feature_engineering import build_feature_matrix, get_feature_columns, mask_future_sales
 from common.mlflow_utils import log_backtest_run
 from common.tuning import (
+    TRAIN_FOLD_FNS,
     best_rounds_to_n_estimators,
     compute_wape_stabilised,
     generate_cv_month_splits,
@@ -50,121 +51,6 @@ from common.tuning import (
 
 def _ts() -> str:
     return time.strftime("%H:%M:%S")
-
-
-# ── Model training with early stopping ───────────────────────────────────────
-
-
-def _train_lgbm_fold(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_val: pd.DataFrame,
-    y_val: pd.Series,
-    cat_cols: list[str],
-    params: dict,
-    n_estimators_max: int,
-    early_stopping_rounds: int,
-) -> tuple[np.ndarray, int]:
-    """Train LGBM with early stopping on a single fold. Returns (preds, best_rounds)."""
-    import lightgbm as lgb
-
-    model = lgb.LGBMRegressor(
-        n_estimators=n_estimators_max,
-        **params,
-        verbosity=-1,
-        random_state=42,
-        n_jobs=-1,
-    )
-    model.fit(
-        X_train,
-        y_train,
-        eval_set=[(X_val, y_val)],
-        categorical_feature=cat_cols if cat_cols else "auto",
-        callbacks=[
-            lgb.early_stopping(early_stopping_rounds, verbose=False),
-            lgb.log_evaluation(0),
-        ],
-    )
-    preds = np.maximum(model.predict(X_val), 0)
-    best_rounds = int(model.best_iteration_) if model.best_iteration_ else n_estimators_max
-    return preds, best_rounds
-
-
-def _train_catboost_fold(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_val: pd.DataFrame,
-    y_val: pd.Series,
-    cat_cols: list[str],
-    params: dict,
-    n_estimators_max: int,
-    early_stopping_rounds: int,
-) -> tuple[np.ndarray, int]:
-    """Train CatBoost with early stopping on a single fold. Returns (preds, best_rounds)."""
-    import catboost as cb
-
-    feature_cols = list(X_train.columns)
-    cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
-
-    model = cb.CatBoostRegressor(
-        iterations=n_estimators_max,
-        random_seed=42,
-        verbose=0,
-        loss_function="RMSE",
-        **params,
-    )
-    model.fit(
-        X_train,
-        y_train,
-        cat_features=cat_indices,
-        eval_set=(X_val, y_val),
-        early_stopping_rounds=early_stopping_rounds,
-        verbose=False,
-    )
-    preds = np.maximum(model.predict(X_val), 0)
-    best_rounds = int(model.best_iteration_) if model.best_iteration_ else n_estimators_max
-    return preds, best_rounds
-
-
-def _train_xgboost_fold(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_val: pd.DataFrame,
-    y_val: pd.Series,
-    cat_cols: list[str],
-    params: dict,
-    n_estimators_max: int,
-    early_stopping_rounds: int,
-) -> tuple[np.ndarray, int]:
-    """Train XGBoost with early stopping on a single fold. Returns (preds, best_rounds)."""
-    import xgboost as xgb
-
-    model = xgb.XGBRegressor(
-        n_estimators=n_estimators_max,
-        verbosity=0,
-        random_state=42,
-        n_jobs=-1,
-        enable_categorical=True,
-        tree_method="hist",
-        **params,
-    )
-    model.fit(
-        X_train,
-        y_train,
-        eval_set=[(X_val, y_val)],
-        early_stopping_rounds=early_stopping_rounds,
-        verbose=False,
-    )
-    preds = np.maximum(model.predict(X_val), 0)
-    best_rounds = int(model.best_iteration) if model.best_iteration else n_estimators_max
-    return preds, best_rounds
-
-
-_TRAIN_FNS = {
-    "lgbm": _train_lgbm_fold,
-    "catboost": _train_catboost_fold,
-    "xgboost": _train_xgboost_fold,
-}
 
 
 # ── Objective factory ─────────────────────────────────────────────────────────
@@ -183,7 +69,7 @@ def make_objective(
     t_cfg = config["tuning"]
     early_stopping_rounds = t_cfg["early_stopping_rounds"]
     n_estimators_max = t_cfg["n_estimators_max"]
-    train_fn = _TRAIN_FNS[model_name]
+    train_fn = TRAIN_FOLD_FNS[model_name]
 
     def objective(trial: optuna.Trial) -> float:
         params = suggest_params(trial, model_name, config)
@@ -289,7 +175,7 @@ def evaluate_per_cluster_wape(
     if len(train_data) == 0 or len(val_data) == 0:
         return {}
 
-    train_fn = _TRAIN_FNS[model_name]
+    train_fn = TRAIN_FOLD_FNS[model_name]
     try:
         preds, _ = train_fn(
             train_data[feature_cols], train_data["qty"],
