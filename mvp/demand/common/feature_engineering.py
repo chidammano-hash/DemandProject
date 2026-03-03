@@ -149,3 +149,37 @@ def mask_future_sales(grid: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame:
         df[f"rolling_std_{w}m"] = rolling.std().fillna(0).reset_index(level=0, drop=True)
 
     return df
+
+
+def update_grid_with_predictions(
+    grid: pd.DataFrame,
+    month: pd.Timestamp,
+    predictions: pd.DataFrame,
+) -> pd.DataFrame:
+    """Write predicted qty for one month into the grid and recompute all lag/rolling features.
+
+    Used by recursive multi-step inference (Feature 43). After calling this for month T,
+    qty_lag_1 for month T+1 reflects the model's own prediction rather than 0.
+
+    Args:
+        grid: Full masked feature grid (all DFUs × all months).
+        month: The month whose predictions are being written back.
+        predictions: DataFrame with columns ``dfu_ck`` and ``basefcst_pref``.
+    """
+    df = grid.copy()
+    pred_map = predictions.set_index("dfu_ck")["basefcst_pref"]
+    mask = df["startdate"] == month
+    df.loc[mask, "qty"] = df.loc[mask, "dfu_ck"].map(pred_map).fillna(0)
+
+    # Recompute lags and rolling on the updated qty (same logic as mask_future_sales)
+    g = df.groupby("dfu_ck", sort=False)["qty"]
+    for lag_n in LAG_RANGE:
+        df[f"qty_lag_{lag_n}"] = g.shift(lag_n)
+
+    shifted = g.shift(1)
+    for w in ROLLING_WINDOWS:
+        rolling = shifted.groupby(df["dfu_ck"], sort=False).rolling(w, min_periods=1)
+        df[f"rolling_mean_{w}m"] = rolling.mean().reset_index(level=0, drop=True)
+        df[f"rolling_std_{w}m"] = rolling.std().fillna(0).reset_index(level=0, drop=True)
+
+    return df

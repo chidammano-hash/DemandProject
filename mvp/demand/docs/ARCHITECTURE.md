@@ -202,8 +202,8 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 
 | Module | Purpose |
 |--------|---------|
-| `common/backtest_framework.py` | `run_tree_backtest()` orchestrator, timeframe generation, data loading, execution-lag assignment, all-lag expansion, post-processing, model-scoped output saving (`data/backtest/<model_id>/`), feature importance |
-| `common/feature_engineering.py` | `build_feature_matrix()`, `get_feature_columns()`, `mask_future_sales()` with `cat_dtype` parameter for framework-specific categorical handling |
+| `common/backtest_framework.py` | `run_tree_backtest()` orchestrator, timeframe generation, data loading, execution-lag assignment, all-lag expansion, post-processing, model-scoped output saving (`data/backtest/<model_id>/`), feature importance; `_fill_predict_nans()`, `_predict_single_month()`, `recursive` param for recursive multi-step inference (Feature 43) |
+| `common/feature_engineering.py` | `build_feature_matrix()`, `get_feature_columns()`, `mask_future_sales()` with `cat_dtype` parameter for framework-specific categorical handling; `update_grid_with_predictions()` for recursive multi-step lag write-back (Feature 43) |
 | `common/metrics.py` | `compute_accuracy_metrics()`: WAPE, bias, accuracy % |
 | `common/mlflow_utils.py` | `log_backtest_run()`: generic MLflow experiment logging |
 | `common/db.py` | `get_db_params()`: shared DB connection parameters |
@@ -211,7 +211,7 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 | `common/tuning.py` | Shared tuning utilities: `generate_cv_month_splits`, `compute_wape_stabilised`, `suggest_params`, `save_best_params`, `load_best_params`, `best_rounds_to_n_estimators`, `tune_for_timeframe()` (per-timeframe causal tuning, PL-002), `TRAIN_FOLD_FNS` registry (`train_lgbm_fold`, `train_catboost_fold`, `train_xgboost_fold`) (Feature 41) |
 | `common/shap_selector.py` | SHAP-based feature selection: `compute_shap_global` (LGBM/XGBoost via `shap.TreeExplainer`), `compute_shap_catboost` (native ShapValues), `compute_timeframe_shap` (cluster-pooled or global), `build_shap_summary`, `save_shap_outputs` (Feature 42) |
 
-Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_global()`, `train_and_predict_per_cluster()`, and `train_and_predict_transfer()`, passed as callables to `run_tree_backtest()`. Non-tree models (Prophet, StatsForecast, NeuralProphet, PatchTST, DeepAR) use shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrate their own training loops. Deep learning models (PatchTST, DeepAR) have separate model files (`patchtst_model.py`, `deepar_model.py`) containing the PyTorch nn.Module, Dataset, and train/predict functions. StatsForecast uses vectorized batch fitting (no per-DFU loop). NeuralProphet follows the Prophet per-DFU pattern with PyTorch GPU support. `run_tree_backtest()` accepts optional `feature_selector_fn` callable (Feature 42): when provided, each timeframe computes SHAP after the initial model train and retrains on the selected feature subset before generating predictions.
+Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_global()`, `train_and_predict_per_cluster()`, and `train_and_predict_transfer()`, passed as callables to `run_tree_backtest()`. Non-tree models (Prophet, StatsForecast, NeuralProphet, PatchTST, DeepAR) use shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrate their own training loops. Deep learning models (PatchTST, DeepAR) have separate model files (`patchtst_model.py`, `deepar_model.py`) containing the PyTorch nn.Module, Dataset, and train/predict functions. StatsForecast uses vectorized batch fitting (no per-DFU loop). NeuralProphet follows the Prophet per-DFU pattern with PyTorch GPU support. `run_tree_backtest()` accepts optional `feature_selector_fn` callable (Feature 42): when provided, each timeframe computes SHAP after the initial model train and retrains on the selected feature subset before generating predictions. `run_tree_backtest()` also accepts `recursive: bool = False` (Feature 43): when `True`, each predict month is scored one at a time using `_predict_single_month()`, and predictions are written back into the feature grid via `update_grid_with_predictions()` so that `qty_lag_1` for month T+1 reflects the model's own prediction for month T rather than zero.
 
 ## ML Pipeline Components
 1. **Feature Engineering** (`generate_clustering_features.py`):
@@ -295,6 +295,17 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_g
    - CLI flags: `--shap-select`, `--shap-top-n`, `--shap-threshold`, `--shap-sample-size`; composable with `--tune-inline` and `--params-file`
    - Make targets: `backtest-lgbm-shap`, `backtest-catboost-shap`, `backtest-xgboost-shap`
    - Graceful degradation: SHAP failures log warning and keep all features; backtest continues uninterrupted
+16. **Recursive Multi-Step Inference** (`common/backtest_framework.py` + `common/feature_engineering.py` — Feature 43):
+   - `--recursive` CLI flag on LGBM, CatBoost, and XGBoost backtest scripts; passes `recursive=True` to `run_tree_backtest()`
+   - In direct mode (default), months 2+ of the prediction window use `qty_lag_1 = 0` (masked sales). In recursive mode, each predict month is scored individually, and the model's prediction for month T is written back via `update_grid_with_predictions()` before scoring month T+1
+   - `update_grid_with_predictions(grid, month, predictions)` in `common/feature_engineering.py`: writes predicted `basefcst_pref` to `qty[month]` then recomputes all lag (1-12) and rolling (3m/6m/12m) features in a single vectorized `groupby().shift()` pass
+   - `_predict_single_month(model_or_models, data, feature_cols, cluster_strategy)` in `common/backtest_framework.py`: routes one month's batch to the correct model without retraining; handles global (single model) and per_cluster/transfer (dict of models) uniformly
+   - `_fill_predict_nans(predict_data, feature_cols, cat_cols)`: fills numeric NaN lag features with 0 per-month (skips categorical columns)
+   - Training cost unchanged: model trained once per timeframe; recursive loop is inference-only
+   - Composable with `--shap-select` (SHAP retrain updates inference model and first-month preds) and `--tune-inline` (PL-002)
+   - `"recursive": true` written to `backtest_metadata.json` for traceability
+   - 9 Makefile targets: `backtest-{lgbm,catboost,xgboost}-{recursive,cluster-recursive,transfer-recursive}`
+   - No API, frontend, or DB schema changes
 14. **Hyperparameter Tuning** (`scripts/tune_hyperparams.py` + `common/tuning.py`):
    - Bayesian optimisation via Optuna (TPESampler + MedianPruner) for LGBM, CatBoost, XGBoost
    - Walk-forward expanding CV with causal masking (`mask_future_sales()` inside each fold)
@@ -404,6 +415,7 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_constants.py` | `common/constants.py` — LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES | 11 |
 | `test_domain_specs.py` | `common/domain_specs.py` — all 8 domains, parametrized | 14+ |
 | `test_backtest_framework.py` | `common/backtest_framework.py` — timeframe generation | 9 |
+| `test_feature_engineering.py` | `common/feature_engineering.py` — feature matrix, mask_future_sales, update_grid_with_predictions (Feature 43) | 6+ |
 | `test_mlflow_utils.py` | `common/mlflow_utils.py` — experiment logging | 3 |
 | `test_db.py` | `common/db.py` — connection parameters | 5 |
 | `test_load_dataset_postgres.py` | `scripts/load_dataset_postgres.py` — forecast execution-lag loading (JOIN-based filter, no staging mutation), archive loading, SQL generation | 24 |
@@ -420,6 +432,7 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_jobs.py` | `api/routers/jobs.py` — job scheduler endpoints (types, submit, list, cancel, delete, stats, schedules, pipeline) | 16 |
 | `test_shap_selector.py` | `common/shap_selector.py` — SHAP extraction, feature selection, cluster pooling, CSV output, error fallback | 22 |
 | `test_shap.py` | `api/routers/shap.py` — SHAP endpoints (models list, summary, timeframes, per-timeframe detail, 404 cases) | 8 |
+| `test_backtest_recursive.py` | `common/backtest_framework.py` — `_fill_predict_nans`, `_predict_single_month` (global/cluster/transfer), recursive loop integration | 13 |
 
 **API test pattern:** httpx `AsyncClient` with `ASGITransport(app)` — no running server needed. DB connections mocked via `pool` fixture in `tests/api/conftest.py`.
 

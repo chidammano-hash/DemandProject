@@ -174,12 +174,26 @@ SHAP Feature Selection (feature42):
 - API: 4 read-only endpoints under `/forecast/shap/` — no DB queries, served from CSV files
 - UI: collapsible "Feature Importance (SHAP)" panel in Accuracy tab with indigo=selected / gray=dropped bar chart
 
+Recursive Multi-Step Forecasting (feature43):
+- Run LGBM per-cluster with recursive inference: `make backtest-lgbm-cluster-recursive`
+- Run CatBoost per-cluster with recursive inference: `make backtest-catboost-cluster-recursive`
+- Run XGBoost per-cluster with recursive inference: `make backtest-xgboost-cluster-recursive`
+- All 9 variants: `make backtest-{lgbm,catboost,xgboost}-{recursive,cluster-recursive,transfer-recursive}`
+- Combine recursive + SHAP: `make backtest-lgbm-cluster-recursive ARGS="--shap-select"`
+- Combine recursive + inline tuning: `make backtest-lgbm-cluster-recursive ARGS="--tune-inline"`
+- Combine all three: `make backtest-lgbm-cluster-recursive ARGS="--shap-select --tune-inline"`
+- **What it does:** In direct mode (default), months 2+ of each predict window use `qty_lag_1 = 0` because future sales are masked. In recursive mode, the model predicts month T, writes the prediction back into the feature grid (`update_grid_with_predictions`), recomputes all lag/rolling features, then predicts month T+1 with `qty_lag_1 = prediction[T]`. This gives a richer near-horizon signal at the cost of potential error compounding across months.
+- Output format, loading, and downstream accuracy views are identical to direct mode
+- `"recursive": true` in `backtest_metadata.json` distinguishes runs at the file level
+- No API, frontend, or database changes — compute-side only
+
 LGBM Backtesting:
 - Run global backtest: `make backtest-lgbm` (trains LightGBM across 10 expanding windows)
 - Run per-cluster backtest: `make backtest-lgbm-cluster` (separate model per cluster)
 - Run with tuned params: `make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"`
 - Run transfer backtest: `make backtest-lgbm-transfer` (global base → per-cluster fine-tune)
 - Run with SHAP feature selection: `make backtest-lgbm-shap` (per-timeframe SHAP selection, 95% cumulative threshold)
+- Run with recursive multi-step inference: `make backtest-lgbm-recursive` / `make backtest-lgbm-cluster-recursive` / `make backtest-lgbm-transfer-recursive`
 - Load predictions: `make backtest-load MODEL=lgbm_cluster` (or `make backtest-load-all` for all models)
 - Or all at once: `make backtest-all`
 - Models appear as `lgbm_global` / `lgbm_cluster` / `lgbm_transfer` in the forecast model selector
@@ -193,6 +207,7 @@ CatBoost Backtesting:
 - Run with tuned params: `make backtest-catboost-cluster ARGS="--params-file data/tuning/best_params_catboost.json"`
 - Run transfer backtest: `make backtest-catboost-transfer` (global base → per-cluster fine-tune)
 - Run with SHAP feature selection: `make backtest-catboost-shap` (uses native CatBoost ShapValues — no shap library required)
+- Run with recursive multi-step inference: `make backtest-catboost-recursive` / `make backtest-catboost-cluster-recursive` / `make backtest-catboost-transfer-recursive`
 - Load predictions: `make backtest-load MODEL=catboost_cluster`
 - Models appear as `catboost_global` / `catboost_cluster` / `catboost_transfer` in the forecast model selector
 - Same feature engineering, lag strategy, and output format as LGBM
@@ -203,6 +218,7 @@ XGBoost Backtesting:
 - Run with tuned params: `make backtest-xgboost-cluster ARGS="--params-file data/tuning/best_params_xgboost.json"`
 - Run transfer backtest: `make backtest-xgboost-transfer` (global base → per-cluster fine-tune)
 - Run with SHAP feature selection: `make backtest-xgboost-shap` (per-timeframe SHAP selection via shap.TreeExplainer)
+- Run with recursive multi-step inference: `make backtest-xgboost-recursive` / `make backtest-xgboost-cluster-recursive` / `make backtest-xgboost-transfer-recursive`
 - Load predictions: `make backtest-load MODEL=xgboost_cluster`
 - Models appear as `xgboost_global` / `xgboost_cluster` / `xgboost_transfer` in the forecast model selector
 - Same feature engineering, lag strategy, and output format as LGBM
@@ -405,7 +421,7 @@ Job Scheduler/Monitor with APScheduler (feature39):
 
 ## Testing
 
-Full-stack automated testing (485+ tests, <3s total):
+Full-stack automated testing (514+ backend tests, <3s total):
 
 Backend (pytest):
 ```bash
@@ -428,7 +444,7 @@ cd mvp/demand
 make test-all          # Backend + frontend
 ```
 
-Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`, `common/shap_selector.py`, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters, dashboard, distinct values, jobs, shap).
+Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py` (timeframe generation + recursive helpers), `common/feature_engineering.py` (update_grid_with_predictions), `common/mlflow_utils.py`, `common/db.py`, `common/shap_selector.py`, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters, dashboard, distinct values, jobs, shap).
 
 Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, `useSidebar`, `useGlobalFilters`), utilities (`formatters`, `export`, `queries`), contexts (`JobNotificationContext`, `ScenarioNotificationContext`), components (`Skeleton`, `KeyboardShortcutHelp`, `EChartContainer`, `AppSidebar`, `ThemeSelector`, `GlobalFilterBar`, `WidgetGrid`, `AlertPanel`, `TopMovers`, `HeatmapGrid`), and all tab components (including DashboardTab, JobsTab).
 
@@ -473,4 +489,4 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - SHAP API router: `mvp/demand/api/routers/shap.py`
 - SHAP TypeScript types: `mvp/demand/frontend/src/types/shap.ts`
 - SHAP output: `mvp/demand/data/backtest/<model_id>/shap/` (shap_timeframe_XX.csv + shap_summary.csv)
-- Design specs: `docs/design-specs/` (feature1–feature42)
+- Design specs: `docs/design-specs/` (feature1–feature43)

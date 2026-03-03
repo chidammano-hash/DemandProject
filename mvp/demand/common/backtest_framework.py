@@ -375,6 +375,61 @@ TrainFn = Callable[
     tuple[pd.DataFrame, Any],
 ]
 
+_PREDICT_META_COLS = ["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]
+
+
+def _fill_predict_nans(
+    predict_data: pd.DataFrame,
+    feature_cols: list[str],
+    cat_cols: list[str],
+) -> pd.DataFrame:
+    """Fill NaN values in numeric feature columns of predict_data with 0."""
+    for col in feature_cols:
+        if col in predict_data.columns and col not in cat_cols:
+            predict_data[col] = predict_data[col].fillna(0)
+    return predict_data
+
+
+def _predict_single_month(
+    model_or_models: Any,
+    predict_data: pd.DataFrame,
+    feature_cols: list[str],
+    cluster_strategy: str,
+) -> pd.DataFrame:
+    """Route a single-month batch to the correct model(s) without retraining.
+
+    Used by recursive multi-step inference (Feature 43). Handles global,
+    per_cluster, and transfer strategies uniformly — all models support
+    ``model.predict(X)`` with no extra arguments at inference time.
+
+    Args:
+        model_or_models: Single model (global) or dict ``{cluster: model,
+            "__base__": base_model}`` (per_cluster / transfer).
+        predict_data: Feature matrix for one month, all DFUs.
+        feature_cols: Ordered list of feature columns to pass to the model.
+        cluster_strategy: One of ``"global"``, ``"per_cluster"``, ``"transfer"``.
+    """
+    if cluster_strategy == "global":
+        preds = np.maximum(model_or_models.predict(predict_data[feature_cols]), 0)
+        result = predict_data[_PREDICT_META_COLS].copy()
+        result["basefcst_pref"] = preds
+        return result
+
+    # per_cluster / transfer: model_or_models is a dict
+    feat_no_cluster = [c for c in feature_cols if c != "ml_cluster"]
+    parts = []
+    for cluster, group in predict_data.groupby("ml_cluster"):
+        m = model_or_models.get(cluster) or model_or_models.get("__base__")
+        if m is None:
+            continue
+        preds = np.maximum(m.predict(group[feat_no_cluster]), 0)
+        r = group[_PREDICT_META_COLS].copy()
+        r["basefcst_pref"] = preds
+        parts.append(r)
+    if not parts:
+        return pd.DataFrame(columns=_PREDICT_META_COLS + ["basefcst_pref"])
+    return pd.concat(parts, ignore_index=True)
+
 
 def run_tree_backtest(
     *,
@@ -397,6 +452,7 @@ def run_tree_backtest(
         [Any, pd.DataFrame, list[str], list[str], int, pd.Timestamp],
         tuple[list[str], pd.DataFrame],
     ] | None = None,
+    recursive: bool = False,
 ) -> None:
     """Run a complete tree-based backtest (LGBM, CatBoost, XGBoost).
 
@@ -406,13 +462,14 @@ def run_tree_backtest(
         build_feature_matrix,
         get_feature_columns,
         mask_future_sales,
+        update_grid_with_predictions,
     )
 
     t_start = time.time()
     db = get_db_params()
 
     print(f"[{_ts()}] Backtest: strategy={cluster_strategy}, model_id={model_id}, "
-          f"n_timeframes={n_timeframes}")
+          f"n_timeframes={n_timeframes}, recursive={recursive}")
 
     # ── Step 1: Load data ────────────────────────────────────────────────────
     print(f"\n[{_ts()}] Step 1: Loading data from Postgres...")
@@ -500,23 +557,55 @@ def run_tree_backtest(
         else:
             effective_params = model_params
 
-        # Train & predict based on strategy
-        if cluster_strategy == "global":
-            preds, model = train_fn_global(
-                train_data, predict_data, feature_cols, cat_cols, effective_params
-            )
-            last_global_model = model
-        elif cluster_strategy == "transfer":
-            preds, models = train_fn_transfer(
-                train_data, predict_data, feature_cols, cat_cols, effective_params,
-                **(transfer_kwargs or {}),
-            )
+        # ── Direct multi-output path (default) ───────────────────────────────
+        if not recursive:
+            if cluster_strategy == "global":
+                preds, model = train_fn_global(
+                    train_data, predict_data, feature_cols, cat_cols, effective_params
+                )
+                last_global_model = model
+            elif cluster_strategy == "transfer":
+                preds, models = train_fn_transfer(
+                    train_data, predict_data, feature_cols, cat_cols, effective_params,
+                    **(transfer_kwargs or {}),
+                )
+            else:
+                preds, models = train_fn_per_cluster(
+                    train_data, predict_data, feature_cols, cat_cols, effective_params
+                )
+
+        # ── Recursive multi-step path (Feature 43) ───────────────────────────
         else:
-            preds, models = train_fn_per_cluster(
-                train_data, predict_data, feature_cols, cat_cols, effective_params
+            sorted_months = sorted(predict_months)
+            first_predict = _fill_predict_nans(
+                masked_grid[masked_grid["startdate"] == sorted_months[0]].copy(),
+                feature_cols, cat_cols,
             )
+            print(f"  [{_ts()}] Recursive: training on first month {sorted_months[0].date()}, "
+                  f"then iterating {len(sorted_months)} months...")
+            if cluster_strategy == "global":
+                preds_first, model = train_fn_global(
+                    train_data, first_predict, feature_cols, cat_cols, effective_params
+                )
+                last_global_model = model
+                model_or_models: Any = model
+            elif cluster_strategy == "transfer":
+                preds_first, models = train_fn_transfer(
+                    train_data, first_predict, feature_cols, cat_cols, effective_params,
+                    **(transfer_kwargs or {}),
+                )
+                model_or_models = models
+            else:
+                preds_first, models = train_fn_per_cluster(
+                    train_data, first_predict, feature_cols, cat_cols, effective_params
+                )
+                model_or_models = models
 
         # ── SHAP feature selection + conditional retrain (Feature 42) ─────────
+        # Runs after initial train_fn_* call in both direct and recursive modes.
+        # In recursive mode, updates model_or_models and preds_first (first month preds).
+        effective_feature_cols = feature_cols
+        effective_cat_cols = cat_cols
         if feature_selector_fn is not None:
             print(f"  [{_ts()}] SHAP feature selection (timeframe {label})...")
             t_shap = time.time()
@@ -534,29 +623,72 @@ def run_tree_backtest(
                     f"(was {len(feature_cols)})..."
                 )
                 selected_cat_cols = [c for c in cat_cols if c in selected_features]
-                # Fill NaN numeric predict cols for selected features
-                for col in selected_features:
-                    if col in predict_data.columns and col not in cat_cols:
-                        predict_data[col] = predict_data[col].fillna(0)
+                effective_feature_cols = selected_features
+                effective_cat_cols = selected_cat_cols
+
+                # predict_data for SHAP retrain: first month only in recursive mode
+                shap_predict_data = (
+                    _fill_predict_nans(
+                        masked_grid[masked_grid["startdate"] == sorted_months[0]].copy(),
+                        selected_features, selected_cat_cols,
+                    )
+                    if recursive
+                    else _fill_predict_nans(predict_data.copy(), selected_features, selected_cat_cols)
+                )
 
                 t_retrain = time.time()
                 if cluster_strategy == "global":
-                    preds, model = train_fn_global(
-                        train_data, predict_data, selected_features, selected_cat_cols, effective_params
+                    preds_retrain, model = train_fn_global(
+                        train_data, shap_predict_data, selected_features, selected_cat_cols, effective_params
                     )
                     last_global_model = model
+                    if recursive:
+                        model_or_models = model
+                        preds_first = preds_retrain
+                    else:
+                        preds = preds_retrain
                 elif cluster_strategy == "transfer":
-                    preds, models = train_fn_transfer(
-                        train_data, predict_data, selected_features, selected_cat_cols, effective_params,
+                    preds_retrain, models = train_fn_transfer(
+                        train_data, shap_predict_data, selected_features, selected_cat_cols, effective_params,
                         **(transfer_kwargs or {}),
                     )
+                    if recursive:
+                        model_or_models = models
+                        preds_first = preds_retrain
+                    else:
+                        preds = preds_retrain
                 else:
-                    preds, models = train_fn_per_cluster(
-                        train_data, predict_data, selected_features, selected_cat_cols, effective_params
+                    preds_retrain, models = train_fn_per_cluster(
+                        train_data, shap_predict_data, selected_features, selected_cat_cols, effective_params
                     )
+                    if recursive:
+                        model_or_models = models
+                        preds_first = preds_retrain
+                    else:
+                        preds = preds_retrain
                 print(f"  [{_ts()}] Retrain done ({time.time() - t_retrain:.1f}s)")
             else:
                 print(f"  [{_ts()}] SHAP: all {len(feature_cols)} features retained")
+
+        # ── Complete recursive loop for months 2+ ─────────────────────────────
+        if recursive:
+            all_month_preds = [preds_first]
+            current_grid = masked_grid.copy()
+            current_grid = update_grid_with_predictions(current_grid, sorted_months[0], preds_first)
+
+            for month in sorted_months[1:]:
+                month_data = _fill_predict_nans(
+                    current_grid[current_grid["startdate"] == month].copy(),
+                    effective_feature_cols, effective_cat_cols,
+                )
+                preds_month = _predict_single_month(
+                    model_or_models, month_data, effective_feature_cols, cluster_strategy,
+                )
+                all_month_preds.append(preds_month)
+                current_grid = update_grid_with_predictions(current_grid, month, preds_month)
+                print(f"    [{_ts()}] Recursive month {month.date()}: {len(preds_month):,} predictions")
+
+            preds = pd.concat(all_month_preds, ignore_index=True)
 
         preds["model_id"] = model_id
         preds["timeframe"] = label
@@ -576,6 +708,10 @@ def run_tree_backtest(
 
     # ── Step 6: Save output ──────────────────────────────────────────────────
     print(f"\n[{_ts()}] Step 6: Saving output...")
+    # Merge recursive flag into extra_metadata for traceability
+    _extra_meta = dict(extra_metadata or {})
+    if recursive:
+        _extra_meta["recursive"] = True
     output_path, archive_path, meta_path, metadata = save_backtest_output(
         output_df=expanded,
         archive_df=archive_expanded,
@@ -588,7 +724,7 @@ def run_tree_backtest(
         timeframes=timeframes,
         earliest_month=earliest_month,
         latest_month=latest_month,
-        extra_metadata=extra_metadata,
+        extra_metadata=_extra_meta or None,
     )
 
     # Feature importance (from last timeframe's global model)

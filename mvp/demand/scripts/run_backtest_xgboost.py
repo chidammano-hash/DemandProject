@@ -237,6 +237,8 @@ def main() -> None:
                         help="Cumulative SHAP importance threshold for feature selection (default: 0.95)")
     parser.add_argument("--shap-sample-size", type=int, default=500,
                         help="Max rows to sample per cluster for SHAP computation (default: 500)")
+    parser.add_argument("--recursive", action="store_true",
+                        help="Recursive multi-step inference: feed predictions back as lag features (Feature 43)")
     args = parser.parse_args()
 
     if args.params_file and args.tune_inline:
@@ -376,6 +378,7 @@ def main() -> None:
         cat_dtype="category",
         inline_tuner_fn=inline_tuner_fn,
         feature_selector_fn=feature_selector_fn,
+        recursive=args.recursive,
     )
 
 

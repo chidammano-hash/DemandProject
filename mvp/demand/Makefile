@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-load-all backtest-all backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all backtest-lgbm-cluster-tuned backtest-catboost-cluster-tuned backtest-xgboost-cluster-tuned db-apply-jobs backtest-lgbm-shap backtest-lgbm-cluster-shap backtest-lgbm-transfer-shap backtest-catboost-shap backtest-catboost-cluster-shap backtest-catboost-transfer-shap backtest-xgboost-shap backtest-xgboost-cluster-shap backtest-xgboost-transfer-shap commit test test-unit test-api test-cov test-all
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all backtest-lgbm backtest-lgbm-cluster backtest-lgbm-transfer backtest-catboost backtest-catboost-cluster backtest-catboost-transfer backtest-xgboost backtest-xgboost-cluster backtest-xgboost-transfer backtest-prophet backtest-prophet-cluster backtest-prophet-pooled backtest-patchtst backtest-patchtst-cluster backtest-patchtst-transfer backtest-deepar backtest-deepar-cluster backtest-deepar-transfer backtest-statsforecast backtest-statsforecast-cluster backtest-statsforecast-pooled backtest-neuralprophet backtest-neuralprophet-cluster backtest-neuralprophet-pooled backtest-load backtest-load-all backtest-all backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all backtest-lgbm-cluster-tuned backtest-catboost-cluster-tuned backtest-xgboost-cluster-tuned db-apply-jobs backtest-lgbm-shap backtest-lgbm-cluster-shap backtest-lgbm-transfer-shap backtest-catboost-shap backtest-catboost-cluster-shap backtest-catboost-transfer-shap backtest-xgboost-shap backtest-xgboost-cluster-shap backtest-xgboost-transfer-shap backtest-lgbm-recursive backtest-lgbm-cluster-recursive backtest-lgbm-transfer-recursive backtest-catboost-recursive backtest-catboost-cluster-recursive backtest-catboost-transfer-recursive backtest-xgboost-recursive backtest-xgboost-cluster-recursive backtest-xgboost-transfer-recursive commit test test-unit test-api test-cov test-all
 
 help:
 	@echo "Targets:"
@@ -96,6 +96,15 @@ help:
 	@echo "  backtest-xgboost-shap          - XGBoost global backtest + SHAP feature selection"
 	@echo "  backtest-xgboost-cluster-shap  - XGBoost per-cluster backtest + SHAP feature selection"
 	@echo "  backtest-xgboost-transfer-shap - XGBoost transfer backtest + SHAP feature selection"
+	@echo "  backtest-lgbm-recursive          - LGBM global backtest + recursive multi-step"
+	@echo "  backtest-lgbm-cluster-recursive  - LGBM per-cluster backtest + recursive multi-step"
+	@echo "  backtest-lgbm-transfer-recursive - LGBM transfer backtest + recursive multi-step"
+	@echo "  backtest-catboost-recursive          - CatBoost global + recursive multi-step"
+	@echo "  backtest-catboost-cluster-recursive  - CatBoost per-cluster + recursive multi-step"
+	@echo "  backtest-catboost-transfer-recursive - CatBoost transfer + recursive multi-step"
+	@echo "  backtest-xgboost-recursive          - XGBoost global + recursive multi-step"
+	@echo "  backtest-xgboost-cluster-recursive  - XGBoost per-cluster + recursive multi-step"
+	@echo "  backtest-xgboost-transfer-recursive - XGBoost transfer + recursive multi-step"
 	@echo "  seasonality-schema   - apply DDL for seasonality columns on dim_dfu (one-time)"
 	@echo "  seasonality-detect   - run seasonality detection pipeline (detect + profile)"
 	@echo "  seasonality-update   - write seasonality profiles to dim_dfu"
@@ -601,6 +610,37 @@ backtest-xgboost-cluster-shap:
 
 backtest-xgboost-transfer-shap:
 	$(UV) python scripts/run_backtest_xgboost.py --cluster-strategy transfer --shap-select $(ARGS)
+
+# Recursive multi-step forecasting (Feature 43)
+# All 9 strategy variants: global / per_cluster / transfer × LGBM / CatBoost / XGBoost
+# Composable: make backtest-lgbm-cluster-recursive ARGS="--shap-select --tune-inline"
+
+backtest-lgbm-recursive:
+	$(UV) python scripts/run_backtest.py --cluster-strategy global --recursive $(ARGS)
+
+backtest-lgbm-cluster-recursive:
+	$(UV) python scripts/run_backtest.py --cluster-strategy per_cluster --recursive $(ARGS)
+
+backtest-lgbm-transfer-recursive:
+	$(UV) python scripts/run_backtest.py --cluster-strategy transfer --recursive $(ARGS)
+
+backtest-catboost-recursive:
+	$(UV) python scripts/run_backtest_catboost.py --cluster-strategy global --recursive $(ARGS)
+
+backtest-catboost-cluster-recursive:
+	$(UV) python scripts/run_backtest_catboost.py --cluster-strategy per_cluster --recursive $(ARGS)
+
+backtest-catboost-transfer-recursive:
+	$(UV) python scripts/run_backtest_catboost.py --cluster-strategy transfer --recursive $(ARGS)
+
+backtest-xgboost-recursive:
+	$(UV) python scripts/run_backtest_xgboost.py --cluster-strategy global --recursive $(ARGS)
+
+backtest-xgboost-cluster-recursive:
+	$(UV) python scripts/run_backtest_xgboost.py --cluster-strategy per_cluster --recursive $(ARGS)
+
+backtest-xgboost-transfer-recursive:
+	$(UV) python scripts/run_backtest_xgboost.py --cluster-strategy transfer --recursive $(ARGS)
 
 commit:
 	@if [ -z "$(MSG)" ]; then echo "Usage: make commit MSG=\"your message\""; exit 1; fi
