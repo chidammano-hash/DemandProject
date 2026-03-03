@@ -235,6 +235,14 @@ def main() -> None:
                              "(default: inline_n_trials from config)")
     parser.add_argument("--tune-config", type=str, default=None,
                         help="Path to hyperparameter_tuning.yaml for --tune-inline")
+    parser.add_argument("--shap-select", action="store_true",
+                        help="Enable per-timeframe SHAP feature selection + retrain on reduced feature set")
+    parser.add_argument("--shap-top-n", type=int, default=None,
+                        help="Keep exactly this many top SHAP features (default: cumulative threshold)")
+    parser.add_argument("--shap-threshold", type=float, default=0.95,
+                        help="Cumulative SHAP importance threshold for feature selection (default: 0.95)")
+    parser.add_argument("--shap-sample-size", type=int, default=500,
+                        help="Max rows to sample per cluster for SHAP computation (default: 500)")
     args = parser.parse_args()
 
     if args.params_file and args.tune_inline:
@@ -323,6 +331,29 @@ def main() -> None:
 
     print(f"[{_ts()}] Params source: {params_source}")
 
+    # Build SHAP feature selector closure (Feature 42)
+    feature_selector_fn = None
+    if args.shap_select:
+        from common.shap_selector import compute_shap_catboost, compute_timeframe_shap
+        _shap_cluster_strategy = args.cluster_strategy
+        _shap_sample_size = args.shap_sample_size
+        _shap_threshold = args.shap_threshold
+        _shap_top_n = args.shap_top_n
+
+        def feature_selector_fn(model_or_dict, train_data, feature_cols, cat_cols, tf_idx, cutoff):
+            return compute_timeframe_shap(
+                model_or_dict, train_data, feature_cols, cat_cols,
+                tf_idx, cutoff,
+                shap_extractor_fn=compute_shap_catboost,
+                cluster_strategy=_shap_cluster_strategy,
+                sample_size=_shap_sample_size,
+                cumulative_threshold=_shap_threshold,
+                top_n=_shap_top_n,
+            )
+
+        print(f"[{_ts()}] SHAP feature selection enabled "
+              f"(threshold={args.shap_threshold}, top_n={args.shap_top_n}, sample={args.shap_sample_size})")
+
     run_tree_backtest(
         model_id=model_id,
         cluster_strategy=args.cluster_strategy,
@@ -346,6 +377,7 @@ def main() -> None:
         },
         cat_dtype="str",
         inline_tuner_fn=inline_tuner_fn,
+        feature_selector_fn=feature_selector_fn,
     )
 
 

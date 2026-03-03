@@ -12,6 +12,10 @@ vi.mock("@/api/queries", () => ({
     lagCurve: (p: unknown) => ["lag-curve", p],
     competitionConfig: () => ["competition-config"],
     competitionSummary: () => ["competition-summary"],
+    shapModels: () => ["shap-models"],
+    shapSummary: (m: string, n: number) => ["shap-summary", m, n],
+    shapTimeframes: (m: string) => ["shap-timeframes", m],
+    shapTimeframeDetail: (m: string, i: number, n: number) => ["shap-timeframe-detail", m, i, n],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchForecastModels: vi.fn().mockResolvedValue(["external", "lgbm_global"]),
@@ -22,6 +26,10 @@ vi.mock("@/api/queries", () => ({
   fetchLagCurve: vi.fn().mockResolvedValue({ by_lag: [] }),
   fetchCompetitionConfig: vi.fn().mockResolvedValue(null),
   fetchCompetitionSummary: vi.fn().mockResolvedValue(null),
+  fetchShapModels: vi.fn().mockResolvedValue({ models: [] }),
+  fetchShapSummary: vi.fn().mockResolvedValue({ model_id: "lgbm_cluster", total_features: 0, features: [] }),
+  fetchShapTimeframes: vi.fn().mockResolvedValue({ model_id: "lgbm_cluster", timeframes: [] }),
+  fetchShapTimeframeDetail: vi.fn().mockResolvedValue({ model_id: "lgbm_cluster", timeframe_idx: 0, label: "A", cutoff_date: "2024-01-01", total_features: 0, features: [] }),
   saveCompetitionConfig: vi.fn(),
   runCompetition: vi.fn(),
 }));
@@ -120,6 +128,43 @@ describe("AccuracyTab", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/before-the-fact/)).toBeDefined();
+    });
+  });
+
+  it("renders SHAP panel collapsed by default", async () => {
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <AccuracyTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Feature Importance \(SHAP\)/)).toBeDefined();
+    });
+
+    // Panel body should not be visible by default (no shap model selector)
+    expect(screen.queryByText(/All timeframes \(average\)/)).toBeNull();
+  });
+
+  it("renders SHAP panel with 'no outputs' message when models list is empty", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <AccuracyTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+
+    // Click panel header to open it
+    const panelHeader = await screen.findByText(/Feature Importance \(SHAP\)/);
+    fireEvent.click(panelHeader.closest("[class]")!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/No SHAP outputs found/)).toBeDefined();
     });
   });
 });

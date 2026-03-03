@@ -29,6 +29,7 @@ dependencies = [
   "plotly>=6.5.2",
   "apscheduler>=3.10",
   "optuna>=3.0",
+  "shap>=0.43.0",
 ]
 
 [dependency-groups]

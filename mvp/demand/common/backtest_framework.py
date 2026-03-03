@@ -393,6 +393,10 @@ def run_tree_backtest(
     cat_dtype: str = "category",
     min_training_months: int = MIN_TRAINING_MONTHS,
     inline_tuner_fn: Callable[[Any, list[str], list[str], Any], dict[str, Any]] | None = None,
+    feature_selector_fn: Callable[
+        [Any, pd.DataFrame, list[str], list[str], int, pd.Timestamp],
+        tuple[list[str], pd.DataFrame],
+    ] | None = None,
 ) -> None:
     """Run a complete tree-based backtest (LGBM, CatBoost, XGBoost).
 
@@ -441,6 +445,7 @@ def run_tree_backtest(
     print(f"\n[{_ts()}] Step 4: Running {len(timeframes)} timeframe backtests...")
     all_predictions = []
     last_global_model = None
+    shap_timeframe_reports: list[pd.DataFrame] = []
 
     for ti, tf in enumerate(timeframes):
         label = tf["label"]
@@ -511,6 +516,48 @@ def run_tree_backtest(
                 train_data, predict_data, feature_cols, cat_cols, effective_params
             )
 
+        # ── SHAP feature selection + conditional retrain (Feature 42) ─────────
+        if feature_selector_fn is not None:
+            print(f"  [{_ts()}] SHAP feature selection (timeframe {label})...")
+            t_shap = time.time()
+            model_for_shap = model if cluster_strategy == "global" else models
+            selected_features, shap_df = feature_selector_fn(
+                model_for_shap, train_data, feature_cols, cat_cols,
+                tf["index"], train_end,
+            )
+            shap_timeframe_reports.append(shap_df)
+            print(f"  [{_ts()}] SHAP done ({time.time() - t_shap:.1f}s)")
+
+            if set(selected_features) != set(feature_cols) and len(selected_features) < len(feature_cols):
+                print(
+                    f"  [{_ts()}] Retraining with {len(selected_features)} SHAP-selected features "
+                    f"(was {len(feature_cols)})..."
+                )
+                selected_cat_cols = [c for c in cat_cols if c in selected_features]
+                # Fill NaN numeric predict cols for selected features
+                for col in selected_features:
+                    if col in predict_data.columns and col not in cat_cols:
+                        predict_data[col] = predict_data[col].fillna(0)
+
+                t_retrain = time.time()
+                if cluster_strategy == "global":
+                    preds, model = train_fn_global(
+                        train_data, predict_data, selected_features, selected_cat_cols, effective_params
+                    )
+                    last_global_model = model
+                elif cluster_strategy == "transfer":
+                    preds, models = train_fn_transfer(
+                        train_data, predict_data, selected_features, selected_cat_cols, effective_params,
+                        **(transfer_kwargs or {}),
+                    )
+                else:
+                    preds, models = train_fn_per_cluster(
+                        train_data, predict_data, selected_features, selected_cat_cols, effective_params
+                    )
+                print(f"  [{_ts()}] Retrain done ({time.time() - t_retrain:.1f}s)")
+            else:
+                print(f"  [{_ts()}] SHAP: all {len(feature_cols)} features retained")
+
         preds["model_id"] = model_id
         preds["timeframe"] = label
         preds["timeframe_idx"] = tf["index"]
@@ -549,6 +596,17 @@ def run_tree_backtest(
     if cluster_strategy == "global" and last_global_model is not None:
         save_feature_importance(last_global_model, feature_cols, output_path.parent)
 
+    # ── Save SHAP outputs (Feature 42) ───────────────────────────────────────
+    extra_artifact_paths: list[str] = []
+    if feature_selector_fn is not None and shap_timeframe_reports:
+        from common.shap_selector import save_shap_outputs
+        print(f"\n[{_ts()}] Saving SHAP feature selection outputs...")
+        _, shap_summary_path = save_shap_outputs(
+            shap_timeframe_reports, output_path.parent, len(timeframes)
+        )
+        if shap_summary_path:
+            extra_artifact_paths.append(str(shap_summary_path))
+
     # ── Step 7: MLflow logging ───────────────────────────────────────────────
     mlflow_params = {
         "n_timeframes": n_timeframes,
@@ -568,7 +626,7 @@ def run_tree_backtest(
             "n_dfus": int(expanded["dmdunit"].nunique()),
         },
         metadata=metadata,
-        artifact_paths=[str(output_path), str(archive_path), str(meta_path)],
+        artifact_paths=[str(output_path), str(archive_path), str(meta_path)] + extra_artifact_paths,
     )
 
     elapsed = time.time() - t_start

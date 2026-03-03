@@ -1,0 +1,340 @@
+"""SHAP-based per-timeframe feature selection for tree-based backtests (Feature 42).
+
+Provides model-agnostic SHAP computation, cumulative-importance-based feature
+selection, and CSV output helpers.  Model-specific SHAP extractors (LGBM / XGBoost
+vs CatBoost native) are passed as callables so this module stays framework-agnostic.
+
+Typical flow per backtest timeframe:
+  1. Train initial model on all features.
+  2. Call compute_timeframe_shap() → (selected_features, shap_df).
+  3. If selected_features ⊊ all_features, retrain on selected_features.
+  4. Call save_shap_outputs() once after all timeframes.
+"""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import Any, Callable
+
+import numpy as np
+import pandas as pd
+
+# ---------------------------------------------------------------------------
+# Type alias
+# ---------------------------------------------------------------------------
+
+# Signature: (model_or_dict, X_sample, feature_cols, cat_cols) → np.ndarray
+# Returned shape: (n_samples, n_features), values are absolute SHAP values.
+ShapExtractorFn = Callable[[Any, pd.DataFrame, list[str], list[str]], np.ndarray]
+
+SHAP_REPORT_COLS = ["feature", "mean_abs_shap", "rank", "selected", "timeframe", "cutoff_date"]
+SHAP_SUMMARY_COLS = [
+    "feature",
+    "mean_abs_shap_across_timeframes",
+    "mean_rank",
+    "selected_count",
+    "n_timeframes",
+]
+
+
+# ---------------------------------------------------------------------------
+# Model-specific SHAP extractors
+# ---------------------------------------------------------------------------
+
+
+def compute_shap_global(
+    model: Any,
+    X_sample: pd.DataFrame,
+    feature_cols: list[str],
+    cat_cols: list[str],
+) -> np.ndarray:
+    """Extract |SHAP| values via shap.TreeExplainer (LGBM, XGBoost).
+
+    Returns absolute SHAP values, shape (n_samples, n_features).
+    """
+    import shap  # lazy import — not required for module-level usage
+
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X_sample)
+    if isinstance(shap_values, list):
+        # Multi-output: average across outputs
+        shap_values = np.mean([np.abs(sv) for sv in shap_values], axis=0)
+    return np.abs(shap_values)
+
+
+def compute_shap_catboost(
+    model: Any,
+    X_sample: pd.DataFrame,
+    feature_cols: list[str],
+    cat_cols: list[str],
+) -> np.ndarray:
+    """Extract |SHAP| values via CatBoost native ShapValues (no shap library needed).
+
+    CatBoost's get_feature_importance(type="ShapValues") returns shape
+    (n_samples, n_features + 1) — the last column is the baseline expected
+    value and must be stripped.
+
+    Returns absolute SHAP values, shape (n_samples, n_features).
+    """
+    import catboost as cb
+
+    cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
+    pool = cb.Pool(X_sample, cat_features=cat_indices)
+    shap_matrix = model.get_feature_importance(data=pool, type="ShapValues")
+    return np.abs(shap_matrix[:, :-1])  # strip baseline column
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _weighted_pool_cluster_shap(
+    models: dict[str, Any],
+    train_data: pd.DataFrame,
+    effective_feature_cols: list[str],
+    effective_cat_cols: list[str],
+    shap_extractor_fn: ShapExtractorFn,
+    sample_size: int,
+) -> np.ndarray:
+    """Compute SHAP for each cluster model and pool by cluster size.
+
+    Skips the "__base__" key present in transfer-learning model dicts.
+
+    Returns mean absolute SHAP values per feature, shape (n_features,).
+    """
+    weighted_shap = np.zeros(len(effective_feature_cols))
+    total_rows = 0
+
+    for cluster_label, model in models.items():
+        if cluster_label == "__base__":
+            continue
+        cluster_data = train_data[train_data["ml_cluster"] == cluster_label]
+        if len(cluster_data) == 0:
+            continue
+        n = min(sample_size, len(cluster_data))
+        X_sample = cluster_data[effective_feature_cols].sample(n=n, random_state=42)
+        try:
+            abs_shap = shap_extractor_fn(model, X_sample, effective_feature_cols, effective_cat_cols)
+            weighted_shap += abs_shap.mean(axis=0) * n
+            total_rows += n
+        except Exception as exc:
+            print(f"    [shap] Warning: SHAP extraction failed for cluster '{cluster_label}': {exc}")
+
+    if total_rows > 0:
+        weighted_shap /= total_rows
+    return weighted_shap
+
+
+def _select_features_from_shap(
+    mean_abs_shap: np.ndarray,
+    feature_cols: list[str],
+    timeframe_idx: int,
+    cutoff_date: pd.Timestamp,
+    cumulative_threshold: float = 0.95,
+    min_features: int = 5,
+    top_n: int | None = None,
+) -> tuple[list[str], pd.DataFrame]:
+    """Select features by cumulative SHAP importance and build the report DataFrame.
+
+    Two modes:
+    - top_n is set: keep exactly max(top_n, min_features) features.
+    - top_n is None: keep features covering cumulative_threshold of total SHAP mass,
+      with min_features as a lower bound.
+
+    Returns (selected_feature_names, shap_report_df).
+    shap_report_df columns: feature, mean_abs_shap, rank, selected, timeframe, cutoff_date.
+    """
+    total_shap = float(mean_abs_shap.sum())
+    sorted_indices = np.argsort(mean_abs_shap)[::-1]
+    sorted_shap = mean_abs_shap[sorted_indices]
+    sorted_features = [feature_cols[i] for i in sorted_indices]
+
+    if top_n is not None:
+        n_select = max(min_features, min(int(top_n), len(feature_cols)))
+    elif total_shap == 0:
+        n_select = len(feature_cols)
+    else:
+        cumsum = np.cumsum(sorted_shap) / total_shap
+        n_select = int(np.searchsorted(cumsum, cumulative_threshold)) + 1
+        n_select = max(min_features, min(n_select, len(feature_cols)))
+
+    selected_set = set(sorted_features[:n_select])
+
+    shap_df = pd.DataFrame({
+        "feature": sorted_features,
+        "mean_abs_shap": sorted_shap.tolist(),
+        "rank": list(range(1, len(sorted_features) + 1)),
+        "selected": [f in selected_set for f in sorted_features],
+        "timeframe": [timeframe_idx] * len(sorted_features),
+        "cutoff_date": [str(cutoff_date.date())] * len(sorted_features),
+    })
+
+    print(
+        f"    [shap] Selected {n_select}/{len(feature_cols)} features "
+        f"(threshold={cumulative_threshold:.2f}, top: {sorted_features[0]})"
+    )
+    return sorted_features[:n_select], shap_df
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def compute_timeframe_shap(
+    model_or_dict: Any,
+    train_data: pd.DataFrame,
+    feature_cols: list[str],
+    cat_cols: list[str],
+    timeframe_idx: int,
+    cutoff_date: pd.Timestamp,
+    shap_extractor_fn: ShapExtractorFn,
+    cluster_strategy: str,
+    sample_size: int = 500,
+    cumulative_threshold: float = 0.95,
+    top_n: int | None = None,
+    min_features: int = 5,
+) -> tuple[list[str], pd.DataFrame]:
+    """Compute SHAP values for one backtest timeframe and select top features.
+
+    Handles both single-model (global strategy) and dict-of-models
+    (per_cluster / transfer strategies).  For per_cluster / transfer, ml_cluster
+    is stripped from effective_feature_cols to match the convention used inside
+    train_and_predict_per_cluster().
+
+    Args:
+        model_or_dict: Trained model (global) or dict[cluster_label → model].
+        train_data: Causally masked training DataFrame for this timeframe.
+        feature_cols: Full feature column list from the feature matrix.
+        cat_cols: Categorical feature names.
+        timeframe_idx: 0-based timeframe index (0=A, 1=B, …).
+        cutoff_date: Training cutoff date for this timeframe.
+        shap_extractor_fn: Model-specific SHAP extractor callable.
+        cluster_strategy: "global", "per_cluster", or "transfer".
+        sample_size: Max rows to sample per cluster for SHAP computation.
+        cumulative_threshold: Cumulative SHAP mass threshold for feature selection.
+        top_n: If set, select exactly this many features (overrides threshold).
+        min_features: Minimum number of features to keep regardless of threshold.
+
+    Returns:
+        (selected_features, shap_df) where shap_df has SHAP_REPORT_COLS columns.
+    """
+    t0 = time.time()
+
+    # Per-cluster / transfer: mirror the internal ml_cluster drop in train_fn
+    if cluster_strategy in ("per_cluster", "transfer"):
+        effective_feature_cols = [c for c in feature_cols if c != "ml_cluster"]
+        effective_cat_cols = [c for c in cat_cols if c != "ml_cluster"]
+    else:
+        effective_feature_cols = feature_cols
+        effective_cat_cols = cat_cols
+
+    # Compute mean absolute SHAP across the training sample
+    try:
+        if isinstance(model_or_dict, dict):
+            mean_abs_shap = _weighted_pool_cluster_shap(
+                model_or_dict,
+                train_data,
+                effective_feature_cols,
+                effective_cat_cols,
+                shap_extractor_fn,
+                sample_size,
+            )
+        else:
+            n = min(sample_size, len(train_data))
+            X_sample = train_data[effective_feature_cols].sample(n=n, random_state=42)
+            abs_shap = shap_extractor_fn(
+                model_or_dict, X_sample, effective_feature_cols, effective_cat_cols
+            )
+            mean_abs_shap = abs_shap.mean(axis=0)
+    except Exception as exc:
+        print(f"    [shap] Warning: SHAP computation failed: {exc}. Keeping all features.")
+        shap_df = pd.DataFrame({
+            "feature": effective_feature_cols,
+            "mean_abs_shap": [0.0] * len(effective_feature_cols),
+            "rank": list(range(1, len(effective_feature_cols) + 1)),
+            "selected": [True] * len(effective_feature_cols),
+            "timeframe": [timeframe_idx] * len(effective_feature_cols),
+            "cutoff_date": [str(cutoff_date.date())] * len(effective_feature_cols),
+        })
+        return effective_feature_cols, shap_df
+
+    print(f"    [shap] SHAP computed ({time.time() - t0:.1f}s)")
+
+    return _select_features_from_shap(
+        mean_abs_shap,
+        effective_feature_cols,
+        timeframe_idx,
+        cutoff_date,
+        cumulative_threshold=cumulative_threshold,
+        min_features=min_features,
+        top_n=top_n,
+    )
+
+
+def build_shap_summary(
+    timeframe_reports: list[pd.DataFrame],
+    n_timeframes: int,
+) -> pd.DataFrame:
+    """Aggregate per-timeframe SHAP reports into a cross-timeframe summary.
+
+    Returns a DataFrame with SHAP_SUMMARY_COLS columns sorted by descending
+    mean importance.  Returns an empty DataFrame if timeframe_reports is empty.
+    """
+    if not timeframe_reports:
+        return pd.DataFrame(columns=SHAP_SUMMARY_COLS)
+
+    combined = pd.concat(timeframe_reports, ignore_index=True)
+    summary = (
+        combined.groupby("feature")
+        .agg(
+            mean_abs_shap_across_timeframes=("mean_abs_shap", "mean"),
+            mean_rank=("rank", "mean"),
+            selected_count=("selected", "sum"),
+        )
+        .reset_index()
+    )
+    summary["n_timeframes"] = n_timeframes
+    summary = summary.sort_values("mean_abs_shap_across_timeframes", ascending=False).reset_index(drop=True)
+    return summary[SHAP_SUMMARY_COLS]
+
+
+def save_shap_outputs(
+    timeframe_reports: list[pd.DataFrame],
+    output_dir: Path,
+    n_timeframes: int,
+) -> tuple[list[Path], Path | None]:
+    """Save per-timeframe SHAP CSVs and a cross-timeframe summary.
+
+    Files written to output_dir/shap/:
+      shap_timeframe_00.csv … shap_timeframe_09.csv   (one per timeframe)
+      shap_summary.csv                                  (aggregated)
+
+    Returns (list_of_timeframe_paths, summary_path) — summary_path is None
+    if timeframe_reports is empty.
+    """
+    if not timeframe_reports:
+        return [], None
+
+    shap_dir = output_dir / "shap"
+    shap_dir.mkdir(parents=True, exist_ok=True)
+
+    timeframe_paths: list[Path] = []
+    for df in timeframe_reports:
+        if df.empty:
+            continue
+        idx = int(df["timeframe"].iloc[0])
+        path = shap_dir / f"shap_timeframe_{idx:02d}.csv"
+        df[SHAP_REPORT_COLS].to_csv(path, index=False)
+        timeframe_paths.append(path)
+
+    summary_df = build_shap_summary(timeframe_reports, n_timeframes)
+    summary_path = shap_dir / "shap_summary.csv"
+    summary_df.to_csv(summary_path, index=False)
+
+    print(
+        f"  [shap] Saved {len(timeframe_paths)} timeframe reports + summary to {shap_dir}"
+    )
+    return timeframe_paths, summary_path

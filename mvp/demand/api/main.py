@@ -44,6 +44,7 @@ from api.routers import intel      # noqa: E402
 from api.routers import inv_backtest  # noqa: E402
 from api.routers import inventory  # noqa: E402
 from api.routers import jobs       # noqa: E402
+from api.routers import shap       # noqa: E402
 from api.routers import domains    # noqa: E402
 
 # Specific-path routers first
@@ -58,6 +59,7 @@ app.include_router(intel.router)
 app.include_router(inv_backtest.router)
 app.include_router(inventory.router)
 app.include_router(jobs.router)
+app.include_router(shap.router)
 
 # domains.py has catch-all /domains/{domain}/* — mount last
 app.include_router(domains.router)

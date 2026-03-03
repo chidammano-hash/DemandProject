@@ -5,7 +5,10 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
+  Cell,
   Legend,
   Line,
   LineChart,
@@ -14,7 +17,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ChartColumn, Loader2, Trophy } from "lucide-react";
+import { ChartColumn, ChevronDown, ChevronRight, Loader2, Trophy } from "lucide-react";
 
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import {
@@ -24,6 +27,10 @@ import {
   fetchLagCurve,
   fetchCompetitionConfig,
   fetchCompetitionSummary,
+  fetchShapModels,
+  fetchShapSummary,
+  fetchShapTimeframes,
+  fetchShapTimeframeDetail,
   saveCompetitionConfig,
   runCompetition,
   type CompetitionConfig,
@@ -99,6 +106,11 @@ export function AccuracyTab() {
 
   // Competition config is local-mutable (user edits checkboxes/dropdowns)
   const [competitionConfig, setCompetitionConfig] = useState<CompetitionConfig | null>(null);
+
+  // SHAP panel state (Feature 42)
+  const [shapOpen, setShapOpen] = useState(false);
+  const [shapModelId, setShapModelId] = useState<string>("");
+  const [shapTimeframeIdx, setShapTimeframeIdx] = useState<number | null>(null); // null = aggregate summary
 
   // ---- Derived params -------------------------------------------------------
   const monthFrom = useMemo(() => {
@@ -183,6 +195,58 @@ export function AccuracyTab() {
   });
 
   const championSummary: ChampionSummary | null = summaryPayload?.summary ?? null;
+
+  // ---- SHAP queries (Feature 42) -------------------------------------------
+  const { data: shapModelsData } = useQuery({
+    queryKey: queryKeys.shapModels(),
+    queryFn: fetchShapModels,
+    staleTime: STALE.TEN_MIN,
+    enabled: shapOpen,
+  });
+
+  const shapModels = shapModelsData?.models ?? [];
+
+  const activeShapModel = shapModelId || shapModels[0] || "";
+
+  const { data: shapTimeframesData } = useQuery({
+    queryKey: queryKeys.shapTimeframes(activeShapModel),
+    queryFn: () => fetchShapTimeframes(activeShapModel),
+    staleTime: STALE.TEN_MIN,
+    enabled: shapOpen && !!activeShapModel,
+  });
+
+  const shapTimeframes = shapTimeframesData?.timeframes ?? [];
+
+  const { data: shapSummaryData, isLoading: loadingShapSummary } = useQuery({
+    queryKey: queryKeys.shapSummary(activeShapModel, 15),
+    queryFn: () => fetchShapSummary(activeShapModel, 15),
+    staleTime: STALE.TEN_MIN,
+    enabled: shapOpen && !!activeShapModel && shapTimeframeIdx === null,
+  });
+
+  const { data: shapDetailData, isLoading: loadingShapDetail } = useQuery({
+    queryKey: queryKeys.shapTimeframeDetail(activeShapModel, shapTimeframeIdx ?? 0, 15),
+    queryFn: () => fetchShapTimeframeDetail(activeShapModel, shapTimeframeIdx!, 15),
+    staleTime: STALE.TEN_MIN,
+    enabled: shapOpen && !!activeShapModel && shapTimeframeIdx !== null,
+  });
+
+  const shapFeatures = useMemo(() => {
+    if (shapTimeframeIdx === null) {
+      return (shapSummaryData?.features ?? []).map((f) => ({
+        feature: f.feature,
+        value: f.mean_abs_shap_across_timeframes,
+        selected: f.selected_count === f.n_timeframes,
+      }));
+    }
+    return (shapDetailData?.features ?? []).map((f) => ({
+      feature: f.feature,
+      value: f.mean_abs_shap,
+      selected: f.selected,
+    }));
+  }, [shapTimeframeIdx, shapSummaryData, shapDetailData]);
+
+  const loadingShap = shapTimeframeIdx === null ? loadingShapSummary : loadingShapDetail;
 
   // ---- Mutations ------------------------------------------------------------
   const saveConfigMutation = useMutation({
@@ -863,6 +927,118 @@ export function AccuracyTab() {
             </div>
           ) : null}
         </CardContent>
+      </Card>
+
+      {/* ── Feature Importance (SHAP) Panel ─────────────────────────────── */}
+      <Card className="mt-4 animate-fade-in">
+        <CardHeader
+          className="cursor-pointer select-none"
+          onClick={() => setShapOpen((v) => !v)}
+        >
+          <div className="flex items-center gap-2">
+            {shapOpen ? (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            )}
+            <CardTitle className="text-base">Feature Importance (SHAP)</CardTitle>
+          </div>
+          <CardDescription>
+            Per-timeframe SHAP feature importance from SHAP-selected backtests. Run with{" "}
+            <code className="text-xs">--shap-select</code> to populate.
+          </CardDescription>
+        </CardHeader>
+        {shapOpen && (
+          <CardContent className="space-y-4">
+            {shapModels.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No SHAP outputs found. Run a backtest with <code>--shap-select</code> to generate feature importance data.
+              </p>
+            ) : (
+              <>
+                {/* ── Selectors ────────────────────────────────────────── */}
+                <div className="flex flex-wrap gap-3">
+                  <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Model
+                    <select
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm block"
+                      value={activeShapModel}
+                      onChange={(e) => {
+                        setShapModelId(e.target.value);
+                        setShapTimeframeIdx(null);
+                      }}
+                    >
+                      {shapModels.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Timeframe
+                    <select
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm block"
+                      value={shapTimeframeIdx ?? "summary"}
+                      onChange={(e) => setShapTimeframeIdx(e.target.value === "summary" ? null : Number(e.target.value))}
+                    >
+                      <option value="summary">All timeframes (average)</option>
+                      {shapTimeframes.map((tf) => (
+                        <option key={tf.index} value={tf.index}>
+                          {tf.label} — cutoff {tf.cutoff_date}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {/* ── Chart ────────────────────────────────────────────── */}
+                {loadingShap ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading SHAP data…
+                  </div>
+                ) : shapFeatures.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4 text-center">No feature data available.</p>
+                ) : (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Top 15 features — <span className="text-indigo-500 font-medium">■ selected</span>{" "}
+                      <span className="text-gray-400 font-medium">■ dropped</span>
+                    </p>
+                    <ResponsiveContainer width="100%" height={Math.max(200, shapFeatures.length * 28)}>
+                      <BarChart
+                        data={shapFeatures}
+                        layout="vertical"
+                        margin={{ top: 4, right: 40, left: 8, bottom: 4 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                        <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => v.toFixed(3)} />
+                        <YAxis
+                          type="category"
+                          dataKey="feature"
+                          width={160}
+                          tick={{ fontSize: 11 }}
+                        />
+                        <Tooltip
+                          formatter={(v: number) => [v.toFixed(5), "Mean |SHAP|"]}
+                          cursor={{ fill: "rgba(0,0,0,0.04)" }}
+                        />
+                        <Bar dataKey="value" name="Mean |SHAP|" radius={[0, 3, 3, 0]}>
+                          {shapFeatures.map((f, i) => (
+                            <Cell
+                              key={i}
+                              fill={f.selected ? "#6366f1" : "#d1d5db"}
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        )}
       </Card>
     </section>
   );

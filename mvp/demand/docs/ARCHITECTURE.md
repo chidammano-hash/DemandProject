@@ -209,8 +209,9 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 | `common/db.py` | `get_db_params()`: shared DB connection parameters |
 | `common/constants.py` | `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output column ordering, thresholds |
 | `common/tuning.py` | Shared tuning utilities: `generate_cv_month_splits`, `compute_wape_stabilised`, `suggest_params`, `save_best_params`, `load_best_params`, `best_rounds_to_n_estimators`, `tune_for_timeframe()` (per-timeframe causal tuning, PL-002), `TRAIN_FOLD_FNS` registry (`train_lgbm_fold`, `train_catboost_fold`, `train_xgboost_fold`) (Feature 41) |
+| `common/shap_selector.py` | SHAP-based feature selection: `compute_shap_global` (LGBM/XGBoost via `shap.TreeExplainer`), `compute_shap_catboost` (native ShapValues), `compute_timeframe_shap` (cluster-pooled or global), `build_shap_summary`, `save_shap_outputs` (Feature 42) |
 
-Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_global()`, `train_and_predict_per_cluster()`, and `train_and_predict_transfer()`, passed as callables to `run_tree_backtest()`. Non-tree models (Prophet, StatsForecast, NeuralProphet, PatchTST, DeepAR) use shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrate their own training loops. Deep learning models (PatchTST, DeepAR) have separate model files (`patchtst_model.py`, `deepar_model.py`) containing the PyTorch nn.Module, Dataset, and train/predict functions. StatsForecast uses vectorized batch fitting (no per-DFU loop). NeuralProphet follows the Prophet per-DFU pattern with PyTorch GPU support.
+Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_global()`, `train_and_predict_per_cluster()`, and `train_and_predict_transfer()`, passed as callables to `run_tree_backtest()`. Non-tree models (Prophet, StatsForecast, NeuralProphet, PatchTST, DeepAR) use shared utilities (`generate_timeframes`, `load_backtest_data`, `postprocess_predictions`, `save_backtest_output`, `log_backtest_run`) but orchestrate their own training loops. Deep learning models (PatchTST, DeepAR) have separate model files (`patchtst_model.py`, `deepar_model.py`) containing the PyTorch nn.Module, Dataset, and train/predict functions. StatsForecast uses vectorized batch fitting (no per-DFU loop). NeuralProphet follows the Prophet per-DFU pattern with PyTorch GPU support. `run_tree_backtest()` accepts optional `feature_selector_fn` callable (Feature 42): when provided, each timeframe computes SHAP after the initial model train and retrains on the selected feature subset before generating predictions.
 
 ## ML Pipeline Components
 1. **Feature Engineering** (`generate_clustering_features.py`):
@@ -283,6 +284,17 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_g
    - `--replace` scoped to `model_id` in CSV (safe for multi-model coexistence)
    - Refreshes `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` materialized views
    - Each backtest writes to `data/backtest/<model_id>/` subdirectory (prevents CSV overwrites — PL-001 fix)
+15. **SHAP Feature Selection** (`common/shap_selector.py` — Feature 42):
+   - Per-timeframe SHAP computation integrated into `run_tree_backtest()` via `feature_selector_fn` hook
+   - LGBM/XGBoost: `shap.TreeExplainer` via `compute_shap_global`; CatBoost: native `get_feature_importance(type="ShapValues")` via `compute_shap_catboost`
+   - For per_cluster/transfer strategies: SHAP pooled across cluster models weighted by cluster size via `_weighted_pool_cluster_shap`; `ml_cluster` excluded from effective feature set
+   - Feature selection: cumulative importance threshold (default 95%) or exact top-N; minimum 5 features guaranteed
+   - Output: `data/backtest/<model_id>/shap/shap_timeframe_XX.csv` (per-timeframe) + `shap_summary.csv` (cross-timeframe aggregated)
+   - API: 4 read-only endpoints under `/forecast/shap/` served directly from CSVs (no DB queries) via `api/routers/shap.py`
+   - Frontend: collapsible "Feature Importance (SHAP)" panel in Accuracy tab; indigo=selected / gray=dropped bar chart
+   - CLI flags: `--shap-select`, `--shap-top-n`, `--shap-threshold`, `--shap-sample-size`; composable with `--tune-inline` and `--params-file`
+   - Make targets: `backtest-lgbm-shap`, `backtest-catboost-shap`, `backtest-xgboost-shap`
+   - Graceful degradation: SHAP failures log warning and keep all features; backtest continues uninterrupted
 14. **Hyperparameter Tuning** (`scripts/tune_hyperparams.py` + `common/tuning.py`):
    - Bayesian optimisation via Optuna (TPESampler + MedianPruner) for LGBM, CatBoost, XGBoost
    - Walk-forward expanding CV with causal masking (`mask_future_sales()` inside each fold)
@@ -406,6 +418,8 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_distinct.py` | `api/main.py` — distinct values endpoint | 12 |
 | `test_dashboard.py` | `api/main.py` — dashboard endpoints (kpis, alerts, top-movers, heatmap) | 17 |
 | `test_jobs.py` | `api/routers/jobs.py` — job scheduler endpoints (types, submit, list, cancel, delete, stats, schedules, pipeline) | 16 |
+| `test_shap_selector.py` | `common/shap_selector.py` — SHAP extraction, feature selection, cluster pooling, CSV output, error fallback | 22 |
+| `test_shap.py` | `api/routers/shap.py` — SHAP endpoints (models list, summary, timeframes, per-timeframe detail, 404 cases) | 8 |
 
 **API test pattern:** httpx `AsyncClient` with `ASGITransport(app)` — no running server needed. DB connections mocked via `pool` fixture in `tests/api/conftest.py`.
 

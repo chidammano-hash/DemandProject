@@ -54,7 +54,10 @@ def log_backtest_run(
                     mlflow.log_metric("bias", acc["bias"])
 
             for path in artifact_paths:
-                mlflow.log_artifact(path)
+                try:
+                    mlflow.log_artifact(path)
+                except Exception as ae:
+                    print(f"\n  [{_ts()}] MLflow artifact skipped ({path}): {ae}")
 
             print(f"\n  [{_ts()}] Logged to MLflow: {mlflow.get_artifact_uri()}")
     except Exception as e:

@@ -161,11 +161,25 @@ Hyperparameter Tuning (feature41):
 - Per-cluster WAPE breakdown in output JSON; MLflow experiment: `hyperparameter_tuning`
 - `TRAIN_FOLD_FNS` registry in `common/tuning.py` exposes fold training functions for both global and inline tuning
 
+SHAP Feature Selection (feature42):
+- Run LGBM per-cluster with SHAP: `make backtest-lgbm-shap`
+- Run CatBoost per-cluster with SHAP: `make backtest-catboost-shap`
+- Run XGBoost per-cluster with SHAP: `make backtest-xgboost-shap`
+- Select exact top-N features: `make backtest-lgbm-shap ARGS="--shap-top-n 10"`
+- Custom cumulative threshold: `make backtest-lgbm-shap ARGS="--shap-threshold 0.80"`
+- Combine tune + SHAP in one run: `make backtest-lgbm-cluster-tuned ARGS="--shap-select"`
+- Per-timeframe flow: train initial model on all features → compute SHAP → select features covering 95% cumulative SHAP mass → retrain final model
+- LGBM/XGBoost use `shap.TreeExplainer`; CatBoost uses native `get_feature_importance(type="ShapValues")`
+- Outputs: `data/backtest/<model_id>/shap/shap_timeframe_XX.csv` + `shap_summary.csv`
+- API: 4 read-only endpoints under `/forecast/shap/` — no DB queries, served from CSV files
+- UI: collapsible "Feature Importance (SHAP)" panel in Accuracy tab with indigo=selected / gray=dropped bar chart
+
 LGBM Backtesting:
 - Run global backtest: `make backtest-lgbm` (trains LightGBM across 10 expanding windows)
 - Run per-cluster backtest: `make backtest-lgbm-cluster` (separate model per cluster)
 - Run with tuned params: `make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"`
 - Run transfer backtest: `make backtest-lgbm-transfer` (global base → per-cluster fine-tune)
+- Run with SHAP feature selection: `make backtest-lgbm-shap` (per-timeframe SHAP selection, 95% cumulative threshold)
 - Load predictions: `make backtest-load MODEL=lgbm_cluster` (or `make backtest-load-all` for all models)
 - Or all at once: `make backtest-all`
 - Models appear as `lgbm_global` / `lgbm_cluster` / `lgbm_transfer` in the forecast model selector
@@ -178,6 +192,7 @@ CatBoost Backtesting:
 - Run per-cluster backtest: `make backtest-catboost-cluster` (separate model per cluster)
 - Run with tuned params: `make backtest-catboost-cluster ARGS="--params-file data/tuning/best_params_catboost.json"`
 - Run transfer backtest: `make backtest-catboost-transfer` (global base → per-cluster fine-tune)
+- Run with SHAP feature selection: `make backtest-catboost-shap` (uses native CatBoost ShapValues — no shap library required)
 - Load predictions: `make backtest-load MODEL=catboost_cluster`
 - Models appear as `catboost_global` / `catboost_cluster` / `catboost_transfer` in the forecast model selector
 - Same feature engineering, lag strategy, and output format as LGBM
@@ -187,6 +202,7 @@ XGBoost Backtesting:
 - Run per-cluster backtest: `make backtest-xgboost-cluster` (separate model per cluster)
 - Run with tuned params: `make backtest-xgboost-cluster ARGS="--params-file data/tuning/best_params_xgboost.json"`
 - Run transfer backtest: `make backtest-xgboost-transfer` (global base → per-cluster fine-tune)
+- Run with SHAP feature selection: `make backtest-xgboost-shap` (per-timeframe SHAP selection via shap.TreeExplainer)
 - Load predictions: `make backtest-load MODEL=xgboost_cluster`
 - Models appear as `xgboost_global` / `xgboost_cluster` / `xgboost_transfer` in the forecast model selector
 - Same feature engineering, lag strategy, and output format as LGBM
@@ -412,7 +428,7 @@ cd mvp/demand
 make test-all          # Backend + frontend
 ```
 
-Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters, dashboard, distinct values, jobs).
+Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py`, `common/mlflow_utils.py`, `common/db.py`, `common/shap_selector.py`, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters, dashboard, distinct values, jobs, shap).
 
 Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, `useSidebar`, `useGlobalFilters`), utilities (`formatters`, `export`, `queries`), contexts (`JobNotificationContext`, `ScenarioNotificationContext`), components (`Skeleton`, `KeyboardShortcutHelp`, `EChartContainer`, `AppSidebar`, `ThemeSelector`, `GlobalFilterBar`, `WidgetGrid`, `AlertPanel`, `TopMovers`, `HeatmapGrid`), and all tab components (including DashboardTab, JobsTab).
 
@@ -453,4 +469,8 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - Tuning utilities: `mvp/demand/common/tuning.py`
 - Tuning config: `mvp/demand/config/hyperparameter_tuning.yaml`
 - Tuning output: `mvp/demand/data/tuning/best_params_<model>.json`
-- Design specs: `docs/design-specs/` (feature1–feature41)
+- SHAP selector: `mvp/demand/common/shap_selector.py`
+- SHAP API router: `mvp/demand/api/routers/shap.py`
+- SHAP TypeScript types: `mvp/demand/frontend/src/types/shap.ts`
+- SHAP output: `mvp/demand/data/backtest/<model_id>/shap/` (shap_timeframe_XX.csv + shap_summary.csv)
+- Design specs: `docs/design-specs/` (feature1–feature42)

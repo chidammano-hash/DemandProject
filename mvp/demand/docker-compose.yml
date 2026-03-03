@@ -41,7 +41,7 @@ services:
       - ./sql/009_create_chat_embeddings.sql:/docker-entrypoint-initdb.d/009_create_chat_embeddings.sql:ro
 
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.16.2
+    image: ghcr.io/mlflow/mlflow:v3.0.0
     container_name: demand-mvp-mlflow
     depends_on:
       - postgres

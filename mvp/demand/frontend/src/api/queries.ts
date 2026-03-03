@@ -20,6 +20,12 @@ import type {
   InvBacktestDetailPayload,
 } from "@/types";
 import type {
+  ShapModelsPayload,
+  ShapSummaryPayload,
+  ShapTimeframesPayload,
+  ShapTimeframeDetailPayload,
+} from "@/types/shap";
+import type {
   DashboardKpis,
   Alert,
   Mover,
@@ -71,6 +77,11 @@ export const queryKeys = {
   jobStats: () => ["job-stats"] as const,
   jobSchedules: () => ["job-schedules"] as const,
   scenarioHistory: () => ["scenario-history"] as const,
+  // SHAP feature importance keys (Feature 42)
+  shapModels: () => ["shap-models"] as const,
+  shapSummary: (modelId: string, topN: number) => ["shap-summary", modelId, topN] as const,
+  shapTimeframes: (modelId: string) => ["shap-timeframes", modelId] as const,
+  shapTimeframeDetail: (modelId: string, idx: number, topN: number) => ["shap-timeframe-detail", modelId, idx, topN] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -722,6 +733,29 @@ export async function createSchedule(
       interval_minutes: intervalMinutes,
     }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// SHAP feature importance queries (Feature 42)
+// ---------------------------------------------------------------------------
+export async function fetchShapModels(): Promise<ShapModelsPayload> {
+  return fetchJson("/forecast/shap/models");
+}
+
+export async function fetchShapSummary(modelId: string, topN = 15): Promise<ShapSummaryPayload> {
+  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/summary?top_n=${topN}`);
+}
+
+export async function fetchShapTimeframes(modelId: string): Promise<ShapTimeframesPayload> {
+  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/timeframes`);
+}
+
+export async function fetchShapTimeframeDetail(
+  modelId: string,
+  idx: number,
+  topN = 15,
+): Promise<ShapTimeframeDetailPayload> {
+  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/timeframe/${idx}?top_n=${topN}`);
 }
 
 export async function deleteSchedule(scheduleId: string): Promise<{ deleted: boolean }> {
