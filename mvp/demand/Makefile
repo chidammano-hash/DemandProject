@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all
 
 help:
 	@echo "Targets:"
@@ -72,6 +72,9 @@ help:
 	@echo "  seasonality-detect   - run seasonality detection pipeline (detect + profile)"
 	@echo "  seasonality-update   - write seasonality profiles to dim_dfu"
 	@echo "  seasonality-all      - seasonality-schema + detect + update (full pipeline)"
+	@echo "  variability-schema   - apply DDL for variability columns on dim_dfu (one-time)"
+	@echo "  variability-compute  - compute demand variability stats per DFU"
+	@echo "  variability-all      - variability-schema + variability-compute (full pipeline)"
 	@echo "  test                 - run all Python tests"
 	@echo "  test-unit            - run Python unit tests only"
 	@echo "  test-api             - run Python API tests only"
@@ -407,6 +410,17 @@ seasonality-update:
 	$(UV) python scripts/update_seasonality_profiles.py --config config/seasonality_config.yaml
 
 seasonality-all: seasonality-schema seasonality-detect seasonality-update
+
+# ---------------------------------------------------------------------------
+# Demand Variability pipeline (IPfeature1)
+# ---------------------------------------------------------------------------
+variability-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/022_add_demand_variability_columns.sql').read()); conn.close(); print('Variability DDL applied')"
+
+variability-compute:
+	$(UV) python scripts/compute_demand_variability.py --config config/variability_config.yaml
+
+variability-all: variability-schema variability-compute
 
 # ---------------------------------------------------------------------------
 # Backtesting (LGBM / CatBoost / XGBoost — per-cluster only)

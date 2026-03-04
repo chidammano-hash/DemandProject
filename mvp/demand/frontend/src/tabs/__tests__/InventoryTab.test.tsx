@@ -23,6 +23,8 @@ vi.mock("@/api/queries", () => ({
     inventoryKpis: (p: Record<string, unknown>) => ["inventory-kpis", p],
     inventoryTrend: (p: Record<string, unknown>) => ["inventory-trend", p],
     inventoryItemDetail: (p: Record<string, unknown>) => ["inventory-item-detail", p],
+    variabilitySummary: (p: Record<string, unknown>) => ["variability-summary", p],
+    variabilityDetail: (p: Record<string, unknown>) => ["variability-detail", p],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchInventoryPosition: vi.fn().mockResolvedValue({
@@ -59,6 +61,18 @@ vi.mock("@/api/queries", () => ({
     snapshots: [
       { item_no: "12345", loc: "LOC1", snapshot_date: "2025-06-15", lead_time_days: 30, qty_on_hand: 100, qty_on_hand_on_order: 150, qty_on_order: 50, mtd_sales: 25 },
     ],
+  }),
+  fetchVariabilitySummary: vi.fn().mockResolvedValue({
+    total_dfus: 100,
+    by_class: { low: 40, medium: 30, high: 20, lumpy: 10 },
+    cv_percentiles: { p25: 0.15, p50: 0.35, p75: 0.70, p95: 1.20 },
+    avg_cv: 0.45,
+    avg_intermittency_ratio: 0.08,
+    top_volatile: [],
+  }),
+  fetchVariabilityDetail: vi.fn().mockResolvedValue({
+    total: 0,
+    rows: [],
   }),
 }));
 

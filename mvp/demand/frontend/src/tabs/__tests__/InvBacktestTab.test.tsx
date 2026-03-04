@@ -41,7 +41,7 @@ vi.mock("@/api/queries", () => ({
         stockout_rate: 3.0,
         excess_count: 400,
         excess_rate: 8.0,
-        service_level: 97.0,
+        cycle_service_level: 97.0,
         avg_dos: 42.0,
         wape: 28.5,
         bias: 3.2,
@@ -52,7 +52,7 @@ vi.mock("@/api/queries", () => ({
         stockout_rate: 2.0,
         excess_count: 350,
         excess_rate: 7.0,
-        service_level: 98.0,
+        cycle_service_level: 98.0,
         avg_dos: 38.5,
         wape: 22.1,
         bias: -1.5,
@@ -99,6 +99,8 @@ vi.mock("@/api/queries", () => ({
         forecast_error: -29.5,
         pct_error: -19.7,
         bias_direction: "under",
+        seasonality_profile: "seasonal_high",
+        zero_velocity_flag: false,
       },
     ],
   }),
@@ -147,7 +149,7 @@ describe("InvBacktestTab", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByText("Best Service Level")).toBeDefined();
+      expect(screen.getByText("Best Cycle Service Level (CSL)")).toBeDefined();
       expect(screen.getByText("Lowest Stockout Rate")).toBeDefined();
       expect(screen.getByText("Lowest Excess Rate")).toBeDefined();
     });
@@ -204,7 +206,7 @@ describe("InvBacktestTab", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByText(/Root Cause/)).toBeDefined();
+      expect(screen.getByText(/Forecast Bias Correlation/)).toBeDefined();
     });
   });
 });

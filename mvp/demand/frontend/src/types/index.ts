@@ -218,7 +218,7 @@ export type InvBacktestModelMetrics = {
   stockout_rate: number;
   excess_count: number;
   excess_rate: number;
-  service_level: number;
+  cycle_service_level: number;
   avg_dos: number | null;
   wape: number | null;
   bias: number | null;
@@ -272,6 +272,8 @@ export type InvBacktestDetailRow = {
   forecast_error: number;
   pct_error: number | null;
   bias_direction: string;
+  seasonality_profile: string;
+  zero_velocity_flag: boolean;
 };
 
 export type InvBacktestDetailPayload = {

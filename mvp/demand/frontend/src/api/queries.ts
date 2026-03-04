@@ -77,6 +77,9 @@ export const queryKeys = {
   jobStats: () => ["job-stats"] as const,
   jobSchedules: () => ["job-schedules"] as const,
   scenarioHistory: () => ["scenario-history"] as const,
+  // Inventory Planning keys (IPfeature1+)
+  variabilitySummary: (params: Record<string, unknown>) => ["variability-summary", params] as const,
+  variabilityDetail: (params: Record<string, unknown>) => ["variability-detail", params] as const,
   // SHAP feature importance keys (Feature 42)
   shapModels: () => ["shap-models"] as const,
   shapSummary: (modelId: string, topN: number) => ["shap-summary", modelId, topN] as const,
@@ -771,4 +774,86 @@ export async function submitPipeline(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ steps, label }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Inventory Planning — IPfeature1: Demand Variability
+// ---------------------------------------------------------------------------
+
+export interface VariabilitySummaryPayload {
+  total_dfus: number;
+  by_class: { low: number; medium: number; high: number; lumpy: number };
+  cv_percentiles: { p25: number | null; p50: number | null; p75: number | null; p95: number | null };
+  avg_cv: number | null;
+  avg_intermittency_ratio: number | null;
+  top_volatile: {
+    item_no: string;
+    loc: string;
+    abc_vol: string | null;
+    cluster_assignment: string | null;
+    demand_mean: number | null;
+    demand_std: number | null;
+    demand_cv: number | null;
+    demand_mad: number | null;
+    intermittency_ratio: number | null;
+    variability_class: string | null;
+  }[];
+}
+
+export interface VariabilityDetailRow {
+  item_no: string;
+  loc: string;
+  abc_vol: string | null;
+  cluster_assignment: string | null;
+  demand_mean: number | null;
+  demand_std: number | null;
+  demand_cv: number | null;
+  demand_mad: number | null;
+  demand_p50: number | null;
+  demand_p90: number | null;
+  demand_skewness: number | null;
+  demand_kurtosis: number | null;
+  zero_demand_months: number | null;
+  total_demand_months: number | null;
+  intermittency_ratio: number | null;
+  variability_class: string | null;
+  demand_profile_ts: string | null;
+}
+
+export interface VariabilityDetailPayload {
+  total: number;
+  rows: VariabilityDetailRow[];
+}
+
+export async function fetchVariabilitySummary(params: {
+  abc_vol?: string;
+  cluster_assignment?: string;
+}): Promise<VariabilitySummaryPayload> {
+  const qs = new URLSearchParams();
+  if (params.abc_vol?.trim()) qs.set("abc_vol", params.abc_vol.trim());
+  if (params.cluster_assignment?.trim()) qs.set("cluster_assignment", params.cluster_assignment.trim());
+  return fetchJson(`/inv-planning/variability/summary?${qs}`);
+}
+
+export async function fetchVariabilityDetail(params: {
+  item?: string;
+  location?: string;
+  abc_vol?: string;
+  variability_class?: string;
+  limit?: number;
+  offset?: number;
+  sort_by?: string;
+  sort_dir?: string;
+}): Promise<VariabilityDetailPayload> {
+  const qs = new URLSearchParams({
+    limit: String(params.limit ?? 50),
+    offset: String(params.offset ?? 0),
+    sort_by: params.sort_by ?? "demand_cv",
+    sort_dir: params.sort_dir ?? "desc",
+  });
+  if (params.item?.trim()) qs.set("item", params.item.trim());
+  if (params.location?.trim()) qs.set("location", params.location.trim());
+  if (params.abc_vol?.trim()) qs.set("abc_vol", params.abc_vol.trim());
+  if (params.variability_class?.trim()) qs.set("variability_class", params.variability_class.trim());
+  return fetchJson(`/inv-planning/variability/detail?${qs}`);
 }

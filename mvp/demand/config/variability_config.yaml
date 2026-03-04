@@ -1,0 +1,26 @@
+# IPfeature1: Demand Variability & Statistical Profiling Engine
+# All configurable thresholds and parameters live here.
+
+history:
+  # Rolling window in months for variability computation
+  history_months: 24
+  # Minimum months of history required to compute stats
+  min_months_history: 6
+
+outlier:
+  # Winsorize outliers beyond mean ± N * std
+  sigma_threshold: 3
+
+cv_thresholds:
+  # Coefficient of variation class boundaries
+  # CV < low      → 'low'
+  # low <= CV < medium → 'medium'
+  # medium <= CV < high → 'high'
+  # CV >= high OR intermittency > intermittency_threshold → 'lumpy'
+  low: 0.30
+  medium: 0.80
+  high: 1.50
+
+intermittency_threshold:
+  # Fraction of zero-demand months that triggers 'lumpy' regardless of CV
+  ratio: 0.30

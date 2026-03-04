@@ -24,6 +24,7 @@ def _inv_backtest_filters(
     cluster_assignment: str,
     abc_vol: str,
     region: str,
+    seasonality_profile: str = "",
 ) -> tuple[list[str], list[Any]]:
     """Build WHERE parts and params for inventory-backtest queries."""
     parts: list[str] = []
@@ -54,6 +55,9 @@ def _inv_backtest_filters(
     if region.strip():
         parts.append("region = %s")
         params.append(region.strip())
+    if seasonality_profile.strip():
+        parts.append("seasonality_profile = %s")
+        params.append(seasonality_profile.strip())
     return parts, params
 
 
@@ -72,14 +76,15 @@ def inv_backtest_summary(
     cluster_assignment: str = Query(default="", max_length=120),
     abc_vol: str = Query(default="", max_length=40),
     region: str = Query(default="", max_length=120),
+    seasonality_profile: str = Query(default="", max_length=120),
     excess_dos_threshold: int = Query(default=90, ge=1, le=365),
 ):
-    """Per-model inventory-outcome metrics: stockout rate, excess rate, service level, WAPE."""
+    """Per-model inventory-outcome metrics: stockout rate, excess rate, cycle service level, WAPE."""
     set_cache(response, max_age=120)
 
     parts, params = _inv_backtest_filters(
         models, month_from, month_to, item, location,
-        cluster_assignment, abc_vol, region,
+        cluster_assignment, abc_vol, region, seasonality_profile,
     )
     threshold_idx = len(params)
     params.append(excess_dos_threshold)
@@ -123,7 +128,7 @@ def inv_backtest_summary(
             "stockout_rate": round(so_count / dfu_months * 100, 2) if dfu_months > 0 else 0,
             "excess_count": ex_count,
             "excess_rate": round(ex_count / dfu_months * 100, 2) if dfu_months > 0 else 0,
-            "service_level": round((1 - so_count / dfu_months) * 100, 2) if dfu_months > 0 else 100,
+            "cycle_service_level": round((1 - so_count / dfu_months) * 100, 2) if dfu_months > 0 else 100,
             "avg_dos": round(float(r[6]), 1) if r[6] is not None else None,
             "wape": round(float(r[4]), 2) if r[4] is not None else None,
             "bias": round(float(r[5]), 2) if r[5] is not None else None,
@@ -142,6 +147,7 @@ def inv_backtest_trend(
     cluster_assignment: str = Query(default="", max_length=120),
     abc_vol: str = Query(default="", max_length=40),
     region: str = Query(default="", max_length=120),
+    seasonality_profile: str = Query(default="", max_length=120),
     excess_dos_threshold: int = Query(default=90, ge=1, le=365),
 ):
     """Monthly inventory-outcome trend by model."""
@@ -149,7 +155,7 @@ def inv_backtest_trend(
 
     parts, params = _inv_backtest_filters(
         models, month_from, month_to, item, location,
-        cluster_assignment, abc_vol, region,
+        cluster_assignment, abc_vol, region, seasonality_profile,
     )
     where_sql = f"WHERE {' AND '.join(parts)}" if parts else ""
 
@@ -211,14 +217,19 @@ def inv_backtest_root_cause(
     cluster_assignment: str = Query(default="", max_length=120),
     abc_vol: str = Query(default="", max_length=40),
     region: str = Query(default="", max_length=120),
+    seasonality_profile: str = Query(default="", max_length=120),
     excess_dos_threshold: int = Query(default=90, ge=1, le=365),
 ):
-    """Stockout/excess root cause breakdown by forecast bias direction for a single model."""
+    """Forecast bias correlation breakdown by bias direction for a single model.
+
+    Shows which bias direction (under/over/exact) co-occurred with stockout and excess events.
+    This is correlation only — not causal attribution.
+    """
     set_cache(response, max_age=120)
 
     parts, params = _inv_backtest_filters(
         "", month_from, month_to, item, location,
-        cluster_assignment, abc_vol, region,
+        cluster_assignment, abc_vol, region, seasonality_profile,
     )
     parts.append("model_id = %s")
     params.append(model_id.strip())
@@ -282,6 +293,7 @@ def inv_backtest_detail(
     cluster_assignment: str = Query(default="", max_length=120),
     abc_vol: str = Query(default="", max_length=40),
     region: str = Query(default="", max_length=120),
+    seasonality_profile: str = Query(default="", max_length=120),
     event_type: str = Query(default="all", max_length=20),
     excess_dos_threshold: int = Query(default=90, ge=1, le=365),
     limit: int = Query(default=50, ge=1, le=1000),
@@ -294,7 +306,7 @@ def inv_backtest_detail(
 
     parts, params = _inv_backtest_filters(
         models, month_from, month_to, item, location,
-        cluster_assignment, abc_vol, region,
+        cluster_assignment, abc_vol, region, seasonality_profile,
     )
     if event_type == "stockout":
         parts.append("eom_qty_on_hand <= 0")
@@ -312,7 +324,8 @@ def inv_backtest_detail(
         SELECT
             item_no, loc, month_start, model_id,
             forecast, actual_demand, eom_qty_on_hand, dos,
-            forecast_error, abs_error, bias_direction
+            forecast_error, abs_error, bias_direction,
+            seasonality_profile, zero_velocity_flag
         FROM mv_inventory_forecast_monthly
         {where_sql}
         ORDER BY {safe_sort} {safe_dir}
@@ -345,6 +358,8 @@ def inv_backtest_detail(
             "forecast_error": round(fc_err, 2),
             "pct_error": round(fc_err / actual * 100, 1) if actual != 0 else None,
             "bias_direction": r[10] or "exact",
+            "seasonality_profile": r[11] or "(unknown)",
+            "zero_velocity_flag": bool(r[12]) if r[12] is not None else False,
         })
 
     return {"total": total, "limit": limit, "offset": offset, "rows": detail_rows}

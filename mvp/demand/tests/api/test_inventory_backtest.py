@@ -54,7 +54,7 @@ async def test_summary_returns_200(mock_pool):
             assert "stockout_rate" in ext
             assert "excess_count" in ext
             assert "excess_rate" in ext
-            assert "service_level" in ext
+            assert "cycle_service_level" in ext
             assert "avg_dos" in ext
             assert "wape" in ext
             assert "bias" in ext
@@ -217,9 +217,10 @@ async def test_detail_returns_200(mock_pool):
     pool, _, cursor = mock_pool
     cursor.fetchone.return_value = (1,)
     # item_no, loc, month_start, model_id, forecast, actual_demand,
-    # eom_qty_on_hand, dos, forecast_error, abs_error, bias_direction
+    # eom_qty_on_hand, dos, forecast_error, abs_error, bias_direction,
+    # seasonality_profile, zero_velocity_flag
     cursor.fetchall.return_value = [
-        ("100320", "1401-BULK", "2025-06-01", "lgbm_cluster", 120.5, 150.0, 0, None, -29.5, 29.5, "under"),
+        ("100320", "1401-BULK", "2025-06-01", "lgbm_cluster", 120.5, 150.0, 0, None, -29.5, 29.5, "under", "seasonal_high", False),
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -240,6 +241,8 @@ async def test_detail_returns_200(mock_pool):
             assert row["event_type"] == "stockout"
             assert row["forecast_error"] == -29.5
             assert row["bias_direction"] == "under"
+            assert row["seasonality_profile"] == "seasonal_high"
+            assert row["zero_velocity_flag"] is False
 
 
 @pytest.mark.asyncio
@@ -290,3 +293,21 @@ async def test_detail_sort(mock_pool):
             # Invalid sort column falls back gracefully
             resp2 = await client.get("/inventory-backtest/detail?sort_by=nonexistent")
             assert resp2.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_seasonality_profile_filter(mock_pool):
+    """seasonality_profile filter is accepted on all endpoints."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = []
+    cursor.fetchone.return_value = (0,)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inventory-backtest/summary?seasonality_profile=seasonal_high")
+            assert resp.status_code == 200
+            resp2 = await client.get("/inventory-backtest/trend?seasonality_profile=flat")
+            assert resp2.status_code == 200
+            resp3 = await client.get("/inventory-backtest/detail?seasonality_profile=seasonal_high")
+            assert resp3.status_code == 200

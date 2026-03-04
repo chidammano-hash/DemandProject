@@ -385,6 +385,8 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 
 ## Important Conventions
 
+- **Config files for all modules:** Every module (script, job, computation pipeline) MUST externalize all configurable parameters into a YAML file under `mvp/demand/config/`. No magic numbers, thresholds, default values, or tuning knobs hardcoded inside Python scripts. Scripts load their config via `yaml.safe_load(open("config/<module>_config.yaml"))` at startup. Examples: `variability_config.yaml` (CV thresholds, history_months), `safety_stock_config.yaml` (service levels by ABC class, Z-table, guard rails), `eoq_config.yaml` (ordering cost, holding cost, MOQ source), `simulation_config.yaml` (n_simulations, random_seed), `replenishment_policy_config.yaml` (policy definitions, auto-assign rules). API endpoints that expose config values must read from the YAML file, not from hardcoded dicts.
+
 - **Null normalization:** `''`, `'null'`, `'none'`, `'NA'` all treated as NULL during load
 - **Type casting:** Integer/float/date fields auto-cast with null coercion in normalize scripts
 - **Lag computation:** `month_diff` auto-computed during forecast normalization

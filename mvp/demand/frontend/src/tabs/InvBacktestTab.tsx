@@ -197,7 +197,7 @@ export default function InvBacktestTab() {
     if (!summaryData?.by_model) return null;
     let best: { id: string; metrics: InvBacktestModelMetrics } | null = null;
     for (const [id, m] of Object.entries(summaryData.by_model)) {
-      if (!best || m.service_level > best.metrics.service_level) {
+      if (!best || m.cycle_service_level > best.metrics.cycle_service_level) {
         best = { id, metrics: m };
       }
     }
@@ -292,13 +292,13 @@ export default function InvBacktestTab() {
       ) : bestModel ? (
         <div className="flex flex-wrap gap-3">
           <KpiCard
-            label="Best Service Level"
-            value={`${formatNumber(bestModel.metrics.service_level)}%`}
+            label="Best Cycle Service Level (CSL)"
+            value={`${formatNumber(bestModel.metrics.cycle_service_level)}%`}
             sublabel={bestModel.id}
             severity={
-              bestModel.metrics.service_level >= 95
+              bestModel.metrics.cycle_service_level >= 95
                 ? "best"
-                : bestModel.metrics.service_level < 90
+                : bestModel.metrics.cycle_service_level < 90
                   ? "warning"
                   : "neutral"
             }
@@ -463,11 +463,11 @@ export default function InvBacktestTab() {
             </div>
           )}
 
-          {/* ---- Root Cause Breakdown ------------------------------------- */}
+          {/* ---- Forecast Bias Correlation -------------------------------- */}
           <div className="space-y-2">
             <div className="flex items-center gap-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                Root Cause — Why Events Happened
+                Forecast Bias Correlation
               </p>
               {summaryData?.models && (
                 <select
@@ -481,6 +481,9 @@ export default function InvBacktestTab() {
                 </select>
               )}
             </div>
+            <p className="text-xs text-muted-foreground italic">
+              Correlation between forecast bias direction and inventory events — not causal attribution
+            </p>
             {loadingRootCause ? (
               <LoadingElement tabKey="invBacktest" message="Loading root cause..." />
             ) : rootCauseChartData.length > 0 ? (

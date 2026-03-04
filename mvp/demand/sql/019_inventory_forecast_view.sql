@@ -46,7 +46,11 @@ SELECT
     COALESCE(d.cluster_assignment, '(unassigned)') AS cluster_assignment,
     COALESCE(d.abc_vol, '(unknown)')               AS abc_vol,
     COALESCE(d.region, '(unknown)')                AS region,
-    COALESCE(d.brand, '(unknown)')                 AS brand
+    COALESCE(d.brand, '(unknown)')                 AS brand,
+    COALESCE(d.seasonality_profile, '(unknown)')   AS seasonality_profile,
+    -- Zero-velocity flag: items with on-hand stock but no sales velocity cannot be
+    -- classified as excess via DOS (DOS=NULL). Flag them separately.
+    (i.avg_daily_sls = 0 AND i.eom_qty_on_hand > 0) AS zero_velocity_flag
 FROM agg_inventory_monthly i
 INNER JOIN fact_external_forecast_monthly f
     ON i.item_no = f.dmdunit
@@ -79,3 +83,9 @@ CREATE INDEX IF NOT EXISTS idx_mv_inv_fcst_stockout
     ON mv_inventory_forecast_monthly (model_id, month_start) WHERE is_stockout = TRUE;
 CREATE INDEX IF NOT EXISTS idx_mv_inv_fcst_excess
     ON mv_inventory_forecast_monthly (model_id, month_start) WHERE is_excess = TRUE;
+
+-- Seasonality and zero-velocity indexes
+CREATE INDEX IF NOT EXISTS idx_mv_inv_fcst_seasonality
+    ON mv_inventory_forecast_monthly (seasonality_profile);
+CREATE INDEX IF NOT EXISTS idx_mv_inv_fcst_zero_vel
+    ON mv_inventory_forecast_monthly (zero_velocity_flag) WHERE zero_velocity_flag = TRUE;
