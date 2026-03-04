@@ -25,6 +25,8 @@ vi.mock("@/api/queries", () => ({
     inventoryItemDetail: (p: Record<string, unknown>) => ["inventory-item-detail", p],
     variabilitySummary: (p: Record<string, unknown>) => ["variability-summary", p],
     variabilityDetail: (p: Record<string, unknown>) => ["variability-detail", p],
+    ltSummary: (p: Record<string, unknown>) => ["lt-summary", p],
+    ltProfile: (p: Record<string, unknown>) => ["lt-profile", p],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchInventoryPosition: vi.fn().mockResolvedValue({
@@ -71,6 +73,19 @@ vi.mock("@/api/queries", () => ({
     top_volatile: [],
   }),
   fetchVariabilityDetail: vi.fn().mockResolvedValue({
+    total: 0,
+    rows: [],
+  }),
+  fetchLtSummary: vi.fn().mockResolvedValue({
+    total_profiles: 80,
+    by_class: { stable: 50, moderate: 20, volatile: 10 },
+    avg_lt_cv: 0.12,
+    avg_lt_mean_days: 28.5,
+    lt_cv_p50: 0.09,
+    lt_cv_p95: 0.38,
+    top_volatile: [],
+  }),
+  fetchLtProfile: vi.fn().mockResolvedValue({
     total: 0,
     rows: [],
   }),

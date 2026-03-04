@@ -1,0 +1,15 @@
+# IPfeature2: Lead Time Variability Profiling
+# All thresholds and parameters for compute_lead_time_variability.py
+
+history:
+  history_months: 12          # rolling window of daily snapshot data to analyse
+
+change_point:
+  min_observations: 3         # minimum number of distinct LT change-points required
+
+cv_thresholds:
+  stable: 0.15                # lt_cv < 0.15 → stable
+  moderate: 0.40              # 0.15 ≤ lt_cv < 0.40 → moderate; ≥ 0.40 → volatile
+
+batch:
+  batch_size: 500             # rows per upsert batch

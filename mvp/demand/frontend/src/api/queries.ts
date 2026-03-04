@@ -80,6 +80,8 @@ export const queryKeys = {
   // Inventory Planning keys (IPfeature1+)
   variabilitySummary: (params: Record<string, unknown>) => ["variability-summary", params] as const,
   variabilityDetail: (params: Record<string, unknown>) => ["variability-detail", params] as const,
+  ltSummary: (params: Record<string, unknown>) => ["lt-summary", params] as const,
+  ltProfile: (params: Record<string, unknown>) => ["lt-profile", params] as const,
   // SHAP feature importance keys (Feature 42)
   shapModels: () => ["shap-models"] as const,
   shapSummary: (modelId: string, topN: number) => ["shap-summary", modelId, topN] as const,
@@ -856,4 +858,80 @@ export async function fetchVariabilityDetail(params: {
   if (params.abc_vol?.trim()) qs.set("abc_vol", params.abc_vol.trim());
   if (params.variability_class?.trim()) qs.set("variability_class", params.variability_class.trim());
   return fetchJson(`/inv-planning/variability/detail?${qs}`);
+}
+
+// ---------------------------------------------------------------------------
+// Inventory Planning — IPfeature2: Lead Time Variability
+// ---------------------------------------------------------------------------
+
+export interface LtSummaryPayload {
+  total_profiles: number;
+  by_class: { stable: number; moderate: number; volatile: number };
+  avg_lt_cv: number | null;
+  avg_lt_mean_days: number | null;
+  lt_cv_p50: number | null;
+  lt_cv_p95: number | null;
+  top_volatile: {
+    item_no: string;
+    loc: string;
+    lt_mean_days: number | null;
+    lt_std_days: number | null;
+    lt_cv: number | null;
+    lt_min_days: number | null;
+    lt_max_days: number | null;
+    observation_count: number | null;
+    lt_variability_class: string | null;
+  }[];
+}
+
+export interface LtProfileRow {
+  item_no: string;
+  loc: string;
+  lt_mean_days: number | null;
+  lt_std_days: number | null;
+  lt_cv: number | null;
+  lt_min_days: number | null;
+  lt_max_days: number | null;
+  lt_p25_days: number | null;
+  lt_p50_days: number | null;
+  lt_p75_days: number | null;
+  lt_p95_days: number | null;
+  observation_count: number | null;
+  observation_months: number | null;
+  lt_variability_class: string | null;
+  computed_at: string | null;
+}
+
+export interface LtProfilePayload {
+  total: number;
+  rows: LtProfileRow[];
+}
+
+export async function fetchLtSummary(params: {
+  abc_vol?: string;
+}): Promise<LtSummaryPayload> {
+  const qs = new URLSearchParams();
+  if (params.abc_vol?.trim()) qs.set("abc_vol", params.abc_vol.trim());
+  return fetchJson(`/inv-planning/lead-time/summary?${qs}`);
+}
+
+export async function fetchLtProfile(params: {
+  item?: string;
+  location?: string;
+  lt_variability_class?: string;
+  limit?: number;
+  offset?: number;
+  sort_by?: string;
+  sort_dir?: string;
+}): Promise<LtProfilePayload> {
+  const qs = new URLSearchParams({
+    limit: String(params.limit ?? 50),
+    offset: String(params.offset ?? 0),
+    sort_by: params.sort_by ?? "lt_cv",
+    sort_dir: params.sort_dir ?? "desc",
+  });
+  if (params.item?.trim()) qs.set("item", params.item.trim());
+  if (params.location?.trim()) qs.set("location", params.location.trim());
+  if (params.lt_variability_class?.trim()) qs.set("lt_variability_class", params.lt_variability_class.trim());
+  return fetchJson(`/inv-planning/lead-time/profile?${qs}`);
 }
