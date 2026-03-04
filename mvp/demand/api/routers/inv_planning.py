@@ -490,10 +490,9 @@ def lt_histogram(
 # IPfeature4 — EOQ & Cycle Stock
 # ---------------------------------------------------------------------------
 
-@router.get("/eoq/summary")
+@router.get("/inv-planning/eoq/summary")
 async def eoq_summary(abc_vol: str | None = None):
     """Portfolio EOQ summary with by-ABC breakdown."""
-    pool = _get_pool()
     wheres = []
     params: list = []
     if abc_vol:
@@ -525,7 +524,7 @@ async def eoq_summary(abc_vol: str | None = None):
         ORDER BY abc_vol
     """
 
-    with pool.connection() as conn:
+    with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(summary_sql, params)
             row = cur.fetchone()
@@ -571,7 +570,7 @@ _EOQ_SORT_COLS = {
 }
 
 
-@router.get("/eoq/detail")
+@router.get("/inv-planning/eoq/detail")
 async def eoq_detail(
     item: str | None = None,
     loc: str | None = None,
@@ -582,7 +581,6 @@ async def eoq_detail(
     offset: int = 0,
 ):
     """Paginated EOQ detail per item-location."""
-    pool = _get_pool()
     col = sort_by if sort_by in _EOQ_SORT_COLS else "total_annual_cost"
     direction = "DESC" if sort_dir.lower() != "asc" else "ASC"
 
@@ -614,7 +612,7 @@ async def eoq_detail(
         LIMIT %s OFFSET %s
     """
 
-    with pool.connection() as conn:
+    with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(count_sql, params)
             total = (cur.fetchone() or (0,))[0]
@@ -648,7 +646,7 @@ async def eoq_detail(
     }
 
 
-@router.get("/eoq/sensitivity")
+@router.get("/inv-planning/eoq/sensitivity")
 async def eoq_sensitivity(item: str | None = None, loc: str | None = None):
     """EOQ sensitivity curve: how EOQ changes as ordering_cost varies."""
     import yaml
@@ -659,17 +657,16 @@ async def eoq_sensitivity(item: str | None = None, loc: str | None = None):
     with open(config_path) as fh:
         config = yaml.safe_load(fh)
 
-    pool = _get_pool()
     if item and loc:
         sql = "SELECT demand_mean_monthly FROM fact_eoq_targets WHERE item_no = %s AND loc = %s LIMIT 1"
-        with pool.connection() as conn:
+        with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, [item, loc])
                 row = cur.fetchone()
         avg_demand = float(row[0]) if row and row[0] else 100.0
     else:
         sql = "SELECT AVG(demand_mean_monthly) FROM fact_eoq_targets WHERE demand_mean_monthly > 0"
-        with pool.connection() as conn:
+        with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql)
                 row = cur.fetchone()

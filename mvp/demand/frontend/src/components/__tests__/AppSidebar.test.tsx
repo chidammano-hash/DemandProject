@@ -20,13 +20,13 @@ function renderSidebar(props = {}) {
 }
 
 describe("AppSidebar", () => {
-  it("renders all 11 nav items", () => {
+  it("renders all nav items", () => {
     renderSidebar();
     // Each nav item renders as a button with the item label text
     for (const item of NAV_ITEMS) {
       expect(screen.getByText(item.label)).toBeInTheDocument();
     }
-    expect(NAV_ITEMS.length).toBe(11);
+    expect(NAV_ITEMS.length).toBe(12);
   });
 
   it("active item has aria-current='page'", () => {

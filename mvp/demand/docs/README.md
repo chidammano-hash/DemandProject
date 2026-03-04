@@ -258,6 +258,16 @@ Inventory Planning (feature34):
 - DDL: `make db-apply-inventory` (creates table + indexes + materialized view)
 - API: `GET /inventory/position`, `GET /inventory/kpis`, `GET /inventory/trend`, `GET /inventory/item-detail`
 
+EOQ & Inventory Planning (IPfeature4):
+- Inventory Planning tab with KPI cards (Avg EOQ, Total Cycle Stock, Avg Annual Cost), EOQ sensitivity chart (total cost vs order quantity), and paginated detail table
+- Per-item EOQ computed via Wilson formula with MOQ floor and max-months-supply cap
+- Config: `config/eoq_config.yaml` (ordering_cost: 50, holding_cost_pct: 0.25, moq: 1, max_eoq_months_supply: 6)
+- Script: `scripts/compute_eoq.py` — reads from `agg_inventory_monthly`, writes to `fact_eoq_targets`
+- DDL: `sql/024_create_eoq_targets.sql` — `fact_eoq_targets` table
+- Pipeline: `make eoq-all` (schema + compute)
+- Individual steps: `make eoq-schema`, `make eoq-compute`
+- API: `GET /inv-planning/eoq/summary`, `GET /inv-planning/eoq/detail`, `GET /inv-planning/eoq/sensitivity`
+
 Backtest Cleanup (feature23):
 - List model row counts: `make backtest-list`
 - Preview deletions: `make backtest-clean MODELS="--dry-run lgbm_cluster"`
@@ -344,7 +354,7 @@ Job Scheduler/Monitor with APScheduler (feature39):
 
 ## Testing
 
-Full-stack automated testing (512+ backend tests, <3s total):
+Full-stack automated testing (630+ backend tests, 238+ frontend tests):
 
 Backend (pytest):
 ```bash
@@ -358,7 +368,7 @@ make test-cov          # With coverage report
 Frontend (Vitest + React Testing Library):
 ```bash
 cd mvp/demand
-make ui-test           # All frontend tests (218 tests)
+make ui-test           # All frontend tests (238 tests)
 ```
 
 Both:
@@ -367,9 +377,9 @@ cd mvp/demand
 make test-all          # Backend + frontend
 ```
 
-Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py` (timeframe generation + recursive helpers), `common/feature_engineering.py` (update_grid_with_predictions), `common/mlflow_utils.py`, `common/db.py`, `common/shap_selector.py`, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters, dashboard, distinct values, jobs, shap).
+Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py` (timeframe generation + recursive helpers), `common/feature_engineering.py` (update_grid_with_predictions), `common/mlflow_utils.py`, `common/db.py`, `common/shap_selector.py`, `scripts/compute_eoq.py` (EOQ formulas, sensitivity curve), and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters, dashboard, distinct values, jobs, shap, inv-planning eoq).
 
-Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, `useSidebar`, `useGlobalFilters`), utilities (`formatters`, `export`, `queries`), contexts (`JobNotificationContext`, `ScenarioNotificationContext`), components (`Skeleton`, `KeyboardShortcutHelp`, `EChartContainer`, `AppSidebar`, `ThemeSelector`, `GlobalFilterBar`, `WidgetGrid`, `AlertPanel`, `TopMovers`, `HeatmapGrid`), and all tab components (including DashboardTab, JobsTab).
+Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, `useSidebar`, `useGlobalFilters`), utilities (`formatters`, `export`, `queries`), contexts (`JobNotificationContext`, `ScenarioNotificationContext`), components (`Skeleton`, `KeyboardShortcutHelp`, `EChartContainer`, `AppSidebar`, `ThemeSelector`, `GlobalFilterBar`, `WidgetGrid`, `AlertPanel`, `TopMovers`, `HeatmapGrid`), and all tab components (including DashboardTab, JobsTab, InvPlanningTab).
 
 **Rule:** Every new feature must include tests. See `docs/design-specs/feature31.md`.
 
@@ -412,4 +422,9 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - SHAP API router: `mvp/demand/api/routers/shap.py`
 - SHAP TypeScript types: `mvp/demand/frontend/src/types/shap.ts`
 - SHAP output: `mvp/demand/data/backtest/<model_id>/shap/` (shap_timeframe_XX.csv + shap_summary.csv)
-- Design specs: `docs/design-specs/` (feature1–feature44)
+- EOQ script: `mvp/demand/scripts/compute_eoq.py`
+- EOQ config: `mvp/demand/config/eoq_config.yaml`
+- EOQ DDL: `mvp/demand/sql/024_create_eoq_targets.sql`
+- Inventory Planning tab: `mvp/demand/frontend/src/tabs/InvPlanningTab.tsx`
+- Inventory Planning router: `mvp/demand/api/routers/inv_planning.py`
+- Design specs: `docs/design-specs/` (feature1–feature44, IPfeature4)
