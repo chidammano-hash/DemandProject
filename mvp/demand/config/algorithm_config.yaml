@@ -1,0 +1,91 @@
+# Algorithm configuration for Demand Studio backtesting (Feature 44)
+#
+# All three algorithms use per-cluster strategy — one model per DFU cluster.
+# Edit this file to control recursive inference, SHAP feature selection,
+# inline tuning, and default model hyperparameters.
+# No CLI flags needed; the backtest scripts read this file automatically.
+#
+# Usage:
+#   make backtest-lgbm             # run LGBM with these settings
+#   make backtest-catboost         # run CatBoost with these settings
+#   make backtest-xgboost          # run XGBoost with these settings
+#   make backtest-all              # run all three
+
+backtest:
+  n_timeframes: 10         # number of expanding-window timeframes (A–J)
+  output_dir: data/backtest
+
+algorithms:
+  lgbm:
+    enabled: true
+    model_id: lgbm_cluster
+
+    # ── Inference mode ────────────────────────────────────────────────────────
+    # recursive: feed each month's prediction back as qty_lag_1 for the next
+    #   true  = recursive multi-step (best for short-horizon lag signal)
+    #   false = direct multi-output (faster, all months scored in one batch)
+    recursive: true
+
+    # ── SHAP feature selection (Feature 42) ───────────────────────────────────
+    # shap_select: run SHAP after initial train, retrain on selected features
+    shap_select: true
+    # shap_threshold: cumulative SHAP importance to retain (0.0–1.0)
+    shap_threshold: 0.95
+    # shap_top_n: keep exactly N top features (null = use threshold instead)
+    shap_top_n: null
+    # shap_sample_size: rows sampled per cluster for SHAP computation
+    shap_sample_size: 500
+
+    # ── Hyperparameter tuning ─────────────────────────────────────────────────
+    # tune_inline: causal per-timeframe Optuna tuning (PL-002, no future leakage)
+    tune_inline: false
+    # params_file: path to pre-tuned JSON from tune_hyperparams.py
+    #   null  = use defaults below
+    #   e.g.  data/tuning/best_params_lgbm.json
+    params_file: null
+
+    # ── Default model hyperparameters ─────────────────────────────────────────
+    n_estimators: 500
+    learning_rate: 0.05
+    num_leaves: 31
+    min_child_samples: 20
+
+  catboost:
+    enabled: true
+    model_id: catboost_cluster
+
+    recursive: true
+
+    shap_select: true
+    shap_threshold: 0.95
+    shap_top_n: null
+    shap_sample_size: 500
+
+    tune_inline: false
+    params_file: null
+
+    iterations: 500
+    learning_rate: 0.05
+    depth: 6
+    l2_leaf_reg: 3.0
+
+  xgboost:
+    enabled: true
+    model_id: xgboost_cluster
+
+    recursive: true
+
+    shap_select: true
+    shap_threshold: 0.95
+    shap_top_n: null
+    shap_sample_size: 500
+
+    tune_inline: false
+    params_file: null
+
+    n_estimators: 500
+    learning_rate: 0.05
+    max_depth: 6
+    min_child_weight: 5
+    subsample: 0.8
+    colsample_bytree: 0.8

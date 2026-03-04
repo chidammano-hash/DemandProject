@@ -1,17 +1,14 @@
 """
-Run XGBoost backtesting with expanding-window timeframes.
+Run XGBoost backtesting with per-cluster strategy and expanding-window timeframes.
 
-Supports three strategies:
-  - global:      One XGBoost for all DFUs, ml_cluster as categorical feature (model_id=xgboost_global)
-  - per_cluster:  Separate XGBoost per ml_cluster (model_id=xgboost_cluster)
-  - transfer:    Global base model (no ml_cluster) → per-cluster fine-tune via xgb_model (model_id=xgboost_transfer)
+All run options (recursive, SHAP, tuning) are controlled via
+config/algorithm_config.yaml rather than CLI flags.
 
-Produces two CSVs:
-  - backtest_predictions.csv: execution-lag only (for fact_external_forecast_monthly)
-  - backtest_predictions_all_lags.csv: lag 0-4 archive (for backtest_lag_archive)
+Produces two CSVs under data/backtest/xgboost_cluster/:
+  - backtest_predictions.csv          (execution-lag row for DB load)
+  - backtest_predictions_all_lags.csv (lag 0-4 archive)
 """
 
-import argparse
 import sys
 import time
 from pathlib import Path
@@ -20,6 +17,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+import yaml
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,33 +33,7 @@ def _ts() -> str:
     return time.strftime("%H:%M:%S")
 
 
-# ── XGBoost training functions (model-specific) ──────────────────────────────
-
-
-def train_and_predict_global(
-    train_df: pd.DataFrame,
-    predict_df: pd.DataFrame,
-    feature_cols: list[str],
-    cat_cols: list[str],
-    params: dict,
-) -> tuple[pd.DataFrame, Any]:
-    """Train one global XGBoost and predict."""
-    t0 = time.time()
-    X_train = train_df[feature_cols]
-    y_train = train_df["qty"]
-    X_pred = predict_df[feature_cols]
-
-    print(f"    [{_ts()}] Training XGBoost global ({len(X_train):,} rows, {len(feature_cols)} features)...")
-    model = xgb.XGBRegressor(**params)
-    model.fit(X_train, y_train)
-    print(f"    [{_ts()}] Training done ({time.time() - t0:.1f}s)")
-
-    print(f"    [{_ts()}] Predicting {len(X_pred):,} rows...")
-    preds = model.predict(X_pred)
-    result = predict_df[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
-    result["basefcst_pref"] = np.maximum(preds, 0)
-    print(f"    [{_ts()}] Prediction done ({time.time() - t0:.1f}s total)")
-    return result, model
+# ── XGBoost per-cluster training function ────────────────────────────────────
 
 
 def train_and_predict_per_cluster(
@@ -78,15 +50,15 @@ def train_and_predict_per_cluster(
     models = {}
 
     clusters = sorted(train_df["ml_cluster"].dropna().unique())
-    print(f"    [{_ts()}] Training {len(clusters)} per-cluster models...")
+    print(f"    [{_ts()}] Training {len(clusters)} per-cluster XGBoost models...")
     for ci, cluster_label in enumerate(clusters, 1):
         train_c = train_df[train_df["ml_cluster"] == cluster_label]
         pred_c = predict_df[predict_df["ml_cluster"] == cluster_label]
 
         if len(train_c) < MIN_CLUSTER_ROWS or len(pred_c) == 0:
             if len(pred_c) > 0:
-                print(f"    [{_ts()}] Cluster {ci}/{len(clusters)} '{cluster_label}': skipped (train={len(train_c)}), "
-                      f"zeroing {len(pred_c)} predictions")
+                print(f"    [{_ts()}] Cluster {ci}/{len(clusters)} '{cluster_label}': "
+                      f"skipped (train={len(train_c)}), zeroing {len(pred_c)} predictions")
                 result = pred_c[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
                 result["basefcst_pref"] = 0.0
                 all_results.append(result)
@@ -108,90 +80,15 @@ def train_and_predict_per_cluster(
         print(f"    [{_ts()}] Cluster {ci}/{len(clusters)} '{cluster_label}': "
               f"train={len(train_c):,}, pred={len(pred_c):,} ({time.time() - t0:.1f}s)")
 
-    no_cluster = predict_df[predict_df["ml_cluster"].isna() | (predict_df["ml_cluster"] == "__unknown__")]
+    no_cluster = predict_df[
+        predict_df["ml_cluster"].isna() | (
+            (predict_df["ml_cluster"] == "__unknown__") & ("__unknown__" not in models)
+        )
+    ]
     if len(no_cluster) > 0:
-        print(f"    [{_ts()}] {len(no_cluster)} predict rows with no cluster → using 0")
+        print(f"    [{_ts()}] {len(no_cluster)} predict rows with no cluster → zeroing")
         result = no_cluster[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
         result["basefcst_pref"] = 0.0
-        all_results.append(result)
-
-    return pd.concat(all_results, ignore_index=True), models
-
-
-def train_and_predict_transfer(
-    train_df: pd.DataFrame,
-    predict_df: pd.DataFrame,
-    feature_cols: list[str],
-    cat_cols: list[str],
-    params: dict,
-    transfer_n_estimators: int = 100,
-    transfer_min_rows: int = 20,
-) -> tuple[pd.DataFrame, dict]:
-    """Transfer learning: global base → per-cluster fine-tune via xgb_model."""
-    feat_cols_no_cluster = [c for c in feature_cols if c != "ml_cluster"]
-
-    t0 = time.time()
-    X_train_all = train_df[feat_cols_no_cluster]
-    y_train_all = train_df["qty"]
-
-    print(f"    [{_ts()}] Phase 1: Training base XGBoost ({len(X_train_all):,} rows, "
-          f"{len(feat_cols_no_cluster)} features, no ml_cluster)...")
-    base_model = xgb.XGBRegressor(**params)
-    base_model.fit(X_train_all, y_train_all)
-    print(f"    [{_ts()}] Base model trained ({time.time() - t0:.1f}s)")
-
-    all_results = []
-    models = {"__base__": base_model}
-
-    clusters = sorted(train_df["ml_cluster"].dropna().unique())
-    clusters = [c for c in clusters if c != "__unknown__"]
-    print(f"    [{_ts()}] Phase 2: Fine-tuning {len(clusters)} clusters "
-          f"(min_rows={transfer_min_rows}, extra_trees={transfer_n_estimators})...")
-
-    for ci, cluster_label in enumerate(clusters, 1):
-        train_c = train_df[train_df["ml_cluster"] == cluster_label]
-        pred_c = predict_df[predict_df["ml_cluster"] == cluster_label]
-
-        if len(pred_c) == 0:
-            continue
-
-        if len(train_c) < transfer_min_rows:
-            print(f"    [{_ts()}] Cluster {ci}/{len(clusters)} '{cluster_label}': "
-                  f"train={len(train_c)} < {transfer_min_rows} → base model fallback")
-            X_pred = pred_c[feat_cols_no_cluster]
-            preds = base_model.predict(X_pred)
-            result = pred_c[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
-            result["basefcst_pref"] = np.maximum(preds, 0)
-            all_results.append(result)
-            continue
-
-        X_train_c = train_c[feat_cols_no_cluster]
-        y_train_c = train_c["qty"]
-        X_pred = pred_c[feat_cols_no_cluster]
-
-        t1 = time.time()
-        ft_params = {**params, "n_estimators": transfer_n_estimators}
-        ft_model = xgb.XGBRegressor(**ft_params)
-        ft_model.fit(
-            X_train_c, y_train_c,
-            xgb_model=base_model.get_booster(),
-        )
-        preds = ft_model.predict(X_pred)
-
-        result = pred_c[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
-        result["basefcst_pref"] = np.maximum(preds, 0)
-        all_results.append(result)
-        models[cluster_label] = ft_model
-        print(f"    [{_ts()}] Cluster {ci}/{len(clusters)} '{cluster_label}': "
-              f"train={len(train_c):,}, pred={len(pred_c):,}, fine-tuned ({time.time() - t1:.1f}s)")
-
-    no_cluster = predict_df[predict_df["ml_cluster"].isna() | (predict_df["ml_cluster"] == "__unknown__")]
-    if len(no_cluster) > 0:
-        print(f"    [{_ts()}] {len(no_cluster)} predict rows with no cluster → base model fallback")
-        X_pred = no_cluster[feat_cols_no_cluster]
-        preds = base_model.predict(X_pred)
-        result = no_cluster[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
-        result["basefcst_pref"] = np.maximum(preds, 0)
         all_results.append(result)
 
     return pd.concat(all_results, ignore_index=True), models
@@ -201,58 +98,38 @@ def train_and_predict_transfer(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run XGBoost backtest with expanding-window timeframes")
-    parser.add_argument("--cluster-strategy", choices=["global", "per_cluster", "transfer"], default="global",
-                        help="global: one model, per_cluster: model per ml_cluster, transfer: global base → per-cluster fine-tune")
+    import argparse
+    parser = argparse.ArgumentParser(description="Run XGBoost per-cluster backtest (settings from algorithm_config.yaml)")
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to algorithm_config.yaml (default: config/algorithm_config.yaml)")
     parser.add_argument("--model-id", type=str, default=None,
-                        help="Override model_id (default: xgboost_global, xgboost_cluster, or xgboost_transfer)")
-    parser.add_argument("--n-timeframes", type=int, default=10, help="Number of expanding windows")
-    parser.add_argument("--output-dir", type=str, default="data/backtest", help="Output directory")
-    parser.add_argument("--transfer-n-estimators", type=int, default=100,
-                        help="Number of additional trees for per-cluster fine-tuning (transfer strategy)")
-    parser.add_argument("--transfer-min-rows", type=int, default=20,
-                        help="Minimum cluster rows for fine-tuning; smaller clusters use base model (transfer strategy)")
-    parser.add_argument("--n-estimators", type=int, default=500)
-    parser.add_argument("--learning-rate", type=float, default=0.05)
-    parser.add_argument("--max-depth", type=int, default=6)
-    parser.add_argument("--min-child-weight", type=int, default=5)
-    parser.add_argument("--subsample", type=float, default=0.8)
-    parser.add_argument("--colsample-bytree", type=float, default=0.8)
-    parser.add_argument("--verbosity", type=int, default=0, help="XGBoost verbosity (0=silent)")
-    parser.add_argument("--params-file", type=str, default=None,
-                        help="Path to tuning JSON from tune_hyperparams.py (overrides defaults)")
-    parser.add_argument("--tune-inline", action="store_true",
-                        help="Run per-timeframe hyperparameter tuning (causal, no future data leakage). "
-                             "Mutually exclusive with --params-file.")
-    parser.add_argument("--tune-n-trials", type=int, default=None,
-                        help="Optuna trials per timeframe for --tune-inline "
-                             "(default: inline_n_trials from config)")
-    parser.add_argument("--tune-config", type=str, default=None,
-                        help="Path to hyperparameter_tuning.yaml for --tune-inline")
-    parser.add_argument("--shap-select", action="store_true",
-                        help="Enable per-timeframe SHAP feature selection + retrain on reduced feature set")
-    parser.add_argument("--shap-top-n", type=int, default=None,
-                        help="Keep exactly this many top SHAP features (default: cumulative threshold)")
-    parser.add_argument("--shap-threshold", type=float, default=0.95,
-                        help="Cumulative SHAP importance threshold for feature selection (default: 0.95)")
-    parser.add_argument("--shap-sample-size", type=int, default=500,
-                        help="Max rows to sample per cluster for SHAP computation (default: 500)")
-    parser.add_argument("--recursive", action="store_true",
-                        help="Recursive multi-step inference: feed predictions back as lag features (Feature 43)")
+                        help="Override model_id from config")
+    parser.add_argument("--n-timeframes", type=int, default=None,
+                        help="Override n_timeframes from config")
     args = parser.parse_args()
-
-    if args.params_file and args.tune_inline:
-        print("ERROR: --params-file and --tune-inline are mutually exclusive")
-        sys.exit(1)
 
     load_dotenv(ROOT / ".env")
 
-    _default_model_ids = {
-        "global": "xgboost_global",
-        "per_cluster": "xgboost_cluster",
-        "transfer": "xgboost_transfer",
-    }
-    model_id = args.model_id or _default_model_ids[args.cluster_strategy]
+    config_path = Path(args.config) if args.config else ROOT / "config" / "algorithm_config.yaml"
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+
+    algo = cfg["algorithms"]["xgboost"]
+    backtest_cfg = cfg.get("backtest", {})
+
+    model_id = args.model_id or algo.get("model_id", "xgboost_cluster")
+    n_timeframes = args.n_timeframes or backtest_cfg.get("n_timeframes", 10)
+    output_dir = ROOT / backtest_cfg.get("output_dir", "data/backtest")
+    recursive = algo.get("recursive", False)
+    shap_select = algo.get("shap_select", False)
+    shap_threshold = algo.get("shap_threshold", 0.95)
+    shap_top_n = algo.get("shap_top_n", None)
+    shap_sample_size = algo.get("shap_sample_size", 500)
+    tune_inline = algo.get("tune_inline", False)
+    params_file = algo.get("params_file", None)
+
+    print(f"[{_ts()}] XGBoost config: model_id={model_id}, recursive={recursive}, "
+          f"shap_select={shap_select}, tune_inline={tune_inline}, n_timeframes={n_timeframes}")
 
     # Detect GPU support for XGBoost
     _use_gpu = False
@@ -265,45 +142,41 @@ def main() -> None:
         print(f"[{_ts()}] GPU not available, falling back to CPU")
 
     xgb_params = {
-        "n_estimators": args.n_estimators,
-        "learning_rate": args.learning_rate,
-        "max_depth": args.max_depth,
-        "min_child_weight": args.min_child_weight,
-        "subsample": args.subsample,
-        "colsample_bytree": args.colsample_bytree,
-        "verbosity": args.verbosity,
+        "n_estimators": algo.get("n_estimators", 500),
+        "learning_rate": algo.get("learning_rate", 0.05),
+        "max_depth": algo.get("max_depth", 6),
+        "min_child_weight": algo.get("min_child_weight", 5),
+        "subsample": algo.get("subsample", 0.8),
+        "colsample_bytree": algo.get("colsample_bytree", 0.8),
+        "verbosity": 0,
         "random_state": 42,
         "n_jobs": -1,
         "enable_categorical": True,
         "tree_method": "hist",
     }
 
-    params_source = "defaults"
-    if args.params_file:
-        tuning_data = load_best_params(Path(args.params_file))
+    params_source = "config_defaults"
+    if params_file:
+        tuning_data = load_best_params(Path(params_file))
         tuned = tuning_data.get("best_params", {})
         n_est_tuned = tuning_data.get("best_n_estimators", None)
         xgb_params.update(tuned)
         if n_est_tuned:
             xgb_params["n_estimators"] = n_est_tuned
-        params_source = f"tuning_file:{args.params_file}"
-        print(f"[{_ts()}] Loaded tuned params from {args.params_file} "
+        params_source = f"tuning_file:{params_file}"
+        print(f"[{_ts()}] Loaded tuned params from {params_file} "
               f"(best_wape={tuning_data.get('best_wape')}%, n_est={xgb_params['n_estimators']})")
 
     if _use_gpu:
         xgb_params["device"] = "cuda"
 
-    # Build causal per-timeframe tuner when --tune-inline is set (PL-002 fix)
+    # Build causal per-timeframe tuner when tune_inline is set (PL-002)
     inline_tuner_fn = None
-    if args.tune_inline:
-        import yaml
-        _tune_config_path = Path(args.tune_config) if args.tune_config else (
-            ROOT / "config" / "hyperparameter_tuning.yaml"
-        )
+    if tune_inline:
+        _tune_config_path = ROOT / "config" / "hyperparameter_tuning.yaml"
         with open(_tune_config_path) as _f:
             _tune_config = yaml.safe_load(_f)
         _fold_fn = TRAIN_FOLD_FNS["xgboost"]
-        _n_trials = args.tune_n_trials
         _base_params = xgb_params.copy()
 
         def inline_tuner_fn(full_grid, feature_cols, cat_cols, train_end):
@@ -315,7 +188,7 @@ def main() -> None:
                 cat_cols=cat_cols,
                 cutoff_date=train_end,
                 config=_tune_config,
-                n_trials=_n_trials,
+                n_trials=None,
             )
             if not tuned:
                 return _base_params.copy()
@@ -325,7 +198,7 @@ def main() -> None:
             return result
 
         params_source = "inline_tuning"
-        print(f"[{_ts()}] Inline tuning enabled: {_tune_config_path} "
+        print(f"[{_ts()}] Inline tuning enabled "
               f"(inline_n_trials={_tune_config['tuning'].get('inline_n_trials', 20)}, "
               f"inline_n_splits={_tune_config['tuning'].get('inline_n_splits', 3)})")
 
@@ -333,52 +206,36 @@ def main() -> None:
 
     # Build SHAP feature selector closure (Feature 42)
     feature_selector_fn = None
-    if args.shap_select:
+    if shap_select:
         from common.shap_selector import compute_shap_global, compute_timeframe_shap
-        _shap_cluster_strategy = args.cluster_strategy
-        _shap_sample_size = args.shap_sample_size
-        _shap_threshold = args.shap_threshold
-        _shap_top_n = args.shap_top_n
 
         def feature_selector_fn(model_or_dict, train_data, feature_cols, cat_cols, tf_idx, cutoff):
             return compute_timeframe_shap(
                 model_or_dict, train_data, feature_cols, cat_cols,
                 tf_idx, cutoff,
                 shap_extractor_fn=compute_shap_global,
-                cluster_strategy=_shap_cluster_strategy,
-                sample_size=_shap_sample_size,
-                cumulative_threshold=_shap_threshold,
-                top_n=_shap_top_n,
+                cluster_strategy="per_cluster",
+                sample_size=shap_sample_size,
+                cumulative_threshold=shap_threshold,
+                top_n=shap_top_n,
             )
 
         print(f"[{_ts()}] SHAP feature selection enabled "
-              f"(threshold={args.shap_threshold}, top_n={args.shap_top_n}, sample={args.shap_sample_size})")
+              f"(threshold={shap_threshold}, top_n={shap_top_n}, sample={shap_sample_size})")
 
     run_tree_backtest(
         model_id=model_id,
-        cluster_strategy=args.cluster_strategy,
-        n_timeframes=args.n_timeframes,
-        output_dir=ROOT / args.output_dir,
+        n_timeframes=n_timeframes,
+        output_dir=output_dir,
         model_params=xgb_params,
         model_params_key="xgboost_params",
         model_type_tag="xgboost_backtest",
-        train_fn_global=train_and_predict_global,
         train_fn_per_cluster=train_and_predict_per_cluster,
-        train_fn_transfer=train_and_predict_transfer,
-        transfer_kwargs={
-            "transfer_n_estimators": args.transfer_n_estimators,
-            "transfer_min_rows": args.transfer_min_rows,
-        } if args.cluster_strategy == "transfer" else None,
-        extra_metadata={
-            **({"transfer_n_estimators": args.transfer_n_estimators,
-                "transfer_min_rows": args.transfer_min_rows}
-               if args.cluster_strategy == "transfer" else {}),
-            "params_source": params_source,
-        },
+        extra_metadata={"params_source": params_source},
         cat_dtype="category",
         inline_tuner_fn=inline_tuner_fn,
         feature_selector_fn=feature_selector_fn,
-        recursive=args.recursive,
+        recursive=recursive,
     )
 
 

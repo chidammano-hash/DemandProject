@@ -167,7 +167,7 @@ def update_grid_with_predictions(
         predictions: DataFrame with columns ``dfu_ck`` and ``basefcst_pref``.
     """
     df = grid.copy()
-    pred_map = predictions.set_index("dfu_ck")["basefcst_pref"]
+    pred_map = predictions.drop_duplicates(subset="dfu_ck", keep="first").set_index("dfu_ck")["basefcst_pref"]
     mask = df["startdate"] == month
     df.loc[mask, "qty"] = df.loc[mask, "dfu_ck"].map(pred_map).fillna(0)
 

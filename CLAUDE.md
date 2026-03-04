@@ -22,7 +22,7 @@
 | Lakehouse | Apache Iceberg via MinIO + Iceberg REST |
 | Big Data | Apache Spark 3.5 |
 | Query Engine | Trino |
-| ML / Clustering | scikit-learn, pandas, scipy, matplotlib, seaborn, StatsForecast, NeuralProphet |
+| ML / Clustering | scikit-learn, pandas, scipy, matplotlib, seaborn |
 | ML Tracking | MLflow |
 | Job Scheduling | APScheduler 3.11 (BackgroundScheduler + ThreadPoolExecutor) |
 | Python packaging | uv |
@@ -57,18 +57,16 @@
 | `mvp/demand/common/champion_strategies.py` | 5 champion strategies (expanding, rolling, decay, ensemble, meta_learner) + registry + leak guards |
 | `mvp/demand/scripts/simulate_champion_strategies.py` | Diagnostic: simulate all strategies, compare accuracy vs ceiling |
 | `mvp/demand/scripts/train_meta_learner.py` | Meta-learner training: ceiling labels as ground truth, temporal split |
-| `mvp/demand/common/backtest_framework.py` | Shared backtest orchestrator: `run_tree_backtest()`, timeframes, data loading, output saving; `_fill_predict_nans()`, `_predict_single_month()`, `recursive` param for recursive multi-step inference (Feature 43) |
+| `mvp/demand/common/backtest_framework.py` | Shared backtest orchestrator: `run_tree_backtest()` (per-cluster only), timeframes, data loading, output saving; `_fill_predict_nans()`, `_predict_single_month(models, predict_data, feature_cols)`, `recursive` param (Feature 43); config-driven via algorithm_config.yaml (Feature 44) |
 | `mvp/demand/common/feature_engineering.py` | Shared feature matrix: lag/rolling features, future masking, `cat_dtype` parameter; `update_grid_with_predictions()` for recursive inference write-back (Feature 43) |
 | `mvp/demand/common/metrics.py` | Shared accuracy metrics: WAPE, bias, accuracy % |
 | `mvp/demand/common/mlflow_utils.py` | Shared MLflow logging wrapper for backtest runs |
 | `mvp/demand/common/db.py` | Shared DB connection parameters |
 | `mvp/demand/common/constants.py` | Shared constants: `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output columns, thresholds |
-| `mvp/demand/scripts/run_backtest.py` | LGBM backtest: model-specific training functions (uses shared framework) |
-| `mvp/demand/scripts/run_backtest_catboost.py` | CatBoost backtest: model-specific training functions (uses shared framework) |
-| `mvp/demand/scripts/run_backtest_xgboost.py` | XGBoost backtest: model-specific training functions (uses shared framework) |
-| `mvp/demand/scripts/run_backtest_prophet.py` | Prophet backtest: per-DFU fitting with multiprocessing (uses shared utilities) |
-| `mvp/demand/scripts/run_backtest_statsforecast.py` | StatsForecast backtest: vectorized AutoARIMA + AutoETS (uses shared utilities) |
-| `mvp/demand/scripts/run_backtest_neuralprophet.py` | NeuralProphet backtest: PyTorch-based per-DFU fitting with GPU support (uses shared utilities) |
+| `mvp/demand/config/algorithm_config.yaml` | Per-algorithm config: recursive, shap_select, shap_threshold, shap_top_n, shap_sample_size, tune_inline, params_file, default hyperparameters (Feature 44) |
+| `mvp/demand/scripts/run_backtest.py` | LGBM backtest: per-cluster training function; reads config/algorithm_config.yaml (Feature 44) |
+| `mvp/demand/scripts/run_backtest_catboost.py` | CatBoost backtest: per-cluster training function; reads config/algorithm_config.yaml (Feature 44) |
+| `mvp/demand/scripts/run_backtest_xgboost.py` | XGBoost backtest: per-cluster training function; reads config/algorithm_config.yaml (Feature 44) |
 | `mvp/demand/scripts/load_backtest_forecasts.py` | Bulk load backtest predictions into Postgres (main + archive); supports `--model MODEL_ID`, `--all` (scan all subdirs), `--input PATH` |
 | `mvp/demand/scripts/tune_hyperparams.py` | Bayesian hyperparameter tuning via Optuna: walk-forward CV, TPE sampler, early stopping, outputs `data/tuning/best_params_<model>.json` |
 | `mvp/demand/common/tuning.py` | Shared tuning utilities: `generate_cv_month_splits`, `compute_wape_stabilised`, `suggest_params`, `save_best_params`, `load_best_params`, `best_rounds_to_n_estimators`, `tune_for_timeframe()` (per-timeframe causal tuning, PL-002), `TRAIN_FOLD_FNS` registry (`train_lgbm_fold`, `train_catboost_fold`, `train_xgboost_fold`) |
@@ -120,7 +118,7 @@
 | `mvp/demand/tests/api/conftest.py` | API test fixtures (mock DB pool, async httpx client) |
 | `mvp/demand/frontend/src/**/__tests__/` | Frontend test suites (Vitest + RTL) |
 | `docs/architecture-diagram.md` | Full-stack architecture diagram (layers, data flow, ML pipeline) |
-| `docs/design-specs/` | Feature specs (feature1–feature42) |
+| `docs/design-specs/` | Feature specs (feature1–feature44) |
 | `mvp/demand/api/core.py` | Shared API utilities: connection pool, OpenAI client, SQL helpers used by router modules |
 | `mvp/demand/api/auth.py` | Optional API key auth (`require_api_key` dependency; disabled when `API_KEY` env var unset) |
 | `mvp/demand/api/routers/` | Modular FastAPI router modules: 13 routers (accuracy, analysis, benchmark, chat, clusters, competition, dashboard, domains, intel, inv_backtest, inventory, jobs, shap) |
@@ -134,8 +132,6 @@
 | `mvp/demand/scripts/detect_seasonality.py` | Compute seasonality metrics per DFU (strength, profile, peak/trough month) |
 | `mvp/demand/scripts/update_seasonality_profiles.py` | Write seasonality profiles to `dim_dfu` in Postgres |
 | `mvp/demand/scripts/run_clustering_scenario.py` | What-If clustering: run trial KMeans with custom params + promote flow |
-| `mvp/demand/scripts/run_backtest_patchtst.py` | PatchTST backtest: deep-learning transformer model (Apple MPS GPU) |
-| `mvp/demand/scripts/run_backtest_deepar.py` | DeepAR backtest: LSTM probabilistic forecasting |
 | `mvp/demand/sql/013_add_composite_indexes.sql` | Composite B-tree indexes for multi-column query performance |
 | `mvp/demand/sql/015_add_seasonality_columns.sql` | DDL: 6 seasonality columns on `dim_dfu` (Feature 30) |
 | `mvp/demand/sql/016_add_seasonality_to_accuracy_views.sql` | DDL: seasonality joins in accuracy materialized views (Feature 32) |
@@ -203,30 +199,13 @@ make cluster-label     # Assign business labels to clusters
 make cluster-update    # Write cluster labels to dim_dfu in Postgres
 make cluster-all       # Run full clustering pipeline (features → train → label → update)
 
-# Backtesting (LGBM)
-make backtest-lgbm          # Run global LGBM backtest (10 expanding timeframes)
-make backtest-lgbm-cluster  # Run per-cluster LGBM backtest
-make backtest-lgbm-transfer # Run LGBM transfer learning backtest
-
-# Backtesting (CatBoost)
-make backtest-catboost          # Run global CatBoost backtest (10 expanding timeframes)
-make backtest-catboost-cluster  # Run per-cluster CatBoost backtest
-make backtest-catboost-transfer # Run CatBoost transfer learning backtest
-
-# Backtesting (XGBoost)
-make backtest-xgboost          # Run global XGBoost backtest (10 expanding timeframes)
-make backtest-xgboost-cluster  # Run per-cluster XGBoost backtest
-make backtest-xgboost-transfer # Run XGBoost transfer learning backtest
-
-# Backtesting (StatsForecast)
-make backtest-statsforecast          # Run global StatsForecast backtest (AutoARIMA+AutoETS, ~100x faster)
-make backtest-statsforecast-cluster  # Run per-cluster StatsForecast backtest
-make backtest-statsforecast-pooled   # Run StatsForecast pooled cluster backtest
-
-# Backtesting (NeuralProphet)
-make backtest-neuralprophet          # Run global NeuralProphet backtest (PyTorch GPU)
-make backtest-neuralprophet-cluster  # Run per-cluster NeuralProphet backtest
-make backtest-neuralprophet-pooled   # Run NeuralProphet pooled cluster backtest
+# Backtesting (Feature 44 — config-driven, per-cluster only)
+# Edit config/algorithm_config.yaml to enable SHAP, recursive, tune_inline, params_file, etc.
+make backtest-lgbm          # Run LGBM per-cluster backtest (reads config/algorithm_config.yaml)
+make backtest-catboost      # Run CatBoost per-cluster backtest
+make backtest-xgboost       # Run XGBoost per-cluster backtest
+make backtest-all           # Run all three sequentially (LGBM → CatBoost → XGBoost)
+make backtest-all-parallel  # Run all three in parallel (logs → data/backtest/logs/)
 
 # Hyperparameter tuning (Feature 41)
 make tune-lgbm              # Tune LGBM hyperparameters via Optuna (50 trials, ~20-40 min) → data/tuning/best_params_lgbm.json
@@ -234,51 +213,11 @@ make tune-catboost          # Tune CatBoost hyperparameters (~30-60 min) → dat
 make tune-xgboost           # Tune XGBoost hyperparameters (~25-50 min) → data/tuning/best_params_xgboost.json
 make tune-all               # Run all three tuning jobs sequentially
 
-# Honest backtesting with per-timeframe causal tuning (PL-002 fix — no data leakage)
-make backtest-lgbm-cluster-tuned       # LGBM per-cluster with inline per-timeframe tuning
-make backtest-catboost-cluster-tuned   # CatBoost per-cluster with inline per-timeframe tuning
-make backtest-xgboost-cluster-tuned    # XGBoost per-cluster with inline per-timeframe tuning
-
-# Backtesting with tuned parameters (Feature 41)
-make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"
-make backtest-catboost-cluster ARGS="--params-file data/tuning/best_params_catboost.json"
-make backtest-xgboost-cluster ARGS="--params-file data/tuning/best_params_xgboost.json"
-
-# Backtesting with SHAP feature selection (Feature 42) — all strategies
-make backtest-lgbm-shap                  # LGBM global + SHAP
-make backtest-lgbm-cluster-shap          # LGBM per-cluster + SHAP
-make backtest-lgbm-transfer-shap         # LGBM transfer + SHAP
-make backtest-catboost-shap              # CatBoost global + SHAP
-make backtest-catboost-cluster-shap      # CatBoost per-cluster + SHAP
-make backtest-catboost-transfer-shap     # CatBoost transfer + SHAP
-make backtest-xgboost-shap              # XGBoost global + SHAP
-make backtest-xgboost-cluster-shap       # XGBoost per-cluster + SHAP
-make backtest-xgboost-transfer-shap      # XGBoost transfer + SHAP
-# Advanced: top-N features, custom threshold, composable with tune-inline
-make backtest-lgbm-cluster-shap ARGS="--shap-top-n 10"
-make backtest-lgbm-cluster-tuned ARGS="--shap-select"  # tune + SHAP in one run
-
-# Backtesting with recursive multi-step inference (Feature 43)
-make backtest-lgbm-recursive               # LGBM global + recursive
-make backtest-lgbm-cluster-recursive       # LGBM per-cluster + recursive
-make backtest-lgbm-transfer-recursive      # LGBM transfer + recursive
-make backtest-catboost-recursive           # CatBoost global + recursive
-make backtest-catboost-cluster-recursive   # CatBoost per-cluster + recursive
-make backtest-catboost-transfer-recursive  # CatBoost transfer + recursive
-make backtest-xgboost-recursive            # XGBoost global + recursive
-make backtest-xgboost-cluster-recursive    # XGBoost per-cluster + recursive
-make backtest-xgboost-transfer-recursive   # XGBoost transfer + recursive
-# Composable with SHAP and inline tuning
-make backtest-lgbm-cluster-recursive ARGS="--shap-select"
-make backtest-lgbm-cluster-recursive ARGS="--tune-inline"
-make backtest-lgbm-cluster-recursive ARGS="--shap-select --tune-inline"
-
 # Backtest loading (shared across all models)
 make backtest-load MODEL=lgbm_cluster   # Load one model from data/backtest/lgbm_cluster/
 make backtest-load MODEL=catboost_cluster
 make backtest-load MODEL=xgboost_cluster
 make backtest-load-all      # Load ALL models found under data/backtest/*/
-make backtest-all           # backtest-lgbm + backtest-load (lgbm_global)
 
 # Champion model selection
 make champion-select        # Run per-DFU champion selection (best-of-models via configurable strategy)
@@ -294,7 +233,7 @@ make seasonality-all        # Full pipeline: schema + detect + update
 
 # Backtest cleanup
 make backtest-list          # List model_id row counts in forecast + archive tables
-make backtest-clean MODELS="lgbm_global deepar_global"  # Remove specific model predictions
+make backtest-clean MODELS="lgbm_cluster catboost_cluster"  # Remove specific model predictions
 
 # Forecast date-range cleanup
 make forecast-clean-list                                             # List row counts by model + month
@@ -458,11 +397,11 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Chat endpoint:** `POST /chat` — OpenAI-powered NL→SQL with pgvector context retrieval. Read-only execution with 5s timeout and 500-row limit. Requires `OPENAI_API_KEY` in `.env`.
 - **DFU clustering:** KMeans-based clustering pipeline groups DFUs by demand patterns. Feature engineering extracts time series, item, and DFU features. Cluster labels (e.g., `high_volume_steady`, `seasonal_medium_volume`) stored in `dim_dfu.cluster_assignment`. MLflow tracks experiments under `dfu_clustering`. Config in `config/clustering_config.yaml`.
 - **Champion model selection:** Configurable per-DFU per-month champion selection via 5 strategies: expanding (cumulative WAPE), rolling (last N months), decay (exponential weighting), ensemble (blend top-K models), meta_learner (ML classifier). All strategies enforce **exec-lag-aware strict causality** — selection for month T with execution_lag=L uses ONLY data from months where `startdate < T − L` (i.e. `startdate < fcstdate`), implemented as `shift(exec_lag + 1)` per DFU-model group. This prevents using actuals that weren't available when the forecast was issued. With `exec_lag=0` the behaviour is identical to `shift(1)` (backward compatible). **Fallback model** (`fallback_model_id: lgbm_cluster` by default): DFU-months in the warm-up period (first `exec_lag + min_dfu_rows` months with insufficient prior history) are filled with the fallback model's forecast so every DFU-month always has a champion row. Strategy registry in `common/champion_strategies.py`. Config in `config/model_competition.yaml` controls competing models, metric, lag, `min_dfu_rows`, `fallback_model_id`, `strategy`, and `strategy_params`. Champion rows stored as `model_id='champion'` in `fact_external_forecast_monthly`. Ceiling (oracle) picks the best model per DFU per month with perfect foresight (after-the-fact), stored as `model_id='ceiling'`. Both at DFU-month granularity with consistent WAPE formula `SUM(|F-A|) / |SUM(A)|`. Gap-to-ceiling quantifies improvement opportunity. Meta-learner uses ceiling labels as ground truth with strict temporal train/test split. Simulation script (`scripts/simulate_champion_strategies.py`) runs all strategies and compares accuracy vs ceiling. UI panel in Accuracy tab shows champion + ceiling KPI cards, gap-to-ceiling indicator, and dual model wins bar charts.
-- **Shared backtest framework:** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) use `common/backtest_framework.py` as a shared orchestrator via `run_tree_backtest()`. Each script implements only model-specific training functions passed as callables. Prophet and NeuralProphet use shared utilities but orchestrate their own per-DFU fitting loops. StatsForecast uses shared utilities with vectorized batch fitting (no per-DFU loop, ~100x faster than Prophet). Shared modules in `common/`: `backtest_framework.py`, `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py` (CV splits, fold functions, per-timeframe inline tuner), `shap_selector.py` (SHAP extraction, feature selection, CSV output). `run_tree_backtest()` accepts optional `inline_tuner_fn` parameter (PL-002): when provided, each timeframe calls the tuner before training using only causally available data. `run_tree_backtest()` also accepts optional `feature_selector_fn` parameter (Feature 42): when provided, each timeframe computes SHAP after the initial model and retrains on the selected feature subset. `run_tree_backtest()` also accepts `recursive: bool = False` parameter (Feature 43): when `True`, enables recursive multi-step inference where each month's prediction is fed back as a lag feature for the next month via `update_grid_with_predictions()`.
+- **Shared backtest framework (Feature 44 — per-cluster only):** All tree-based backtest scripts (LGBM, CatBoost, XGBoost) use `common/backtest_framework.py` as a shared orchestrator via `run_tree_backtest()`. Each script implements only `train_fn_per_cluster` (global and transfer strategies were removed in Feature 44). Algorithm options (recursive, shap_select, tune_inline, params_file, hyperparameters) are read from `config/algorithm_config.yaml` — not from CLI flags. Shared modules in `common/`: `backtest_framework.py`, `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py` (CV splits, fold functions, per-timeframe inline tuner), `shap_selector.py` (SHAP extraction, feature selection, CSV output). `run_tree_backtest()` optional parameters: `inline_tuner_fn` (PL-002, per-timeframe causal tuning), `feature_selector_fn` (Feature 42, SHAP retraining), `recursive: bool = False` (Feature 43, recursive multi-step inference via `update_grid_with_predictions()`). `_predict_single_month(models, predict_data, feature_cols)` routes each recursive inference step to the correct cluster model.
 - **Backtest output paths (model-scoped subdirectories):** Each backtest run writes output to `data/backtest/<model_id>/` (e.g., `data/backtest/lgbm_cluster/backtest_predictions.csv`). Multiple models can be run sequentially without overwriting each other. Load with `make backtest-load MODEL=<model_id>` or `make backtest-load-all` (scans all subdirs). See PL-001 in `docs/PARKING_LOT.md` for history.
-- **Hyperparameter tuning (Feature 41):** Bayesian Optuna tuning for LGBM, CatBoost, XGBoost cluster models. Walk-forward CV with causal masking (`mask_future_sales()` inside every fold). WAPE stabilised with denominator floor. `n_estimators` determined by early stopping (not in search space). Outputs `data/tuning/best_params_<model>.json` with `best_params` + `best_n_estimators` + per-cluster WAPEs. Backtest scripts accept `--params-file` to override defaults: `make backtest-catboost-cluster ARGS="--params-file data/tuning/best_params_catboost.json"`. Make targets: `tune-lgbm`, `tune-catboost`, `tune-xgboost`, `tune-all`. MLflow experiment: `hyperparameter_tuning`. Config: `config/hyperparameter_tuning.yaml`. Shared utilities: `common/tuning.py`. **Two-mode workflow:** (1) Production scoring: tune once on full history (`make tune-lgbm`), apply via `--params-file` — fastest path, no future leakage for production use. (2) Honest backtesting: per-timeframe causal tuning via `--tune-inline` flag (PL-002 fix) — each timeframe tunes on only the data available at that point in time; no future leakage into backtest accuracy metrics. Make targets: `backtest-lgbm-cluster-tuned`, `backtest-catboost-cluster-tuned`, `backtest-xgboost-cluster-tuned`. `TRAIN_FOLD_FNS` registry in `common/tuning.py` exposes shared fold functions for both global tuning and inline tuner.
-- **SHAP feature selection (Feature 42):** Per-timeframe automatic feature selection using SHAP values for LGBM, CatBoost, and XGBoost backtests. Activated by `--shap-select` CLI flag. Flow per timeframe: (1) train initial model on all features, (2) compute SHAP via `common/shap_selector.py`, (3) select features covering 95% cumulative SHAP mass (or exactly `--shap-top-n` features), (4) retrain final model on selected features. CatBoost uses native `get_feature_importance(type="ShapValues")`; LGBM/XGBoost use `shap.TreeExplainer` (requires `shap>=0.43.0`). For per-cluster/transfer strategies, SHAP is pooled across clusters weighted by cluster size; `ml_cluster` is excluded from the effective feature set. Output written to `data/backtest/<model_id>/shap/shap_timeframe_XX.csv` (per-timeframe) and `shap_summary.csv` (cross-timeframe). Served via 4 read-only REST endpoints under `/forecast/shap/` (no DB queries — CSV-based). `--shap-select` is fully composable with `--tune-inline` (PL-002) and `--params-file`. Make targets: 9 total — `backtest-{lgbm,catboost,xgboost}-{shap,cluster-shap,transfer-shap}` (global/per-cluster/transfer for each model). CLI flags: `--shap-select`, `--shap-top-n`, `--shap-threshold` (default 0.95), `--shap-sample-size` (default 500). Graceful fallback: if SHAP computation fails, all features are kept and the backtest continues.
-- **Recursive multi-step forecasting (Feature 43):** `--recursive` CLI flag on LGBM, CatBoost, and XGBoost backtest scripts. In direct mode (default), all future months are predicted from the same lag-1-zero baseline (masked sales = 0 for months 2+). In recursive mode, each month in the prediction window is forecast one at a time; the model's prediction for month T is written back into the feature grid via `update_grid_with_predictions()` in `common/feature_engineering.py`, recomputing all lag and rolling features before month T+1 is scored. This gives `qty_lag_1` a real signal (model's own prior prediction) instead of zero. `_predict_single_month()` in `common/backtest_framework.py` handles routing to global / per_cluster / transfer models during the recursive loop (inference-only, no retraining). `_fill_predict_nans()` fills numeric NaNs per-month. `recursive: bool = False` is the parameter on `run_tree_backtest()`. Composable with `--shap-select` (SHAP retrain updates inference model and first-month preds so entire recursive chain uses selected features), `--tune-inline` (PL-002), and `--params-file`. `"recursive": true` written to `backtest_metadata.json` for traceability. No API, frontend, or DB changes. Make targets: 9 total — `backtest-{lgbm,catboost,xgboost}-{recursive,cluster-recursive,transfer-recursive}`. Trade-off: richer near-horizon signal vs potential error compounding across months.
+- **Hyperparameter tuning (Feature 41):** Bayesian Optuna tuning for LGBM, CatBoost, XGBoost cluster models. Walk-forward CV with causal masking (`mask_future_sales()` inside every fold). WAPE stabilised with denominator floor. `n_estimators` determined by early stopping (not in search space). Outputs `data/tuning/best_params_<model>.json` with `best_params` + `best_n_estimators` + per-cluster WAPEs. Apply tuned params by setting `params_file: data/tuning/best_params_lgbm.json` in `config/algorithm_config.yaml` (Feature 44). Make targets: `tune-lgbm`, `tune-catboost`, `tune-xgboost`, `tune-all`. MLflow experiment: `hyperparameter_tuning`. Config: `config/hyperparameter_tuning.yaml`. Shared utilities: `common/tuning.py`. **Two-mode workflow:** (1) Production scoring: tune once on full history (`make tune-lgbm`), apply via `params_file` in algorithm config — fastest path, no future leakage for production use. (2) Honest backtesting: per-timeframe causal tuning via `tune_inline: true` in algorithm config (PL-002 fix) — each timeframe tunes on only the data available at that point in time; no future leakage into backtest accuracy metrics. `TRAIN_FOLD_FNS` registry in `common/tuning.py` exposes shared fold functions for both global tuning and inline tuner.
+- **SHAP feature selection (Feature 42):** Per-timeframe automatic feature selection using SHAP values for LGBM, CatBoost, and XGBoost backtests. Activated by `shap_select: true` in `config/algorithm_config.yaml` (Feature 44). Flow per timeframe: (1) train initial model on all features, (2) compute SHAP via `common/shap_selector.py`, (3) select features covering 95% cumulative SHAP mass (or exactly `shap_top_n` features), (4) retrain final model on selected features. CatBoost uses native `get_feature_importance(type="ShapValues")`; LGBM/XGBoost use `shap.TreeExplainer` (requires `shap>=0.43.0`). SHAP is pooled across clusters weighted by cluster size; `ml_cluster` is excluded from the effective feature set. Output written to `data/backtest/<model_id>/shap/shap_timeframe_XX.csv` (per-timeframe) and `shap_summary.csv` (cross-timeframe). Served via 4 read-only REST endpoints under `/forecast/shap/` (no DB queries — CSV-based). Composable with `tune_inline` (PL-002) and `params_file` via config keys. Config keys: `shap_select`, `shap_top_n`, `shap_threshold` (default 0.95), `shap_sample_size` (default 500). Graceful fallback: if SHAP computation fails, all features are kept and the backtest continues.
+- **Recursive multi-step forecasting (Feature 43):** Enabled via `recursive: true` in `config/algorithm_config.yaml` (Feature 44). In direct mode (default), all future months are predicted from the same lag-1-zero baseline (masked sales = 0 for months 2+). In recursive mode, each month in the prediction window is forecast one at a time; the model's prediction for month T is written back into the feature grid via `update_grid_with_predictions()` in `common/feature_engineering.py`, recomputing all lag and rolling features before month T+1 is scored. This gives `qty_lag_1` a real signal (model's own prior prediction) instead of zero. `_predict_single_month(models, predict_data, feature_cols)` in `common/backtest_framework.py` routes inference to the correct cluster model dict during the recursive loop (inference-only, no retraining). `_fill_predict_nans()` fills numeric NaNs per-month. `recursive: bool = False` is the parameter on `run_tree_backtest()`. Composable with `shap_select` and `tune_inline` via config keys. `"recursive": true` written to `backtest_metadata.json` for traceability. No API, frontend, or DB changes. Trade-off: richer near-horizon signal vs potential error compounding across months.
 - **Market intelligence:** `POST /market-intelligence` — combines Google Custom Search API (product news/trends) + GPT-4o narrative synthesis for item + location pairs. Looks up item metadata (description, brand, category) from `dim_item` and location state from `dim_location`. Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` in `.env`.
 - **Backtest cleanup:** `scripts/clean_backtest_models.py` selectively removes model predictions from `fact_external_forecast_monthly` and `backtest_lag_archive` by `model_id`, then refreshes 5 materialized views. Supports `--list`, `--dry-run`, `--all-backtest` (excludes `external`). Make targets: `backtest-clean`, `backtest-list`.
 - **Forecast date-range cleanup:** `scripts/clean_forecasts_by_date.py` deletes rows from `fact_external_forecast_monthly` and/or `backtest_lag_archive` by time bucket. Supports `--before`, `--after`, `--between` date range filters and `--months` for specific month(s) on `startdate` (default) or `fcstdate`, optional `--model` filter, `--forecast-only`/`--archive-only` scope, `--dry-run` preview, and `--list` for row counts by model+month. All dates normalized to month-start. Refreshes same 5 materialized views as `clean_backtest_models.py`. Make targets: `forecast-clean`, `forecast-clean-list`.
@@ -476,6 +415,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Vite dev server proxy:** `frontend/vite.config.ts` proxies all API path prefixes (`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`) to the FastAPI backend at `http://127.0.0.1:8000`. **CRITICAL:** When adding a new API path prefix, you MUST add a corresponding proxy entry in `vite.config.ts` or the frontend will receive HTML instead of JSON. Restart the Vite dev server (`make ui`) after changes.
 - **Single theme with light/dark modes:** Only the "General" (Demand Studio) product theme remains. `useTheme()` manages light/dark color mode. `ThemeSelector` in sidebar footer provides light/dark toggle. No theme cycling, no motifs.
 - **Theme context (no prop-drilling):** Tab components access the current theme via `useThemeContext()` from `context/ThemeContext.tsx` or `useChartColors()` from `hooks/useChartColors.ts` — NOT via a `theme` prop from `App.tsx`. `ThemeProvider` wraps the app tree in `App.tsx`. `useChartColors()` returns `{ theme, chartColors, trendColors }` for Recharts styling. `ScenarioCharts` component extracted to `components/ScenarioCharts.tsx` (elbow, silhouette, radar, pie, gap charts).
+- **Algorithm configuration (Feature 44):** All backtest algorithm options are controlled by `config/algorithm_config.yaml`, not CLI flags. Backtest scripts for LGBM, CatBoost, and XGBoost accept only `--config`, `--model-id`, and `--n-timeframes`. Features (recursive, shap_select, tune_inline, params_file, default hyperparameters) are set per-algorithm in the YAML file. Only per-cluster strategy (`lgbm_cluster`, `catboost_cluster`, `xgboost_cluster`) is supported — global and transfer strategies were removed. Prophet, StatsForecast, NeuralProphet, PatchTST, and DeepAR scripts were deleted. `run_tree_backtest()` only accepts `train_fn_per_cluster`; `_predict_single_month(models, predict_data, feature_cols)` no longer takes a `cluster_strategy` argument.
 
 ---
 
@@ -524,6 +464,7 @@ Located in `docs/design-specs/`:
 - `feature41.md` — Hyperparameter Tuning for Tree-Based Cluster Models (Optuna Bayesian optimization, walk-forward CV, early stopping, model-scoped output dirs, --params-file integration)
 - `feature42.md` — SHAP-Based Per-Timeframe Feature Selection (LGBM/CatBoost/XGBoost, cumulative importance threshold, cluster-pooled SHAP, CSV output, 4 REST endpoints, Accuracy tab UI panel)
 - `feature43.md` — Recursive Multi-Step Forecasting (--recursive flag, update_grid_with_predictions, _predict_single_month, per-month lag write-back, composable with SHAP + inline tuning, 9 Makefile targets, 19 unit tests)
+- `feature44.md` — Algorithm Configuration & Simplification (algorithm_config.yaml, per-cluster only, removed Prophet/StatsForecast/NeuralProphet/PatchTST/DeepAR, simplified run_tree_backtest, 4 Makefile targets, 512 backend tests)
 - `theme-testing-strategy.md` — Multi-Theme Testing Strategy (unit tests implemented; integration/a11y/perf tests pending)
 - `docs/REFACTORING_RECOMMENDATIONS.md` — Comprehensive codebase refactoring roadmap
 

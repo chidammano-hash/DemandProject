@@ -96,12 +96,12 @@ Cluster assignments are filterable in the Data Explorer via the `cluster_assignm
 
 Two modes — choose based on your goal:
 
-| Mode | When to use | Command |
+| Mode | When to use | How to activate (Feature 44) |
 |---|---|---|
-| **Global** — tune once on full history, apply via `--params-file` | Production scoring, fastest path | `make tune-lgbm` |
-| **Inline** — per-timeframe causal tuning inside each backtest fold | Honest backtest evaluation, no future leakage (PL-002) | `make backtest-lgbm-cluster-tuned` |
+| **Global** — tune once on full history, apply via `params_file` | Production scoring, fastest path | `make tune-lgbm` → set `params_file: data/tuning/best_params_lgbm.json` in `config/algorithm_config.yaml` |
+| **Inline** — per-timeframe causal tuning inside each backtest fold | Honest backtest evaluation, no future leakage (PL-002) | Set `tune_inline: true` in `config/algorithm_config.yaml`, then `make backtest-lgbm` |
 
-> **Warning:** Using a globally tuned `--params-file` in backtests introduces temporal leakage — the tuner sees future timeframes. Use inline tuning for unbiased backtest accuracy.
+> **Warning:** Using a globally tuned `params_file` in backtests introduces temporal leakage — the tuner sees future timeframes. Use `tune_inline: true` for unbiased backtest accuracy.
 
 **Global tuning (Mode A):**
 ```bash
@@ -111,16 +111,11 @@ make tune-xgboost   # ~25–50 min  → data/tuning/best_params_xgboost.json
 make tune-all       # All three sequentially
 ```
 
-Each JSON file contains `best_params`, `best_n_estimators`, per-cluster WAPEs, and CV fold metrics. Apply in backtest via `ARGS="--params-file data/tuning/best_params_<model>.json"`.
+Each JSON file contains `best_params`, `best_n_estimators`, per-cluster WAPEs, and CV fold metrics. Apply in backtest by setting `params_file: data/tuning/best_params_<model>.json` in `config/algorithm_config.yaml` (Feature 44).
 
 **Inline per-timeframe tuning (Mode B, PL-002 fix):**
-```bash
-make backtest-lgbm-cluster-tuned       # 10 timeframes × 20 trials × 3 folds (~2–3× slower)
-make backtest-catboost-cluster-tuned
-make backtest-xgboost-cluster-tuned
-```
 
-Each timeframe tunes only on data available up to its training cutoff — no future leakage into backtest accuracy metrics.
+Set `tune_inline: true` in `config/algorithm_config.yaml` for the relevant algorithm section, then run `make backtest-lgbm` (or catboost/xgboost). This is equivalent to the old `--tune-inline` flag — each of the 10 timeframes (~20 trials × 3 folds, ~2–3× slower) tunes on only data available up to its training cutoff — no future leakage into backtest accuracy metrics.
 
 ### 3.3 Backtesting
 
@@ -128,139 +123,69 @@ Each backtest run writes to a **model-scoped subdirectory** so multiple models c
 - `data/backtest/<model_id>/backtest_predictions.csv` — execution-lag predictions (→ `fact_external_forecast_monthly`)
 - `data/backtest/<model_id>/backtest_predictions_all_lags.csv` — lag 0–4 archive (→ `backtest_lag_archive`)
 
-**Architecture:** Tree-based models (LGBM, CatBoost, XGBoost) share `common/backtest_framework.py` via `run_tree_backtest()`. Each script provides only model-specific training functions. Shared modules: `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py`. Prophet and NeuralProphet orchestrate their own per-DFU fitting loops. StatsForecast uses vectorized batch fitting (~100× faster than Prophet).
+**Architecture (Feature 44):** Tree-based models (LGBM, CatBoost, XGBoost) share `common/backtest_framework.py` via `run_tree_backtest()` — per-cluster strategy only. Each script provides only `train_and_predict_per_cluster()`. Algorithm options (recursive, shap_select, tune_inline, params_file, hyperparameters) are read from `config/algorithm_config.yaml`. Shared modules: `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py`, `shap_selector.py`.
 
 ---
 
-#### LGBM
+#### Configuration (Feature 44)
+
+Before running any backtest, edit `config/algorithm_config.yaml` to set options for each algorithm:
+
+```yaml
+lgbm:
+  recursive: false       # Set true for recursive multi-step inference (Feature 43)
+  shap_select: false     # Set true for per-timeframe SHAP feature selection (Feature 42)
+  shap_threshold: 0.95   # Cumulative SHAP importance threshold
+  shap_top_n: null       # Exact top-N features (overrides threshold)
+  shap_sample_size: 500
+  tune_inline: false     # Set true for per-timeframe causal tuning (PL-002)
+  params_file: null      # Set to data/tuning/best_params_lgbm.json for pre-tuned params
+  # Default hyperparameters used when params_file is null and tune_inline is false
+  n_estimators: 300
+  learning_rate: 0.05
+  # ... (see full file for all keys)
+```
+
+Same structure for `catboost:` and `xgboost:` sections.
+
+#### LGBM (per-cluster)
 
 ```bash
-# Global model (one LGBM for all DFUs)
+# Edit config/algorithm_config.yaml lgbm: section, then:
 make backtest-lgbm
-make backtest-load MODEL=lgbm_global
-
-# Per-cluster model (separate model per cluster)
-make backtest-lgbm-cluster
 make backtest-load MODEL=lgbm_cluster
-
-# Per-cluster with globally tuned params (production scoring, see §3.2)
-make backtest-lgbm-cluster ARGS="--params-file data/tuning/best_params_lgbm.json"
-make backtest-load MODEL=lgbm_cluster
-
-# Per-cluster with inline tuning (honest backtesting, no leakage — PL-002)
-make backtest-lgbm-cluster-tuned
-make backtest-load MODEL=lgbm_cluster
-
-# Transfer learning (global base → per-cluster fine-tune)
-make backtest-lgbm-transfer
-make backtest-load MODEL=lgbm_transfer
-
-# Shortcut: global backtest + load in one shot
-make backtest-all
 ```
 
-#### CatBoost
+#### CatBoost (per-cluster)
 
 ```bash
+# Edit config/algorithm_config.yaml catboost: section, then:
 make backtest-catboost
-make backtest-load MODEL=catboost_global
-
-make backtest-catboost-cluster
 make backtest-load MODEL=catboost_cluster
-
-make backtest-catboost-cluster ARGS="--params-file data/tuning/best_params_catboost.json"
-make backtest-load MODEL=catboost_cluster
-
-make backtest-catboost-cluster-tuned
-make backtest-load MODEL=catboost_cluster
-
-make backtest-catboost-transfer
-make backtest-load MODEL=catboost_transfer
 ```
 
-#### XGBoost
+#### XGBoost (per-cluster)
 
 ```bash
+# Edit config/algorithm_config.yaml xgboost: section, then:
 make backtest-xgboost
-make backtest-load MODEL=xgboost_global
-
-make backtest-xgboost-cluster
 make backtest-load MODEL=xgboost_cluster
-
-make backtest-xgboost-cluster ARGS="--params-file data/tuning/best_params_xgboost.json"
-make backtest-load MODEL=xgboost_cluster
-
-make backtest-xgboost-cluster-tuned
-make backtest-load MODEL=xgboost_cluster
-
-make backtest-xgboost-transfer
-make backtest-load MODEL=xgboost_transfer
 ```
 
-#### StatsForecast (vectorized AutoARIMA + AutoETS, ~100× faster than Prophet)
+#### Run all three
 
 ```bash
-make backtest-statsforecast
-make backtest-load MODEL=statsforecast_global
+# Sequential (safe default)
+make backtest-all
+make backtest-load-all
 
-make backtest-statsforecast-cluster
-make backtest-load MODEL=statsforecast_cluster
-
-make backtest-statsforecast-pooled        # Aggregate by cluster → fit → disaggregate
-make backtest-load MODEL=statsforecast_pooled
+# Parallel (faster on servers with 16+ cores / 32GB+ RAM)
+# Each process logs to data/backtest/logs/<model>.log — no interleaved output
+make backtest-all-parallel
+make backtest-load-all
 ```
 
-#### Prophet
-
-```bash
-make backtest-prophet
-make backtest-load MODEL=prophet_global
-
-make backtest-prophet-cluster
-make backtest-load MODEL=prophet_cluster
-
-make backtest-prophet-pooled
-make backtest-load MODEL=prophet_pooled
-```
-
-#### NeuralProphet (PyTorch, Apple MPS GPU)
-
-```bash
-make backtest-neuralprophet
-make backtest-load MODEL=neuralprophet_global
-
-make backtest-neuralprophet-cluster
-make backtest-load MODEL=neuralprophet_cluster
-
-make backtest-neuralprophet-pooled
-make backtest-load MODEL=neuralprophet_pooled
-```
-
-#### PatchTST (Transformer, Apple MPS GPU)
-
-```bash
-make backtest-patchtst
-make backtest-load MODEL=patchtst_global
-
-make backtest-patchtst-cluster
-make backtest-load MODEL=patchtst_cluster
-
-make backtest-patchtst-transfer
-make backtest-load MODEL=patchtst_transfer
-```
-
-#### DeepAR (LSTM probabilistic)
-
-```bash
-make backtest-deepar
-make backtest-load MODEL=deepar_global
-
-make backtest-deepar-cluster
-make backtest-load MODEL=deepar_cluster
-
-make backtest-deepar-transfer
-make backtest-load MODEL=deepar_transfer
-```
+> **Note:** `backtest-all-parallel` fires all three processes simultaneously. LGBM and XGBoost use `n_jobs=-1` (all cores); running them in parallel fully saturates CPU and RAM. Use sequential on laptops or machines with limited resources.
 
 ---
 
@@ -273,18 +198,13 @@ make backtest-load-all                # Scan data/backtest/*/ and load all model
 
 `--replace` is built into `backtest-load` — it only deletes rows for the loaded `model_id`, leaving all other models untouched. Accuracy materialized views are refreshed automatically after every load.
 
-**Available model IDs:**
+**Available model IDs (Feature 44 — per-cluster only):**
 
 | Framework | model_ids |
 |---|---|
-| LGBM | `lgbm_global`, `lgbm_cluster`, `lgbm_transfer` |
-| CatBoost | `catboost_global`, `catboost_cluster`, `catboost_transfer` |
-| XGBoost | `xgboost_global`, `xgboost_cluster`, `xgboost_transfer` |
-| StatsForecast | `statsforecast_global`, `statsforecast_cluster`, `statsforecast_pooled` |
-| Prophet | `prophet_global`, `prophet_cluster`, `prophet_pooled` |
-| NeuralProphet | `neuralprophet_global`, `neuralprophet_cluster`, `neuralprophet_pooled` |
-| PatchTST | `patchtst_global`, `patchtst_cluster`, `patchtst_transfer` |
-| DeepAR | `deepar_global`, `deepar_cluster`, `deepar_transfer` |
+| LGBM | `lgbm_cluster` |
+| CatBoost | `catboost_cluster` |
+| XGBoost | `xgboost_cluster` |
 
 Verify archive data:
 ```bash
@@ -323,7 +243,7 @@ competition:
   metric: accuracy_pct
   lag: execution
   min_dfu_rows: 3
-  models: [lgbm_cluster, catboost_cluster, xgboost_cluster, neuralprophet_cluster, statsforecast_global]
+  models: [lgbm_cluster, catboost_cluster, xgboost_cluster]
   strategy: expanding          # expanding | rolling | decay | ensemble | meta_learner
   strategy_params:
     window_months: 6
@@ -404,7 +324,7 @@ make test-unit     # Unit tests only (common/ modules)
 make test-api      # API endpoint tests only
 make test-cov      # Backend tests with coverage report
 make ui-test       # All frontend tests (Vitest + RTL, ~1.5s)
-make test-all      # Backend + frontend (485+ total tests, <3s)
+make test-all      # Backend + frontend (512+ backend tests, <3s)
 ```
 
 **Test structure:**
@@ -451,8 +371,8 @@ Run `make test-all` after every code change. Every new feature must include test
 
 ```bash
 make backtest-list                                 # Row counts per model_id
-make backtest-clean MODELS="--dry-run lgbm_global" # Preview before deleting
-make backtest-clean MODELS="lgbm_global deepar_global"  # Delete specific models
+make backtest-clean MODELS="--dry-run lgbm_cluster" # Preview before deleting
+make backtest-clean MODELS="lgbm_cluster catboost_cluster"  # Delete specific models
 make backtest-clean MODELS="--all-backtest"        # Delete all non-external backtest models
 ```
 

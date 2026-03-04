@@ -391,35 +391,24 @@ def _fill_predict_nans(
 
 
 def _predict_single_month(
-    model_or_models: Any,
+    models: dict,
     predict_data: pd.DataFrame,
     feature_cols: list[str],
-    cluster_strategy: str,
 ) -> pd.DataFrame:
-    """Route a single-month batch to the correct model(s) without retraining.
+    """Route a single-month batch through per-cluster models for recursive inference.
 
-    Used by recursive multi-step inference (Feature 43). Handles global,
-    per_cluster, and transfer strategies uniformly — all models support
-    ``model.predict(X)`` with no extra arguments at inference time.
+    Used by recursive multi-step inference (Feature 43). Each DFU row is
+    routed to its cluster's model; DFUs with no matching cluster are skipped.
 
     Args:
-        model_or_models: Single model (global) or dict ``{cluster: model,
-            "__base__": base_model}`` (per_cluster / transfer).
-        predict_data: Feature matrix for one month, all DFUs.
-        feature_cols: Ordered list of feature columns to pass to the model.
-        cluster_strategy: One of ``"global"``, ``"per_cluster"``, ``"transfer"``.
+        models: ``{cluster_label: model}`` dict from ``train_and_predict_per_cluster``.
+        predict_data: Feature matrix for one month, all DFUs (must have ``ml_cluster``).
+        feature_cols: Ordered list of feature columns passed to each model.
     """
-    if cluster_strategy == "global":
-        preds = np.maximum(model_or_models.predict(predict_data[feature_cols]), 0)
-        result = predict_data[_PREDICT_META_COLS].copy()
-        result["basefcst_pref"] = preds
-        return result
-
-    # per_cluster / transfer: model_or_models is a dict
     feat_no_cluster = [c for c in feature_cols if c != "ml_cluster"]
     parts = []
     for cluster, group in predict_data.groupby("ml_cluster"):
-        m = model_or_models.get(cluster) or model_or_models.get("__base__")
+        m = models.get(cluster)
         if m is None:
             continue
         preds = np.maximum(m.predict(group[feat_no_cluster]), 0)
@@ -434,16 +423,12 @@ def _predict_single_month(
 def run_tree_backtest(
     *,
     model_id: str,
-    cluster_strategy: str,
     n_timeframes: int,
     output_dir: Path,
     model_params: dict[str, Any],
     model_params_key: str,
     model_type_tag: str,
-    train_fn_global: TrainFn,
     train_fn_per_cluster: TrainFn,
-    train_fn_transfer: TrainFn,
-    transfer_kwargs: dict[str, Any] | None = None,
     extra_metadata: dict[str, Any] | None = None,
     cat_dtype: str = "category",
     min_training_months: int = MIN_TRAINING_MONTHS,
@@ -454,9 +439,10 @@ def run_tree_backtest(
     ] | None = None,
     recursive: bool = False,
 ) -> None:
-    """Run a complete tree-based backtest (LGBM, CatBoost, XGBoost).
+    """Run a complete tree-based per-cluster backtest (LGBM, CatBoost, XGBoost).
 
-    This is the main orchestrator that replaces the duplicated main() in each script.
+    All algorithms use per-cluster strategy. Options (recursive, SHAP, tuning)
+    are passed via closures rather than CLI flags; see algorithm_config.yaml.
     """
     from common.feature_engineering import (
         build_feature_matrix,
@@ -465,6 +451,7 @@ def run_tree_backtest(
         update_grid_with_predictions,
     )
 
+    cluster_strategy = "per_cluster"
     t_start = time.time()
     db = get_db_params()
 
@@ -501,7 +488,6 @@ def run_tree_backtest(
     # ── Step 4: Train & predict per timeframe ────────────────────────────────
     print(f"\n[{_ts()}] Step 4: Running {len(timeframes)} timeframe backtests...")
     all_predictions = []
-    last_global_model = None
     shap_timeframe_reports: list[pd.DataFrame] = []
 
     for ti, tf in enumerate(timeframes):
@@ -559,20 +545,9 @@ def run_tree_backtest(
 
         # ── Direct multi-output path (default) ───────────────────────────────
         if not recursive:
-            if cluster_strategy == "global":
-                preds, model = train_fn_global(
-                    train_data, predict_data, feature_cols, cat_cols, effective_params
-                )
-                last_global_model = model
-            elif cluster_strategy == "transfer":
-                preds, models = train_fn_transfer(
-                    train_data, predict_data, feature_cols, cat_cols, effective_params,
-                    **(transfer_kwargs or {}),
-                )
-            else:
-                preds, models = train_fn_per_cluster(
-                    train_data, predict_data, feature_cols, cat_cols, effective_params
-                )
+            preds, models = train_fn_per_cluster(
+                train_data, predict_data, feature_cols, cat_cols, effective_params
+            )
 
         # ── Recursive multi-step path (Feature 43) ───────────────────────────
         else:
@@ -583,35 +558,20 @@ def run_tree_backtest(
             )
             print(f"  [{_ts()}] Recursive: training on first month {sorted_months[0].date()}, "
                   f"then iterating {len(sorted_months)} months...")
-            if cluster_strategy == "global":
-                preds_first, model = train_fn_global(
-                    train_data, first_predict, feature_cols, cat_cols, effective_params
-                )
-                last_global_model = model
-                model_or_models: Any = model
-            elif cluster_strategy == "transfer":
-                preds_first, models = train_fn_transfer(
-                    train_data, first_predict, feature_cols, cat_cols, effective_params,
-                    **(transfer_kwargs or {}),
-                )
-                model_or_models = models
-            else:
-                preds_first, models = train_fn_per_cluster(
-                    train_data, first_predict, feature_cols, cat_cols, effective_params
-                )
-                model_or_models = models
+            preds_first, models = train_fn_per_cluster(
+                train_data, first_predict, feature_cols, cat_cols, effective_params
+            )
 
         # ── SHAP feature selection + conditional retrain (Feature 42) ─────────
-        # Runs after initial train_fn_* call in both direct and recursive modes.
-        # In recursive mode, updates model_or_models and preds_first (first month preds).
+        # Runs after initial train_fn_per_cluster in both direct and recursive modes.
+        # In recursive mode, updates models and preds_first (first month preds).
         effective_feature_cols = feature_cols
         effective_cat_cols = cat_cols
         if feature_selector_fn is not None:
             print(f"  [{_ts()}] SHAP feature selection (timeframe {label})...")
             t_shap = time.time()
-            model_for_shap = model if cluster_strategy == "global" else models
             selected_features, shap_df = feature_selector_fn(
-                model_for_shap, train_data, feature_cols, cat_cols,
+                models, train_data, feature_cols, cat_cols,
                 tf["index"], train_end,
             )
             shap_timeframe_reports.append(shap_df)
@@ -637,35 +597,13 @@ def run_tree_backtest(
                 )
 
                 t_retrain = time.time()
-                if cluster_strategy == "global":
-                    preds_retrain, model = train_fn_global(
-                        train_data, shap_predict_data, selected_features, selected_cat_cols, effective_params
-                    )
-                    last_global_model = model
-                    if recursive:
-                        model_or_models = model
-                        preds_first = preds_retrain
-                    else:
-                        preds = preds_retrain
-                elif cluster_strategy == "transfer":
-                    preds_retrain, models = train_fn_transfer(
-                        train_data, shap_predict_data, selected_features, selected_cat_cols, effective_params,
-                        **(transfer_kwargs or {}),
-                    )
-                    if recursive:
-                        model_or_models = models
-                        preds_first = preds_retrain
-                    else:
-                        preds = preds_retrain
+                preds_retrain, models = train_fn_per_cluster(
+                    train_data, shap_predict_data, selected_features, selected_cat_cols, effective_params
+                )
+                if recursive:
+                    preds_first = preds_retrain
                 else:
-                    preds_retrain, models = train_fn_per_cluster(
-                        train_data, shap_predict_data, selected_features, selected_cat_cols, effective_params
-                    )
-                    if recursive:
-                        model_or_models = models
-                        preds_first = preds_retrain
-                    else:
-                        preds = preds_retrain
+                    preds = preds_retrain
                 print(f"  [{_ts()}] Retrain done ({time.time() - t_retrain:.1f}s)")
             else:
                 print(f"  [{_ts()}] SHAP: all {len(feature_cols)} features retained")
@@ -681,9 +619,7 @@ def run_tree_backtest(
                     current_grid[current_grid["startdate"] == month].copy(),
                     effective_feature_cols, effective_cat_cols,
                 )
-                preds_month = _predict_single_month(
-                    model_or_models, month_data, effective_feature_cols, cluster_strategy,
-                )
+                preds_month = _predict_single_month(models, month_data, effective_feature_cols)
                 all_month_preds.append(preds_month)
                 current_grid = update_grid_with_predictions(current_grid, month, preds_month)
                 print(f"    [{_ts()}] Recursive month {month.date()}: {len(preds_month):,} predictions")
@@ -727,11 +663,6 @@ def run_tree_backtest(
         extra_metadata=_extra_meta or None,
     )
 
-    # Feature importance (from last timeframe's global model)
-    # output_path.parent is the model-scoped subdirectory (output_dir / model_id)
-    if cluster_strategy == "global" and last_global_model is not None:
-        save_feature_importance(last_global_model, feature_cols, output_path.parent)
-
     # ── Save SHAP outputs (Feature 42) ───────────────────────────────────────
     extra_artifact_paths: list[str] = []
     if feature_selector_fn is not None and shap_timeframe_reports:
@@ -749,8 +680,6 @@ def run_tree_backtest(
         "cluster_strategy": cluster_strategy,
         **{k: v for k, v in model_params.items() if not callable(v)},
     }
-    if transfer_kwargs:
-        mlflow_params.update(transfer_kwargs)
 
     log_backtest_run(
         model_type=model_type_tag,
