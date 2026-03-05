@@ -24,6 +24,18 @@ make db-apply-inventory    # Inventory snapshot table + indexes + agg view
 make db-apply-chat         # pgvector extension + chat_embeddings table
 make db-apply-jobs         # job_history + job_schedule tables + indexes
 make db-apply-inv-backtest # mv_inventory_forecast_monthly bridge view (Feature 37)
+make eoq-schema            # fact_eoq_targets table (IPfeature4)
+make policy-schema         # dim_replenishment_policy + fact_dfu_policy_assignment (IPfeature5)
+make health-schema         # fact_safety_stock_targets stub + mv_inventory_health_score view (IPfeature6)
+make exceptions-schema     # fact_replenishment_exceptions table + indexes (IPfeature7)
+make fill-rate-schema      # mv_fill_rate_monthly materialized view (IPfeature8)
+make demand-signals-schema # fact_demand_signals table (IPfeature9)
+make sim-schema            # fact_ss_simulation_results table (IPfeature10)
+make abc-xyz-schema        # XYZ classification columns on dim_dfu (IPfeature11)
+make supplier-perf-schema  # mv_supplier_performance materialized view (IPfeature12)
+make investment-schema     # fact_inventory_investment_plan + fact_efficient_frontier (IPfeature13)
+make intramonth-schema     # mv_intramonth_stockout materialized view (IPfeature14)
+make control-tower-schema  # mv_control_tower_kpis materialized view (IPfeature15)
 ```
 
 > Run once when setting up a new environment. Safe to re-run (uses `IF NOT EXISTS`).
@@ -59,6 +71,89 @@ make load-forecast-replace-no-archive   # Replace external only, skip 45M-row ar
 make normalize-inventory    # Merge 14 monthly CSVs → single clean CSV
 make load-inventory         # Load into Postgres + refresh agg view
 make inventory-pipeline     # normalize + load + refresh (all-in-one)
+```
+
+**EOQ computation** (IPfeature4 — requires inventory loaded):
+```bash
+make eoq-all         # Apply schema + compute EOQ metrics → fact_eoq_targets
+make eoq-schema      # Apply DDL only
+make eoq-compute     # Compute + upsert only
+```
+
+**Replenishment policies** (IPfeature5):
+```bash
+make policy-all      # Apply schema + upsert policies + auto-assign DFUs
+make policy-schema   # Apply DDL only
+make policy-assign   # Upsert policies + auto-assign DFUs from config
+```
+
+**Inventory Health Score** (IPfeature6 — requires inventory loaded):
+```bash
+make health-all      # Apply schema + refresh health score view
+make health-schema   # Apply DDL + create materialized view
+make health-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_inventory_health_score
+```
+
+**Exception Queue** (IPfeature7 — requires inventory + EOQ computed):
+```bash
+make exceptions-schema        # Apply DDL for fact_replenishment_exceptions (one-time)
+make exceptions-generate      # Detect exceptions + write to DB
+make exceptions-generate-dry  # Preview exceptions without writing to DB
+```
+
+**Fill Rate Analytics** (IPfeature8 — requires inventory loaded):
+```bash
+make fill-rate-all      # Apply schema + refresh fill rate view
+make fill-rate-schema   # Apply DDL only
+make fill-rate-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_fill_rate_monthly
+```
+
+**Demand Signals** (IPfeature9 — requires inventory loaded):
+```bash
+make demand-signals-all      # Apply schema + compute demand signals
+make demand-signals-schema   # Apply DDL only
+make demand-signals-compute  # Compute demand signals → fact_demand_signals
+```
+
+**Safety Stock Simulation** (IPfeature10 — requires inventory loaded):
+```bash
+make sim-schema  # Apply DDL for fact_ss_simulation_results (one-time)
+make sim-run     # Run Monte Carlo safety stock simulation (reads config/simulation_config.yaml)
+```
+
+**ABC-XYZ Classification** (IPfeature11 — requires sales + inventory loaded):
+```bash
+make abc-xyz-all      # Apply schema + run classification
+make abc-xyz-schema   # Apply DDL only
+make abc-xyz-classify # Run ABC-XYZ classification + write to dim_dfu
+```
+
+**Supplier Performance** (IPfeature12 — requires inventory loaded):
+```bash
+make supplier-perf-all      # Apply schema + refresh supplier performance view
+make supplier-perf-schema   # Apply DDL only
+make supplier-perf-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_supplier_performance
+```
+
+**Investment Plan** (IPfeature13 — requires EOQ + policy data):
+```bash
+make investment-all    # Apply schema + compute investment plan
+make investment-schema # Apply DDL only
+make investment-plan   # Compute investment plan + efficient frontier → fact tables
+```
+
+**Intramonth Stockout** (IPfeature14 — requires inventory loaded):
+```bash
+make intramonth-all      # Apply schema + refresh intramonth stockout view
+make intramonth-schema   # Apply DDL only
+make intramonth-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_intramonth_stockout
+```
+
+**Control Tower** (IPfeature15 — requires all inv planning data):
+```bash
+make control-tower-all      # Apply schema + refresh control tower KPIs view
+make control-tower-schema   # Apply DDL only
+make control-tower-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_control_tower_kpis
 ```
 
 ### 2.3 Chatbot embeddings (requires `OPENAI_API_KEY` in `.env`)
@@ -324,7 +419,7 @@ make test-unit     # Unit tests only (common/ modules)
 make test-api      # API endpoint tests only
 make test-cov      # Backend tests with coverage report
 make ui-test       # All frontend tests (Vitest + RTL, ~1.5s)
-make test-all      # Backend + frontend (512+ backend tests, <3s)
+make test-all      # Backend + frontend (851 backend tests, 258 frontend tests, <3s)
 ```
 
 **Test structure:**
@@ -350,7 +445,19 @@ tests/
     ├── test_inventory.py
     ├── test_distinct.py
     ├── test_dashboard.py
-    └── test_jobs.py         # 16 tests: types, submit, list, cancel, delete, stats, schedules, pipeline
+    ├── test_jobs.py         # 16 tests: types, submit, list, cancel, delete, stats, schedules, pipeline
+    ├── test_inv_planning_eoq.py   # 10 tests: EOQ summary, detail, sensitivity endpoints
+    ├── test_inv_planning_policy.py  # 13 tests: policy CRUD, assign, compliance endpoints
+    ├── test_inv_planning_health.py  # 12 tests: health summary, detail, heatmap endpoints
+    ├── test_inv_planning_exceptions.py  # 13 tests: exception list, summary, ack, status, generate
+    ├── test_fill_rate.py            # fill rate summary, trend, detail endpoints
+    ├── test_inv_planning_demand_signals.py  # demand signals endpoints
+    ├── test_inv_planning_simulation.py      # simulation run, results, compare, status
+    ├── test_inv_planning_abc_xyz.py         # ABC-XYZ matrix, summary, detail
+    ├── test_inv_planning_supplier.py        # supplier performance endpoints
+    ├── test_inv_planning_investment.py      # investment plan endpoints
+    ├── test_inv_planning_intramonth.py      # intramonth stockout endpoints
+    └── test_control_tower.py               # control tower kpis, alerts, top-critical, trend
 
 frontend/src/
 ├── hooks/__tests__/         # useTheme, useUrlState, useKeyboardShortcuts, useSidebar, useGlobalFilters

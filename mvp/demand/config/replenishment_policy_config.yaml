@@ -1,0 +1,79 @@
+policies:
+  - id: A_continuous_v1
+    name: "A-Class Continuous Review (ROP/EOQ)"
+    type: continuous_rop
+    segment: "A"
+    service_level: 0.98
+    use_eoq: true
+    use_safety_stock: true
+
+  - id: B_periodic_v1
+    name: "B-Class Periodic Review (4-week)"
+    type: periodic_review
+    segment: "B"
+    review_cycle_days: 28
+    service_level: 0.95
+    use_eoq: true
+    use_safety_stock: true
+
+  - id: C_min_max_v1
+    name: "C-Class Min-Max"
+    type: min_max
+    segment: "C"
+    service_level: 0.90
+    use_eoq: false
+    use_safety_stock: true
+
+  - id: lumpy_manual_v1
+    name: "Lumpy/Intermittent — Manual Review"
+    type: manual
+    segment: "lumpy"
+    service_level: 0.85
+    use_eoq: false
+    use_safety_stock: false
+
+auto_assign:
+  enabled: true
+  # Priority: variability_class overrides abc_vol
+  # lumpy variability_class → lumpy_manual_v1 regardless of ABC class
+  # else: A → A_continuous_v1, B → B_periodic_v1, C → C_min_max_v1
+  variability_override:
+    lumpy: lumpy_manual_v1
+
+abc_xyz_policies:
+  AX:
+    dos_min: 14
+    dos_max: 21
+    service_level: 0.98
+  AY:
+    dos_min: 21
+    dos_max: 28
+    service_level: 0.97
+  AZ:
+    dos_min: 28
+    dos_max: 42
+    service_level: 0.95
+  BX:
+    dos_min: 21
+    dos_max: 28
+    service_level: 0.95
+  BY:
+    dos_min: 28
+    dos_max: 35
+    service_level: 0.93
+  BZ:
+    dos_min: 35
+    dos_max: 45
+    service_level: 0.90
+  CX:
+    dos_min: 28
+    dos_max: 35
+    service_level: 0.92
+  CY:
+    dos_min: 35
+    dos_max: 42
+    service_level: 0.90
+  CZ:
+    dos_min: 42
+    dos_max: 60
+    service_level: 0.85

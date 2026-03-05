@@ -153,6 +153,20 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 4. `agg_inventory_monthly` — materialized view aggregating inventory to monthly grain (avg on-hand, avg on-order, avg lead time, total MTD sales)
 5. `job_history` — persistent job tracking table for the APScheduler-powered job engine; includes scheduling columns (`scheduled_cron`, `retry_count`, `max_retries`, `pipeline_id`, `pipeline_step`, `triggered_by`); grain: `(job_id)` PK
 6. `job_schedule` — recurring schedule definitions for APScheduler cron/interval triggers; grain: `(schedule_id)` PK; columns: `job_type`, `params`, `cron_expr`, `interval_min`, `active`
+7. `fact_eoq_targets` — computed EOQ metrics per DFU (IPfeature4); grain: `(item_no, loc)`; columns: demand_mean_monthly, annual_demand, ordering_cost, holding_cost_pct, unit_cost, moq, eoq, effective_eoq, eoq_cycle_stock, order_frequency, annual_holding_cost, annual_order_cost, total_annual_cost, computed_at
+8. `dim_replenishment_policy` — replenishment policy definitions (IPfeature5); grain: `(policy_id)`; columns: policy_name, policy_type, segment, review_cycle_days, service_level, use_eoq, use_safety_stock, active, dfu_count
+9. `fact_dfu_policy_assignment` — DFU-to-policy assignments (IPfeature5); grain: `(item_no, loc)`; columns: policy_id (FK), assigned_at, assigned_by; `UNIQUE(item_no, loc)` prevents duplicate assignments
+10. `fact_safety_stock_targets` — stub table for safety stock targets (IPfeature6); populated by IPfeature3; currently empty, causing health score SS components to return neutral scores until IPfeature3 is implemented
+11. `mv_inventory_health_score` — materialized view computing composite inventory health scores (IPfeature6); grain: `(item_no, loc)`; 4 components × 25 pts = 0–100 composite; tiers: healthy (≥80), monitor (≥60), at_risk (≥40), critical (<40); components: SS Coverage (0–25), DOS Target Adherence (0–25), Stockout Risk History (0–25), Forecast Accuracy (0–25)
+12. `fact_replenishment_exceptions` — exception queue table (IPfeature7); grain: `(exception_id)` UUID PK; columns: item_no, loc, exception_date, exception_type, severity, current state snapshot, recommendation (order qty, order_by date, receipt date, estimated value), workflow (status, acknowledged_by, acknowledged_ts, ordered_ts, resolved_ts, notes); 6 exception types: below_rop, below_rop_critical, below_ss, stockout, excess, zero_velocity; 4 severity levels: critical/high/medium/low; 4 workflow statuses: open/acknowledged/ordered/resolved
+13. `mv_fill_rate_monthly` — materialized view aggregating order fill rate metrics by item-location-month (IPfeature8)
+14. `fact_demand_signals` — short-horizon demand signals computed from recent sales velocity and inventory movement (IPfeature9); grain: `(item_no, loc, signal_date)`
+15. `fact_ss_simulation_results` — Monte Carlo safety stock simulation output (IPfeature10); grain: `(simulation_id, item_no, loc)`
+16. `mv_supplier_performance` — materialized view aggregating supplier delivery performance KPIs from inventory receipt data (IPfeature12)
+17. `fact_inventory_investment_plan` — computed capital investment allocation plan per item-location (IPfeature13); grain: `(item_no, loc, plan_date)`
+18. `fact_efficient_frontier` — efficient frontier curve data points for budget vs. service level trade-off (IPfeature13)
+19. `mv_intramonth_stockout` — materialized view detecting within-month stockout events from daily inventory snapshots (IPfeature14)
+20. `mv_control_tower_kpis` — materialized view aggregating cross-dimensional KPIs for the Control Tower dashboard (IPfeature15)
 
 ## Accuracy Slice Materialized Views (feature10)
 Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-table joins:
@@ -268,6 +282,98 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_p
    - Meta-learner (`scripts/train_meta_learner.py`): RandomForest/XGBoost classifier trained on ceiling labels with temporal split
    - Simulation (`scripts/simulate_champion_strategies.py`): runs all strategies, compares accuracy vs ceiling
 
+25. EOQ & Cycle Stock Calculator (IPfeature4):
+   - Wilson EOQ formula with MOQ rounding and months-supply cap
+   - `fact_eoq_targets` table stores computed per-DFU EOQ metrics
+   - Config: `config/eoq_config.yaml` (ordering_cost, holding_cost_pct, moq, max_eoq_months_supply)
+   - Script: `scripts/compute_eoq.py` reads from `agg_inventory_monthly`, writes to `fact_eoq_targets`
+   - 3 API endpoints: `GET /inv-planning/eoq/summary`, `GET /inv-planning/eoq/detail`, `GET /inv-planning/eoq/sensitivity`
+   - Frontend: InvPlanningTab with KPI cards (avg EOQ, total cycle stock, avg order frequency, total annual cost), sensitivity curve chart, paginated detail table
+   - Makefile: `eoq-schema`, `eoq-compute`, `eoq-all`
+26. Replenishment Policy Management (IPfeature5):
+   - 4 default policies in `config/replenishment_policy_config.yaml`: A-Class Continuous Review (ROP/EOQ), B/C Periodic Review, Lumpy/Intermittent Manual Review, Emergency/Critical Parts
+   - DDL: `dim_replenishment_policy` + `fact_dfu_policy_assignment` (sql/025)
+   - Script: `scripts/assign_replenishment_policies.py` — upsert policies from config + auto-assign DFUs by segment (--dry-run, --force-overwrite)
+   - 5 API endpoints: `GET /inv-planning/policies`, `POST /inv-planning/policies`, `PUT /inv-planning/policies/{id}`, `GET /inv-planning/policy-assignments/compliance`, `POST /inv-planning/policy-assignments/assign`
+   - Frontend: Policy Management panel in InvPlanningTab — policy cards with service level/type/config badges, ring gauge for DFU coverage, auto-assign button, compliance table, edit modal
+   - Makefile: `policy-schema`, `policy-assign`, `policy-all`
+27. Inventory Health Score Dashboard (IPfeature6):
+   - Composite 0–100 health score per DFU from 4 components (each 0–25 pts)
+   - SQL scoring via CTEs in `mv_inventory_health_score` materialized view: latest_inv, recent_stockout, recent_accuracy, ss (LEFT JOIN stub), scored
+   - Stub pattern: `fact_safety_stock_targets` created empty; SS components use neutral scores (12/15) until IPfeature3 populates it
+   - 3 API endpoints using `get_conn()` directly (NOT `Depends(_get_pool)` — avoids 422 MagicMock signature issue in tests): `GET /inv-planning/health/summary`, `GET /inv-planning/health/detail`, `GET /inv-planning/health/heatmap`
+   - Frontend: Portfolio Health panel at top of InvPlanningTab — 4 clickable tier KPI cards, health distribution donut chart, component score progress bars, ABC×variability heatmap table, paginated detail table with severity badges
+   - Makefile: `health-schema`, `health-refresh`, `health-all`
+28. Exception Queue & Replenishment Recommendations (IPfeature7):
+   - Automated exception detection from `agg_inventory_monthly` + policy assignments + safety stock (stub fallback)
+   - 6 exception types: `stockout` (qty≤0, critical), `below_ss` (below safety stock, critical if <50% coverage, else high), `below_rop` (below reorder point, high), `excess` (DOS>1.5×target_max, medium/low), `zero_velocity` (qty>0, no sales, low)
+   - Recommendation formula: `max(effective_eoq, gap + eoq/2)` capped at `max_eoq_months_supply × demand`; order_by = TODAY (critical), TODAY+review_cycle (high/medium)
+   - Deduplication: skip if same item_no+loc+exception_type open within last 7 days
+   - DDL: `fact_replenishment_exceptions` with 6 indexes including partial index on open+critical (sql/027)
+   - Script: `scripts/generate_replenishment_exceptions.py` — pure-function detection/recommendation + DB write with --dry-run support
+   - 5 API endpoints using `get_conn()` directly: `GET /inv-planning/exceptions` (paginated, filterable by type/severity/status/item/loc), `GET /inv-planning/exceptions/summary`, `PUT /inv-planning/exceptions/{id}/acknowledge` (auth), `PUT /inv-planning/exceptions/{id}/status` (auth), `POST /inv-planning/exceptions/generate` (auth)
+   - Frontend: Exception Queue panel at top of InvPlanningTab — 4 KPI cards (Total Open, Critical, High, Rec. Order Value), type/severity filter pills, status toggle, item/loc filter inputs, exception table with inline action buttons (Acknowledge/Mark Ordered/Resolve), row background coloring by severity
+   - Makefile: `exceptions-schema`, `exceptions-generate`, `exceptions-generate-dry`
+29. Fill Rate Analytics (IPfeature8):
+   - Order fill rate metrics aggregated from inventory snapshot data
+   - DDL: `sql/028_create_fill_rate_monthly.sql` — `mv_fill_rate_monthly` materialized view
+   - Router: `api/routers/fill_rate.py` — 3 endpoints: `GET /fill-rate/summary`, `GET /fill-rate/trend`, `GET /fill-rate/detail`
+   - Frontend: FillRatePanel in InvPlanningTab
+   - Makefile: `fill-rate-schema`, `fill-rate-refresh`, `fill-rate-all`
+   - Tests: `tests/api/test_fill_rate.py`
+30. Demand Sensing & Short-Horizon Signal Integration (IPfeature9):
+   - Short-horizon demand signals computed from recent sales velocity and inventory movement patterns
+   - DDL: `sql/029_create_demand_signals.sql` — `fact_demand_signals` table
+   - Script: `scripts/compute_demand_signals.py`
+   - 3 API endpoints in `api/routers/inv_planning.py`: `GET /inv-planning/demand-signals/summary`, `/list`, `/item`
+   - Makefile: `demand-signals-schema`, `demand-signals-compute`, `demand-signals-all`
+   - Tests: `tests/api/test_inv_planning_demand_signals.py`, `tests/unit/test_demand_signals.py`
+31. Safety Stock Monte Carlo Simulation (IPfeature10):
+   - Probabilistic safety stock simulation using configurable number of iterations and seed
+   - DDL: `sql/030_create_ss_simulation_results.sql` — `fact_ss_simulation_results` table
+   - Script: `scripts/run_ss_simulation.py`
+   - Config: `config/simulation_config.yaml` (n_simulations, random_seed)
+   - 3 API endpoints: `POST /inv-planning/simulation/run`, `GET /inv-planning/simulation/results`, `GET /inv-planning/simulation/compare`, `GET /inv-planning/simulation/{id}/status`
+   - Makefile: `sim-schema`, `sim-run`
+   - Tests: `tests/api/test_inv_planning_simulation.py`
+32. ABC-XYZ Policy Matrix (IPfeature11):
+   - Combined ABC volume segmentation × XYZ demand variability classification into 3×3 policy matrix
+   - DDL: `sql/031_add_xyz_classification.sql` — XYZ classification columns on DFU dimension
+   - Script: `scripts/classify_abc_xyz.py`
+   - 3 API endpoints: `GET /inv-planning/abc-xyz/matrix`, `/summary`, `/detail`
+   - Frontend: AbcXyzPanel in InvPlanningTab
+   - Makefile: `abc-xyz-schema`, `abc-xyz-classify`, `abc-xyz-all`
+   - Tests: `tests/api/test_inv_planning_abc_xyz.py`, `tests/unit/test_abc_xyz_classification.py`
+33. Supplier Performance Analytics (IPfeature12):
+   - Supplier delivery performance KPIs aggregated from inventory receipt data
+   - DDL: `sql/032_create_supplier_performance.sql` — `mv_supplier_performance` materialized view
+   - 3 API endpoints: `GET /inv-planning/supplier-performance/summary`, `/detail`, `/items`
+   - Frontend: SupplierPanel in InvPlanningTab
+   - Makefile: `supplier-perf-schema`, `supplier-perf-refresh`, `supplier-perf-all`
+   - Tests: `tests/api/test_inv_planning_supplier.py`
+34. Capital Investment Optimization (IPfeature13):
+   - Portfolio-level inventory investment planning with efficient frontier computation
+   - DDL: `sql/033_create_investment_plan.sql` — `fact_inventory_investment_plan` + `fact_efficient_frontier` tables
+   - Script: `scripts/compute_investment_plan.py`
+   - 4 API endpoints: `GET /inv-planning/investment/efficient-frontier`, `/summary`, `/detail`, `POST /inv-planning/investment/plan`
+   - Makefile: `investment-schema`, `investment-plan`, `investment-all`
+   - Tests: `tests/api/test_inv_planning_investment.py`, `tests/unit/test_investment_plan.py`
+35. Intra-Month Stockout Detection (IPfeature14):
+   - Daily inventory scan detects within-month stockout events before end-of-month snapshot
+   - DDL: `sql/034_create_intramonth_stockout.sql` — `mv_intramonth_stockout` materialized view
+   - Script: `scripts/refresh_intramonth_stockout.py`
+   - 3 API endpoints: `GET /inv-planning/intramonth-stockouts/summary`, `/detail`, `/daily`
+   - Frontend: IntramonthPanel in InvPlanningTab
+   - Makefile: `intramonth-schema`, `intramonth-refresh`, `intramonth-all`
+   - Tests: `tests/api/test_inv_planning_intramonth.py`
+36. Unified Control Tower / Command Center (IPfeature15):
+   - Single-pane-of-glass operational dashboard aggregating KPIs, alerts, critical items, and trends
+   - DDL: `sql/035_create_control_tower_kpis.sql` — `mv_control_tower_kpis` materialized view
+   - Router: `api/routers/control_tower.py` — 4 endpoints: `GET /control-tower/kpis`, `/alerts`, `/top-critical`, `/trend`
+   - Frontend: `frontend/src/tabs/ControlTowerTab.tsx` — dedicated Control Tower tab registered in App.tsx and AppSidebar
+   - Router registered in `api/main.py`; Vite proxy entry `/control-tower` added to `frontend/vite.config.ts`
+   - Makefile: `control-tower-schema`, `control-tower-refresh`, `control-tower-all`
+   - Tests: `tests/api/test_control_tower.py`, `src/tabs/__tests__/ControlTowerTab.test.tsx`
 21. Inventory Planning — Phase 1 (feature34):
    - Inventory position snapshots from 14 monthly CSV files (~190M rows total)
    - DDL: `fact_inventory_snapshot` with B-tree + GIN trigram indexes, `agg_inventory_monthly` materialized view
@@ -355,6 +461,27 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_shap_selector.py` | `common/shap_selector.py` — SHAP extraction, feature selection, cluster pooling, CSV output, error fallback | 22 |
 | `test_shap.py` | `api/routers/shap.py` — SHAP endpoints (models list, summary, timeframes, per-timeframe detail, 404 cases) | 8 |
 | `test_backtest_recursive.py` | `common/backtest_framework.py` — `_fill_predict_nans`, `_predict_single_month` (global/cluster/transfer), recursive loop integration | 13 |
+| `test_eoq.py` | `scripts/compute_eoq.py` — Wilson EOQ formula, effective EOQ with MOQ+cap, sensitivity curve | 23 |
+| `test_inv_planning_eoq.py` | `api/routers/inv_planning.py` — EOQ summary, detail, sensitivity endpoints | 10 |
+| `test_replenishment_policy.py` | Policy assignment logic — auto-assign rules, dry-run, force-overwrite, compliance calculation | 18 |
+| `test_inv_planning_policy.py` | `api/routers/inv_planning.py` — policy CRUD, assign, compliance endpoints | 13 |
+| `test_health_score.py` | Pure-Python replicas of SQL scoring logic — SS coverage, DOS target, stockout risk, forecast accuracy, composite, health tier | 42 |
+| `test_inv_planning_health.py` | `api/routers/inv_planning.py` — health summary, detail, heatmap endpoints | 12 |
+| `test_exception_generation.py` | `scripts/generate_replenishment_exceptions.py` — detect_exception_type, compute_recommendation pure functions | 19 |
+| `test_inv_planning_exceptions.py` | `api/routers/inv_planning.py` — exception list, summary, acknowledge, status, generate endpoints | 13 |
+| `test_fill_rate.py` | `api/routers/fill_rate.py` — fill rate summary, trend, detail endpoints | varies |
+| `test_inv_planning_demand_signals.py` | `api/routers/inv_planning.py` — demand signals summary, list, item endpoints | varies |
+| `test_demand_signals.py` | `scripts/compute_demand_signals.py` — demand signal computation pure functions | varies |
+| `test_inv_planning_simulation.py` | `api/routers/inv_planning.py` — simulation run, results, compare, status endpoints | varies |
+| `test_inv_planning_abc_xyz.py` | `api/routers/inv_planning.py` — ABC-XYZ matrix, summary, detail endpoints | varies |
+| `test_abc_xyz_classification.py` | `scripts/classify_abc_xyz.py` — ABC-XYZ classification logic | varies |
+| `test_inv_planning_supplier.py` | `api/routers/inv_planning.py` — supplier performance summary, detail, items endpoints | varies |
+| `test_inv_planning_investment.py` | `api/routers/inv_planning.py` — investment efficient-frontier, summary, detail, plan endpoints | varies |
+| `test_investment_plan.py` | `scripts/compute_investment_plan.py` — investment plan computation logic | varies |
+| `test_inv_planning_intramonth.py` | `api/routers/inv_planning.py` — intramonth stockout summary, detail, daily endpoints | varies |
+| `test_control_tower.py` | `api/routers/control_tower.py` — control tower kpis, alerts, top-critical, trend endpoints | varies |
+
+**Total backend: 851 tests**
 
 **API test pattern:** httpx `AsyncClient` with `ASGITransport(app)` — no running server needed. DB connections mocked via `pool` fixture in `tests/api/conftest.py`.
 
@@ -399,6 +526,10 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `HeatmapGrid.test.tsx` | Heatmap grid | 13 |
 | `DashboardTab.test.tsx` | Dashboard overview tab | 4 |
 | `JobsTab.test.tsx` | Jobs automation dashboard tab | 7 |
+| `InvPlanningTab.test.tsx` | Inventory Planning tab — EOQ KPIs, sensitivity, detail, policy management, health score, exception queue | 21 |
+| `ControlTowerTab.test.tsx` | Control Tower tab — KPI cards, alerts panel, top-critical list, trend chart | varies |
+
+**Total frontend: 258 tests**
 
 **Combined:** `make test-all` runs backend + frontend.
 

@@ -4,7 +4,7 @@
 InventoryPlanning
 
 ## Status
-Planned
+Implemented — 749 backend tests, 253 frontend tests
 
 ## Priority
 P2 — Should Have

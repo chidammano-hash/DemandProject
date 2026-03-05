@@ -40,6 +40,7 @@ const MarketIntelTab = lazy(() => import("./tabs/MarketIntelTab"));
 const InventoryTab = lazy(() => import("./tabs/InventoryTab").then((m) => ({ default: m.InventoryTab })));
 const InvBacktestTab = lazy(() => import("./tabs/InvBacktestTab"));
 const InvPlanningTab = lazy(() => import("./tabs/InvPlanningTab").then((m) => ({ default: m.InvPlanningTab })));
+const ControlTowerTab = lazy(() => import("./tabs/ControlTowerTab"));
 const JobsTab = lazy(() => import("./tabs/JobsTab"));
 
 // ---------------------------------------------------------------------------
@@ -207,6 +208,13 @@ export default function App() {
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="invPlanning" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="invPlanning" />}>
                       <InvPlanningTab />
+                    </Suspense>
+                  </ErrorBoundary>
+                )}
+                {activeTab === "controlTower" && (
+                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="controlTower" />} resetKeys={[activeTab]}>
+                    <Suspense fallback={<TabSuspenseFallback tabKey="controlTower" />}>
+                      <ControlTowerTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}

@@ -72,3 +72,5 @@ There is problem with the champion select algorithm. selection of April 2025 bas
 run 5 agents and go through each spec and add an example for each of the feature and functionality. also add another 5 qa agents to check if all the examples are added if not send it back to the agent who created it to add the missing one. 
 
 This is more than demand Studio it will emerge in to inventory optimization network optimization and replenishment. so name it appropriately using 10 creative agents suggest few names and then start 5 review agents one on each perception of brand, ease etc and suggest the final 5 .
+
+Give me a plan to embed AI in Demand and Invnetory planning not as chatbot but somehting tangible. liek it can pick context on the entire workflow and stich the journey through AI

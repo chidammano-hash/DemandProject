@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all
 
 help:
 	@echo "Targets:"
@@ -78,6 +78,15 @@ help:
 	@echo "  lt-profile-schema    - create dim_item_lead_time_profile table (one-time)"
 	@echo "  lt-profile-compute   - compute LT variability profiles per item-location"
 	@echo "  lt-profile-all       - lt-profile-schema + lt-profile-compute (full pipeline)"
+	@echo "  policy-schema        - create dim_replenishment_policy + fact_dfu_policy_assignment tables (one-time)"
+	@echo "  policy-assign        - upsert policies + auto-assign DFUs from config"
+	@echo "  policy-all           - policy-schema + policy-assign (full pipeline)"
+	@echo "  health-schema        - create mv_inventory_health_score materialized view (one-time)"
+	@echo "  health-refresh       - refresh mv_inventory_health_score with current data"
+	@echo "  health-all           - health-schema + health-refresh (full pipeline)"
+	@echo "  exceptions-schema    - create fact_replenishment_exceptions table (one-time)"
+	@echo "  exceptions-generate  - run exception detection + insert into queue"
+	@echo "  exceptions-generate-dry - preview exceptions without inserting"
 	@echo "  test                 - run all Python tests"
 	@echo "  test-unit            - run Python unit tests only"
 	@echo "  test-api             - run Python API tests only"
@@ -448,6 +457,38 @@ eoq-compute:
 eoq-all: eoq-schema eoq-compute
 
 # ---------------------------------------------------------------------------
+# Replenishment Policy pipeline (IPfeature5)
+# ---------------------------------------------------------------------------
+policy-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/025_create_replenishment_policy.sql').read()); conn.close(); print('Replenishment policy DDL applied')"
+
+policy-assign:
+	$(UV) python scripts/assign_replenishment_policies.py --config config/replenishment_policy_config.yaml
+
+policy-all: policy-schema policy-assign
+
+health-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/026_create_inventory_health_score.sql').read()); conn.close(); print('Health score DDL applied')"
+
+health-refresh:
+	$(UV) python scripts/refresh_health_scores.py
+
+health-all: health-schema health-refresh
+
+# ---------------------------------------------------------------------------
+# Exception Queue (IPfeature7)
+# ---------------------------------------------------------------------------
+
+exceptions-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/027_create_replenishment_exceptions.sql').read()); conn.close(); print('Exceptions DDL applied')"
+
+exceptions-generate:
+	$(UV) python scripts/generate_replenishment_exceptions.py
+
+exceptions-generate-dry:
+	$(UV) python scripts/generate_replenishment_exceptions.py --dry-run
+
+# ---------------------------------------------------------------------------
 # Backtesting (LGBM / CatBoost / XGBoost — per-cluster only)
 # Options (recursive, SHAP, tuning, params) are set in config/algorithm_config.yaml
 # ---------------------------------------------------------------------------
@@ -540,3 +581,95 @@ test-cov:
 test-all: test ui-test
 
 check-all: check-db check-api trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast
+
+# ---------------------------------------------------------------------------
+# IPfeature8: Fill Rate Analytics
+# ---------------------------------------------------------------------------
+fill-rate-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/028_create_fill_rate_monthly.sql').read()); conn.close(); print('Fill rate DDL applied')"
+
+fill-rate-refresh:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; populated=conn.execute("SELECT relispopulated FROM pg_class WHERE relname='mv_fill_rate_monthly'").fetchone(); conn.execute('REFRESH MATERIALIZED VIEW ' + ('CONCURRENTLY ' if populated and populated[0] else '') + 'mv_fill_rate_monthly'); conn.close(); print('mv_fill_rate_monthly refreshed')"
+
+fill-rate-all: fill-rate-schema fill-rate-refresh
+
+# ---------------------------------------------------------------------------
+# IPfeature9: Demand Sensing
+# ---------------------------------------------------------------------------
+demand-signals-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/029_create_demand_signals.sql').read()); conn.close(); print('Demand signals DDL applied')"
+
+demand-signals-compute:
+	$(UV) python scripts/compute_demand_signals.py
+
+demand-signals-dry:
+	$(UV) python scripts/compute_demand_signals.py --dry-run
+
+demand-signals-all: demand-signals-schema demand-signals-compute
+
+# ---------------------------------------------------------------------------
+# IPfeature10: Monte Carlo Simulation
+# ---------------------------------------------------------------------------
+sim-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/030_create_ss_simulation_results.sql').read()); conn.close(); print('Simulation DDL applied')"
+
+sim-run:
+	$(UV) python scripts/run_ss_simulation.py --item $(ITEM) --loc $(LOC)
+
+# ---------------------------------------------------------------------------
+# IPfeature11: ABC-XYZ Classification
+# ---------------------------------------------------------------------------
+abc-xyz-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/031_add_xyz_classification.sql').read()); conn.close(); print('ABC-XYZ DDL applied')"
+
+abc-xyz-classify:
+	$(UV) python scripts/classify_abc_xyz.py
+
+abc-xyz-classify-dry:
+	$(UV) python scripts/classify_abc_xyz.py --dry-run
+
+abc-xyz-all: abc-xyz-schema abc-xyz-classify
+
+# ---------------------------------------------------------------------------
+# IPfeature12: Supplier Performance
+# ---------------------------------------------------------------------------
+supplier-perf-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/032_create_supplier_performance.sql').read()); conn.close(); print('Supplier performance DDL applied')"
+
+supplier-perf-refresh:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; populated=conn.execute("SELECT relispopulated FROM pg_class WHERE relname='mv_supplier_performance'").fetchone(); conn.execute('REFRESH MATERIALIZED VIEW ' + ('CONCURRENTLY ' if populated and populated[0] else '') + 'mv_supplier_performance'); conn.close(); print('mv_supplier_performance refreshed')"
+
+supplier-perf-all: supplier-perf-schema supplier-perf-refresh
+
+# ---------------------------------------------------------------------------
+# IPfeature13: Investment Optimization
+# ---------------------------------------------------------------------------
+investment-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/033_create_investment_plan.sql').read()); conn.close(); print('Investment plan DDL applied')"
+
+investment-plan:
+	$(UV) python scripts/compute_investment_plan.py
+
+investment-all: investment-schema investment-plan
+
+# ---------------------------------------------------------------------------
+# IPfeature14: Intra-Month Stockout Detection
+# ---------------------------------------------------------------------------
+intramonth-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/034_create_intramonth_stockout.sql').read()); conn.close(); print('Intramonth stockout DDL applied')"
+
+intramonth-refresh:
+	$(UV) python scripts/refresh_intramonth_stockout.py
+
+intramonth-all: intramonth-schema intramonth-refresh
+
+# ---------------------------------------------------------------------------
+# IPfeature15: Control Tower
+# ---------------------------------------------------------------------------
+control-tower-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/035_create_control_tower_kpis.sql').read()); conn.close(); print('Control tower DDL applied')"
+
+control-tower-refresh:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; populated=conn.execute("SELECT relispopulated FROM pg_class WHERE relname='mv_control_tower_kpis'").fetchone(); conn.execute('REFRESH MATERIALIZED VIEW ' + ('CONCURRENTLY ' if populated and populated[0] else '') + 'mv_control_tower_kpis'); conn.close(); print('mv_control_tower_kpis refreshed')"
+
+control-tower-all: control-tower-schema control-tower-refresh

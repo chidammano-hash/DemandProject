@@ -85,6 +85,10 @@ export const queryKeys = {
   eoqSummary: (params: Record<string, unknown>) => ["eoq-summary", params] as const,
   eoqDetail: (params: Record<string, unknown>) => ["eoq-detail", params] as const,
   eoqSensitivity: (params: Record<string, unknown>) => ["eoq-sensitivity", params] as const,
+  // IPfeature5 — Replenishment Policy Management
+  policyList: () => ["policy-list"] as const,
+  policyAssignments: (params: Record<string, unknown>) => ["policy-assignments", params] as const,
+  policyCompliance: () => ["policy-compliance"] as const,
   // SHAP feature importance keys (Feature 42)
   shapModels: () => ["shap-models"] as const,
   shapSummary: (modelId: string, topN: number) => ["shap-summary", modelId, topN] as const,
@@ -1038,3 +1042,683 @@ export async function fetchEoqSensitivity(params: {
   if (params.loc?.trim()) qs.set("loc", params.loc.trim());
   return fetchJson(`/inv-planning/eoq/sensitivity?${qs}`);
 }
+
+// ---------------------------------------------------------------------------
+// Inventory Planning — IPfeature5: Replenishment Policy Management
+// ---------------------------------------------------------------------------
+
+export interface ReplenishmentPolicy {
+  policy_id: string;
+  policy_name: string;
+  policy_type: "continuous_rop" | "periodic_review" | "min_max" | "manual";
+  segment: string | null;
+  review_cycle_days: number | null;
+  service_level: number | null;
+  use_eoq: boolean;
+  use_safety_stock: boolean;
+  active: boolean;
+  dfu_count: number;
+}
+
+export interface PolicyListPayload {
+  policies: ReplenishmentPolicy[];
+}
+
+export interface PolicyAssignmentRow {
+  item_no: string;
+  loc: string;
+  policy_id: string;
+  policy_name: string;
+  policy_type: string;
+  override_reason: string | null;
+  assigned_by: string;
+  effective_date: string | null;
+}
+
+export interface PolicyAssignmentsPayload {
+  total: number;
+  rows: PolicyAssignmentRow[];
+}
+
+export interface PolicyComplianceByPolicy {
+  policy_name: string;
+  policy_type: string;
+  dfu_count: number;
+  below_ss_pct: number | null;
+  avg_ss_coverage: number | null;
+  avg_dos: number | null;
+}
+
+export interface PolicyCompliancePayload {
+  total_dfus: number;
+  assigned_count: number;
+  unassigned_count: number;
+  assignment_pct: number;
+  by_policy: Record<string, PolicyComplianceByPolicy>;
+}
+
+export interface PolicyAssignResult {
+  assigned_count: number;
+  failed_count: number;
+  already_assigned_count: number;
+}
+
+export async function fetchPolicies(): Promise<PolicyListPayload> {
+  return fetchJson("/inv-planning/policies");
+}
+
+export async function createPolicy(body: {
+  policy_id: string;
+  policy_name: string;
+  policy_type: string;
+  segment?: string;
+  review_cycle_days?: number;
+  service_level?: number;
+  use_eoq?: boolean;
+  use_safety_stock?: boolean;
+  notes?: string;
+}): Promise<ReplenishmentPolicy> {
+  return fetchJson("/inv-planning/policies", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updatePolicy(
+  policyId: string,
+  body: Partial<{
+    policy_name: string;
+    policy_type: string;
+    segment: string;
+    review_cycle_days: number;
+    service_level: number;
+    use_eoq: boolean;
+    use_safety_stock: boolean;
+    active: boolean;
+    notes: string;
+  }>,
+): Promise<ReplenishmentPolicy> {
+  return fetchJson(`/inv-planning/policies/${encodeURIComponent(policyId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchPolicyAssignments(params: {
+  item?: string;
+  location?: string;
+  policy_id?: string;
+  assigned_by?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<PolicyAssignmentsPayload> {
+  const qs = new URLSearchParams({
+    limit: String(params.limit ?? 50),
+    offset: String(params.offset ?? 0),
+  });
+  if (params.item?.trim()) qs.set("item", params.item.trim());
+  if (params.location?.trim()) qs.set("location", params.location.trim());
+  if (params.policy_id?.trim()) qs.set("policy_id", params.policy_id.trim());
+  if (params.assigned_by?.trim()) qs.set("assigned_by", params.assigned_by.trim());
+  return fetchJson(`/inv-planning/policy-assignments?${qs}`);
+}
+
+export async function assignPolicy(body: {
+  item_no?: string;
+  loc?: string;
+  policy_id?: string;
+  override_reason?: string;
+  segment?: string;
+}): Promise<PolicyAssignResult> {
+  return fetchJson("/inv-planning/policy-assignments/assign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchPolicyCompliance(): Promise<PolicyCompliancePayload> {
+  return fetchJson("/inv-planning/policy-assignments/compliance");
+}
+
+// ---------------------------------------------------------------------------
+// IPfeature6 — Inventory Health Score
+// ---------------------------------------------------------------------------
+
+export const healthKeys = {
+  summary: (filters?: HealthSummaryFilters) => ["health-summary", filters ?? {}] as const,
+  detail:  (params?: HealthDetailParams)   => ["health-detail",  params ?? {}]   as const,
+  heatmap: (groupX?: string, groupY?: string) => ["health-heatmap", groupX ?? "abc_vol", groupY ?? "variability_class"] as const,
+};
+
+export interface HealthSummaryFilters {
+  abc_vol?: string;
+  cluster_assignment?: string;
+  region?: string;
+  variability_class?: string;
+}
+
+export interface HealthTierBreakdown {
+  healthy: number;
+  monitor: number;
+  at_risk: number;
+  critical: number;
+}
+
+export interface HealthComponentAvgs {
+  ss_coverage: number | null;
+  dos_target: number | null;
+  stockout_risk: number | null;
+  forecast_accuracy: number | null;
+}
+
+export interface HealthHistogramBucket {
+  bucket: string;
+  count: number;
+}
+
+export interface HealthSummaryPayload {
+  total_dfus: number;
+  by_tier: HealthTierBreakdown;
+  avg_health_score: number | null;
+  component_avgs: HealthComponentAvgs;
+  score_histogram: HealthHistogramBucket[];
+}
+
+export interface HealthDetailParams {
+  item?: string;
+  location?: string;
+  health_tier?: string;
+  abc_vol?: string;
+  cluster_assignment?: string;
+  variability_class?: string;
+  limit?: number;
+  offset?: number;
+  sort_by?: string;
+  sort_dir?: string;
+}
+
+export interface HealthDetailRow {
+  item_no: string;
+  loc: string;
+  abc_vol: string | null;
+  variability_class: string | null;
+  cluster_assignment: string | null;
+  health_score: number;
+  health_tier: string;
+  score_ss_coverage: number;
+  score_dos_target: number;
+  score_stockout_risk: number;
+  score_forecast_accuracy: number;
+  ss_coverage: number | null;
+  current_dos: number | null;
+  target_dos_min: number | null;
+  target_dos_max: number | null;
+  is_below_ss: boolean | null;
+  recent_wape: number | null;
+  stockout_count_3m: number | null;
+}
+
+export interface HealthDetailPayload {
+  total: number;
+  rows: HealthDetailRow[];
+}
+
+export interface HealthHeatmapCell {
+  x: string;
+  y: string;
+  avg_health_score: number | null;
+  count: number;
+  critical_count: number;
+}
+
+export interface HealthHeatmapPayload {
+  x_labels: string[];
+  y_labels: string[];
+  cells: HealthHeatmapCell[];
+}
+
+export async function fetchHealthSummary(
+  filters: HealthSummaryFilters = {},
+): Promise<HealthSummaryPayload> {
+  const qs = new URLSearchParams();
+  if (filters.abc_vol) qs.set("abc_vol", filters.abc_vol);
+  if (filters.cluster_assignment) qs.set("cluster_assignment", filters.cluster_assignment);
+  if (filters.region) qs.set("region", filters.region);
+  if (filters.variability_class) qs.set("variability_class", filters.variability_class);
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/health/summary${q ? "?" + q : ""}`);
+}
+
+export async function fetchHealthDetail(
+  params: HealthDetailParams = {},
+): Promise<HealthDetailPayload> {
+  const qs = new URLSearchParams({
+    limit: String(params.limit ?? 100),
+    offset: String(params.offset ?? 0),
+    sort_by: params.sort_by ?? "health_score",
+    sort_dir: params.sort_dir ?? "asc",
+  });
+  if (params.item) qs.set("item", params.item);
+  if (params.location) qs.set("location", params.location);
+  if (params.health_tier) qs.set("health_tier", params.health_tier);
+  if (params.abc_vol) qs.set("abc_vol", params.abc_vol);
+  if (params.cluster_assignment) qs.set("cluster_assignment", params.cluster_assignment);
+  if (params.variability_class) qs.set("variability_class", params.variability_class);
+  return fetchJson(`/inv-planning/health/detail?${qs}`);
+}
+
+export async function fetchHealthHeatmap(
+  group_x = "abc_vol",
+  group_y = "variability_class",
+): Promise<HealthHeatmapPayload> {
+  return fetchJson(
+    `/inv-planning/health/heatmap?group_x=${encodeURIComponent(group_x)}&group_y=${encodeURIComponent(group_y)}`,
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// IPfeature7 — Exception Queue & Replenishment Recommendations
+// ---------------------------------------------------------------------------
+
+export interface ExceptionSummaryFilters {
+  status?: string;
+}
+
+export interface ExceptionListParams {
+  exception_type?: string;
+  severity?: string;
+  status?: string;
+  item?: string;
+  location?: string;
+  sort_by?: string;
+  sort_dir?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ExceptionRow {
+  exception_id: string;
+  item_no: string;
+  loc: string;
+  exception_date: string;
+  exception_type: string;
+  severity: string;
+  current_qty_on_hand: number | null;
+  current_dos: number | null;
+  ss_combined: number | null;
+  reorder_point: number | null;
+  recommended_order_qty: number | null;
+  recommended_order_by: string | null;
+  expected_receipt_date: string | null;
+  estimated_order_value: number | null;
+  policy_id: string | null;
+  status: string;
+  acknowledged_by: string | null;
+  notes: string | null;
+}
+
+export interface ExceptionListPayload {
+  total: number;
+  limit: number;
+  offset: number;
+  rows: ExceptionRow[];
+}
+
+export interface ExceptionSummaryPayload {
+  open_count: number;
+  by_type: Record<string, number>;
+  by_severity: { critical: number; high: number; medium: number; low: number };
+  total_recommended_order_value: number;
+  oldest_open_days: number;
+}
+
+export interface ExceptionGeneratePayload {
+  generated_count: number;
+  skipped_dedup: number;
+  by_type: Record<string, number>;
+}
+
+export const exceptionKeys = {
+  list:    (p?: ExceptionListParams)      => ["exception-list",    p ?? {}] as const,
+  summary: (f?: ExceptionSummaryFilters)  => ["exception-summary", f ?? {}] as const,
+};
+
+export async function fetchExceptions(
+  params: ExceptionListParams = {},
+): Promise<ExceptionListPayload> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/exceptions${q ? `?${q}` : ""}`);
+}
+
+export async function fetchExceptionSummary(
+  filters: ExceptionSummaryFilters = {},
+): Promise<ExceptionSummaryPayload> {
+  const qs = new URLSearchParams();
+  if (filters.status) qs.set("status", filters.status);
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/exceptions/summary${q ? `?${q}` : ""}`);
+}
+
+export async function acknowledgeException(
+  exceptionId: string,
+  acknowledgedBy: string,
+  notes?: string,
+): Promise<ExceptionRow> {
+  return fetchJson(`/inv-planning/exceptions/${encodeURIComponent(exceptionId)}/acknowledge`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ acknowledged_by: acknowledgedBy, notes }),
+  });
+}
+
+export async function updateExceptionStatus(
+  exceptionId: string,
+  status: "ordered" | "resolved",
+  notes?: string,
+): Promise<ExceptionRow> {
+  return fetchJson(`/inv-planning/exceptions/${encodeURIComponent(exceptionId)}/status`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status, notes }),
+  });
+}
+
+export async function generateExceptions(): Promise<ExceptionGeneratePayload> {
+  return fetchJson("/inv-planning/exceptions/generate", { method: "POST" });
+}
+
+// ---------------------------------------------------------------------------
+// IPfeature8: Fill Rate Analytics
+// ---------------------------------------------------------------------------
+
+export interface FillRateSummaryPayload {
+  portfolio_fill_rate: number | null;
+  total_ordered: number;
+  total_shipped: number;
+  total_shortage_qty: number;
+  partial_fulfillment_events: number;
+  by_abc: Record<string, { avg_fill_rate: number | null; total_shortage_qty: number; events: number }>;
+  worst_items: Array<{ item_no: string; loc: string; fill_rate: number | null; shortage_qty: number | null; abc_vol: string | null }>;
+  trend: Array<{ month_start: string; portfolio_fill_rate: number | null; total_shortage_qty: number }>;
+}
+
+export interface FillRateTrendRow {
+  month_start: string;
+  fill_rate: number | null;
+  total_ordered: number;
+  total_shipped: number;
+  shortage_qty: number;
+}
+
+export interface FillRateDetailRow {
+  item_no: string;
+  loc: string;
+  month_start: string;
+  total_ordered: number | null;
+  total_shipped: number | null;
+  fill_rate: number | null;
+  shortage_qty: number | null;
+  had_partial_fulfillment: boolean;
+  abc_vol: string | null;
+  cluster_assignment: string | null;
+  region: string | null;
+}
+
+export const fillRateKeys = {
+  summary: (f?: Record<string, unknown>) => ["fill-rate-summary", f ?? {}] as const,
+  trend:   (f?: Record<string, unknown>) => ["fill-rate-trend", f ?? {}] as const,
+  detail:  (f?: Record<string, unknown>) => ["fill-rate-detail", f ?? {}] as const,
+};
+
+export async function fetchFillRateSummary(
+  params: Record<string, unknown> = {},
+): Promise<FillRateSummaryPayload> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/fill-rate/summary${q ? `?${q}` : ""}`);
+}
+
+export async function fetchFillRateTrend(
+  params: Record<string, unknown> = {},
+): Promise<{ months: FillRateTrendRow[] }> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/fill-rate/trend${q ? `?${q}` : ""}`);
+}
+
+export async function fetchFillRateDetail(
+  params: Record<string, unknown> = {},
+): Promise<{ total: number; rows: FillRateDetailRow[] }> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/fill-rate/detail${q ? `?${q}` : ""}`);
+}
+
+// ---------------------------------------------------------------------------
+// IPfeature11: ABC-XYZ Classification
+// ---------------------------------------------------------------------------
+
+export interface AbcXyzCell {
+  abc_vol: string;
+  xyz_class: string;
+  segment: string;
+  dfu_count: number;
+  avg_service_level: number | null;
+  avg_dos_min: number | null;
+  avg_dos_max: number | null;
+}
+
+export interface AbcXyzDetailRow {
+  dmdunit: string;
+  dmdgroup: string;
+  loc: string;
+  abc_vol: string | null;
+  xyz_class: string | null;
+  abc_xyz_segment: string | null;
+  demand_cv: number | null;
+  intermittency_ratio: number | null;
+  abc_xyz_dos_min: number | null;
+  abc_xyz_dos_max: number | null;
+  abc_xyz_service_level: number | null;
+}
+
+export const abcXyzKeys = {
+  matrix:  () => ["abc-xyz-matrix"] as const,
+  summary: () => ["abc-xyz-summary"] as const,
+  detail:  (f?: Record<string, unknown>) => ["abc-xyz-detail", f ?? {}] as const,
+};
+
+export const fetchAbcXyzMatrix = (): Promise<{ cells: AbcXyzCell[]; total_classified: number }> =>
+  fetchJson("/inv-planning/abc-xyz/matrix");
+
+export const fetchAbcXyzSummary = (): Promise<Record<string, number | null>> =>
+  fetchJson("/inv-planning/abc-xyz/summary");
+
+export async function fetchAbcXyzDetail(
+  params: Record<string, unknown> = {},
+): Promise<{ total: number; rows: AbcXyzDetailRow[] }> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/abc-xyz/detail${q ? `?${q}` : ""}`);
+}
+
+// ---------------------------------------------------------------------------
+// IPfeature12: Supplier Performance
+// ---------------------------------------------------------------------------
+
+export interface SupplierRow {
+  supplier_no: string;
+  supplier_name: string | null;
+  sku_loc_count: number;
+  distinct_items: number;
+  avg_lt_mean_days: number | null;
+  avg_lt_cv: number | null;
+  avg_lt_std_days: number | null;
+  pct_stable_lt: number | null;
+  pct_volatile_lt: number | null;
+  total_safety_stock_units: number | null;
+  total_ss_value: number | null;
+  supplier_reliability_score: number | null;
+}
+
+export const supplierKeys = {
+  summary: () => ["supplier-perf-summary"] as const,
+  detail:  (f?: Record<string, unknown>) => ["supplier-perf-detail", f ?? {}] as const,
+  items:   (supplierNo: string) => ["supplier-perf-items", supplierNo] as const,
+};
+
+export const fetchSupplierSummary = (): Promise<Record<string, number | null>> =>
+  fetchJson("/inv-planning/supplier-performance/summary");
+
+export async function fetchSupplierDetail(
+  params: Record<string, unknown> = {},
+): Promise<{ total: number; rows: SupplierRow[] }> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/supplier-performance/detail${q ? `?${q}` : ""}`);
+}
+
+// ---------------------------------------------------------------------------
+// IPfeature14: Intra-Month Stockout Detection
+// ---------------------------------------------------------------------------
+
+export interface IntramonthStockoutRow {
+  item_no: string;
+  loc: string;
+  month_start: string;
+  snapshot_days: number;
+  stockout_days: number;
+  stockout_day_rate: number | null;
+  min_qty_on_hand: number | null;
+  max_qty_on_hand: number | null;
+  avg_qty_on_hand: number | null;
+  est_lost_sales: number | null;
+  had_full_stockout: boolean;
+  had_extended_stockout: boolean;
+  abc_vol: string | null;
+  abc_xyz_segment: string | null;
+  cluster_assignment: string | null;
+}
+
+export const intramonthKeys = {
+  summary: (f?: Record<string, unknown>) => ["intramonth-summary", f ?? {}] as const,
+  detail:  (f?: Record<string, unknown>) => ["intramonth-detail", f ?? {}] as const,
+};
+
+export async function fetchIntramonthSummary(
+  params: Record<string, unknown> = {},
+): Promise<Record<string, number | null>> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/intramonth-stockouts/summary${q ? `?${q}` : ""}`);
+}
+
+export async function fetchIntramonthDetail(
+  params: Record<string, unknown> = {},
+): Promise<{ total: number; rows: IntramonthStockoutRow[] }> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/intramonth-stockouts/detail${q ? `?${q}` : ""}`);
+}
+
+// ---------------------------------------------------------------------------
+// IPfeature15: Control Tower
+// ---------------------------------------------------------------------------
+
+export interface ControlTowerKpis {
+  computed_at: string | null;
+  health: {
+    total_dfus: number; healthy_count: number; monitor_count: number;
+    at_risk_count: number; critical_count: number;
+    avg_health_score: number | null; avg_ss_coverage: number | null;
+    below_ss_count: number; below_ss_pct: number | null; avg_portfolio_dos: number | null;
+  };
+  exceptions: {
+    open_exceptions_total: number; critical_exceptions: number;
+    high_exceptions: number; recommended_order_value: number | null;
+  };
+  fill_rate: { portfolio_fill_rate_3m: number | null; total_shortage_qty_3m: number | null };
+  demand_signals: { urgent_demand_signals: number; projected_stockouts_today: number };
+  intramonth: { items_with_stockout_this_month: number; extended_stockouts_this_month: number };
+}
+
+export interface ControlTowerAlert {
+  alert_id: string;
+  source: string;
+  severity: string;
+  item_no: string;
+  loc: string;
+  alert_type: string;
+  description: string;
+  action: string;
+  alert_ts: string | null;
+  abc_vol: string | null;
+}
+
+export interface ControlTowerCriticalItem {
+  item_no: string; loc: string; abc_vol: string | null; abc_xyz_segment: string | null;
+  health_score: number | null; health_tier: string | null;
+  ss_coverage: number | null; is_below_ss: boolean;
+  current_dos: number | null; target_dos_min: number | null; target_dos_max: number | null;
+  open_exception_count: number; recommended_order_qty: number | null;
+  fill_rate_last_3m: number | null; stockout_days_this_month: number;
+}
+
+export const controlTowerKeys = {
+  kpis:       () => ["ct-kpis"] as const,
+  alerts:     (f?: Record<string, unknown>) => ["ct-alerts", f ?? {}] as const,
+  topCritical:(limit?: number) => ["ct-top-critical", limit ?? 10] as const,
+  trend:      (months?: number) => ["ct-trend", months ?? 6] as const,
+};
+
+export const fetchControlTowerKpis = (): Promise<ControlTowerKpis> =>
+  fetchJson("/control-tower/kpis");
+
+export async function fetchControlTowerAlerts(
+  params: { limit?: number; severity?: string } = {},
+): Promise<{ total: number; alerts: ControlTowerAlert[] }> {
+  const qs = new URLSearchParams();
+  if (params.limit) qs.set("limit", String(params.limit));
+  if (params.severity) qs.set("severity", params.severity);
+  const q = qs.toString();
+  return fetchJson(`/control-tower/alerts${q ? `?${q}` : ""}`);
+}
+
+export const fetchControlTowerTopCritical = (
+  limit = 10,
+): Promise<{ items: ControlTowerCriticalItem[] }> =>
+  fetchJson(`/control-tower/top-critical?limit=${limit}`);
+
+export const fetchControlTowerTrend = (
+  months = 6,
+): Promise<{ trend: Array<Record<string, number | string | null>> }> =>
+  fetchJson(`/control-tower/trend?months=${months}`);

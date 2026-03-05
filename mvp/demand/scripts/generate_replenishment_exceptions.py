@@ -1,0 +1,350 @@
+"""Generate replenishment exceptions for the Exception Queue (IPfeature7).
+
+Scans the latest inventory position and detects 6 exception types:
+  - stockout: current_qty <= 0
+  - below_ss: current_qty <= ss_combined
+  - below_rop: current_qty <= reorder_point (but > ss_combined)
+  - excess: current_dos > target_dos_max * 1.5
+  - zero_velocity: avg_daily_sls == 0 and current_qty > 0
+
+Deduplication: skips item-loc-type if an open exception exists within last 7 days.
+
+Usage:
+    uv run python scripts/generate_replenishment_exceptions.py
+    uv run python scripts/generate_replenishment_exceptions.py --dry-run
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import os
+import sys
+from collections import defaultdict
+
+import yaml
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from common.db import get_db_params
+
+
+# ---------------------------------------------------------------------------
+# Exception detection helpers (pure functions — also used by unit tests)
+# ---------------------------------------------------------------------------
+
+def detect_exception_type(
+    current_qty: float,
+    ss_combined: float | None,
+    reorder_point: float | None,
+    current_dos: float | None,
+    target_dos_max: float | None,
+    avg_daily_sls: float,
+) -> tuple[str | None, str | None]:
+    """Return (exception_type, severity) or (None, None) if no exception."""
+    ss = ss_combined or 0.0
+    rop = reorder_point or 0.0
+
+    if current_qty <= 0:
+        return "stockout", "critical"
+
+    if ss > 0 and current_qty <= ss:
+        coverage_ratio = current_qty / ss
+        severity = "critical" if coverage_ratio < 0.5 else "high"
+        return "below_ss", severity
+
+    if rop > 0 and current_qty <= rop:
+        return "below_rop", "high"
+
+    if (
+        target_dos_max is not None
+        and target_dos_max > 0
+        and current_dos is not None
+        and current_dos > target_dos_max * 1.5
+    ):
+        severity = "low" if current_dos >= 180 else "medium"
+        return "excess", severity
+
+    if avg_daily_sls == 0 and current_qty > 0:
+        return "zero_velocity", "low"
+
+    return None, None
+
+
+def compute_recommendation(
+    exception_type: str,
+    severity: str,
+    current_qty: float,
+    ss_combined: float | None,
+    effective_eoq: float | None,
+    demand_mean_monthly: float | None,
+    review_cycle_days: int | None,
+    lead_time_mean_days: float | None,
+    max_eoq_months_supply: float,
+    today: datetime.date,
+) -> tuple[float, datetime.date | None, datetime.date | None]:
+    """Return (recommended_order_qty, recommended_order_by, expected_receipt_date)."""
+    if exception_type in ("below_rop", "below_ss", "stockout"):
+        eoq = effective_eoq or 1.0
+        ss = ss_combined or 0.0
+        gap = max(0.0, ss - current_qty)
+        qty = max(eoq, gap + eoq / 2.0)
+        # Cap at max_eoq_months_supply months of demand
+        if demand_mean_monthly and demand_mean_monthly > 0:
+            cap = max_eoq_months_supply * demand_mean_monthly
+            qty = min(qty, cap)
+
+        # Order-by date
+        cycle = review_cycle_days or 7
+        if severity == "critical":
+            order_by = today
+        else:
+            order_by = today + datetime.timedelta(days=cycle)
+
+        # Expected receipt
+        lt = int(lead_time_mean_days or 0)
+        receipt = order_by + datetime.timedelta(days=lt)
+        return round(qty, 4), order_by, receipt
+
+    # excess / zero_velocity — no order recommended
+    return 0.0, None, None
+
+
+# ---------------------------------------------------------------------------
+# Main pipeline
+# ---------------------------------------------------------------------------
+
+def run(dry_run: bool = False) -> dict:
+    """Detect exceptions and insert into fact_replenishment_exceptions."""
+    import psycopg
+
+    config_dir = os.path.join(os.path.dirname(__file__), "..", "config")
+    eoq_cfg_path = os.path.join(config_dir, "eoq_config.yaml")
+    with open(eoq_cfg_path) as fh:
+        eoq_config = yaml.safe_load(fh)
+    max_months = float(eoq_config.get("max_eoq_months_supply", 6))
+
+    db_params = get_db_params()
+    today = datetime.date.today()
+
+    with psycopg.connect(**db_params) as conn:
+        with conn.cursor() as cur:
+            # ----------------------------------------------------------------
+            # 1. Latest inventory position from agg_inventory_monthly
+            # ----------------------------------------------------------------
+            try:
+                cur.execute("""
+                    SELECT
+                        item_no,
+                        loc,
+                        eom_on_hand          AS current_qty,
+                        daily_sales          AS avg_daily_sls
+                    FROM (
+                        SELECT
+                            item_no,
+                            loc,
+                            eom_on_hand,
+                            daily_sales,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY item_no, loc
+                                ORDER BY month_start DESC
+                            ) AS rn
+                        FROM agg_inventory_monthly
+                    ) t
+                    WHERE rn = 1
+                """)
+                inv_rows = cur.fetchall()
+            except Exception:
+                inv_rows = []
+
+            inv_map: dict[tuple, dict] = {}
+            for r in inv_rows:
+                key = (r[0], r[1])
+                inv_map[key] = {
+                    "current_qty": float(r[2] or 0),
+                    "avg_daily_sls": float(r[3] or 0),
+                }
+
+            # ----------------------------------------------------------------
+            # 2. Safety stock targets (stub until IPfeature3)
+            # ----------------------------------------------------------------
+            try:
+                cur.execute("""
+                    SELECT
+                        item_no, loc,
+                        ss_combined, reorder_point, effective_eoq,
+                        target_dos_max, unit_cost, demand_mean_monthly
+                    FROM fact_safety_stock_targets
+                """)
+                ss_rows = cur.fetchall()
+            except Exception:
+                ss_rows = []
+
+            ss_map: dict[tuple, dict] = {}
+            for r in ss_rows:
+                key = (r[0], r[1])
+                ss_map[key] = {
+                    "ss_combined": float(r[2]) if r[2] is not None else None,
+                    "reorder_point": float(r[3]) if r[3] is not None else None,
+                    "effective_eoq": float(r[4]) if r[4] is not None else None,
+                    "target_dos_max": float(r[5]) if r[5] is not None else None,
+                    "unit_cost": float(r[6]) if r[6] is not None else None,
+                    "demand_mean_monthly": float(r[7]) if r[7] is not None else None,
+                }
+
+            # ----------------------------------------------------------------
+            # 3. Policy assignments (review_cycle_days from IPfeature5)
+            # ----------------------------------------------------------------
+            try:
+                cur.execute("""
+                    SELECT a.item_no, a.loc, a.policy_id, p.review_cycle_days
+                    FROM fact_dfu_policy_assignment a
+                    JOIN dim_replenishment_policy p ON p.policy_id = a.policy_id
+                """)
+                policy_rows = cur.fetchall()
+            except Exception:
+                policy_rows = []
+
+            policy_map: dict[tuple, dict] = {}
+            for r in policy_rows:
+                key = (r[0], r[1])
+                policy_map[key] = {
+                    "policy_id": r[2],
+                    "review_cycle_days": int(r[3]) if r[3] is not None else 7,
+                }
+
+            # ----------------------------------------------------------------
+            # 4. Lead time profile (stub until IPfeature2)
+            # ----------------------------------------------------------------
+            try:
+                cur.execute("""
+                    SELECT item_no, loc, lt_mean_days
+                    FROM dim_item_lead_time_profile
+                """)
+                lt_rows = cur.fetchall()
+                lt_map = {(r[0], r[1]): float(r[2] or 0) for r in lt_rows}
+            except Exception:
+                lt_map = {}
+
+            # ----------------------------------------------------------------
+            # 5. Load existing open exceptions (dedup: last 7 days)
+            # ----------------------------------------------------------------
+            dedup_cutoff = today - datetime.timedelta(days=7)
+            try:
+                cur.execute("""
+                    SELECT item_no, loc, exception_type
+                    FROM fact_replenishment_exceptions
+                    WHERE status = 'open'
+                      AND exception_date >= %s
+                """, [dedup_cutoff])
+                existing = {(r[0], r[1], r[2]) for r in cur.fetchall()}
+            except Exception:
+                existing = set()
+
+        # ----------------------------------------------------------------
+        # 6. Detect exceptions
+        # ----------------------------------------------------------------
+        to_insert: list[dict] = []
+        counts_by_type: dict[str, int] = defaultdict(int)
+        skipped_dedup = 0
+
+        for (item_no, loc), inv in inv_map.items():
+            current_qty = inv["current_qty"]
+            avg_daily_sls = inv["avg_daily_sls"]
+
+            ss_data = ss_map.get((item_no, loc), {})
+            ss_combined = ss_data.get("ss_combined")
+            reorder_point = ss_data.get("reorder_point")
+            effective_eoq = ss_data.get("effective_eoq")
+            target_dos_max = ss_data.get("target_dos_max")
+            unit_cost = ss_data.get("unit_cost")
+            demand_mean_monthly = ss_data.get("demand_mean_monthly")
+
+            current_dos: float | None = None
+            if avg_daily_sls > 0:
+                current_dos = current_qty / avg_daily_sls
+
+            exc_type, severity = detect_exception_type(
+                current_qty, ss_combined, reorder_point,
+                current_dos, target_dos_max, avg_daily_sls,
+            )
+            if exc_type is None:
+                continue
+
+            # Deduplication check
+            if (item_no, loc, exc_type) in existing:
+                skipped_dedup += 1
+                continue
+
+            pol = policy_map.get((item_no, loc), {})
+            policy_id = pol.get("policy_id")
+            review_cycle_days = pol.get("review_cycle_days", 7)
+            lead_time = lt_map.get((item_no, loc))
+
+            rec_qty, order_by, receipt = compute_recommendation(
+                exc_type, severity, current_qty, ss_combined, effective_eoq,
+                demand_mean_monthly, review_cycle_days, lead_time, max_months, today,
+            )
+
+            est_value = round(rec_qty * (unit_cost or 0.0), 2)
+
+            to_insert.append({
+                "item_no": item_no,
+                "loc": loc,
+                "exception_date": today,
+                "exception_type": exc_type,
+                "severity": severity,
+                "current_qty_on_hand": current_qty,
+                "current_dos": current_dos,
+                "ss_combined": ss_combined,
+                "reorder_point": reorder_point,
+                "recommended_order_qty": rec_qty,
+                "recommended_order_by": order_by,
+                "expected_receipt_date": receipt,
+                "estimated_order_value": est_value,
+                "policy_id": policy_id,
+                "lead_time_mean_days": lead_time,
+            })
+            counts_by_type[exc_type] += 1
+
+        # ----------------------------------------------------------------
+        # 7. Insert (skip on dry-run)
+        # ----------------------------------------------------------------
+        if not dry_run and to_insert:
+            with conn.cursor() as cur:
+                for row in to_insert:
+                    cur.execute("""
+                        INSERT INTO fact_replenishment_exceptions (
+                            item_no, loc, exception_date, exception_type, severity,
+                            current_qty_on_hand, current_dos, ss_combined, reorder_point,
+                            recommended_order_qty, recommended_order_by, expected_receipt_date,
+                            estimated_order_value, policy_id, lead_time_mean_days
+                        ) VALUES (
+                            %(item_no)s, %(loc)s, %(exception_date)s, %(exception_type)s, %(severity)s,
+                            %(current_qty_on_hand)s, %(current_dos)s, %(ss_combined)s, %(reorder_point)s,
+                            %(recommended_order_qty)s, %(recommended_order_by)s, %(expected_receipt_date)s,
+                            %(estimated_order_value)s, %(policy_id)s, %(lead_time_mean_days)s
+                        )
+                        ON CONFLICT DO NOTHING
+                    """, row)
+            conn.commit()
+
+    generated_count = len(to_insert)
+    result = {
+        "generated_count": generated_count,
+        "skipped_dedup": skipped_dedup,
+        "dry_run": dry_run,
+        "by_type": dict(counts_by_type),
+    }
+
+    prefix = "[DRY RUN] " if dry_run else ""
+    print(f"{prefix}Generated: {generated_count} exceptions, skipped (dedup): {skipped_dedup}")
+    for exc_type, count in sorted(counts_by_type.items()):
+        print(f"  {exc_type}: {count}")
+
+    return result
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate replenishment exceptions")
+    parser.add_argument("--dry-run", action="store_true", help="Preview without inserting")
+    args = parser.parse_args()
+    run(dry_run=args.dry_run)

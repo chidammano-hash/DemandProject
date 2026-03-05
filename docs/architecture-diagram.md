@@ -40,6 +40,15 @@
 ║  │  │               │  │  │  │ Position    │ │ Model Comp  │ │ Scheduler   │              │  │  │    ║
 ║  │  │               │  │  │  │ KPIs/Trend  │ │ Root Cause  │ │ Monitor     │              │  │  │    ║
 ║  │  │               │  │  │  └─────────────┘ └─────────────┘ └─────────────┘              │  │  │    ║
+║  │  │               │  │  │  ┌─────────────────────────────────────────────┐              │  │  │    ║
+║  │  │               │  │  │  │          InvPlanningTab                     │              │  │  │    ║
+║  │  │               │  │  │  │ Exceptions|Health|Policies|EOQ|FillRate     │              │  │  │    ║
+║  │  │               │  │  │  │ AbcXyz|Supplier|Investment|Intramonth       │              │  │  │    ║
+║  │  │               │  │  │  └─────────────────────────────────────────────┘              │  │  │    ║
+║  │  │               │  │  │  ┌─────────────────────────────────────────────┐              │  │  │    ║
+║  │  │               │  │  │  │        ControlTowerTab (IPfeature15)        │              │  │  │    ║
+║  │  │               │  │  │  │ KPIs | Alerts | Top-Critical | Trend        │              │  │  │    ║
+║  │  │               │  │  │  └─────────────────────────────────────────────┘              │  │  │    ║
 ║  │  │               │  │  │                                                                │  │  │    ║
 ║  │  └──────────────┘  │  └────────────────────────────────────────────────────────────────┘  │  │    ║
 ║  │                     │                                            ┌──────────┐              │  │    ║
@@ -57,10 +66,11 @@
 ║  └───────────────────────────────┘  └──────────────────────────────┘  └──────────────────────────┘  ║
 ╚═══════════════════════════════════════════════════════════════════════════════════════════════════════╝
                                               │
-                                    Vite Proxy (12 path prefixes)
+                                    Vite Proxy (15 path prefixes)
                                     /domains /jobs /clustering /forecast
                                     /inventory /dashboard /health /chat
                                     /dfu /competition /bench /market-intelligence
+                                    /inv-planning /fill-rate /control-tower
                                               │
                                               ▼
 ╔═══════════════════════════════════════════════════════════════════════════════════════════════════════╗
@@ -69,7 +79,7 @@
 ║                                                                                                     ║
 ║  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐    ║
 ║  │                               main.py (~65 lines)                                           │    ║
-║  │  App creation → GZip middleware → CORS middleware → Mount 12 routers                        │    ║
+║  │  App creation → GZip middleware → CORS middleware → Mount 16 routers                        │    ║
 ║  └──────────────────────────────────────────────────────────────────────────────────────────────┘    ║
 ║                                                                                                     ║
 ║  ┌──── core.py ──────────────┐  ┌──── auth.py ─────────────────────────────────────────────────┐    ║
@@ -79,7 +89,7 @@
 ║  │ Domain Spec Wrappers      │                                                                     ║
 ║  └───────────────────────────┘                                                                     ║
 ║                                                                                                     ║
-║  ┌──────────────────────────── 12 Modular API Routers ────────────────────────────────────────┐     ║
+║  ┌──────────────────────────── 16 Modular API Routers ────────────────────────────────────────┐     ║
 ║  │                                                                                            │     ║
 ║  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐    │     ║
 ║  │  │  accuracy.py  │ │ analysis.py  │ │benchmark.py  │ │   chat.py    │ │ clusters.py  │    │     ║
@@ -95,11 +105,20 @@
 ║  │  │ Selection    │ │ Heatmap/Move │ │ Briefings    │ │ Root Cause   │ │ KPIs/Trend   │    │     ║
 ║  │  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘    │     ║
 ║  │                                                                                            │     ║
-║  │  ┌──────────────┐ ┌──────────────┐                                                        │     ║
-║  │  │   jobs.py    │ │  domains.py  │  ← mounted LAST (catch-all {domain} paths)             │     ║
-║  │  │  /jobs/*     │ │ /domains/*   │                                                        │     ║
-║  │  │ APScheduler  │ │ Generic CRUD │                                                        │     ║
-║  │  │ 12 endpoints │ │ 8 Domains    │                                                        │     ║
+║  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────────────────────────────┐      │     ║
+║  │  │   jobs.py    │ │  domains.py  │ │           inv_planning.py                    │      │     ║
+║  │  │  /jobs/*     │ │ /domains/*   │ │  /inv-planning/eoq/* (EOQ, IPfeature4)       │      │     ║
+║  │  │ APScheduler  │ │ Generic CRUD │ │  /inv-planning/policies/* (IPfeature5)       │      │     ║
+║  │  │ 12 endpoints │ │ 8 Domains    │ │  /inv-planning/policy-assignments/* (IP5)    │      │     ║
+║  │  └──────────────┘ └──────────────┘ │  /inv-planning/health/* (IPfeature6)         │      │     ║
+║  │                    ← mounted LAST  │  /inv-planning/exceptions/* (IPfeature7)     │      │     ║
+║  │                                    │  /inv-planning/demand-signals/* (IP9)        │      │     ║
+║  │  ┌──────────────┐ ┌──────────────┐ │  /inv-planning/simulation/* (IP10)           │      │     ║
+║  │  │fill_rate.py  │ │control_tower │ │  /inv-planning/abc-xyz/* (IP11)              │      │     ║
+║  │  │/fill-rate/*  │ │    .py       │ │  /inv-planning/supplier-performance/* (IP12) │      │     ║
+║  │  │ FillRate     │ │/control-tower│ │  /inv-planning/investment/* (IP13)           │      │     ║
+║  │  │ Analytics    │ │ KPIs/Alerts  │ │  /inv-planning/intramonth-stockouts/* (IP14) │      │     ║
+║  │  │ (IPfeature8) │ │ (IPfeature15)│ └──────────────────────────────────────────────┘      │     ║
 ║  │  └──────────────┘ └──────────────┘                                                        │     ║
 ║  └────────────────────────────────────────────────────────────────────────────────────────────┘     ║
 ╚═══════════════════════════════════════════════════════════════════════════════════════════════════════╝
@@ -214,12 +233,28 @@
 ║  │  │  job_history                   │  │  mv_inventory_forecast     (inv-forecast bridge)   │  │   ║
 ║  │  │  job_schedule                  │  │  mv_top_movers             (dashboard)             │  │   ║
 ║  │  └────────────────────────────────┘  │  mv_accuracy_*             (accuracy slices)       │  │   ║
+║  │                                       │  mv_inventory_health_score  (0-100 health, 4-comp) │  │   ║
+║  │                                       │  mv_fill_rate_monthly       (fill rate analytics)   │  │   ║
+║  │                                       │  mv_supplier_performance    (supplier KPIs)         │  │   ║
+║  │                                       │  mv_intramonth_stockout     (intra-month stockouts) │  │   ║
+║  │                                       │  mv_control_tower_kpis      (cross-dim KPIs)        │  │   ║
+║  │  ┌──── Inv Planning Tables ───────┐  └────────────────────────────────────────────────────┘  │   ║
+║  │  │  fact_eoq_targets              │                                                           │   ║
+║  │  │  dim_replenishment_policy      │                                                           │   ║
+║  │  │  fact_dfu_policy_assignment    │                                                           │   ║
+║  │  │  fact_safety_stock_targets(stub)│                                                          │   ║
+║  │  │  fact_replenishment_exceptions │                                                           │   ║
+║  │  │  fact_demand_signals           │                                                           │   ║
+║  │  │  fact_ss_simulation_results    │                                                           │   ║
+║  │  │  fact_inventory_investment_plan│                                                           │   ║
+║  │  │  fact_efficient_frontier       │                                                           │   ║
+║  │  └────────────────────────────────┘                                                           │   ║
 ║  │                                       └───────────────────────────────────────────────────┘   │   ║
 ║  │  ┌──── Indexes ───────────────────────────────────────────────────────────────────────────┐  │   ║
 ║  │  │  B-tree (composite)  │  GIN trigram (pg_trgm full-text)  │  pgvector (embeddings)     │  │   ║
 ║  │  └────────────────────────────────────────────────────────────────────────────────────────┘  │   ║
 ║  │                                                                                               │   ║
-║  │  21 SQL Migration Files (sql/001 → sql/021)                                                   │   ║
+║  │  35 SQL Migration Files (sql/001 → sql/035)                                                   │   ║
 ║  └───────────────────────────────────────────────────────────────────────────────────────────────┘   ║
 ║                                                                                                     ║
 ║  ┌──────────── Lakehouse (Optional) ──────────────────────────────────────────────────────────┐     ║
@@ -246,7 +281,7 @@
 ║  ┌──── Build ─────────────┐  ┌──── Testing ──────────────┐  ┌──── Infrastructure ────────────────┐  ║
 ║  │ Makefile (100+ targets)│  │ pytest (backend, ~0.7s)   │  │ Docker Compose (7 services)        │  ║
 ║  │ uv (Python packaging) │  │ vitest (frontend, ~1.5s)  │  │ Vite dev server + proxy            │  ║
-║  │ Vite 5 (frontend)     │  │ 485+ total tests          │  │ MLflow tracking server             │  ║
+║  │ Vite 5 (frontend)     │  │ 1109+ total tests         │  │ MLflow tracking server             │  ║
 ║  │ TypeScript 5           │  │ httpx ASGI transport      │  │ APScheduler (in-process)           │  ║
 ║  │ Tailwind CSS           │  │ React Testing Library     │  │                                    │  ║
 ║  └────────────────────────┘  └───────────────────────────┘  └────────────────────────────────────┘  ║
