@@ -1,0 +1,49 @@
+# Safety Stock Engine Configuration (IPfeature3)
+# All parameters for scripts/compute_safety_stock.py.
+# No magic numbers in the script — all thresholds, defaults, and Z-scores come from here.
+
+safety_stock:
+  # Method: 'combined' uses both demand and LT variability (recommended).
+  # 'demand_only' uses only demand variability (when LT data is unavailable).
+  default_method: combined
+
+  # Policy version tag written to fact_safety_stock_targets.policy_version.
+  # Override via --policy-version CLI flag.
+  policy_version: v1
+
+  # Service levels by ABC class (dim_dfu.abc_vol).
+  # ABC class is determined by demand volume contribution (Pareto segmentation).
+  service_levels:
+    A: 0.98          # Top 20% by volume — highest service level
+    B: 0.95          # Middle 30% by volume
+    C: 0.90          # Bottom 50% by volume
+    default: 0.95    # Fallback if abc_vol is NULL or unrecognized
+
+  # Precomputed Z-scores (standard normal, one-tail).
+  # Key = service level as float, value = Z.
+  z_table:
+    0.85: 1.036
+    0.90: 1.282
+    0.95: 1.645
+    0.97: 1.881
+    0.98: 2.054
+    0.99: 2.326
+
+  # Guard rails — prevent unreasonably small or large SS recommendations.
+  min_ss_days: 3       # Never compute SS below 3 days of supply (unless zero-demand item)
+  max_ss_days: 120     # Cap SS at 120 days (prevents outlier spikes from volatile items)
+
+  # Minimum months of demand history required for a DFU to receive an SS target.
+  # DFUs with fewer months are skipped (insufficient data).
+  min_demand_months: 3
+
+  # Lead time std fallback: when lt_std_days is NULL (insufficient LT observations),
+  # use lt_mean_days * lt_std_fallback_pct as an approximation.
+  lt_std_fallback_pct: 0.20   # Assume LT std = 20% of LT mean
+
+  # Formula components to include.
+  use_demand_variability: true
+  use_lt_variability: true
+
+  # Batch upsert size (rows per INSERT ... ON CONFLICT batch).
+  batch_size: 1000

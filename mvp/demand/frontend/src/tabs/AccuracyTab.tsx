@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   useQuery,
   useMutation,
@@ -33,6 +33,8 @@ import {
   fetchShapTimeframeDetail,
   saveCompetitionConfig,
   runCompetition,
+  seasonalityProfileKeys,
+  fetchSeasonalityProfileNames,
   type CompetitionConfig,
   type ChampionSummary,
   type SliceParams,
@@ -104,8 +106,21 @@ export function AccuracyTab() {
   const [sliceMonths, setSliceMonths] = useState(12);
   const [commonDfus, setCommonDfus] = useState(false);
 
+  // Seasonality profile filter (Feature 32)
+  const [seasonalityProfile, setSeasonalityProfile] = useState("");
+  const [seasonalityProfiles, setSeasonalityProfiles] = useState<string[]>([]);
+
   // Competition config is local-mutable (user edits checkboxes/dropdowns)
   const [competitionConfig, setCompetitionConfig] = useState<CompetitionConfig | null>(null);
+
+  // Fetch seasonality profile names once for the filter dropdown (Feature 32)
+  useEffect(() => {
+    let cancelled = false;
+    fetchSeasonalityProfileNames()
+      .then((profiles) => { if (!cancelled) setSeasonalityProfiles(profiles); })
+      .catch(() => { /* non-blocking */ });
+    return () => { cancelled = true; };
+  }, []);
 
   // SHAP panel state (Feature 42)
   const [shapOpen, setShapOpen] = useState(false);
@@ -135,8 +150,9 @@ export function AccuracyTab() {
       include_dfu_count: needDfuCount,
       item: globalItem,
       location: globalLocation,
+      seasonality_profile: seasonalityProfile || undefined,
     }),
-    [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation],
+    [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile],
   );
 
   const lagCurveParams: LagCurveParams = useMemo(
@@ -147,8 +163,9 @@ export function AccuracyTab() {
       include_dfu_count: needDfuCount,
       item: globalItem,
       location: globalLocation,
+      seasonality_profile: seasonalityProfile || undefined,
     }),
-    [sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation],
+    [sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile],
   );
 
   // ---- Data fetching: accuracy slice + lag curve ----------------------------
@@ -451,6 +468,22 @@ export function AccuracyTab() {
                 disabled={loadingSlice}
               />
             </label>
+            {seasonalityProfiles.length > 0 ? (
+              <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Seasonality Profile
+                <select
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={seasonalityProfile}
+                  onChange={(e) => setSeasonalityProfile(e.target.value)}
+                  disabled={loadingSlice}
+                >
+                  <option value="">All Profiles</option>
+                  {seasonalityProfiles.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             {sliceGroupBy !== "month_start" ? (
               <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 KPI Window

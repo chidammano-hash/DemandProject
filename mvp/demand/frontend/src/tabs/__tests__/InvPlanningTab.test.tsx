@@ -27,6 +27,10 @@ vi.mock("@/api/queries", () => ({
     eoqSensitivity: (p: Record<string, unknown>) => ["eoq-sensitivity", p],
     policyList: () => ["policy-list"],
     policyCompliance: () => ["policy-compliance"],
+    variabilitySummary: (p?: Record<string, unknown>) => ["variability-summary", p ?? {}],
+    variabilityDetail: (p?: Record<string, unknown>) => ["variability-detail", p ?? {}],
+    ltSummary: (p?: Record<string, unknown>) => ["lt-summary", p ?? {}],
+    ltProfile: (p?: Record<string, unknown>) => ["lt-profile", p ?? {}],
   },
   healthKeys: {
     summary: (f?: Record<string, unknown>) => ["health-summary", f ?? {}],
@@ -265,6 +269,59 @@ vi.mock("@/api/queries", () => ({
     avg_stockout_day_rate: 0.08, total_est_lost_sales: 25000,
   }),
   fetchIntramonthDetail: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  safetyStockKeys: {
+    summary: (f?: Record<string, unknown>) => ["safety-stock", "summary", f ?? {}],
+    detail: (p?: Record<string, unknown>) => ["safety-stock", "detail", p ?? {}],
+    waterfall: (itemNo: string, loc: string) => ["safety-stock", "waterfall", itemNo, loc],
+    config: () => ["safety-stock", "config"],
+  },
+  fetchSafetyStockSummary: vi.fn().mockResolvedValue({
+    total_dfus: 300, below_ss_count: 45, avg_ss_coverage: 1.8, avg_ss_days: 21,
+    by_abc: [{ abc_vol: "A", count: 100, below_ss_count: 10, avg_coverage: 2.1 }],
+  }),
+  fetchSafetyStockDetail: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  fetchSafetyStockWaterfall: vi.fn().mockResolvedValue(null),
+  fetchSafetyStockConfig: vi.fn().mockResolvedValue({}),
+  fetchVariabilitySummary: vi.fn().mockResolvedValue({
+    total_dfus: 400, avg_cv: 0.35,
+    by_class: { low: 150, medium: 180, high: 50, lumpy: 20 },
+    cv_percentiles: { p25: 0.15, p50: 0.30, p75: 0.55, p95: 0.90 },
+    avg_intermittency_ratio: 0.12, top_volatile: [],
+  }),
+  fetchVariabilityDetail: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  fetchLtSummary: vi.fn().mockResolvedValue({
+    total_profiles: 200, avg_lt_cv: 0.18, avg_lt_mean_days: 14.0,
+    by_class: { stable: 120, moderate: 60, volatile: 20 },
+    lt_cv_p50: 0.12, lt_cv_p95: 0.42,
+    top_volatile: [],
+  }),
+  fetchLtProfile: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  demandSignalsKeys: {
+    summary: (date?: string) => ["demand-signals", "summary", date],
+    list: (p?: Record<string, unknown>) => ["demand-signals", "list", p ?? {}],
+    item: (itemNo: string, loc: string) => ["demand-signals", "item", itemNo, loc],
+  },
+  fetchDemandSignalsSummary: vi.fn().mockResolvedValue({
+    signal_date: "2026-03-05", above_plan_count: 30, below_plan_count: 20,
+    on_plan_count: 50, urgent_count: 5, watch_count: 15, projected_stockouts: 3,
+  }),
+  fetchDemandSignals: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  simulationKeys: {
+    results: (p?: Record<string, unknown>) => ["simulation", "results", p ?? {}],
+    compare: (itemNo: string, loc: string) => ["simulation", "compare", itemNo, loc],
+    status: (id: string) => ["simulation", "status", id],
+  },
+  fetchSimulationResults: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  runSimulation: vi.fn().mockResolvedValue(null),
+  investmentKeys: {
+    summary: (planId?: string) => ["investment", "summary", planId],
+    detail: (p?: Record<string, unknown>) => ["investment", "detail", p ?? {}],
+    frontier: (planId?: string) => ["investment", "frontier", planId],
+  },
+  fetchInvestmentSummary: vi.fn().mockResolvedValue(null),
+  fetchInvestmentDetail: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  fetchInvestmentFrontier: vi.fn().mockResolvedValue([]),
+  runInvestmentPlan: vi.fn().mockResolvedValue(null),
 }));
 
 const { InvPlanningTab } = await import("@/tabs/InvPlanningTab");
@@ -580,6 +637,84 @@ describe("InvPlanningTab", () => {
     );
     await waitFor(() => {
       expect(screen.getByText("Generate Exceptions")).toBeDefined();
+    });
+  });
+
+  it("renders Safety Stock section header", async () => {
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InvPlanningTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Safety Stock")).toBeDefined();
+    });
+  });
+
+  it("renders Demand Variability section header", async () => {
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InvPlanningTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Demand Variability")).toBeDefined();
+    });
+  });
+
+  it("renders Lead Time Analysis section header", async () => {
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InvPlanningTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Lead Time Analysis")).toBeDefined();
+    });
+  });
+
+  it("renders Demand Signals section header", async () => {
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InvPlanningTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Demand Signals")).toBeDefined();
+    });
+  });
+
+  it("renders Safety Stock Simulation section header", async () => {
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InvPlanningTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Safety Stock Simulation")).toBeDefined();
+    });
+  });
+
+  it("renders Investment Plan section header", async () => {
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InvPlanningTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Investment Plan")).toBeDefined();
     });
   });
 });

@@ -1,0 +1,149 @@
+import { describe, it, expect, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+
+// Mock all ECharts modules before importing the component
+vi.mock("echarts-for-react/lib/core", () => ({
+  default: ({ style, className }: { style?: React.CSSProperties; className?: string }) => (
+    <div data-testid="echarts-mock" style={style} className={className} />
+  ),
+}));
+
+vi.mock("echarts/core", () => ({
+  use: vi.fn(),
+}));
+
+vi.mock("echarts/charts", () => ({
+  LineChart: {},
+}));
+
+vi.mock("echarts/components", () => ({
+  GridComponent: {},
+  TooltipComponent: {},
+  LegendComponent: {},
+  DataZoomComponent: {},
+}));
+
+vi.mock("echarts/renderers", () => ({
+  CanvasRenderer: {},
+}));
+
+import { ForecastTrendChart } from "@/components/ForecastTrendChart";
+
+const defaultChartColors = {
+  grid: "#e5e5e5",
+  axis: "#737373",
+  tooltip: "#ffffff",
+};
+
+const defaultSeriesColors = ["#6366f1", "#f59e0b"];
+
+const sampleData = [
+  { month: "2024-01", forecast: 1000, actual: 950 },
+  { month: "2024-02", forecast: 1100, actual: 1050 },
+  { month: "2024-03", forecast: 1200, actual: 1180 },
+];
+
+describe("ForecastTrendChart", () => {
+  it("renders without crashing with empty data array", () => {
+    render(
+      <ForecastTrendChart
+        data={[]}
+        theme="light"
+        chartColors={defaultChartColors}
+        seriesColors={defaultSeriesColors}
+      />
+    );
+  });
+
+  it("shows empty state message when data is empty", () => {
+    render(
+      <ForecastTrendChart
+        data={[]}
+        theme="light"
+        chartColors={defaultChartColors}
+        seriesColors={defaultSeriesColors}
+      />
+    );
+    expect(screen.getByText("No forecast data available")).toBeInTheDocument();
+  });
+
+  it("does NOT show empty state when data is provided", () => {
+    render(
+      <ForecastTrendChart
+        data={sampleData}
+        theme="light"
+        chartColors={defaultChartColors}
+        seriesColors={defaultSeriesColors}
+      />
+    );
+    expect(screen.queryByText("No forecast data available")).not.toBeInTheDocument();
+  });
+
+  it("renders ECharts container when data is provided", () => {
+    render(
+      <ForecastTrendChart
+        data={sampleData}
+        theme="light"
+        chartColors={defaultChartColors}
+        seriesColors={defaultSeriesColors}
+      />
+    );
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
+  });
+
+  it("renders with dark theme without crashing", () => {
+    render(
+      <ForecastTrendChart
+        data={sampleData}
+        theme="dark"
+        chartColors={{ grid: "#333", axis: "#aaa", tooltip: "#222" }}
+        seriesColors={["#818cf8", "#fbbf24"]}
+      />
+    );
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
+  });
+
+  it("renders with a single data point without crashing", () => {
+    render(
+      <ForecastTrendChart
+        data={[{ month: "2024-01", forecast: 500, actual: 480 }]}
+        theme="light"
+        chartColors={defaultChartColors}
+        seriesColors={defaultSeriesColors}
+      />
+    );
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
+  });
+
+  it("renders with many data points without crashing", () => {
+    const largeData = Array.from({ length: 24 }, (_, i) => ({
+      month: `2023-${String(i % 12 + 1).padStart(2, "0")}`,
+      forecast: 1000 + i * 50,
+      actual: 980 + i * 45,
+    }));
+    render(
+      <ForecastTrendChart
+        data={largeData}
+        theme="light"
+        chartColors={defaultChartColors}
+        seriesColors={defaultSeriesColors}
+      />
+    );
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
+  });
+
+  it("renders with zero values in data without crashing", () => {
+    render(
+      <ForecastTrendChart
+        data={[
+          { month: "2024-01", forecast: 0, actual: 0 },
+          { month: "2024-02", forecast: 0, actual: 100 },
+        ]}
+        theme="light"
+        chartColors={defaultChartColors}
+        seriesColors={defaultSeriesColors}
+      />
+    );
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
+  });
+});

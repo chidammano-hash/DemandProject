@@ -1,5 +1,5 @@
 -- IPAIfeature1: AI Planning Agent — insight storage tables
--- Run: psql $DATABASE_URL -f sql/027_create_ai_insights.sql
+-- Run: psql $DATABASE_URL -f sql/036_create_ai_insights.sql
 
 -- ---------------------------------------------------------------------------
 -- ai_insights

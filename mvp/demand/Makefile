@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all
 
 help:
 	@echo "Targets:"
@@ -87,6 +87,10 @@ help:
 	@echo "  exceptions-schema    - create fact_replenishment_exceptions table (one-time)"
 	@echo "  exceptions-generate  - run exception detection + insert into queue"
 	@echo "  exceptions-generate-dry - preview exceptions without inserting"
+	@echo "  ss-schema            - create fact_safety_stock_targets table (one-time)"
+	@echo "  ss-compute           - compute SS targets + upsert into DB"
+	@echo "  ss-compute-dry       - preview SS computation without writing"
+	@echo "  ss-all               - ss-schema + ss-compute (full pipeline)"
 	@echo "  ai-insights-schema   - create ai_insights + ai_planning_memos tables (one-time)"
 	@echo "  ai-insights-scan     - run portfolio scan to generate AI insights"
 	@echo "  ai-insights-scan-dry - preview scan without writing to DB"
@@ -494,6 +498,21 @@ exceptions-generate-dry:
 	$(UV) python scripts/generate_replenishment_exceptions.py --dry-run
 
 # ---------------------------------------------------------------------------
+# Safety Stock Engine (IPfeature3)
+# ---------------------------------------------------------------------------
+
+ss-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/037_create_safety_stock_targets.sql').read()); conn.close(); print('Safety Stock DDL applied')"
+
+ss-compute:
+	$(UV) python scripts/compute_safety_stock.py
+
+ss-compute-dry:
+	$(UV) python scripts/compute_safety_stock.py --dry-run
+
+ss-all: ss-schema ss-compute
+
+# ---------------------------------------------------------------------------
 # AI Planning Agent (IPAIfeature1)
 # ---------------------------------------------------------------------------
 
@@ -696,3 +715,17 @@ control-tower-refresh:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; populated=conn.execute("SELECT relispopulated FROM pg_class WHERE relname='mv_control_tower_kpis'").fetchone(); conn.execute('REFRESH MATERIALIZED VIEW ' + ('CONCURRENTLY ' if populated and populated[0] else '') + 'mv_control_tower_kpis'); conn.close(); print('mv_control_tower_kpis refreshed')"
 
 control-tower-all: control-tower-schema control-tower-refresh
+
+# ---------------------------------------------------------------------------
+# Feature 40: Demand Planner Storyboard (Exception-Based Value Workflow)
+# ---------------------------------------------------------------------------
+storyboard-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/038_create_storyboard.sql').read()); conn.close(); print('Storyboard DDL applied')"
+
+storyboard-generate:
+	$(UV) python scripts/generate_storyboard_exceptions.py
+
+storyboard-generate-dry:
+	$(UV) python scripts/generate_storyboard_exceptions.py --dry-run
+
+storyboard-all: storyboard-schema storyboard-generate

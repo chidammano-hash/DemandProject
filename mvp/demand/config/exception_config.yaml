@@ -1,0 +1,67 @@
+# Demand Planner Storyboard — Exception Engine Config (Feature 40)
+#
+# Controls exception detection thresholds, scoring weights, and generation limits.
+# All configurable parameters live here; no magic numbers in Python scripts.
+
+exception_engine:
+  # Exception types to detect (order determines processing priority)
+  exception_types:
+    - forecast_bias
+    - stockout_risk
+    - accuracy_drop
+    - excess_risk
+    - model_drift
+    - new_item
+
+  # Per-type detection thresholds
+  thresholds:
+    forecast_bias:
+      bias_pct_threshold: 20.0    # % absolute bias to flag (abs(SUM(F)/SUM(A)-1)*100)
+      critical_pct_threshold: 40.0 # % absolute bias for critical severity
+      min_months: 3               # minimum months of consistent bias required
+      min_actual_units: 100       # skip items with trivial sales volume
+
+    stockout_risk:
+      dos_threshold: 14           # days of supply below this = risk
+      critical_dos_threshold: 7   # days of supply below this = critical
+      min_daily_sales: 1.0        # skip items with trivial daily sales
+
+    accuracy_drop:
+      accuracy_drop_pct: 15.0    # % accuracy drop vs prior 3 months to flag
+      critical_drop_pct: 25.0    # % accuracy drop for critical severity
+      min_recent_wape: 40.0      # also flag if recent WAPE > this
+      baseline_months: 3         # months to use for baseline WAPE
+
+    excess_risk:
+      excess_dos_threshold: 90   # DOS above this = excess risk (days)
+      critical_dos_threshold: 180 # DOS above this = critical severity
+      excess_months: 3           # months of excess supply to confirm trend
+      carrying_cost_rate: 0.25   # annual carrying cost as fraction of unit cost
+
+    model_drift:
+      drift_wape_threshold: 45.0 # recent WAPE threshold signaling model drift
+      lookback_months: 6         # window for evaluating champion stability
+      change_threshold_pct: 30.0 # % of months where champion changed = drift
+
+    new_item:
+      max_history_months: 2      # items with <= this months of history = new item
+
+  # Severity scoring weights (used to combine rule score + financial impact)
+  severity_weights:
+    financial_impact: 0.4   # weight for dollar impact component
+    rule_score: 0.4         # weight for rule-based score (0-1 from detection fn)
+    urgency: 0.2            # weight for time-based urgency (how close to threshold)
+
+  # Generation controls
+  max_exceptions_per_run: 500      # cap total exceptions per generation run
+  exception_ttl_days: 30           # auto-expire exceptions after N days (sets expires_at)
+  dedupe_window_days: 7            # don't recreate same item-loc-type exception within N days
+  batch_size: 100                  # DB insert batch size
+
+  # Priority scoring formula weights (for sorting the exception queue)
+  priority_scoring:
+    severity_weights:
+      critical: 4.0   # maps severity 0.75-1.0
+      high: 3.0       # maps severity 0.50-0.75
+      medium: 2.0     # maps severity 0.25-0.50
+      low: 1.0        # maps severity 0.0-0.25

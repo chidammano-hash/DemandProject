@@ -10,8 +10,7 @@ import {
   Globe,
   MessageSquare,
   PlayCircle,
-  Settings,
-  Brain, Monitor, Sparkles,
+  Brain, Monitor, Sparkles, BookOpen,
   PanelLeftClose,
   PanelLeft,
   Menu,
@@ -41,12 +40,12 @@ const NAV_ITEMS: NavItem[] = [
   { key: "invBacktest", label: "Inv. Backtest", icon: Activity, section: "supply", shortcut: "6" },
   { key: "invPlanning", label: "Inv. Planning", icon: Brain, section: "supply" },
   { key: "controlTower", label: "Control Tower", icon: Monitor, section: "supply" },
+  { key: "storyboard", label: "Storyboard", icon: BookOpen, section: "supply" },
   { key: "aiPlanner", label: "AI Planner", icon: Sparkles, section: "intelligence" },
   { key: "clusters", label: "Clusters", icon: Network, section: "intelligence", shortcut: "7" },
   { key: "intel", label: "Market Intel", icon: Globe, section: "intelligence", shortcut: "8" },
   { key: "jobs", label: "Jobs", icon: PlayCircle, section: "system", shortcut: "9" },
   { key: "chat", label: "Chat", icon: MessageSquare, section: "system" },
-  { key: "settings", label: "Settings", icon: Settings, section: "system" },
 ];
 
 const SECTION_LABELS: Record<SidebarSection, string> = {

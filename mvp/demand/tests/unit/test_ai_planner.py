@@ -44,7 +44,7 @@ def test_get_dfu_full_context_found():
     pool, conn, cursor = _make_pool(
         fetchone_return=("100320", "1401-BULK", "A", "L", "high_volume_steady", None, False,
                          42.0, 14, 1000.0, 33.0, 250.0, 3000.0, 500.0, 3.0, 8000.0,
-                         "continuous_rop", "rop", 7, 14, 28.5),
+                         "continuous_rop", "rop", 7, 0.95, True, 28.5),
         description=[
             ("item_no",), ("loc",), ("abc_vol",), ("variability_class",), ("cluster_assignment",),
             ("seasonality_profile",), ("is_yearly_seasonal",),
@@ -52,7 +52,7 @@ def test_get_dfu_full_context_found():
             ("eoq_effective",), ("annual_demand",), ("total_annual_cost",),
             ("eoq_months_supply",), ("cycle_stock_value",),
             ("current_policy_id",), ("policy_type",), ("review_period_days",),
-            ("safety_stock_days",), ("champion_wape",),
+            ("service_level",), ("use_safety_stock",), ("champion_wape",),
         ],
     )
 
@@ -401,7 +401,7 @@ def test_openai_loop_tool_call_then_stop():
     pool, conn, cursor = _make_pool(
         fetchone_return=("100320", "1401-BULK", "A", "L", "c", None, False,
                          42.0, 14, 1000.0, 33.0, 250.0, 3000.0, 500.0, 3.0,
-                         8000.0, "rop", "rop", 7, 14, 28.5),
+                         8000.0, "rop", "rop", 7, 0.95, True, 28.5),
         description=[
             ("item_no",), ("loc",), ("abc_vol",), ("variability_class",),
             ("cluster_assignment",), ("seasonality_profile",), ("is_yearly_seasonal",),
@@ -409,7 +409,7 @@ def test_openai_loop_tool_call_then_stop():
             ("eoq_effective",), ("annual_demand",), ("total_annual_cost",),
             ("eoq_months_supply",), ("cycle_stock_value",),
             ("current_policy_id",), ("policy_type",), ("review_period_days",),
-            ("safety_stock_days",), ("champion_wape",),
+            ("service_level",), ("use_safety_stock",), ("champion_wape",),
         ],
     )
     agent = _make_openai_agent(pool)

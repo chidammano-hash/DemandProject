@@ -29,6 +29,7 @@ import {
   DFU_SALES_COLORS,
   dfuModelColor,
 } from "@/constants/colors";
+import { fetchSeasonalityProfileNames } from "@/api/queries";
 import { useChartColors } from "@/hooks/useChartColors";
 import { ELEMENT_CONFIG } from "@/constants/elements";
 import {
@@ -79,6 +80,10 @@ export function DfuAnalysisTab() {
     string[]
   >([]);
 
+  // Seasonality profile filter (Feature 32)
+  const [seasonalityProfile, setSeasonalityProfile] = useState("");
+  const [seasonalityProfiles, setSeasonalityProfiles] = useState<string[]>([]);
+
   const { filters: globalFilters } = useGlobalFilterContext();
   const { chartColors, trendColors } = useChartColors();
 
@@ -94,6 +99,15 @@ export function DfuAnalysisTab() {
     if (globalFilters.item.length === 1) setDfuItem(globalFilters.item[0]);
     if (globalFilters.location.length === 1) setDfuLocation(globalFilters.location[0]);
   }, [globalFilters.item, globalFilters.location]);
+
+  // ---- fetch seasonality profile names once for filter dropdown (Feature 32) ----
+  useEffect(() => {
+    let cancelled = false;
+    fetchSeasonalityProfileNames()
+      .then((profiles) => { if (!cancelled) setSeasonalityProfiles(profiles); })
+      .catch(() => { /* non-blocking */ });
+    return () => { cancelled = true; };
+  }, []);
 
   // ---- auto-sample on first visit ----
   useEffect(() => {
@@ -144,6 +158,7 @@ export function DfuAnalysisTab() {
           location: debouncedDfuLocation.trim(),
           points: String(dfuPoints),
         });
+        if (seasonalityProfile) params.set("seasonality_profile", seasonalityProfile);
         const res = await fetch(`/dfu/analysis?${params}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const payload = (await res.json()) as DfuAnalysisPayload;
@@ -188,7 +203,7 @@ export function DfuAnalysisTab() {
     return () => {
       cancelled = true;
     };
-  }, [dfuMode, debouncedDfuItem, debouncedDfuLocation, dfuPoints]);
+  }, [dfuMode, debouncedDfuItem, debouncedDfuLocation, dfuPoints, seasonalityProfile]);
 
   // ---- item typeahead suggestions ----
   useEffect(() => {
@@ -398,7 +413,7 @@ export function DfuAnalysisTab() {
             </div>
           </div>
 
-          {/* Row 2: Item + Location filters */}
+          {/* Row 2: Item + Location + Seasonality Profile filters */}
           <div className="grid gap-2 md:grid-cols-2">
             {dfuMode !== "all_items_at_location" ? (
               <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -447,6 +462,25 @@ export function DfuAnalysisTab() {
               </div>
             )}
           </div>
+
+          {/* Row 3: Seasonality Profile filter (Feature 32) */}
+          {seasonalityProfiles.length > 0 ? (
+            <div className="grid gap-2 md:grid-cols-3">
+              <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Seasonality Profile
+                <select
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={seasonalityProfile}
+                  onChange={(e) => setSeasonalityProfile(e.target.value)}
+                >
+                  <option value="">All Profiles</option>
+                  {seasonalityProfiles.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
         </CardHeader>
 
         <CardContent className="space-y-4">

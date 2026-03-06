@@ -32,6 +32,10 @@ vi.mock("@/api/queries", () => ({
   fetchShapTimeframeDetail: vi.fn().mockResolvedValue({ model_id: "lgbm_cluster", timeframe_idx: 0, label: "A", cutoff_date: "2024-01-01", total_features: 0, features: [] }),
   saveCompetitionConfig: vi.fn(),
   runCompetition: vi.fn(),
+  seasonalityProfileKeys: {
+    list: () => ["seasonality-profiles"],
+  },
+  fetchSeasonalityProfileNames: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/components/EChartContainer", () => ({

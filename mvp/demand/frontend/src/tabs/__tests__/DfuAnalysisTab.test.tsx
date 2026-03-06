@@ -24,6 +24,7 @@ vi.mock("@/api/queries", () => ({
     dfu_attributes: [],
   }),
   fetchForecastModels: vi.fn().mockResolvedValue(["external"]),
+  fetchSeasonalityProfileNames: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/components/EChartContainer", () => ({

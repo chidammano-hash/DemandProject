@@ -1,6 +1,8 @@
 /**
- * IPfeature4 + IPfeature5 + IPfeature6 + IPfeature7
- * EOQ & Cycle Stock + Replenishment Policy + Health Score + Exception Queue
+ * IPfeature4 + IPfeature5 + IPfeature6 + IPfeature7 + IPfeature8–IPfeature14
+ * EOQ & Cycle Stock + Replenishment Policy + Health Score + Exception Queue +
+ * Fill Rate + ABC-XYZ + Supplier + Intramonth + Safety Stock + Variability +
+ * Lead Time + Demand Signals + Simulation + Investment Plan
  *
  * Inventory Planning tab: Exception Queue, Portfolio Health panel, EOQ KPI cards,
  * sensitivity line chart, paginated EOQ detail table, and Policy Management panel.
@@ -52,6 +54,24 @@ import {
   intramonthKeys,
   fetchIntramonthSummary,
   fetchIntramonthDetail,
+  safetyStockKeys,
+  fetchSafetyStockSummary,
+  fetchSafetyStockDetail,
+  fetchVariabilitySummary,
+  fetchVariabilityDetail,
+  fetchLtSummary,
+  fetchLtProfile,
+  demandSignalsKeys,
+  fetchDemandSignalsSummary,
+  fetchDemandSignals,
+  simulationKeys,
+  fetchSimulationResults,
+  runSimulation,
+  investmentKeys,
+  fetchInvestmentSummary,
+  fetchInvestmentDetail,
+  fetchInvestmentFrontier,
+  runInvestmentPlan,
   STALE,
   type EoqDetailRow,
   type ReplenishmentPolicy,
@@ -61,6 +81,13 @@ import {
   type AbcXyzCell,
   type SupplierRow,
   type IntramonthStockoutRow,
+  type SafetyStockRow,
+  type VariabilityDetailRow,
+  type LtProfileRow,
+  type DemandSignalRow,
+  type SimulationResult,
+  type InvestmentRow,
+  type FrontierPoint,
 } from "@/api/queries";
 
 const PAGE = 50;
@@ -1337,6 +1364,54 @@ export function InvPlanningTab() {
         <h3 className="font-semibold text-base">Intra-Month Stockout Detection</h3>
         <IntramonthPanel />
       </div>
+
+      {/* ================================================================
+          IPfeature3: Safety Stock Panel
+          ================================================================ */}
+      <div className="rounded-lg border bg-card p-4 space-y-4">
+        <h3 className="font-semibold text-base">Safety Stock</h3>
+        <SafetyStockPanel />
+      </div>
+
+      {/* ================================================================
+          IPfeature1: Demand Variability Panel
+          ================================================================ */}
+      <div className="rounded-lg border bg-card p-4 space-y-4">
+        <h3 className="font-semibold text-base">Demand Variability</h3>
+        <VariabilityPanel />
+      </div>
+
+      {/* ================================================================
+          IPfeature2: Lead Time Panel
+          ================================================================ */}
+      <div className="rounded-lg border bg-card p-4 space-y-4">
+        <h3 className="font-semibold text-base">Lead Time Analysis</h3>
+        <LeadTimePanel />
+      </div>
+
+      {/* ================================================================
+          IPfeature9: Demand Signals Panel
+          ================================================================ */}
+      <div className="rounded-lg border bg-card p-4 space-y-4">
+        <h3 className="font-semibold text-base">Demand Signals</h3>
+        <DemandSignalsPanel />
+      </div>
+
+      {/* ================================================================
+          IPfeature10: Simulation Panel
+          ================================================================ */}
+      <div className="rounded-lg border bg-card p-4 space-y-4">
+        <h3 className="font-semibold text-base">Safety Stock Simulation</h3>
+        <SimulationPanel />
+      </div>
+
+      {/* ================================================================
+          IPfeature13: Investment Plan Panel
+          ================================================================ */}
+      <div className="rounded-lg border bg-card p-4 space-y-4">
+        <h3 className="font-semibold text-base">Investment Plan</h3>
+        <InvestmentPanel />
+      </div>
     </div>
   );
 }
@@ -1606,3 +1681,996 @@ function IntramonthPanel() {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// IPfeature3: Safety Stock sub-component
+// ---------------------------------------------------------------------------
+function SafetyStockPanel() {
+  const [belowOnly, setBelowOnly] = useState(false);
+  const [ssItemFilter, setSsItemFilter] = useState("");
+  const [ssLocFilter, setSsLocFilter] = useState("");
+  const [ssOffset, setSsOffset] = useState(0);
+
+  const { data: summary, isLoading: summaryLoading } = useQuery({
+    queryKey: safetyStockKeys.summary(),
+    queryFn: () => fetchSafetyStockSummary(),
+    staleTime: STALE.FIVE_MIN,
+  });
+
+  const { data: detail, isLoading: detailLoading } = useQuery({
+    queryKey: safetyStockKeys.detail({
+      is_below_ss: belowOnly ? true : undefined,
+      item: ssItemFilter || undefined,
+      loc: ssLocFilter || undefined,
+      limit: PAGE,
+      offset: ssOffset,
+    }),
+    queryFn: () =>
+      fetchSafetyStockDetail({
+        is_below_ss: belowOnly ? true : undefined,
+        item: ssItemFilter || undefined,
+        loc: ssLocFilter || undefined,
+        limit: PAGE,
+        offset: ssOffset,
+      }),
+    staleTime: STALE.FIVE_MIN,
+  });
+
+  const totalPages = detail ? Math.ceil(detail.total / PAGE) : 0;
+  const currentPage = Math.floor(ssOffset / PAGE) + 1;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Items Below SS</p>
+          <p className={`text-xl font-bold ${(summary?.below_ss_count ?? 0) > 0 ? "text-red-600" : "text-foreground"}`}>
+            {summaryLoading ? "..." : (summary?.below_ss_count ?? 0).toLocaleString()}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Avg SS Coverage</p>
+          <p className="text-xl font-bold">
+            {summaryLoading ? "..." : fmtPct(summary?.avg_ss_coverage != null ? summary.avg_ss_coverage * 100 : null)}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Total DFUs</p>
+          <p className="text-xl font-bold">{summaryLoading ? "..." : (summary?.total_dfus ?? 0).toLocaleString()}</p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Avg SS Days</p>
+          <p className="text-xl font-bold">{summaryLoading ? "..." : fmt(summary?.avg_ss_days, 1)}</p>
+        </div>
+      </div>
+
+      {summary && summary.by_abc.length > 0 && (
+        <div className="overflow-x-auto">
+          <p className="text-xs font-medium mb-2">Safety Stock by ABC Class</p>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b text-muted-foreground">
+                <th className="text-left py-1 pr-3">ABC Class</th>
+                <th className="text-right py-1 pr-3">Count</th>
+                <th className="text-right py-1 pr-3">Below SS</th>
+                <th className="text-right py-1">Avg Coverage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.by_abc.map((row) => (
+                <tr key={row.abc_vol} className="border-b last:border-0">
+                  <td className="py-1 pr-3 font-medium">{row.abc_vol}</td>
+                  <td className="py-1 pr-3 text-right">{row.count.toLocaleString()}</td>
+                  <td className={`py-1 pr-3 text-right ${row.below_ss_count > 0 ? "text-red-600 font-medium" : ""}`}>
+                    {row.below_ss_count.toLocaleString()}
+                  </td>
+                  <td className="py-1 text-right">
+                    {fmtPct(row.avg_coverage != null ? row.avg_coverage * 100 : null)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          className={`px-3 py-1 text-xs rounded border transition-colors ${belowOnly ? "bg-foreground text-background border-foreground" : "border-border hover:bg-accent"}`}
+          onClick={() => { setBelowOnly(!belowOnly); setSsOffset(0); }}
+        >
+          {belowOnly ? "All Items" : "Below SS Only"}
+        </button>
+        <input
+          className="h-7 rounded border border-input bg-background px-2 text-xs w-32"
+          placeholder="Filter by item..."
+          value={ssItemFilter}
+          onChange={(e) => { setSsItemFilter(e.target.value); setSsOffset(0); }}
+        />
+        <input
+          className="h-7 rounded border border-input bg-background px-2 text-xs w-32"
+          placeholder="Filter by location..."
+          value={ssLocFilter}
+          onChange={(e) => { setSsLocFilter(e.target.value); setSsOffset(0); }}
+        />
+      </div>
+
+      {detailLoading ? (
+        <p className="text-xs text-muted-foreground">Loading...</p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b text-muted-foreground">
+                  <th className="text-left py-1 pr-2">Item No</th>
+                  <th className="text-left py-1 pr-2">Location</th>
+                  <th className="text-right py-1 pr-2">SS (qty)</th>
+                  <th className="text-right py-1 pr-2">Coverage %</th>
+                  <th className="text-center py-1 pr-2">Below SS</th>
+                  <th className="text-right py-1 pr-2">Reorder Point</th>
+                  <th className="text-center py-1">ABC</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(detail?.rows ?? []).length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-4 text-center text-muted-foreground">
+                      No data. Run make health-schema health-refresh to populate.
+                    </td>
+                  </tr>
+                ) : (
+                  (detail?.rows ?? []).map((r: SafetyStockRow, i: number) => (
+                    <tr
+                      key={`${r.item_no}-${r.loc}-${i}`}
+                      className={`border-b last:border-0 hover:bg-muted/40 ${r.is_below_ss ? "bg-red-50 dark:bg-red-950/20" : ""}`}
+                    >
+                      <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                      <td className="py-1 pr-2">{r.loc}</td>
+                      <td className="py-1 pr-2 text-right">{fmt(r.ss_combined, 1)}</td>
+                      <td className="py-1 pr-2 text-right">
+                        {fmtPct(r.ss_coverage != null ? r.ss_coverage * 100 : null)}
+                      </td>
+                      <td className="py-1 pr-2 text-center">
+                        {r.is_below_ss ? (
+                          <span className="px-1.5 py-0.5 rounded text-xs bg-red-100 text-red-800 font-medium">Yes</span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </td>
+                      <td className="py-1 pr-2 text-right">{fmt(r.reorder_point, 1)}</td>
+                      <td className="py-1 text-center">{r.abc_vol ?? "-"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+              <button
+                className="px-2 py-1 rounded border disabled:opacity-40"
+                disabled={ssOffset === 0}
+                onClick={() => setSsOffset(Math.max(0, ssOffset - PAGE))}
+              >
+                Prev
+              </button>
+              <span>Page {currentPage} / {totalPages}</span>
+              <button
+                className="px-2 py-1 rounded border disabled:opacity-40"
+                disabled={currentPage >= totalPages}
+                onClick={() => setSsOffset(ssOffset + PAGE)}
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// IPfeature1: Demand Variability sub-component
+// ---------------------------------------------------------------------------
+function VariabilityPanel() {
+  const { data: summary, isLoading } = useQuery({
+    queryKey: queryKeys.variabilitySummary({}),
+    queryFn: () => fetchVariabilitySummary({}),
+    staleTime: STALE.FIVE_MIN,
+  });
+
+  const { data: volatile } = useQuery({
+    queryKey: queryKeys.variabilityDetail({ variability_class: "high", limit: 10 }),
+    queryFn: () => fetchVariabilityDetail({ variability_class: "high", limit: 10 }),
+    staleTime: STALE.FIVE_MIN,
+  });
+
+  const pieData = summary
+    ? [
+        { name: "Stable", value: summary.by_class.low, color: "#22c55e" },
+        { name: "Moderate", value: summary.by_class.medium, color: "#f59e0b" },
+        {
+          name: "Volatile",
+          value: (summary.by_class.high ?? 0) + (summary.by_class.lumpy ?? 0),
+          color: "#ef4444",
+        },
+      ].filter((d) => d.value > 0)
+    : [];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Stable Items</p>
+          <p className="text-xl font-bold text-green-600">
+            {isLoading ? "..." : (summary?.by_class.low ?? 0).toLocaleString()}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Volatile Items</p>
+          <p className={`text-xl font-bold ${(summary?.by_class.high ?? 0) > 0 ? "text-red-600" : "text-foreground"}`}>
+            {isLoading ? "..." : ((summary?.by_class.high ?? 0) + (summary?.by_class.lumpy ?? 0)).toLocaleString()}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Avg CV</p>
+          <p className="text-xl font-bold">
+            {isLoading ? "..." : fmtPct(summary?.avg_cv != null ? summary.avg_cv * 100 : null)}
+          </p>
+        </div>
+      </div>
+
+      {pieData.length > 0 && (
+        <div className="flex items-center gap-6">
+          <div className="h-36 w-36 shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={pieData} cx="50%" cy="50%" innerRadius={36} outerRadius={56} paddingAngle={2} dataKey="value">
+                  {pieData.map((entry) => (
+                    <Cell key={entry.name} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(v: number) => [v.toLocaleString(), "Items"]} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex flex-col gap-1.5 text-xs">
+            {pieData.map((d) => (
+              <div key={d.name} className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: d.color }} />
+                <span className="text-foreground">{d.name}</span>
+                <span className="text-muted-foreground ml-auto pl-4">{d.value.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {volatile && volatile.rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <p className="text-xs font-medium mb-2">Top Volatile Items</p>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b text-muted-foreground">
+                <th className="text-left py-1 pr-2">Item No</th>
+                <th className="text-left py-1 pr-2">Location</th>
+                <th className="text-right py-1 pr-2">Demand CV</th>
+                <th className="text-center py-1">Class</th>
+              </tr>
+            </thead>
+            <tbody>
+              {volatile.rows.map((r: VariabilityDetailRow, i: number) => (
+                <tr key={`${r.item_no}-${r.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
+                  <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                  <td className="py-1 pr-2">{r.loc}</td>
+                  <td className="py-1 pr-2 text-right">
+                    {r.demand_cv != null ? (r.demand_cv * 100).toFixed(1) + "%" : "-"}
+                  </td>
+                  <td className="py-1 text-center">
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                        r.variability_class === "high" || r.variability_class === "lumpy"
+                          ? "bg-red-100 text-red-800"
+                          : r.variability_class === "medium"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-green-100 text-green-800"
+                      }`}
+                    >
+                      {r.variability_class ?? "-"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// IPfeature2: Lead Time sub-component
+// ---------------------------------------------------------------------------
+function LeadTimePanel() {
+  const { data: summary, isLoading } = useQuery({
+    queryKey: queryKeys.ltSummary({}),
+    queryFn: () => fetchLtSummary({}),
+    staleTime: STALE.FIVE_MIN,
+  });
+
+  const { data: volatile } = useQuery({
+    queryKey: queryKeys.ltProfile({ lt_variability_class: "volatile", limit: 10 }),
+    queryFn: () => fetchLtProfile({ lt_variability_class: "volatile", limit: 10 }),
+    staleTime: STALE.FIVE_MIN,
+  });
+
+  const classData = summary
+    ? [
+        { label: "Stable", count: summary.by_class.stable, color: "text-green-600" },
+        { label: "Moderate", count: summary.by_class.moderate, color: "text-amber-600" },
+        { label: "Volatile", count: summary.by_class.volatile, color: "text-red-600" },
+      ]
+    : [];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Avg Lead Time</p>
+          <p className="text-xl font-bold">
+            {isLoading ? "..." : summary?.avg_lt_mean_days != null ? `${summary.avg_lt_mean_days.toFixed(1)} days` : "-"}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Volatile Suppliers</p>
+          <p className={`text-xl font-bold ${(summary?.by_class.volatile ?? 0) > 0 ? "text-red-600" : "text-foreground"}`}>
+            {isLoading ? "..." : (summary?.by_class.volatile ?? 0).toLocaleString()}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Avg LT CV</p>
+          <p className="text-xl font-bold">
+            {isLoading ? "..." : fmtPct(summary?.avg_lt_cv != null ? summary.avg_lt_cv * 100 : null)}
+          </p>
+        </div>
+      </div>
+
+      {classData.length > 0 && (
+        <div className="flex gap-4 text-xs">
+          {classData.map((d) => (
+            <div key={d.label} className="rounded-lg border bg-muted/30 px-4 py-2 text-center">
+              <p className="text-muted-foreground">{d.label}</p>
+              <p className={`text-lg font-bold ${d.color}`}>{d.count.toLocaleString()}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {volatile && volatile.rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <p className="text-xs font-medium mb-2">Top Volatile Lead Time Items</p>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b text-muted-foreground">
+                <th className="text-left py-1 pr-2">Item No</th>
+                <th className="text-left py-1 pr-2">Location</th>
+                <th className="text-right py-1 pr-2">LT Mean (days)</th>
+                <th className="text-right py-1 pr-2">LT Std</th>
+                <th className="text-right py-1 pr-2">CV</th>
+                <th className="text-center py-1">Class</th>
+              </tr>
+            </thead>
+            <tbody>
+              {volatile.rows.map((r: LtProfileRow, i: number) => (
+                <tr key={`${r.item_no}-${r.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
+                  <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                  <td className="py-1 pr-2">{r.loc}</td>
+                  <td className="py-1 pr-2 text-right">{r.lt_mean_days?.toFixed(1) ?? "-"}</td>
+                  <td className="py-1 pr-2 text-right">{r.lt_std_days?.toFixed(1) ?? "-"}</td>
+                  <td className="py-1 pr-2 text-right">
+                    {r.lt_cv != null ? (r.lt_cv * 100).toFixed(1) + "%" : "-"}
+                  </td>
+                  <td className="py-1 text-center">
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                        r.lt_variability_class === "volatile"
+                          ? "bg-red-100 text-red-800"
+                          : r.lt_variability_class === "moderate"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-green-100 text-green-800"
+                      }`}
+                    >
+                      {r.lt_variability_class ?? "-"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// IPfeature9: Demand Signals sub-component
+// ---------------------------------------------------------------------------
+function DemandSignalsPanel() {
+  const [signalTypeFilter, setSignalTypeFilter] = useState("");
+  const [alertPriorityFilter, setAlertPriorityFilter] = useState("");
+  const [dsItemFilter, setDsItemFilter] = useState("");
+  const [dsLocFilter, setDsLocFilter] = useState("");
+  const [dsOffset, setDsOffset] = useState(0);
+
+  const { data: summary } = useQuery({
+    queryKey: demandSignalsKeys.summary(),
+    queryFn: () => fetchDemandSignalsSummary(),
+    staleTime: STALE.ONE_MIN,
+  });
+
+  const { data: signals, isLoading } = useQuery({
+    queryKey: demandSignalsKeys.list({
+      signal_type: signalTypeFilter || undefined,
+      alert_priority: alertPriorityFilter || undefined,
+      item: dsItemFilter || undefined,
+      loc: dsLocFilter || undefined,
+      limit: PAGE,
+      offset: dsOffset,
+    }),
+    queryFn: () =>
+      fetchDemandSignals({
+        signal_type: signalTypeFilter || undefined,
+        alert_priority: alertPriorityFilter || undefined,
+        item: dsItemFilter || undefined,
+        loc: dsLocFilter || undefined,
+        limit: PAGE,
+        offset: dsOffset,
+      }),
+    staleTime: STALE.ONE_MIN,
+  });
+
+  const totalPages = signals ? Math.ceil(signals.total / PAGE) : 0;
+  const currentPage = Math.floor(dsOffset / PAGE) + 1;
+
+  const SIGNAL_TYPE_COLORS: Record<string, string> = {
+    above_plan: "bg-green-100 text-green-800",
+    below_plan: "bg-red-100 text-red-800",
+    on_plan: "bg-blue-100 text-blue-800",
+  };
+
+  const PRIORITY_COLORS: Record<string, string> = {
+    urgent: "bg-red-100 text-red-800",
+    watch: "bg-amber-100 text-amber-800",
+    normal: "bg-neutral-100 text-neutral-600",
+  };
+
+  const ROW_BG: Record<string, string> = {
+    urgent: "bg-red-50 dark:bg-red-950/20",
+    watch: "bg-yellow-50 dark:bg-yellow-950/20",
+    normal: "",
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Above Plan</p>
+          <p className="text-xl font-bold text-green-600">{(summary?.above_plan_count ?? 0).toLocaleString()}</p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Below Plan</p>
+          <p className="text-xl font-bold text-red-600">{(summary?.below_plan_count ?? 0).toLocaleString()}</p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Urgent Alerts</p>
+          <p className={`text-xl font-bold ${(summary?.urgent_count ?? 0) > 0 ? "text-red-600" : "text-foreground"}`}>
+            {(summary?.urgent_count ?? 0).toLocaleString()}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Projected Stockouts</p>
+          <p className={`text-xl font-bold ${(summary?.projected_stockouts ?? 0) > 0 ? "text-orange-600" : "text-foreground"}`}>
+            {(summary?.projected_stockouts ?? 0).toLocaleString()}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {["", "above_plan", "below_plan", "on_plan"].map((t) => (
+          <button
+            key={t || "all"}
+            className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+              signalTypeFilter === t
+                ? "bg-foreground text-background border-foreground"
+                : "border-border hover:bg-accent"
+            }`}
+            onClick={() => { setSignalTypeFilter(t); setDsOffset(0); }}
+          >
+            {t ? t.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) : "All Types"}
+          </button>
+        ))}
+        {["", "urgent", "watch"].map((p) => (
+          <button
+            key={p || "all-priority"}
+            className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+              alertPriorityFilter === p
+                ? "bg-foreground text-background border-foreground"
+                : "border-border hover:bg-accent"
+            }`}
+            onClick={() => { setAlertPriorityFilter(p); setDsOffset(0); }}
+          >
+            {p ? p.charAt(0).toUpperCase() + p.slice(1) : "All Priority"}
+          </button>
+        ))}
+        <input
+          className="h-7 rounded border border-input bg-background px-2 text-xs w-28"
+          placeholder="Filter by item..."
+          value={dsItemFilter}
+          onChange={(e) => { setDsItemFilter(e.target.value); setDsOffset(0); }}
+        />
+        <input
+          className="h-7 rounded border border-input bg-background px-2 text-xs w-28"
+          placeholder="Filter by location..."
+          value={dsLocFilter}
+          onChange={(e) => { setDsLocFilter(e.target.value); setDsOffset(0); }}
+        />
+      </div>
+
+      {isLoading ? (
+        <p className="text-xs text-muted-foreground">Loading...</p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b text-muted-foreground">
+                  <th className="text-left py-1 pr-2">Item No</th>
+                  <th className="text-left py-1 pr-2">Location</th>
+                  <th className="text-center py-1 pr-2">Signal Type</th>
+                  <th className="text-right py-1 pr-2">Demand vs Fcst %</th>
+                  <th className="text-center py-1 pr-2">Alert Priority</th>
+                  <th className="text-right py-1 pr-2">On Hand</th>
+                  <th className="text-center py-1">Below SS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(signals?.rows ?? []).length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-4 text-center text-muted-foreground">
+                      No demand signals found.
+                    </td>
+                  </tr>
+                ) : (
+                  (signals?.rows ?? []).map((r: DemandSignalRow, i: number) => (
+                    <tr
+                      key={`${r.item_no}-${r.loc}-${i}`}
+                      className={`border-b last:border-0 hover:bg-muted/40 ${ROW_BG[r.alert_priority] ?? ""}`}
+                    >
+                      <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                      <td className="py-1 pr-2">{r.loc}</td>
+                      <td className="py-1 pr-2 text-center">
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                            SIGNAL_TYPE_COLORS[r.signal_type] ?? "bg-neutral-100 text-neutral-600"
+                          }`}
+                        >
+                          {r.signal_type.replace(/_/g, " ")}
+                        </span>
+                      </td>
+                      <td className="py-1 pr-2 text-right">
+                        {r.demand_vs_forecast_pct != null ? `${r.demand_vs_forecast_pct.toFixed(1)}%` : "-"}
+                      </td>
+                      <td className="py-1 pr-2 text-center">
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                            PRIORITY_COLORS[r.alert_priority] ?? ""
+                          }`}
+                        >
+                          {r.alert_priority}
+                        </span>
+                      </td>
+                      <td className="py-1 pr-2 text-right">{fmt(r.current_on_hand, 0)}</td>
+                      <td className="py-1 text-center">
+                        {r.is_below_ss ? (
+                          <span className="px-1 py-0.5 rounded text-xs bg-red-100 text-red-800">Yes</span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+              <button
+                className="px-2 py-1 rounded border disabled:opacity-40"
+                disabled={dsOffset === 0}
+                onClick={() => setDsOffset(Math.max(0, dsOffset - PAGE))}
+              >
+                Prev
+              </button>
+              <span>Page {currentPage} / {totalPages}</span>
+              <button
+                className="px-2 py-1 rounded border disabled:opacity-40"
+                disabled={currentPage >= totalPages}
+                onClick={() => setDsOffset(dsOffset + PAGE)}
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// IPfeature10: Safety Stock Simulation sub-component
+// ---------------------------------------------------------------------------
+function SimulationPanel() {
+  const queryClient = useQueryClient();
+  const [simItemNo, setSimItemNo] = useState("");
+  const [simLoc, setSimLoc] = useState("");
+  const [simResult, setSimResult] = useState<SimulationResult | null>(null);
+
+  const { data: recentRuns, isLoading: runsLoading } = useQuery({
+    queryKey: simulationKeys.results({ limit: 10 }),
+    queryFn: () => fetchSimulationResults({ limit: 10 }),
+    staleTime: STALE.FIVE_MIN,
+  });
+
+  const runMutation = useMutation({
+    mutationFn: (body: { item_no: string; loc: string }) => runSimulation(body),
+    onSuccess: (result) => {
+      setSimResult(result);
+      queryClient.invalidateQueries({ queryKey: simulationKeys.results() });
+    },
+  });
+
+  const activeResult = simResult ?? recentRuns?.rows?.[0] ?? null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 items-center">
+        <input
+          className="h-8 rounded border border-input bg-background px-2 text-xs w-36"
+          placeholder="Item No"
+          value={simItemNo}
+          onChange={(e) => setSimItemNo(e.target.value)}
+        />
+        <input
+          className="h-8 rounded border border-input bg-background px-2 text-xs w-36"
+          placeholder="Location"
+          value={simLoc}
+          onChange={(e) => setSimLoc(e.target.value)}
+        />
+        <button
+          className="h-8 px-4 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          disabled={runMutation.isPending || !simItemNo || !simLoc}
+          onClick={() => runMutation.mutate({ item_no: simItemNo, loc: simLoc })}
+        >
+          {runMutation.isPending ? "Running..." : "Run Simulation"}
+        </button>
+      </div>
+
+      {activeResult && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground">Recommended SS</p>
+              <p className="text-xl font-bold">{fmt(activeResult.recommended_ss, 0)}</p>
+            </div>
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground">Analytical SS</p>
+              <p className="text-xl font-bold">{fmt(activeResult.analytical_ss, 0)}</p>
+            </div>
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <p className="text-xs text-muted-foreground">Difference %</p>
+              <p
+                className={`text-xl font-bold ${
+                  (activeResult.sim_vs_analytical_pct ?? 0) > 0 ? "text-red-600" : "text-green-600"
+                }`}
+              >
+                {activeResult.sim_vs_analytical_pct != null
+                  ? `${activeResult.sim_vs_analytical_pct > 0 ? "+" : ""}${activeResult.sim_vs_analytical_pct.toFixed(1)}%`
+                  : "-"}
+              </p>
+            </div>
+          </div>
+
+          {activeResult.results_by_ss_level && activeResult.results_by_ss_level.length > 0 && (
+            <div>
+              <p className="text-xs font-medium mb-2">Service Level Curve</p>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={activeResult.results_by_ss_level}
+                    margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="ss_qty" tick={{ fontSize: 10 }} />
+                    <YAxis
+                      domain={[0, 100]}
+                      tickFormatter={(v: number) => `${v}%`}
+                      tick={{ fontSize: 10 }}
+                    />
+                    <Tooltip formatter={(v: number) => [`${v.toFixed(1)}%`, "CSL"]} />
+                    <Line
+                      type="monotone"
+                      dataKey="csl"
+                      stroke="hsl(220, 70%, 55%)"
+                      dot={false}
+                      strokeWidth={2}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div>
+        <p className="text-xs font-medium mb-2">Recent Simulation Runs</p>
+        {runsLoading ? (
+          <p className="text-xs text-muted-foreground">Loading...</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b text-muted-foreground">
+                  <th className="text-left py-1 pr-2">Item</th>
+                  <th className="text-left py-1 pr-2">Location</th>
+                  <th className="text-left py-1 pr-2">Date</th>
+                  <th className="text-right py-1 pr-2">Sim SS</th>
+                  <th className="text-right py-1 pr-2">Analytical SS</th>
+                  <th className="text-right py-1 pr-2">Diff %</th>
+                  <th className="text-right py-1">Duration (s)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(recentRuns?.rows ?? []).length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-4 text-center text-muted-foreground">
+                      No simulation runs. Use the form above to run a simulation.
+                    </td>
+                  </tr>
+                ) : (
+                  (recentRuns?.rows ?? []).map((r: SimulationResult) => (
+                    <tr key={r.sim_run_id} className="border-b last:border-0 hover:bg-muted/30">
+                      <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                      <td className="py-1 pr-2">{r.loc}</td>
+                      <td className="py-1 pr-2">{r.simulation_date?.slice(0, 10) ?? "-"}</td>
+                      <td className="py-1 pr-2 text-right">{fmt(r.recommended_ss, 0)}</td>
+                      <td className="py-1 pr-2 text-right">{fmt(r.analytical_ss, 0)}</td>
+                      <td
+                        className={`py-1 pr-2 text-right ${
+                          (r.sim_vs_analytical_pct ?? 0) > 5 ? "text-red-600" : "text-foreground"
+                        }`}
+                      >
+                        {r.sim_vs_analytical_pct != null ? `${r.sim_vs_analytical_pct.toFixed(1)}%` : "-"}
+                      </td>
+                      <td className="py-1 text-right">{r.run_duration_secs?.toFixed(1) ?? "-"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// IPfeature13: Investment Plan sub-component
+// ---------------------------------------------------------------------------
+function InvestmentPanel() {
+  const queryClient = useQueryClient();
+  const [invOffset, setInvOffset] = useState(0);
+  const [runStatus, setRunStatus] = useState("");
+
+  const { data: summary, isLoading: summaryLoading } = useQuery({
+    queryKey: investmentKeys.summary(),
+    queryFn: () => fetchInvestmentSummary(),
+    staleTime: STALE.TEN_MIN,
+  });
+
+  const { data: detail, isLoading: detailLoading } = useQuery({
+    queryKey: investmentKeys.detail({ limit: 20, offset: invOffset }),
+    queryFn: () => fetchInvestmentDetail({ limit: 20, offset: invOffset }),
+    staleTime: STALE.TEN_MIN,
+  });
+
+  const { data: frontier } = useQuery({
+    queryKey: investmentKeys.frontier(),
+    queryFn: () => fetchInvestmentFrontier(),
+    staleTime: STALE.TEN_MIN,
+  });
+
+  const runPlanMutation = useMutation({
+    mutationFn: () => runInvestmentPlan(),
+    onSuccess: () => {
+      setRunStatus("Plan computed successfully.");
+      queryClient.invalidateQueries({ queryKey: investmentKeys.summary() });
+      queryClient.invalidateQueries({ queryKey: investmentKeys.detail() });
+      queryClient.invalidateQueries({ queryKey: investmentKeys.frontier() });
+    },
+    onError: () => setRunStatus("Failed to compute plan. Check auth settings."),
+  });
+
+  const totalPages = detail ? Math.ceil(detail.total / 20) : 0;
+  const currentPage = Math.floor(invOffset / 20) + 1;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        {runStatus && <span className="text-xs text-muted-foreground">{runStatus}</span>}
+        <button
+          className="h-8 px-4 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          disabled={runPlanMutation.isPending}
+          onClick={() => { setRunStatus(""); runPlanMutation.mutate(); }}
+        >
+          {runPlanMutation.isPending ? "Computing..." : "Run Plan"}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Investment Gap</p>
+          <p className="text-xl font-bold text-amber-600">
+            {summaryLoading
+              ? "..."
+              : summary?.total_investment_gap != null
+              ? `$${fmtInt(summary.total_investment_gap)}`
+              : "-"}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Current Portfolio CSL</p>
+          <p className="text-xl font-bold">
+            {summaryLoading
+              ? "..."
+              : fmtPct(summary?.avg_current_csl != null ? summary.avg_current_csl * 100 : null)}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">Target Portfolio CSL</p>
+          <p className="text-xl font-bold text-green-600">
+            {summaryLoading
+              ? "..."
+              : fmtPct(summary?.avg_recommended_csl != null ? summary.avg_recommended_csl * 100 : null)}
+          </p>
+        </div>
+        <div className="rounded-lg border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">DFUs Analyzed</p>
+          <p className="text-xl font-bold">
+            {summaryLoading ? "..." : (summary?.total_items ?? 0).toLocaleString()}
+          </p>
+        </div>
+      </div>
+
+      {frontier && frontier.length > 0 && (
+        <div>
+          <p className="text-xs font-medium mb-2">Efficient Frontier</p>
+          <div className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={frontier} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis
+                  dataKey="cumulative_investment"
+                  tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
+                  tick={{ fontSize: 10 }}
+                />
+                <YAxis
+                  dataKey="achievable_csl"
+                  tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`}
+                  domain={[0, 1]}
+                  tick={{ fontSize: 10 }}
+                />
+                <Tooltip
+                  formatter={(v: number, name: string) =>
+                    name === "achievable_csl"
+                      ? [`${(v * 100).toFixed(1)}%`, "Achievable CSL"]
+                      : [`$${v.toLocaleString()}`, name]
+                  }
+                />
+                <Line
+                  type="monotone"
+                  dataKey="achievable_csl"
+                  stroke="hsl(142, 70%, 45%)"
+                  dot={false}
+                  strokeWidth={2}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {detailLoading ? (
+        <p className="text-xs text-muted-foreground">Loading...</p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b text-muted-foreground">
+                  <th className="text-right py-1 pr-2">Rank</th>
+                  <th className="text-left py-1 pr-2">Item No</th>
+                  <th className="text-left py-1 pr-2">Loc</th>
+                  <th className="text-center py-1 pr-2">ABC</th>
+                  <th className="text-right py-1 pr-2">Current CSL</th>
+                  <th className="text-right py-1 pr-2">Target CSL</th>
+                  <th className="text-right py-1 pr-2">Inv. Gap ($)</th>
+                  <th className="text-right py-1">Marginal ROI</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(detail?.rows ?? []).length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-4 text-center text-muted-foreground">
+                      No data. Click Run Plan to compute the investment plan.
+                    </td>
+                  </tr>
+                ) : (
+                  (detail?.rows ?? []).map((r: InvestmentRow) => (
+                    <tr key={`${r.investment_rank}`} className="border-b last:border-0 hover:bg-muted/30">
+                      <td className="py-1 pr-2 text-right text-muted-foreground">{r.investment_rank}</td>
+                      <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                      <td className="py-1 pr-2">{r.loc}</td>
+                      <td className="py-1 pr-2 text-center">{r.abc_vol ?? "-"}</td>
+                      <td className="py-1 pr-2 text-right">
+                        {r.current_csl != null ? `${(r.current_csl * 100).toFixed(1)}%` : "-"}
+                      </td>
+                      <td className="py-1 pr-2 text-right text-green-600">
+                        {r.recommended_csl != null ? `${(r.recommended_csl * 100).toFixed(1)}%` : "-"}
+                      </td>
+                      <td className="py-1 pr-2 text-right text-amber-600">
+                        {r.investment_increment != null ? `$${fmtInt(r.investment_increment)}` : "-"}
+                      </td>
+                      <td className="py-1 text-right">
+                        {r.marginal_roi != null ? r.marginal_roi.toFixed(2) : "-"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+              <button
+                className="px-2 py-1 rounded border disabled:opacity-40"
+                disabled={invOffset === 0}
+                onClick={() => setInvOffset(Math.max(0, invOffset - 20))}
+              >
+                Prev
+              </button>
+              <span>
+                Page {currentPage} / {totalPages} - {detail?.total.toLocaleString()} items
+              </span>
+              <button
+                className="px-2 py-1 rounded border disabled:opacity-40"
+                disabled={currentPage >= totalPages}
+                onClick={() => setInvOffset(invOffset + 20)}
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
