@@ -12,14 +12,14 @@ interface ShortcutConfig {
 }
 
 const TAB_MAP: Record<string, string> = {
-  "1": "overview",
-  "2": "explorer",
-  "3": "dfuAnalysis",
+  "1": "aiPlanner",
+  "2": "controlTower",
+  "3": "overview",
   "4": "accuracy",
-  "5": "inventory",
-  "6": "invBacktest",
-  "7": "clusters",
-  "8": "intel",
+  "5": "dfuAnalysis",
+  "6": "inventory",
+  "7": "storyboard",
+  "8": "invPlanning",
   "9": "jobs",
 };
 

@@ -17,6 +17,7 @@ vi.mock("@/api/queries", () => ({
   fetchAiMemos: vi.fn().mockResolvedValue({ memos: [] }),
   triggerPortfolioScan: vi.fn().mockResolvedValue({ scan_run_id: "scan-001", status: "accepted" }),
   updateInsightStatus: vi.fn().mockResolvedValue({ insight_id: 1, status: "acknowledged" }),
+  triggerAutoAccept: vi.fn().mockResolvedValue({ accepted: 3, dry_run: false, insight_ids: [1, 2, 3] }),
   STALE: { THIRTY_SEC: 30_000, FIVE_MIN: 300_000 },
 }));
 
@@ -282,6 +283,19 @@ describe("AIPlannerTab", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Portfolio looks healthy!")).toBeDefined();
+    });
+  });
+
+  it("renders Auto-Accept button", async () => {
+    const { default: AIPlannerTab } = await import("@/tabs/AIPlannerTab");
+    render(
+      <TestQueryWrapper>
+        <AIPlannerTab />
+      </TestQueryWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Auto-Accept")).toBeDefined();
     });
   });
 });

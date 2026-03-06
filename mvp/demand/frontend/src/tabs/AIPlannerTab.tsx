@@ -13,8 +13,10 @@ import {
   fetchAiMemos,
   triggerPortfolioScan,
   updateInsightStatus,
+  triggerAutoAccept,
   STALE,
 } from "@/api/queries";
+import type { AutoAcceptResponse } from "@/api/queries/ai-planner";
 import type { AiInsight, InsightSeverity, InsightStatus, InsightType } from "@/types/ai-planner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -377,6 +379,121 @@ function ConfirmModal({
 }
 
 // ---------------------------------------------------------------------------
+// AutoAcceptModal
+// ---------------------------------------------------------------------------
+const SEVERITY_THRESHOLD_LABELS: Record<InsightSeverity, string> = {
+  critical: "Critical only",
+  high: "High and above",
+  medium: "Medium and above",
+  low: "All severities",
+};
+
+function AutoAcceptModal({
+  onConfirm,
+  onCancel,
+  isPending,
+  result,
+}: {
+  onConfirm: (minSeverity: InsightSeverity, dryRun: boolean) => void;
+  onCancel: () => void;
+  isPending: boolean;
+  result: AutoAcceptResponse | null;
+}) {
+  const [minSeverity, setMinSeverity] = useState<InsightSeverity>("high");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-xl border bg-card shadow-xl">
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <div>
+            <p className="text-sm font-semibold">Auto-Accept Rules</p>
+            <p className="text-xs text-muted-foreground">
+              Bulk-accept open insights by severity threshold
+            </p>
+          </div>
+          <button onClick={onCancel} className="rounded-md p-1 text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="space-y-4 px-5 py-4">
+          {result ? (
+            /* Result state */
+            <div className={cn(
+              "rounded-lg p-4 text-center",
+              result.dry_run
+                ? "bg-muted/50"
+                : "bg-green-50 dark:bg-green-950/30",
+            )}>
+              <p className={cn(
+                "text-2xl font-bold",
+                result.dry_run ? "text-foreground" : "text-green-700 dark:text-green-400",
+              )}>
+                {result.accepted}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {result.dry_run
+                  ? "insights would be auto-accepted (preview — no changes made)"
+                  : "insights auto-accepted and logged to outcome tracker"}
+              </p>
+            </div>
+          ) : (
+            /* Config state */
+            <>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Accept insights at severity
+                </label>
+                <select
+                  value={minSeverity}
+                  onChange={(e) => setMinSeverity(e.target.value as InsightSeverity)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none"
+                >
+                  {(["critical", "high", "medium", "low"] as InsightSeverity[]).map((s) => (
+                    <option key={s} value={s}>{SEVERITY_THRESHOLD_LABELS[s]}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                All open insights at or above this severity will be marked <strong>Accepted</strong> and written
+                to the outcome tracker for 30-day follow-up measurement.
+              </p>
+            </>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t px-5 py-3">
+          <Button variant="ghost" size="sm" onClick={onCancel}>
+            {result ? "Close" : "Cancel"}
+          </Button>
+          {!result && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onConfirm(minSeverity, true)}
+                disabled={isPending}
+              >
+                Preview
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => onConfirm(minSeverity, false)}
+                disabled={isPending}
+                className="gap-1.5"
+              >
+                {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Auto-Accept
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // InsightCard
 // ---------------------------------------------------------------------------
 function InsightCard({
@@ -543,6 +660,20 @@ export default function AIPlannerTab() {
   // Confirm modal state
   const [confirmAction, setConfirmAction] = useState<ConfirmActionState | null>(null);
 
+  // Auto-accept modal state
+  const [showAutoAccept, setShowAutoAccept] = useState(false);
+  const [autoAcceptResult, setAutoAcceptResult] = useState<AutoAcceptResponse | null>(null);
+
+  const autoAcceptMutation = useMutation({
+    mutationFn: triggerAutoAccept,
+    onSuccess: (data) => {
+      setAutoAcceptResult(data);
+      if (!data.dry_run) {
+        qc.invalidateQueries({ queryKey: queryKeys.aiInsights({}) });
+      }
+    },
+  });
+
   const insightParams = {
     ...(severityFilter !== "all" && { severity: severityFilter as InsightSeverity }),
     ...(statusFilter !== "all" && { status: statusFilter as InsightStatus }),
@@ -641,13 +772,29 @@ export default function AIPlannerTab() {
 
   return (
     <>
-      {/* Confirm modal (rendered outside main flow to avoid z-index issues) */}
+      {/* Confirm modal */}
       {confirmAction && (
         <ConfirmModal
           action={confirmAction}
           onConfirm={executeConfirmedAction}
           onCancel={() => setConfirmAction(null)}
           isPending={statusMutation.isPending}
+        />
+      )}
+
+      {/* Auto-accept modal */}
+      {showAutoAccept && (
+        <AutoAcceptModal
+          onConfirm={(minSeverity, dryRun) =>
+            autoAcceptMutation.mutate({ min_severity: minSeverity, insight_types: [], dry_run: dryRun })
+          }
+          onCancel={() => {
+            setShowAutoAccept(false);
+            setAutoAcceptResult(null);
+            autoAcceptMutation.reset();
+          }}
+          isPending={autoAcceptMutation.isPending}
+          result={autoAcceptResult}
         />
       )}
 
@@ -670,23 +817,34 @@ export default function AIPlannerTab() {
               </p>
             </div>
           </div>
-          <Button
-            onClick={() => scanMutation.mutate()}
-            disabled={scanMutation.isPending}
-            className="gap-2"
-          >
-            {scanMutation.isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Scanning portfolio…
-              </>
-            ) : (
-              <>
-                <RefreshCw className="h-4 w-4" />
-                Generate Now
-              </>
-            )}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => { setAutoAcceptResult(null); setShowAutoAccept(true); }}
+              disabled={showAutoAccept}
+              className="gap-2"
+            >
+              <Zap className="h-4 w-4" />
+              Auto-Accept
+            </Button>
+            <Button
+              onClick={() => scanMutation.mutate()}
+              disabled={scanMutation.isPending}
+              className="gap-2"
+            >
+              {scanMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Scanning portfolio…
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4" />
+                  Generate Now
+                </>
+              )}
+            </Button>
+          </div>
         </div>
 
         {/* ---------------------------------------------------------------- */}

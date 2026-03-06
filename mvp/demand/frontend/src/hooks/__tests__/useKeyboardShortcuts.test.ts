@@ -20,29 +20,35 @@ describe("useKeyboardShortcuts", () => {
     vi.clearAllMocks();
   });
 
-  it("switches tabs with 1-8 keys", () => {
+  it("switches tabs with 1-9 keys", () => {
     renderHook(() => useKeyboardShortcuts(defaultConfig));
 
     act(() => fireKey("1"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("overview");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("aiPlanner");
 
     act(() => fireKey("2"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("explorer");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("controlTower");
 
     act(() => fireKey("3"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("dfuAnalysis");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("overview");
+
+    act(() => fireKey("4"));
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("accuracy");
 
     act(() => fireKey("5"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("inventory");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("dfuAnalysis");
 
     act(() => fireKey("6"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("invBacktest");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("inventory");
 
     act(() => fireKey("7"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("clusters");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("storyboard");
 
     act(() => fireKey("8"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("intel");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("invPlanning");
+
+    act(() => fireKey("9"));
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("jobs");
   });
 
   it("focuses search on /", () => {

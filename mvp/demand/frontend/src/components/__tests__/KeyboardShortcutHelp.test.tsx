@@ -11,11 +11,11 @@ describe("KeyboardShortcutHelp", () => {
 
   it("lists all shortcuts", () => {
     render(<KeyboardShortcutHelp onClose={vi.fn()} />);
-    expect(screen.getByText("Explorer tab")).toBeInTheDocument();
-    expect(screen.getByText("Clusters tab")).toBeInTheDocument();
-    expect(screen.getByText("DFU Analysis tab")).toBeInTheDocument();
-    expect(screen.getByText("Accuracy tab")).toBeInTheDocument();
-    expect(screen.getByText("Market Intel tab")).toBeInTheDocument();
+    expect(screen.getByText("AI Planner")).toBeInTheDocument();
+    expect(screen.getByText("Control Tower")).toBeInTheDocument();
+    expect(screen.getByText("DFU Analysis")).toBeInTheDocument();
+    expect(screen.getByText("Accuracy")).toBeInTheDocument();
+    expect(screen.getByText("Inv. Planning")).toBeInTheDocument();
     expect(screen.getByText("Focus search")).toBeInTheDocument();
     expect(screen.getByText("Close panel / help")).toBeInTheDocument();
     expect(screen.getByText("Toggle column fields")).toBeInTheDocument();

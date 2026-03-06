@@ -32,28 +32,32 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { key: "overview", label: "Overview", icon: LayoutDashboard, section: "overview", shortcut: "1" },
-  { key: "explorer", label: "Explorer", icon: Database, section: "demand", shortcut: "2" },
-  { key: "dfuAnalysis", label: "DFU Analysis", icon: TrendingUp, section: "demand", shortcut: "3" },
-  { key: "accuracy", label: "Accuracy", icon: Target, section: "demand", shortcut: "4" },
-  { key: "inventory", label: "Inventory", icon: Package, section: "supply", shortcut: "5" },
-  { key: "invBacktest", label: "Inv. Backtest", icon: Activity, section: "supply", shortcut: "6" },
-  { key: "invPlanning", label: "Inv. Planning", icon: Brain, section: "supply" },
-  { key: "controlTower", label: "Control Tower", icon: Monitor, section: "supply" },
-  { key: "storyboard", label: "Storyboard", icon: BookOpen, section: "supply" },
-  { key: "aiPlanner", label: "AI Planner", icon: Sparkles, section: "intelligence" },
-  { key: "clusters", label: "Clusters", icon: Network, section: "intelligence", shortcut: "7" },
-  { key: "intel", label: "Market Intel", icon: Globe, section: "intelligence", shortcut: "8" },
-  { key: "jobs", label: "Jobs", icon: PlayCircle, section: "system", shortcut: "9" },
-  { key: "chat", label: "Chat", icon: MessageSquare, section: "system" },
+  // Command Center — AI-first primary items (no section header)
+  { key: "aiPlanner",    label: "AI Planner",    icon: Sparkles,        section: "overview",     shortcut: "1" },
+  { key: "controlTower", label: "Control Tower", icon: Monitor,         section: "overview",     shortcut: "2" },
+  { key: "overview",     label: "Overview",      icon: LayoutDashboard, section: "overview",     shortcut: "3" },
+  // Analyze section
+  { key: "accuracy",     label: "Accuracy",      icon: Target,          section: "demand",       shortcut: "4" },
+  { key: "dfuAnalysis",  label: "DFU Analysis",  icon: TrendingUp,      section: "demand",       shortcut: "5" },
+  { key: "inventory",    label: "Inventory",     icon: Package,         section: "demand",       shortcut: "6" },
+  { key: "storyboard",   label: "Storyboard",    icon: BookOpen,        section: "demand",       shortcut: "7" },
+  // Configure section
+  { key: "invPlanning",  label: "Inv. Planning", icon: Brain,           section: "supply",       shortcut: "8" },
+  { key: "clusters",     label: "Clusters",      icon: Network,         section: "supply" },
+  { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,        section: "supply" },
+  // System section
+  { key: "jobs",         label: "Jobs",          icon: PlayCircle,      section: "system",       shortcut: "9" },
+  { key: "explorer",     label: "Explorer",      icon: Database,        section: "system" },
+  { key: "intel",        label: "Market Intel",  icon: Globe,           section: "system" },
+  { key: "chat",         label: "Chat",          icon: MessageSquare,   section: "system" },
 ];
 
 const SECTION_LABELS: Record<SidebarSection, string> = {
-  overview: "",
-  demand: "Demand",
-  supply: "Supply",
-  intelligence: "Intelligence",
-  system: "",
+  overview: "",         // Command Center — no heading
+  demand: "Analyze",
+  supply: "Configure",
+  intelligence: "",     // unused — kept for type compat
+  system: "System",
 };
 
 // ---------------------------------------------------------------------------

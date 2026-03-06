@@ -273,6 +273,79 @@ async def test_get_ai_metrics_empty():
 
 
 # ---------------------------------------------------------------------------
+# POST /ai-planner/auto-accept
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_auto_accept_dry_run():
+    """Dry run returns matching count without writing."""
+    rows = [
+        (1, "stockout_risk", "100320", "1401-BULK", "A", 8500.0, 18.0, 21, 0.41, 0.20),
+        (2, "forecast_bias", "200100", "1401-BULK", "B", 3000.0, 30.0, 14, 0.55, -0.30),
+    ]
+    pool, conn, cursor = _make_pool(fetchall_return=rows)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/ai-planner/auto-accept",
+                json={"min_severity": "high", "insight_types": [], "dry_run": True},
+            )
+
+    assert resp.status_code in (200, 403)
+    if resp.status_code == 200:
+        data = resp.json()
+        assert data["dry_run"] is True
+        assert data["accepted"] == 2
+        assert data["insight_ids"] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_auto_accept_executes():
+    """Non-dry-run updates rows and writes outcomes."""
+    rows = [
+        (1, "stockout_risk", "100320", "1401-BULK", "A", 8500.0, 18.0, 21, 0.41, 0.20),
+    ]
+    pool, conn, cursor = _make_pool(fetchall_return=rows)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/ai-planner/auto-accept",
+                json={"min_severity": "critical", "insight_types": [], "dry_run": False},
+            )
+
+    assert resp.status_code in (200, 403)
+    if resp.status_code == 200:
+        data = resp.json()
+        assert data["dry_run"] is False
+        assert data["accepted"] == 1
+        # Should have called execute for: SELECT + UPDATE + INSERT (outcome)
+        assert cursor.execute.call_count >= 3
+
+
+@pytest.mark.asyncio
+async def test_auto_accept_empty_results():
+    """No matching insights returns accepted=0."""
+    pool, conn, cursor = _make_pool(fetchall_return=[])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/ai-planner/auto-accept",
+                json={"min_severity": "critical", "insight_types": [], "dry_run": False},
+            )
+
+    assert resp.status_code in (200, 403)
+    if resp.status_code == 200:
+        data = resp.json()
+        assert data["accepted"] == 0
+
+
+# ---------------------------------------------------------------------------
 # POST /ai-planner/portfolio-scan — 202
 # ---------------------------------------------------------------------------
 

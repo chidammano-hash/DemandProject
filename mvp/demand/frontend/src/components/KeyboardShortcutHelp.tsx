@@ -1,11 +1,17 @@
 import { cn } from "@/lib/utils";
 
 const SHORTCUTS = [
-  { keys: ["1"], desc: "Explorer tab" },
-  { keys: ["2"], desc: "Clusters tab" },
-  { keys: ["3"], desc: "DFU Analysis tab" },
-  { keys: ["4"], desc: "Accuracy tab" },
-  { keys: ["5"], desc: "Market Intel tab" },
+  { keys: ["1"], desc: "AI Planner" },
+  { keys: ["2"], desc: "Control Tower" },
+  { keys: ["3"], desc: "Overview" },
+  { keys: ["4"], desc: "Accuracy" },
+  { keys: ["5"], desc: "DFU Analysis" },
+  { keys: ["6"], desc: "Inventory" },
+  { keys: ["7"], desc: "Storyboard" },
+  { keys: ["8"], desc: "Inv. Planning" },
+  { keys: ["9"], desc: "Jobs" },
+  { keys: ["["], desc: "Toggle sidebar" },
+  { keys: ["d"], desc: "Toggle dark / light mode" },
   { keys: ["/"], desc: "Focus search" },
   { keys: ["Esc"], desc: "Close panel / help" },
   { keys: ["←"], desc: "Previous page" },

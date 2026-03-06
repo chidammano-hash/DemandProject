@@ -62,3 +62,23 @@ export async function updateInsightStatus(
     body: JSON.stringify({ status }),
   });
 }
+
+export interface AutoAcceptRequest {
+  min_severity: InsightSeverity;
+  insight_types: InsightType[];
+  dry_run: boolean;
+}
+
+export interface AutoAcceptResponse {
+  accepted: number;
+  dry_run: boolean;
+  insight_ids: number[];
+}
+
+export async function triggerAutoAccept(req: AutoAcceptRequest): Promise<AutoAcceptResponse> {
+  return fetchJson("/ai-planner/auto-accept", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}

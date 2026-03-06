@@ -66,6 +66,12 @@ class StatusUpdateRequest(BaseModel):
     action_taken: str | None = None  # optional: what the planner intends to do
 
 
+class AutoAcceptRequest(BaseModel):
+    min_severity: str = "critical"  # critical | high | medium | low
+    insight_types: list[str] = []   # empty = all types
+    dry_run: bool = False
+
+
 # ---------------------------------------------------------------------------
 # POST /ai-planner/analyze
 # ---------------------------------------------------------------------------
@@ -247,6 +253,87 @@ async def update_insight_status(insight_id: int, body: StatusUpdateRequest, requ
             conn.commit()
 
     return {"insight_id": row[0], "status": row[1]}
+
+
+# ---------------------------------------------------------------------------
+# POST /ai-planner/auto-accept
+# ---------------------------------------------------------------------------
+
+SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+VALID_INSIGHT_TYPES = {
+    "stockout_risk", "excess_inventory", "forecast_bias", "policy_gap", "champion_degradation"
+}
+
+
+@router.post("/ai-planner/auto-accept")
+async def auto_accept_insights(body: AutoAcceptRequest, request: Request):
+    """Bulk-accept open insights matching severity/type rules.
+
+    With dry_run=true returns matching count without writing.
+    Writes ai_recommendation_outcomes with planner_decision='auto_accepted'.
+    """
+    require_api_key(request)
+
+    min_rank = SEVERITY_RANK.get(body.min_severity, 0)
+    qualifying = [s for s, r in SEVERITY_RANK.items() if r <= min_rank]
+
+    conditions = ["status = 'open'", "severity = ANY(%s)"]
+    params: list = [qualifying]
+
+    requested_types = [t for t in body.insight_types if t in VALID_INSIGHT_TYPES]
+    if requested_types:
+        conditions.append("insight_type = ANY(%s)")
+        params.append(requested_types)
+
+    where = "WHERE " + " AND ".join(conditions)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT insight_id, insight_type, item_no, loc, abc_vol, "
+                f"financial_impact_estimate, dos, total_lt_days, champion_wape, forecast_bias_pct "
+                f"FROM ai_insights {where} "
+                "ORDER BY CASE severity "
+                "  WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, "
+                "COALESCE(financial_impact_estimate, 0) DESC",
+                params,
+            )
+            rows = cur.fetchall()
+
+            if body.dry_run or not rows:
+                conn.commit()
+                return {"accepted": len(rows), "dry_run": True, "insight_ids": [r[0] for r in rows]}
+
+            ids = [r[0] for r in rows]
+            cur.execute(
+                "UPDATE ai_insights "
+                "SET status = 'acknowledged', acknowledged_at = NOW(), updated_at = NOW() "
+                "WHERE insight_id = ANY(%s)",
+                (ids,),
+            )
+
+            for row in rows:
+                (iid, itype, item_no, loc, abc_vol, fin_impact, dos, lt, wape, bias) = row
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO ai_recommendation_outcomes
+                            (insight_id, insight_type, item_no, loc, abc_vol,
+                             planner_decision, financial_impact_est,
+                             metric_before_dos, metric_before_wape, metric_before_bias_pct,
+                             lead_time_days, executed_at, outcome_check_due_at)
+                        VALUES (%s,%s,%s,%s,%s,'auto_accepted',%s,%s,%s,%s,%s,
+                                NOW(), NOW() + INTERVAL '30 days')
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (iid, itype, item_no, loc, abc_vol, fin_impact, dos, wape, bias, lt),
+                    )
+                except Exception:
+                    log.warning("Failed to write outcome for insight %s", iid)
+
+            conn.commit()
+
+    return {"accepted": len(ids), "dry_run": False, "insight_ids": ids}
 
 
 # ---------------------------------------------------------------------------
