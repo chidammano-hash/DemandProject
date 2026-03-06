@@ -182,6 +182,18 @@ Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-tab
 
 Performance impact: aggregate queries (cluster-level, supplier-level) drop from 5–30s → <300ms.
 
+## API Router Architecture
+
+`api/main.py` is a ~65-line shell that only creates the app, adds middleware, and mounts all 30 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/`. `domains.py` is mounted last (catch-all `{domain}` path parameter).
+
+**30 active router modules** (as of IPAIfeature1 + Feature 40):
+accuracy, ai_planner, analysis, benchmark, chat, clusters, competition, control_tower, dashboard, domains, fill_rate, intel, inv_backtest, inventory, inv_planning (shim), inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, jobs, shap, storyboard
+
+**17 Vite proxy path prefixes** in `frontend/vite.config.ts`:
+`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`
+
+**CRITICAL:** Every new API path prefix must be added to `frontend/vite.config.ts` or the frontend receives HTML instead of JSON. Restart the Vite dev server after changes.
+
 ## Shared Backtest Framework (`common/`)
 All tree-based backtest scripts share common logic extracted into reusable modules:
 
@@ -195,6 +207,8 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 | `common/constants.py` | `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output column ordering, thresholds |
 | `common/tuning.py` | Shared tuning utilities: `generate_cv_month_splits`, `compute_wape_stabilised`, `suggest_params`, `save_best_params`, `load_best_params`, `best_rounds_to_n_estimators`, `tune_for_timeframe()` (per-timeframe causal tuning, PL-002), `TRAIN_FOLD_FNS` registry (`train_lgbm_fold`, `train_catboost_fold`, `train_xgboost_fold`) (Feature 41) |
 | `common/shap_selector.py` | SHAP-based feature selection: `compute_shap_global` (LGBM/XGBoost via `shap.TreeExplainer`), `compute_shap_catboost` (native ShapValues), `compute_timeframe_shap` (cluster-pooled or global), `build_shap_summary`, `save_shap_outputs` (Feature 42) |
+| `common/job_state.py` | In-memory job state: `_active_jobs`, `_pending_queues`, `_cancel_flags`, state lock, status constants; extracted from `job_registry.py` for separation of concerns |
+| `common/job_scheduler.py` | APScheduler wrapper: `make_scheduler()`, `make_trigger()` utilities; extracted from `job_registry.py` to isolate APScheduler-specific initialization and trigger creation |
 
 Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_per_cluster()`, passed as `train_fn_per_cluster` to `run_tree_backtest()`. Global and transfer strategies were removed in Feature 44 — only per-cluster training is supported. Algorithm behavior (recursive, SHAP selection, inline tuning, params file, hyperparameters) is read from `config/algorithm_config.yaml`, not from CLI flags. `run_tree_backtest()` accepts optional `feature_selector_fn` callable (Feature 42): when provided, each timeframe computes SHAP after the initial model train and retrains on the selected feature subset before generating predictions. `run_tree_backtest()` also accepts `recursive: bool = False` (Feature 43): when `True`, each predict month is scored one at a time using `_predict_single_month(models, predict_data, feature_cols)`, and predictions are written back into the feature grid via `update_grid_with_predictions()` so that `qty_lag_1` for month T+1 reflects the model's own prediction for month T rather than zero.
 
@@ -434,7 +448,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_p
    - Script: `scripts/generate_ai_insights.py` — CLI batch scan (`--portfolio`, `--item`/`--loc`, `--dry-run`)
    - 5 API endpoints in `api/routers/ai_planner.py`: `POST /ai-planner/analyze` (single DFU, synchronous), `POST /ai-planner/portfolio-scan` (202 background), `GET /ai-planner/insights` (paginated, filterable), `PUT /ai-planner/insights/{id}/status`, `GET /ai-planner/memos`
    - Frontend: `AIPlannerTab.tsx` — insight cards with severity badges, financial impact chips, causal reasoning, acknowledge/resolve actions; portfolio health KPI bar; planning memo markdown panel
-   - Types: `frontend/src/types/ai_planner.ts` — AiInsight, AiPlanningMemo, InsightSeverity, InsightStatus, InsightType
+   - Types: `frontend/src/types/ai-planner.ts` — AiInsight, AiPlanningMemo, InsightSeverity, InsightStatus, InsightType
    - New UI component: `frontend/src/components/ui/select.tsx` — minimal React Context-based Select wrapper matching shadcn/ui API
    - "AI Planner" nav item (14th item) + "aiPlanner" added to VALID_TABS (13 total) + Vite proxy `/ai-planner`
    - Dependency: `anthropic>=0.40.0`
@@ -505,7 +519,7 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_ai_planner.py` | `common/ai_planner.py` — tool functions, agent loop, dry-run mode | 18 |
 | `test_ai_planner_api.py` | `api/routers/ai_planner.py` — insights CRUD, portfolio scan 202, memo list | 10 |
 
-**Total backend: 879 tests**
+**Total backend: 1085 tests**
 
 **API test pattern:** httpx `AsyncClient` with `ASGITransport(app)` — no running server needed. DB connections mocked via `pool` fixture in `tests/api/conftest.py`.
 
@@ -554,11 +568,46 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `ControlTowerTab.test.tsx` | Control Tower tab — KPI cards, alerts panel, top-critical list, trend chart | varies |
 | `AIPlannerTab.test.tsx` | AI Planner tab — insight cards, severity badges, generate button, acknowledge action | 7 |
 
-**Total frontend: 265 tests**
+**Total frontend: 372 tests**
 
-**Combined:** `make test-all` runs backend + frontend.
+**Combined total: 1457 tests.** `make test-all` runs backend + frontend.
 
 **Mandatory rule:** Every new feature, endpoint, component, or utility must include corresponding tests. See `docs/design-specs/feature31.md` for the full testing strategy.
+
+## Frontend Component Architecture
+
+### Tab Panel Subfolder Pattern
+Large tab files were refactored into shell + panel subfolder pattern for maintainability. The shell file (200–250L) handles layout and state; all panels are extracted into a co-located subfolder:
+
+| Tab Shell | Subfolder | Extracted Panels |
+|-----------|-----------|-----------------|
+| `tabs/AccuracyTab.tsx` (224L) | `tabs/accuracy/` | KpiSection, TrendChartPanel, SliceTablePanel, ChampionPanel, ShapPanel |
+| `tabs/DfuAnalysisTab.tsx` (252L) | `tabs/dfu-analysis/` | SelectorPanel, OverlayChartPanel, ModelKpiSection |
+| `tabs/InventoryTab.tsx` (222L) | `tabs/inventory/` | KpiSection, TrendChartPanel, PositionTablePanel, ItemDetailPanel, DemandVariabilityPanel, LeadTimeProfilePanel |
+| `tabs/JobsTab.tsx` (202L) | `tabs/jobs/` | KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel, jobsShared.ts |
+| `tabs/ClustersTab.tsx` (224L) | `tabs/clusters/` | ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel |
+| `tabs/InvPlanningTab.tsx` | `tabs/inv-planning/` | ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel |
+
+### API Query Sub-modules
+`frontend/src/api/queries.ts` is a thin re-export barrel (`export * from "./queries/index"`). All domain query modules live under `frontend/src/api/queries/`:
+
+| Module | Purpose |
+|--------|---------|
+| `queries/core.ts` | Core forecast, accuracy, domain queries |
+| `queries/inv-planning.ts` | Barrel re-exporting all 9 inv-planning sub-modules |
+| `queries/inv-planning-eoq.ts` | EOQ query keys + fetch functions (IPfeature4) |
+| `queries/inv-planning-policy.ts` | Policy CRUD query keys + fetch/mutate functions (IPfeature5) |
+| `queries/inv-planning-health.ts` | Health score query keys + fetch functions (IPfeature6) |
+| `queries/inv-planning-exceptions.ts` | Exception queue query keys + fetch/mutate functions (IPfeature7) |
+| `queries/inv-planning-safety-stock.ts` | Safety stock query keys + fetch functions (IPfeature3) |
+| `queries/inv-planning-signals.ts` | Demand signals query keys + fetch functions (IPfeature9) |
+| `queries/inv-planning-abc.ts` | ABC-XYZ query keys + fetch functions (IPfeature11) |
+| `queries/inv-planning-supplier.ts` | Supplier performance query keys + fetch functions (IPfeature12) |
+| `queries/inv-planning-intramonth.ts` | Intramonth stockout query keys + fetch functions (IPfeature14) |
+| `queries/ai-planner.ts` | AI planner query keys + fetch/mutate functions (IPAIfeature1) |
+| `queries/control-tower.ts` | Control Tower query keys + fetch functions (IPfeature15) |
+| `queries/fill-rate.ts` | Fill rate query keys + fetch functions (IPfeature8) |
+| `queries/storyboard.ts` | Storyboard exception query keys + fetch/mutate functions (Feature 40) |
 
 ## How to add next dataset
 1. Add `<DATASET>_SPEC` in `common/domain_specs.py`

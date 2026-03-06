@@ -373,7 +373,7 @@ AI Planning Agent (IPAIfeature1):
 - Batch script: `scripts/generate_ai_insights.py` — `--portfolio` (scan all), `--item/--loc` (single DFU), `--dry-run`
 - Router: `api/routers/ai_planner.py` — `POST /ai-planner/analyze`, `POST /ai-planner/portfolio-scan` (202), `GET /ai-planner/insights`, `PUT /ai-planner/insights/{id}/status`, `GET /ai-planner/memos`
 - Frontend: `frontend/src/tabs/AIPlannerTab.tsx` — "AI Planner" nav item (14th), insight cards + portfolio health bar + planning memo panel
-- TypeScript types: `frontend/src/types/ai_planner.ts`
+- TypeScript types: `frontend/src/types/ai-planner.ts`
 - Dependency: `anthropic>=0.40.0`
 - Pipeline: `make ai-insights-schema`, `make ai-insights-scan`, `make ai-insights-dfu ITEM=<item> LOC=<loc>`, `make ai-insights-all`
 
@@ -463,7 +463,7 @@ Job Scheduler/Monitor with APScheduler (feature39):
 
 ## Testing
 
-Full-stack automated testing (879 backend tests, 265 frontend tests):
+Full-stack automated testing (1085 backend tests, 372 frontend tests):
 
 Backend (pytest):
 ```bash
@@ -477,7 +477,7 @@ make test-cov          # With coverage report
 Frontend (Vitest + React Testing Library):
 ```bash
 cd mvp/demand
-make ui-test           # All frontend tests (265 tests)
+make ui-test           # All frontend tests (372 tests)
 ```
 
 Both:
@@ -509,8 +509,11 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - Champion simulation: `mvp/demand/scripts/simulate_champion_strategies.py`
 - Meta-learner training: `mvp/demand/scripts/train_meta_learner.py`
 - Job engine: `mvp/demand/common/job_registry.py`
+- Job in-memory state: `mvp/demand/common/job_state.py`
+- Job APScheduler wrapper: `mvp/demand/common/job_scheduler.py`
 - Jobs router: `mvp/demand/api/routers/jobs.py`
 - Jobs tab: `mvp/demand/frontend/src/tabs/JobsTab.tsx`
+- Jobs tab panels: `mvp/demand/frontend/src/tabs/jobs/` (KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel)
 - Clustering config: `mvp/demand/config/clustering_config.yaml`
 - Competition config: `mvp/demand/config/model_competition.yaml`
 - Inventory normalize: `mvp/demand/scripts/normalize_inventory_csv.py`
@@ -556,5 +559,11 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - AI Planner script: `mvp/demand/scripts/generate_ai_insights.py`
 - AI Planner router: `mvp/demand/api/routers/ai_planner.py`
 - AI Planner tab: `mvp/demand/frontend/src/tabs/AIPlannerTab.tsx`
-- AI Planner types: `mvp/demand/frontend/src/types/ai_planner.ts`
+- AI Planner types: `mvp/demand/frontend/src/types/ai-planner.ts`
+- Tab panel components: `mvp/demand/frontend/src/tabs/accuracy/` (KpiSection, TrendChartPanel, SliceTablePanel, ChampionPanel, ShapPanel)
+- Tab panel components: `mvp/demand/frontend/src/tabs/inventory/` (KpiSection, TrendChartPanel, PositionTablePanel, ItemDetailPanel, DemandVariabilityPanel, LeadTimeProfilePanel)
+- Tab panel components: `mvp/demand/frontend/src/tabs/dfu-analysis/` (SelectorPanel, OverlayChartPanel, ModelKpiSection)
+- Tab panel components: `mvp/demand/frontend/src/tabs/clusters/` (ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel)
+- Tab panel components: `mvp/demand/frontend/src/tabs/inv-planning/` (14 panel components)
+- API query sub-modules: `mvp/demand/frontend/src/api/queries/` (core.ts, inv-planning.ts barrel, 9 inv-planning sub-modules, ai-planner.ts, control-tower.ts, fill-rate.ts, storyboard.ts)
 - Design specs: `docs/design-specs/` (feature1–feature44, IPfeature4–IPfeature15, IPAIfeature1)

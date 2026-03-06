@@ -428,7 +428,7 @@ make test-unit     # Unit tests only (common/ modules)
 make test-api      # API endpoint tests only
 make test-cov      # Backend tests with coverage report
 make ui-test       # All frontend tests (Vitest + RTL, ~1.5s)
-make test-all      # Backend + frontend (879 backend tests, 265 frontend tests, <3s)
+make test-all      # Backend + frontend (1085 backend tests, 372 frontend tests, <3s)
 ```
 
 **Test structure:**

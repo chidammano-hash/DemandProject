@@ -27,13 +27,16 @@
 ║  │  │  Inventory    │  │  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐              │  │  │    ║
 ║  │  │  Inv Backtest │  │  │  │ DashboardTab│ │ ExplorerTab │ │ ClustersTab │              │  │  │    ║
 ║  │  │  Jobs         │  │  │  │ KPIs/Alerts │ │ 8 Domains   │ │ What-If     │              │  │  │    ║
-║  │  │  ───────────  │  │  │  │ Heatmap     │ │ Virtualized │ │ Scenarios   │              │  │  │    ║
-║  │  │  Chat ◉       │  │  │  │ TopMovers   │ │ DataTable   │ │ ScenarioChts│              │  │  │    ║
-║  │  │  [d] Dark Mode│  │  │  └─────────────┘ └─────────────┘ └─────────────┘              │  │  │    ║
-║  │  │  [?] Shortcuts│  │  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐              │  │  │    ║
-║  │  │  Active: (3)  │  │  │  │DfuAnalysis  │ │ AccuracyTab │ │MarketIntel  │              │  │  │    ║
-║  │  │               │  │  │  │ Multi-Model │ │ WAPE/Bias   │ │ Web Search  │              │  │  │    ║
-║  │  │               │  │  │  │ Overlay     │ │ Champion    │ │ GPT-4o      │              │  │  │    ║
+║  │  │  Inv Planning │  │  │  │ Heatmap     │ │ Virtualized │ │ Scenarios   │              │  │  │    ║
+║  │  │  Ctrl Tower   │  │  │  │ TopMovers   │ │ DataTable   │ │ ScenarioChts│              │  │  │    ║
+║  │  │  AI Planner   │  │  │  └─────────────┘ └─────────────┘ └─────────────┘              │  │  │    ║
+║  │  │  Storyboard   │  │  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐              │  │  │    ║
+║  │  │  ───────────  │  │  │  │DfuAnalysis  │ │ AccuracyTab │ │MarketIntel  │              │  │  │    ║
+║  │  │  Chat ◉       │  │  │  │ Multi-Model │ │ WAPE/Bias   │ │ Web Search  │              │  │  │    ║
+║  │  │  [d] Dark Mode│  │  │  │ Overlay     │ │ Champion    │ │ GPT-4o      │              │  │  │    ║
+║  │  │  [?] Shortcuts│  │  │  └─────────────┘ └─────────────┘ └─────────────┘              │  │  │    ║
+║  │  │  Active: (3)  │  │  │                                                                │  │  │    ║
+║  │  │               │  │  │
 ║  │  │               │  │  │  └─────────────┘ └─────────────┘ └─────────────┘              │  │  │    ║
 ║  │  │               │  │  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐              │  │  │    ║
 ║  │  │               │  │  │  │InventoryTab │ │InvBacktest  │ │  JobsTab    │              │  │  │    ║
@@ -53,6 +56,10 @@
 ║  │  │               │  │  │  │        AIPlannerTab (IPAIfeature1)          │              │  │  │    ║
 ║  │  │               │  │  │  │ Insight Cards | Portfolio Health | Memos    │              │  │  │    ║
 ║  │  │               │  │  │  └─────────────────────────────────────────────┘              │  │  │    ║
+║  │  │               │  │  │  ┌─────────────────────────────────────────────┐              │  │  │    ║
+║  │  │               │  │  │  │        StoryboardTab (Feature 40)           │              │  │  │    ║
+║  │  │               │  │  │  │ Exception Cards | Severity | Resolution     │              │  │  │    ║
+║  │  │               │  │  │  └─────────────────────────────────────────────┘              │  │  │    ║
 ║  │  │               │  │  │                                                                │  │  │    ║
 ║  │  └──────────────┘  │  └────────────────────────────────────────────────────────────────┘  │  │    ║
 ║  │                     │                                            ┌──────────┐              │  │    ║
@@ -70,11 +77,12 @@
 ║  └───────────────────────────────┘  └──────────────────────────────┘  └──────────────────────────┘  ║
 ╚═══════════════════════════════════════════════════════════════════════════════════════════════════════╝
                                               │
-                                    Vite Proxy (16 path prefixes)
+                                    Vite Proxy (17 path prefixes)
                                     /domains /jobs /clustering /forecast
                                     /inventory /dashboard /health /chat
                                     /dfu /competition /bench /market-intelligence
                                     /inv-planning /fill-rate /control-tower /ai-planner
+                                    /storyboard
                                               │
                                               ▼
 ╔═══════════════════════════════════════════════════════════════════════════════════════════════════════╗
@@ -83,7 +91,7 @@
 ║                                                                                                     ║
 ║  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐    ║
 ║  │                               main.py (~65 lines)                                           │    ║
-║  │  App creation → GZip middleware → CORS middleware → Mount 17 routers                        │    ║
+║  │  App creation → GZip middleware → CORS middleware → Mount 30 routers                        │    ║
 ║  └──────────────────────────────────────────────────────────────────────────────────────────────┘    ║
 ║                                                                                                     ║
 ║  ┌──── core.py ──────────────┐  ┌──── auth.py ─────────────────────────────────────────────────┐    ║
@@ -93,7 +101,7 @@
 ║  │ Domain Spec Wrappers      │                                                                     ║
 ║  └───────────────────────────┘                                                                     ║
 ║                                                                                                     ║
-║  ┌──────────────────────────── 17 Modular API Routers ────────────────────────────────────────┐     ║
+║  ┌──────────────────────────── 30 Modular API Routers ────────────────────────────────────────┐     ║
 ║  │                                                                                            │     ║
 ║  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐    │     ║
 ║  │  │  accuracy.py  │ │ analysis.py  │ │benchmark.py  │ │   chat.py    │ │ clusters.py  │    │     ║
@@ -147,10 +155,10 @@
 ║  run_tree_       ║  ║ Cron/Interval    ║  ║  Web search      ║  ╚═══════════════════════╝
 ║  backtest()      ║  ║ Pipelines        ║  ║                  ║
 ║                  ║  ║ Retry + backoff  ║  ║ Anthropic Claude ║
-║                  ║  ╚══════════════════╝  ║  tool_use agent  ║
-║                  ║                        ║  AI Planner (IP) ║
-║                  ║                        ╚══════════════════╝
-║ champion_        ║  ║                  ║
+║                  ║  ║ job_state.py     ║  ║  tool_use agent  ║
+║                  ║  ║  _active_jobs    ║  ║  AI Planner (IP) ║
+║                  ║  ║  _pending_queues ║  ╚══════════════════╝
+║ champion_        ║  ║ job_scheduler.py ║
 ║  strategies.py   ║  ║ 7 Job Types:     ║
 ║  5 strategies    ║  ║  clustering      ║
 ║  expanding       ║  ║  backtest_lgbm   ║
@@ -159,8 +167,8 @@
 ║  ensemble        ║  ║  seasonality     ║
 ║  meta_learner    ║  ║  champion        ║
 ║                  ║  ║  scenario        ║
-║ feature_         ║  ╚══════════════════╝
-║  engineering.py  ║
+║ feature_         ║  ║ make_scheduler   ║
+║  engineering.py  ║  ║ make_trigger     ║
 ║  Lag/Rolling     ║
 ║                  ║
 ║ metrics.py       ║
@@ -176,7 +184,7 @@
 ║  Optuna suggest  ║
 ║  save/load JSON  ║
 ║  tune_for_tf()   ║
-║  TRAIN_FOLD_FNS  ║
+║  TRAIN_FOLD_FNS  ║  ╚══════════════════╝
 ╚══════════════════╝
            │
            ▼
@@ -268,7 +276,7 @@
 ║  │  │  B-tree (composite)  │  GIN trigram (pg_trgm full-text)  │  pgvector (embeddings)     │  │   ║
 ║  │  └────────────────────────────────────────────────────────────────────────────────────────┘  │   ║
 ║  │                                                                                               │   ║
-║  │  35 SQL Migration Files (sql/001 → sql/035)                                                   │   ║
+║  │  38 SQL Migration Files (sql/001 → sql/038)                                                   │   ║
 ║  └───────────────────────────────────────────────────────────────────────────────────────────────┘   ║
 ║                                                                                                     ║
 ║  ┌──────────── Lakehouse (Optional) ──────────────────────────────────────────────────────────┐     ║
@@ -295,7 +303,7 @@
 ║  ┌──── Build ─────────────┐  ┌──── Testing ──────────────┐  ┌──── Infrastructure ────────────────┐  ║
 ║  │ Makefile (100+ targets)│  │ pytest (backend, ~0.7s)   │  │ Docker Compose (7 services)        │  ║
 ║  │ uv (Python packaging) │  │ vitest (frontend, ~1.5s)  │  │ Vite dev server + proxy            │  ║
-║  │ Vite 5 (frontend)     │  │ 1109+ total tests         │  │ MLflow tracking server             │  ║
+║  │ Vite 5 (frontend)     │  │ 1457 total tests         │  │ MLflow tracking server             │  ║
 ║  │ TypeScript 5           │  │ httpx ASGI transport      │  │ APScheduler (in-process)           │  ║
 ║  │ Tailwind CSS           │  │ React Testing Library     │  │                                    │  ║
 ║  └────────────────────────┘  └───────────────────────────┘  └────────────────────────────────────┘  ║
@@ -333,7 +341,7 @@
      ▼           ▼                        ▼
 ┌────────────────────────┐    ┌──────────────────┐
 │  FastAPI (:8000)        │◄───│ Job Scheduler    │
-│  12 Routers             │    │ (APScheduler)    │
+│  30 Routers             │    │ (APScheduler)    │
 │  Pydantic v2 Validation │    │ Cron/Pipelines   │
 └──────────┬─────────────┘    └──────────────────┘
            │
@@ -342,7 +350,7 @@
            ▼
 ┌────────────────────────┐
 │  React UI               │
-│  9 Tabs + Chat          │
+│  15 Tabs + Chat         │
 │  TanStack Query Cache   │
 │  ECharts + Recharts     │
 │  Light/Dark Theme       │
