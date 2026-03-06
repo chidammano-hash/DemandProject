@@ -12,6 +12,11 @@ function fmtPct(n: number | null | undefined): string {
   return `${Number(n).toFixed(1)}%`;
 }
 
+function fmtDays(n: number | string | null | undefined): string {
+  if (n == null) return "—";
+  return `${Number(n).toFixed(1)}`;
+}
+
 export function LeadTimePanel() {
   const { data: summary, isLoading } = useQuery({
     queryKey: queryKeys.ltSummary({}),
@@ -39,7 +44,7 @@ export function LeadTimePanel() {
         <div className="rounded-lg border bg-muted/30 p-3">
           <p className="text-xs text-muted-foreground">Avg Lead Time</p>
           <p className="text-xl font-bold">
-            {isLoading ? "..." : summary?.avg_lt_mean_days != null ? `${summary.avg_lt_mean_days.toFixed(1)} days` : "-"}
+            {isLoading ? "..." : summary?.avg_lt_mean_days != null ? `${fmtDays(summary.avg_lt_mean_days)} days` : "-"}
           </p>
         </div>
         <div className="rounded-lg border bg-muted/30 p-3">
@@ -86,10 +91,10 @@ export function LeadTimePanel() {
                 <tr key={`${r.item_no}-${r.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
                   <td className="py-1 pr-2 font-mono">{r.item_no}</td>
                   <td className="py-1 pr-2">{r.loc}</td>
-                  <td className="py-1 pr-2 text-right">{r.lt_mean_days?.toFixed(1) ?? "-"}</td>
-                  <td className="py-1 pr-2 text-right">{r.lt_std_days?.toFixed(1) ?? "-"}</td>
+                  <td className="py-1 pr-2 text-right">{r.lt_mean_days != null ? fmtDays(r.lt_mean_days) : "—"}</td>
+                  <td className="py-1 pr-2 text-right">{r.lt_std_days != null ? fmtDays(r.lt_std_days) : "—"}</td>
                   <td className="py-1 pr-2 text-right">
-                    {r.lt_cv != null ? (r.lt_cv * 100).toFixed(1) + "%" : "-"}
+                    {r.lt_cv != null ? fmtPct(Number(r.lt_cv) * 100) : "—"}
                   </td>
                   <td className="py-1 text-center">
                     <span

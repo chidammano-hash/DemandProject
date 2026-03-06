@@ -81,22 +81,23 @@ def get_policies(response: FastAPIResponse) -> dict:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
-            cols = [d[0] for d in cur.description]
             rows = cur.fetchall()
 
+    # Column order matches SELECT: policy_id(0), policy_name(1), policy_type(2),
+    # segment(3), review_cycle_days(4), service_level(5), use_eoq(6),
+    # use_safety_stock(7), active(8), dfu_count(9)
     def _row(r: tuple) -> dict:
-        d = dict(zip(cols, r))
         return {
-            "policy_id":         d["policy_id"],
-            "policy_name":       d["policy_name"],
-            "policy_type":       d["policy_type"],
-            "segment":           d["segment"],
-            "review_cycle_days": d["review_cycle_days"],
-            "service_level":     float(d["service_level"]) if d["service_level"] is not None else None,
-            "use_eoq":           bool(d["use_eoq"]),
-            "use_safety_stock":  bool(d["use_safety_stock"]),
-            "active":            bool(d["active"]),
-            "dfu_count":         int(d["dfu_count"]),
+            "policy_id":         r[0],
+            "policy_name":       r[1],
+            "policy_type":       r[2],
+            "segment":           r[3],
+            "review_cycle_days": r[4],
+            "service_level":     float(r[5]) if r[5] is not None else None,
+            "use_eoq":           bool(r[6]),
+            "use_safety_stock":  bool(r[7]),
+            "active":            bool(r[8]),
+            "dfu_count":         int(r[9]),
         }
 
     return {"policies": [_row(r) for r in rows]}

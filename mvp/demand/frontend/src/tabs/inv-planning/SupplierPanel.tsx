@@ -61,9 +61,9 @@ export function SupplierPanel() {
                     {r.supplier_reliability_score ?? "—"}
                   </td>
                   <td className="text-right py-1 px-2">{r.sku_loc_count?.toLocaleString() ?? "—"}</td>
-                  <td className="text-right py-1 px-2">{r.avg_lt_mean_days?.toFixed(1) ?? "—"}</td>
-                  <td className="text-right py-1 px-2">{r.avg_lt_cv?.toFixed(2) ?? "—"}</td>
-                  <td className="text-right py-1 px-2">{r.pct_stable_lt != null ? `${(r.pct_stable_lt * 100).toFixed(0)}%` : "—"}</td>
+                  <td className="text-right py-1 px-2">{r.avg_lt_mean_days != null ? Number(r.avg_lt_mean_days).toFixed(1) : "—"}</td>
+                  <td className="text-right py-1 px-2">{r.avg_lt_cv != null ? Number(r.avg_lt_cv).toFixed(2) : "—"}</td>
+                  <td className="text-right py-1 px-2">{r.pct_stable_lt != null ? `${(Number(r.pct_stable_lt) * 100).toFixed(0)}%` : "—"}</td>
                 </tr>
               ))}
             </tbody>

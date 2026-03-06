@@ -68,7 +68,7 @@ def get_simulation_results(
         with conn.cursor() as cur:
             cur.execute(sql, [item, location])
             row = cur.fetchone()
-            if not row:
+            if row is None or len(row) < 2:
                 raise HTTPException(status_code=404, detail="No simulation results found")
 
     curve = _json.loads(row[11]) if isinstance(row[11], str) else (row[11] or [])
@@ -164,7 +164,7 @@ def get_simulation_status(
         with conn.cursor() as cur:
             cur.execute(sql, [sim_run_id])
             row = cur.fetchone()
-            if not row:
+            if row is None or len(row) < 2:
                 raise HTTPException(status_code=404, detail="Simulation run not found")
 
     return {

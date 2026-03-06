@@ -78,8 +78,10 @@
 | `mvp/demand/scripts/clean_forecasts_by_date.py` | Date-range forecast cleanup: delete rows by time bucket from forecast + archive tables |
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
 | `mvp/demand/sql/008_perf_indexes_and_agg.sql` | Performance indexes (B-tree, GIN trigram) + materialized views |
-| `mvp/demand/frontend/src/api/queries.ts` | Centralized TanStack Query layer (all fetch functions + query keys) |
+| `mvp/demand/frontend/src/api/queries.ts` | Thin re-export barrel: `export * from "./queries/index"` — all domain query modules in `queries/` subfolder |
+| `mvp/demand/frontend/src/api/queries/` | Domain query modules: `core.ts`, `inv-planning.ts`, `ai-planner.ts`, `control-tower.ts`, `fill-rate.ts`, `storyboard.ts`, `index.ts` |
 | `mvp/demand/frontend/src/tabs/` | Extracted tab components (DashboardTab, ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, InvBacktestTab, ChatPanel, JobsTab, InvPlanningTab, ControlTowerTab) |
+| `mvp/demand/frontend/src/tabs/inv-planning/` | Inventory Planning panel components: ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel |
 | `mvp/demand/frontend/src/hooks/useTheme.ts` | Color mode management (light/dark) for the General theme |
 | `mvp/demand/frontend/src/hooks/useUrlState.ts` | URL state synchronization (13 tabs, overview default) |
 | `mvp/demand/frontend/src/hooks/useKeyboardShortcuts.ts` | Keyboard shortcuts handler (1-9 tabs, sidebar, dark mode) |
@@ -115,13 +117,27 @@
 | `mvp/demand/frontend/tailwind.config.ts` | Tailwind config with custom `pulse-glow` animation |
 | `mvp/demand/tests/` | Backend test suite (pytest): unit/ + api/ |
 | `mvp/demand/tests/conftest.py` | Shared pytest fixtures (sample DataFrames) |
-| `mvp/demand/tests/api/conftest.py` | API test fixtures (mock DB pool, async httpx client) |
+| `mvp/demand/tests/api/conftest.py` | API test fixtures: `make_pool(fetchall_return, fetchone_return)` factory + `mock_pool` fixture |
 | `mvp/demand/frontend/src/**/__tests__/` | Frontend test suites (Vitest + RTL) |
 | `docs/architecture-diagram.md` | Full-stack architecture diagram (layers, data flow, ML pipeline) |
-| `docs/design-specs/` | Feature specs (feature1–feature44, IPfeature4–IPfeature15, IPAIfeature1) |
+| `docs/design-specs/` | Feature specs organized in 5 functional subfolders: 01-platform-infrastructure/, 02-forecasting-models/, 03-clustering-seasonality/, 04-inventory-planning/, 05-ui-automation/ |
 | `mvp/demand/api/core.py` | Shared API utilities: connection pool, OpenAI client, SQL helpers used by router modules |
 | `mvp/demand/api/auth.py` | Optional API key auth (`require_api_key` dependency; disabled when `API_KEY` env var unset) |
-| `mvp/demand/api/routers/` | Modular FastAPI router modules: 17 routers (accuracy, ai_planner, analysis, benchmark, chat, clusters, competition, control_tower, dashboard, domains, fill_rate, intel, inv_backtest, inventory, inv_planning, jobs, shap) |
+| `mvp/demand/api/routers/` | Modular FastAPI router modules: 29 routers total (see inv_planning_* split below) |
+| `mvp/demand/api/routers/inv_planning.py` | Thin compatibility shim — re-exports `router` from domain routers for backward compat |
+| `mvp/demand/api/routers/inv_planning_eoq.py` | EOQ endpoints: summary, detail, sensitivity (IPfeature4) |
+| `mvp/demand/api/routers/inv_planning_policy.py` | Policy CRUD + assignment + compliance endpoints (IPfeature5) |
+| `mvp/demand/api/routers/inv_planning_health.py` | Health score endpoints: summary, detail, heatmap (IPfeature6) |
+| `mvp/demand/api/routers/inv_planning_exceptions.py` | Exception queue endpoints: list, summary, acknowledge, status, generate (IPfeature7) |
+| `mvp/demand/api/routers/inv_planning_safety_stock.py` | Safety stock endpoints: summary, detail, gap analysis (IPfeature3) |
+| `mvp/demand/api/routers/inv_planning_abc_xyz.py` | ABC-XYZ classification endpoints (IPfeature11) |
+| `mvp/demand/api/routers/inv_planning_supplier.py` | Supplier performance endpoints (IPfeature12) |
+| `mvp/demand/api/routers/inv_planning_investment.py` | Investment plan endpoints (IPfeature13) |
+| `mvp/demand/api/routers/inv_planning_intramonth.py` | Intramonth stockout endpoints (IPfeature14) |
+| `mvp/demand/api/routers/inv_planning_demand_signals.py` | Demand signals endpoints (IPfeature9) |
+| `mvp/demand/api/routers/inv_planning_simulation.py` | Safety stock simulation endpoints (IPfeature10) |
+| `mvp/demand/api/routers/inv_planning_variability.py` | Demand variability endpoints |
+| `mvp/demand/api/routers/inv_planning_lead_time.py` | Lead time analysis endpoints |
 | `mvp/demand/api/routers/inventory.py` | Inventory endpoints: position, KPIs, trend, item-detail |
 | `mvp/demand/api/routers/inv_backtest.py` | Inventory backtest endpoints: summary, trend, root-cause, detail |
 | `mvp/demand/api/routers/dashboard.py` | Dashboard endpoints: KPIs, alerts, top-movers, heatmap |
@@ -540,7 +556,9 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Job scheduler (APScheduler):** `common/job_registry.py` provides `JobManager` singleton powered by APScheduler 3.11 (`BackgroundScheduler` + `ThreadPoolExecutor(max_workers=4)`). Thread-safe: `_state_lock` guards `_active_jobs`, `_pending_queues`, `_cancel_flags`; `_init_lock` with double-checked locking protects `_ensure_init()`. `JOB_TYPE_REGISTRY` maps 7 job types across 4 groups. Per-group concurrency control with FIFO queueing (one active job per group: clustering, backtest, seasonality, champion; busy groups queue jobs instead of rejecting). Job callables wrap existing scripts via `subprocess.run()`. Progress updates written to `job_history` table. `recover_stale_jobs()` re-enqueues queued jobs from DB on restart and marks running jobs as failed. Supports cron/interval scheduling (`POST /jobs/schedule`, `GET /jobs/schedules`), job pipelines (`POST /jobs/pipeline` — sequential chaining), retry logic with exponential backoff (`max_retries`), and dashboard stats (`GET /jobs/stats`). 12 REST API endpoints total. Route ordering in `jobs.py`: literal paths (`/jobs/schedules`, `/jobs/pipeline`) must come before parameterized `{job_id}` paths. Frontend polls `GET /jobs/active` every 2s, stats every 5s, history every 10s. `JobNotificationContext` provides cross-tab completion alerts. Sidebar shows active job count badge. ClustersTab uses "Schedule Scenario Job" button. Dependencies: `apscheduler>=3.10`, `tzlocal>=5.0`.
 - **API key authentication:** `api/auth.py` provides `require_api_key` FastAPI dependency. Auth is disabled when the `API_KEY` env var is unset (development default). When set, mutation endpoints (`POST /clustering/scenario`, `PUT /competition/config`, `POST /competition/run`, `POST /chat`, `POST /market-intelligence`) require `X-API-Key` header.
 - **Vite dev server proxy:** `frontend/vite.config.ts` proxies all API path prefixes (`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`) to the FastAPI backend at `http://127.0.0.1:8000`. **CRITICAL:** When adding a new API path prefix, you MUST add a corresponding proxy entry in `vite.config.ts` or the frontend will receive HTML instead of JSON. Restart the Vite dev server (`make ui`) after changes.
-- **Health endpoint DB pattern (IPfeature6):** Health endpoints in `inv_planning.py` use `get_conn()` directly (NOT `Depends(_get_pool)`). Using `Depends(_get_pool)` causes 422 errors when `api.main` is first imported inside a `patch("api.core._get_pool", ...)` test context — FastAPI inspects the MagicMock's signature as `(*args, **kwargs)` and turns them into required query params. All new endpoints in `inv_planning.py` must use `get_conn()`.
+- **Health endpoint DB pattern (IPfeature6):** All `inv_planning_*.py` router files use `get_conn()` directly (NOT `Depends(_get_pool)`). Using `Depends(_get_pool)` causes 422 errors when `api.main` is first imported inside a `patch("api.core._get_pool", ...)` test context — FastAPI inspects the MagicMock's signature as `(*args, **kwargs)` and turns them into required query params. All new endpoints in any `inv_planning_*.py` file must use `get_conn()`.
+- **Shared DB params pattern:** All scripts import `from common.db import get_db_params` — no inline `_get_db_params`/`_db_conn` functions. `common/db.py` is the canonical source.
+- **Shared test pool factory:** `tests/api/conftest.py` exports `make_pool(fetchall_return=None, fetchone_return=None)` module-level factory (NOT a pytest fixture). Defaults: fetchall=[], fetchone=(0,). Import with `from tests.api.conftest import make_pool as _make_pool`. For endpoints making multiple `fetchall()` calls, use `cursor.fetchall.side_effect = [list1, list2, ...]`; for single-call endpoints use `cursor.fetchall.return_value = [...]`.
 - **Stub table pattern (IPfeature6):** When a materialized view depends on a table from a future feature (e.g., `fact_safety_stock_targets` for IPfeature6 depends on IPfeature3), create the stub table with the minimum required columns using `CREATE TABLE IF NOT EXISTS`. The LEFT JOIN produces NULL for all rows, causing score components to use neutral scores. When the real table is populated by the upstream feature, real scores flow automatically with zero code changes.
 - **Single theme with light/dark modes:** Only the "General" (Demand Studio) product theme remains. `useTheme()` manages light/dark color mode. `ThemeSelector` in sidebar footer provides light/dark toggle. No theme cycling, no motifs.
 - **Theme context (no prop-drilling):** Tab components access the current theme via `useThemeContext()` from `context/ThemeContext.tsx` or `useChartColors()` from `hooks/useChartColors.ts` — NOT via a `theme` prop from `App.tsx`. `ThemeProvider` wraps the app tree in `App.tsx`. `useChartColors()` returns `{ theme, chartColors, trendColors }` for Recharts styling. `ScenarioCharts` component extracted to `components/ScenarioCharts.tsx` (elbow, silhouette, radar, pie, gap charts).
