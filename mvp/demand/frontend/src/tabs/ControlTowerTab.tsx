@@ -20,15 +20,11 @@ import {
   type ControlTowerAlert,
   type ControlTowerCriticalItem,
 } from "@/api/queries";
+import { formatFixed as fmt } from "@/lib/formatters";
 
 function pct(n: number | null | undefined, scale = 1): string {
   if (n == null) return "—";
   return `${(Number(n) * scale).toFixed(1)}%`;
-}
-
-function fmt(n: number | null | undefined, dec = 1): string {
-  if (n == null) return "—";
-  return Number(n).toFixed(dec);
 }
 
 // Severity color mapping

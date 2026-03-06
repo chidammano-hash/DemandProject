@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from api.core import get_conn, get_spec_or_404, qident
+from api.core import get_conn
 
 router = APIRouter()
 

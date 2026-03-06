@@ -33,20 +33,7 @@ from common.champion_strategies import (
     compute_ceiling,
     compute_strategy_accuracy,
 )
-
-
-# ---------------------------------------------------------------------------
-# DB helpers
-# ---------------------------------------------------------------------------
-
-def _get_db_params() -> dict[str, Any]:
-    return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
-        "port": int(os.getenv("POSTGRES_PORT", "5440")),
-        "dbname": os.getenv("POSTGRES_DB", "demand_mvp"),
-        "user": os.getenv("POSTGRES_USER", "demand"),
-        "password": os.getenv("POSTGRES_PASSWORD", "demand"),
-    }
+from common.db import get_db_params
 
 
 def load_monthly_errors(
@@ -190,7 +177,7 @@ def main() -> None:
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
-    db = _get_db_params()
+    db = get_db_params()
 
     # Load config
     config_path = ROOT / args.config

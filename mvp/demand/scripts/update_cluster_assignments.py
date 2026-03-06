@@ -7,10 +7,8 @@ This script loads labeled cluster assignments and updates the database.
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 import psycopg
@@ -20,16 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-
-def get_db_conn() -> dict[str, Any]:
-    """Get database connection parameters."""
-    return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
-        "port": int(os.getenv("POSTGRES_PORT", "5440")),
-        "dbname": os.getenv("POSTGRES_DB", "demand_mvp"),
-        "user": os.getenv("POSTGRES_USER", "demand"),
-        "password": os.getenv("POSTGRES_PASSWORD", "demand"),
-    }
+from common.db import get_db_params
 
 
 def main() -> None:
@@ -62,8 +51,8 @@ def main() -> None:
         print(f"Warning: {missing_labels} assignments have missing labels")
     
     # Get database connection
-    db = get_db_conn()
-    
+    db = get_db_params()
+
     # Show cluster distribution from file
     cluster_counts = assignments_df["cluster_label"].value_counts()
     print("\nCluster distribution (from file):")

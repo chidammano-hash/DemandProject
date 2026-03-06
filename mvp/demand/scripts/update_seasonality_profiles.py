@@ -6,10 +6,8 @@ profile, strength, yearly flag, peak/trough months, and ratio.
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 import psycopg
@@ -19,16 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-
-def get_db_conn() -> dict[str, Any]:
-    """Get database connection parameters."""
-    return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
-        "port": int(os.getenv("POSTGRES_PORT", "5440")),
-        "dbname": os.getenv("POSTGRES_DB", "demand_mvp"),
-        "user": os.getenv("POSTGRES_USER", "demand"),
-        "password": os.getenv("POSTGRES_PASSWORD", "demand"),
-    }
+from common.db import get_db_params
 
 
 def main() -> None:
@@ -67,7 +56,7 @@ def main() -> None:
         print("\nDry run mode - no changes made")
         return
 
-    db = get_db_conn()
+    db = get_db_params()
 
     with psycopg.connect(**db) as conn:
         with conn.cursor() as cur:

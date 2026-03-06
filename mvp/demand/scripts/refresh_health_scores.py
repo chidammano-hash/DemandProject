@@ -8,11 +8,18 @@ Usage:
 """
 from __future__ import annotations
 
-import os
+import sys
 import time
+from pathlib import Path
 
 import psycopg
 from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from common.db import get_db_params
 
 
 def refresh(conn_params: dict) -> dict:
@@ -35,18 +42,10 @@ def refresh(conn_params: dict) -> dict:
 
 
 def main() -> None:
-    load_dotenv()
-
-    conn_params = {
-        "host":     os.getenv("POSTGRES_HOST", "localhost"),
-        "port":     int(os.getenv("POSTGRES_PORT", "5440")),
-        "dbname":   os.getenv("POSTGRES_DB", "demand_mvp"),
-        "user":     os.getenv("POSTGRES_USER", "demand"),
-        "password": os.getenv("POSTGRES_PASSWORD", "demand"),
-    }
+    load_dotenv(ROOT / ".env")
 
     print("[health] Refreshing mv_inventory_health_score…")
-    result = refresh(conn_params)
+    result = refresh(get_db_params())
     print(f"[health] Done — {result['rows']:,} rows in {result['elapsed_s']}s")
 
 

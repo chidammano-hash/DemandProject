@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { formatCurrency as fmtCurrency } from "@/lib/formatters";
 import {
   AlertTriangle,
   AlertCircle,
@@ -92,13 +93,6 @@ const INSIGHT_TYPE_LABELS: Record<InsightType, string> = {
   policy_gap: "Policy Gap",
   champion_degradation: "Model Degradation",
 };
-
-function fmt$(v: number | null | undefined): string {
-  if (v == null) return "—";
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
-  return `$${v.toFixed(0)}`;
-}
 
 // ---------------------------------------------------------------------------
 // SeverityIcon
@@ -200,7 +194,7 @@ function InsightCard({
             )}
             {insight.financial_impact_estimate != null && (
               <span className="rounded bg-amber-100 px-2 py-1 font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-                {fmt$(insight.financial_impact_estimate)} at risk
+                {fmtCurrency(insight.financial_impact_estimate)} at risk
               </span>
             )}
           </div>
@@ -380,7 +374,7 @@ export default function AIPlannerTab() {
           },
           {
             label: "Total Financial Risk",
-            value: fmt$(
+            value: fmtCurrency(
               insights.reduce((s, i) => s + (i.financial_impact_estimate ?? 0), 0),
             ),
             color: "text-amber-600 dark:text-amber-400",

@@ -15,7 +15,6 @@ Usage:
 """
 
 import argparse
-import os
 import sys
 import time
 from datetime import date, datetime
@@ -26,6 +25,11 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from common.db import get_db_params
 
 VALID_DATE_COLUMNS = ("startdate", "fcstdate")
 
@@ -44,16 +48,6 @@ REFRESH_VIEWS = [
 
 def _ts() -> str:
     return time.strftime("%H:%M:%S")
-
-
-def get_db_conn() -> dict:
-    return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
-        "port": int(os.getenv("POSTGRES_PORT", "5440")),
-        "dbname": os.getenv("POSTGRES_DB", "demand_mvp"),
-        "user": os.getenv("POSTGRES_USER", "demand"),
-        "password": os.getenv("POSTGRES_PASSWORD", "demand"),
-    }
 
 
 def parse_date(value: str) -> date:
@@ -249,8 +243,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    db = get_db_conn()
-    with psycopg.connect(**db) as conn:
+    with psycopg.connect(**get_db_params()) as conn:
         if args.list_only:
             list_by_date(conn, args.date_column)
             return

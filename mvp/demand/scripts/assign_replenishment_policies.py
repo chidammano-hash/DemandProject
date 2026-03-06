@@ -28,10 +28,16 @@ import argparse
 import os
 import sys
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import yaml
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from common.db import get_db_params
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "replenishment_policy_config.yaml")
 
@@ -220,15 +226,7 @@ def run(config_path: str = CONFIG_PATH, dry_run: bool = False, force_overwrite: 
     policies = config.get("policies", [])
     auto_cfg = config.get("auto_assign", {})
 
-    conn_params = {
-        "host":     os.getenv("POSTGRES_HOST", "localhost"),
-        "port":     int(os.getenv("POSTGRES_PORT", "5440")),
-        "dbname":   os.getenv("POSTGRES_DB", "demand_mvp"),
-        "user":     os.getenv("POSTGRES_USER", "demand"),
-        "password": os.getenv("POSTGRES_PASSWORD", "demand"),
-    }
-
-    with psycopg.connect(**conn_params) as conn:
+    with psycopg.connect(**get_db_params()) as conn:
         # Step 1: Upsert policies
         n_policies = upsert_policies(conn, policies, dry_run=dry_run)
         print(f"[policies] {'Would upsert' if dry_run else 'Upserted'} {n_policies} policies")

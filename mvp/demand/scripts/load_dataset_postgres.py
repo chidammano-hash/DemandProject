@@ -1,5 +1,4 @@
 import argparse
-import os
 import time
 from pathlib import Path
 import sys
@@ -11,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.db import get_db_params
 from common.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
 
 
@@ -258,13 +258,7 @@ def main() -> None:
     csv_path = root / "data" / spec.clean_file
     csv_size_mb = csv_path.stat().st_size / (1024 ** 2) if csv_path.exists() else 0
 
-    db = {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
-        "port": int(os.getenv("POSTGRES_PORT", "5440")),
-        "dbname": os.getenv("POSTGRES_DB", "demand_mvp"),
-        "user": os.getenv("POSTGRES_USER", "demand"),
-        "password": os.getenv("POSTGRES_PASSWORD", "demand"),
-    }
+    db = get_db_params()
 
     target_cols = [spec.ck_field, *spec.columns]
     stg_table = f"stg_{spec.table}_{spec.name}"

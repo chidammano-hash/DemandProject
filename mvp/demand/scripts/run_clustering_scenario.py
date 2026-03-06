@@ -22,7 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.generate_clustering_features import compute_time_series_features, get_db_conn
+from common.db import get_db_params
+from scripts.generate_clustering_features import compute_time_series_features
 from scripts.train_clustering_model import (
     CORE_FEATURES,
     LOG_TRANSFORM_FEATURES,
@@ -165,7 +166,7 @@ def _run_full_pipeline(
     from sklearn.decomposition import PCA
     from sklearn.metrics import silhouette_score as sk_silhouette
 
-    db = get_db_conn()
+    db = get_db_params()
 
     # Step 1: Load sales data
     time_window = fp["time_window_months"]
@@ -473,7 +474,7 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
 
     # Update database
     df = pd.read_csv(labels_path)
-    db = get_db_conn()
+    db = get_db_params()
 
     with psycopg.connect(**db) as conn:
         with conn.cursor() as cur:

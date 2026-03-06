@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import get_conn, set_cache, qident
+from api.core import get_conn, set_cache
 
 logger = logging.getLogger(__name__)
 

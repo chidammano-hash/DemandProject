@@ -7,7 +7,6 @@ and classifies each DFU into a seasonality profile tier.
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,16 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-
-def get_db_conn() -> dict[str, Any]:
-    """Get database connection parameters."""
-    return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
-        "port": int(os.getenv("POSTGRES_PORT", "5440")),
-        "dbname": os.getenv("POSTGRES_DB", "demand_mvp"),
-        "user": os.getenv("POSTGRES_USER", "demand"),
-        "password": os.getenv("POSTGRES_PASSWORD", "demand"),
-    }
+from common.db import get_db_params
 
 
 def load_config(config_path: str = "config/seasonality_config.yaml") -> dict:
@@ -180,7 +170,7 @@ def main() -> None:
     print(f"Thresholds: low={config['thresholds']['low']}, "
           f"medium={config['thresholds']['medium']}, high={config['thresholds']['high']}")
 
-    db = get_db_conn()
+    db = get_db_params()
 
     with psycopg.connect(**db) as conn:
         print("Loading sales data...")

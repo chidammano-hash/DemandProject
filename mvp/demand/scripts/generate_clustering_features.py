@@ -6,7 +6,6 @@ a feature matrix for clustering analysis.
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 from datetime import date, timedelta
@@ -21,18 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.db import get_db_params
 from common.domain_specs import DFU_SPEC, ITEM_SPEC
-
-
-def get_db_conn() -> dict[str, Any]:
-    """Get database connection parameters."""
-    return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
-        "port": int(os.getenv("POSTGRES_PORT", "5440")),
-        "dbname": os.getenv("POSTGRES_DB", "demand_mvp"),
-        "user": os.getenv("POSTGRES_USER", "demand"),
-        "password": os.getenv("POSTGRES_PASSWORD", "demand"),
-    }
 
 
 def compute_time_series_features(df: pd.DataFrame) -> pd.Series:
@@ -172,8 +161,8 @@ def main() -> None:
     root = Path(__file__).resolve().parents[1]
     load_dotenv(root / ".env")
     
-    db = get_db_conn()
-    
+    db = get_db_params()
+
     # Determine time window
     if args.time_window.lower() == "all":
         cutoff_date = None

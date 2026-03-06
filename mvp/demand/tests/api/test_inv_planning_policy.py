@@ -8,28 +8,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 import httpx
 from httpx import ASGITransport
-
-
-def _make_pool(fetchall_return=None, fetchone_return=None):
-    cursor = MagicMock()
-    cursor.fetchall.return_value = fetchall_return or []
-    cursor.fetchone.return_value = fetchone_return or (0,)
-    cursor.description = [
-        ("policy_id",), ("policy_name",), ("policy_type",), ("segment",),
-        ("review_cycle_days",), ("service_level",), ("use_eoq",),
-        ("use_safety_stock",), ("active",), ("dfu_count",),
-    ]
-    cursor.rowcount = 1
-
-    conn = MagicMock()
-    conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
-    conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    conn.__enter__ = MagicMock(return_value=conn)
-    conn.__exit__ = MagicMock(return_value=False)
-
-    pool = MagicMock()
-    pool.connection.return_value = conn
-    return pool, conn, cursor
+from tests.api.conftest import make_pool as _make_pool
 
 
 # ---------------------------------------------------------------------------

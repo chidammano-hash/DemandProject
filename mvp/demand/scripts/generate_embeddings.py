@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.db import get_db_params
 from common.domain_specs import DOMAIN_SPECS, DomainSpec
 
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -94,16 +95,6 @@ def build_texts(spec: DomainSpec) -> list[tuple[str, str, str]]:
     return rows
 
 
-def get_conninfo() -> str:
-    return (
-        f"host={os.getenv('POSTGRES_HOST', 'localhost')} "
-        f"port={os.getenv('POSTGRES_PORT', '5440')} "
-        f"dbname={os.getenv('POSTGRES_DB', 'demand_mvp')} "
-        f"user={os.getenv('POSTGRES_USER', 'demand')} "
-        f"password={os.getenv('POSTGRES_PASSWORD', 'demand')}"
-    )
-
-
 def main() -> None:
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env")
@@ -135,8 +126,7 @@ def main() -> None:
         print(f"  Embedded {min(i + BATCH_SIZE, len(texts))}/{len(texts)}")
 
     # Store in Postgres
-    conninfo = get_conninfo()
-    with psycopg.connect(conninfo) as conn:
+    with psycopg.connect(**get_db_params()) as conn:
         with conn.cursor() as cur:
             cur.execute("TRUNCATE chat_embeddings")
             for idx, (content_type, domain_name, source_text) in enumerate(all_chunks):
@@ -148,7 +138,7 @@ def main() -> None:
         conn.commit()
 
     # Create IVFFlat index now that we have data
-    with psycopg.connect(conninfo) as conn:
+    with psycopg.connect(**get_db_params()) as conn:
         with conn.cursor() as cur:
             cur.execute("DROP INDEX IF EXISTS idx_chat_embeddings_vector")
             n_lists = max(1, len(all_chunks) // 10)

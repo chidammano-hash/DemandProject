@@ -8,6 +8,31 @@ import httpx
 from httpx import ASGITransport
 
 
+def make_pool(fetchall_return=None, fetchone_return=None):
+    """Shared factory for mock DB pool used across API tests.
+
+    Args:
+        fetchall_return: return value for cursor.fetchall() calls. Defaults to [].
+        fetchone_return: return value for cursor.fetchone() calls. Defaults to (0,).
+    """
+    from unittest.mock import MagicMock
+    cursor = MagicMock()
+    cursor.fetchall.return_value = fetchall_return if fetchall_return is not None else []
+    cursor.fetchone.return_value = fetchone_return if fetchone_return is not None else (0,)
+    cursor.description = [("col",)]
+    cursor.rowcount = 1
+
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+    conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    conn.__enter__ = MagicMock(return_value=conn)
+    conn.__exit__ = MagicMock(return_value=False)
+
+    pool = MagicMock()
+    pool.connection.return_value = conn
+    return pool, conn, cursor
+
+
 @pytest.fixture
 def mock_pool():
     """Create a mock connection pool that returns mock cursors."""

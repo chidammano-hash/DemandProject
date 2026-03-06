@@ -9,7 +9,6 @@ Supports --replace to delete existing rows for a model_id before inserting.
 """
 
 import argparse
-import os
 import sys
 import time
 from pathlib import Path
@@ -23,15 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-
-def get_db_conn() -> dict[str, Any]:
-    return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
-        "port": int(os.getenv("POSTGRES_PORT", "5440")),
-        "dbname": os.getenv("POSTGRES_DB", "demand_mvp"),
-        "user": os.getenv("POSTGRES_USER", "demand"),
-        "password": os.getenv("POSTGRES_PASSWORD", "demand"),
-    }
+from common.db import get_db_params
 
 
 LOAD_COLS = [
@@ -559,7 +550,7 @@ Examples:
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
-    db = get_db_conn()
+    db = get_db_params()
 
     backtest_dir = ROOT / "data" / "backtest"
     csv_files = _resolve_input_files(args.input, args.model, args.all, backtest_dir)

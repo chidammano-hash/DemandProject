@@ -15,7 +15,6 @@ from api.core import (
     to_api_col,
     to_sql_col,
     qident,
-    row_to_dict,
     numeric_fields_for_spec,
     date_fields_for_spec,
     category_fields_for_spec,

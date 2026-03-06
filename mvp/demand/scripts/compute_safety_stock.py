@@ -30,11 +30,18 @@ import argparse
 import datetime
 import logging
 import math
-import os
 import sys
+from pathlib import Path
 from typing import Any
 
+import psycopg
 import yaml
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from common.db import get_db_params
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -319,19 +326,6 @@ def compute_position_metrics(
 # Database helpers
 # ---------------------------------------------------------------------------
 
-def _db_conn():
-    """Return a psycopg connection using environment variables."""
-    import psycopg  # type: ignore
-
-    return psycopg.connect(
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=int(os.getenv("POSTGRES_PORT", "5440")),
-        dbname=os.getenv("POSTGRES_DB", "demand_mvp"),
-        user=os.getenv("POSTGRES_USER", "demand"),
-        password=os.getenv("POSTGRES_PASSWORD", "demand"),
-    )
-
-
 def _load_dfu_data(cur) -> list[dict]:
     """Load DFU demand stats and ABC classification from dim_dfu."""
     sql = """
@@ -511,7 +505,7 @@ def run(
     log.info("Safety Stock Engine — IPfeature3 (policy_version=%s, dry_run=%s)", pv, dry_run)
 
     # -- Query source data ----------------------------------------------------
-    conn = _db_conn()
+    conn = psycopg.connect(**get_db_params())
     conn.autocommit = False
 
     with conn.cursor() as cur:
