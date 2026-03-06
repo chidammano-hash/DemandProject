@@ -50,7 +50,7 @@ async def test_get_insights_empty():
     assert resp.status_code == 200
     data = resp.json()
     assert data["total"] == 0
-    assert data["rows"] == []
+    assert data["insights"] == []
     assert data["page"] == 1
 
 
@@ -76,7 +76,7 @@ async def test_get_insights_with_data():
     assert resp.status_code == 200
     data = resp.json()
     assert data["total"] == 2
-    assert len(data["rows"]) == 2
+    assert len(data["insights"]) == 2
 
 
 @pytest.mark.asyncio
@@ -124,7 +124,12 @@ async def test_get_insights_invalid_severity_ignored():
 
 @pytest.mark.asyncio
 async def test_update_insight_status_acknowledge():
-    pool, conn, cursor = _make_pool(fetchone_return=(1, "acknowledged"))
+    # RETURNING has 11 cols: id, status, type, item_no, loc, abc_vol,
+    #   financial_impact_est, dos, total_lt_days, champion_wape, forecast_bias_pct
+    pool, conn, cursor = _make_pool(fetchone_return=(
+        1, "acknowledged", "stockout_risk", "100320", "1401-BULK", "A",
+        8500.0, 18.0, 14, 0.41, 0.20,
+    ))
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -137,6 +142,31 @@ async def test_update_insight_status_acknowledge():
 
     # Auth disabled when API_KEY not set → should pass through
     assert resp.status_code in (200, 403)
+
+
+@pytest.mark.asyncio
+async def test_update_insight_status_writes_outcome():
+    """When acknowledged, an outcome record is written (cursor.execute called twice)."""
+    pool, conn, cursor = _make_pool(fetchone_return=(
+        1, "acknowledged", "stockout_risk", "100320", "1401-BULK", "A",
+        8500.0, 18.0, 14, 0.41, 0.20,
+    ))
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.put(
+                "/ai-planner/insights/1/status",
+                json={"status": "acknowledged", "action_taken": "Emergency reorder 250 units"},
+                headers={"X-API-Key": "test"},
+            )
+
+    # Either succeeded (200) or auth blocked (403)
+    assert resp.status_code in (200, 403)
+    # If auth succeeded, cursor.execute should have been called for both
+    # the UPDATE and the INSERT INTO ai_recommendation_outcomes
+    if resp.status_code == 200:
+        assert cursor.execute.call_count >= 2
 
 
 @pytest.mark.asyncio
@@ -212,6 +242,34 @@ async def test_get_memos_with_scope_filter():
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["memos"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# GET /ai-planner/metrics — observability
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_ai_metrics_empty():
+    """GET /ai-planner/metrics returns by_model and by_tool lists."""
+    pool, conn, cursor = _make_pool(
+        fetchall_return=[],
+        description=[
+            ("provider",), ("model",), ("llm_turns",), ("tool_calls",),
+            ("total_tokens",), ("avg_llm_latency_ms",), ("p95_llm_latency_ms",),
+            ("tool_errors",), ("error_rate_pct",),
+        ],
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/ai-planner/metrics?days=7")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["days"] == 7
+    assert "by_model" in data
+    assert "by_tool" in data
 
 
 # ---------------------------------------------------------------------------

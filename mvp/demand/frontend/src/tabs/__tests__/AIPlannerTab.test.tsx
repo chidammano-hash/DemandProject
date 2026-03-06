@@ -52,6 +52,9 @@ vi.mock("lucide-react", async (importOriginal) => {
     ChevronUp: ({ className }: { className?: string }) => (
       <span data-testid="icon-chevron-up" className={className} />
     ),
+    ChevronRight: ({ className }: { className?: string }) => (
+      <span data-testid="icon-chevron-right" className={className} />
+    ),
     Package: ({ className }: { className?: string }) => (
       <span data-testid="icon-package" className={className} />
     ),
@@ -66,6 +69,12 @@ vi.mock("lucide-react", async (importOriginal) => {
     ),
     Target: ({ className }: { className?: string }) => (
       <span data-testid="icon-target" className={className} />
+    ),
+    DollarSign: ({ className }: { className?: string }) => (
+      <span data-testid="icon-dollar" className={className} />
+    ),
+    X: ({ className }: { className?: string }) => (
+      <span data-testid="icon-x" className={className} />
     ),
     Monitor: ({ className }: { className?: string }) => (
       <span data-testid="icon-monitor" className={className} />
@@ -92,10 +101,18 @@ const sampleInsight = {
   reasoning: "DOS 18 < LT 21",
   financial_impact_estimate: 8500,
   dos: 18,
+  total_lt_days: 21,
   champion_wape: 0.41,
+  forecast_bias_pct: 0.22,
   current_policy_id: "continuous_rop",
+  eoq_effective: null,
   status: "open" as const,
+  acknowledged_at: null,
+  resolved_at: null,
+  model_version: null,
+  scan_run_id: null,
   created_at: "2026-03-01T00:00:00Z",
+  updated_at: "2026-03-01T00:00:00Z",
 };
 
 // ---------------------------------------------------------------------------
@@ -146,7 +163,7 @@ describe("AIPlannerTab", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Open Insights")).toBeDefined();
-      // "Critical" may appear multiple times (KPI card + select item) — use getAllByText
+      // "Critical" may appear multiple times (KPI card + select item)
       expect(screen.getAllByText("Critical").length).toBeGreaterThan(0);
     });
   });
@@ -191,7 +208,7 @@ describe("AIPlannerTab", () => {
     });
   });
 
-  it("renders Acknowledge button for open insights", async () => {
+  it("renders Accept button for open insights", async () => {
     const { fetchAiInsights } = await import("@/api/queries");
     vi.mocked(fetchAiInsights).mockResolvedValue({
       insights: [sampleInsight],
@@ -207,7 +224,7 @@ describe("AIPlannerTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Acknowledge")).toBeDefined();
+      expect(screen.getByText("Accept")).toBeDefined();
     });
   });
 
@@ -228,6 +245,43 @@ describe("AIPlannerTab", () => {
 
     await waitFor(() => {
       expect(screen.getByText("critical")).toBeDefined();
+    });
+  });
+
+  it("renders causal chain section for insight with metrics", async () => {
+    const { fetchAiInsights } = await import("@/api/queries");
+    vi.mocked(fetchAiInsights).mockResolvedValue({
+      insights: [sampleInsight],
+      total: 1,
+      page: 1,
+    });
+
+    const { default: AIPlannerTab } = await import("@/tabs/AIPlannerTab");
+    render(
+      <TestQueryWrapper>
+        <AIPlannerTab />
+      </TestQueryWrapper>,
+    );
+
+    await waitFor(() => {
+      // Causal chain labels should be visible
+      expect(screen.getByText("Causal Chain")).toBeDefined();
+    });
+  });
+
+  it("shows healthy empty state when no open insights", async () => {
+    const { fetchAiInsights } = await import("@/api/queries");
+    vi.mocked(fetchAiInsights).mockResolvedValue({ insights: [], total: 0, page: 1 });
+
+    const { default: AIPlannerTab } = await import("@/tabs/AIPlannerTab");
+    render(
+      <TestQueryWrapper>
+        <AIPlannerTab />
+      </TestQueryWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Portfolio looks healthy!")).toBeDefined();
     });
   });
 });

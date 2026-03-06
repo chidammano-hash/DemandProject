@@ -517,7 +517,9 @@ ss-all: ss-schema ss-compute
 # ---------------------------------------------------------------------------
 
 ai-insights-schema:
-	$(UV) psql $(DATABASE_URL) -f sql/030_create_ai_insights.sql
+	$(UV) psql $(DATABASE_URL) -f sql/036_create_ai_insights.sql
+	$(UV) psql $(DATABASE_URL) -f sql/039_create_ai_call_log.sql
+	$(UV) psql $(DATABASE_URL) -f sql/040_create_ai_recommendation_outcomes.sql
 
 ai-insights-scan:
 	$(UV) python scripts/generate_ai_insights.py --portfolio

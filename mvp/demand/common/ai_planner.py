@@ -20,11 +20,53 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Annotated, Literal
+
+from pydantic import BaseModel, Field, field_validator
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Circuit-breaker constants
+# ---------------------------------------------------------------------------
+MAX_TURNS = 40
+TOKEN_BUDGET = 100_000  # cumulative tokens per DFU / portfolio scan
+
+
+# ---------------------------------------------------------------------------
+# Pydantic validation for create_insight LLM inputs
+# ---------------------------------------------------------------------------
+
+class CreateInsightInput(BaseModel):
+    insight_type: Literal[
+        "stockout_risk", "excess_inventory", "forecast_bias",
+        "policy_gap", "champion_degradation"
+    ]
+    severity: Literal["critical", "high", "medium", "low"]
+    item_no: str
+    loc: str
+    summary: str = Field(min_length=20, max_length=300)
+    recommendation: str = Field(min_length=30, max_length=600)
+    reasoning: str | None = None
+    financial_impact_estimate: Annotated[float | None, Field(ge=0, le=10_000_000)] = None
+    dos: float | None = None
+    total_lt_days: int | None = None
+    champion_wape: float | None = None
+    forecast_bias_pct: float | None = None
+    current_policy_id: str | None = None
+    eoq_effective: float | None = None
+    abc_vol: str | None = None
+    cluster_assignment: str | None = None
+
+    @field_validator("summary")
+    @classmethod
+    def summary_must_contain_metrics(cls, v: str) -> str:
+        if not any(c.isdigit() for c in v):
+            raise ValueError("summary must contain at least one metric value (number)")
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +166,7 @@ def get_forecast_performance(pool, item_no: str, loc: str, months: int = 6) -> l
         WHERE dmdunit = %s AND loc = %s
           AND model_id = 'champion'
           AND lag = 0
-          AND startdate >= date_trunc('month', NOW() - INTERVAL '%s months')
+          AND startdate >= date_trunc('month', NOW() - INTERVAL '1 month' * %s)
         ORDER BY startdate
     """
     with pool.connection() as conn:
@@ -367,6 +409,42 @@ def get_portfolio_health_summary(pool) -> dict:
             return dict(zip(cols, row))
 
 
+def log_ai_call(
+    pool,
+    scan_run_id: str,
+    provider: str,
+    model: str,
+    turn_number: int,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
+    latency_ms: int | None = None,
+    tool_name: str | None = None,
+    tool_success: bool | None = None,
+    error_type: str | None = None,
+    dfu_key: str | None = None,
+) -> None:
+    """Write a row to ai_call_log (best-effort, silently ignores failures)."""
+    sql = """
+        INSERT INTO ai_call_log (
+            scan_run_id, dfu_key, provider, model, turn_number,
+            prompt_tokens, completion_tokens, total_tokens, latency_ms,
+            tool_name, tool_success, error_type
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
+    try:
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (
+                    scan_run_id, dfu_key, provider, model, turn_number,
+                    prompt_tokens, completion_tokens, total_tokens, latency_ms,
+                    tool_name, tool_success, error_type,
+                ))
+                conn.commit()
+    except Exception as exc:
+        log.debug("ai_call_log insert failed (non-fatal): %s", exc)
+
+
 def create_insight(
     pool,
     insight_type: str,
@@ -388,7 +466,30 @@ def create_insight(
     model_version: str | None = None,
     scan_run_id: str | None = None,
 ) -> int:
-    """Insert a new insight row and return the new insight_id."""
+    """Validate with Pydantic then insert a new insight row; return new insight_id."""
+    try:
+        validated = CreateInsightInput(
+            insight_type=insight_type,  # type: ignore[arg-type]
+            severity=severity,  # type: ignore[arg-type]
+            item_no=item_no,
+            loc=loc,
+            summary=summary,
+            recommendation=recommendation,
+            reasoning=reasoning,
+            financial_impact_estimate=financial_impact_estimate,
+            dos=dos,
+            total_lt_days=total_lt_days,
+            champion_wape=champion_wape,
+            forecast_bias_pct=forecast_bias_pct,
+            current_policy_id=current_policy_id,
+            eoq_effective=eoq_effective,
+            abc_vol=abc_vol,
+            cluster_assignment=cluster_assignment,
+        )
+    except Exception as exc:
+        log.warning("create_insight validation failed: %s — skipping INSERT", exc)
+        return -1
+
     sql = """
         INSERT INTO ai_insights (
             insight_type, severity,
@@ -407,12 +508,13 @@ def create_insight(
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, (
-                insight_type, severity,
-                item_no, loc, abc_vol, cluster_assignment,
-                summary, recommendation, reasoning,
-                financial_impact_estimate,
-                dos, total_lt_days, champion_wape, forecast_bias_pct,
-                current_policy_id, eoq_effective,
+                validated.insight_type, validated.severity,
+                validated.item_no, validated.loc, validated.abc_vol, validated.cluster_assignment,
+                validated.summary, validated.recommendation, validated.reasoning,
+                validated.financial_impact_estimate,
+                validated.dos, validated.total_lt_days, validated.champion_wape,
+                validated.forecast_bias_pct,
+                validated.current_policy_id, validated.eoq_effective,
                 model_version, scan_run_id,
             ))
             row = cur.fetchone()
@@ -654,6 +756,32 @@ For each DFU you analyse:
 - Be specific: "reduce EOQ by 40% from 250 to 150 units" is better than "reduce order quantity".
 - Trace the causal chain in the reasoning field: explain HOW the signals connect.
 - One `create_insight` call per distinct exception type per DFU.
+- summary MUST include at least one number (DOS, WAPE %, units, days, $).
+- recommendation MUST name the exact action (change policy type, apply X× multiplier, reorder N units).
+
+## Few-shot examples
+
+### Example 1 — Stockout risk driven by over-forecast (A-class)
+
+Tool results: current_dos=6.4, total_lt_days=14, champion_wape=63.2, bias_6m_avg=+88.5, avg_daily_sales=33
+
+Correct create_insight call:
+  insight_type    = "stockout_risk"
+  severity        = "critical"
+  summary         = "DOS 6.4d below lead time 14d — stockout in ~8 days. Persistent +88.5% over-forecast for 6 months exhausted safety stock."
+  recommendation  = "1) Emergency reorder 462 units (14d × 33u/day) now. 2) Apply forecast multiplier 0.52× for next 3 months. 3) Switch policy continuous_rop → safety_stock_buffer."
+  financial_impact_estimate = 7920.0
+
+### Example 2 — Excess inventory from stale cluster label (B-class)
+
+Tool results: current_dos=247, total_lt_days=21, cluster_assignment="high_volume_steady", variability_class="high", eoq_effective=300
+
+Correct create_insight call:
+  insight_type    = "excess_inventory"
+  severity        = "high"
+  summary         = "DOS 247d is 6.5× peer average of 38d for high_volume_steady cluster. Variability class HIGH contradicts cluster label — EOQ sized 300u for wrong demand profile."
+  recommendation  = "1) Re-run clustering scenario to reclassify this DFU. 2) Switch policy continuous_rop → periodic_order_up_to for high-variability items. 3) Suspend planned orders until DOS falls below 120d."
+  financial_impact_estimate = 10130.0
 """
 
 
@@ -722,15 +850,19 @@ class AIPlannerAgent:
 
     # ------------------------------------------------------------------
     def _run_openai_loop(self, user_message: str, scan_run_id: str) -> tuple[str, list[int]]:
-        """OpenAI function-calling agentic loop."""
+        """OpenAI function-calling agentic loop (bounded by MAX_TURNS + TOKEN_BUDGET)."""
         messages: list[dict] = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user",   "content": user_message},
         ]
         insight_ids: list[int] = []
         oai_tools = _tools_to_openai(_TOOL_DEFINITIONS)
+        turn = 0
+        total_tokens = 0
 
-        while True:
+        while turn < MAX_TURNS and total_tokens < TOKEN_BUDGET:
+            turn += 1
+            t0 = time.monotonic()
             response = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
@@ -738,6 +870,18 @@ class AIPlannerAgent:
                 tools=oai_tools,
                 messages=messages,
             )
+            latency_ms = int((time.monotonic() - t0) * 1000)
+
+            usage = response.usage
+            if usage:
+                total_tokens += usage.total_tokens or 0
+                log_ai_call(
+                    self.pool, scan_run_id, "openai", self.model, turn,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    total_tokens=usage.total_tokens,
+                    latency_ms=latency_ms,
+                )
 
             choice = response.choices[0]
             msg = choice.message
@@ -765,10 +909,20 @@ class AIPlannerAgent:
                         raw_input.setdefault("scan_run_id", scan_run_id)
                         raw_input.setdefault("model_version", self.model)
 
+                    t1 = time.monotonic()
                     result = self._dispatch_tool(tc.function.name, raw_input)
+                    tool_ms = int((time.monotonic() - t1) * 1000)
 
                     if tc.function.name == "create_insight" and isinstance(result, int) and result > 0:
                         insight_ids.append(result)
+
+                    log_ai_call(
+                        self.pool, scan_run_id, "openai", self.model, turn,
+                        latency_ms=tool_ms,
+                        tool_name=tc.function.name,
+                        tool_success=not isinstance(result, dict) or "error" not in result,
+                        error_type=result.get("error") if isinstance(result, dict) else None,
+                    )
 
                     messages.append({
                         "role": "tool",
@@ -780,13 +934,20 @@ class AIPlannerAgent:
             log.warning("Unexpected finish_reason: %s", choice.finish_reason)
             break
 
+        if turn >= MAX_TURNS:
+            log.warning("OpenAI loop hit MAX_TURNS=%d  scan_run_id=%s", MAX_TURNS, scan_run_id)
+        if total_tokens >= TOKEN_BUDGET:
+            log.warning("OpenAI loop hit TOKEN_BUDGET=%d  scan_run_id=%s", TOKEN_BUDGET, scan_run_id)
+
         return "", insight_ids
 
     # ------------------------------------------------------------------
     def _run_anthropic_loop(self, user_message: str, scan_run_id: str) -> tuple[str, list[int]]:
-        """Anthropic tool_use agentic loop."""
+        """Anthropic tool_use agentic loop (bounded by MAX_TURNS + TOKEN_BUDGET)."""
         messages: list[dict] = [{"role": "user", "content": user_message}]
         insight_ids: list[int] = []
+        turn = 0
+        total_tokens = 0
 
         def _wrap(tool_input: dict) -> dict:
             out = dict(tool_input)
@@ -794,7 +955,9 @@ class AIPlannerAgent:
             out.setdefault("model_version", self.model)
             return out
 
-        while True:
+        while turn < MAX_TURNS and total_tokens < TOKEN_BUDGET:
+            turn += 1
+            t0 = time.monotonic()
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
@@ -803,6 +966,18 @@ class AIPlannerAgent:
                 tools=_TOOL_DEFINITIONS,
                 messages=messages,
             )
+            latency_ms = int((time.monotonic() - t0) * 1000)
+
+            if hasattr(response, "usage") and response.usage:
+                used = getattr(response.usage, "input_tokens", 0) + getattr(response.usage, "output_tokens", 0)
+                total_tokens += used
+                log_ai_call(
+                    self.pool, scan_run_id, "anthropic", self.model, turn,
+                    prompt_tokens=getattr(response.usage, "input_tokens", None),
+                    completion_tokens=getattr(response.usage, "output_tokens", None),
+                    total_tokens=used,
+                    latency_ms=latency_ms,
+                )
 
             messages.append({"role": "assistant", "content": response.content})
 
@@ -821,10 +996,20 @@ class AIPlannerAgent:
                     if block.name == "create_insight":
                         raw_input = _wrap(raw_input)
 
+                    t1 = time.monotonic()
                     result = self._dispatch_tool(block.name, raw_input)
+                    tool_ms = int((time.monotonic() - t1) * 1000)
 
                     if block.name == "create_insight" and isinstance(result, int) and result > 0:
                         insight_ids.append(result)
+
+                    log_ai_call(
+                        self.pool, scan_run_id, "anthropic", self.model, turn,
+                        latency_ms=tool_ms,
+                        tool_name=block.name,
+                        tool_success=not isinstance(result, dict) or "error" not in result,
+                        error_type=result.get("error") if isinstance(result, dict) else None,
+                    )
 
                     tool_results.append({
                         "type": "tool_result",
@@ -837,6 +1022,11 @@ class AIPlannerAgent:
 
             log.warning("Unexpected stop_reason: %s", response.stop_reason)
             break
+
+        if turn >= MAX_TURNS:
+            log.warning("Anthropic loop hit MAX_TURNS=%d  scan_run_id=%s", MAX_TURNS, scan_run_id)
+        if total_tokens >= TOKEN_BUDGET:
+            log.warning("Anthropic loop hit TOKEN_BUDGET=%d  scan_run_id=%s", TOKEN_BUDGET, scan_run_id)
 
         return "", insight_ids
 

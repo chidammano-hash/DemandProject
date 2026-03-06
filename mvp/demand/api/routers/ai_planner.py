@@ -63,6 +63,7 @@ class AnalyzeRequest(BaseModel):
 
 class StatusUpdateRequest(BaseModel):
     status: str  # open | acknowledged | resolved
+    action_taken: str | None = None  # optional: what the planner intends to do
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +182,7 @@ async def get_insights(
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
 
-    return {"total": total, "page": page, "page_size": page_size, "rows": rows}
+    return {"total": total, "page": page, "page_size": page_size, "insights": rows}
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +191,7 @@ async def get_insights(
 
 @router.put("/ai-planner/insights/{insight_id}/status")
 async def update_insight_status(insight_id: int, body: StatusUpdateRequest, request: Request):
-    """Acknowledge or resolve an insight."""
+    """Acknowledge or resolve an insight, and record the outcome for feedback tracking."""
     require_api_key(request)
     valid = {"open", "acknowledged", "resolved"}
     if body.status not in valid:
@@ -202,20 +203,112 @@ async def update_insight_status(insight_id: int, body: StatusUpdateRequest, requ
     elif body.status == "resolved":
         ts_col = ", resolved_at = NOW()"
 
-    sql = (
+    update_sql = (
         f"UPDATE ai_insights SET status = %s, updated_at = NOW() {ts_col} "
-        "WHERE insight_id = %s RETURNING insight_id, status"
+        "WHERE insight_id = %s "
+        "RETURNING insight_id, status, insight_type, item_no, loc, abc_vol, "
+        "          financial_impact_estimate, dos, total_lt_days, "
+        "          champion_wape, forecast_bias_pct"
     )
+
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (body.status, insight_id))
+            cur.execute(update_sql, (body.status, insight_id))
             row = cur.fetchone()
+
+            if row is None:
+                conn.commit()
+                raise HTTPException(status_code=404, detail="Insight not found")
+
+            # Write outcome record when planner makes a decision
+            if body.status in ("acknowledged", "resolved"):
+                decision = "accepted" if body.status == "acknowledged" else "resolved"
+                (_, _, ins_type, item_no, loc, abc_vol,
+                 fin_impact, dos, lt, wape, bias) = row
+                outcome_sql = """
+                    INSERT INTO ai_recommendation_outcomes
+                        (insight_id, insight_type, item_no, loc, abc_vol,
+                         planner_decision, financial_impact_est,
+                         metric_before_dos, metric_before_wape, metric_before_bias_pct,
+                         lead_time_days, action_taken, executed_at, outcome_check_due_at)
+                    VALUES (%s,%s,%s,%s,%s, %s,%s, %s,%s,%s, %s,%s,NOW(),NOW() + INTERVAL '30 days')
+                    ON CONFLICT DO NOTHING
+                """
+                try:
+                    cur.execute(outcome_sql, (
+                        insight_id, ins_type, item_no, loc, abc_vol,
+                        decision, fin_impact,
+                        dos, wape, bias,
+                        lt, body.action_taken,
+                    ))
+                except Exception:
+                    log.warning("Failed to write outcome record for insight %s", insight_id)
+
             conn.commit()
 
-    if row is None:
-        raise HTTPException(status_code=404, detail="Insight not found")
-
     return {"insight_id": row[0], "status": row[1]}
+
+
+# ---------------------------------------------------------------------------
+# GET /ai-planner/metrics
+# ---------------------------------------------------------------------------
+
+@router.get("/ai-planner/metrics")
+async def get_ai_metrics(
+    days: int = Query(7, ge=1, le=90),
+):
+    """Return AI call log aggregates: cost estimate, tokens, latency, error rate.
+
+    Returns per-model and per-tool aggregates for the last N days.
+    Used for observability and cost monitoring.
+    """
+    sql = """
+        SELECT
+            provider,
+            model,
+            COUNT(*) FILTER (WHERE tool_name IS NULL)    AS llm_turns,
+            COUNT(*) FILTER (WHERE tool_name IS NOT NULL) AS tool_calls,
+            SUM(total_tokens) FILTER (WHERE tool_name IS NULL) AS total_tokens,
+            ROUND(AVG(latency_ms) FILTER (WHERE tool_name IS NULL))::INTEGER
+                                                          AS avg_llm_latency_ms,
+            PERCENTILE_CONT(0.95) WITHIN GROUP (
+                ORDER BY latency_ms
+            ) FILTER (WHERE tool_name IS NULL)            AS p95_llm_latency_ms,
+            COUNT(*) FILTER (WHERE tool_success = false)  AS tool_errors,
+            ROUND(
+                100.0 * COUNT(*) FILTER (WHERE tool_success = false) /
+                NULLIF(COUNT(*) FILTER (WHERE tool_name IS NOT NULL), 0), 2
+            )                                             AS error_rate_pct
+        FROM ai_call_log
+        WHERE created_at >= NOW() - INTERVAL '1 day' * %s
+        GROUP BY provider, model
+        ORDER BY total_tokens DESC NULLS LAST
+    """
+
+    tool_sql = """
+        SELECT
+            tool_name,
+            COUNT(*)                                      AS total_calls,
+            COUNT(*) FILTER (WHERE tool_success = false)  AS failures,
+            ROUND(AVG(latency_ms))::INTEGER               AS avg_latency_ms
+        FROM ai_call_log
+        WHERE tool_name IS NOT NULL
+          AND created_at >= NOW() - INTERVAL '1 day' * %s
+        GROUP BY tool_name
+        ORDER BY total_calls DESC
+    """
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (days,))
+            model_cols = [d[0] for d in cur.description]
+            by_model = [dict(zip(model_cols, r)) for r in cur.fetchall()]
+
+            cur.execute(tool_sql, (days,))
+            tool_cols = [d[0] for d in cur.description]
+            by_tool = [dict(zip(tool_cols, r)) for r in cur.fetchall()]
+
+    return {"days": days, "by_model": by_model, "by_tool": by_tool}
 
 
 # ---------------------------------------------------------------------------

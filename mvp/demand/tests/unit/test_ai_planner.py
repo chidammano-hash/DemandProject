@@ -255,8 +255,8 @@ def test_create_insight_returns_id():
         severity="high",
         item_no="100320",
         loc="1401-BULK",
-        summary="Low DOS vs lead time",
-        recommendation="Trigger emergency reorder",
+        summary="DOS 18d below lead time 21d — stockout risk within 3 days.",
+        recommendation="Trigger emergency reorder of 250 units immediately and review policy.",
         reasoning="DOS 18 < LT 21",
         financial_impact_estimate=5000.0,
     )
@@ -275,8 +275,44 @@ def test_create_insight_no_row_returns_minus1():
         severity="medium",
         item_no="999",
         loc="LOC",
-        summary="Excess stock",
-        recommendation="Review order policy",
+        summary="DOS 247d is 6.5× peer average — excess stock accumulating.",
+        recommendation="Suspend planned orders until DOS falls below 120d and review policy.",
+    )
+    assert result == -1
+
+
+def test_create_insight_validation_rejects_bad_summary():
+    """Summary without any digit fails Pydantic validation; returns -1."""
+    from common.ai_planner import create_insight
+
+    pool, conn, cursor = _make_pool(fetchone_return=(99,))
+
+    result = create_insight(
+        pool,
+        insight_type="forecast_bias",
+        severity="medium",
+        item_no="100320",
+        loc="LOC",
+        summary="Persistent over-forecast detected this month",  # no digit → invalid
+        recommendation="Apply a multiplier adjustment and review the champion model.",
+    )
+    assert result == -1
+
+
+def test_create_insight_validation_rejects_bad_type():
+    """Invalid insight_type fails Pydantic validation; returns -1."""
+    from common.ai_planner import create_insight
+
+    pool, conn, cursor = _make_pool(fetchone_return=(99,))
+
+    result = create_insight(
+        pool,
+        insight_type="inventory_risk",  # not a valid Literal
+        severity="high",
+        item_no="100320",
+        loc="LOC",
+        summary="DOS 12d below LT 14d — stockout risk.",
+        recommendation="Reorder 200 units immediately and switch policy.",
     )
     assert result == -1
 
@@ -370,8 +406,14 @@ def _make_oai_response(finish_reason, content=None, tool_calls=None):
     choice.finish_reason = finish_reason
     choice.message = msg
 
+    usage = MagicMock()
+    usage.prompt_tokens = 100
+    usage.completion_tokens = 50
+    usage.total_tokens = 150
+
     resp = MagicMock()
     resp.choices = [choice]
+    resp.usage = usage
     return resp
 
 
