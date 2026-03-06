@@ -15,7 +15,7 @@ import {
   updateInsightStatus,
   STALE,
 } from "@/api/queries";
-import type { AiInsight, InsightSeverity, InsightStatus, InsightType } from "@/types/ai_planner";
+import type { AiInsight, InsightSeverity, InsightStatus, InsightType } from "@/types/ai-planner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

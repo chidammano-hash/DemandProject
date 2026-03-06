@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from api.core import get_conn
 from api.auth import require_api_key
 
-router = APIRouter()
+router = APIRouter(tags=["clustering"])
 
 
 # ---------------------------------------------------------------------------

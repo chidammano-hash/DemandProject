@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from api.core import get_conn
 from api.auth import require_api_key
 
-router = APIRouter()
+router = APIRouter(tags=["competition"])
 
 _COMPETITION_CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

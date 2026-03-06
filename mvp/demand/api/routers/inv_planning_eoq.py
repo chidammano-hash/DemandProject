@@ -7,7 +7,7 @@ from fastapi import APIRouter
 
 from api.core import get_conn
 
-router = APIRouter()
+router = APIRouter(tags=["inv-planning"])
 
 
 _EOQ_SORT_COLS = {

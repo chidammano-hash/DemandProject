@@ -34,7 +34,7 @@ from api.core import (
     list_domain,
 )
 
-router = APIRouter()
+router = APIRouter(tags=["domains"])
 
 
 # ---------------------------------------------------------------------------

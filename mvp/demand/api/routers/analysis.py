@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from api.core import get_conn
 
-router = APIRouter()
+router = APIRouter(tags=["dfu-analysis"])
 
 _DFU_ANALYSIS_MODES = {"item_location", "all_items_at_location", "item_at_all_locations"}
 

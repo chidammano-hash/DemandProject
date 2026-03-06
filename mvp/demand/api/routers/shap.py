@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
-router = APIRouter()
+router = APIRouter(tags=["shap"])
 
 # Root of the model-scoped backtest output directories
 _BACKTEST_DATA_DIR = Path(os.environ.get("BACKTEST_DATA_DIR", "data/backtest"))

@@ -9,7 +9,7 @@ from fastapi.responses import Response as FastAPIResponse
 from api.auth import require_api_key
 from api.core import get_conn, set_cache
 
-router = APIRouter()
+router = APIRouter(tags=["inv-planning"])
 
 
 def _f(v: Any) -> float | None:

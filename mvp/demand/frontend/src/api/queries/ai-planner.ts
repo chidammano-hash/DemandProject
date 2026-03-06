@@ -5,7 +5,7 @@ import type {
   InsightSeverity,
   InsightStatus,
   InsightType,
-} from "@/types/ai_planner";
+} from "@/types/ai-planner";
 import { fetchJson, submitJob } from "./core";
 
 // ---------------------------------------------------------------------------

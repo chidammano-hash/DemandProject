@@ -21,7 +21,7 @@ from api.core import (
     timed_trino_query,
 )
 
-router = APIRouter()
+router = APIRouter(tags=["benchmark"])
 
 
 @router.get("/bench/compare")

@@ -8,7 +8,7 @@ from fastapi.responses import Response as FastAPIResponse
 
 from api.core import get_conn, set_cache, compute_kpis
 
-router = APIRouter()
+router = APIRouter(tags=["accuracy"])
 
 _ACCURACY_SLICE_DIMS = {
     "cluster_assignment",

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from api.auth import require_api_key
 
-router = APIRouter()
+router = APIRouter(tags=["jobs"])
 
 
 # ---------------------------------------------------------------------------

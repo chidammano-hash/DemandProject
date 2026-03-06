@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from api.auth import require_api_key
 from api.core import get_conn, set_cache
 
-router = APIRouter()
+router = APIRouter(tags=["inv-planning"])
 
 
 _VALID_EXCEPTION_TYPES = {

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Query
 
 from api.core import get_conn
 
-router = APIRouter()
+router = APIRouter(tags=["inv-planning"])
 
 
 @router.get("/inv-planning/health/summary")

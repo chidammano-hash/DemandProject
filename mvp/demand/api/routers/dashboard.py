@@ -12,7 +12,7 @@ from api.core import get_conn, set_cache
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["dashboard"])
 
 
 # ---------------------------------------------------------------------------

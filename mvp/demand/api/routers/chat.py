@@ -15,7 +15,7 @@ from api.auth import require_api_key
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["chat"])
 
 
 class ChatRequest(BaseModel):

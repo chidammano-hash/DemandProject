@@ -12,7 +12,7 @@ from fastapi.responses import Response as FastAPIResponse
 
 from api.core import get_conn, set_cache
 
-router = APIRouter()
+router = APIRouter(tags=["control-tower"])
 
 
 def _f(v: Any) -> float | None:

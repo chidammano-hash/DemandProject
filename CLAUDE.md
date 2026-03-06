@@ -123,7 +123,7 @@
 | `docs/design-specs/` | Feature specs organized in 5 functional subfolders: 01-platform-infrastructure/, 02-forecasting-models/, 03-clustering-seasonality/, 04-inventory-planning/, 05-ui-automation/ |
 | `mvp/demand/api/core.py` | Shared API utilities: connection pool, OpenAI client, SQL helpers used by router modules |
 | `mvp/demand/api/auth.py` | Optional API key auth (`require_api_key` dependency; disabled when `API_KEY` env var unset) |
-| `mvp/demand/api/routers/` | Modular FastAPI router modules: 29 routers total (see inv_planning_* split below) |
+| `mvp/demand/api/routers/` | Modular FastAPI router modules: 30 active routers (all with OpenAPI tags; see inv_planning_* split below) |
 | `mvp/demand/api/routers/inv_planning.py` | Thin compatibility shim — re-exports `router` from domain routers for backward compat |
 | `mvp/demand/api/routers/inv_planning_eoq.py` | EOQ endpoints: summary, detail, sensitivity (IPfeature4) |
 | `mvp/demand/api/routers/inv_planning_policy.py` | Policy CRUD + assignment + compliance endpoints (IPfeature5) |
@@ -192,8 +192,32 @@
 | `mvp/demand/scripts/generate_ai_insights.py` | CLI batch job: portfolio scan or single DFU analysis, --dry-run support (IPAIfeature1) |
 | `mvp/demand/api/routers/ai_planner.py` | AI planner endpoints: analyze DFU, portfolio-scan (202), insights list, status update, memos list (IPAIfeature1) |
 | `mvp/demand/frontend/src/tabs/AIPlannerTab.tsx` | AI Planner tab: portfolio health bar, insight cards with causal reasoning, planning memo panel (IPAIfeature1) |
-| `mvp/demand/frontend/src/types/ai_planner.ts` | TypeScript types: AiInsight, AiPlanningMemo, InsightSeverity, InsightStatus, InsightType (IPAIfeature1) |
+| `mvp/demand/frontend/src/types/ai-planner.ts` | TypeScript types: AiInsight, AiPlanningMemo, InsightSeverity, InsightStatus, InsightType (IPAIfeature1) |
 | `mvp/demand/frontend/src/components/ui/select.tsx` | Minimal shadcn/ui Select API wrapper (Select, SelectContent, SelectItem, SelectTrigger, SelectValue) |
+| `mvp/demand/common/exception_engine.py` | Exception detection engine: `ExceptionEngine` class, threshold evaluation, severity scoring, exception type classification (Feature 40) |
+| `mvp/demand/scripts/generate_storyboard_exceptions.py` | CLI batch job: generate storyboard exceptions for all or specific DFUs, --dry-run support (Feature 40) |
+| `mvp/demand/api/routers/storyboard.py` | Storyboard endpoints: exception list, summary, detail, acknowledge, generate (Feature 40) |
+| `mvp/demand/frontend/src/tabs/StoryboardTab.tsx` | Storyboard tab: exception cards with causal chain, severity badges, resolution workflow (Feature 40) |
+| `mvp/demand/frontend/src/types/storyboard.ts` | TypeScript types: StoryboardException, StoryboardSummary, ExceptionType, ResolutionStatus (Feature 40) |
+| `mvp/demand/sql/038_create_storyboard.sql` | DDL for `fact_storyboard_exceptions` + indexes (Feature 40) |
+| `mvp/demand/config/exception_config.yaml` | Exception detection thresholds by type and severity (Feature 40) |
+| `mvp/demand/scripts/compute_safety_stock.py` | Safety stock computation: `compute_safety_stock()`, service-level Z-table lookup, demand/LT variability, writes to `fact_safety_stock_targets` (IPfeature3) |
+| `mvp/demand/sql/037_create_safety_stock_targets.sql` | DDL for `fact_safety_stock_targets` + indexes (IPfeature3) |
+| `mvp/demand/config/safety_stock_config.yaml` | Safety stock config: service levels by ABC class, Z-table, guard rails (IPfeature3) |
+| `mvp/demand/scripts/compute_demand_variability.py` | Demand variability computation: CV, dispersion metrics, volatility profiles per DFU (IPfeature3/variability) |
+| `mvp/demand/scripts/compute_lead_time_variability.py` | Lead time variability computation: LT CV, reliability metrics per item-location (IPfeature3/lead time) |
+| `mvp/demand/config/variability_config.yaml` | Demand variability config: CV thresholds, history_months, volatility profile labels |
+| `mvp/demand/config/lead_time_config.yaml` | Lead time variability config: LT CV thresholds, reliability bands |
+| `mvp/demand/sql/022_create_demand_variability.sql` | DDL: demand variability columns on `dim_dfu` |
+| `mvp/demand/sql/023_create_lead_time_profile.sql` | DDL: lead time profile table + indexes |
+| `mvp/demand/frontend/src/tabs/inventory/` | Inventory tab panel components: KpiSection, TrendChartPanel, PositionTablePanel, ItemDetailPanel |
+| `mvp/demand/frontend/src/tabs/accuracy/` | Accuracy tab panel components: KpiSection, TrendChartPanel, SliceTablePanel, ChampionPanel, ShapPanel |
+| `mvp/demand/frontend/src/tabs/jobs/` | Jobs tab panel components: KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel |
+| `mvp/demand/frontend/src/tabs/clusters/` | Clusters tab panel components: ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel |
+| `mvp/demand/frontend/src/tabs/dfu-analysis/` | DFU Analysis tab panel components: SelectorPanel, OverlayChartPanel, ModelKpiSection |
+| `mvp/demand/frontend/src/api/queries/` | Domain query modules: core.ts, inv-planning.ts (barrel), inv-planning-eoq.ts, inv-planning-policy.ts, inv-planning-health.ts, inv-planning-exceptions.ts, inv-planning-safety-stock.ts, inv-planning-signals.ts, inv-planning-abc.ts, inv-planning-supplier.ts, inv-planning-intramonth.ts, ai-planner.ts, control-tower.ts, fill-rate.ts, storyboard.ts |
+| `mvp/demand/common/job_state.py` | Job in-memory state: `_active_jobs`, `_pending_queues`, `_cancel_flags`, state lock, status constants |
+| `mvp/demand/common/job_scheduler.py` | APScheduler wrapper: scheduler initialization, cron/interval schedule CRUD, APScheduler-specific utilities |
 
 ---
 
