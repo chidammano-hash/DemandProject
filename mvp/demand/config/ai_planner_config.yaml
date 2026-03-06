@@ -1,0 +1,48 @@
+# AI Planning Agent configuration
+# IPAIfeature1 — config for common/ai_planner.py and scripts/generate_ai_insights.py
+
+# provider: "openai" (uses OPENAI_API_KEY) or "anthropic" (uses ANTHROPIC_API_KEY)
+provider: "openai"
+model: "gpt-4o-mini"
+max_tokens: 4096
+temperature: 0.2
+
+# How many top-exception DFUs to scan per portfolio run
+portfolio_scan_limit: 20
+
+# How many months of forecast history to consider
+forecast_lookback_months: 6
+
+# ---------------------------------------------------------------------------
+# Insight thresholds — drive when each insight type is triggered
+# ---------------------------------------------------------------------------
+insight_thresholds:
+  # DOS < total_lt * this multiplier → stockout_risk
+  stockout_dos_multiplier: 1.5
+
+  # DOS > this → excess_inventory
+  excess_dos_days: 180
+
+  # |bias%| > this for N consecutive months → forecast_bias
+  bias_threshold_pct: 20.0
+  bias_persistence_months: 3
+
+  # champion WAPE above these levels → champion_degradation
+  champion_wape_critical: 50.0
+  champion_wape_high: 35.0
+
+  # EOQ deviation > this % from current order quantity → policy_gap
+  eoq_deviation_pct: 50.0
+
+# ---------------------------------------------------------------------------
+# Financial impact estimation parameters
+# ---------------------------------------------------------------------------
+default_unit_cost: 10.0
+carrying_cost_rate: 0.25
+stockout_cost_multiplier: 3.0
+
+# ---------------------------------------------------------------------------
+# Scheduling
+# ---------------------------------------------------------------------------
+scheduled: true
+cron: "0 6 * * 1"   # Monday 06:00 UTC

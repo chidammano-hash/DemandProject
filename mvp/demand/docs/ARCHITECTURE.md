@@ -61,6 +61,10 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - OpenAI GPT-4o (generation) + text-embedding-3-small (embeddings)
    - pgvector for schema metadata vector search
    - Read-only SQL execution with safety guardrails (SELECT only, 5s timeout, 500-row cap)
+6b. AI Planning Agent:
+   - Anthropic Claude `claude-opus-4-6` via `anthropic>=0.40.0` SDK (tool_use API)
+   - `AIPlannerAgent` in `common/ai_planner.py`: 10 tools, agentic loop, insight creation
+   - Not a chatbot — proactive exception work-queue scanner writing structured insights to DB
 7. Multi-model forecasting:
    - `model_id` column on forecast fact table
    - Per-model analytics and model selector in UI
@@ -167,6 +171,8 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 18. `fact_efficient_frontier` — efficient frontier curve data points for budget vs. service level trade-off (IPfeature13)
 19. `mv_intramonth_stockout` — materialized view detecting within-month stockout events from daily inventory snapshots (IPfeature14)
 20. `mv_control_tower_kpis` — materialized view aggregating cross-dimensional KPIs for the Control Tower dashboard (IPfeature15)
+21. `ai_insights` — AI-generated planning exception records (IPAIfeature1); grain: `(insight_id)` PK; 5 insight types (stockout_risk, excess_inventory, forecast_bias, policy_gap, champion_degradation); 4 severity levels; open/acknowledged/resolved workflow; financial_impact_estimate, reasoning, recommendation
+22. `ai_planning_memos` — AI-generated planning narrative memos (IPAIfeature1); grain: `(memo_id)` PK; scope: portfolio or DFU; narrative_text + content_json; indexed by period + scope
 
 ## Accuracy Slice Materialized Views (feature10)
 Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-table joins:
@@ -419,6 +425,22 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_p
    - **View Results navigation:** "View Results" button in JobsTab navigates to ClustersTab with `?scenario_job=<id>` URL param for completed cluster_scenario jobs; ClustersTab auto-loads and renders ScenarioCharts
    - **Past Scenarios history:** ClustersTab What-If panel shows last 10 completed scenarios in an accordion with inline charts and promote buttons
 
+37. AI Planning Agent (IPAIfeature1):
+   - Claude `tool_use` agent (`common/ai_planner.py`) with `AIPlannerAgent` class and 10 tools
+   - 9 read-only PostgreSQL tools (get_dfu_full_context, get_forecast_performance, get_portfolio_exceptions, compute_bias_trend, get_inventory_trend, get_eoq_context, get_similar_dfus, check_stockout_history, get_portfolio_health_summary) + 1 write tool (create_insight)
+   - Agent calls Claude `claude-opus-4-6` via Anthropic SDK; tool_use loop dispatches to Python handlers with real DB queries
+   - DDL: `sql/036_create_ai_insights.sql` — `ai_insights` table (5 insight types, 4 severities, open/acknowledged/resolved workflow) + `ai_planning_memos` table (portfolio/DFU scope narratives)
+   - Config: `config/ai_planner_config.yaml` (model, thresholds, severity rules, portfolio_scan_limit, schedule)
+   - Script: `scripts/generate_ai_insights.py` — CLI batch scan (`--portfolio`, `--item`/`--loc`, `--dry-run`)
+   - 5 API endpoints in `api/routers/ai_planner.py`: `POST /ai-planner/analyze` (single DFU, synchronous), `POST /ai-planner/portfolio-scan` (202 background), `GET /ai-planner/insights` (paginated, filterable), `PUT /ai-planner/insights/{id}/status`, `GET /ai-planner/memos`
+   - Frontend: `AIPlannerTab.tsx` — insight cards with severity badges, financial impact chips, causal reasoning, acknowledge/resolve actions; portfolio health KPI bar; planning memo markdown panel
+   - Types: `frontend/src/types/ai_planner.ts` — AiInsight, AiPlanningMemo, InsightSeverity, InsightStatus, InsightType
+   - New UI component: `frontend/src/components/ui/select.tsx` — minimal React Context-based Select wrapper matching shadcn/ui API
+   - "AI Planner" nav item (14th item) + "aiPlanner" added to VALID_TABS (13 total) + Vite proxy `/ai-planner`
+   - Dependency: `anthropic>=0.40.0`
+   - Makefile: `ai-insights-schema`, `ai-insights-scan`, `ai-insights-dfu`, `ai-insights-all`
+   - Tests: 18 backend unit, 10 API, 7 frontend
+
 ## Testing Infrastructure
 
 Full-stack automated testing covering backend (Python) and frontend (TypeScript):
@@ -480,8 +502,10 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_investment_plan.py` | `scripts/compute_investment_plan.py` — investment plan computation logic | varies |
 | `test_inv_planning_intramonth.py` | `api/routers/inv_planning.py` — intramonth stockout summary, detail, daily endpoints | varies |
 | `test_control_tower.py` | `api/routers/control_tower.py` — control tower kpis, alerts, top-critical, trend endpoints | varies |
+| `test_ai_planner.py` | `common/ai_planner.py` — tool functions, agent loop, dry-run mode | 18 |
+| `test_ai_planner_api.py` | `api/routers/ai_planner.py` — insights CRUD, portfolio scan 202, memo list | 10 |
 
-**Total backend: 851 tests**
+**Total backend: 879 tests**
 
 **API test pattern:** httpx `AsyncClient` with `ASGITransport(app)` — no running server needed. DB connections mocked via `pool` fixture in `tests/api/conftest.py`.
 
@@ -528,8 +552,9 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `JobsTab.test.tsx` | Jobs automation dashboard tab | 7 |
 | `InvPlanningTab.test.tsx` | Inventory Planning tab — EOQ KPIs, sensitivity, detail, policy management, health score, exception queue | 21 |
 | `ControlTowerTab.test.tsx` | Control Tower tab — KPI cards, alerts panel, top-critical list, trend chart | varies |
+| `AIPlannerTab.test.tsx` | AI Planner tab — insight cards, severity badges, generate button, acknowledge action | 7 |
 
-**Total frontend: 258 tests**
+**Total frontend: 265 tests**
 
 **Combined:** `make test-all` runs backend + frontend.
 

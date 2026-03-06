@@ -68,6 +68,10 @@ export default defineConfig({
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
+      "/ai-planner": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
       "/control-tower": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,

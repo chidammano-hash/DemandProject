@@ -42,6 +42,7 @@ const InvBacktestTab = lazy(() => import("./tabs/InvBacktestTab"));
 const InvPlanningTab = lazy(() => import("./tabs/InvPlanningTab").then((m) => ({ default: m.InvPlanningTab })));
 const ControlTowerTab = lazy(() => import("./tabs/ControlTowerTab"));
 const JobsTab = lazy(() => import("./tabs/JobsTab"));
+const AIPlannerTab = lazy(() => import("./tabs/AIPlannerTab"));
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -222,6 +223,13 @@ export default function App() {
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="jobs" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="jobs" />}>
                       <JobsTab onNavigateToScenario={handleNavigateToScenario} />
+                    </Suspense>
+                  </ErrorBoundary>
+                )}
+                {activeTab === "aiPlanner" && (
+                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="aiPlanner" />} resetKeys={[activeTab]}>
+                    <Suspense fallback={<TabSuspenseFallback tabKey="aiPlanner" />}>
+                      <AIPlannerTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}

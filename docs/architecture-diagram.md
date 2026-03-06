@@ -49,6 +49,10 @@
 ║  │  │               │  │  │  │        ControlTowerTab (IPfeature15)        │              │  │  │    ║
 ║  │  │               │  │  │  │ KPIs | Alerts | Top-Critical | Trend        │              │  │  │    ║
 ║  │  │               │  │  │  └─────────────────────────────────────────────┘              │  │  │    ║
+║  │  │               │  │  │  ┌─────────────────────────────────────────────┐              │  │  │    ║
+║  │  │               │  │  │  │        AIPlannerTab (IPAIfeature1)          │              │  │  │    ║
+║  │  │               │  │  │  │ Insight Cards | Portfolio Health | Memos    │              │  │  │    ║
+║  │  │               │  │  │  └─────────────────────────────────────────────┘              │  │  │    ║
 ║  │  │               │  │  │                                                                │  │  │    ║
 ║  │  └──────────────┘  │  └────────────────────────────────────────────────────────────────┘  │  │    ║
 ║  │                     │                                            ┌──────────┐              │  │    ║
@@ -66,11 +70,11 @@
 ║  └───────────────────────────────┘  └──────────────────────────────┘  └──────────────────────────┘  ║
 ╚═══════════════════════════════════════════════════════════════════════════════════════════════════════╝
                                               │
-                                    Vite Proxy (15 path prefixes)
+                                    Vite Proxy (16 path prefixes)
                                     /domains /jobs /clustering /forecast
                                     /inventory /dashboard /health /chat
                                     /dfu /competition /bench /market-intelligence
-                                    /inv-planning /fill-rate /control-tower
+                                    /inv-planning /fill-rate /control-tower /ai-planner
                                               │
                                               ▼
 ╔═══════════════════════════════════════════════════════════════════════════════════════════════════════╗
@@ -79,7 +83,7 @@
 ║                                                                                                     ║
 ║  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐    ║
 ║  │                               main.py (~65 lines)                                           │    ║
-║  │  App creation → GZip middleware → CORS middleware → Mount 16 routers                        │    ║
+║  │  App creation → GZip middleware → CORS middleware → Mount 17 routers                        │    ║
 ║  └──────────────────────────────────────────────────────────────────────────────────────────────┘    ║
 ║                                                                                                     ║
 ║  ┌──── core.py ──────────────┐  ┌──── auth.py ─────────────────────────────────────────────────┐    ║
@@ -89,7 +93,7 @@
 ║  │ Domain Spec Wrappers      │                                                                     ║
 ║  └───────────────────────────┘                                                                     ║
 ║                                                                                                     ║
-║  ┌──────────────────────────── 16 Modular API Routers ────────────────────────────────────────┐     ║
+║  ┌──────────────────────────── 17 Modular API Routers ────────────────────────────────────────┐     ║
 ║  │                                                                                            │     ║
 ║  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐    │     ║
 ║  │  │  accuracy.py  │ │ analysis.py  │ │benchmark.py  │ │   chat.py    │ │ clusters.py  │    │     ║
@@ -120,6 +124,13 @@
 ║  │  │ Analytics    │ │ KPIs/Alerts  │ │  /inv-planning/intramonth-stockouts/* (IP14) │      │     ║
 ║  │  │ (IPfeature8) │ │ (IPfeature15)│ └──────────────────────────────────────────────┘      │     ║
 ║  │  └──────────────┘ └──────────────┘                                                        │     ║
+║  │                                                                                            │     ║
+║  │  ┌──────────────────────────────────────────────────────────────────────────┐              │     ║
+║  │  │                     ai_planner.py (IPAIfeature1)                         │              │     ║
+║  │  │  POST /ai-planner/analyze   POST /ai-planner/portfolio-scan              │              │     ║
+║  │  │  GET /ai-planner/insights   PUT /ai-planner/insights/{id}/status         │              │     ║
+║  │  │  GET /ai-planner/memos  ← Claude tool_use agent (AIPlannerAgent, 10 tools) │            │     ║
+║  │  └──────────────────────────────────────────────────────────────────────────┘              │     ║
 ║  └────────────────────────────────────────────────────────────────────────────────────────────┘     ║
 ╚═══════════════════════════════════════════════════════════════════════════════════════════════════════╝
            │                    │                    │                        │
@@ -135,7 +146,10 @@
 ║  framework.py    ║  ║ Per-group queues ║  ║ Google CSE API   ║  ║                       ║
 ║  run_tree_       ║  ║ Cron/Interval    ║  ║  Web search      ║  ╚═══════════════════════╝
 ║  backtest()      ║  ║ Pipelines        ║  ║                  ║
-║                  ║  ║ Retry + backoff  ║  ╚══════════════════╝
+║                  ║  ║ Retry + backoff  ║  ║ Anthropic Claude ║
+║                  ║  ╚══════════════════╝  ║  tool_use agent  ║
+║                  ║                        ║  AI Planner (IP) ║
+║                  ║                        ╚══════════════════╝
 ║ champion_        ║  ║                  ║
 ║  strategies.py   ║  ║ 7 Job Types:     ║
 ║  5 strategies    ║  ║  clustering      ║

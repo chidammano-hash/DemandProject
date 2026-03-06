@@ -30,6 +30,7 @@ dependencies = [
   "apscheduler>=3.10",
   "optuna>=3.0",
   "shap>=0.43.0",
+  "anthropic>=0.40.0",
 ]
 
 [dependency-groups]

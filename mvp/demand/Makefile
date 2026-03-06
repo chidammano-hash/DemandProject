@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all
 
 help:
 	@echo "Targets:"
@@ -87,6 +87,11 @@ help:
 	@echo "  exceptions-schema    - create fact_replenishment_exceptions table (one-time)"
 	@echo "  exceptions-generate  - run exception detection + insert into queue"
 	@echo "  exceptions-generate-dry - preview exceptions without inserting"
+	@echo "  ai-insights-schema   - create ai_insights + ai_planning_memos tables (one-time)"
+	@echo "  ai-insights-scan     - run portfolio scan to generate AI insights"
+	@echo "  ai-insights-scan-dry - preview scan without writing to DB"
+	@echo "  ai-insights-dfu      - run single-DFU analysis (ITEM=<item> LOC=<loc>)"
+	@echo "  ai-insights-all      - ai-insights-schema + ai-insights-scan (full pipeline)"
 	@echo "  test                 - run all Python tests"
 	@echo "  test-unit            - run Python unit tests only"
 	@echo "  test-api             - run Python API tests only"
@@ -487,6 +492,24 @@ exceptions-generate:
 
 exceptions-generate-dry:
 	$(UV) python scripts/generate_replenishment_exceptions.py --dry-run
+
+# ---------------------------------------------------------------------------
+# AI Planning Agent (IPAIfeature1)
+# ---------------------------------------------------------------------------
+
+ai-insights-schema:
+	$(UV) psql $(DATABASE_URL) -f sql/030_create_ai_insights.sql
+
+ai-insights-scan:
+	$(UV) python scripts/generate_ai_insights.py --portfolio
+
+ai-insights-scan-dry:
+	$(UV) python scripts/generate_ai_insights.py --portfolio --dry-run
+
+ai-insights-dfu:
+	$(UV) python scripts/generate_ai_insights.py --item $(ITEM) --loc $(LOC)
+
+ai-insights-all: ai-insights-schema ai-insights-scan
 
 # ---------------------------------------------------------------------------
 # Backtesting (LGBM / CatBoost / XGBoost — per-cluster only)

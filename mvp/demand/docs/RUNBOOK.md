@@ -36,6 +36,7 @@ make supplier-perf-schema  # mv_supplier_performance materialized view (IPfeatur
 make investment-schema     # fact_inventory_investment_plan + fact_efficient_frontier (IPfeature13)
 make intramonth-schema     # mv_intramonth_stockout materialized view (IPfeature14)
 make control-tower-schema  # mv_control_tower_kpis materialized view (IPfeature15)
+make ai-insights-schema    # ai_insights + ai_planning_memos tables (IPAIfeature1)
 ```
 
 > Run once when setting up a new environment. Safe to re-run (uses `IF NOT EXISTS`).
@@ -154,6 +155,14 @@ make intramonth-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_intramonth_
 make control-tower-all      # Apply schema + refresh control tower KPIs view
 make control-tower-schema   # Apply DDL only
 make control-tower-refresh  # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_control_tower_kpis
+```
+
+**AI Planning Agent** (IPAIfeature1 — requires `ANTHROPIC_API_KEY` in `.env`):
+```bash
+make ai-insights-schema     # Apply DDL: ai_insights + ai_planning_memos tables (one-time)
+make ai-insights-scan       # Run portfolio scan (requires anthropic API key + data loaded)
+make ai-insights-dfu ITEM=<item_no> LOC=<loc>   # Analyze a single DFU
+make ai-insights-all        # ai-insights-schema + ai-insights-scan (full pipeline)
 ```
 
 ### 2.3 Chatbot embeddings (requires `OPENAI_API_KEY` in `.env`)
@@ -419,7 +428,7 @@ make test-unit     # Unit tests only (common/ modules)
 make test-api      # API endpoint tests only
 make test-cov      # Backend tests with coverage report
 make ui-test       # All frontend tests (Vitest + RTL, ~1.5s)
-make test-all      # Backend + frontend (851 backend tests, 258 frontend tests, <3s)
+make test-all      # Backend + frontend (879 backend tests, 265 frontend tests, <3s)
 ```
 
 **Test structure:**
@@ -457,7 +466,9 @@ tests/
     ├── test_inv_planning_supplier.py        # supplier performance endpoints
     ├── test_inv_planning_investment.py      # investment plan endpoints
     ├── test_inv_planning_intramonth.py      # intramonth stockout endpoints
-    └── test_control_tower.py               # control tower kpis, alerts, top-critical, trend
+    ├── test_control_tower.py               # control tower kpis, alerts, top-critical, trend
+    ├── test_ai_planner.py                  # 18 tests: tool functions, agent loop, dry-run mode
+    └── test_ai_planner_api.py              # 10 tests: insights CRUD, portfolio scan 202, memo list
 
 frontend/src/
 ├── hooks/__tests__/         # useTheme, useUrlState, useKeyboardShortcuts, useSidebar, useGlobalFilters
@@ -544,6 +555,7 @@ After any cleanup that affects champion/ceiling rows, re-run `make champion-sele
 | Backtest fails | Run clustering first: `make cluster-all`; load sales: `make load-sales`; install deps: `uv sync` |
 | Champion selection finds no DFUs | Load backtest predictions: `make backtest-load`; lower `min_dfu_rows` in `config/model_competition.yaml`; verify models exist: `SELECT DISTINCT model_id FROM fact_external_forecast_monthly` |
 | Chat endpoint errors | Set `OPENAI_API_KEY` in `.env`; run `make generate-embeddings`; check API logs for rate limit errors |
+| AI Planner errors | Set `ANTHROPIC_API_KEY` in `.env`; verify insight schema exists: `make ai-insights-schema`; check API logs for rate limit or tool dispatch errors |
 
 ### Frontend / API
 

@@ -65,6 +65,7 @@ Clustering:
 - scikit-learn (clustering algorithms)
 - OpenAI (GPT-4o + text-embedding-3-small) for NL→SQL chatbot
 - APScheduler 3.11 (job scheduling engine — BackgroundScheduler + ThreadPoolExecutor)
+- Anthropic Claude (claude-opus-4-6 tool_use agent for AI Planning Agent — IPAIfeature1)
 - Docker Compose
 
 ## Performance defaults
@@ -361,6 +362,21 @@ Control Tower / Command Center (IPfeature15):
 - Vite proxy: `/control-tower` path prefix registered in `frontend/vite.config.ts`
 - Pipeline: `make control-tower-schema`, `make control-tower-refresh`, `make control-tower-all`
 
+AI Planning Agent (IPAIfeature1):
+- Proactive exception work-queue for planners: NOT a chatbot — ranked insight cards with diagnosis, recommendation, and financial impact
+- Claude `tool_use` agent (`common/ai_planner.py`) with `AIPlannerAgent` class and 10 tools
+- 9 read-only PostgreSQL tools (get_dfu_full_context, get_forecast_performance, get_portfolio_exceptions, compute_bias_trend, get_inventory_trend, get_eoq_context, get_similar_dfus, check_stockout_history, get_portfolio_health_summary) + 1 write tool (create_insight)
+- 5 insight types: stockout_risk, excess_inventory, forecast_bias, policy_gap, champion_degradation
+- 4 severity levels: critical / high / medium / low; status workflow: open → acknowledged → resolved
+- DDL: `sql/036_create_ai_insights.sql` — `ai_insights` + `ai_planning_memos` tables
+- Config: `config/ai_planner_config.yaml` — model, thresholds, severity rules, portfolio_scan_limit, schedule
+- Batch script: `scripts/generate_ai_insights.py` — `--portfolio` (scan all), `--item/--loc` (single DFU), `--dry-run`
+- Router: `api/routers/ai_planner.py` — `POST /ai-planner/analyze`, `POST /ai-planner/portfolio-scan` (202), `GET /ai-planner/insights`, `PUT /ai-planner/insights/{id}/status`, `GET /ai-planner/memos`
+- Frontend: `frontend/src/tabs/AIPlannerTab.tsx` — "AI Planner" nav item (14th), insight cards + portfolio health bar + planning memo panel
+- TypeScript types: `frontend/src/types/ai_planner.ts`
+- Dependency: `anthropic>=0.40.0`
+- Pipeline: `make ai-insights-schema`, `make ai-insights-scan`, `make ai-insights-dfu ITEM=<item> LOC=<loc>`, `make ai-insights-all`
+
 Backtest Cleanup (feature23):
 - List model row counts: `make backtest-list`
 - Preview deletions: `make backtest-clean MODELS="--dry-run lgbm_cluster"`
@@ -447,7 +463,7 @@ Job Scheduler/Monitor with APScheduler (feature39):
 
 ## Testing
 
-Full-stack automated testing (851 backend tests, 258 frontend tests):
+Full-stack automated testing (879 backend tests, 265 frontend tests):
 
 Backend (pytest):
 ```bash
@@ -461,7 +477,7 @@ make test-cov          # With coverage report
 Frontend (Vitest + React Testing Library):
 ```bash
 cd mvp/demand
-make ui-test           # All frontend tests (258 tests)
+make ui-test           # All frontend tests (265 tests)
 ```
 
 Both:
@@ -534,4 +550,11 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - Investment plan script: `mvp/demand/scripts/compute_investment_plan.py`
 - Intramonth stockout script: `mvp/demand/scripts/refresh_intramonth_stockout.py`
 - Simulation config: `mvp/demand/config/simulation_config.yaml`
-- Design specs: `docs/design-specs/` (feature1–feature44, IPfeature4–IPfeature15)
+- AI Planner agent: `mvp/demand/common/ai_planner.py`
+- AI Planner config: `mvp/demand/config/ai_planner_config.yaml`
+- AI Planner DDL: `mvp/demand/sql/036_create_ai_insights.sql`
+- AI Planner script: `mvp/demand/scripts/generate_ai_insights.py`
+- AI Planner router: `mvp/demand/api/routers/ai_planner.py`
+- AI Planner tab: `mvp/demand/frontend/src/tabs/AIPlannerTab.tsx`
+- AI Planner types: `mvp/demand/frontend/src/types/ai_planner.ts`
+- Design specs: `docs/design-specs/` (feature1–feature44, IPfeature4–IPfeature15, IPAIfeature1)

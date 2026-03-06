@@ -98,8 +98,8 @@ describe("useUrlState", () => {
   });
 
   describe("exported constants", () => {
-    it("VALID_TABS has 11 entries including overview, invBacktest, and jobs", () => {
-      expect(VALID_TABS).toHaveLength(11);
+    it("VALID_TABS has 12 entries including overview, invBacktest, jobs, and aiPlanner", () => {
+      expect(VALID_TABS).toHaveLength(12);
       expect(VALID_TABS).toContain("overview");
       expect(VALID_TABS).toContain("explorer");
       expect(VALID_TABS).toContain("accuracy");

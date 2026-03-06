@@ -187,6 +187,17 @@ def _run_champion_select(params: dict[str, Any], progress_cb: Callable | None = 
     return {"output_summary": output[:500] if output else "Champion selection completed"}
 
 
+def _run_generate_ai_insights(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Run AI Planning Agent portfolio scan to generate insights."""
+    if progress_cb:
+        progress_cb(pct=5, msg="Starting AI insights generation")
+    cmd = [_UV, "run", "python", "scripts/generate_ai_insights.py", "--portfolio"]
+    output = _run_subprocess(cmd, progress_cb, "Scanning portfolio for exceptions")
+    if progress_cb:
+        progress_cb(pct=100, msg="AI insights generation complete")
+    return {"output_summary": output[:500] if output else "AI insights generation completed"}
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -246,6 +257,14 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         description="Select per-DFU champion model via rolling WAPE comparison",
         group="champion",
         callable=_run_champion_select,
+        params_schema={},
+    ),
+    "generate_ai_insights": JobTypeDef(
+        type_id="generate_ai_insights",
+        label="AI Insight Generation",
+        description="Scan portfolio for planning exceptions and generate AI insights",
+        group="ai",
+        callable=_run_generate_ai_insights,
         params_schema={},
     ),
 }
