@@ -438,6 +438,7 @@ def run_tree_backtest(
         tuple[list[str], pd.DataFrame],
     ] | None = None,
     recursive: bool = False,
+    model_persistence_fn: Callable[[Any, list[str], str], None] | None = None,
 ) -> None:
     """Run a complete tree-based per-cluster backtest (LGBM, CatBoost, XGBoost).
 
@@ -630,6 +631,14 @@ def run_tree_backtest(
         preds["timeframe"] = label
         preds["timeframe_idx"] = tf["index"]
         all_predictions.append(preds)
+
+        # Persist the most recent timeframe's models for production inference (F1.1)
+        if model_persistence_fn is not None and ti == len(timeframes) - 1:
+            try:
+                model_persistence_fn(models, effective_feature_cols, label)
+            except Exception as exc:
+                print(f"  [{_ts()}] Warning: model persistence failed: {exc}")
+
         print(f"  [{_ts()}] Timeframe {label} complete: {len(preds):,} predictions ({time.time() - tf_start:.1f}s)")
 
     if not all_predictions:

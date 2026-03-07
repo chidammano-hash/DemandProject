@@ -220,6 +220,12 @@
 | `mvp/demand/frontend/src/api/queries/` | Domain query modules: core.ts, inv-planning.ts (barrel), inv-planning-eoq.ts, inv-planning-policy.ts, inv-planning-health.ts, inv-planning-exceptions.ts, inv-planning-safety-stock.ts, inv-planning-signals.ts, inv-planning-abc.ts, inv-planning-supplier.ts, inv-planning-intramonth.ts, ai-planner.ts, control-tower.ts, fill-rate.ts, storyboard.ts |
 | `mvp/demand/common/job_state.py` | Job in-memory state: `_active_jobs`, `_pending_queues`, `_cancel_flags`, state lock, status constants |
 | `mvp/demand/common/job_scheduler.py` | APScheduler wrapper: scheduler initialization, cron/interval schedule CRUD, APScheduler-specific utilities |
+| `mvp/demand/sql/039_create_production_forecast.sql` | DDL for `fact_production_forecast` + `fact_model_registry` tables (F1.1) |
+| `mvp/demand/config/production_forecast_config.yaml` | Production forecast config: inference settings, model_selection, plan_version format, scheduler config (F1.1) |
+| `mvp/demand/scripts/generate_production_forecasts.py` | Full inference pipeline: load_active_models, get_champion_assignments, build_inference_grid, generate_forecast_recursive, write_forecast, purge_old_versions (F1.1) |
+| `mvp/demand/api/routers/production_forecast.py` | Production forecast endpoints: GET /forecast/production, /summary, /versions (F1.1) |
+| `mvp/demand/frontend/src/api/queries/production-forecast.ts` | TypeScript interfaces + fetch functions for production forecast endpoints (F1.1) |
+| `mvp/demand/frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` | Demand Forecast panel: KPI cards, ABC breakdown chart, DFU drill-down chart with CI bands (F1.1) |
 
 ---
 
@@ -384,6 +390,13 @@ make ai-insights-schema     # Apply DDL for ai_insights + ai_planning_memos tabl
 make ai-insights-scan       # Run portfolio AI scan → write insights to DB
 make ai-insights-dfu        # Analyze single DFU: make ai-insights-dfu ITEM=100320 LOC=1401-BULK
 make ai-insights-all        # ai-insights-schema + ai-insights-scan (full pipeline)
+
+# Production Forecast Generation (F1.1)
+make forecast-prod-schema   # Apply DDL for fact_production_forecast + fact_model_registry (one-time)
+make forecast-generate      # Run full production forecast inference pipeline
+make forecast-generate-dfu  # Generate forecast for single DFU: make forecast-generate-dfu ITEM=100320 LOC=1401-BULK
+make forecast-generate-dry  # Preview forecast generation without writing (--dry-run)
+make forecast-prod-all      # forecast-prod-schema + forecast-generate (full pipeline)
 
 # Backtest cleanup
 make backtest-list          # List model_id row counts in forecast + archive tables
@@ -652,6 +665,7 @@ Located in `docs/design-specs/`:
 - `IPfeature14.md` — Intra-Month Stockout Detection (mv_intramonth_stockout materialized view, refresh_intramonth_stockout.py script, 3 API endpoints, IntramonthPanel in InvPlanningTab, tests in test_inv_planning_intramonth.py)
 - `IPfeature15.md` — Unified Control Tower / Command Center (mv_control_tower_kpis materialized view, control_tower.py router, 4 API endpoints, ControlTowerTab frontend component, Vite proxy entry, sidebar nav item, 851 backend + 258 frontend tests total)
 - `IPAIfeature1.md` — AI Planning Agent (NOT a chatbot — proactive exception work-queue; `AIPlannerAgent` with 10 tools via Claude `tool_use` API; `ai_insights` + `ai_planning_memos` tables; 5 API endpoints under /ai-planner/*; AIPlannerTab with insight cards + planning memo; ai_planner_config.yaml; generate_ai_insights.py batch script; `anthropic>=0.40.0` dependency; 1085 backend + 372 frontend tests)
+- `feature_06_01.md` — Production Forecast Generation Pipeline (fact_production_forecast + fact_model_registry tables; generate_production_forecasts.py inference pipeline with recursive multi-step scoring; model_persistence_fn callback in run_tree_backtest(); 3 API endpoints under /forecast/production/*; DemandForecastPanel in InvPlanningTab; generate_production_forecast job type in forecast group; 17 tests total, 1109 backend + 380 frontend)
 - `theme-testing-strategy.md` — Multi-Theme Testing Strategy (unit tests implemented; integration/a11y/perf tests pending)
 - `docs/REFACTORING_RECOMMENDATIONS.md` — Comprehensive codebase refactoring roadmap
 
@@ -665,9 +679,10 @@ Located in `docs/design-specs/`:
 2. **`mvp/demand/docs/ARCHITECTURE.md`** — Update architecture, component technologies, tables, or data flow if affected
 3. **`mvp/demand/docs/README.md`** — Update stack, datasets, analytics behavior, quick start, or key paths if affected
 4. **`mvp/demand/docs/RUNBOOK.md`** — Update setup steps, notes, or troubleshooting if affected
-5. **`docs/design-specs/feature<N>.md`** — Create or update the design spec for the feature
-6. **`docs/design-specs/feature1.md`** — Add the feature to the "Implemented Features (MVP)" list
-7. **`CLAUDE.md`** (this file) — Update Key Files, Common Commands, Data Models, Frontend Features, Important Conventions, or Design Specs list if affected
+5. **`mvp/demand/docs/WORKFLOW.md`** — Update the end-to-end workflow if any pipeline phase is added, removed, or reordered — new Make targets, new schema steps, new scripts, or changes to the dependency chain between phases
+6. **`docs/design-specs/feature<N>.md`** — Create or update the design spec for the feature
+7. **`docs/design-specs/feature1.md`** — Add the feature to the "Implemented Features (MVP)" list
+8. **`CLAUDE.md`** (this file) — Update Key Files, Common Commands, Data Models, Frontend Features, Important Conventions, or Design Specs list if affected
 
 **This applies to ALL changes — additions, modifications, AND deletions. When code is removed, the corresponding references in ALL documentation files above must also be removed or updated.**
 
@@ -682,7 +697,7 @@ Located in `docs/design-specs/`:
 - Schema changes (new columns, tables, indexes, materialized views)
 - New dependencies or infrastructure changes (docker images, pyproject.toml)
 - New Make targets or CLI commands
-- Changes to data flow or pipeline behavior
+- Changes to data flow or pipeline behavior — including new pipeline phases, reordered steps, or new schema/compute prerequisites
 - Removal or renaming of any module, endpoint, component, table, or script
 - Refactors that change architecture, file structure, or public interfaces
 

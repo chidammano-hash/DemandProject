@@ -1,8 +1,8 @@
 /**
- * IPfeature4 + IPfeature5 + IPfeature6 + IPfeature7 + IPfeature8–IPfeature14
+ * IPfeature4 + IPfeature5 + IPfeature6 + IPfeature7 + IPfeature8–IPfeature14 + F1.1
  * EOQ & Cycle Stock + Replenishment Policy + Health Score + Exception Queue +
  * Fill Rate + ABC-XYZ + Supplier + Intramonth + Safety Stock + Variability +
- * Lead Time + Demand Signals + Simulation + Investment Plan
+ * Lead Time + Demand Signals + Simulation + Investment Plan + Production Forecast
  *
  * PL-009: Sub-navigation added — shows one panel at a time to reduce scroll
  * and initial API call overhead.
@@ -24,6 +24,7 @@ import { LeadTimePanel } from "./inv-planning/LeadTimePanel";
 import { DemandSignalsPanel } from "./inv-planning/DemandSignalsPanel";
 import { SimulationPanel } from "./inv-planning/SimulationPanel";
 import { InvestmentPanel } from "./inv-planning/InvestmentPanel";
+import { DemandForecastPanel } from "./inv-planning/DemandForecastPanel";
 
 // ---------------------------------------------------------------------------
 // Sub-navigation config
@@ -43,6 +44,7 @@ const SUB_TABS = [
   { key: "signals",     label: "Signals",       group: "Planning" },
   { key: "simulation",  label: "Simulation",    group: "Planning" },
   { key: "investment",  label: "Investment",    group: "Planning" },
+  { key: "forecast",    label: "Demand Fcst",   group: "Planning" },
 ] as const;
 
 type SubTabKey = (typeof SUB_TABS)[number]["key"];
@@ -154,6 +156,17 @@ export function InvPlanningTab() {
         <div className="rounded-lg border bg-card p-4 space-y-4">
           <h3 className="font-semibold text-base">Investment Plan</h3>
           <InvestmentPanel />
+        </div>
+      )}
+
+      {activePanel === "forecast" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Production Demand Forecast</h3>
+          <p className="text-xs text-muted-foreground">
+            Forward-looking ML forecasts generated from champion models. Run{" "}
+            <code className="font-mono">make forecast-generate</code> to refresh.
+          </p>
+          <DemandForecastPanel />
         </div>
       )}
     </div>

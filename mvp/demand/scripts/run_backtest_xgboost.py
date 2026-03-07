@@ -9,6 +9,7 @@ Produces two CSVs under data/backtest/xgboost_cluster/:
   - backtest_predictions_all_lags.csv (lag 0-4 archive)
 """
 
+import pickle
 import sys
 import time
 from pathlib import Path
@@ -223,6 +224,25 @@ def main() -> None:
         print(f"[{_ts()}] SHAP feature selection enabled "
               f"(threshold={shap_threshold}, top_n={shap_top_n}, sample={shap_sample_size})")
 
+    # Load production forecast config for model persistence (F1.1)
+    prod_config_path = ROOT / "config" / "production_forecast_config.yaml"
+    prod_config = None
+    if prod_config_path.exists():
+        with open(prod_config_path) as f:
+            prod_config = yaml.safe_load(f)
+
+    def _persist_models(models: dict, feature_cols: list[str], timeframe_label: str) -> None:
+        base_path = "data/models"
+        if prod_config:
+            base_path = prod_config.get("model_registry", {}).get("base_path", "data/models")
+        out_dir = ROOT / base_path / model_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for cluster_label, model in models.items():
+            artifact = {"model": model, "feature_cols": feature_cols, "model_id": model_id}
+            with open(out_dir / f"cluster_{cluster_label}.pkl", "wb") as f:
+                pickle.dump(artifact, f)
+        print(f"  [{_ts()}] Persisted {len(models)} {model_id} cluster models (timeframe={timeframe_label})")
+
     run_tree_backtest(
         model_id=model_id,
         n_timeframes=n_timeframes,
@@ -236,6 +256,7 @@ def main() -> None:
         inline_tuner_fn=inline_tuner_fn,
         feature_selector_fn=feature_selector_fn,
         recursive=recursive,
+        model_persistence_fn=_persist_models,
     )
 
 

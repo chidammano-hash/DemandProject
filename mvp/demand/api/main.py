@@ -62,6 +62,7 @@ from api.routers import fill_rate    # noqa: E402
 from api.routers import control_tower  # noqa: E402
 from api.routers import ai_planner  # noqa: E402
 from api.routers import storyboard  # noqa: E402
+from api.routers import production_forecast  # noqa: E402
 from api.routers import domains    # noqa: E402
 
 # Specific-path routers first
@@ -93,6 +94,7 @@ app.include_router(control_tower.router)
 app.include_router(jobs.router)
 app.include_router(ai_planner.router)
 app.include_router(storyboard.router)
+app.include_router(production_forecast.router)
 app.include_router(shap.router)
 
 # domains.py has catch-all /domains/{domain}/* — mount last

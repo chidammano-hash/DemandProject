@@ -1,0 +1,26 @@
+# Production Forecast Generation Config — F1.1
+# Controls the generate_production_forecasts.py inference pipeline.
+
+inference:
+  horizon_months: 12          # How many months ahead to forecast (T+1 through T+12)
+  recursive: true             # Use recursive inference: lag_1 for T+2 = model's T+1 prediction
+  confidence_interval: false  # Generate P10/P90 bounds (requires quantile-trained models)
+  ci_lower_quantile: 0.10
+  ci_upper_quantile: 0.90
+
+model_selection:
+  strategy: champion          # 'champion' = use each DFU's current champion model assignment
+  fallback_model_id: lgbm_cluster  # fallback when no champion is assigned
+
+plan_version:
+  format: "%Y-%m"             # e.g. '2026-03' from the run date
+  keep_last_n_versions: 3     # retain this many plan versions; older versions are purged
+
+model_registry:
+  base_path: "data/models"    # root directory for persisted .pkl files
+  # Subdirectory structure: data/models/<model_id>/cluster_<N>.pkl
+  # e.g. data/models/lgbm_cluster/cluster_3.pkl
+
+scheduler:
+  job_type: generate_production_forecast
+  cron: "0 6 2 * *"          # 2nd of each month at 06:00 UTC (after previous month's sales close)

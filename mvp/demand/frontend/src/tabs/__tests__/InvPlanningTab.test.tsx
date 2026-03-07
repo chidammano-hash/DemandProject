@@ -9,10 +9,14 @@ import type { GlobalFilters } from "@/types/theme";
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   LineChart: ({ children }: { children: React.ReactNode }) => <div data-testid="line-chart">{children}</div>,
+  ComposedChart: ({ children }: { children: React.ReactNode }) => <div data-testid="composed-chart">{children}</div>,
   PieChart: ({ children }: { children: React.ReactNode }) => <div data-testid="pie-chart">{children}</div>,
   Pie: () => null,
   Cell: () => null,
+  Bar: () => null,
   Line: () => null,
+  Area: () => null,
+  ReferenceLine: () => null,
   XAxis: () => null,
   YAxis: () => null,
   CartesianGrid: () => null,
@@ -31,6 +35,9 @@ vi.mock("@/api/queries", () => ({
     variabilityDetail: (p?: Record<string, unknown>) => ["variability-detail", p ?? {}],
     ltSummary: (p?: Record<string, unknown>) => ["lt-summary", p ?? {}],
     ltProfile: (p?: Record<string, unknown>) => ["lt-profile", p ?? {}],
+    productionForecast: (p?: Record<string, unknown>) => ["production-forecast", p ?? {}],
+    productionForecastSummary: (p?: Record<string, unknown>) => ["production-forecast-summary", p ?? {}],
+    productionForecastVersions: () => ["production-forecast-versions"],
   },
   healthKeys: {
     summary: (f?: Record<string, unknown>) => ["health-summary", f ?? {}],
@@ -322,6 +329,32 @@ vi.mock("@/api/queries", () => ({
   fetchInvestmentDetail: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
   fetchInvestmentFrontier: vi.fn().mockResolvedValue([]),
   runInvestmentPlan: vi.fn().mockResolvedValue(null),
+  // Production Forecast (F1.1)
+  fetchProductionForecastVersions: vi.fn().mockResolvedValue({
+    versions: [
+      { plan_version: "2026-03", dfu_count: 1000, total_rows: 12000, generated_at: "2026-03-01T06:00:00Z" },
+    ],
+  }),
+  fetchProductionForecastSummary: vi.fn().mockResolvedValue({
+    plan_version: "2026-03",
+    horizon_months: 3,
+    total_dfu_count: 1000,
+    total_forecast_qty: 55000.0,
+    generated_at: "2026-03-01T06:00:00Z",
+    by_abc_class: [
+      { abc_class: "A", dfu_count: 200, forecast_qty: 20000.0 },
+      { abc_class: "B", dfu_count: 500, forecast_qty: 25000.0 },
+    ],
+  }),
+  fetchProductionForecast: vi.fn().mockResolvedValue({
+    item_no: "ITEM001", loc: "LOC1",
+    plan_version: "2026-03", model_id: "lgbm_cluster",
+    generated_at: "2026-03-01T06:00:00Z", horizon_months: 3, is_recursive: true,
+    forecasts: [
+      { forecast_month: "2026-04-01", forecast_qty: 150.0, forecast_qty_lower: 120.0, forecast_qty_upper: 180.0,
+        model_id: "lgbm_cluster", cluster_id: 2, horizon_months: 1, is_recursive: true, lag_source: "actual" },
+    ],
+  }),
 }));
 
 const { InvPlanningTab } = await import("@/tabs/InvPlanningTab");
@@ -736,6 +769,35 @@ describe("InvPlanningTab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Investment" }));
     await waitFor(() => {
       expect(screen.getByText("Investment Plan")).toBeDefined();
+    });
+  });
+
+  it("renders Production Demand Forecast section header", async () => {
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InvPlanningTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Demand Fcst" }));
+    await waitFor(() => {
+      expect(screen.getByText("Production Demand Forecast")).toBeDefined();
+    });
+  });
+
+  it("renders demand forecast KPI cards from mocked data", async () => {
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InvPlanningTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Demand Fcst" }));
+    await waitFor(() => {
+      expect(screen.getByText("Plan Version")).toBeDefined();
+      expect(screen.getByText("DFU Coverage")).toBeDefined();
     });
   });
 });

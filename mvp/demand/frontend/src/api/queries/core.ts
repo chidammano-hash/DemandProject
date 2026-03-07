@@ -106,6 +106,10 @@ export const queryKeys = {
   // AI Planner keys (IPAIfeature1)
   aiInsights: (params: Record<string, unknown>) => ["ai-insights", params] as const,
   aiMemos: (params: Record<string, unknown>) => ["ai-memos", params] as const,
+  // Production Forecast keys (F1.1)
+  productionForecast: (params: Record<string, unknown>) => ["production-forecast", params] as const,
+  productionForecastSummary: (params: Record<string, unknown>) => ["production-forecast-summary", params] as const,
+  productionForecastVersions: () => ["production-forecast-versions"] as const,
 };
 
 // ---------------------------------------------------------------------------

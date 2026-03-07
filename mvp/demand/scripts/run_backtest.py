@@ -9,6 +9,7 @@ Produces two CSVs under data/backtest/lgbm_cluster/:
   - backtest_predictions_all_lags.csv (lag 0-4 archive)
 """
 
+import pickle
 import platform
 import sys
 import time
@@ -94,6 +95,47 @@ def train_and_predict_per_cluster(
         all_results.append(result)
 
     return pd.concat(all_results, ignore_index=True), models
+
+
+def persist_cluster_models(
+    models: dict,
+    feature_cols: list[str],
+    model_id: str,
+    timeframe_label: str,
+    prod_config: dict | None = None,
+) -> None:
+    """Persist trained cluster models to disk for production inference (F1.1).
+
+    Saves one .pkl file per cluster under data/models/<model_id>/cluster_<N>.pkl.
+    Only called for the last (most recent) backtest timeframe so the most
+    up-to-date models are always on disk.
+
+    Args:
+        models: {cluster_label: model} from train_and_predict_per_cluster.
+        feature_cols: Ordered feature column names used during training.
+        model_id: e.g. 'lgbm_cluster'.
+        timeframe_label: Backtest timeframe label (e.g. 'J' = most recent).
+        prod_config: Loaded production_forecast_config.yaml dict (optional).
+    """
+    if not models:
+        return
+
+    base_path = "data/models"
+    if prod_config:
+        base_path = prod_config.get("model_registry", {}).get("base_path", "data/models")
+
+    out_dir = ROOT / base_path / model_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = 0
+    for cluster_label, model in models.items():
+        artifact = {"model": model, "feature_cols": feature_cols, "model_id": model_id}
+        file_path = out_dir / f"cluster_{cluster_label}.pkl"
+        with open(file_path, "wb") as f:
+            pickle.dump(artifact, f)
+        saved += 1
+
+    print(f"  [{_ts()}] Persisted {saved} {model_id} cluster models to {out_dir}/ (timeframe={timeframe_label})")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -223,6 +265,16 @@ def main() -> None:
         print(f"[{_ts()}] SHAP feature selection enabled "
               f"(threshold={shap_threshold}, top_n={shap_top_n}, sample={shap_sample_size})")
 
+    # Load production forecast config for model persistence (F1.1)
+    prod_config_path = ROOT / "config" / "production_forecast_config.yaml"
+    prod_config = None
+    if prod_config_path.exists():
+        with open(prod_config_path) as f:
+            prod_config = yaml.safe_load(f)
+
+    def _persistence_fn(models: dict, feature_cols: list[str], timeframe_label: str) -> None:
+        persist_cluster_models(models, feature_cols, model_id, timeframe_label, prod_config)
+
     run_tree_backtest(
         model_id=model_id,
         n_timeframes=n_timeframes,
@@ -236,6 +288,7 @@ def main() -> None:
         inline_tuner_fn=inline_tuner_fn,
         feature_selector_fn=feature_selector_fn,
         recursive=recursive,
+        model_persistence_fn=_persistence_fn,
     )
 
 

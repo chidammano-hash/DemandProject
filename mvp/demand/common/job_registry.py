@@ -40,6 +40,7 @@ from common.job_state import (
     _run_cluster_pipeline,
     _run_cluster_scenario,
     _run_generate_ai_insights,
+    _run_generate_production_forecast,
     _run_seasonality,
 )
 from common.job_scheduler import make_scheduler, make_trigger
@@ -115,6 +116,14 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="ai",
         callable=_run_generate_ai_insights,
         params_schema={},
+    ),
+    "generate_production_forecast": JobTypeDef(
+        type_id="generate_production_forecast",
+        label="Production Forecast",
+        description="Generate future-period production forecasts using champion ML models",
+        group="forecast",
+        callable=_run_generate_production_forecast,
+        params_schema={"horizon": 12},
     ),
 }
 

@@ -180,6 +180,18 @@ def _run_champion_select(params: dict[str, Any], progress_cb: Callable | None = 
     return {"output_summary": output[:500] if output else "Champion selection completed"}
 
 
+def _run_generate_production_forecast(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Run the production forecast generation pipeline (F1.1)."""
+    horizon = params.get("horizon", 12)
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Starting production forecast generation (horizon={horizon})")
+    cmd = [_UV, "run", "python", "scripts/generate_production_forecasts.py", "--horizon", str(horizon)]
+    output = _run_subprocess(cmd, progress_cb, "Generating production forecasts")
+    if progress_cb:
+        progress_cb(pct=100, msg="Production forecast generation complete")
+    return {"horizon": horizon, "output_summary": output[:500] if output else "Production forecast generation completed"}
+
+
 def _run_generate_ai_insights(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
     """Run AI Planning Agent portfolio scan to generate insights."""
     if progress_cb:

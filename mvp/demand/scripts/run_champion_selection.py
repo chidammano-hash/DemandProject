@@ -397,15 +397,17 @@ def insert_champion_forecasts(
         copy.write(buf.read())
 
     # 4. Bulk INSERT ... SELECT champion rows
+    # source_model_id records which underlying algorithm won (e.g. lgbm_cluster)
+    # so production forecast can load the right .pkl artifact per DFU.
     cur.execute(
         """
         INSERT INTO fact_external_forecast_monthly
             (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
-             lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+             lag, execution_lag, basefcst_pref, tothist_dmd, model_id, source_model_id)
         SELECT
             f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
             f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
-            %s
+            %s, w.winning_model_id
         FROM fact_external_forecast_monthly f
         INNER JOIN _champion_winners w
             ON f.dmdunit = w.dmdunit

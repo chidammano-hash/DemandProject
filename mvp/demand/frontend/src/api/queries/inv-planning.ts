@@ -170,3 +170,4 @@ export * from "./inv-planning-signals";
 export * from "./inv-planning-abc";
 export * from "./inv-planning-supplier";
 export * from "./inv-planning-intramonth";
+export * from "./production-forecast";

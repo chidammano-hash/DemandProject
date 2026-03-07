@@ -1,0 +1,296 @@
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  ComposedChart,
+  Bar,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ReferenceLine,
+  ResponsiveContainer,
+} from "recharts";
+import {
+  queryKeys,
+  fetchProductionForecastSummary,
+  fetchProductionForecastVersions,
+  fetchProductionForecast,
+  STALE,
+  type ProductionForecastAbcRow,
+  type ProductionForecastPoint,
+} from "@/api/queries";
+
+function fmt(n: number | null | undefined, decimals = 0): string {
+  if (n == null) return "—";
+  return Number(n).toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return iso.slice(0, 10);
+}
+
+// ---------------------------------------------------------------------------
+// KPI card
+// ---------------------------------------------------------------------------
+function KpiCard({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+}) {
+  return (
+    <div className="rounded-lg border bg-card p-4 flex flex-col gap-1">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-2xl font-bold text-foreground">{value}</span>
+      {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DFU drill-down chart
+// ---------------------------------------------------------------------------
+function DfuForecastChart({
+  item,
+  loc,
+  planVersion,
+}: {
+  item: string;
+  loc: string;
+  planVersion?: string;
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: queryKeys.productionForecast({ item, loc, planVersion: planVersion ?? "" }),
+    queryFn: () =>
+      fetchProductionForecast({ item_no: item, loc, plan_version: planVersion }),
+    staleTime: STALE.FIVE_MIN,
+    enabled: item.trim().length > 0 && loc.trim().length > 0,
+  });
+
+  if (!item.trim() || !loc.trim()) {
+    return (
+      <p className="text-sm text-muted-foreground py-4 text-center">
+        Enter item and location above to view the forecast series.
+      </p>
+    );
+  }
+  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (error)
+    return (
+      <p className="text-sm text-destructive">
+        {error instanceof Error && error.message.includes("404")
+          ? "No forecast found. Run 'make forecast-generate' to generate forecasts."
+          : "Failed to load forecast."}
+      </p>
+    );
+  if (!data) return null;
+
+  const chartData = data.forecasts.map((p: ProductionForecastPoint) => ({
+    month: p.forecast_month?.slice(0, 7) ?? "",
+    qty: p.forecast_qty,
+    lower: p.forecast_qty_lower,
+    upper: p.forecast_qty_upper,
+    lag_source: p.lag_source,
+  }));
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+        <span>
+          Model: <strong className="text-foreground">{data.model_id}</strong>
+        </span>
+        <span>
+          Version: <strong className="text-foreground">{data.plan_version}</strong>
+        </span>
+        <span>
+          Generated: <strong className="text-foreground">{fmtDate(data.generated_at)}</strong>
+        </span>
+        {data.is_recursive && (
+          <span className="rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 px-2 py-0.5 text-[10px] font-semibold">
+            RECURSIVE
+          </span>
+        )}
+      </div>
+      <ResponsiveContainer width="100%" height={220}>
+        <ComposedChart data={chartData} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+          <YAxis tick={{ fontSize: 11 }} />
+          <Tooltip formatter={(v: number) => fmt(v, 1)} />
+          <Legend iconSize={12} wrapperStyle={{ fontSize: 11 }} />
+          {data.forecasts.some((p) => p.forecast_qty_lower != null) && (
+            <Bar dataKey="lower" name="Lower CI" fill="var(--muted)" opacity={0.4} />
+          )}
+          <Bar dataKey="qty" name="Forecast Qty" fill="var(--primary)" radius={[2, 2, 0, 0]} />
+          {data.forecasts.some((p) => p.forecast_qty_upper != null) && (
+            <Line
+              type="monotone"
+              dataKey="upper"
+              name="Upper CI"
+              stroke="var(--muted-foreground)"
+              strokeDasharray="4 2"
+              dot={false}
+            />
+          )}
+          <ReferenceLine x={chartData[0]?.month ?? ""} stroke="var(--primary)" strokeWidth={1.5} label="" />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main panel
+// ---------------------------------------------------------------------------
+export function DemandForecastPanel() {
+  const [horizonMonths, setHorizonMonths] = useState(3);
+  const [dfuItem, setDfuItem] = useState("");
+  const [dfuLoc, setDfuLoc] = useState("");
+
+  const { data: versions } = useQuery({
+    queryKey: queryKeys.productionForecastVersions(),
+    queryFn: fetchProductionForecastVersions,
+    staleTime: STALE.TEN_MIN,
+  });
+
+  const [selectedVersion, setSelectedVersion] = useState<string | undefined>();
+  const latestVersion = versions?.versions[0]?.plan_version;
+  const effectiveVersion = selectedVersion ?? latestVersion;
+
+  const { data: summary, isLoading: summaryLoading } = useQuery({
+    queryKey: queryKeys.productionForecastSummary({
+      plan_version: effectiveVersion ?? "",
+      horizon_months: horizonMonths,
+    }),
+    queryFn: () =>
+      fetchProductionForecastSummary({
+        plan_version: effectiveVersion,
+        horizon_months: horizonMonths,
+      }),
+    staleTime: STALE.FIVE_MIN,
+    enabled: !!effectiveVersion,
+  });
+
+  const abcChartData =
+    summary?.by_abc_class.map((r: ProductionForecastAbcRow) => ({
+      abc: r.abc_class,
+      qty: r.forecast_qty,
+      dfus: r.dfu_count,
+    })) ?? [];
+
+  return (
+    <div className="space-y-6">
+      {/* Header row */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 text-sm">
+          <label className="text-muted-foreground whitespace-nowrap">Horizon</label>
+          <select
+            value={horizonMonths}
+            onChange={(e) => setHorizonMonths(Number(e.target.value))}
+            className="rounded border bg-background px-2 py-1 text-sm"
+          >
+            {[1, 3, 6, 9, 12].map((m) => (
+              <option key={m} value={m}>
+                {m}M
+              </option>
+            ))}
+          </select>
+        </div>
+        {versions && versions.versions.length > 0 && (
+          <div className="flex items-center gap-2 text-sm">
+            <label className="text-muted-foreground whitespace-nowrap">Version</label>
+            <select
+              value={effectiveVersion ?? ""}
+              onChange={(e) => setSelectedVersion(e.target.value || undefined)}
+              className="rounded border bg-background px-2 py-1 text-sm"
+            >
+              {versions.versions.map((v) => (
+                <option key={v.plan_version} value={v.plan_version}>
+                  {v.plan_version} ({v.dfu_count.toLocaleString()} DFUs)
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* KPI cards */}
+      {summaryLoading ? (
+        <p className="text-sm text-muted-foreground">Loading summary…</p>
+      ) : summary ? (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <KpiCard
+            label="Plan Version"
+            value={summary.plan_version ?? "—"}
+            sub={`Generated ${fmtDate(summary.generated_at)}`}
+          />
+          <KpiCard
+            label="DFU Coverage"
+            value={fmt(summary.total_dfu_count)}
+            sub="item-locations with forecasts"
+          />
+          <KpiCard
+            label={`Total Forecast (${horizonMonths}M)`}
+            value={fmt(summary.total_forecast_qty)}
+            sub="cumulative units"
+          />
+          <KpiCard
+            label="Horizon"
+            value={`${horizonMonths} months`}
+            sub="forward-looking window"
+          />
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No production forecasts available. Run <code className="font-mono text-xs">make forecast-generate</code> to generate.
+        </p>
+      )}
+
+      {/* ABC class breakdown chart */}
+      {abcChartData.length > 0 && (
+        <div className="rounded-lg border bg-card p-4 space-y-3">
+          <h4 className="text-sm font-semibold">Forecast by ABC Class</h4>
+          <ResponsiveContainer width="100%" height={180}>
+            <ComposedChart data={abcChartData} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="abc" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Tooltip formatter={(v: number) => fmt(v, 0)} />
+              <Legend iconSize={12} wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="qty" name="Forecast Qty" fill="var(--primary)" radius={[2, 2, 0, 0]} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* DFU drill-down */}
+      <div className="rounded-lg border bg-card p-4 space-y-3">
+        <h4 className="text-sm font-semibold">DFU Forecast Series</h4>
+        <div className="flex flex-wrap gap-2">
+          <input
+            placeholder="Item No"
+            value={dfuItem}
+            onChange={(e) => setDfuItem(e.target.value)}
+            className="rounded border bg-background px-3 py-1.5 text-sm w-36"
+          />
+          <input
+            placeholder="Location"
+            value={dfuLoc}
+            onChange={(e) => setDfuLoc(e.target.value)}
+            className="rounded border bg-background px-3 py-1.5 text-sm w-36"
+          />
+        </div>
+        <DfuForecastChart item={dfuItem} loc={dfuLoc} planVersion={effectiveVersion} />
+      </div>
+    </div>
+  );
+}
