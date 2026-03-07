@@ -137,7 +137,7 @@ describe("AIPlannerTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("AI Planner")).toBeDefined();
+      expect(screen.getAllByText("AI Planner").length).toBeGreaterThan(0);
     });
   });
 

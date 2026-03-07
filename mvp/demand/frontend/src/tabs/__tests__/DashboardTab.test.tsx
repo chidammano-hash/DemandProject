@@ -22,39 +22,12 @@ const localStorageMock = (() => {
 
 Object.defineProperty(window, "localStorage", { value: localStorageMock });
 
-// Mock ECharts
-vi.mock("echarts-for-react/lib/core", () => ({
-  default: ({ style, className }: any) => (
-    <div data-testid="echarts-mock" style={style} className={className} />
-  ),
-}));
-
-vi.mock("echarts/core", () => ({
-  use: vi.fn(),
-}));
-
-vi.mock("echarts/charts", () => ({
-  LineChart: {},
-  BarChart: {},
-}));
-
-vi.mock("echarts/components", () => ({
-  GridComponent: {},
-  TooltipComponent: {},
-  LegendComponent: {},
-  DataZoomComponent: {},
-}));
-
-vi.mock("echarts/renderers", () => ({
-  CanvasRenderer: {},
-}));
-
 vi.mock("@/api/queries", () => ({
   queryKeys: {
     dashboardKpis: (p: Record<string, unknown>) => ["dashboard-kpis", p],
     dashboardAlerts: (p: Record<string, unknown>) => ["dashboard-alerts", p],
-    dashboardTopMovers: (p: Record<string, unknown>) => ["dashboard-top-movers", p],
-    dashboardHeatmap: (p: Record<string, unknown>) => ["dashboard-heatmap", p],
+    aiInsights: (p: Record<string, unknown>) => ["ai-insights", p],
+    aiMemos: (p: Record<string, unknown>) => ["ai-memos", p],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchDashboardKpis: vi.fn().mockResolvedValue({
@@ -65,22 +38,46 @@ vi.mock("@/api/queries", () => ({
     total_actual: 480000,
     weeks_of_supply: 4.2,
     window_months: 3,
-    deltas: { accuracy_pct: 1.2, wape_pct: -0.5, bias_pct: 0.8 },
+    deltas: { accuracy_pct: 1.2, wape_pct: -0.5, bias_pct: 0.8, weeks_of_supply: 0.3 },
   }),
   fetchDashboardAlerts: vi.fn().mockResolvedValue({
     alerts: [
       { id: "a1", type: "oos_risk", severity: "critical", title: "OOS Risk", detail: "5 items at risk", count: 5 },
     ],
   }),
-  fetchDashboardTopMovers: vi.fn().mockResolvedValue({
-    movers: [
-      { item_description: "Top Item", delta: 12000, pct_change: 15.0, direction: "up" },
+  fetchAiInsights: vi.fn().mockResolvedValue({
+    insights: [
+      {
+        insight_id: 1,
+        item_no: "587382",
+        loc: "1401-BULK",
+        severity: "critical",
+        insight_type: "stockout_risk",
+        summary: "Stockout in ~8 days",
+        status: "open",
+        champion_wape: 0.63,
+        forecast_bias_pct: 0.87,
+        dos: 6.4,
+        total_lt_days: 14,
+        financial_impact_estimate: 42000,
+        current_policy_id: null,
+        abc_vol: "A",
+        ml_cluster: null,
+        created_at: new Date().toISOString(),
+      },
     ],
+    total: 3,
   }),
-  fetchDashboardHeatmap: vi.fn().mockResolvedValue({
-    rows: [{ label: "Beverages", values: [90, 85, 78] }],
-    period_labels: ["Dec", "Jan", "Feb"],
-    metric: "accuracy_pct",
+  fetchAiMemos: vi.fn().mockResolvedValue({
+    memos: [
+      {
+        memo_id: 1,
+        period: "2026-03-01",
+        narrative_text: "Portfolio is under pressure this week. Three A-class DFUs show critical stockout risk.",
+        model_version: "claude-sonnet-4-6",
+        created_at: new Date().toISOString(),
+      },
+    ],
   }),
 }));
 
@@ -135,29 +132,46 @@ describe("DashboardTab", () => {
 
   it("shows loading skeletons initially", () => {
     const { container } = renderDashboard();
-    // Skeleton elements have animate-pulse class
     const skeletons = container.querySelectorAll(".animate-pulse");
     expect(skeletons.length).toBeGreaterThan(0);
   });
 
-  it("renders KPI cards after data loads", async () => {
+  it("renders Command Center KPI cards after data loads", async () => {
     const { getByText } = renderDashboard();
     await waitFor(() => {
-      expect(getByText("Accuracy")).toBeDefined();
-      expect(getByText("WAPE")).toBeDefined();
-      expect(getByText("Bias")).toBeDefined();
-      expect(getByText("Total Forecast")).toBeDefined();
-      expect(getByText("Total Actual")).toBeDefined();
+      expect(getByText("Open Insights")).toBeDefined();
+      expect(getByText("Critical")).toBeDefined();
+      expect(getByText("Portfolio DOS")).toBeDefined();
+      expect(getByText("$ at Risk")).toBeDefined();
     });
   });
 
-  it("renders widget cards with titles after data loads", async () => {
+  it("renders priority work queue with top insight", async () => {
     const { getByText } = renderDashboard();
     await waitFor(() => {
-      expect(getByText("Alerts")).toBeDefined();
-      expect(getByText("Performance Heatmap")).toBeDefined();
-      expect(getByText("Top Movers")).toBeDefined();
-      expect(getByText("Forecast vs Actual Trend")).toBeDefined();
+      expect(getByText("Priority Work Queue")).toBeDefined();
+      expect(getByText("587382 @ 1401-BULK")).toBeDefined();
+    });
+  });
+
+  it("renders AI Planning Digest when memo is available", async () => {
+    const { getByText } = renderDashboard();
+    await waitFor(() => {
+      expect(getByText("AI Planning Digest")).toBeDefined();
+    });
+  });
+
+  it("renders system alerts section", async () => {
+    const { getByText } = renderDashboard();
+    await waitFor(() => {
+      expect(getByText("System Alerts")).toBeDefined();
+    });
+  });
+
+  it("renders Command Center heading", async () => {
+    const { getByText } = renderDashboard();
+    await waitFor(() => {
+      expect(getByText("Command Center")).toBeDefined();
     });
   });
 });

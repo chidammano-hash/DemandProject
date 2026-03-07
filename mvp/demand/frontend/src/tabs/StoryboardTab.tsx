@@ -1,5 +1,5 @@
 /**
- * Feature 40 — Demand Planner Storyboard
+ * Feature 40 — Exception Triage
  *
  * 3-zone command center for demand planners:
  * Zone 1: Summary KPI header
@@ -48,6 +48,13 @@ const STATUS_COLORS: Record<string, string> = {
   resolved: "bg-green-100 text-green-800",
   dismissed: "bg-gray-100 text-gray-700",
 };
+
+function severityLabel(score: number): string {
+  if (score >= 0.75) return "Critical";
+  if (score >= 0.50) return "High";
+  if (score >= 0.25) return "Medium";
+  return "Low";
+}
 
 function getSeverityColor(severity: number): string {
   if (severity >= 0.7) return "text-red-600 bg-red-50 border-red-200";
@@ -188,7 +195,8 @@ export default function StoryboardTab() {
     <div className="flex flex-col gap-4 p-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Demand Planner Storyboard</h2>
+        <h2 className="text-lg font-semibold">Exception Triage</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">Rule-based threshold alerts from replenishment policies. For ML-generated insights ranked by financial impact, see the <strong>AI Planner</strong> tab.</p>
         <button
           className="text-xs rounded border px-3 py-1 hover:bg-muted"
           onClick={() => {
@@ -369,7 +377,7 @@ export default function StoryboardTab() {
                             : "text-yellow-600"
                         }`}
                       >
-                        {fmt(detailData.exception.severity, 2)}
+                        {severityLabel(detailData.exception.severity)}
                       </p>
                     </div>
                     <div className="rounded border p-2 text-center">
@@ -572,7 +580,7 @@ function ExceptionCard({
             exception.severity
           )}`}
         >
-          {fmt(exception.severity, 2)}
+          {severityLabel(exception.severity)}
         </span>
         <span
           className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${

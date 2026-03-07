@@ -129,7 +129,7 @@ describe("ControlTowerTab", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByText(/6-Month Portfolio Trend/i)).toBeDefined();
+      expect(screen.getByText(/Portfolio Trend/i)).toBeDefined();
     });
   });
 });

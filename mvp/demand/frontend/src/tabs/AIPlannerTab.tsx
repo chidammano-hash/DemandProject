@@ -5,7 +5,7 @@
  * by an AI agent that reads across all data layers and traces causal chains.
  * NOT a chatbot — a proactive scan-and-triage system for planners.
  */
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   queryKeys,
@@ -14,6 +14,7 @@ import {
   triggerPortfolioScan,
   updateInsightStatus,
   triggerAutoAccept,
+  snoozeInsight,
   STALE,
 } from "@/api/queries";
 import type { AutoAcceptResponse } from "@/api/queries/ai-planner";
@@ -48,6 +49,8 @@ import {
   Target,
   DollarSign,
   X,
+  Copy,
+  Check,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -117,17 +120,32 @@ function deriveConfidence(insight: AiInsight): ConfidenceTier {
   return "low";
 }
 
-const CONFIDENCE_STYLES: Record<ConfidenceTier, { label: string; className: string }> = {
-  high:   { label: "HIGH", className: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300" },
-  medium: { label: "MED",  className: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" },
-  low:    { label: "LOW",  className: "bg-gray-100 text-gray-600 dark:bg-gray-700/40 dark:text-gray-400" },
+const CONFIDENCE_STYLES: Record<ConfidenceTier, { label: string; className: string; tooltip: string }> = {
+  high:   {
+    label: "HIGH",
+    className: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300",
+    tooltip: "High confidence — forecast WAPE < 35% with financial impact confirmed. Act on this insight with high certainty.",
+  },
+  medium: {
+    label: "MED",
+    className: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+    tooltip: "Medium confidence — moderate forecast bias or variability detected. Review the AI reasoning before acting.",
+  },
+  low:    {
+    label: "LOW",
+    className: "bg-gray-100 text-gray-600 dark:bg-gray-700/40 dark:text-gray-400",
+    tooltip: "Low confidence — limited signal strength or no financial impact data. Treat as an early warning, not a directive.",
+  },
 };
 
 function ConfidenceBadge({ insight }: { insight: AiInsight }) {
   const tier = deriveConfidence(insight);
   const style = CONFIDENCE_STYLES[tier];
   return (
-    <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", style.className)}>
+    <span
+      title={style.tooltip}
+      className={cn("rounded-full px-2 py-0.5 text-xs font-medium cursor-help", style.className)}
+    >
       {style.label} confidence
     </span>
   );
@@ -400,6 +418,17 @@ function AutoAcceptModal({
   result: AutoAcceptResponse | null;
 }) {
   const [minSeverity, setMinSeverity] = useState<InsightSeverity>("high");
+  // PL-008: track preview result before final confirm
+  const [previewResult, setPreviewResult] = useState<AutoAcceptResponse | null>(null);
+
+  // After dry-run succeeds, parent sets result; split into preview vs execute result
+  const isDryRunResult = result?.dry_run === true;
+  const isExecuteResult = result?.dry_run === false;
+
+  function handlePreview() {
+    setPreviewResult(null);
+    onConfirm(minSeverity, true);
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
@@ -417,24 +446,32 @@ function AutoAcceptModal({
         </div>
 
         <div className="space-y-4 px-5 py-4">
-          {result ? (
-            /* Result state */
-            <div className={cn(
-              "rounded-lg p-4 text-center",
-              result.dry_run
-                ? "bg-muted/50"
-                : "bg-green-50 dark:bg-green-950/30",
-            )}>
-              <p className={cn(
-                "text-2xl font-bold",
-                result.dry_run ? "text-foreground" : "text-green-700 dark:text-green-400",
-              )}>
-                {result.accepted}
-              </p>
+          {isExecuteResult ? (
+            /* Final result state */
+            <div className="rounded-lg bg-green-50 p-4 text-center dark:bg-green-950/30">
+              <p className="text-2xl font-bold text-green-700 dark:text-green-400">{result!.accepted}</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {result.dry_run
-                  ? "insights would be auto-accepted (preview — no changes made)"
-                  : "insights auto-accepted and logged to outcome tracker"}
+                insights auto-accepted and logged to outcome tracker
+              </p>
+            </div>
+          ) : isDryRunResult && result!.accepted > 0 ? (
+            /* Confirmation step — PL-008 */
+            <div className="space-y-3">
+              <div className="rounded-lg bg-amber-50 p-4 text-center dark:bg-amber-950/30">
+                <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{result!.accepted}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  open {SEVERITY_THRESHOLD_LABELS[minSeverity].toLowerCase()} insights found
+                </p>
+              </div>
+              <div className="rounded-md border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/20 dark:text-amber-300">
+                ⚠️ This will permanently accept {result!.accepted} insight{result!.accepted !== 1 ? "s" : ""} and write outcome records. <strong>This cannot be undone.</strong>
+              </div>
+            </div>
+          ) : isDryRunResult && result!.accepted === 0 ? (
+            <div className="rounded-lg bg-muted/50 p-4 text-center">
+              <p className="text-2xl font-bold text-foreground">0</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                no matching open insights found for this threshold
               </p>
             </div>
           ) : (
@@ -464,28 +501,25 @@ function AutoAcceptModal({
 
         <div className="flex justify-end gap-2 border-t px-5 py-3">
           <Button variant="ghost" size="sm" onClick={onCancel}>
-            {result ? "Close" : "Cancel"}
+            {isExecuteResult ? "Close" : "Cancel"}
           </Button>
+          {/* Config → Preview */}
           {!result && (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onConfirm(minSeverity, true)}
-                disabled={isPending}
-              >
-                Preview
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => onConfirm(minSeverity, false)}
-                disabled={isPending}
-                className="gap-1.5"
-              >
-                {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Auto-Accept
-              </Button>
-            </>
+            <Button variant="outline" size="sm" onClick={handlePreview} disabled={isPending}>
+              {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Preview"}
+            </Button>
+          )}
+          {/* Preview with matches → Confirm execute */}
+          {isDryRunResult && result!.accepted > 0 && (
+            <Button
+              size="sm"
+              onClick={() => onConfirm(minSeverity, false)}
+              disabled={isPending}
+              className="gap-1.5 bg-amber-600 hover:bg-amber-700"
+            >
+              {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Confirm — Accept {result!.accepted}
+            </Button>
           )}
         </div>
       </div>
@@ -498,14 +532,23 @@ function AutoAcceptModal({
 // ---------------------------------------------------------------------------
 function InsightCard({
   insight,
+  selected,
+  onSelect,
   onAcknowledge,
   onResolve,
+  onSnooze,
 }: {
   insight: AiInsight;
+  selected?: boolean;
+  onSelect?: (id: number) => void;
   onAcknowledge: (insight: AiInsight) => void;
   onResolve: (insight: AiInsight) => void;
+  onSnooze: (insight: AiInsight, days: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showSnoozePicker, setShowSnoozePicker] = useState(false);
+  const [snoozeReason, setSnoozeReason] = useState("");
+  const [snoozeDays, setSnoozeDays] = useState<number | null>(null);
   const s = SEVERITY_STYLES[insight.severity];
   const TypeIcon = INSIGHT_TYPE_ICONS[insight.insight_type];
 
@@ -515,10 +558,22 @@ function InsightCard({
         "rounded-lg border border-l-4 bg-card p-4 shadow-sm transition-all",
         s.border,
         insight.status === "resolved" && "opacity-60",
+        selected && "ring-2 ring-primary/30",
       )}
     >
       {/* Header row */}
       <div className="flex items-start gap-3">
+        {/* Bulk select checkbox */}
+        {onSelect && insight.status === "open" && (
+          <input
+            type="checkbox"
+            checked={selected ?? false}
+            onChange={() => onSelect(insight.insight_id)}
+            className="mt-1 h-3.5 w-3.5 flex-shrink-0 cursor-pointer accent-primary"
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`Select insight for ${insight.item_no}`}
+          />
+        )}
         <div className="mt-0.5 flex-shrink-0">
           <SeverityIcon severity={insight.severity} />
         </div>
@@ -612,7 +667,7 @@ function InsightCard({
 
           {/* Action buttons — open modal, not direct mutations */}
           {insight.status === "open" && (
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <Button
                 size="sm"
                 variant="outline"
@@ -628,6 +683,73 @@ function InsightCard({
               >
                 Resolve
               </Button>
+              {/* Snooze dialog (PL-012 enhanced with reason + date) */}
+              {showSnoozePicker ? (
+                <div className="w-full rounded-md border bg-muted/30 p-2 space-y-2">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Snooze until</span>
+                    <button onClick={() => { setShowSnoozePicker(false); setSnoozeReason(""); setSnoozeDays(null); }} className="ml-auto text-muted-foreground hover:text-foreground px-1 text-xs">✕</button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {[1, 3, 7, 14].map((d) => (
+                      <button
+                        key={d}
+                        onClick={() => setSnoozeDays(snoozeDays === d ? null : d)}
+                        className={cn(
+                          "rounded border px-2 py-0.5 text-xs font-medium transition-colors",
+                          snoozeDays === d
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-input bg-background hover:bg-muted text-muted-foreground",
+                        )}
+                      >
+                        {d}d
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Reason (optional) — e.g. confirmed with supplier"
+                    value={snoozeReason}
+                    onChange={(e) => setSnoozeReason(e.target.value)}
+                    className="w-full rounded border border-input bg-background px-2 py-1 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <div className="flex justify-end gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 text-xs"
+                      onClick={() => { setShowSnoozePicker(false); setSnoozeReason(""); setSnoozeDays(null); }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-6 text-xs"
+                      disabled={snoozeDays == null}
+                      onClick={() => {
+                        if (snoozeDays != null) {
+                          onSnooze(insight, snoozeDays);
+                          setShowSnoozePicker(false);
+                          setSnoozeReason("");
+                          setSnoozeDays(null);
+                        }
+                      }}
+                    >
+                      Confirm snooze
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  title="Snooze this insight"
+                  onClick={() => setShowSnoozePicker(true)}
+                >
+                  Snooze
+                </Button>
+              )}
             </div>
           )}
           {insight.status === "acknowledged" && (
@@ -649,13 +771,99 @@ function InsightCard({
 // ---------------------------------------------------------------------------
 // Main tab component
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// BulkActionBar — sticky bar shown when ≥1 insight selected
+// ---------------------------------------------------------------------------
+function BulkActionBar({
+  count,
+  onAcknowledgeAll,
+  onClear,
+  isPending,
+}: {
+  count: number;
+  onAcknowledgeAll: () => void;
+  onClear: () => void;
+  isPending: boolean;
+}) {
+  return (
+    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-3 rounded-full border bg-card px-5 py-2.5 shadow-lg">
+      <span className="text-sm font-medium">{count} selected</span>
+      <div className="h-4 w-px bg-border" />
+      <Button size="sm" onClick={onAcknowledgeAll} disabled={isPending} className="rounded-full gap-1.5">
+        {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        Accept all
+      </Button>
+      <Button size="sm" variant="ghost" onClick={onClear} className="rounded-full text-muted-foreground">
+        <X className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CopyButton — copies text to clipboard with transient "Copied!" state
+// ---------------------------------------------------------------------------
+function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  function handleCopy() {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      className="flex items-center gap-1 rounded border border-input bg-background px-2 py-1 text-xs hover:bg-muted"
+      title="Copy memo to clipboard"
+    >
+      {copied ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
+      {copied ? "Copied!" : label}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main tab component
+// ---------------------------------------------------------------------------
 export default function AIPlannerTab() {
   const qc = useQueryClient();
 
-  // Filter state
-  const [severityFilter, setSeverityFilter] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<string>("open");
-  const [typeFilter, setTypeFilter] = useState<string>("all");
+  // ── Persistent URL filter state ──────────────────────────────────────────
+  // Read initial values from URL params so filters survive page refresh
+  const getUrlParam = (key: string, fallback: string) => {
+    try { return new URLSearchParams(window.location.search).get(key) ?? fallback; } catch { return fallback; }
+  };
+  const [severityFilter, setSeverityFilter] = useState(() => getUrlParam("ai_severity", "all"));
+  const [statusFilter, setStatusFilter] = useState(() => getUrlParam("ai_status", "open"));
+  const [typeFilter, setTypeFilter] = useState(() => getUrlParam("ai_type", "all"));
+
+  // Sync filter changes to URL (pushState, doesn't reload page)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (severityFilter === "all") params.delete("ai_severity"); else params.set("ai_severity", severityFilter);
+    if (statusFilter === "open") params.delete("ai_status"); else params.set("ai_status", statusFilter);
+    if (typeFilter === "all") params.delete("ai_type"); else params.set("ai_type", typeFilter);
+    const newSearch = params.toString();
+    const newUrl = `${window.location.pathname}${newSearch ? "?" + newSearch : ""}`;
+    window.history.replaceState(null, "", newUrl);
+  }, [severityFilter, statusFilter, typeFilter]);
+
+  // ── Bulk selection state ──────────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  const handleSelect = useCallback((id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  // Clear selection when filters change
+  useEffect(() => { setSelectedIds(new Set()); }, [severityFilter, statusFilter, typeFilter]);
 
   // Confirm modal state
   const [confirmAction, setConfirmAction] = useState<ConfirmActionState | null>(null);
@@ -689,22 +897,38 @@ export default function AIPlannerTab() {
   });
 
   const memosQ = useQuery({
-    queryKey: queryKeys.aiMemos({ scope: "portfolio", limit: 1 }),
-    queryFn: () => fetchAiMemos({ scope: "portfolio", limit: 1 }),
+    queryKey: queryKeys.aiMemos({ scope: "portfolio", limit: 5 }),
+    queryFn: () => fetchAiMemos({ scope: "portfolio", limit: 5 }),
     staleTime: STALE.FIVE_MIN,
   });
+  const [memoIndex, setMemoIndex] = useState(0); // PL-017: 0 = latest
 
   const [showScanSuccess, setShowScanSuccess] = useState(false);
+  const [scanQueuedAt, setScanQueuedAt] = useState<Date | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // PL-007: Poll for new insights for up to 5 minutes after a scan is queued
+  useEffect(() => {
+    if (!scanQueuedAt) return;
+    const POLL_INTERVAL = 30_000; // 30 s
+    const TIMEOUT = 5 * 60_000;  // 5 min
+    pollRef.current = setInterval(() => {
+      qc.invalidateQueries({ queryKey: queryKeys.aiInsights({}) });
+      qc.invalidateQueries({ queryKey: queryKeys.aiMemos({}) });
+      if (Date.now() - scanQueuedAt.getTime() > TIMEOUT) {
+        clearInterval(pollRef.current!);
+        setScanQueuedAt(null);
+      }
+    }, POLL_INTERVAL);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [scanQueuedAt, qc]);
 
   const scanMutation = useMutation({
     mutationFn: triggerPortfolioScan,
     onSuccess: () => {
       setShowScanSuccess(true);
-      setTimeout(() => setShowScanSuccess(false), 5000);
-      setTimeout(() => {
-        qc.invalidateQueries({ queryKey: queryKeys.aiInsights({}) });
-        qc.invalidateQueries({ queryKey: queryKeys.aiMemos({}) });
-      }, 5000);
+      setScanQueuedAt(new Date());
+      setTimeout(() => setShowScanSuccess(false), 8000);
     },
   });
 
@@ -737,6 +961,33 @@ export default function AIPlannerTab() {
     });
   }
 
+  const snoozeMutation = useMutation({
+    mutationFn: ({ id, days }: { id: number; days: number }) => snoozeInsight(id, days),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.aiInsights({}) });
+    },
+  });
+
+  function handleSnooze(insight: AiInsight, days: number) {
+    snoozeMutation.mutate({ id: insight.insight_id, days });
+  }
+
+  // Bulk acknowledge — fires one mutation per selected insight sequentially
+  const [bulkPending, setBulkPending] = useState(false);
+  async function handleBulkAcknowledge() {
+    if (selectedIds.size === 0) return;
+    setBulkPending(true);
+    try {
+      for (const id of selectedIds) {
+        await updateInsightStatus(id, "acknowledged");
+      }
+      qc.invalidateQueries({ queryKey: queryKeys.aiInsights({}) });
+      setSelectedIds(new Set());
+    } finally {
+      setBulkPending(false);
+    }
+  }
+
   function executeConfirmedAction() {
     if (!confirmAction) return;
     statusMutation.mutate({ id: confirmAction.insight.insight_id, status: confirmAction.status });
@@ -744,7 +995,8 @@ export default function AIPlannerTab() {
 
   const insights = insightsQ.data?.insights ?? [];
   const total = insightsQ.data?.total ?? 0;
-  const latestMemo = memosQ.data?.memos?.[0];
+  const allMemos = memosQ.data?.memos ?? [];
+  const latestMemo = allMemos[memoIndex]; // PL-017: navigate history
 
   // Last-scan timestamp
   const lastScanAt = latestMemo?.created_at ?? (insights.length > 0 ? insights[0].created_at : null);
@@ -848,6 +1100,13 @@ export default function AIPlannerTab() {
         </div>
 
         {/* ---------------------------------------------------------------- */}
+        {/* Distinction banner (PL-004)                                     */}
+        {/* ---------------------------------------------------------------- */}
+        <div className="rounded-md border border-violet-200 bg-violet-50 px-4 py-2 text-xs text-violet-700 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-300">
+          <strong>AI Planner</strong> shows ML-generated insights ranked by financial impact. For rule-based threshold alerts from replenishment policies, see the <strong>Exceptions</strong> tab.
+        </div>
+
+        {/* ---------------------------------------------------------------- */}
         {/* Portfolio Health Bar                                             */}
         {/* ---------------------------------------------------------------- */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -884,10 +1143,18 @@ export default function AIPlannerTab() {
           ))}
         </div>
 
-        {/* Scan success/error banner */}
+        {/* Scan success/error banner (PL-007) */}
         {showScanSuccess && (
-          <div className="rounded-md bg-green-50 px-4 py-2 text-sm text-green-800 dark:bg-green-900/20 dark:text-green-300">
-            Portfolio scan queued — track progress in the <strong>Jobs</strong> tab. Insights will appear here when complete.
+          <div className="rounded-md bg-green-50 px-4 py-2 text-sm text-green-800 dark:bg-green-900/20 dark:text-green-300 flex items-center gap-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin flex-shrink-0" />
+            Portfolio scan in progress — insights will refresh automatically. Track in the <strong>Jobs</strong> tab.
+          </div>
+        )}
+        {!showScanSuccess && scanQueuedAt && (
+          <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300 flex items-center gap-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin flex-shrink-0" />
+            Background scan running — checking for new insights every 30s.
+            <button className="ml-auto text-xs underline" onClick={() => { setScanQueuedAt(null); if (pollRef.current) clearInterval(pollRef.current); }}>Dismiss</button>
           </div>
         )}
         {scanMutation.isError && (
@@ -987,8 +1254,11 @@ export default function AIPlannerTab() {
               <InsightCard
                 key={insight.insight_id}
                 insight={insight}
+                selected={selectedIds.has(insight.insight_id)}
+                onSelect={handleSelect}
                 onAcknowledge={handleAcknowledge}
                 onResolve={handleResolve}
+                onSnooze={handleSnooze}
               />
             ))}
             {total > sorted.length && (
@@ -1000,14 +1270,27 @@ export default function AIPlannerTab() {
         )}
 
         {/* ---------------------------------------------------------------- */}
+        {/* Bulk action bar                                                  */}
+        {/* ---------------------------------------------------------------- */}
+        {selectedIds.size > 0 && (
+          <BulkActionBar
+            count={selectedIds.size}
+            onAcknowledgeAll={handleBulkAcknowledge}
+            onClear={clearSelection}
+            isPending={bulkPending}
+          />
+        )}
+
+        {/* ---------------------------------------------------------------- */}
         {/* Planning Memo panel                                              */}
         {/* ---------------------------------------------------------------- */}
         {latestMemo && (
           <Card>
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Latest Planning Memo</CardTitle>
+                <CardTitle className="text-base">Planning Memo</CardTitle>
                 <div className="flex items-center gap-2">
+                  <CopyButton text={latestMemo.narrative_text} label="Copy markdown" />
                   {latestMemo.model_version && (
                     <Badge variant="outline" className="text-xs">
                       {latestMemo.model_version}
@@ -1019,6 +1302,30 @@ export default function AIPlannerTab() {
                       month: "long",
                     })}
                   </span>
+                  {/* PL-017: History navigation */}
+                  {allMemos.length > 1 && (
+                    <div className="flex items-center gap-1 ml-1">
+                      <button
+                        onClick={() => setMemoIndex((i) => Math.min(i + 1, allMemos.length - 1))}
+                        disabled={memoIndex >= allMemos.length - 1}
+                        className="rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                        title="Older memo"
+                      >
+                        ‹
+                      </button>
+                      <span className="text-[10px] text-muted-foreground tabular-nums">
+                        {memoIndex + 1}/{allMemos.length}
+                      </span>
+                      <button
+                        onClick={() => setMemoIndex((i) => Math.max(i - 1, 0))}
+                        disabled={memoIndex === 0}
+                        className="rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                        title="Newer memo"
+                      >
+                        ›
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </CardHeader>

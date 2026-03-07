@@ -40,7 +40,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "accuracy",     label: "Accuracy",      icon: Target,          section: "demand",       shortcut: "4" },
   { key: "dfuAnalysis",  label: "DFU Analysis",  icon: TrendingUp,      section: "demand",       shortcut: "5" },
   { key: "inventory",    label: "Inventory",     icon: Package,         section: "demand",       shortcut: "6" },
-  { key: "storyboard",   label: "Storyboard",    icon: BookOpen,        section: "demand",       shortcut: "7" },
+  { key: "exceptions",   label: "Exceptions",    icon: BookOpen,        section: "demand",       shortcut: "7" },
   // Configure section
   { key: "invPlanning",  label: "Inv. Planning", icon: Brain,           section: "supply",       shortcut: "8" },
   { key: "clusters",     label: "Clusters",      icon: Network,         section: "supply" },
@@ -185,12 +185,16 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
           })}
         </nav>
 
-        {/* Footer: theme selector slot */}
-        {themeFooter && (
-          <div className="border-t border-border/50 p-2">
-            {themeFooter}
-          </div>
-        )}
+        {/* Footer: theme selector + ⌘K hint */}
+        <div className="border-t border-border/50 p-2 space-y-1">
+          {themeFooter}
+          {!collapsed && (
+            <p className="px-2 py-1 text-[10px] text-sidebar-foreground/40 flex items-center gap-1">
+              <kbd className="rounded border border-border/50 bg-muted px-1 py-0.5 font-mono text-[9px]">⌘K</kbd>
+              <span>command palette</span>
+            </p>
+          )}
+        </div>
       </aside>
 
       {/* Mobile overlay */}

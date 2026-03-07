@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
 import type { GlobalFilterContextValue } from "@/context/GlobalFilterContext";
@@ -366,6 +366,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "EOQ" }));
     await waitFor(() => {
       expect(screen.getByText("Total Cycle Stock")).toBeDefined();
       expect(screen.getByText("Avg EOQ Size")).toBeDefined();
@@ -382,6 +383,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "EOQ" }));
     await waitFor(() => {
       expect(screen.getByText("EOQ Sensitivity")).toBeDefined();
     });
@@ -395,6 +397,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "EOQ" }));
     await waitFor(() => {
       expect(screen.getByText("EOQ Detail")).toBeDefined();
     });
@@ -408,6 +411,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "EOQ" }));
     await waitFor(() => {
       const items = screen.getAllByText("ITEM001");
       expect(items.length).toBeGreaterThan(0);
@@ -422,6 +426,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "EOQ" }));
     await waitFor(() => {
       // Multiple item/location filter inputs may exist across sections
       const itemInputs = screen.getAllByPlaceholderText("Filter by item…");
@@ -439,6 +444,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Policy" }));
     await waitFor(() => {
       expect(screen.getByText("Policy Management")).toBeDefined();
     });
@@ -452,6 +458,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Policy" }));
     await waitFor(() => {
       expect(screen.getByText("Auto-assign All")).toBeDefined();
     });
@@ -465,6 +472,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Policy" }));
     await waitFor(() => {
       // Policy name appears in both the card and the compliance table — use getAllByText
       const els = screen.getAllByText("A-Class Continuous Review (ROP/EOQ)");
@@ -480,6 +488,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Policy" }));
     await waitFor(() => {
       expect(screen.getByText("DFU Coverage")).toBeDefined();
     });
@@ -493,6 +502,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Policy" }));
     await waitFor(() => {
       expect(screen.getByText("Policy Compliance")).toBeDefined();
     });
@@ -506,6 +516,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Health" }));
     await waitFor(() => {
       expect(screen.getByText("Portfolio Health Score")).toBeDefined();
     });
@@ -519,6 +530,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Health" }));
     await waitFor(() => {
       expect(screen.getByText("Healthy")).toBeDefined();
       expect(screen.getByText("Monitor")).toBeDefined();
@@ -537,6 +549,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Health" }));
     await waitFor(() => {
       expect(screen.getByText("Health Detail")).toBeDefined();
     });
@@ -550,6 +563,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Health" }));
     await waitFor(() => {
       // item_no appears in both EOQ and health detail tables
       const items = screen.getAllByText("ITEM001");
@@ -565,6 +579,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Health" }));
     await waitFor(() => {
       expect(screen.getByText("Health Distribution")).toBeDefined();
     });
@@ -578,6 +593,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Health" }));
     await waitFor(() => {
       expect(screen.getByText(/Score Components/i)).toBeDefined();
     });
@@ -661,6 +677,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Variability" }));
     await waitFor(() => {
       expect(screen.getByText("Demand Variability")).toBeDefined();
     });
@@ -674,6 +691,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Lead Time" }));
     await waitFor(() => {
       expect(screen.getByText("Lead Time Analysis")).toBeDefined();
     });
@@ -687,6 +705,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Signals" }));
     await waitFor(() => {
       expect(screen.getByText("Demand Signals")).toBeDefined();
     });
@@ -700,6 +719,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Simulation" }));
     await waitFor(() => {
       expect(screen.getByText("Safety Stock Simulation")).toBeDefined();
     });
@@ -713,6 +733,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Investment" }));
     await waitFor(() => {
       expect(screen.getByText("Investment Plan")).toBeDefined();
     });

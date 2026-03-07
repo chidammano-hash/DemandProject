@@ -146,6 +146,7 @@ export interface Alert {
   title: string;
   detail: string;
   count?: number;
+  source_tab?: string; // PL-013: destination tab when alert is clicked
 }
 
 export interface Mover {

@@ -99,7 +99,7 @@ describe("StoryboardTab", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByText(/Demand Planner Storyboard/i)).toBeDefined();
+      expect(screen.getByText(/Exception Triage/i)).toBeDefined();
     });
   });
 

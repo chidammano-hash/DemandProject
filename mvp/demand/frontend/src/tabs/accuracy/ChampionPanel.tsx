@@ -114,26 +114,27 @@ export function ChampionPanel({
                   <option value="4">Lag 4</option>
                 </select>
               </label>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={savingConfig || runningCompetition}
-                onClick={onSaveConfig}
-              >
-                {savingConfig ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
-                Save Config
-              </Button>
+              {/* PL-015: Save & Run combined — saves config then immediately runs */}
               <Button
                 size="sm"
-                disabled={runningCompetition || competitionConfig.models.length < 2}
+                disabled={savingConfig || runningCompetition || competitionConfig.models.length < 2}
                 onClick={onRunCompetition}
               >
-                {runningCompetition ? (
+                {(savingConfig || runningCompetition) ? (
                   <Loader2 className="mr-1 h-3 w-3 animate-spin" />
                 ) : (
                   <Trophy className="mr-1 h-3 w-3" />
                 )}
-                Run Competition
+                Save &amp; Run
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={savingConfig || runningCompetition}
+                onClick={onSaveConfig}
+                title="Save configuration without running competition"
+              >
+                Save only
               </Button>
             </div>
           </>

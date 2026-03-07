@@ -7,7 +7,7 @@ const SHORTCUTS = [
   { keys: ["4"], desc: "Accuracy" },
   { keys: ["5"], desc: "DFU Analysis" },
   { keys: ["6"], desc: "Inventory" },
-  { keys: ["7"], desc: "Storyboard" },
+  { keys: ["7"], desc: "Exceptions" },
   { keys: ["8"], desc: "Inv. Planning" },
   { keys: ["9"], desc: "Jobs" },
   { keys: ["["], desc: "Toggle sidebar" },

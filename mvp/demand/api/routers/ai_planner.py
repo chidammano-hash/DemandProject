@@ -62,8 +62,12 @@ class AnalyzeRequest(BaseModel):
 
 
 class StatusUpdateRequest(BaseModel):
-    status: str  # open | acknowledged | resolved
+    status: str  # open | acknowledged | resolved | snoozed
     action_taken: str | None = None  # optional: what the planner intends to do
+
+
+class SnoozeRequest(BaseModel):
+    days: int = 1  # 1 | 3 | 7 | custom
 
 
 class AutoAcceptRequest(BaseModel):
@@ -253,6 +257,43 @@ async def update_insight_status(insight_id: int, body: StatusUpdateRequest, requ
             conn.commit()
 
     return {"insight_id": row[0], "status": row[1]}
+
+
+# ---------------------------------------------------------------------------
+# PUT /ai-planner/insights/{insight_id}/snooze  (PL-012)
+# ---------------------------------------------------------------------------
+
+@router.put("/ai-planner/insights/{insight_id}/snooze")
+async def snooze_insight(insight_id: int, body: SnoozeRequest, request: Request):
+    """Snooze an insight for N days — hides it from the default open queue."""
+    require_api_key(request)
+    if body.days < 1 or body.days > 365:
+        raise HTTPException(status_code=422, detail="days must be between 1 and 365")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE ai_insights
+                   SET status = 'snoozed',
+                       snoozed_until = NOW() + INTERVAL '1 day' * %s,
+                       updated_at = NOW()
+                 WHERE insight_id = %s
+                RETURNING insight_id, status, snoozed_until
+                """,
+                (body.days, insight_id),
+            )
+            row = cur.fetchone()
+            if row is None:
+                conn.commit()
+                raise HTTPException(status_code=404, detail="Insight not found")
+            conn.commit()
+
+    return {
+        "insight_id": row[0],
+        "status": row[1],
+        "snoozed_until": row[2].isoformat() if row[2] else None,
+    }
 
 
 # ---------------------------------------------------------------------------

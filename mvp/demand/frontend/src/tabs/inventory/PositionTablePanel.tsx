@@ -1,5 +1,5 @@
-import { useCallback } from "react";
-import { ChevronLeft, ChevronRight, Package } from "lucide-react";
+import { useCallback, useState } from "react";
+import { ChevronLeft, ChevronRight, Package, Columns } from "lucide-react";
 
 import {
   Card,
@@ -82,6 +82,9 @@ interface PositionTablePanelProps {
   isLoadingDetail: boolean;
 }
 
+// Default visible columns (5 primary + 3 optional)
+const DEFAULT_VISIBLE = new Set<SortCol>(["item_no", "loc", "qty_on_hand", "lead_time_days", "mtd_sales"]);
+
 export function PositionTablePanel({
   itemFilter,
   locationFilter,
@@ -107,6 +110,16 @@ export function PositionTablePanel({
 }: PositionTablePanelProps) {
   const totalPages = Math.max(1, Math.ceil(totalPositions / PAGE_SIZE));
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
+  const [visibleCols, setVisibleCols] = useState<Set<SortCol>>(DEFAULT_VISIBLE);
+  const [colPickerOpen, setColPickerOpen] = useState(false);
+
+  const toggleCol = useCallback((col: SortCol) => {
+    setVisibleCols((prev) => {
+      const next = new Set(prev);
+      if (next.has(col)) { next.delete(col); } else { next.add(col); }
+      return next;
+    });
+  }, []);
 
   const sortIndicator = useCallback(
     (col: SortCol) => {
@@ -133,6 +146,36 @@ export function PositionTablePanel({
         <div className="flex items-center gap-2">
           <Package className="h-5 w-5" />
           <CardTitle className="text-base">Inventory Position</CardTitle>
+          <div className="relative ml-auto">
+            <button
+              onClick={() => setColPickerOpen((v) => !v)}
+              className="flex items-center gap-1 rounded border border-input bg-background px-2 py-1 text-xs hover:bg-muted"
+              title="Choose columns"
+            >
+              <Columns className="h-3.5 w-3.5" /> Columns
+            </button>
+            {colPickerOpen && (
+              <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-md border bg-card shadow-lg p-2 space-y-1">
+                {COLUMNS.map(({ col, label }) => (
+                  <label key={col} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted px-1 py-0.5 rounded">
+                    <input
+                      type="checkbox"
+                      checked={visibleCols.has(col)}
+                      onChange={() => toggleCol(col)}
+                      className="h-3 w-3"
+                    />
+                    {label}
+                  </label>
+                ))}
+                <button
+                  onClick={() => setColPickerOpen(false)}
+                  className="mt-1 w-full text-center text-[10px] text-muted-foreground hover:text-foreground"
+                >
+                  Close
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         <CardDescription>
           Browse inventory snapshots by item and location. Click a row to view
@@ -194,7 +237,7 @@ export function PositionTablePanel({
               <Table>
                 <TableHeader>
                   <TableRow className="border-muted bg-muted/30">
-                    {COLUMNS.map(({ col, label }) => (
+                    {COLUMNS.filter(({ col }) => visibleCols.has(col)).map(({ col, label }) => (
                       <TableHead
                         key={col}
                         className={cn(
@@ -216,39 +259,49 @@ export function PositionTablePanel({
                     const isSelected =
                       selectedRow?.item === row.item_no &&
                       selectedRow?.location === row.loc;
+                    // PL-016: compute approximate DOS and apply threshold color
+                    const avgDailySales = row.mtd_sales > 0 ? row.mtd_sales / 30 : null;
+                    const dos = avgDailySales != null ? row.qty_on_hand / avgDailySales : null;
+                    const dosColor = dos == null ? "" :
+                      dos < 7   ? "bg-red-50 dark:bg-red-900/20" :
+                      dos < 14  ? "bg-amber-50 dark:bg-amber-900/20" :
+                      dos > 180 ? "bg-blue-50 dark:bg-blue-900/20" :
+                      "";
                     return (
                       <TableRow
                         key={`${row.item_no}-${row.loc}-${row.snapshot_date}-${idx}`}
                         className={cn(
                           "cursor-pointer",
-                          isSelected ? "bg-primary/10" : "hover:bg-muted/30",
+                          isSelected ? "bg-primary/10" : cn(dosColor, "hover:bg-muted/30"),
                         )}
                         onClick={() => onRowClick(row)}
                       >
-                        <TableCell className="text-sm font-medium">
-                          {row.item_no}
-                        </TableCell>
-                        <TableCell className="text-sm">{row.loc}</TableCell>
-                        <TableCell className="text-sm text-right tabular-nums">
-                          {row.snapshot_date}
-                        </TableCell>
-                        <TableCell className="text-sm text-right tabular-nums">
-                          {formatNumber(row.qty_on_hand)}
-                        </TableCell>
-                        <TableCell className="text-sm text-right tabular-nums">
-                          {formatNumber(row.qty_on_hand_on_order)}
-                        </TableCell>
-                        <TableCell className="text-sm text-right tabular-nums">
-                          {formatNumber(row.qty_on_order)}
-                        </TableCell>
-                        <TableCell className="text-sm text-right tabular-nums">
-                          {row.lead_time_days != null
-                            ? formatNumber(row.lead_time_days)
-                            : "-"}
-                        </TableCell>
-                        <TableCell className="text-sm text-right tabular-nums">
-                          {formatNumber(row.mtd_sales)}
-                        </TableCell>
+                        {visibleCols.has("item_no") && (
+                          <TableCell className="text-sm font-medium">{row.item_no}</TableCell>
+                        )}
+                        {visibleCols.has("loc") && (
+                          <TableCell className="text-sm">{row.loc}</TableCell>
+                        )}
+                        {visibleCols.has("snapshot_date") && (
+                          <TableCell className="text-sm text-right tabular-nums">{row.snapshot_date}</TableCell>
+                        )}
+                        {visibleCols.has("qty_on_hand") && (
+                          <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.qty_on_hand)}</TableCell>
+                        )}
+                        {visibleCols.has("qty_on_hand_on_order") && (
+                          <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.qty_on_hand_on_order)}</TableCell>
+                        )}
+                        {visibleCols.has("qty_on_order") && (
+                          <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.qty_on_order)}</TableCell>
+                        )}
+                        {visibleCols.has("lead_time_days") && (
+                          <TableCell className="text-sm text-right tabular-nums">
+                            {row.lead_time_days != null ? formatNumber(row.lead_time_days) : "-"}
+                          </TableCell>
+                        )}
+                        {visibleCols.has("mtd_sales") && (
+                          <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.mtd_sales)}</TableCell>
+                        )}
                       </TableRow>
                     );
                   })}
@@ -291,8 +344,10 @@ export function PositionTablePanel({
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No inventory data found. Check that inventory data has been loaded
-            into the database.
+            No inventory data found
+            {itemFilter || locationFilter
+              ? " matching current filters. Try broadening the item or location filter."
+              : ". Check that inventory data has been loaded into the database."}
           </p>
         )}
 

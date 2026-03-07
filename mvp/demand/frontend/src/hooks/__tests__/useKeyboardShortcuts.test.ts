@@ -42,7 +42,7 @@ describe("useKeyboardShortcuts", () => {
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("inventory");
 
     act(() => fireKey("7"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("storyboard");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("exceptions");
 
     act(() => fireKey("8"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("invPlanning");

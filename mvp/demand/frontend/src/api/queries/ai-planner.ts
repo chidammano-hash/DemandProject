@@ -82,3 +82,15 @@ export async function triggerAutoAccept(req: AutoAcceptRequest): Promise<AutoAcc
     body: JSON.stringify(req),
   });
 }
+
+// PL-012: Snooze an insight for N days
+export async function snoozeInsight(
+  insight_id: number,
+  days: number,
+): Promise<{ insight_id: number; status: string; snoozed_until: string | null }> {
+  return fetchJson(`/ai-planner/insights/${insight_id}/snooze`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ days }),
+  });
+}

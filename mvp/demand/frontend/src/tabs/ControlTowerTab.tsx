@@ -4,6 +4,7 @@
  * 5-zone command center: KPI strip, health overview, exception queue,
  * top-critical items, and 6-month trend chart.
  */
+import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -41,33 +42,52 @@ const SOURCE_LABELS: Record<string, string> = {
   health_drop:   "HEALTH",
 };
 
-export default function ControlTowerTab() {
+// PL-014: trend window options (months)
+const TREND_WINDOWS = [
+  { label: "3M",  value: 3 },
+  { label: "6M",  value: 6 },
+  { label: "12M", value: 12 },
+  { label: "18M", value: 18 },
+] as const;
+
+export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: string) => void }) {
   const queryClient = useQueryClient();
+  const [trendMonths, setTrendMonths] = useState(6); // PL-014
+  const [showMoreKpis, setShowMoreKpis] = useState(false);
+
+  // Reduce auto-refresh interval when tab is hidden (10 min instead of 2 min)
+  const [isTabVisible, setIsTabVisible] = useState(!document.hidden);
+  useEffect(() => {
+    const handler = () => setIsTabVisible(!document.hidden);
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, []);
+  const refreshInterval = isTabVisible ? 120_000 : 600_000;
 
   const { data: kpis, isLoading: kpisLoading } = useQuery({
     queryKey: controlTowerKeys.kpis(),
     queryFn: fetchControlTowerKpis,
     staleTime: STALE,
-    refetchInterval: 120_000, // auto-refresh every 2 minutes
+    refetchInterval: refreshInterval,
   });
 
   const { data: alertsData } = useQuery({
     queryKey: controlTowerKeys.alerts({ limit: 10 }),
     queryFn: () => fetchControlTowerAlerts({ limit: 10 }),
     staleTime: STALE,
-    refetchInterval: 120_000,
+    refetchInterval: refreshInterval,
   });
 
   const { data: topCritical } = useQuery({
     queryKey: controlTowerKeys.topCritical(10),
     queryFn: () => fetchControlTowerTopCritical(10),
     staleTime: STALE,
-    refetchInterval: 120_000,
+    refetchInterval: refreshInterval,
   });
 
   const { data: trendData } = useQuery({
-    queryKey: controlTowerKeys.trend(6),
-    queryFn: () => fetchControlTowerTrend(6),
+    queryKey: controlTowerKeys.trend(trendMonths),
+    queryFn: () => fetchControlTowerTrend(trendMonths),
     staleTime: STALE,
     refetchInterval: 3_600_000,
   });
@@ -97,40 +117,65 @@ export default function ControlTowerTab() {
 
       {kpisLoading && <p className="text-sm text-muted-foreground">Loading control tower data...</p>}
 
-      {/* ZONE 1: KPI Strip */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiCard
-          label="Portfolio Health"
-          value={h?.avg_health_score != null ? `${h.avg_health_score.toFixed(0)}/100` : "—"}
-          color={h?.avg_health_score == null ? undefined : h.avg_health_score >= 80 ? "green" : h.avg_health_score >= 60 ? "amber" : "red"}
-        />
-        <KpiCard
-          label="Open Exceptions"
-          value={`${ex?.open_exceptions_total ?? 0}`}
-          badge={ex?.critical_exceptions ? `${ex.critical_exceptions} critical` : undefined}
-          badgeColor="red"
-          color={ex?.critical_exceptions ? "red" : undefined}
-        />
-        <KpiCard
-          label="Fill Rate (3m)"
-          value={fr?.portfolio_fill_rate_3m != null ? pct(fr.portfolio_fill_rate_3m, 100) : "—"}
-          color={fr?.portfolio_fill_rate_3m == null ? undefined : fr.portfolio_fill_rate_3m >= 0.95 ? "green" : fr.portfolio_fill_rate_3m >= 0.90 ? "amber" : "red"}
-        />
-        <KpiCard
-          label="Stockout Items (MTD)"
-          value={`${im?.items_with_stockout_this_month ?? 0}`}
-          color={im?.extended_stockouts_this_month ? "red" : undefined}
-        />
-        <KpiCard
-          label="Below SS %"
-          value={h?.below_ss_pct != null ? pct(h.below_ss_pct, 100) : "—"}
-          color={h?.below_ss_pct == null ? undefined : h.below_ss_pct < 0.05 ? "green" : h.below_ss_pct < 0.20 ? "amber" : "red"}
-        />
-        <KpiCard
-          label="Urgent Signals"
-          value={`${ds?.urgent_demand_signals ?? 0}`}
-          color={ds?.urgent_demand_signals ? "red" : "green"}
-        />
+      {/* ZONE 1: KPI Strip — 4 primary KPIs (MAX_PRIMARY_KPIS = 4) */}
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <KpiCard
+            label="Portfolio Health"
+            value={h?.avg_health_score != null ? `${h.avg_health_score.toFixed(0)}/100` : "—"}
+            color={h?.avg_health_score == null ? undefined : h.avg_health_score >= 80 ? "green" : h.avg_health_score >= 60 ? "amber" : "red"}
+          />
+          <KpiCard
+            label="Open Exceptions"
+            value={`${ex?.open_exceptions_total ?? 0}`}
+            badge={ex?.critical_exceptions ? `${ex.critical_exceptions} critical` : undefined}
+            badgeColor="red"
+            color={ex?.critical_exceptions ? "red" : undefined}
+          />
+          <KpiCard
+            label="Fill Rate (3m)"
+            value={fr?.portfolio_fill_rate_3m != null ? pct(fr.portfolio_fill_rate_3m, 100) : "—"}
+            color={fr?.portfolio_fill_rate_3m == null ? undefined : fr.portfolio_fill_rate_3m >= 0.95 ? "green" : fr.portfolio_fill_rate_3m >= 0.90 ? "amber" : "red"}
+          />
+          <KpiCard
+            label="$ at Risk"
+            value={ex?.critical_exceptions ? `${ex.critical_exceptions} critical` : "—"}
+            color={ex?.critical_exceptions ? "red" : "green"}
+          />
+        </div>
+
+        {/* Secondary KPIs — shown on demand */}
+        {showMoreKpis && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <KpiCard
+              label="Stockout Items (MTD)"
+              value={`${im?.items_with_stockout_this_month ?? 0}`}
+              color={im?.extended_stockouts_this_month ? "red" : undefined}
+            />
+            <KpiCard
+              label="Below SS %"
+              value={h?.below_ss_pct != null ? pct(h.below_ss_pct, 100) : "—"}
+              color={h?.below_ss_pct == null ? undefined : h.below_ss_pct < 0.05 ? "green" : h.below_ss_pct < 0.20 ? "amber" : "red"}
+            />
+            <KpiCard
+              label="Urgent Signals"
+              value={`${ds?.urgent_demand_signals ?? 0}`}
+              color={ds?.urgent_demand_signals ? "red" : "green"}
+            />
+            <KpiCard
+              label="Extended Stockouts"
+              value={`${im?.extended_stockouts_this_month ?? 0}`}
+              color={im?.extended_stockouts_this_month ? "red" : undefined}
+            />
+          </div>
+        )}
+
+        <button
+          onClick={() => setShowMoreKpis((v) => !v)}
+          className="text-[11px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+        >
+          {showMoreKpis ? "▲ Fewer metrics" : "▼ More metrics"}
+        </button>
       </div>
 
       {/* ZONE 2 + ZONE 3: Health Overview & Exception Queue */}
@@ -168,9 +213,19 @@ export default function ControlTowerTab() {
 
         {/* ZONE 3: Exception Queue */}
         <div className="rounded-lg border bg-card p-4 space-y-3">
-          <h3 className="text-sm font-semibold">
-            Open Exceptions ({ex?.open_exceptions_total ?? 0})
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">
+              Open Exceptions ({ex?.open_exceptions_total ?? 0})
+            </h3>
+            {onNavigate && (
+              <button
+                onClick={() => onNavigate("exceptions")}
+                className="text-xs text-primary hover:underline"
+              >
+                View All →
+              </button>
+            )}
+          </div>
           {alertsData?.alerts && alertsData.alerts.length > 0 ? (
             <div className="space-y-2 max-h-52 overflow-y-auto">
               {alertsData.alerts.map((alert: ControlTowerAlert) => (
@@ -191,14 +246,31 @@ export default function ControlTowerTab() {
               ))}
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground">No open exceptions.</p>
+            <p className="text-xs text-green-600 dark:text-green-400">
+              ✓ No open exceptions matching current thresholds.
+              {onNavigate && (
+                <button onClick={() => onNavigate("invPlanning")} className="ml-1 underline">
+                  Adjust in Inv. Planning →
+                </button>
+              )}
+            </p>
           )}
         </div>
       </div>
 
       {/* ZONE 4: Top-10 Critical Items */}
       <div className="rounded-lg border bg-card p-4 space-y-3">
-        <h3 className="text-sm font-semibold">Top Critical Items (worst health first)</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Top Critical Items (worst health first)</h3>
+          {onNavigate && (
+            <button
+              onClick={() => onNavigate("inventory")}
+              className="text-xs text-primary hover:underline"
+            >
+              View Inventory →
+            </button>
+          )}
+        </div>
         {topCritical?.items && topCritical.items.length > 0 ? (
           <div className="flex gap-3 overflow-x-auto pb-2">
             {topCritical.items.map((item: ControlTowerCriticalItem) => (
@@ -232,17 +304,44 @@ export default function ControlTowerTab() {
                 {item.stockout_days_this_month > 0 && (
                   <p className="text-red-600">Stockout: {item.stockout_days_this_month}d MTD</p>
                 )}
+                {onNavigate && (
+                  <button
+                    onClick={() => onNavigate("dfuAnalysis")}
+                    className="mt-1 w-full text-center rounded border border-current px-2 py-0.5 text-[10px] font-medium hover:opacity-80"
+                  >
+                    View Detail →
+                  </button>
+                )}
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">No critical items to display.</p>
+          <p className="text-xs text-green-600 dark:text-green-400">
+            ✓ No critical items — all DFUs within health thresholds.
+          </p>
         )}
       </div>
 
       {/* ZONE 5: 6-Month Trend */}
       <div className="rounded-lg border bg-card p-4 space-y-3">
-        <h3 className="text-sm font-semibold">6-Month Portfolio Trend</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Portfolio Trend</h3>
+          <div className="flex gap-1">
+            {TREND_WINDOWS.map((w) => (
+              <button
+                key={w.value}
+                onClick={() => setTrendMonths(w.value)}
+                className={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                  trendMonths === w.value
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80"
+                }`}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {trendData?.trend && trendData.trend.length > 0 ? (
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={trendData.trend}>

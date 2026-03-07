@@ -4,9 +4,12 @@
  * Fill Rate + ABC-XYZ + Supplier + Intramonth + Safety Stock + Variability +
  * Lead Time + Demand Signals + Simulation + Investment Plan
  *
- * Inventory Planning tab: renders each panel as an extracted sub-component.
+ * PL-009: Sub-navigation added — shows one panel at a time to reduce scroll
+ * and initial API call overhead.
  */
 
+import { useState } from "react";
+import { cn } from "@/lib/utils";
 import { ExceptionQueuePanel } from "./inv-planning/ExceptionQueuePanel";
 import { PortfolioHealthPanel } from "./inv-planning/PortfolioHealthPanel";
 import { EoqPanel } from "./inv-planning/EoqPanel";
@@ -22,118 +25,137 @@ import { DemandSignalsPanel } from "./inv-planning/DemandSignalsPanel";
 import { SimulationPanel } from "./inv-planning/SimulationPanel";
 import { InvestmentPanel } from "./inv-planning/InvestmentPanel";
 
+// ---------------------------------------------------------------------------
+// Sub-navigation config
+// ---------------------------------------------------------------------------
+const SUB_TABS = [
+  { key: "exceptions",  label: "Exceptions",   group: "Daily" },
+  { key: "health",      label: "Health",        group: "Daily" },
+  { key: "eoq",         label: "EOQ",           group: "Optimize" },
+  { key: "policy",      label: "Policy",        group: "Optimize" },
+  { key: "fillrate",    label: "Fill Rate",     group: "Analytics" },
+  { key: "abcxyz",      label: "ABC-XYZ",       group: "Analytics" },
+  { key: "supplier",    label: "Supplier",      group: "Analytics" },
+  { key: "intramonth",  label: "Intramonth",    group: "Analytics" },
+  { key: "safetystock", label: "Safety Stock",  group: "Planning" },
+  { key: "variability", label: "Variability",   group: "Planning" },
+  { key: "leadtime",    label: "Lead Time",     group: "Planning" },
+  { key: "signals",     label: "Signals",       group: "Planning" },
+  { key: "simulation",  label: "Simulation",    group: "Planning" },
+  { key: "investment",  label: "Investment",    group: "Planning" },
+] as const;
+
+type SubTabKey = (typeof SUB_TABS)[number]["key"];
+
 export function InvPlanningTab() {
+  const [activePanel, setActivePanel] = useState<SubTabKey>("exceptions");
+
   return (
-    <div className="flex flex-col gap-6 p-4">
+    <div className="flex flex-col gap-4 p-4">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-foreground">
-          Inventory Planning — Health Score, EOQ &amp; Replenishment Policy
-        </h2>
+        <h2 className="text-xl font-semibold text-foreground">Inventory Planning</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Portfolio health scoring, Economic Order Quantity targets, and replenishment policy assignments per item-location.
+          Exception queue, health scoring, EOQ targets, replenishment policy, and demand analytics per item-location.
         </p>
       </div>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Exception Queue (IPfeature7)                                        */}
-      {/* ------------------------------------------------------------------ */}
-      <ExceptionQueuePanel />
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Portfolio Health section (IPfeature6)                               */}
-      {/* ------------------------------------------------------------------ */}
-      <PortfolioHealthPanel />
-
-      {/* ------------------------------------------------------------------ */}
-      {/* EOQ KPIs, Sensitivity, Detail Table (IPfeature4)                   */}
-      {/* ------------------------------------------------------------------ */}
-      <EoqPanel />
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Policy Management (IPfeature5)                                      */}
-      {/* ------------------------------------------------------------------ */}
-      <PolicyManagementPanel />
-
-      {/* ================================================================
-          IPfeature8: Fill Rate Analytics Panel
-          ================================================================ */}
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        <h3 className="font-semibold text-base">Fill Rate Analytics</h3>
-        <FillRatePanel />
+      {/* Sub-navigation tab strip (PL-009) */}
+      <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/30 p-1">
+        {SUB_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActivePanel(tab.key)}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              activePanel === tab.key
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground hover:bg-card/50",
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* ================================================================
-          IPfeature11: ABC-XYZ Classification Panel
-          ================================================================ */}
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        <h3 className="font-semibold text-base">ABC-XYZ Segmentation</h3>
-        <AbcXyzPanel />
-      </div>
+      {/* Active panel */}
+      {activePanel === "exceptions" && <ExceptionQueuePanel />}
 
-      {/* ================================================================
-          IPfeature12: Supplier Performance Panel
-          ================================================================ */}
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        <h3 className="font-semibold text-base">Supplier Performance</h3>
-        <SupplierPanel />
-      </div>
+      {activePanel === "health" && <PortfolioHealthPanel />}
 
-      {/* ================================================================
-          IPfeature14: Intra-Month Stockout Detection Panel
-          ================================================================ */}
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        <h3 className="font-semibold text-base">Intra-Month Stockout Detection</h3>
-        <IntramonthPanel />
-      </div>
+      {activePanel === "eoq" && <EoqPanel />}
 
-      {/* ================================================================
-          IPfeature3: Safety Stock Panel
-          ================================================================ */}
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        <h3 className="font-semibold text-base">Safety Stock</h3>
-        <SafetyStockPanel />
-      </div>
+      {activePanel === "policy" && <PolicyManagementPanel />}
 
-      {/* ================================================================
-          IPfeature1: Demand Variability Panel
-          ================================================================ */}
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        <h3 className="font-semibold text-base">Demand Variability</h3>
-        <VariabilityPanel />
-      </div>
+      {activePanel === "fillrate" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Fill Rate Analytics</h3>
+          <FillRatePanel />
+        </div>
+      )}
 
-      {/* ================================================================
-          IPfeature2: Lead Time Panel
-          ================================================================ */}
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        <h3 className="font-semibold text-base">Lead Time Analysis</h3>
-        <LeadTimePanel />
-      </div>
+      {activePanel === "abcxyz" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">ABC-XYZ Segmentation</h3>
+          <AbcXyzPanel />
+        </div>
+      )}
 
-      {/* ================================================================
-          IPfeature9: Demand Signals Panel
-          ================================================================ */}
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        <h3 className="font-semibold text-base">Demand Signals</h3>
-        <DemandSignalsPanel />
-      </div>
+      {activePanel === "supplier" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Supplier Performance</h3>
+          <SupplierPanel />
+        </div>
+      )}
 
-      {/* ================================================================
-          IPfeature10: Simulation Panel
-          ================================================================ */}
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        <h3 className="font-semibold text-base">Safety Stock Simulation</h3>
-        <SimulationPanel />
-      </div>
+      {activePanel === "intramonth" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Intra-Month Stockout Detection</h3>
+          <IntramonthPanel />
+        </div>
+      )}
 
-      {/* ================================================================
-          IPfeature13: Investment Plan Panel
-          ================================================================ */}
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        <h3 className="font-semibold text-base">Investment Plan</h3>
-        <InvestmentPanel />
-      </div>
+      {activePanel === "safetystock" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Safety Stock</h3>
+          <SafetyStockPanel />
+        </div>
+      )}
+
+      {activePanel === "variability" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Demand Variability</h3>
+          <VariabilityPanel />
+        </div>
+      )}
+
+      {activePanel === "leadtime" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Lead Time Analysis</h3>
+          <LeadTimePanel />
+        </div>
+      )}
+
+      {activePanel === "signals" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Demand Signals</h3>
+          <DemandSignalsPanel />
+        </div>
+      )}
+
+      {activePanel === "simulation" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Safety Stock Simulation</h3>
+          <SimulationPanel />
+        </div>
+      )}
+
+      {activePanel === "investment" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Investment Plan</h3>
+          <InvestmentPanel />
+        </div>
+      )}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -41,6 +42,12 @@ export function TrendChartPanel({ trendData, isLoading }: TrendChartPanelProps) 
     avg_lead_time: pt.avg_lead_time,
     dos: pt.dos,
   }));
+
+  // Compute reorder-point threshold: avg lead time × 1.5 (safety buffer)
+  const validLTs = trendData.map((pt) => pt.avg_lead_time).filter((v): v is number => v != null && v > 0);
+  const ropThreshold = validLTs.length > 0
+    ? (validLTs.reduce((a, b) => a + b, 0) / validLTs.length) * 1.5
+    : null;
 
   const TOOLTIP_LABELS: Record<string, string> = {
     total_on_hand: "On Hand",
@@ -136,6 +143,17 @@ export function TrendChartPanel({ trendData, isLoading }: TrendChartPanelProps) 
             dot={CHART_DOT}
             connectNulls
           />
+          {/* Reorder Point threshold: LT × 1.5 — DOS below this line needs attention */}
+          {ropThreshold != null && (
+            <ReferenceLine
+              yAxisId="right"
+              y={ropThreshold}
+              stroke="#ef4444"
+              strokeDasharray="4 3"
+              strokeWidth={1.5}
+              label={{ value: `ROP ${ropThreshold.toFixed(0)}d`, position: "insideTopRight", fontSize: 10, fill: "#ef4444" }}
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>

@@ -7,7 +7,8 @@ type KpiCardProps = {
   sublabel?: string;
   colorClass?: string;
   borderClass?: string;
-  trend?: { delta: number; direction: "up" | "down" | "flat" };
+  /** direction drives color; unit defaults to "%" if omitted; period labels the comparison window */
+  trend?: { delta: number; direction: "up" | "down" | "flat"; unit?: string; period?: string };
   sparkline?: number[];
   severity?: "best" | "warning" | "neutral";
   icon?: LucideIcon;
@@ -75,7 +76,7 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, trend
         <div className={cn("flex items-center gap-1 text-xs", trendColor)}>
           <TrendIcon className="h-3 w-3" />
           <span className="tabular-nums">
-            {trend.delta > 0 ? "+" : ""}{trend.delta.toFixed(1)}% vs prior
+            {trend.delta > 0 ? "+" : ""}{trend.delta.toFixed(1)}{trend.unit ?? "%"} vs {trend.period ?? "prior"}
           </span>
         </div>
       )}

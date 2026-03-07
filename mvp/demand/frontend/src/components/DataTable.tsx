@@ -218,6 +218,7 @@ export function DataTable({
                   {headerGroup.headers.map((header, colIdx) => (
                     <TableHead
                       key={header.id}
+                      scope="col"
                       className={cn(
                         "align-top",
                         colIdx === 0 && "w-[40px] sticky left-0 z-10 bg-muted",

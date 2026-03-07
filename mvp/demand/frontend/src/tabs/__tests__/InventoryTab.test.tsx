@@ -15,6 +15,7 @@ vi.mock("recharts", () => ({
   CartesianGrid: () => null,
   Tooltip: () => null,
   Legend: () => null,
+  ReferenceLine: () => null,
 }));
 
 vi.mock("@/api/queries", () => ({

@@ -44,6 +44,7 @@ const ControlTowerTab = lazy(() => import("./tabs/ControlTowerTab"));
 const JobsTab = lazy(() => import("./tabs/JobsTab"));
 const AIPlannerTab = lazy(() => import("./tabs/AIPlannerTab"));
 const StoryboardTab = lazy(() => import("./tabs/StoryboardTab"));
+const ExceptionsTab = StoryboardTab; // alias — PL-003 rename
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -144,8 +145,10 @@ export default function App() {
 
           {/* Main content area */}
           <div className="flex flex-1 flex-col overflow-hidden">
-            {/* Global filter bar */}
-            <GlobalFilterBar />
+            {/* Global filter bar — hidden on tabs that don't consume it (PL-005) */}
+            {!["aiPlanner", "jobs", "chat", "clusters", "invBacktest", "exceptions", "storyboard"].includes(activeTab) && (
+              <GlobalFilterBar />
+            )}
 
             {/* Tab content */}
             <div id="tab-content" role="tabpanel" aria-label={`${activeTab} tab content`} className="flex-1 overflow-y-auto p-4 md:p-6">
@@ -153,7 +156,7 @@ export default function App() {
                 {activeTab === "overview" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="overview" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="overview" />}>
-                      <DashboardTab />
+                      <DashboardTab onNavigate={handleTabSwitch} />
                     </Suspense>
                   </ErrorBoundary>
                 )}
@@ -216,7 +219,7 @@ export default function App() {
                 {activeTab === "controlTower" && (
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="controlTower" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="controlTower" />}>
-                      <ControlTowerTab />
+                      <ControlTowerTab onNavigate={handleTabSwitch} />
                     </Suspense>
                   </ErrorBoundary>
                 )}
@@ -234,10 +237,10 @@ export default function App() {
                     </Suspense>
                   </ErrorBoundary>
                 )}
-                {activeTab === "storyboard" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="storyboard" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="storyboard" />}>
-                      <StoryboardTab />
+                {(activeTab === "exceptions" || activeTab === "storyboard") && (
+                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="exceptions" />} resetKeys={[activeTab]}>
+                    <Suspense fallback={<TabSuspenseFallback tabKey="exceptions" />}>
+                      <ExceptionsTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}

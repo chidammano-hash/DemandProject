@@ -18,7 +18,7 @@ const TAB_MAP: Record<string, string> = {
   "4": "accuracy",
   "5": "dfuAnalysis",
   "6": "inventory",
-  "7": "storyboard",
+  "7": "exceptions",
   "8": "invPlanning",
   "9": "jobs",
 };
