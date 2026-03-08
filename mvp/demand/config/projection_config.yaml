@@ -1,0 +1,17 @@
+projection:
+  horizon_days: 90                    # days forward to project
+  scenarios:
+    - no_order
+    - with_open_po
+    - with_planned_orders
+  daily_demand_method: calendar_days  # 'calendar_days' or 'business_days'
+  fallback_history_months: 3          # months of history to average if no production forecast
+
+thresholds:
+  reorder_point_source: safety_stock  # 'safety_stock' or 'reorder_point_config'
+  excess_coverage_months: 6           # projected_qty > 6 months avg demand = excess_risk
+
+scheduler:
+  job_type: compute_inventory_projection
+  cron: "0 7 * * *"                   # Run after production forecast (06:00)
+  horizon_days: 90

@@ -110,6 +110,13 @@ export const queryKeys = {
   productionForecast: (params: Record<string, unknown>) => ["production-forecast", params] as const,
   productionForecastSummary: (params: Record<string, unknown>) => ["production-forecast-summary", params] as const,
   productionForecastVersions: () => ["production-forecast-versions"] as const,
+  // Open PO Integration keys (F1.3)
+  openPOs: (params: Record<string, unknown>) => ["open-pos", params] as const,
+  openPOSummary: () => ["open-po-summary"] as const,
+  pastDuePOs: () => ["past-due-pos"] as const,
+  // Order Recommendation keys (F2.1)
+  plannedOrders: (params: Record<string, unknown>) => ["planned-orders", params] as const,
+  plannedOrdersSummary: () => ["planned-orders-summary"] as const,
 };
 
 // ---------------------------------------------------------------------------

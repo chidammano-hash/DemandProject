@@ -17,9 +17,13 @@ from unittest.mock import MagicMock, patch
 
 from scripts.generate_production_forecasts import (
     build_inference_grid,
+    build_sales_index,
+    build_attrs_index,
+    build_cat_encoders,
     generate_forecast_recursive,
+    generate_forecasts_batch,
 )
-from common.constants import LAG_RANGE, ROLLING_WINDOWS
+from common.constants import LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +203,201 @@ def test_generate_forecast_qty_nonneg():
         run_id="test-run-id",
         model_id="lgbm_cluster",
         cluster_id=2,
+    )
+    for row in rows:
+        assert row["forecast_qty"] >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# build_sales_index
+# ---------------------------------------------------------------------------
+
+def test_build_sales_index_structure():
+    """Returns dict keyed by (item_no, loc) with (dates, qty) tuples."""
+    sales = _make_sales(n_months=6)
+    idx = build_sales_index(sales)
+    assert ("ITEM001", "LOC1") in idx
+    dates, qty = idx[("ITEM001", "LOC1")]
+    assert len(dates) == 6
+    assert len(qty) == 6
+
+
+def test_build_sales_index_sorted():
+    """Qty values are sorted chronologically."""
+    sales = _make_sales(n_months=6)
+    sales = sales.sample(frac=1, random_state=0)  # shuffle
+    idx = build_sales_index(sales)
+    _, qty = idx[("ITEM001", "LOC1")]
+    assert len(qty) == 6  # all rows present
+
+
+def test_build_sales_index_multiple_dfus():
+    """Handles multiple DFUs correctly."""
+    s1 = _make_sales("ITEM001", "LOC1", n_months=6)
+    s2 = _make_sales("ITEM002", "LOC2", n_months=4)
+    idx = build_sales_index(pd.concat([s1, s2], ignore_index=True))
+    assert ("ITEM001", "LOC1") in idx
+    assert ("ITEM002", "LOC2") in idx
+    assert len(idx[("ITEM002", "LOC2")][1]) == 4
+
+
+# ---------------------------------------------------------------------------
+# build_attrs_index
+# ---------------------------------------------------------------------------
+
+def test_build_attrs_index_structure():
+    """Returns dict keyed by (item_no, loc) with attr dicts."""
+    attrs = _make_dfu_attrs()
+    idx = build_attrs_index(attrs)
+    assert ("ITEM001", "LOC1") in idx
+    assert idx[("ITEM001", "LOC1")]["brand"] == "BrandA"
+
+
+def test_build_attrs_index_missing_key():
+    """Missing DFU returns empty dict via .get()."""
+    idx = build_attrs_index(_make_dfu_attrs())
+    assert idx.get(("MISSING", "LOC99"), {}) == {}
+
+
+# ---------------------------------------------------------------------------
+# build_cat_encoders
+# ---------------------------------------------------------------------------
+
+def test_build_cat_encoders_returns_all_features():
+    """Returns encoders for all CAT_FEATURES present in attrs."""
+    attrs = _make_dfu_attrs()
+    enc = build_cat_encoders(attrs)
+    for col in CAT_FEATURES:
+        if col in attrs.columns:
+            assert col in enc
+
+
+def test_build_cat_encoders_integer_codes():
+    """Encoder values are non-negative integers."""
+    attrs = _make_dfu_attrs()
+    enc = build_cat_encoders(attrs)
+    for col, mapping in enc.items():
+        for val, code in mapping.items():
+            assert isinstance(code, int)
+            assert code >= 0
+
+
+# ---------------------------------------------------------------------------
+# build_inference_grid fast path (index-based)
+# ---------------------------------------------------------------------------
+
+def test_build_grid_fast_path():
+    """Fast path using sales_index and attrs_index returns same shape as slow path."""
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    sales_index = build_sales_index(sales)
+    attrs_index = build_attrs_index(attrs)
+
+    grid = build_inference_grid(
+        "ITEM001", "LOC1", 2,
+        horizon=6,
+        sales_index=sales_index,
+        attrs_index=attrs_index,
+    )
+    assert grid is not None
+    assert len(grid) == 6
+
+
+def test_build_grid_fast_path_missing_dfu_returns_none():
+    """Fast path returns None when DFU not in sales_index."""
+    sales = _make_sales(n_months=24)
+    sales_index = build_sales_index(sales)
+    attrs_index = build_attrs_index(_make_dfu_attrs())
+
+    result = build_inference_grid(
+        "MISSING", "LOC99", 0,
+        horizon=6,
+        sales_index=sales_index,
+        attrs_index=attrs_index,
+    )
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# generate_forecasts_batch
+# ---------------------------------------------------------------------------
+
+def _make_artifact(pred_val: float = 100.0) -> dict:
+    model = MagicMock()
+    model.predict = MagicMock(side_effect=lambda X: np.full(len(X), pred_val))
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=3)
+    feature_cols = [c for c in grid.columns if not c.startswith("_")]
+    return {"model": model, "feature_cols": feature_cols}
+
+
+def test_generate_forecasts_batch_returns_rows():
+    """Returns horizon rows per DFU."""
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=3)
+    artifact = _make_artifact(100.0)
+    enc = build_cat_encoders(attrs)
+
+    rows = generate_forecasts_batch(
+        artifact=artifact,
+        dfu_list=[
+            ({"item_no": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid),
+        ],
+        horizon=3,
+        plan_version="2026-03",
+        run_id="test-run-id",
+        model_id="lgbm_cluster",
+        cat_encoders=enc,
+    )
+    assert len(rows) == 3
+
+
+def test_generate_forecasts_batch_multi_dfu():
+    """Batch processes multiple DFUs in one call."""
+    sales1 = _make_sales("ITEM001", "LOC1", n_months=24)
+    sales2 = _make_sales("ITEM002", "LOC2", n_months=24)
+    attrs1 = _make_dfu_attrs("ITEM001", "LOC1")
+    attrs2 = _make_dfu_attrs("ITEM002", "LOC2")
+    grid1 = build_inference_grid("ITEM001", "LOC1", 2, sales1, attrs1, horizon=3)
+    grid2 = build_inference_grid("ITEM002", "LOC2", 2, sales2, attrs2, horizon=3)
+    artifact = _make_artifact(50.0)
+    enc = build_cat_encoders(pd.concat([attrs1, attrs2], ignore_index=True))
+
+    rows = generate_forecasts_batch(
+        artifact=artifact,
+        dfu_list=[
+            ({"item_no": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid1),
+            ({"item_no": "ITEM002", "loc": "LOC2", "cluster_id": 2}, grid2),
+        ],
+        horizon=3,
+        plan_version="2026-03",
+        run_id="test-run-id",
+        model_id="lgbm_cluster",
+        cat_encoders=enc,
+    )
+    assert len(rows) == 6  # 2 DFUs × 3 months
+
+
+def test_generate_forecasts_batch_nonneg_qty():
+    """Batch clamps negative predictions to 0."""
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=2)
+    model = MagicMock()
+    model.predict = MagicMock(side_effect=lambda X: np.full(len(X), -999.0))
+    artifact = {"model": model, "feature_cols": [c for c in grid.columns if not c.startswith("_")]}
+    enc = build_cat_encoders(attrs)
+
+    rows = generate_forecasts_batch(
+        artifact=artifact,
+        dfu_list=[({"item_no": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid)],
+        horizon=2,
+        plan_version="2026-03",
+        run_id="test-run-id",
+        model_id="lgbm_cluster",
+        cat_encoders=enc,
     )
     for row in rows:
         assert row["forecast_qty"] >= 0.0

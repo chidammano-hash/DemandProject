@@ -1,0 +1,21 @@
+ingest:
+  strategy: csv_export              # 'csv_export' | 'erp_api' (future)
+  csv:
+    po_file_pattern: "datafiles/open_pos_*.csv"
+    receipt_file_pattern: "datafiles/po_receipts_*.csv"
+    supplier_file_pattern: "datafiles/suppliers_*.csv"
+    archive_after_load: false
+    archive_dir: "datafiles/archive/"
+
+validation:
+  reject_pos_past_due_days: 180     # ignore POs > 180 days past due (likely data error)
+  require_confirmed_delivery_date: false
+  max_open_qty_ratio: 10.0
+
+data_quality:
+  past_due_threshold_days: 7
+  delivery_date_tolerance_days: 2
+
+scheduler:
+  job_type: load_open_pos
+  cron: "0 */4 * * *"

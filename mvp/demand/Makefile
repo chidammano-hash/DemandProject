@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all
+.PHONY: help init init-pip up down logs minio-bucket db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline spark-item spark-location spark-customer spark-time spark-dfu spark-sales spark-forecast trino-check-item trino-check-location trino-check-customer trino-check-time trino-check-dfu trino-check-sales trino-check-forecast bench-compare check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all
 
 help:
 	@echo "Targets:"
@@ -750,3 +750,241 @@ forecast-generate-dry:
 
 forecast-prod-all: forecast-prod-schema forecast-generate
 
+# ---------------------------------------------------------------------------
+# Open PO Integration (F1.3)
+# ---------------------------------------------------------------------------
+
+po-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; [conn.execute(open(f).read()) for f in ['sql/042_create_supplier_master.sql','sql/043_create_open_purchase_orders.sql','sql/044_create_po_receipts.sql']]; conn.close(); print('PO schema applied')"
+
+po-load:
+	$(UV) python scripts/load_open_pos.py
+
+po-load-file:
+	$(UV) python scripts/load_open_pos.py --file $(FILE)
+
+po-load-dry:
+	$(UV) python scripts/load_open_pos.py --dry-run
+
+po-receipts-load:
+	$(UV) python scripts/load_open_pos.py --receipts
+
+po-all: po-schema po-load
+
+# ---------------------------------------------------------------------------
+# Forward Inventory Projection (F1.2)
+# ---------------------------------------------------------------------------
+
+projection-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/045_create_inventory_projection.sql').read()); conn.close(); print('Projection schema applied')"
+
+projection-compute:
+	$(UV) python scripts/compute_inventory_projection.py --horizon 90
+
+projection-compute-dfu:
+	$(UV) python scripts/compute_inventory_projection.py --dfu $(ITEM) $(LOC) --horizon 90
+
+projection-dry:
+	$(UV) python scripts/compute_inventory_projection.py --dry-run --horizon 90
+
+projection-all: projection-schema projection-compute
+
+# ---------------------------------------------------------------------------
+# Order Recommendation Engine (F2.1)
+# ---------------------------------------------------------------------------
+
+planned-orders-schema:
+	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/046_create_planned_orders.sql').read()); conn.close(); print('Planned orders schema applied')"
+
+planned-orders-generate:
+	$(UV) python scripts/generate_planned_orders.py
+
+planned-orders-generate-dfu:
+	$(UV) python scripts/generate_planned_orders.py --dfu $(ITEM) $(LOC)
+
+planned-orders-dry:
+	$(UV) python scripts/generate_planned_orders.py --dry-run
+
+planned-orders-all: planned-orders-schema planned-orders-generate
+
+# ---------------------------------------------------------------------------
+# F2.2 — Multi-Horizon Quantile Demand Plan
+# ---------------------------------------------------------------------------
+VERSION ?= $(shell date +%Y-%m-%d)_production
+
+quantile-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/047_create_demand_plan.sql').read()); conn.commit(); conn.close(); print('quantile schema applied')"
+
+quantile-train:
+	$(UV) scripts/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION)
+
+quantile-train-dfu:
+	$(UV) scripts/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION) --dfu $(ITEM) $(LOC)
+
+quantile-dry:
+	$(UV) scripts/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION) --dry-run
+
+quantile-all: quantile-schema quantile-train
+
+## F2.3 — Consensus Forecasting & Planner Overrides
+consensus-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/048_create_consensus_plan.sql').read()); conn.commit(); conn.close(); print('consensus schema applied')"
+
+consensus-generate:
+	$(UV) scripts/generate_consensus_plan.py --plan-version $(VERSION) --months-ahead 12
+
+consensus-generate-dry:
+	$(UV) scripts/generate_consensus_plan.py --plan-version $(VERSION) --months-ahead 12 --dry-run
+
+consensus-all: consensus-schema consensus-generate
+
+## F2.4 — Procurement Workflow & Order Release
+procurement-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/049_create_procurement_workflow.sql').read()); conn.commit(); conn.close(); print('procurement schema applied')"
+
+procurement-export:
+	$(UV) scripts/release_planned_orders.py --action export_csv --po-numbers $(PO_NUMBERS) --output-dir data/po_exports/
+
+procurement-send-erp:
+	$(UV) scripts/release_planned_orders.py --action send_erp --po-numbers $(PO_NUMBERS) --integration-id $(INTEGRATION_ID)
+
+procurement-all: procurement-schema
+
+
+# ---------------------------------------------------------------------------
+# F3.1 — Forecast Bias Correction Engine
+# ---------------------------------------------------------------------------
+bias-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/050_create_bias_corrections.sql').read()); conn.commit(); conn.close(); print('bias corrections schema applied')"
+
+bias-compute:
+	$(UV) python scripts/compute_bias_corrections.py --plan-version $(VERSION)
+
+bias-compute-dry:
+	$(UV) python scripts/compute_bias_corrections.py --plan-version $(VERSION) --dry-run
+
+bias-all: bias-schema bias-compute
+
+# ---------------------------------------------------------------------------
+# F3.2 — Service Level Actuals vs Targets
+# ---------------------------------------------------------------------------
+service-level-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/051_create_service_level_tracking.sql').read()); conn.commit(); conn.close(); print('service level schema applied')"
+
+service-level-compute:
+	$(UV) python scripts/compute_service_level_actuals.py
+
+service-level-dry:
+	$(UV) python scripts/compute_service_level_actuals.py --dry-run
+
+service-level-all: service-level-schema service-level-compute
+
+# ---------------------------------------------------------------------------
+# F3.3 — Supplier Lead Time Learning
+# ---------------------------------------------------------------------------
+lead-time-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/052_create_lead_time_learning.sql').read()); conn.commit(); conn.close(); print('lead time schema applied')"
+
+lead-time-update:
+	$(UV) python scripts/update_lead_time_actuals.py
+
+lead-time-dry:
+	$(UV) python scripts/update_lead_time_actuals.py --dry-run
+
+lead-time-all: lead-time-schema lead-time-update
+
+# ---------------------------------------------------------------------------
+# F3.4 — Demand Sensing / Blended Forecast
+# ---------------------------------------------------------------------------
+blended-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/053_create_blended_forecast.sql').read()); conn.commit(); conn.close(); print('blended forecast schema applied')"
+
+blended-compute:
+	$(UV) python scripts/compute_blended_forecast.py
+
+blended-compute-dfu:
+	$(UV) python scripts/compute_blended_forecast.py --item-no $(ITEM) --loc $(LOC)
+
+blended-dry:
+	$(UV) python scripts/compute_blended_forecast.py --dry-run
+
+blended-all: blended-schema blended-compute
+
+# ---------------------------------------------------------------------------
+# F3.5 — Multi-Echelon Planning
+# ---------------------------------------------------------------------------
+echelon-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/054_create_echelon_planning.sql').read()); conn.commit(); conn.close(); print('echelon planning schema applied')"
+
+echelon-compute:
+	$(UV) python scripts/compute_echelon_targets.py
+
+echelon-compute-item:
+	$(UV) python scripts/compute_echelon_targets.py --item-no $(ITEM)
+
+echelon-dry:
+	$(UV) python scripts/compute_echelon_targets.py --dry-run
+
+echelon-all: echelon-schema echelon-compute
+
+# ---------------------------------------------------------------------------
+# F4.1 — Financial Inventory Plan
+# ---------------------------------------------------------------------------
+financial-plan-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/055_create_financial_plan.sql').read()); conn.commit(); conn.close(); print('financial plan schema applied')"
+
+financial-plan-compute:
+	$(UV) python scripts/compute_financial_plan.py
+
+financial-plan-dry:
+	$(UV) python scripts/compute_financial_plan.py --dry-run
+
+financial-plan-all: financial-plan-schema financial-plan-compute
+
+# ---------------------------------------------------------------------------
+# F4.2 — Sales & Operations Planning (S&OP)
+# ---------------------------------------------------------------------------
+sop-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/056_create_sop_module.sql').read()); conn.commit(); conn.close(); print('S&OP schema applied')"
+
+sop-create:
+	$(UV) python scripts/run_sop_cycle.py --action create --cycle-month $(CYCLE_MONTH)
+
+sop-advance:
+	$(UV) python scripts/run_sop_cycle.py --action advance --cycle-id $(CYCLE_ID)
+
+sop-populate:
+	$(UV) python scripts/run_sop_cycle.py --action populate-demand --cycle-id $(CYCLE_ID)
+
+sop-all: sop-schema
+
+# ---------------------------------------------------------------------------
+# F4.3 — Promotion & Event Planning
+# ---------------------------------------------------------------------------
+events-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/057_create_event_planning.sql').read()); conn.commit(); conn.close(); print('event planning schema applied')"
+
+events-apply:
+	$(UV) python scripts/apply_event_adjustments.py
+
+events-apply-dry:
+	$(UV) python scripts/apply_event_adjustments.py --dry-run
+
+events-all: events-schema events-apply
+
+# ---------------------------------------------------------------------------
+# F4.4 — Supply Chain Scenario Planning
+# ---------------------------------------------------------------------------
+scenarios-schema:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/058_create_supply_scenarios.sql').read()); conn.commit(); conn.close(); print('supply scenarios schema applied')"
+
+scenarios-list:
+	$(UV) python scripts/run_supply_chain_scenario.py --action list
+
+scenarios-run:
+	$(UV) python scripts/run_supply_chain_scenario.py --action run --scenario-id $(SCENARIO_ID)
+
+scenarios-run-dry:
+	$(UV) python scripts/run_supply_chain_scenario.py --action run --scenario-id $(SCENARIO_ID) --dry-run
+
+scenarios-all: scenarios-schema

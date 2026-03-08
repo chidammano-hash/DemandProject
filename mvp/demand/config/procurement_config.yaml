@@ -1,0 +1,32 @@
+procurement:
+  po_number_format: "DS-{YEAR}-{MONTH:02d}-{SEQ:03d}"
+  default_currency: USD
+  default_unit_of_measure: EA
+
+  approval_thresholds:
+    # POs > $1,000 total value require buyer release step before CSV/ERP send
+    requires_buyer_release_above_value: 1000
+    # Set > 0 to enable auto-release for small orders (skip buyer step)
+    auto_release_below_value: 0
+
+  csv_export:
+    output_dir: data/po_exports/
+    filename_format: "PO_export_{TIMESTAMP}.csv"
+    include_internal_ids: true
+
+  erp_integration:
+    default_integration_id: 1
+    retry_on_failure: true
+    max_retries: 3
+    retry_delay_seconds: 30
+    timeout_seconds: 30
+
+  notifications:
+    notify_buyer_on_planner_approval: true
+    notify_planner_on_buyer_release: true
+    notify_on_erp_failure: true
+    # 'email', 'slack', 'none'
+    notification_method: none
+
+  # Used when dim_supplier.default_lead_time_days is NULL
+  lead_time_fallback_days: 14

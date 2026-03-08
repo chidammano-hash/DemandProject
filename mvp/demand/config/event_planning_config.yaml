@@ -1,0 +1,32 @@
+event_planning:
+  # Allowed event types
+  event_types:
+    - PROMOTION
+    - HOLIDAY
+    - PRODUCT_LAUNCH
+    - PHASE_OUT
+    - DISRUPTION
+    - TRADE_SHOW
+
+  # Guard rails on uplift multiplier
+  max_uplift_multiplier: 5.0
+  min_uplift_multiplier: 0.0
+
+  # Events above this estimated impact value require manager approval
+  require_approval_above_impact_value: 5000.0
+
+  # Approval threshold by uplift % (override regardless of $ value)
+  require_approval_above_uplift_pct: 20.0
+
+  # Post-event tracking: how many weeks after event_end_date to check actuals
+  post_event_lag_weeks: 2
+
+  # Minimum days advance notice required to create an event
+  min_advance_days: 3
+
+  # Conflict detection: events within this many days of each other flag for review
+  conflict_window_days: 7
+
+scheduler:
+  job_type: apply_event_adjustments
+  cron: "0 6 * * *"    # Daily at 6am (events can be added any day)

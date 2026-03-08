@@ -1,0 +1,43 @@
+consensus_plan:
+  approval_required_threshold_units: 100     # Overrides > 100 units require approval
+  approval_required_threshold_pct: 0.20      # Or > 20% uplift requires approval
+  approval_required_threshold_value: 5000    # Or > $5,000 estimated impact requires approval
+
+  valid_override_types:
+    - PROMO
+    - LAUNCH
+    - PHASE_OUT
+    - MARKET_EVENT
+    - CAPACITY_LOCK
+    - MANUAL
+
+  multiplier_bounds:
+    min: 0.10
+    max: 5.00
+
+  conflict_resolution:
+    priority_order:
+      - CAPACITY_LOCK
+      - PROMO
+      - LAUNCH
+      - PHASE_OUT
+      - MARKET_EVENT
+      - MANUAL
+    log_all_conflicts: true
+
+  auto_expiry:
+    enabled: true
+    status_on_expiry: expired    # Set status to 'expired' (do not delete)
+
+  consensus_plan_output:
+    adjust_p10_p90_proportionally: true   # Scale P10/P90 by same ratio as P50 override
+    floor_qty: 0                          # Never allow negative consensus qty
+    ceiling_multiplier: 5.0              # Override cannot multiply base by more than 5x
+
+  notifications:
+    notify_on_submission: true
+    notify_on_approval: true
+    notify_on_rejection: true
+    approver_roles:
+      - demand_manager
+      - supply_chain_director

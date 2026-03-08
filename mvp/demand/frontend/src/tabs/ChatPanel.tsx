@@ -67,7 +67,7 @@ export default function ChatPanel({ domain }: ChatPanelProps) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <MessageSquare className="h-5 w-5" />
-              <CardTitle className="text-base">Chat with Planthium</CardTitle>
+              <CardTitle className="text-base">Chat with Vrantis</CardTitle>
             </div>
             <Badge variant="outline">{chatOpen ? "Collapse" : "Expand"}</Badge>
           </div>

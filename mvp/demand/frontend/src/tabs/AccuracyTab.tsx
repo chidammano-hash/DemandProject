@@ -29,6 +29,7 @@ import { SliceTablePanel } from "./accuracy/SliceTablePanel";
 import { TrendChartPanel } from "./accuracy/TrendChartPanel";
 import { ChampionPanel } from "./accuracy/ChampionPanel";
 import { ShapPanel } from "./accuracy/ShapPanel";
+import { BiasCorrectionsPanel } from "./accuracy/BiasCorrectionsPanel";
 
 export function AccuracyTab() {
   const queryClient = useQueryClient();
@@ -219,6 +220,8 @@ export function AccuracyTab() {
         onModelChange={handleShapModelChange}
         onTimeframeChange={handleShapTimeframeChange}
       />
+
+      <BiasCorrectionsPanel />
     </section>
   );
 }

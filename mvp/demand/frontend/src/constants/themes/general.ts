@@ -2,7 +2,7 @@ import type { ProductTheme } from "@/types/theme";
 
 export const generalTheme: ProductTheme = {
   id: "general",
-  displayName: "Demand Studio",
+  displayName: "Vrantis",
   tagline: "Unified Demand Intelligence",
   description: "Clean SaaS analytics platform. Neutral grays, crisp blue accents, maximum readability.",
   supportedModes: ["light", "soft", "dark"],

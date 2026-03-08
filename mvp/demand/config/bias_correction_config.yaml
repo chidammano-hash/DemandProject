@@ -1,0 +1,30 @@
+bias_correction:
+  # Rolling window weights (most-recent first, must sum to 1.0)
+  rolling_weights: [0.50, 0.30, 0.20]
+
+  # Minimum months of data required for DFU-level correction
+  min_months_dfu: 3
+  min_months_segment: 2
+
+  # Activation threshold: only apply correction if |bias| >= this
+  min_bias_threshold: 0.05
+
+  # Guard rails: correction factor clipped to [min, max]
+  correction_factor_min: 0.70
+  correction_factor_max: 1.30
+
+  # Flag for human review when raw correction exceeds this
+  review_threshold: 0.20
+
+  # Segment precedence (highest specificity first)
+  segment_priority:
+    - dfu
+    - cluster
+    - abc_seasonality
+
+  # History window for bias computation (months back from plan_run_date)
+  lookback_months: 3
+
+scheduler:
+  job_type: compute_bias_corrections
+  cron: "0 3 1 * *"       # Monthly, 3am on the 1st

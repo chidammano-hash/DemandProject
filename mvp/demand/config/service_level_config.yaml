@@ -1,0 +1,27 @@
+service_level:
+  # Default service level targets by ABC class
+  targets_by_abc:
+    A: 0.98
+    B: 0.95
+    C: 0.90
+    X: 0.92   # default when class not assigned
+
+  # Minimum data points required for reliable service level calculation
+  min_months_history: 3
+
+  # Chronic miss detection: flag DFU if misses in >= N of last M months
+  chronic_miss_count: 2
+  chronic_miss_window_months: 3
+
+  # Gap thresholds for miss reason classification
+  miss_reason_thresholds:
+    stockout_days_for_stockout_miss: 3     # ≥3 stockout days → classify as STOCKOUT
+    lt_variance_for_lt_miss: 3             # ≥3 days LT variance → classify as LEAD_TIME
+    demand_spike_ratio_for_demand_miss: 1.3  # ≥30% demand spike → classify as DEMAND_SURGE
+
+  # Days of supply target (used in gap analysis)
+  target_dos: 45
+
+scheduler:
+  job_type: compute_service_level_actuals
+  cron: "0 2 1 * *"    # Monthly, 2am on the 1st

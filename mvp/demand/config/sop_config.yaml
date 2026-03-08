@@ -1,0 +1,35 @@
+sop:
+  # Planning horizon
+  planning_horizon_months: 12
+
+  # Scheduled meeting days within the month PRIOR to the planning month
+  demand_review_day: 5       # 5th of the month before
+  supply_review_day: 10      # 10th
+  pre_sop_day: 15            # 15th
+  executive_sop_day: 20      # 20th (final sign-off day)
+
+  # Stage machine
+  stages:
+    - demand_review
+    - supply_review
+    - pre_sop
+    - executive_sop
+    - approved
+    - closed
+
+  # Consensus plan source
+  demand_baseline_model: champion     # model_id from fact_external_forecast_monthly
+
+  # Gap alert thresholds
+  supply_gap_alert_pct: 0.10          # Alert when supply < 90% of consensus demand
+
+  # Who must approve each stage (roles, not enforced server-side — informational only)
+  approvers:
+    demand_review: demand_planner
+    supply_review: supply_planner
+    pre_sop: supply_chain_manager
+    executive_sop: vp_supply_chain
+
+scheduler:
+  job_type: run_sop_cycle
+  cron: "0 7 1 * *"     # Monthly, 7am on the 1st

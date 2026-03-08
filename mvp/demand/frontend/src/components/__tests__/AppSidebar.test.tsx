@@ -9,7 +9,7 @@ function renderSidebar(props = {}) {
     onNavigate: vi.fn(),
     collapsed: false,
     onToggle: vi.fn(),
-    appName: "Demand Studio",
+    appName: "Vrantis",
     ...props,
   };
   return render(
@@ -26,7 +26,7 @@ describe("AppSidebar", () => {
     for (const item of NAV_ITEMS) {
       expect(screen.getByText(item.label)).toBeInTheDocument();
     }
-    expect(NAV_ITEMS.length).toBe(14);
+    expect(NAV_ITEMS.length).toBe(15);
   });
 
   it("active item has aria-current='page'", () => {
@@ -41,7 +41,7 @@ describe("AppSidebar", () => {
 
   it("collapsed state hides labels", () => {
     renderSidebar({ collapsed: true });
-    expect(screen.queryByText("Demand Studio")).not.toBeInTheDocument();
+    expect(screen.queryByText("Vrantis")).not.toBeInTheDocument();
     // The nav item labels should not be rendered as visible text
     expect(screen.queryByText("Overview")).not.toBeInTheDocument();
     expect(screen.queryByText("Explorer")).not.toBeInTheDocument();
@@ -76,9 +76,9 @@ describe("AppSidebar", () => {
     expect(onNavigate).toHaveBeenCalledWith("chat");
   });
 
-  it("renders app name when not collapsed", () => {
-    renderSidebar({ appName: "Test App" });
-    expect(screen.getByText("Test App")).toBeInTheDocument();
+  it("renders Vrantis wordmark when not collapsed", () => {
+    renderSidebar({ collapsed: false });
+    expect(screen.getByText("Vrantis")).toBeInTheDocument();
   });
 
   it("renders theme footer when provided", () => {

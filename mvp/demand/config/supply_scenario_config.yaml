@@ -1,0 +1,35 @@
+supply_scenario:
+  # Simulation horizon
+  simulation_horizon_weeks: 13
+
+  # Default service level target
+  service_level_target: 0.95
+
+  # Financial impact parameters
+  stockout_cost_per_unit: 10.0        # $ per unit of lost sales (margin proxy)
+  excess_holding_cost_pct: 0.25       # Annual holding cost fraction
+
+  # Disruption types and their default parameters
+  disruption_defaults:
+    supplier_delay:
+      typical_impact_pct: 50
+      typical_duration_weeks: 4
+    capacity_constraint:
+      typical_impact_pct: 30
+      typical_duration_weeks: 8
+    demand_shock:
+      typical_impact_pct: 40
+      typical_duration_weeks: 2
+    transport_disruption:
+      typical_impact_pct: 100
+      typical_duration_weeks: 2
+    quality_hold:
+      typical_impact_pct: 25
+      typical_duration_weeks: 3
+
+  # Alert threshold: scenarios with total financial impact above this are flagged
+  alert_threshold_usd: 100000.0
+
+scheduler:
+  job_type: run_supply_chain_scenario
+  cron: null            # On-demand only (no scheduled runs)

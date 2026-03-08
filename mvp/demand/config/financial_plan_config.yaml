@@ -1,0 +1,30 @@
+financial_plan:
+  # Annual carrying cost as fraction of inventory value (20-35% typical)
+  carrying_cost_pct: 0.25
+
+  # Forward projection horizon
+  months_ahead: 6
+
+  # Days of supply threshold above which is classified as "excess"
+  excess_dos_threshold: 180
+
+  # Alert when planned spend reaches this % of budget cap
+  budget_breach_alert_pct: 0.90
+
+  # Working capital targets
+  target_inventory_turns: 8.0       # Annual inventory turns target
+  target_dos: 45                    # Target days of supply
+
+  # Currency
+  default_currency: USD
+
+  # Cost types in priority order (first available is used)
+  cost_type_priority:
+    - moving_avg
+    - standard
+    - landed
+    - manual
+
+scheduler:
+  job_type: compute_financial_plan
+  cron: "0 5 1 * *"     # Monthly, 5am on the 1st

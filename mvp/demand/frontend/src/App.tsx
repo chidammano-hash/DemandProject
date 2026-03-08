@@ -45,6 +45,7 @@ const JobsTab = lazy(() => import("./tabs/JobsTab"));
 const AIPlannerTab = lazy(() => import("./tabs/AIPlannerTab"));
 const StoryboardTab = lazy(() => import("./tabs/StoryboardTab"));
 const ExceptionsTab = StoryboardTab; // alias — PL-003 rename
+const SopTab = lazy(() => import("./tabs/SopTab"));
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -241,6 +242,13 @@ export default function App() {
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="exceptions" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="exceptions" />}>
                       <ExceptionsTab />
+                    </Suspense>
+                  </ErrorBoundary>
+                )}
+                {activeTab === "sop" && (
+                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="sop" />} resetKeys={[activeTab]}>
+                    <Suspense fallback={<TabSuspenseFallback tabKey="sop" />}>
+                      <SopTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}

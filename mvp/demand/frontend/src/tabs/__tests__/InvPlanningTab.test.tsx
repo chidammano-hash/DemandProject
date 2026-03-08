@@ -5,6 +5,27 @@ import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
 import type { GlobalFilterContextValue } from "@/context/GlobalFilterContext";
 import type { GlobalFilters } from "@/types/theme";
 
+// Mock evolution query module (for new F3.x / F4.x panels)
+vi.mock("@/api/queries/evolution", () => ({
+  blendedKeys: { summary: () => ["blended-summary"], list: () => ["blended-list"] },
+  echelonKeys: { summary: () => ["echelon-summary"], targets: () => ["echelon-targets"] },
+  financialPlanKeys: { budget: () => ["budget"], workingCapital: () => ["wc"] },
+  eventKeys: { calendar: () => ["event-calendar"] },
+  scenarioKeys: { list: () => ["scenarios-list"], results: () => ["scenarios-results"] },
+  sopKeys: { cycles: () => ["sop-cycles"], gaps: () => ["sop-gaps"], approvedPlan: () => ["sop-plan"] },
+  biasKeys: { summary: () => ["bias-summary"], flagged: () => ["bias-flagged"] },
+  STALE_EVO: { FIVE_MIN: 300000, ONE_MIN: 60000 },
+  fetchBlendedForecast: vi.fn().mockResolvedValue({ total: 0, page: 1, rows: [] }),
+  fetchBlendedSummary: vi.fn().mockResolvedValue({ total_dfus: 0, total_weeks: 0, avg_alpha: null, capped_count: 0 }),
+  fetchEchelonTargets: vi.fn().mockResolvedValue({ total: 0, page: 1, rows: [] }),
+  fetchEchelonSummary: vi.fn().mockResolvedValue({ total_nodes: 0, critical_count: 0, high_count: 0, avg_coverage_days: null }),
+  fetchBudgetStatus: vi.fn().mockResolvedValue({ total: 0, budgets: [] }),
+  fetchWorkingCapitalTrend: vi.fn().mockResolvedValue({ months: [] }),
+  fetchEventCalendar: vi.fn().mockResolvedValue({ total: 0, events: [] }),
+  fetchSupplyScenarios: vi.fn().mockResolvedValue({ total: 0, scenarios: [] }),
+  fetchScenarioResults: vi.fn().mockResolvedValue({ scenario_id: "", items: [], total_impact: 0, total_stockout_days: 0 }),
+}));
+
 // Mock recharts
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -38,6 +59,11 @@ vi.mock("@/api/queries", () => ({
     productionForecast: (p?: Record<string, unknown>) => ["production-forecast", p ?? {}],
     productionForecastSummary: (p?: Record<string, unknown>) => ["production-forecast-summary", p ?? {}],
     productionForecastVersions: () => ["production-forecast-versions"],
+    openPOs: (p: Record<string, unknown>) => ["open-pos", p],
+    openPOSummary: () => ["open-po-summary"],
+    pastDuePOs: () => ["past-due-pos"],
+    plannedOrders: (p: Record<string, unknown>) => ["planned-orders", p],
+    plannedOrdersSummary: () => ["planned-orders-summary"],
   },
   healthKeys: {
     summary: (f?: Record<string, unknown>) => ["health-summary", f ?? {}],
@@ -355,6 +381,105 @@ vi.mock("@/api/queries", () => ({
         model_id: "lgbm_cluster", cluster_id: 2, horizon_months: 1, is_recursive: true, lag_source: "actual" },
     ],
   }),
+  // Open PO Integration (F1.3) + Projection (F1.2)
+  projectionKeys: {
+    dfu: (p: Record<string, unknown>) => ["projection", "dfu", p],
+    atRisk: (h: number) => ["projection", "at-risk", h],
+  },
+  fetchOpenPOSummary: vi.fn().mockResolvedValue({
+    total_open_lines: 8,
+    total_open_value_usd: 125000.0,
+    total_open_qty_by_status: { open: 900.0, partially_received: 100.0 },
+    past_due_lines: 2,
+    past_due_value_usd: 8750.0,
+    avg_days_past_due: 14.5,
+    suppliers_with_open_pos: 3,
+    last_loaded_at: "2026-03-07T06:00:00Z",
+  }),
+  fetchOpenPOs: vi.fn().mockResolvedValue({
+    total: 2,
+    open_po_data_available: true,
+    last_loaded_at: "2026-03-07T06:00:00Z",
+    page: 1,
+    page_size: 50,
+    items: [
+      {
+        po_number: "PO-4521", po_line_number: 1, item_no: "100320", loc: "1401-BULK",
+        supplier_id: "VENDOR-0042", supplier_name: "Acme Supply Co.",
+        po_date: "2026-02-15", ordered_qty: 150, confirmed_qty: 150, received_qty: 0,
+        open_qty: 150, unit_cost: 12.50, line_value: 1875.0,
+        promised_delivery_date: "2026-03-14", confirmed_delivery_date: "2026-03-14",
+        revised_delivery_date: null, effective_delivery_date: "2026-03-14",
+        days_past_due: 0, line_status: "open",
+      },
+    ],
+  }),
+  fetchPastDuePOs: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+  fetchProjection: vi.fn().mockRejectedValue(new Error("No projection")),
+  fetchProjectionAtRisk: vi.fn().mockResolvedValue({ total: 0, horizon_days: 30, page: 1, page_size: 50, items: [] }),
+  refreshProjection: vi.fn().mockResolvedValue({ status: "ok", rows_written: 270, run_id: "test-run" }),
+  // Planned Orders (F2.1)
+  fetchPlannedOrdersSummary: vi.fn().mockResolvedValue({
+    status_counts: { proposed: 5, approved: 2, released: 1, rejected: 0 },
+    total_proposed_value_usd: 18750.0,
+    total_approved_value_usd: 7500.0,
+    past_due_proposed_count: 1,
+    past_due_proposed_value_usd: 3750.0,
+    avg_confidence_score: 0.873,
+    low_confidence_count: 1,
+    generated_at: "2026-03-02T08:04:22Z",
+  }),
+  fetchPlannedOrders: vi.fn().mockResolvedValue({
+    total: 1,
+    total_order_value_usd: 3750.0,
+    past_due_count: 0,
+    page: 1,
+    page_size: 50,
+    items: [
+      {
+        id: 1001, item_no: "100320", loc: "1401-BULK",
+        supplier_id: "VENDOR-0042", supplier_name: "Acme Supply Co.",
+        net_requirement_qty: 233.4, recommended_qty: 300.0, moq: 100.0,
+        unit_cost: 12.5, order_value: 3750.0, currency: "USD",
+        trigger_date: "2026-03-10", trigger_reason: "projected_below_ss",
+        order_by_date: "2026-03-10", expected_receipt_date: "2026-03-24",
+        lead_time_days: 14, current_qty_on_hand: 120.0, safety_stock: 60.0,
+        reorder_point: 60.0, confirmed_inbound_qty: 200.0, lt_forecast_demand: 228.2,
+        plan_version: "2026-03", confidence_score: 0.95,
+        confidence_reason: "all data sources available",
+        is_past_due: false, status: "proposed",
+        created_at: "2026-03-02T08:04:22Z", approved_by: null, approved_at: null,
+      },
+    ],
+  }),
+  approvePlannedOrder: vi.fn().mockResolvedValue({ id: 1001, status: "approved", approved_by: "planner", approved_at: "2026-03-06T09:00:00Z" }),
+  rejectPlannedOrder: vi.fn().mockResolvedValue({ id: 1001, status: "rejected" }),
+  generatePlannedOrders: vi.fn().mockResolvedValue({ status: "accepted", job_id: "test-job-id" }),
+  // Demand Plan (F2.2)
+  fetchDemandPlanVersions: vi.fn().mockResolvedValue({ versions: [] }),
+  fetchDemandPlan: vi.fn().mockResolvedValue({ item_no: "", loc: "", plan_version: "", generated_at: null, horizon_months: 12, rows: [] }),
+  fetchDemandPlanWeekly: vi.fn().mockResolvedValue({ item_no: "", loc: "", plan_version: "", weeks: [] }),
+  fetchDemandPlanComparison: vi.fn().mockResolvedValue({ item_no: "", loc: "", v1: "", v2: "", months: [] }),
+  // Procurement Workflow (F2.4)
+  fetchPurchaseOrders: vi.fn().mockResolvedValue({ total: 0, total_value: 0, page: 1, orders: [] }),
+  approvePurchaseOrder: vi.fn().mockResolvedValue({ po_number: "DS-2026-04-001", status: "planner_approved", approved_by: "planner1" }),
+  releasePurchaseOrder: vi.fn().mockResolvedValue({ po_number: "DS-2026-04-001", status: "buyer_released", released_by: "buyer1" }),
+  exportPOsCSV: vi.fn().mockResolvedValue({ filename: "PO_export_test.csv", line_count: 1, total_value: 7584, csv_content: "" }),
+  fetchPOTimeline: vi.fn().mockResolvedValue({ po_number: "DS-2026-04-001", current_status: "proposed", timeline: [] }),
+  createPOFromException: vi.fn().mockResolvedValue({ po_number: "DS-2026-04-001", status: "proposed", total_value: null, requested_delivery_date: null }),
+  // Override Queue (F2.3)
+  fetchOverrideSummary: vi.fn().mockResolvedValue({
+    by_status: { pending_approval: 2, approved: 5, rejected: 1, expired: 0, superseded: 0 },
+    dfu_count_overridden: 3,
+    total_uplift_units: 1200,
+    total_uplift_value: 6000,
+    by_type: { PROMO: 4, MANUAL: 4 },
+  }),
+  fetchOverrides: vi.fn().mockResolvedValue({ total: 0, page: 1, overrides: [] }),
+  submitOverride: vi.fn().mockResolvedValue({ override_id: 1, status: "pending_approval", requires_approval: true, message: "ok" }),
+  approveOverride: vi.fn().mockResolvedValue({ override_id: 1, status: "approved", approved_by: "manager", approved_at: "2026-03-07T00:00:00Z" }),
+  rejectOverride: vi.fn().mockResolvedValue({ override_id: 1, status: "rejected" }),
+  fetchConsensusPlan: vi.fn().mockResolvedValue({ plan_version: "", item_no: "", loc: "", months: [] }),
 }));
 
 const { InvPlanningTab } = await import("@/tabs/InvPlanningTab");
@@ -798,6 +923,37 @@ describe("InvPlanningTab", () => {
     await waitFor(() => {
       expect(screen.getByText("Plan Version")).toBeDefined();
       expect(screen.getByText("DFU Coverage")).toBeDefined();
+    });
+  });
+
+  it("renders Planned Orders panel with KPI cards", async () => {
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InvPlanningTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Planned Orders" }));
+    await waitFor(() => {
+      expect(screen.getAllByText("Planned Orders").length).toBeGreaterThan(0);
+      expect(screen.getByText("Proposed")).toBeDefined();
+      expect(screen.getByText("Past Due")).toBeDefined();
+    });
+  });
+
+  it("renders planned order row from mocked data", async () => {
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={makeFilterContext()}>
+          <InvPlanningTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Planned Orders" }));
+    await waitFor(() => {
+      const items = screen.getAllByText("100320");
+      expect(items.length).toBeGreaterThan(0);
     });
   });
 });

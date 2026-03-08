@@ -1,8 +1,10 @@
 /**
  * IPfeature4 + IPfeature5 + IPfeature6 + IPfeature7 + IPfeature8–IPfeature14 + F1.1
+ * F3.1–F3.5 (Bias, Service Level, Lead Time, Blended, Echelon) + F4.1–F4.4
  * EOQ & Cycle Stock + Replenishment Policy + Health Score + Exception Queue +
  * Fill Rate + ABC-XYZ + Supplier + Intramonth + Safety Stock + Variability +
- * Lead Time + Demand Signals + Simulation + Investment Plan + Production Forecast
+ * Lead Time + Demand Signals + Simulation + Investment Plan + Production Forecast +
+ * Blended Demand + Echelon Planning + Financial Plan + Events + Scenarios
  *
  * PL-009: Sub-navigation added — shows one panel at a time to reduce scroll
  * and initial API call overhead.
@@ -25,6 +27,17 @@ import { DemandSignalsPanel } from "./inv-planning/DemandSignalsPanel";
 import { SimulationPanel } from "./inv-planning/SimulationPanel";
 import { InvestmentPanel } from "./inv-planning/InvestmentPanel";
 import { DemandForecastPanel } from "./inv-planning/DemandForecastPanel";
+import { DemandPlanPanel } from "./inv-planning/DemandPlanPanel";
+import { OverrideQueuePanel } from "./inv-planning/OverrideQueuePanel";
+import { ProcurementPanel } from "./inv-planning/ProcurementPanel";
+import { OpenPOPanel } from "./inv-planning/OpenPOPanel";
+import { ProjectionPanel } from "./inv-planning/ProjectionPanel";
+import { PlannedOrdersPanel } from "./inv-planning/PlannedOrdersPanel";
+import { BlendedDemandPanel } from "./inv-planning/BlendedDemandPanel";
+import { EchelonPanel } from "./inv-planning/EchelonPanel";
+import { FinancialPlanPanel } from "./inv-planning/FinancialPlanPanel";
+import { EventCalendarPanel } from "./inv-planning/EventCalendarPanel";
+import { ScenarioPlanningPanel } from "./inv-planning/ScenarioPlanningPanel";
 
 // ---------------------------------------------------------------------------
 // Sub-navigation config
@@ -45,6 +58,17 @@ const SUB_TABS = [
   { key: "simulation",  label: "Simulation",    group: "Planning" },
   { key: "investment",  label: "Investment",    group: "Planning" },
   { key: "forecast",    label: "Demand Fcst",   group: "Planning" },
+  { key: "blended",     label: "Blended Demand", group: "Sensing" },
+  { key: "echelon",     label: "Echelon SS",    group: "Sensing" },
+  { key: "finance",     label: "Financial Plan", group: "Strategic" },
+  { key: "events",      label: "Events",        group: "Strategic" },
+  { key: "scenarios",   label: "Scenarios",     group: "Strategic" },
+  { key: "demandplan",    label: "Demand Plan",    group: "Supply" },
+  { key: "overridequeue",  label: "Override Queue", group: "Supply" },
+  { key: "procurement",   label: "Procurement",    group: "Supply" },
+  { key: "openpos",       label: "Open POs",       group: "Supply" },
+  { key: "projection",   label: "Projection",     group: "Supply" },
+  { key: "plannedorders", label: "Planned Orders", group: "Supply" },
 ] as const;
 
 type SubTabKey = (typeof SUB_TABS)[number]["key"];
@@ -167,6 +191,95 @@ export function InvPlanningTab() {
             <code className="font-mono">make forecast-generate</code> to refresh.
           </p>
           <DemandForecastPanel />
+        </div>
+      )}
+
+      {activePanel === "demandplan" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <DemandPlanPanel />
+        </div>
+      )}
+
+      {activePanel === "overridequeue" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <OverrideQueuePanel />
+        </div>
+      )}
+
+      {activePanel === "procurement" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <ProcurementPanel />
+        </div>
+      )}
+
+      {activePanel === "openpos" && (
+        <OpenPOPanel />
+      )}
+
+      {activePanel === "projection" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Forward Inventory Projection</h3>
+          <p className="text-xs text-muted-foreground">
+            Day-by-day projected inventory position across 3 scenarios: no new orders,
+            with confirmed open POs, and with planned orders.
+          </p>
+          <ProjectionPanel />
+        </div>
+      )}
+
+      {activePanel === "plannedorders" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <PlannedOrdersPanel />
+        </div>
+      )}
+
+      {activePanel === "blended" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Blended Demand Plan</h3>
+          <p className="text-xs text-muted-foreground">
+            Short-horizon demand sensing signal blended with statistical forecast using linearly decaying alpha weights.
+          </p>
+          <BlendedDemandPanel />
+        </div>
+      )}
+
+      {activePanel === "echelon" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Multi-Echelon Safety Stock</h3>
+          <p className="text-xs text-muted-foreground">
+            Risk-pooled DC-level safety stock targets with cascade risk scoring across downstream stores.
+          </p>
+          <EchelonPanel />
+        </div>
+      )}
+
+      {activePanel === "finance" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Financial Inventory Plan</h3>
+          <p className="text-xs text-muted-foreground">
+            Inventory value, carrying cost projections, excess inventory, and budget utilization tracking.
+          </p>
+          <FinancialPlanPanel />
+        </div>
+      )}
+
+      {activePanel === "events" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Event & Promotion Planning</h3>
+          <p className="text-xs text-muted-foreground">
+            Manage promotional events, seasonal uplifts, and forecast adjustments with approval workflow.
+          </p>
+          <EventCalendarPanel />
+        </div>
+      )}
+
+      {activePanel === "scenarios" && (
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <h3 className="font-semibold text-base">Supply Chain Scenario Planning</h3>
+          <p className="text-xs text-muted-foreground">
+            Model disruption scenarios (supplier delay, capacity constraints, demand shocks) and quantify financial impact.
+          </p>
+          <ScenarioPlanningPanel />
         </div>
       )}
     </div>

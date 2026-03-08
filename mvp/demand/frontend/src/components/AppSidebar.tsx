@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { VrantisLogo } from "./VrantisLogo";
 import {
   LayoutDashboard,
   Database,
@@ -10,7 +11,7 @@ import {
   Globe,
   MessageSquare,
   PlayCircle,
-  Brain, Monitor, Sparkles, BookOpen,
+  Brain, Monitor, Sparkles, BookOpen, CalendarDays,
   PanelLeftClose,
   PanelLeft,
   Menu,
@@ -43,6 +44,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "exceptions",   label: "Exceptions",    icon: BookOpen,        section: "demand",       shortcut: "7" },
   // Configure section
   { key: "invPlanning",  label: "Inv. Planning", icon: Brain,           section: "supply",       shortcut: "8" },
+  { key: "sop",          label: "S&OP",          icon: CalendarDays,    section: "supply" },
   { key: "clusters",     label: "Clusters",      icon: Network,         section: "supply" },
   { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,        section: "supply" },
   // System section
@@ -68,7 +70,7 @@ export interface AppSidebarProps {
   onNavigate: (tab: string) => void;
   collapsed: boolean;
   onToggle: () => void;
-  appName: string;
+  appName?: string; // retained for backward compat; logo always shows "Vrantis"
   themeFooter?: React.ReactNode;
 }
 
@@ -109,15 +111,15 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
       >
         {/* Header */}
         <div className="flex h-14 items-center border-b border-border/50 px-3">
-          {!collapsed && (
-            <span className="flex-1 truncate text-sm font-semibold text-sidebar-foreground">
-              {appName}
-            </span>
+          {collapsed ? (
+            <VrantisLogo size={28} />
+          ) : (
+            <VrantisLogo size={26} showWordmark className="flex-1 min-w-0" />
           )}
           <button
             onClick={onToggle}
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            className="ml-auto flex h-8 w-8 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-hover"
+            className="ml-auto flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-hover"
           >
             {collapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
           </button>

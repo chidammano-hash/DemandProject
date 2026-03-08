@@ -80,6 +80,30 @@ export default defineConfig({
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
+      "/supply": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/analytics": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/finance": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/sop": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/events": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/scenarios": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
     },
   },
   build: {

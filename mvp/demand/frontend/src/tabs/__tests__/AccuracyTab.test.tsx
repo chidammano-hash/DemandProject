@@ -38,6 +38,23 @@ vi.mock("@/api/queries", () => ({
   fetchSeasonalityProfileNames: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("@/api/queries/evolution", () => ({
+  biasKeys: {
+    summary: (p?: unknown) => ["bias-summary", p],
+    flagged: (p?: unknown) => ["bias-flagged", p],
+  },
+  STALE_EVO: { FIVE_MIN: 300000, ONE_MIN: 60000 },
+  fetchBiasCorrectionSummary: vi.fn().mockResolvedValue({
+    dfu_count: 0,
+    avg_correction_factor: null,
+    flagged_count: 0,
+    clipped_count: 0,
+    avg_rolling_bias: null,
+    last_computed_at: null,
+  }),
+  fetchFlaggedBiasCorrections: vi.fn().mockResolvedValue({ total: 0, flagged: [] }),
+}));
+
 vi.mock("@/components/EChartContainer", () => ({
   EChartContainer: () => <div data-testid="chart-mock" />,
 }));

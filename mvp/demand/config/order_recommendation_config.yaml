@@ -1,0 +1,26 @@
+recommendation:
+  horizon_days: 90                  # how far forward to look for trigger dates
+  max_orders_per_dfu: 3             # generate at most N planned orders per DFU per run
+  include_past_due: true            # generate past-due orders (order_by_date < today)
+
+  # Confidence scoring rules
+  confidence:
+    high_threshold: 0.80            # >= this = High confidence
+    low_threshold: 0.50             # < this = Low confidence (show warning)
+    # Factors that reduce confidence:
+    penalty_no_open_po_data: 0.15   # open PO data unavailable
+    penalty_fallback_forecast: 0.20 # using fallback avg instead of production forecast
+    penalty_past_due_order: 0.10    # order_by_date is in the past
+
+moq_handling:
+  rounding_strategy: ceil_to_moq   # 'ceil_to_moq' | 'nearest_moq' | 'floor_to_moq'
+  evaluate_price_breaks: false      # future feature
+
+budget_cap:
+  enabled: false                    # true = enforce portfolio budget cap
+  monthly_budget_usd: 500000.0      # max order value per month across all DFUs
+  priority_by: abc_class            # A-class items get budget first
+
+scheduler:
+  job_type: generate_planned_orders
+  cron: "0 8 * * *"                # Run after projection (which runs 07:00)

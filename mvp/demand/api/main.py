@@ -63,6 +63,18 @@ from api.routers import control_tower  # noqa: E402
 from api.routers import ai_planner  # noqa: E402
 from api.routers import storyboard  # noqa: E402
 from api.routers import production_forecast  # noqa: E402
+from api.routers import consensus_plan      # noqa: E402
+from api.routers import supply      # noqa: E402
+from api.routers import inv_planning_projection  # noqa: E402
+from api.routers import bias_corrections  # noqa: E402
+from api.routers import service_level     # noqa: E402
+from api.routers import lead_time_learning  # noqa: E402
+from api.routers import blended_forecast  # noqa: E402
+from api.routers import echelon_planning  # noqa: E402
+from api.routers import financial_plan    # noqa: E402
+from api.routers import sop               # noqa: E402
+from api.routers import events            # noqa: E402
+from api.routers import supply_scenarios  # noqa: E402
 from api.routers import domains    # noqa: E402
 
 # Specific-path routers first
@@ -95,6 +107,18 @@ app.include_router(jobs.router)
 app.include_router(ai_planner.router)
 app.include_router(storyboard.router)
 app.include_router(production_forecast.router)
+app.include_router(consensus_plan.router)
+app.include_router(supply.router)
+app.include_router(inv_planning_projection.router)
+app.include_router(bias_corrections.router)
+app.include_router(service_level.router)
+app.include_router(lead_time_learning.router)
+app.include_router(blended_forecast.router)
+app.include_router(echelon_planning.router)
+app.include_router(financial_plan.router)
+app.include_router(sop.router)
+app.include_router(events.router)
+app.include_router(supply_scenarios.router)
 app.include_router(shap.router)
 
 # domains.py has catch-all /domains/{domain}/* — mount last
