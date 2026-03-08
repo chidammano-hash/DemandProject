@@ -16,7 +16,7 @@ def _f(v: Any) -> float | None:
     return float(v) if v is not None else None
 
 
-@router.post("/inv-planning/simulation/run")
+@router.post("/inv-planning/simulation/run", status_code=201)
 def run_simulation(
     item_no: str,
     loc: str,

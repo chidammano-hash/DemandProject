@@ -29,30 +29,36 @@ def _dashboard_filter_clause(
     fact_external_forecast_monthly has no customer dimension join key.
     Item/location filter on f.dmdunit/f.loc directly (no extra JOINs needed).
     """
+    _MAX_FILTER_VALUES = 50
+
+    def _split(raw: str) -> list[str]:
+        vals = [v.strip() for v in raw.split(",") if v.strip()]
+        return vals[:_MAX_FILTER_VALUES]
+
     clauses: list[str] = []
     params: list[Any] = []
     if brand.strip():
-        brands = [b.strip() for b in brand.split(",") if b.strip()]
+        brands = _split(brand)
         if brands:
             clauses.append("i.brand_name = ANY(%s)")
             params.append(brands)
     if category.strip():
-        cats = [c.strip() for c in category.split(",") if c.strip()]
+        cats = _split(category)
         if cats:
             clauses.append("i.class = ANY(%s)")
             params.append(cats)
     if market.strip():
-        markets = [m.strip() for m in market.split(",") if m.strip()]
+        markets = _split(market)
         if markets:
             clauses.append("lo.state_id = ANY(%s)")
             params.append(markets)
     if item.strip():
-        items = [it.strip() for it in item.split(",") if it.strip()]
+        items = _split(item)
         if items:
             clauses.append("f.dmdunit = ANY(%s)")
             params.append(items)
     if location.strip():
-        locs = [lc.strip() for lc in location.split(",") if lc.strip()]
+        locs = _split(location)
         if locs:
             clauses.append("f.loc = ANY(%s)")
             params.append(locs)

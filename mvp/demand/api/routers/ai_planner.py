@@ -80,7 +80,7 @@ class AutoAcceptRequest(BaseModel):
 # POST /ai-planner/analyze
 # ---------------------------------------------------------------------------
 
-@router.post("/ai-planner/analyze")
+@router.post("/ai-planner/analyze", status_code=201)
 async def analyze_dfu(body: AnalyzeRequest, request: Request):
     """Run AI analysis for a single DFU (synchronous, ~5-15s)."""
     require_api_key(request)
@@ -95,7 +95,7 @@ async def analyze_dfu(body: AnalyzeRequest, request: Request):
         insights = agent.run_dfu_analysis(body.item_no, body.loc, scan_run_id)
     except Exception as exc:
         log.exception("DFU analysis failed for %s@%s", body.item_no, body.loc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Analysis failed. Check server logs for details.") from exc
 
     return {
         "scan_run_id": scan_run_id,
@@ -199,7 +199,7 @@ async def get_insights(
 # PUT /ai-planner/insights/{insight_id}/status
 # ---------------------------------------------------------------------------
 
-@router.put("/ai-planner/insights/{insight_id}/status")
+@router.post("/ai-planner/insights/{insight_id}/status")
 async def update_insight_status(insight_id: int, body: StatusUpdateRequest, request: Request):
     """Acknowledge or resolve an insight, and record the outcome for feedback tracking."""
     require_api_key(request)
@@ -263,7 +263,7 @@ async def update_insight_status(insight_id: int, body: StatusUpdateRequest, requ
 # PUT /ai-planner/insights/{insight_id}/snooze  (PL-012)
 # ---------------------------------------------------------------------------
 
-@router.put("/ai-planner/insights/{insight_id}/snooze")
+@router.post("/ai-planner/insights/{insight_id}/snooze")
 async def snooze_insight(insight_id: int, body: SnoozeRequest, request: Request):
     """Snooze an insight for N days — hides it from the default open queue."""
     require_api_key(request)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 import json
+import logging
 import time
 import threading
 
@@ -13,6 +14,8 @@ from pydantic import BaseModel
 
 from api.core import get_conn
 from api.auth import require_api_key
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["clustering"])
 
@@ -398,7 +401,8 @@ def promote_clustering_scenario(scenario_id: str):
     try:
         result = promote_scenario(scenario_id)
         return result
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        log.exception("Promote scenario failed for %s", scenario_id)
+        raise HTTPException(status_code=500, detail="Promote failed. Check server logs for details.") from e

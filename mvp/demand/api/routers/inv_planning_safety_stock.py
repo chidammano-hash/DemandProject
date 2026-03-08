@@ -318,7 +318,7 @@ def get_ss_waterfall(
     }
 
 
-@router.post("/inv-planning/safety-stock/override")
+@router.post("/inv-planning/safety-stock/override", status_code=201)
 def override_safety_stock(
     body: SafetyStockOverrideBody,
     _: None = Depends(require_api_key),

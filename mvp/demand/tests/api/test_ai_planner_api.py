@@ -134,7 +134,7 @@ async def test_update_insight_status_acknowledge():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/ai-planner/insights/1/status",
                 json={"status": "acknowledged"},
                 headers={"X-API-Key": "test"},
@@ -155,7 +155,7 @@ async def test_update_insight_status_writes_outcome():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/ai-planner/insights/1/status",
                 json={"status": "acknowledged", "action_taken": "Emergency reorder 250 units"},
                 headers={"X-API-Key": "test"},
@@ -177,7 +177,7 @@ async def test_update_insight_status_invalid():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/ai-planner/insights/1/status",
                 json={"status": "BOGUS"},
                 headers={"X-API-Key": "test"},
@@ -196,7 +196,7 @@ async def test_update_insight_status_not_found():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/ai-planner/insights/9999/status",
                 json={"status": "resolved"},
                 headers={"X-API-Key": "test"},

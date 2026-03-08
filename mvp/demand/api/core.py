@@ -19,6 +19,12 @@ from fastapi import HTTPException
 
 from common.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
 
+
+def _require_env(name: str) -> str:
+    """Raise a clear error when a required env var is missing."""
+    raise RuntimeError(f"Required environment variable '{name}' is not set.")
+
+
 # ---------------------------------------------------------------------------
 # Connection pool
 # ---------------------------------------------------------------------------
@@ -28,12 +34,15 @@ _pool: ConnectionPool | None = None
 def _get_pool() -> ConnectionPool:
     global _pool
     if _pool is None:
+        password = os.environ.get("POSTGRES_PASSWORD")
+        if not password:
+            raise RuntimeError("Required environment variable 'POSTGRES_PASSWORD' is not set.")
         conninfo = (
             f"host={os.getenv('POSTGRES_HOST', 'localhost')} "
             f"port={os.getenv('POSTGRES_PORT', '5440')} "
             f"dbname={os.getenv('POSTGRES_DB', 'demand_mvp')} "
             f"user={os.getenv('POSTGRES_USER', 'demand')} "
-            f"password={os.getenv('POSTGRES_PASSWORD', 'demand')}"
+            f"password={password}"
         )
         _pool = ConnectionPool(conninfo, min_size=2, max_size=10, open=True)
     return _pool

@@ -328,7 +328,7 @@ def get_exception_detail(exception_id: str) -> dict:
 VALID_STATUSES = {"open", "investigating", "resolved", "dismissed"}
 
 
-@router.put("/storyboard/exceptions/{exception_id}/status")
+@router.post("/storyboard/exceptions/{exception_id}/status")
 def update_exception_status(
     exception_id: str,
     body: ExceptionStatusUpdate,

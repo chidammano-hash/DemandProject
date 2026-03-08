@@ -559,7 +559,7 @@ class ApproveRequest(BaseModel):
     approved_by: str
 
 
-@router.put("/supply/planned-orders/{order_id}/approve")
+@router.post("/supply/planned-orders/{order_id}/approve")
 async def approve_planned_order(
     order_id: int,
     body: ApproveRequest,
@@ -597,7 +597,7 @@ class RejectRequest(BaseModel):
     rejection_reason: str
 
 
-@router.put("/supply/planned-orders/{order_id}/reject")
+@router.post("/supply/planned-orders/{order_id}/reject")
 async def reject_planned_order(
     order_id: int,
     body: RejectRequest,
@@ -626,7 +626,7 @@ async def reject_planned_order(
 # PUT /supply/planned-orders/{id}/release
 # ---------------------------------------------------------------------------
 
-@router.put("/supply/planned-orders/{order_id}/release")
+@router.post("/supply/planned-orders/{order_id}/release")
 async def release_planned_order(
     order_id: int,
     request: Request,

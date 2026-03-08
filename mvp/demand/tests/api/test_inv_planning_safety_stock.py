@@ -505,8 +505,8 @@ async def test_safety_stock_override_with_auth_returns_200():
                 },
             )
 
-    # 200 = updated, 404 = item not found in table — both are acceptable without real DB
-    assert resp.status_code in (200, 404)
+    # 201 = created, 404 = item not found in table — both are acceptable without real DB
+    assert resp.status_code in (201, 404)
 
 
 @pytest.mark.asyncio

@@ -98,6 +98,9 @@ def _is_safe_sql(sql: str) -> bool:
     cleaned = cleaned.strip().upper()
     if not cleaned.startswith("SELECT"):
         return False
+    # Block multi-statement execution
+    if ";" in cleaned:
+        return False
     forbidden = {"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE", "GRANT", "REVOKE", "COPY"}
     tokens = set(re.findall(r'\b[A-Z]+\b', cleaned))
     if tokens & forbidden:

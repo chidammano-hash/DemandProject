@@ -200,7 +200,7 @@ def get_exception_summary(
     }
 
 
-@router.put("/inv-planning/exceptions/{exception_id}/acknowledge")
+@router.post("/inv-planning/exceptions/{exception_id}/acknowledge")
 def acknowledge_exception(
     exception_id: str,
     body: ExceptionAcknowledgeBody,
@@ -246,7 +246,7 @@ def acknowledge_exception(
     }
 
 
-@router.put("/inv-planning/exceptions/{exception_id}/status")
+@router.post("/inv-planning/exceptions/{exception_id}/status")
 def update_exception_status(
     exception_id: str,
     body: ExceptionStatusBody,

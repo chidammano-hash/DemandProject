@@ -131,7 +131,7 @@ def create_policy(body: PolicyCreateBody) -> dict:
                 cols = [d[0] for d in cur.description]
             except Exception as exc:
                 conn.rollback()
-                raise HTTPException(status_code=409, detail=str(exc)) from exc
+                raise HTTPException(status_code=409, detail="Policy with this ID already exists.") from exc
 
     d = dict(zip(cols, row))
     return {

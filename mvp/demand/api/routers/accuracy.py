@@ -64,6 +64,8 @@ def forecast_accuracy_slice(
         )
 
     model_list = [m.strip() for m in models.split(",") if m.strip()] if models.strip() else []
+    if len(model_list) > 20:
+        raise HTTPException(status_code=422, detail="models: max 20 values allowed")
 
     # ── Common-DFUs path: raw fact table with intersection CTE ──────────
     use_common = common_dfus and len(model_list) >= 2
@@ -315,6 +317,8 @@ def forecast_accuracy_lag_curve(
     set_cache(response, max_age=120, stale_while_revalidate=300)
     """Return accuracy by lag (0-4) for each model."""
     model_list = [m.strip() for m in models.split(",") if m.strip()] if models.strip() else []
+    if len(model_list) > 20:
+        raise HTTPException(status_code=422, detail="models: max 20 values allowed")
 
     use_common = common_dfus and len(model_list) >= 2
 

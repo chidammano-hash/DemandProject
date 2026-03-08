@@ -281,7 +281,7 @@ async def test_update_status_requires_auth():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 f"/storyboard/exceptions/{_EXC_ID}/status",
                 json={"status": "investigating"},
             )
@@ -299,7 +299,7 @@ async def test_update_status_with_auth_200():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 f"/storyboard/exceptions/{_EXC_ID}/status",
                 headers={"X-API-Key": "secret"},
                 json={"status": "investigating"},
@@ -316,7 +316,7 @@ async def test_update_status_invalid_status_422():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 f"/storyboard/exceptions/{_EXC_ID}/status",
                 headers={"X-API-Key": "secret"},
                 json={"status": "not_valid"},
@@ -335,7 +335,7 @@ async def test_update_status_not_found():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 f"/storyboard/exceptions/{_EXC_ID}/status",
                 headers={"X-API-Key": "secret"},
                 json={"status": "resolved"},

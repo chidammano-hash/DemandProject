@@ -150,7 +150,7 @@ async def test_approve_planned_order_success():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/supply/planned-orders/1001/approve",
                 json={"approved_by": "jane@example.com"},
                 headers={"X-API-Key": "test-key"},
@@ -174,7 +174,7 @@ async def test_approve_planned_order_requires_auth():
             from api.main import app
             transport = ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                resp = await client.put(
+                resp = await client.post(
                     "/supply/planned-orders/1001/approve",
                     json={"approved_by": "jane@example.com"},
                     # no X-API-Key header
@@ -195,7 +195,7 @@ async def test_approve_planned_order_not_found():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/supply/planned-orders/9999/approve",
                 json={"approved_by": "jane@example.com"},
                 headers={"X-API-Key": "test"},
@@ -218,7 +218,7 @@ async def test_reject_planned_order_records_reason():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/supply/planned-orders/1001/reject",
                 json={"rejection_reason": "Demand expected to fall"},
                 headers={"X-API-Key": "test"},
@@ -242,7 +242,7 @@ async def test_release_planned_order_success():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/supply/planned-orders/1001/release",
                 headers={"X-API-Key": "test"},
             )

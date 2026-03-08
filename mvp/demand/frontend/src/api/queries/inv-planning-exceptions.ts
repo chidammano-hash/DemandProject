@@ -93,7 +93,7 @@ export async function acknowledgeException(
   notes?: string,
 ): Promise<ExceptionRow> {
   return fetchJson(`/inv-planning/exceptions/${encodeURIComponent(exceptionId)}/acknowledge`, {
-    method: "PUT",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ acknowledged_by: acknowledgedBy, notes }),
   });
@@ -105,7 +105,7 @@ export async function updateExceptionStatus(
   notes?: string,
 ): Promise<ExceptionRow> {
   return fetchJson(`/inv-planning/exceptions/${encodeURIComponent(exceptionId)}/status`, {
-    method: "PUT",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status, notes }),
   });

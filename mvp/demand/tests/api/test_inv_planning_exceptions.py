@@ -196,7 +196,7 @@ async def test_acknowledge_without_auth_returns_403():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/inv-planning/exceptions/exc-001/acknowledge",
                 json={"acknowledged_by": "planner"},
             )
@@ -219,7 +219,7 @@ async def test_acknowledge_with_auth_returns_200():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/inv-planning/exceptions/exc-001/acknowledge",
                 headers={"X-API-Key": "secret-key"},
                 json={"acknowledged_by": "planner"},
@@ -243,7 +243,7 @@ async def test_update_status_without_auth_returns_403():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/inv-planning/exceptions/exc-001/status",
                 json={"status": "resolved"},
             )
@@ -261,7 +261,7 @@ async def test_update_status_invalid_value_returns_422():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.put(
+            resp = await client.post(
                 "/inv-planning/exceptions/exc-001/status",
                 headers={"X-API-Key": "secret-key"},
                 json={"status": "invalid_status"},

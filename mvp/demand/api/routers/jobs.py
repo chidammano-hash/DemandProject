@@ -156,9 +156,9 @@ def schedule_recurring_job(req: ScheduleJobRequest):
             cron=req.cron, interval_minutes=req.interval_minutes,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc))  # controlled validation message
+    except RuntimeError:
+        raise HTTPException(status_code=409, detail="Schedule conflict or scheduler unavailable.")
 
     return JSONResponse(
         status_code=201,

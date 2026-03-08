@@ -57,7 +57,7 @@ export async function updateInsightStatus(
   status: InsightStatus,
 ): Promise<{ insight_id: number; status: string }> {
   return fetchJson(`/ai-planner/insights/${insight_id}/status`, {
-    method: "PUT",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status }),
   });
@@ -89,7 +89,7 @@ export async function snoozeInsight(
   days: number,
 ): Promise<{ insight_id: number; status: string; snoozed_until: string | null }> {
   return fetchJson(`/ai-planner/insights/${insight_id}/snooze`, {
-    method: "PUT",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ days }),
   });

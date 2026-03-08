@@ -197,7 +197,7 @@ export async function approvePlannedOrder(
   approvedBy: string
 ): Promise<{ id: number; status: string; approved_by: string; approved_at: string }> {
   return fetchJson(`/supply/planned-orders/${id}/approve`, {
-    method: "PUT",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ approved_by: approvedBy }),
   });
@@ -208,7 +208,7 @@ export async function rejectPlannedOrder(
   rejectionReason: string
 ): Promise<{ id: number; status: string }> {
   return fetchJson(`/supply/planned-orders/${id}/reject`, {
-    method: "PUT",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rejection_reason: rejectionReason }),
   });

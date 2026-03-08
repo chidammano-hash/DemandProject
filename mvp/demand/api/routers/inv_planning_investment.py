@@ -212,7 +212,7 @@ def get_investment_detail(
     }
 
 
-@router.post("/inv-planning/investment/plan")
+@router.post("/inv-planning/investment/plan", status_code=201)
 def run_investment_plan(
     budget_constraint: Optional[float] = None,
     target_csl: Optional[float] = None,
