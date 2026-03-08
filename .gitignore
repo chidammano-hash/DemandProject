@@ -38,3 +38,4 @@ mvp/demand/data/**/*.joblib
 # Claude Code settings
 .claude/
 
+everything-claude-code-main
