@@ -11,12 +11,12 @@ export function SupplierPanel() {
   const { data: summary } = useQuery({
     queryKey: supplierKeys.summary(),
     queryFn: fetchSupplierSummary,
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
   });
   const { data: detail } = useQuery({
     queryKey: supplierKeys.detail({ limit: 10 }),
     queryFn: () => fetchSupplierDetail({ limit: 10, sort_by: "supplier_reliability_score", sort_dir: "asc" }),
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
   });
 
   return (

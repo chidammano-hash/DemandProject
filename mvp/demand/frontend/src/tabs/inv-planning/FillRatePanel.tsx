@@ -19,12 +19,12 @@ export function FillRatePanel() {
   const { data: summary, isLoading } = useQuery({
     queryKey: fillRateKeys.summary(),
     queryFn: () => fetchFillRateSummary(),
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
   });
   const { data: trendData } = useQuery({
     queryKey: fillRateKeys.trend(),
     queryFn: () => fetchFillRateTrend(),
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
   });
 
   const pct = (n: number | null | undefined) =>

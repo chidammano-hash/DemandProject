@@ -11,12 +11,12 @@ export function IntramonthPanel() {
   const { data: summary } = useQuery({
     queryKey: intramonthKeys.summary(),
     queryFn: () => fetchIntramonthSummary(),
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
   });
   const { data: detail } = useQuery({
     queryKey: intramonthKeys.detail({ limit: 10, had_stockout: true }),
     queryFn: () => fetchIntramonthDetail({ limit: 10, had_stockout: "true", sort_by: "stockout_day_rate", sort_dir: "desc" }),
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
   });
 
   return (

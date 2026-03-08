@@ -82,7 +82,7 @@ export function DemandPlanPanel() {
   const weekly = weeklyQ.data;
 
   // Sigma chips from latest available month
-  const latestRow = plan?.rows?.find((r: { sigma_combined?: number }) => r.sigma_combined != null);
+  const latestRow = plan?.rows?.find((r) => r.sigma_combined != null);
   const sigmaF = latestRow?.sigma_forecast;
   const sigmaD = latestRow?.sigma_demand;
   const sigmaC = latestRow?.sigma_combined;
@@ -132,7 +132,7 @@ export function DemandPlanPanel() {
             onChange={(e) => setSelectedVersion(e.target.value)}
           >
             <option value="">Latest active</option>
-            {versions.map((v: { plan_version: string; plan_label?: string; status?: string }) => (
+            {versions.map((v) => (
               <option key={v.plan_version} value={v.plan_version}>
                 {v.plan_version} {v.status === "active" ? "✓" : ""}
               </option>
@@ -217,15 +217,7 @@ export function DemandPlanPanel() {
             </thead>
             <tbody className="divide-y">
               {plan?.rows?.map(
-                (r: {
-                  plan_month: string;
-                  horizon_months: number;
-                  p10?: number;
-                  p50?: number;
-                  p90?: number;
-                  sigma_forecast?: number;
-                  sigma_combined?: number;
-                }) => (
+                (r) => (
                   <tr key={r.plan_month} className="hover:bg-muted/30">
                     <td className="px-3 py-2 font-medium">{formatMonth(r.plan_month)}</td>
                     <td className="px-3 py-2 text-muted-foreground">{r.horizon_months}m</td>
@@ -258,13 +250,7 @@ export function DemandPlanPanel() {
           </h4>
           <div className="grid grid-cols-4 md:grid-cols-8 gap-2">
             {weekly.weeks.map(
-              (w: {
-                plan_week: string;
-                iso_week: number;
-                p10_weekly?: number;
-                p50_weekly?: number;
-                p90_weekly?: number;
-              }) => (
+              (w) => (
                 <div
                   key={w.plan_week}
                   className="rounded-lg border bg-card p-2 text-center"

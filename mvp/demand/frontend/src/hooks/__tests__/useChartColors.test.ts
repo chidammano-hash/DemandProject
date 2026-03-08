@@ -7,7 +7,7 @@ import type { Theme } from "@/types";
 
 function makeWrapper(theme: Theme) {
   return ({ children }: { children: React.ReactNode }) =>
-    React.createElement(ThemeProvider, { value: { theme } }, children);
+    React.createElement(ThemeProvider, { value: { theme }, children });
 }
 
 describe("useChartColors", () => {

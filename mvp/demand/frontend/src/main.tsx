@@ -17,13 +17,14 @@ const queryClient = new QueryClient({
   },
 });
 
-function CrashFallback({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) {
+function CrashFallback({ error, resetErrorBoundary }: { error: unknown; resetErrorBoundary: () => void }) {
+  const message = error instanceof Error ? error.message : String(error);
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif", padding: "2rem", textAlign: "center" }}>
       <div style={{ border: "2px solid #e11d48", borderRadius: "12px", padding: "2rem", maxWidth: "480px", background: "#fff1f2" }}>
         <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>Ac</div>
         <h1 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#1e293b", marginBottom: "0.5rem" }}>Something went wrong</h1>
-        <p style={{ fontSize: "0.875rem", color: "#64748b", marginBottom: "1rem" }}>{error.message}</p>
+        <p style={{ fontSize: "0.875rem", color: "#64748b", marginBottom: "1rem" }}>{message}</p>
         <button
           onClick={resetErrorBoundary}
           style={{ background: "#4f46e5", color: "#fff", border: "none", borderRadius: "8px", padding: "0.5rem 1.5rem", cursor: "pointer", fontSize: "0.875rem", fontWeight: 600 }}

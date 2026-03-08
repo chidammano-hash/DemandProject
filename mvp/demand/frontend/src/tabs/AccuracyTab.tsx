@@ -89,10 +89,10 @@ export function AccuracyTab() {
 
   // ── Queries ─────────────────────────────────────────────────────────────
   const { data: slicePayload, isLoading: loadingSlice } = useQuery({
-    queryKey: queryKeys.accuracySlice(sliceParams), queryFn: () => fetchAccuracySlice(sliceParams), staleTime: STALE.TWO_MIN,
+    queryKey: queryKeys.accuracySlice(sliceParams as unknown as Record<string, unknown>), queryFn: () => fetchAccuracySlice(sliceParams), staleTime: STALE.TWO_MIN,
   });
   const { data: lagPayload } = useQuery({
-    queryKey: queryKeys.lagCurve(lagCurveParams), queryFn: () => fetchLagCurve(lagCurveParams), staleTime: STALE.TWO_MIN,
+    queryKey: queryKeys.lagCurve(lagCurveParams as unknown as Record<string, unknown>), queryFn: () => fetchLagCurve(lagCurveParams), staleTime: STALE.TWO_MIN,
   });
   const { data: configPayload } = useQuery({
     queryKey: queryKeys.competitionConfig(), queryFn: fetchCompetitionConfig, staleTime: STALE.FIVE_MIN,
@@ -126,7 +126,7 @@ export function AccuracyTab() {
     mutationFn: async (config: CompetitionConfig) => { await saveCompetitionConfig(config); return runCompetition(); },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.competitionSummary() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.accuracySlice(sliceParams) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.accuracySlice(sliceParams as unknown as Record<string, unknown>) });
     },
   });
 

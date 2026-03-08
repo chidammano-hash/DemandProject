@@ -13,7 +13,7 @@ vi.mock("@/api/queries", () => ({
     aiInsights: (p?: object) => ["ai-insights", p ?? {}],
     aiMemos: (p?: object) => ["ai-memos", p ?? {}],
   },
-  fetchAiInsights: vi.fn().mockResolvedValue({ insights: [], total: 0, page: 1 }),
+  fetchAiInsights: vi.fn().mockResolvedValue({ insights: [], total: 0, page: 1, page_size: 10 }),
   fetchAiMemos: vi.fn().mockResolvedValue({ memos: [] }),
   triggerPortfolioScan: vi.fn().mockResolvedValue({ scan_run_id: "scan-001", status: "accepted" }),
   updateInsightStatus: vi.fn().mockResolvedValue({ insight_id: 1, status: "acknowledged" }),
@@ -126,7 +126,7 @@ describe("AIPlannerTab", () => {
 
   it("renders without crashing with empty data", async () => {
     const { fetchAiInsights, fetchAiMemos } = await import("@/api/queries");
-    vi.mocked(fetchAiInsights).mockResolvedValue({ insights: [], total: 0, page: 1 });
+    vi.mocked(fetchAiInsights).mockResolvedValue({ insights: [], total: 0, page: 1, page_size: 10 });
     vi.mocked(fetchAiMemos).mockResolvedValue({ memos: [] });
 
     const { default: AIPlannerTab } = await import("@/tabs/AIPlannerTab");
@@ -175,6 +175,7 @@ describe("AIPlannerTab", () => {
       insights: [sampleInsight],
       total: 1,
       page: 1,
+      page_size: 10,
     });
 
     const { default: AIPlannerTab } = await import("@/tabs/AIPlannerTab");
@@ -195,6 +196,7 @@ describe("AIPlannerTab", () => {
       insights: [sampleInsight],
       total: 1,
       page: 1,
+      page_size: 10,
     });
 
     const { default: AIPlannerTab } = await import("@/tabs/AIPlannerTab");
@@ -215,6 +217,7 @@ describe("AIPlannerTab", () => {
       insights: [sampleInsight],
       total: 1,
       page: 1,
+      page_size: 10,
     });
 
     const { default: AIPlannerTab } = await import("@/tabs/AIPlannerTab");
@@ -235,6 +238,7 @@ describe("AIPlannerTab", () => {
       insights: [sampleInsight],
       total: 1,
       page: 1,
+      page_size: 10,
     });
 
     const { default: AIPlannerTab } = await import("@/tabs/AIPlannerTab");
@@ -255,6 +259,7 @@ describe("AIPlannerTab", () => {
       insights: [sampleInsight],
       total: 1,
       page: 1,
+      page_size: 10,
     });
 
     const { default: AIPlannerTab } = await import("@/tabs/AIPlannerTab");
@@ -272,7 +277,7 @@ describe("AIPlannerTab", () => {
 
   it("shows healthy empty state when no open insights", async () => {
     const { fetchAiInsights } = await import("@/api/queries");
-    vi.mocked(fetchAiInsights).mockResolvedValue({ insights: [], total: 0, page: 1 });
+    vi.mocked(fetchAiInsights).mockResolvedValue({ insights: [], total: 0, page: 1, page_size: 10 });
 
     const { default: AIPlannerTab } = await import("@/tabs/AIPlannerTab");
     render(

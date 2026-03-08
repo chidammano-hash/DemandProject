@@ -52,7 +52,7 @@ vi.mock("@/hooks/useUrlState", async (importOriginal) => {
   };
 });
 
-const { fetchScenarioStatus: mockFetchStatus } = await import("@/api/queries") as { fetchScenarioStatus: ReturnType<typeof vi.fn> };
+const { fetchScenarioStatus: mockFetchStatus } = await import("@/api/queries") as unknown as { fetchScenarioStatus: ReturnType<typeof vi.fn> };
 
 // Mock recharts to avoid rendering issues in test env
 vi.mock("recharts", () => ({

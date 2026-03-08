@@ -23,7 +23,7 @@ echarts.use([
 ]);
 
 type EChartContainerProps = {
-  option: echarts.EChartsOption;
+  option: echarts.EChartsCoreOption;
   theme: Theme;
   height?: string | number;
   className?: string;

@@ -133,6 +133,7 @@ export interface DashboardKpis {
     accuracy_pct: number | null;
     wape_pct: number | null;
     bias_pct: number | null;
+    weeks_of_supply?: number | null;
   };
 }
 

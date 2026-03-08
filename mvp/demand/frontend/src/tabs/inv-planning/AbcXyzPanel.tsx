@@ -11,12 +11,12 @@ export function AbcXyzPanel() {
   const { data: matrix } = useQuery({
     queryKey: abcXyzKeys.matrix(),
     queryFn: fetchAbcXyzMatrix,
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
   });
   const { data: summary } = useQuery({
     queryKey: abcXyzKeys.summary(),
     queryFn: fetchAbcXyzSummary,
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
   });
 
   const ABC = ["A", "B", "C"];

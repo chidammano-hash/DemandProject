@@ -67,28 +67,28 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
   const { data: kpis, isLoading: kpisLoading } = useQuery({
     queryKey: controlTowerKeys.kpis(),
     queryFn: fetchControlTowerKpis,
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
     refetchInterval: refreshInterval,
   });
 
   const { data: alertsData } = useQuery({
     queryKey: controlTowerKeys.alerts({ limit: 10 }),
     queryFn: () => fetchControlTowerAlerts({ limit: 10 }),
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
     refetchInterval: refreshInterval,
   });
 
   const { data: topCritical } = useQuery({
     queryKey: controlTowerKeys.topCritical(10),
     queryFn: () => fetchControlTowerTopCritical(10),
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
     refetchInterval: refreshInterval,
   });
 
   const { data: trendData } = useQuery({
     queryKey: controlTowerKeys.trend(trendMonths),
     queryFn: () => fetchControlTowerTrend(trendMonths),
-    staleTime: STALE,
+    staleTime: STALE.FIVE_MIN,
     refetchInterval: 3_600_000,
   });
 
