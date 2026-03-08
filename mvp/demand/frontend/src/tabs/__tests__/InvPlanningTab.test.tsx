@@ -15,6 +15,8 @@ vi.mock("@/api/queries/evolution", () => ({
   sopKeys: { cycles: () => ["sop-cycles"], gaps: () => ["sop-gaps"], approvedPlan: () => ["sop-plan"] },
   biasKeys: { summary: () => ["bias-summary"], flagged: () => ["bias-flagged"] },
   STALE_EVO: { FIVE_MIN: 300000, ONE_MIN: 60000 },
+  fetchBiasCorrectionSummary: vi.fn().mockResolvedValue({ dfu_count: 0, avg_correction_factor: null, flagged_count: 0, clipped_count: 0, avg_rolling_bias: null, last_computed_at: null }),
+  fetchFlaggedBiasCorrections: vi.fn().mockResolvedValue({ total: 0, flagged: [] }),
   fetchBlendedForecast: vi.fn().mockResolvedValue({ total: 0, page: 1, rows: [] }),
   fetchBlendedSummary: vi.fn().mockResolvedValue({ total_dfus: 0, total_weeks: 0, avg_alpha: null, capped_count: 0 }),
   fetchEchelonTargets: vi.fn().mockResolvedValue({ total: 0, page: 1, rows: [] }),
