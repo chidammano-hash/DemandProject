@@ -30,10 +30,15 @@ catboost_info/
 reference/
 datafiles/
 
-# Generated data files (large CSVs, ML outputs, Optuna DBs)
-mvp/demand/data/**/*.csv
-mvp/demand/data/**/*.db
-mvp/demand/data/**/*.joblib
+# Generated data files — entire data directory (CSVs, models, tuning, backtest outputs, SHAP)
+mvp/demand/data/
+
+# ML model files (safety net for any models outside data/)
+*.pkl
+*.joblib
+*.h5
+*.onnx
+*.model
 
 # Claude Code settings
 .claude/
