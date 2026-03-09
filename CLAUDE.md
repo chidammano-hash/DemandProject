@@ -655,6 +655,9 @@ Located in `docs/specs/` — 6 domains, 40 files, `DD-SS-descriptive-name.md` co
 - `06-05-testing-strategy.md` — Full-stack pytest + Vitest testing spec, mandatory test requirements
 - `06-06-backtest-cleanup.md` — clean_backtest_models.py, selective model deletion, view refresh
 
+### 07-platform-integration/
+- `07-01-integration-architecture.md` — Four bidirectional integration vectors: notifications (Slack/Teams/Email/PagerDuty), REST API consumers (CORS, rate limiting, webhooks), cloud data pipelines (Snowflake/BigQuery/S3/Databricks), ERP/WMS adapters (SAP/Oracle/NetSuite/Manhattan)
+
 ### Archived specs (deleted code / superseded designs)
 Located in `docs/archive/` — feature14 (transfer learning), feature19-21/24-25 (archived ML models), feature35 (deleted motif themes), theme-testing-strategy (orphaned), feature27 (Figma MCP, not started)
 
