@@ -12,15 +12,9 @@ import {
   type ExceptionListParams,
 } from "@/api/queries";
 
-const PAGE = 50;
+import { formatFixed } from "@/lib/formatters";
 
-function fmt(n: number | null | undefined, decimals = 1): string {
-  if (n == null) return "—";
-  return Number(n).toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
-}
+const PAGE = 50;
 
 const SEVERITY_BADGE: Record<string, string> = {
   critical: "bg-red-100 text-red-800",
@@ -149,7 +143,7 @@ export function ExceptionQueuePanel() {
           },
           {
             label: "Rec. Order Value",
-            value: `$${fmt(excSummary?.total_recommended_order_value ?? 0, 0)}`,
+            value: `$${formatFixed(excSummary?.total_recommended_order_value ?? 0, 0)}`,
             color: "text-blue-600",
             isStr: true,
           },
@@ -258,9 +252,9 @@ export function ExceptionQueuePanel() {
                   <td className="px-2 py-1.5 font-mono">{row.item_no}</td>
                   <td className="px-2 py-1.5 font-mono">{row.loc}</td>
                   <td className="px-2 py-1.5">{EXC_TYPE_LABELS[row.exception_type] ?? row.exception_type}</td>
-                  <td className="px-2 py-1.5 text-right">{fmt(row.current_qty_on_hand)}</td>
-                  <td className="px-2 py-1.5 text-right">{fmt(row.ss_combined)}</td>
-                  <td className="px-2 py-1.5 text-right font-medium">{row.recommended_order_qty ? fmt(row.recommended_order_qty) : "—"}</td>
+                  <td className="px-2 py-1.5 text-right">{formatFixed(row.current_qty_on_hand)}</td>
+                  <td className="px-2 py-1.5 text-right">{formatFixed(row.ss_combined)}</td>
+                  <td className="px-2 py-1.5 text-right font-medium">{row.recommended_order_qty ? formatFixed(row.recommended_order_qty) : "—"}</td>
                   <td className="px-2 py-1.5">{row.recommended_order_by ?? "—"}</td>
                   <td className="px-2 py-1.5">
                     <span className={`px-1 py-0.5 rounded text-xs ${

@@ -14,10 +14,10 @@ import {
   type VariabilityDetailRow,
 } from "@/api/queries";
 
-function fmtPct(n: number | null | undefined): string {
-  if (n == null) return "—";
-  return `${Number(n).toFixed(1)}%`;
-}
+import { KpiCard } from "@/components/KpiCard";
+import { formatPct } from "@/lib/formatters";
+
+const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function VariabilityPanel() {
   const { data: summary, isLoading } = useQuery({
@@ -47,24 +47,18 @@ export function VariabilityPanel() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Stable Items</p>
-          <p className="text-xl font-bold text-green-600">
-            {isLoading ? "..." : (summary?.by_class.low ?? 0).toLocaleString()}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Volatile Items</p>
-          <p className={`text-xl font-bold ${(summary?.by_class.high ?? 0) > 0 ? "text-red-600" : "text-foreground"}`}>
-            {isLoading ? "..." : ((summary?.by_class.high ?? 0) + (summary?.by_class.lumpy ?? 0)).toLocaleString()}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Avg CV</p>
-          <p className="text-xl font-bold">
-            {isLoading ? "..." : fmtPct(summary?.avg_cv != null ? summary.avg_cv * 100 : null)}
-          </p>
-        </div>
+        <KpiCard className={PANEL_KPI} label="Stable Items" value={isLoading ? "..." : (summary?.by_class.low ?? 0).toLocaleString()} colorClass="text-green-600" />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Volatile Items"
+          value={isLoading ? "..." : ((summary?.by_class.high ?? 0) + (summary?.by_class.lumpy ?? 0)).toLocaleString()}
+          colorClass={(summary?.by_class.high ?? 0) > 0 ? "text-red-600" : undefined}
+        />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Avg CV"
+          value={isLoading ? "..." : formatPct(summary?.avg_cv != null ? summary.avg_cv * 100 : null)}
+        />
       </div>
 
       {pieData.length > 0 && (

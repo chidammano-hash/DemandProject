@@ -17,13 +17,10 @@ import {
   type SimulationResult,
 } from "@/api/queries";
 
-function fmt(n: number | null | undefined, decimals = 1): string {
-  if (n == null) return "—";
-  return Number(n).toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
-}
+import { KpiCard } from "@/components/KpiCard";
+import { formatFixed } from "@/lib/formatters";
+
+const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function SimulationPanel() {
   const queryClient = useQueryClient();
@@ -74,26 +71,16 @@ export function SimulationPanel() {
       {activeResult && (
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-lg border bg-muted/30 p-3">
-              <p className="text-xs text-muted-foreground">Recommended SS</p>
-              <p className="text-xl font-bold">{fmt(activeResult.recommended_ss, 0)}</p>
-            </div>
-            <div className="rounded-lg border bg-muted/30 p-3">
-              <p className="text-xs text-muted-foreground">Analytical SS</p>
-              <p className="text-xl font-bold">{fmt(activeResult.analytical_ss, 0)}</p>
-            </div>
-            <div className="rounded-lg border bg-muted/30 p-3">
-              <p className="text-xs text-muted-foreground">Difference %</p>
-              <p
-                className={`text-xl font-bold ${
-                  (activeResult.sim_vs_analytical_pct ?? 0) > 0 ? "text-red-600" : "text-green-600"
-                }`}
-              >
-                {activeResult.sim_vs_analytical_pct != null
-                  ? `${activeResult.sim_vs_analytical_pct > 0 ? "+" : ""}${activeResult.sim_vs_analytical_pct.toFixed(1)}%`
-                  : "-"}
-              </p>
-            </div>
+            <KpiCard className={PANEL_KPI} label="Recommended SS" value={formatFixed(activeResult.recommended_ss, 0)} />
+            <KpiCard className={PANEL_KPI} label="Analytical SS" value={formatFixed(activeResult.analytical_ss, 0)} />
+            <KpiCard
+              className={PANEL_KPI}
+              label="Difference %"
+              value={activeResult.sim_vs_analytical_pct != null
+                ? `${activeResult.sim_vs_analytical_pct > 0 ? "+" : ""}${activeResult.sim_vs_analytical_pct.toFixed(1)}%`
+                : "-"}
+              colorClass={(activeResult.sim_vs_analytical_pct ?? 0) > 0 ? "text-red-600" : "text-green-600"}
+            />
           </div>
 
           {activeResult.results_by_ss_level && activeResult.results_by_ss_level.length > 0 && (
@@ -159,8 +146,8 @@ export function SimulationPanel() {
                       <td className="py-1 pr-2 font-mono">{r.item_no}</td>
                       <td className="py-1 pr-2">{r.loc}</td>
                       <td className="py-1 pr-2">{r.simulation_date?.slice(0, 10) ?? "-"}</td>
-                      <td className="py-1 pr-2 text-right">{fmt(r.recommended_ss, 0)}</td>
-                      <td className="py-1 pr-2 text-right">{fmt(r.analytical_ss, 0)}</td>
+                      <td className="py-1 pr-2 text-right">{formatFixed(r.recommended_ss, 0)}</td>
+                      <td className="py-1 pr-2 text-right">{formatFixed(r.analytical_ss, 0)}</td>
                       <td
                         className={`py-1 pr-2 text-right ${
                           (r.sim_vs_analytical_pct ?? 0) > 5 ? "text-red-600" : "text-foreground"

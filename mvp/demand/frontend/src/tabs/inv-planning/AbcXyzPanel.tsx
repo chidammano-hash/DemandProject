@@ -6,6 +6,9 @@ import {
   STALE,
   type AbcXyzCell,
 } from "@/api/queries";
+import { KpiCard } from "@/components/KpiCard";
+
+const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function AbcXyzPanel() {
   const { data: matrix } = useQuery({
@@ -26,18 +29,9 @@ export function AbcXyzPanel() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Total DFUs</p>
-          <p className="text-xl font-bold">{Number(summary?.total_dfus ?? 0).toLocaleString()}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Classified</p>
-          <p className="text-xl font-bold">{(matrix?.total_classified ?? 0).toLocaleString()}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Z-Class (High Variability)</p>
-          <p className="text-xl font-bold text-amber-600">{Number(summary?.z_count ?? 0).toLocaleString()}</p>
-        </div>
+        <KpiCard className={PANEL_KPI} label="Total DFUs" value={(summary?.total_dfus ?? 0).toLocaleString()} />
+        <KpiCard className={PANEL_KPI} label="Classified" value={(matrix?.total_classified ?? 0).toLocaleString()} />
+        <KpiCard className={PANEL_KPI} label="Z-Class (High Variability)" value={(summary?.z_count ?? 0).toLocaleString()} colorClass="text-amber-600" />
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">

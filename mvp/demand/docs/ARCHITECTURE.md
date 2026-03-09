@@ -9,7 +9,6 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 3. Reuse generic scripts:
    - `normalize_dataset_csv.py`
    - `load_dataset_postgres.py`
-   - `spark_dataset_to_iceberg.py`
 4. Reuse generic API query paths in `api/main.py`:
    - `/domains/{domain}`
    - `/domains/{domain}/page`
@@ -51,11 +50,7 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - Python scripts + `uv` + Make
 2. Relational sink:
    - PostgreSQL 16 (pgvector/pgvector:pg16) via `psycopg` copy/load
-3. Lakehouse sink:
-   - Spark 3.5 writing Apache Iceberg tables to MinIO (S3 API)
-4. Query:
-   - Trino over Iceberg catalog
-5. API + UI:
+3. API + UI:
    - FastAPI backend + React/Vite/shadcn UI frontend
 6. NL→SQL chatbot:
    - OpenAI GPT-4o (generation) + text-embedding-3-small (embeddings)
@@ -186,11 +181,11 @@ Performance impact: aggregate queries (cluster-level, supplier-level) drop from 
 
 `api/main.py` is a ~65-line shell that only creates the app, adds middleware, and mounts all 30 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/`. `domains.py` is mounted last (catch-all `{domain}` path parameter).
 
-**30 active router modules** (as of IPAIfeature1 + Feature 40):
-accuracy, ai_planner, analysis, benchmark, chat, clusters, competition, control_tower, dashboard, domains, fill_rate, intel, inv_backtest, inventory, inv_planning (shim), inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, jobs, shap, storyboard
+**29 active router modules** (as of IPAIfeature1 + Feature 40):
+accuracy, ai_planner, analysis, chat, clusters, competition, control_tower, dashboard, domains, fill_rate, intel, inv_backtest, inventory, inv_planning (shim), inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, jobs, shap, storyboard
 
-**17 Vite proxy path prefixes** in `frontend/vite.config.ts`:
-`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`
+**16 Vite proxy path prefixes** in `frontend/vite.config.ts`:
+`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`
 
 **CRITICAL:** Every new API path prefix must be added to `frontend/vite.config.ts` or the frontend receives HTML instead of JSON. Restart the Vite dev server after changes.
 
@@ -615,7 +610,6 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 3. Add Make targets:
    - `normalize-<dataset>`
    - `load-<dataset>`
-   - `spark-<dataset>` (calls generic spark script with `--dataset <dataset>`)
 4. For generic dimension/fact domains: API uses existing generic `/domains/{domain}/...` endpoints
 5. For specialized domains (like inventory): Add dedicated API endpoints and frontend tab
 6. Run `make generate-embeddings` to update chat context with new schema metadata

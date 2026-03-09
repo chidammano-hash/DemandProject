@@ -35,7 +35,6 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 from api.routers import accuracy   # noqa: E402
 from api.routers import analysis   # noqa: E402
-from api.routers import benchmark  # noqa: E402
 from api.routers import chat       # noqa: E402
 from api.routers import clusters   # noqa: E402
 from api.routers import competition  # noqa: E402
@@ -80,7 +79,6 @@ from api.routers import domains    # noqa: E402
 # Specific-path routers first
 app.include_router(accuracy.router)
 app.include_router(analysis.router)
-app.include_router(benchmark.router)
 app.include_router(chat.router)
 app.include_router(clusters.router)
 app.include_router(competition.router)

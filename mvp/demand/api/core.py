@@ -8,10 +8,7 @@ from __future__ import annotations
 from typing import Any
 from datetime import date
 import json
-import math
 import os
-import subprocess
-import time
 
 import psycopg
 from psycopg_pool import ConnectionPool
@@ -425,6 +422,45 @@ def build_agg_trend_source(spec: DomainSpec, trend_metrics: list[str], filters: 
 
 
 # ---------------------------------------------------------------------------
+# Generic row helpers (used across all router modules)
+# ---------------------------------------------------------------------------
+
+def rows_to_dicts(cols: list[str], rows: list[tuple]) -> list[dict[str, Any]]:
+    """Convert a list of DB row tuples to a list of dicts using a column name list."""
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def add_item_loc_filters(
+    where: list[str],
+    params: list[Any],
+    item: str | None,
+    loc: str | None,
+    *,
+    table_alias: str = "",
+    item_col: str = "item_no",
+    loc_col: str = "loc",
+) -> None:
+    """Append ILIKE filter clauses for item and location to an in-progress WHERE parts list.
+
+    Args:
+        where: Mutable list of WHERE clause fragments (e.g. ``["status = %s"]``).
+        params: Mutable list of query parameters, appended in tandem with *where*.
+        item: Optional item filter value; adds ``ILIKE '%value%'`` clause when non-empty.
+        loc: Optional location filter value; adds ``ILIKE '%value%'`` clause when non-empty.
+        table_alias: Optional table alias prefix, e.g. ``"s"`` produces ``s.item_no``.
+        item_col: Column name for the item identifier (default ``"item_no"``).
+        loc_col: Column name for the location identifier (default ``"loc"``).
+    """
+    prefix = f"{table_alias}." if table_alias else ""
+    if item:
+        where.append(f"{prefix}{item_col} ILIKE %s")
+        params.append(f"%{item}%")
+    if loc:
+        where.append(f"{prefix}{loc_col} ILIKE %s")
+        params.append(f"%{loc}%")
+
+
+# ---------------------------------------------------------------------------
 # Pagination helpers
 # ---------------------------------------------------------------------------
 _LARGE_TABLES = {"fact_external_forecast_monthly", "fact_sales_monthly"}
@@ -500,88 +536,3 @@ def list_domain(spec: DomainSpec, limit: int) -> list[dict[str, Any]]:
     )
     return page[spec.plural]
 
-
-# ---------------------------------------------------------------------------
-# Benchmark timing helpers
-# ---------------------------------------------------------------------------
-def quote_literal(value: str) -> str:
-    """Escape a string for inline SQL literals.
-
-    Used only by the benchmark endpoint which must build identical SQL for both
-    Postgres and Trino (Trino's docker exec path cannot use parameterized queries).
-    """
-    return "'" + value.replace("'", "''") + "'"
-
-
-def parse_optional_iso_date(value: str, field_name: str) -> str:
-    v = value.strip()
-    if not v:
-        return ""
-    try:
-        return date.fromisoformat(v).isoformat()
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid {field_name}; expected YYYY-MM-DD") from exc
-
-
-def percentile_ms(values: list[float], p: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    idx = max(0, min(len(ordered) - 1, math.ceil((p / 100.0) * len(ordered)) - 1))
-    return round(ordered[idx], 3)
-
-
-def summary_stats_ms(values: list[float]) -> dict[str, float | None]:
-    if not values:
-        return {"runs": 0, "avg_ms": None, "min_ms": None, "max_ms": None, "p50_ms": None, "p95_ms": None}
-    return {
-        "runs": len(values),
-        "avg_ms": round(sum(values) / len(values), 3),
-        "min_ms": round(min(values), 3),
-        "max_ms": round(max(values), 3),
-        "p50_ms": percentile_ms(values, 50),
-        "p95_ms": percentile_ms(values, 95),
-    }
-
-
-def timed_postgres_query(sql: str, runs: int, warmup: int) -> list[float]:
-    timings: list[float] = []
-    with get_conn() as conn, conn.cursor() as cur:
-        for _ in range(warmup):
-            cur.execute(sql)
-            cur.fetchall()
-        for _ in range(runs):
-            t0 = time.perf_counter()
-            cur.execute(sql)
-            cur.fetchall()
-            timings.append((time.perf_counter() - t0) * 1000.0)
-    return timings
-
-
-def timed_trino_query(sql: str, runs: int, warmup: int, trino_container: str) -> list[float]:
-    timings: list[float] = []
-    cmd = [
-        "docker",
-        "exec",
-        "-i",
-        trino_container,
-        "trino",
-        "--output-format",
-        "CSV_HEADER",
-        "--execute",
-        sql,
-    ]
-    for _ in range(warmup):
-        warmup_proc = subprocess.run(cmd, capture_output=True, text=True)
-        if warmup_proc.returncode != 0:
-            err = (warmup_proc.stderr or warmup_proc.stdout or "unknown trino error").strip()
-            raise RuntimeError(err)
-    for _ in range(runs):
-        t0 = time.perf_counter()
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        elapsed = (time.perf_counter() - t0) * 1000.0
-        if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout or "unknown trino error").strip()
-            raise RuntimeError(err)
-        timings.append(elapsed)
-    return timings

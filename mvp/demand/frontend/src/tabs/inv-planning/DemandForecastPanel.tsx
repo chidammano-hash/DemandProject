@@ -22,13 +22,7 @@ import {
   type ProductionForecastPoint,
 } from "@/api/queries";
 
-function fmt(n: number | null | undefined, decimals = 0): string {
-  if (n == null) return "—";
-  return Number(n).toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
-}
+import { formatFixed } from "@/lib/formatters";
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -125,7 +119,7 @@ function DfuForecastChart({
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
           <XAxis dataKey="month" tick={{ fontSize: 11 }} />
           <YAxis tick={{ fontSize: 11 }} />
-          <Tooltip formatter={(v: number) => fmt(v, 1)} />
+          <Tooltip formatter={(v: number) => formatFixed(v, 1)} />
           <Legend iconSize={12} wrapperStyle={{ fontSize: 11 }} />
           {data.forecasts.some((p) => p.forecast_qty_lower != null) && (
             <Bar dataKey="lower" name="Lower CI" fill="var(--muted)" opacity={0.4} />
@@ -235,12 +229,12 @@ export function DemandForecastPanel() {
           />
           <KpiCard
             label="DFU Coverage"
-            value={fmt(summary.total_dfu_count)}
+            value={formatFixed(summary.total_dfu_count)}
             sub="item-locations with forecasts"
           />
           <KpiCard
             label={`Total Forecast (${horizonMonths}M)`}
-            value={fmt(summary.total_forecast_qty)}
+            value={formatFixed(summary.total_forecast_qty)}
             sub="cumulative units"
           />
           <KpiCard
@@ -264,7 +258,7 @@ export function DemandForecastPanel() {
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
               <XAxis dataKey="abc" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v: number) => fmt(v, 0)} />
+              <Tooltip formatter={(v: number) => formatFixed(v, 0)} />
               <Legend iconSize={12} wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="qty" name="Forecast Qty" fill="var(--primary)" radius={[2, 2, 0, 0]} />
             </ComposedChart>

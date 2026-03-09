@@ -18,21 +18,9 @@ import {
   STALE,
   type EoqDetailRow,
 } from "@/api/queries";
+import { formatFixed, formatInt } from "@/lib/formatters";
 
 const PAGE = 50;
-
-function fmt(n: number | null | undefined, decimals = 1): string {
-  if (n == null) return "—";
-  return Number(n).toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
-}
-
-function fmtInt(n: number | null | undefined): string {
-  if (n == null) return "—";
-  return Math.round(Number(n)).toLocaleString();
-}
 
 export function EoqPanel() {
   const [abcFilter, setAbcFilter] = useState("");
@@ -91,7 +79,7 @@ export function EoqPanel() {
             Total Cycle Stock
           </p>
           <p className="text-2xl font-bold mt-1 text-foreground">
-            {summaryLoading ? "…" : fmtInt(eoqSummary?.total_cycle_stock)}
+            {summaryLoading ? "…" : formatInt(eoqSummary?.total_cycle_stock)}
           </p>
           <p className="text-xs text-muted-foreground mt-1">units (avg EOQ/2)</p>
         </div>
@@ -100,7 +88,7 @@ export function EoqPanel() {
             Avg EOQ Size
           </p>
           <p className="text-2xl font-bold mt-1 text-foreground">
-            {summaryLoading ? "…" : fmt(eoqSummary?.avg_effective_eoq, 0)}
+            {summaryLoading ? "…" : formatFixed(eoqSummary?.avg_effective_eoq, 0)}
           </p>
           <p className="text-xs text-muted-foreground mt-1">units per order</p>
         </div>
@@ -109,7 +97,7 @@ export function EoqPanel() {
             Avg Order Frequency
           </p>
           <p className="text-2xl font-bold mt-1 text-foreground">
-            {summaryLoading ? "…" : fmt(eoqSummary?.avg_order_frequency, 1)}
+            {summaryLoading ? "…" : formatFixed(eoqSummary?.avg_order_frequency, 1)}
           </p>
           <p className="text-xs text-muted-foreground mt-1">orders / year</p>
         </div>
@@ -121,7 +109,7 @@ export function EoqPanel() {
             {summaryLoading
               ? "…"
               : eoqSummary?.total_annual_cost != null
-              ? `$${fmtInt(eoqSummary.total_annual_cost)}`
+              ? `$${formatInt(eoqSummary.total_annual_cost)}`
               : "—"}
           </p>
           <p className="text-xs text-muted-foreground mt-1">holding + ordering</p>
@@ -148,11 +136,11 @@ export function EoqPanel() {
                   <tr key={row.abc_vol} className="border-b last:border-0">
                     <td className="py-1 pr-4 font-medium">{row.abc_vol}</td>
                     <td className="text-right py-1 pr-4">{row.count.toLocaleString()}</td>
-                    <td className="text-right py-1 pr-4">{fmt(row.avg_eoq, 0)}</td>
-                    <td className="text-right py-1 pr-4">{fmtInt(row.total_cycle_stock)}</td>
+                    <td className="text-right py-1 pr-4">{formatFixed(row.avg_eoq, 0)}</td>
+                    <td className="text-right py-1 pr-4">{formatInt(row.total_cycle_stock)}</td>
                     <td className="text-right py-1">
                       {row.total_annual_cost != null
-                        ? `$${fmtInt(row.total_annual_cost)}`
+                        ? `$${formatInt(row.total_annual_cost)}`
                         : "—"}
                     </td>
                   </tr>
@@ -285,12 +273,12 @@ export function EoqPanel() {
                       <td className="py-1 pr-3 font-mono text-xs">{r.item_no}</td>
                       <td className="py-1 pr-3 text-muted-foreground">{r.loc}</td>
                       <td className="py-1 pr-3 text-center">{r.abc_vol ?? "—"}</td>
-                      <td className="py-1 pr-3 text-right">{fmt(r.eoq, 1)}</td>
-                      <td className="py-1 pr-3 text-right font-medium">{fmt(r.effective_eoq, 1)}</td>
-                      <td className="py-1 pr-3 text-right">{fmt(r.eoq_cycle_stock, 1)}</td>
-                      <td className="py-1 pr-3 text-right">{fmt(r.order_frequency, 2)}</td>
+                      <td className="py-1 pr-3 text-right">{formatFixed(r.eoq, 1)}</td>
+                      <td className="py-1 pr-3 text-right font-medium">{formatFixed(r.effective_eoq, 1)}</td>
+                      <td className="py-1 pr-3 text-right">{formatFixed(r.eoq_cycle_stock, 1)}</td>
+                      <td className="py-1 pr-3 text-right">{formatFixed(r.order_frequency, 2)}</td>
                       <td className="py-1 text-right">
-                        {r.total_annual_cost != null ? `$${fmt(r.total_annual_cost, 2)}` : "—"}
+                        {r.total_annual_cost != null ? `$${formatFixed(r.total_annual_cost, 2)}` : "—"}
                       </td>
                     </tr>
                   ))}

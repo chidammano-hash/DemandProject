@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**Demand Studio** is a unified demand forecasting analytics platform. It ingests sales and forecast data, stores it in PostgreSQL (OLTP) and Apache Iceberg (lakehouse), and serves a React UI for interactive analytics.
+**Demand Studio** is a unified demand forecasting analytics platform. It ingests sales and forecast data, stores it in PostgreSQL, and serves a React UI for interactive analytics.
 
 **Working directory for all dev work:** `mvp/demand/`
 
@@ -19,9 +19,6 @@
 | Styling | Tailwind CSS + shadcn/ui |
 | Charts | Recharts + ECharts |
 | Database | PostgreSQL 16 |
-| Lakehouse | Apache Iceberg via MinIO + Iceberg REST |
-| Big Data | Apache Spark 3.5 |
-| Query Engine | Trino |
 | ML / Clustering | scikit-learn, pandas, scipy, matplotlib, seaborn |
 | ML Tracking | MLflow |
 | Job Scheduling | APScheduler 3.11 (BackgroundScheduler + ThreadPoolExecutor) |
@@ -39,10 +36,9 @@
 | `mvp/demand/api/main.py` | FastAPI backend — primary endpoints + mounts routers (clusters, jobs, etc.) |
 | `mvp/demand/frontend/src/App.tsx` | React UI — sidebar layout shell (~200 lines, lazy-loaded tabs) |
 | `mvp/demand/Makefile` | All dev commands |
-| `mvp/demand/docker-compose.yml` | 7-service infra cluster |
+| `mvp/demand/docker-compose.yml` | 2-service infra cluster (Postgres + MLflow) |
 | `mvp/demand/scripts/normalize_dataset_csv.py` | Generic ETL: CSV → clean CSV |
 | `mvp/demand/scripts/load_dataset_postgres.py` | Generic loader: clean CSV → PostgreSQL |
-| `mvp/demand/scripts/spark_dataset_to_iceberg.py` | Spark job: clean CSV → Iceberg |
 | `mvp/demand/sql/` | DDL for all tables, indexes, materialized views |
 | `mvp/demand/sql/017_create_fact_inventory_snapshot.sql` | Inventory snapshot table DDL, indexes, materialized view |
 | `mvp/demand/sql/019_inventory_forecast_view.sql` | Inventory-forecast bridge materialized view (Feature 37) |
@@ -236,7 +232,7 @@
 make init              # Create .venv, install uv, sync dependencies
 
 # Infrastructure
-make up                # Start Docker services (Postgres, MinIO, Spark, Trino, MLflow)
+make up                # Start Docker services (Postgres, MLflow)
 make down              # Stop all services
 make db-apply-sql      # Apply DDL schemas to Postgres
 
@@ -245,7 +241,6 @@ make normalize-all     # Normalize all 8 datasets (CSV → clean CSV)
 make load-all          # Load cleaned data into Postgres + refresh materialized views
 make load-forecast-replace  # Reload external forecast only (preserves backtest data)
 make load-forecast-replace-no-archive  # Reload external forecast, skip archive (fast)
-make spark-all         # Publish datasets to Iceberg (optional)
 
 # Inventory pipeline
 make db-apply-inventory     # Create inventory table + indexes + materialized view (one-time)
@@ -278,14 +273,13 @@ make ui                # Start React dev server on :5173
 # Validation
 make check-db          # Table row counts in Postgres
 make check-api         # Curl API health + sample endpoints
-make check-all         # Full check: DB + API + Trino
+make check-all         # Full check: DB + API
 
 # Chatbot
 make db-apply-chat     # Apply pgvector + embeddings table DDL
 make generate-embeddings  # Generate and store schema embeddings (requires OPENAI_API_KEY)
 
 # Benchmarking
-make bench-compare DOMAIN=sales RUNS=7 ITEM=100320 LOCATION=1401-BULK
 
 # Clustering pipeline
 make cluster-features  # Generate clustering feature matrix from sales/DFU/item data
@@ -439,15 +433,13 @@ All datasets extend a single `DomainSpec` dataclass in `common/domain_specs.py`.
 ```
 Source CSV → normalize_dataset_csv.py → clean CSV
                                               ↓
-                          ┌───────────────────┴───────────────────┐
-                          ▼                                         ▼
-              load_dataset_postgres.py                spark_dataset_to_iceberg.py
-                          ▼                                         ▼
-                    PostgreSQL 16                          Apache Iceberg (MinIO)
-                          ▼                                         ▼
-                      FastAPI                                    Trino SQL
-                          ▼
-                    React UI (:5173)
+                              load_dataset_postgres.py
+                                              ↓
+                                       PostgreSQL 16
+                                              ↓
+                                          FastAPI
+                                              ↓
+                                      React UI (:5173)
 ```
 
 ### API Pattern
@@ -501,7 +493,6 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - KPI window selector: 1–12 month rolling window
 - Multi-metric trend charts (dual Y-axis: volume left, accuracy % right)
 - Item/Location filter with typeahead suggestions
-- Postgres vs Iceberg latency benchmarking panel
 - Champion Selection panel: model competition config, run, and FVA model-wins visualization
 - Market Intelligence tab: item/location selector with Google web search + GPT-4o narrative briefing
 - DFU Analysis tab: unified sales vs multi-model forecast overlay chart, 3 scope modes, per-model KPI cards, toggleable measures
@@ -587,7 +578,6 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Market intelligence:** `POST /market-intelligence` — combines Google Custom Search API (product news/trends) + GPT-4o narrative synthesis for item + location pairs. Looks up item metadata (description, brand, category) from `dim_item` and location state from `dim_location`. Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` in `.env`.
 - **Backtest cleanup:** `scripts/clean_backtest_models.py` selectively removes model predictions from `fact_external_forecast_monthly` and `backtest_lag_archive` by `model_id`, then refreshes 5 materialized views. Supports `--list`, `--dry-run`, `--all-backtest` (excludes `external`). Make targets: `backtest-clean`, `backtest-list`.
 - **Forecast date-range cleanup:** `scripts/clean_forecasts_by_date.py` deletes rows from `fact_external_forecast_monthly` and/or `backtest_lag_archive` by time bucket. Supports `--before`, `--after`, `--between` date range filters and `--months` for specific month(s) on `startdate` (default) or `fcstdate`, optional `--model` filter, `--forecast-only`/`--archive-only` scope, `--dry-run` preview, and `--list` for row counts by model+month. All dates normalized to month-start. Refreshes same 5 materialized views as `clean_backtest_models.py`. Make targets: `forecast-clean`, `forecast-clean-list`.
-- **Benchmarking:** `GET /bench/compare` runs identical queries (count, page, trend) against Postgres and Trino/Iceberg, returning per-query latency stats (min/max/avg/p50/p95) with winner determination and speedup factor. Requires Docker services running. Make target: `bench-compare`.
 - **Inventory snapshots:** 14 monthly CSV files (`datafiles/Inventory_Snapshot_YYYY_MM.csv`, ~190M rows total) merged by `scripts/normalize_inventory_csv.py` into a single clean CSV. Loaded into `fact_inventory_snapshot` via generic loader. `qty_on_order` derived as `qty_on_hand_on_order - qty_on_hand` during normalization. Dedicated API endpoints (`/inventory/*`) and frontend InventoryTab. `agg_inventory_monthly` materialized view with daily sales derivation (LAG CTE), EOM snapshots, and proper monthly sales (MAX not SUM). `/inventory/kpis` uses two-query pattern: point-in-time totals from latest snapshot + trailing-month aggregates for supply chain KPIs (DOS, WOC, Inventory Turns, LT Coverage). KPI cards use severity color-coding (green/yellow/red thresholds). Trend chart renders 5 lines: On Hand, On Order, Monthly Sales, Lead Time, Days of Supply.
 - **DFU seasonality detection:** Pipeline in `scripts/detect_seasonality.py` + `update_seasonality_profiles.py` computes seasonality metrics (strength, profile label, peak/trough month, peak-to-trough ratio, is_yearly_seasonal flag) from sales history and writes them to `dim_dfu`. Config in `config/seasonality_config.yaml`. DDL in `sql/015_add_seasonality_columns.sql`. Make targets: `seasonality-detect`, `seasonality-update`, `seasonality-all`. These 6 columns (`seasonality_profile`, `seasonality_strength`, `is_yearly_seasonal`, `peak_month`, `trough_month`, `peak_trough_ratio`) are now part of `DFU_SPEC` and are exposed by the generic Data Explorer.
 - **What-If clustering scenarios:** `POST /clustering/scenario` runs a trial KMeans pipeline with custom `feature_params`, `model_params`, and `label_params` without overwriting production clustering. Returns HTTP 202 immediately and runs in background thread; `GET /clustering/scenario/{id}/status` polls for running/completed/failed. `GET /clustering/scenario/estimate` returns runtime estimate based on DFU count, K range, and gap flag. `POST /clustering/scenario/{id}/promote` applies the winning scenario to `dim_dfu.ml_cluster`. `ScenarioNotificationContext` tracks running/completed state across tabs; Dashboard injects completion alert. Enhanced charts: elbow with optimal K ReferenceLine, silhouette bar chart with quality zone thresholds (Strong/Reasonable/Weak/No structure), feature importance horizontal bars, cluster size pie chart, conditional gap statistic line chart. Requires `API_KEY` env var to be set for auth (disabled when unset). **Scenario queueing:** When a clustering job is already running, new scenarios are queued (`status="queued"`) instead of rejected with 409; queued jobs auto-dispatch via `_dispatch_next()` when the active job completes. **View Results:** "View Results" button in JobsTab navigates to ClustersTab with `?scenario_job=<id>` URL param; ClustersTab auto-loads result and renders ScenarioCharts. **Past Scenarios:** ClustersTab What-If panel shows last 10 completed scenario runs in an accordion with inline charts and promote buttons.
@@ -613,7 +603,7 @@ Located in `docs/specs/` — 6 domains, 39 files, `DD-SS-descriptive-name.md` co
 ### 01-data-platform/
 - `01-01-infrastructure.md` — Tech stack, Docker Compose, services, implemented-features master index
 - `01-02-data-models.md` — Data architecture + ERD + dimension tables (Item/Location/Customer/Time/DFU) + fact tables (Sales, Forecast)
-- `01-03-benchmarking.md` — Postgres vs Trino/Iceberg latency comparison API
+- `01-03-benchmarking.md` — *(removed — benchmarking feature deleted)*
 
 ### 02-forecasting/ (includes demand intelligence: clustering, seasonality, blended demand)
 - `02-01-accuracy-kpis.md` — Accuracy metrics (WAPE/bias/accuracy%) + multi-dimensional slicing (agg_accuracy_by_dim, lag-curve)
@@ -674,17 +664,18 @@ Located in `docs/archive/` — feature14 (transfer learning), feature19-21/24-25
 2. **`mvp/demand/docs/README.md`** — Update stack, datasets, analytics behavior, quick start, or key paths if affected
 3. **`mvp/demand/docs/RUNBOOK.md`** — Update setup steps, notes, or troubleshooting if affected
 4. **`mvp/demand/docs/WORKFLOW.md`** — Update the end-to-end workflow if any pipeline phase is added, removed, or reordered — new Make targets, new schema steps, new scripts, or changes to the dependency chain between phases
-5. **`docs/specs/<domain>/<DD-SS-name>.md`** — Create or update the design spec for the feature in the appropriate domain folder
-6. **`docs/specs/01-data-platform/01-01-infrastructure.md`** — Add the feature to the "Implemented Features" list
-7. **`CLAUDE.md`** (this file) — Update Key Files, Common Commands, Data Models, Frontend Features, Important Conventions, or Design Specs list if affected
+5. **`mvp/demand/docs/product_summary.md`** — Update the product summary when a feature area is added, removed, or significantly changed — update the relevant Feature Area section, Data Scale row counts if tables change, UI tab counts, and test counts
+6. **`docs/specs/<domain>/<DD-SS-name>.md`** — Create or update the design spec for the feature in the appropriate domain folder
+7. **`docs/specs/01-data-platform/01-01-infrastructure.md`** — Add the feature to the "Implemented Features" list
+8. **`CLAUDE.md`** (this file) — Update Key Files, Common Commands, Data Models, Frontend Features, Important Conventions, or Design Specs list if affected
 
 **This applies to ALL changes — additions, modifications, AND deletions. When code is removed, the corresponding references in ALL documentation files above must also be removed or updated.**
 
 **Additionally, you MUST write tests for every change and run `make test-all` to verify they pass:**
 
-8. **`mvp/demand/tests/`** — Add or update backend tests for any new/modified Python modules or API endpoints
-9. **`mvp/demand/frontend/src/**/__tests__/`** — Add or update frontend tests for any new/modified components, hooks, or utilities
-10. **Run `make test-all`** — Verify all 1457+ tests pass (both backend and frontend) before considering the work complete
+9. **`mvp/demand/tests/`** — Add or update backend tests for any new/modified Python modules or API endpoints
+10. **`mvp/demand/frontend/src/**/__tests__/`** — Add or update frontend tests for any new/modified components, hooks, or utilities
+11. **Run `make test-all`** — Verify all 1457+ tests pass (both backend and frontend) before considering the work complete
 
 **What counts as changes requiring doc updates:**
 - New feature implementation (new endpoints, UI panels, tables, scripts)
@@ -713,4 +704,3 @@ Located in `docs/archive/` — feature14 (transfer learning), feature19-21/24-25
 - Do not commit `__pycache__/`, `.pyc` files, or `.venv/`
 - Do not modify `mvp/demand/data/*.csv` files manually — they are generated by normalize scripts
 - Do not touch the `reference/` directory — it is archived code
-- Do not run `make spark-all` unless Iceberg/MinIO is needed; Postgres path is sufficient for most dev work

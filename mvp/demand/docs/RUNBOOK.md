@@ -13,7 +13,7 @@ make init          # Create .venv, install uv, sync all dependencies
 
 ### 1.2 Start infrastructure
 ```bash
-make up            # Postgres, MinIO, MLflow, Iceberg REST, Spark, Trino
+make up            # Postgres, MLflow
 make down          # Stop all services
 ```
 
@@ -409,13 +409,7 @@ Open in browser:
 ```bash
 make check-db      # Table row counts in Postgres
 make check-api     # Curl health + sample endpoints
-make check-all     # DB + API + Trino (full)
-```
-
-**Optional Iceberg/Spark path** (only needed if using Trino query engine):
-```bash
-make spark-all     # Publish all datasets to Iceberg (MinIO)
-make trino-check-item && make trino-check-sales  # Spot-check via Trino
+make check-all     # DB + API (full)
 ```
 
 ---
@@ -531,11 +525,9 @@ After any cleanup that affects champion/ceiling rows, re-run `make champion-sele
 
 | Problem | Fix |
 |---|---|
-| `make up` fails on bucket creation | Re-run `make minio-bucket` |
 | API returns DB errors | Verify `.env` DB values and `make up` status |
 | pgvector extension not found | Ensure `docker-compose.yml` uses `pgvector/pgvector:pg16`; rebuild: `make down && docker volume rm demand_pg_data && make up` |
 | MLflow connection refused (port 5003) | Run `make up`; verify: `docker ps \| grep mlflow`; MLflow only runs when stack is up |
-| Spark fails | Run `make normalize-all` first; inspect `demand-mvp-spark` and `demand-mvp-iceberg-rest` logs |
 
 ### Data Ingestion
 

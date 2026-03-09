@@ -7,6 +7,8 @@ type KpiCardProps = {
   sublabel?: string;
   colorClass?: string;
   borderClass?: string;
+  /** Override classes on the outer wrapper div */
+  className?: string;
   /** direction drives color; unit defaults to "%" if omitted; period labels the comparison window */
   trend?: { delta: number; direction: "up" | "down" | "flat"; unit?: string; period?: string };
   sparkline?: number[];
@@ -43,7 +45,7 @@ function Sparkline({ data }: { data: number[] }) {
   );
 }
 
-export function KpiCard({ label, value, sublabel, colorClass, borderClass, trend, sparkline, severity, icon: Icon }: KpiCardProps) {
+export function KpiCard({ label, value, sublabel, colorClass, borderClass, className, trend, sparkline, severity, icon: Icon }: KpiCardProps) {
   const trendColor = trend
     ? trend.direction === "up"
       ? "text-[var(--kpi-best)]"
@@ -57,7 +59,7 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, trend
     : null;
 
   return (
-    <div className={cn("rounded-md border bg-card px-3 py-2", borderClass)}>
+    <div className={cn("rounded-md border bg-card px-3 py-2", borderClass, className)}>
       <div className="flex items-center gap-1.5">
         {Icon && <Icon className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.5} />}
         <p className="text-xs text-muted-foreground">

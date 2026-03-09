@@ -56,8 +56,6 @@ Clustering:
 - PostgreSQL 16 (pgvector/pgvector:pg16 — includes vector extension)
 - FastAPI + Uvicorn
 - React + Vite + Tailwind + shadcn/ui + Recharts + ECharts
-- Spark + Iceberg + MinIO
-- Trino
 - MLflow (experiment tracking, model registry)
 - LightGBM (demand forecasting models)
 - CatBoost (demand forecasting models)
@@ -395,35 +393,6 @@ Forecast Date-Range Cleanup:
 - Scope: `--forecast-only` or `--archive-only` to limit to one table
 - Date column: `--date-column fcstdate` to filter by forecast generation date instead of target month
 
-Benchmark Postgres vs Iceberg/Trino:
-- endpoint: `GET /bench/compare`
-- compares the same query shapes (`count`, `page`, `trend`) for one domain
-- returns per-run timings and p50/p95 stats for both backends
-
-Example:
-```bash
-cd mvp/demand
-make api
-make bench-compare DOMAIN=sales RUNS=7 ITEM=100320 LOCATION=1401-BULK START_DATE=2023-01-01 END_DATE=2025-01-01
-```
-
-If your Trino catalog/schema differs from `iceberg.silver`, override:
-```bash
-make bench-compare DOMAIN=sales TRINO_CATALOG=iceberg TRINO_SCHEMA=silver
-```
-
-Optional analytics path:
-```bash
-make spark-item
-make spark-location
-make spark-customer
-make spark-time
-make spark-dfu
-make spark-sales
-make spark-forecast
-make check-all
-```
-
 Optional inventory pipeline:
 ```bash
 make db-apply-inventory     # Create table + indexes + materialized view
@@ -498,7 +467,6 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - Frontend app: `mvp/demand/frontend/src/App.tsx`
 - Generic normalize script: `mvp/demand/scripts/normalize_dataset_csv.py`
 - Generic load script: `mvp/demand/scripts/load_dataset_postgres.py`
-- Generic Spark writer: `mvp/demand/scripts/spark_dataset_to_iceberg.py`
 - Embeddings generator: `mvp/demand/scripts/generate_embeddings.py`
 - Clustering scripts: `mvp/demand/scripts/generate_clustering_features.py`, `train_clustering_model.py`, `label_clusters.py`, `update_cluster_assignments.py`
 - Shared backtest framework: `mvp/demand/common/backtest_framework.py`, `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`

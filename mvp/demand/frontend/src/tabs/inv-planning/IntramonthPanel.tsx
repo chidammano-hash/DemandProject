@@ -6,6 +6,9 @@ import {
   STALE,
   type IntramonthStockoutRow,
 } from "@/api/queries";
+import { KpiCard } from "@/components/KpiCard";
+
+const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function IntramonthPanel() {
   const { data: summary } = useQuery({
@@ -22,22 +25,10 @@ export function IntramonthPanel() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Items with Stockout</p>
-          <p className="text-xl font-bold text-red-600">{Number(summary?.items_with_stockout ?? 0).toLocaleString()}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Extended Stockouts (7d+)</p>
-          <p className="text-xl font-bold text-red-700">{Number(summary?.items_with_extended_stockout ?? 0).toLocaleString()}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Total Stockout Days</p>
-          <p className="text-xl font-bold">{Number(summary?.total_stockout_days ?? 0).toLocaleString()}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Est. Lost Sales</p>
-          <p className="text-xl font-bold">{Number(summary?.total_est_lost_sales ?? 0).toFixed(0)}</p>
-        </div>
+        <KpiCard className={PANEL_KPI} label="Items with Stockout" value={(summary?.items_with_stockout ?? 0).toLocaleString()} colorClass="text-red-600" />
+        <KpiCard className={PANEL_KPI} label="Extended Stockouts (7d+)" value={(summary?.items_with_extended_stockout ?? 0).toLocaleString()} colorClass="text-red-700" />
+        <KpiCard className={PANEL_KPI} label="Total Stockout Days" value={(summary?.total_stockout_days ?? 0).toLocaleString()} />
+        <KpiCard className={PANEL_KPI} label="Est. Lost Sales" value={Number(summary?.total_est_lost_sales ?? 0).toFixed(0)} />
       </div>
       {detail && detail.rows.length > 0 && (
         <div className="overflow-x-auto">

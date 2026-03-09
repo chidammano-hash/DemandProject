@@ -7,21 +7,11 @@ import {
   STALE,
   type SafetyStockRow,
 } from "@/api/queries";
+import { KpiCard } from "@/components/KpiCard";
+import { formatFixed, formatPct } from "@/lib/formatters";
 
 const PAGE = 50;
-
-function fmt(n: number | null | undefined, decimals = 1): string {
-  if (n == null) return "—";
-  return Number(n).toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
-}
-
-function fmtPct(n: number | null | undefined): string {
-  if (n == null) return "—";
-  return `${Number(n).toFixed(1)}%`;
-}
+const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function SafetyStockPanel() {
   const [belowOnly, setBelowOnly] = useState(false);
@@ -60,26 +50,27 @@ export function SafetyStockPanel() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Items Below SS</p>
-          <p className={`text-xl font-bold ${(summary?.below_ss_count ?? 0) > 0 ? "text-red-600" : "text-foreground"}`}>
-            {summaryLoading ? "..." : (summary?.below_ss_count ?? 0).toLocaleString()}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Avg SS Coverage</p>
-          <p className="text-xl font-bold">
-            {summaryLoading ? "..." : fmtPct(summary?.avg_ss_coverage != null ? summary.avg_ss_coverage * 100 : null)}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Total DFUs</p>
-          <p className="text-xl font-bold">{summaryLoading ? "..." : (summary?.total_dfus ?? 0).toLocaleString()}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Avg SS Days</p>
-          <p className="text-xl font-bold">{summaryLoading ? "..." : fmt(summary?.avg_ss_days, 1)}</p>
-        </div>
+        <KpiCard
+          className={PANEL_KPI}
+          label="Items Below SS"
+          value={summaryLoading ? "..." : (summary?.below_ss_count ?? 0).toLocaleString()}
+          colorClass={(summary?.below_ss_count ?? 0) > 0 ? "text-red-600" : undefined}
+        />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Avg SS Coverage"
+          value={summaryLoading ? "..." : formatPct(summary?.avg_ss_coverage != null ? summary.avg_ss_coverage * 100 : null)}
+        />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Total DFUs"
+          value={summaryLoading ? "..." : (summary?.total_dfus ?? 0).toLocaleString()}
+        />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Avg SS Days"
+          value={summaryLoading ? "..." : formatFixed(summary?.avg_ss_days)}
+        />
       </div>
 
       {summary && summary.by_abc.length > 0 && (
@@ -103,7 +94,7 @@ export function SafetyStockPanel() {
                     {row.below_ss_count.toLocaleString()}
                   </td>
                   <td className="py-1 text-right">
-                    {fmtPct(row.avg_coverage != null ? row.avg_coverage * 100 : null)}
+                    {formatPct(row.avg_coverage != null ? row.avg_coverage * 100 : null)}
                   </td>
                 </tr>
               ))}
@@ -165,9 +156,9 @@ export function SafetyStockPanel() {
                     >
                       <td className="py-1 pr-2 font-mono">{r.item_no}</td>
                       <td className="py-1 pr-2">{r.loc}</td>
-                      <td className="py-1 pr-2 text-right">{fmt(r.ss_combined, 1)}</td>
+                      <td className="py-1 pr-2 text-right">{formatFixed(r.ss_combined)}</td>
                       <td className="py-1 pr-2 text-right">
-                        {fmtPct(r.ss_coverage != null ? r.ss_coverage * 100 : null)}
+                        {formatPct(r.ss_coverage != null ? r.ss_coverage * 100 : null)}
                       </td>
                       <td className="py-1 pr-2 text-center">
                         {r.is_below_ss ? (
@@ -176,7 +167,7 @@ export function SafetyStockPanel() {
                           <span className="text-muted-foreground">-</span>
                         )}
                       </td>
-                      <td className="py-1 pr-2 text-right">{fmt(r.reorder_point, 1)}</td>
+                      <td className="py-1 pr-2 text-right">{formatFixed(r.reorder_point)}</td>
                       <td className="py-1 text-center">{r.abc_vol ?? "-"}</td>
                     </tr>
                   ))

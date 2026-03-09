@@ -7,15 +7,10 @@ import {
   type LtProfileRow,
 } from "@/api/queries";
 
-function fmtPct(n: number | null | undefined): string {
-  if (n == null) return "—";
-  return `${Number(n).toFixed(1)}%`;
-}
+import { KpiCard } from "@/components/KpiCard";
+import { formatFixed, formatPct } from "@/lib/formatters";
 
-function fmtDays(n: number | string | null | undefined): string {
-  if (n == null) return "—";
-  return `${Number(n).toFixed(1)}`;
-}
+const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function LeadTimePanel() {
   const { data: summary, isLoading } = useQuery({
@@ -41,24 +36,22 @@ export function LeadTimePanel() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Avg Lead Time</p>
-          <p className="text-xl font-bold">
-            {isLoading ? "..." : summary?.avg_lt_mean_days != null ? `${fmtDays(summary.avg_lt_mean_days)} days` : "-"}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Volatile Suppliers</p>
-          <p className={`text-xl font-bold ${(summary?.by_class.volatile ?? 0) > 0 ? "text-red-600" : "text-foreground"}`}>
-            {isLoading ? "..." : (summary?.by_class.volatile ?? 0).toLocaleString()}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Avg LT CV</p>
-          <p className="text-xl font-bold">
-            {isLoading ? "..." : fmtPct(summary?.avg_lt_cv != null ? summary.avg_lt_cv * 100 : null)}
-          </p>
-        </div>
+        <KpiCard
+          className={PANEL_KPI}
+          label="Avg Lead Time"
+          value={isLoading ? "..." : summary?.avg_lt_mean_days != null ? `${formatFixed(summary.avg_lt_mean_days)} days` : "-"}
+        />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Volatile Suppliers"
+          value={isLoading ? "..." : (summary?.by_class.volatile ?? 0).toLocaleString()}
+          colorClass={(summary?.by_class.volatile ?? 0) > 0 ? "text-red-600" : undefined}
+        />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Avg LT CV"
+          value={isLoading ? "..." : formatPct(summary?.avg_lt_cv != null ? summary.avg_lt_cv * 100 : null)}
+        />
       </div>
 
       {classData.length > 0 && (
@@ -91,10 +84,10 @@ export function LeadTimePanel() {
                 <tr key={`${r.item_no}-${r.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
                   <td className="py-1 pr-2 font-mono">{r.item_no}</td>
                   <td className="py-1 pr-2">{r.loc}</td>
-                  <td className="py-1 pr-2 text-right">{r.lt_mean_days != null ? fmtDays(r.lt_mean_days) : "—"}</td>
-                  <td className="py-1 pr-2 text-right">{r.lt_std_days != null ? fmtDays(r.lt_std_days) : "—"}</td>
+                  <td className="py-1 pr-2 text-right">{r.lt_mean_days != null ? formatFixed(r.lt_mean_days) : "—"}</td>
+                  <td className="py-1 pr-2 text-right">{r.lt_std_days != null ? formatFixed(r.lt_std_days) : "—"}</td>
                   <td className="py-1 pr-2 text-right">
-                    {r.lt_cv != null ? fmtPct(Number(r.lt_cv) * 100) : "—"}
+                    {r.lt_cv != null ? formatPct(Number(r.lt_cv) * 100) : "—"}
                   </td>
                   <td className="py-1 text-center">
                     <span

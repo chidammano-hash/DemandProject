@@ -6,6 +6,9 @@ import {
   STALE,
   type SupplierRow,
 } from "@/api/queries";
+import { KpiCard } from "@/components/KpiCard";
+
+const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function SupplierPanel() {
   const { data: summary } = useQuery({
@@ -22,22 +25,10 @@ export function SupplierPanel() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Total Suppliers</p>
-          <p className="text-xl font-bold">{Number(summary?.total_suppliers ?? 0).toLocaleString()}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Avg Reliability Score</p>
-          <p className="text-xl font-bold">{Number(summary?.avg_reliability_score ?? 0).toFixed(0)}/100</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Avg Lead Time (days)</p>
-          <p className="text-xl font-bold">{Number(summary?.avg_lead_time_days ?? 0).toFixed(1)}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Low Reliability (&lt;40)</p>
-          <p className="text-xl font-bold text-red-600">{Number(summary?.low_reliability_count ?? 0).toLocaleString()}</p>
-        </div>
+        <KpiCard className={PANEL_KPI} label="Total Suppliers" value={(summary?.total_suppliers ?? 0).toLocaleString()} />
+        <KpiCard className={PANEL_KPI} label="Avg Reliability Score" value={`${Number(summary?.avg_reliability_score ?? 0).toFixed(0)}/100`} />
+        <KpiCard className={PANEL_KPI} label="Avg Lead Time (days)" value={Number(summary?.avg_lead_time_days ?? 0).toFixed(1)} />
+        <KpiCard className={PANEL_KPI} label="Low Reliability (<40)" value={(summary?.low_reliability_count ?? 0).toLocaleString()} colorClass="text-red-600" />
       </div>
       {detail && detail.rows.length > 0 && (
         <div className="overflow-x-auto">

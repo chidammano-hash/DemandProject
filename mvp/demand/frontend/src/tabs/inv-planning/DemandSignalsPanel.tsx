@@ -8,15 +8,10 @@ import {
   type DemandSignalRow,
 } from "@/api/queries";
 
-const PAGE = 50;
+import { KpiCard } from "@/components/KpiCard";
 
-function fmt(n: number | null | undefined, decimals = 1): string {
-  if (n == null) return "—";
-  return Number(n).toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
-}
+const PAGE = 50;
+const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function DemandSignalsPanel() {
   const [signalTypeFilter, setSignalTypeFilter] = useState("");
@@ -76,26 +71,20 @@ export function DemandSignalsPanel() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Above Plan</p>
-          <p className="text-xl font-bold text-green-600">{(summary?.above_plan_count ?? 0).toLocaleString()}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Below Plan</p>
-          <p className="text-xl font-bold text-red-600">{(summary?.below_plan_count ?? 0).toLocaleString()}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Urgent Alerts</p>
-          <p className={`text-xl font-bold ${(summary?.urgent_count ?? 0) > 0 ? "text-red-600" : "text-foreground"}`}>
-            {(summary?.urgent_count ?? 0).toLocaleString()}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Projected Stockouts</p>
-          <p className={`text-xl font-bold ${(summary?.projected_stockouts ?? 0) > 0 ? "text-orange-600" : "text-foreground"}`}>
-            {(summary?.projected_stockouts ?? 0).toLocaleString()}
-          </p>
-        </div>
+        <KpiCard className={PANEL_KPI} label="Above Plan" value={(summary?.above_plan_count ?? 0).toLocaleString()} colorClass="text-green-600" />
+        <KpiCard className={PANEL_KPI} label="Below Plan" value={(summary?.below_plan_count ?? 0).toLocaleString()} colorClass="text-red-600" />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Urgent Alerts"
+          value={(summary?.urgent_count ?? 0).toLocaleString()}
+          colorClass={(summary?.urgent_count ?? 0) > 0 ? "text-red-600" : undefined}
+        />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Projected Stockouts"
+          value={(summary?.projected_stockouts ?? 0).toLocaleString()}
+          colorClass={(summary?.projected_stockouts ?? 0) > 0 ? "text-orange-600" : undefined}
+        />
       </div>
 
       <div className="flex flex-wrap gap-2">

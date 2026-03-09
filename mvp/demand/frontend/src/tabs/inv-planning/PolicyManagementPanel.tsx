@@ -10,18 +10,7 @@ import {
   type ReplenishmentPolicy,
 } from "@/api/queries";
 
-function fmt(n: number | null | undefined, decimals = 1): string {
-  if (n == null) return "—";
-  return Number(n).toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  });
-}
-
-function fmtPct(n: number | null | undefined): string {
-  if (n == null) return "—";
-  return `${Number(n).toFixed(1)}%`;
-}
+import { formatFixed, formatPct } from "@/lib/formatters";
 
 const POLICY_TYPE_COLORS: Record<string, string> = {
   continuous_rop:  "bg-blue-100 text-blue-800",
@@ -221,9 +210,9 @@ export function PolicyManagementPanel() {
                         </span>
                       </td>
                       <td className="py-1 pr-4 text-right">{bp.dfu_count.toLocaleString()}</td>
-                      <td className="py-1 pr-4 text-right">{fmtPct(bp.below_ss_pct)}</td>
-                      <td className="py-1 pr-4 text-right">{fmtPct(bp.avg_ss_coverage)}</td>
-                      <td className="py-1 text-right">{fmt(bp.avg_dos, 1)}</td>
+                      <td className="py-1 pr-4 text-right">{formatPct(bp.below_ss_pct)}</td>
+                      <td className="py-1 pr-4 text-right">{formatPct(bp.avg_ss_coverage)}</td>
+                      <td className="py-1 text-right">{formatFixed(bp.avg_dos, 1)}</td>
                     </tr>
                   ))}
               </tbody>

@@ -17,7 +17,7 @@ Run once per machine / new environment.
 make init              # Create .venv, install uv, sync all dependencies
 
 # 2. Infrastructure (Docker)
-make up                # Start Postgres, MinIO, MLflow, Iceberg REST, Spark, Trino
+make up                # Start Postgres, MLflow
 
 # 3. Frontend dependencies
 make ui-init           # npm install for React dev server

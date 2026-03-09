@@ -14,6 +14,10 @@ import {
   fetchFillRateTrend,
   STALE,
 } from "@/api/queries";
+import { KpiCard } from "@/components/KpiCard";
+import { formatInt, formatPct } from "@/lib/formatters";
+
+const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function FillRatePanel() {
   const { data: summary, isLoading } = useQuery({
@@ -27,28 +31,13 @@ export function FillRatePanel() {
     staleTime: STALE.FIVE_MIN,
   });
 
-  const pct = (n: number | null | undefined) =>
-    n == null ? "—" : `${(Number(n) * 100).toFixed(1)}%`;
-
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Portfolio Fill Rate</p>
-          <p className="text-xl font-bold">{pct(summary?.portfolio_fill_rate)}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Total Ordered</p>
-          <p className="text-xl font-bold">{Math.round(Number(summary?.total_ordered ?? 0)).toLocaleString()}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Total Shortage</p>
-          <p className="text-xl font-bold text-red-600">{Math.round(Number(summary?.total_shortage_qty ?? 0)).toLocaleString()}</p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Partial Fulfillment Events</p>
-          <p className="text-xl font-bold">{(summary?.partial_fulfillment_events ?? 0).toLocaleString()}</p>
-        </div>
+        <KpiCard className={PANEL_KPI} label="Portfolio Fill Rate" value={formatPct((summary?.portfolio_fill_rate ?? 0) * 100)} />
+        <KpiCard className={PANEL_KPI} label="Total Ordered" value={formatInt(summary?.total_ordered)} />
+        <KpiCard className={PANEL_KPI} label="Total Shortage" value={formatInt(summary?.total_shortage_qty)} colorClass="text-red-600" />
+        <KpiCard className={PANEL_KPI} label="Partial Fulfillment Events" value={formatInt(summary?.partial_fulfillment_events)} />
       </div>
       {isLoading && <p className="text-xs text-muted-foreground">Loading fill rate data...</p>}
       {trendData?.months && trendData.months.length > 0 && (

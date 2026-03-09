@@ -19,15 +19,10 @@ import {
   type InvestmentRow,
 } from "@/api/queries";
 
-function fmtInt(n: number | null | undefined): string {
-  if (n == null) return "—";
-  return Math.round(Number(n)).toLocaleString();
-}
+import { KpiCard } from "@/components/KpiCard";
+import { formatInt, formatPct } from "@/lib/formatters";
 
-function fmtPct(n: number | null | undefined): string {
-  if (n == null) return "—";
-  return `${Number(n).toFixed(1)}%`;
-}
+const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function InvestmentPanel() {
   const queryClient = useQueryClient();
@@ -80,38 +75,28 @@ export function InvestmentPanel() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Investment Gap</p>
-          <p className="text-xl font-bold text-amber-600">
-            {summaryLoading
-              ? "..."
-              : summary?.total_investment_gap != null
-              ? `$${fmtInt(summary.total_investment_gap)}`
-              : "-"}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Current Portfolio CSL</p>
-          <p className="text-xl font-bold">
-            {summaryLoading
-              ? "..."
-              : fmtPct(summary?.avg_current_csl != null ? summary.avg_current_csl * 100 : null)}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">Target Portfolio CSL</p>
-          <p className="text-xl font-bold text-green-600">
-            {summaryLoading
-              ? "..."
-              : fmtPct(summary?.avg_recommended_csl != null ? summary.avg_recommended_csl * 100 : null)}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">DFUs Analyzed</p>
-          <p className="text-xl font-bold">
-            {summaryLoading ? "..." : (summary?.total_items ?? 0).toLocaleString()}
-          </p>
-        </div>
+        <KpiCard
+          className={PANEL_KPI}
+          label="Investment Gap"
+          value={summaryLoading ? "..." : summary?.total_investment_gap != null ? `$${formatInt(summary.total_investment_gap)}` : "-"}
+          colorClass="text-amber-600"
+        />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Current Portfolio CSL"
+          value={summaryLoading ? "..." : formatPct(summary?.avg_current_csl != null ? summary.avg_current_csl * 100 : null)}
+        />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Target Portfolio CSL"
+          value={summaryLoading ? "..." : formatPct(summary?.avg_recommended_csl != null ? summary.avg_recommended_csl * 100 : null)}
+          colorClass="text-green-600"
+        />
+        <KpiCard
+          className={PANEL_KPI}
+          label="DFUs Analyzed"
+          value={summaryLoading ? "..." : (summary?.total_items ?? 0).toLocaleString()}
+        />
       </div>
 
       {frontier && frontier.length > 0 && (
@@ -191,7 +176,7 @@ export function InvestmentPanel() {
                         {r.recommended_csl != null ? `${(r.recommended_csl * 100).toFixed(1)}%` : "-"}
                       </td>
                       <td className="py-1 pr-2 text-right text-amber-600">
-                        {r.investment_increment != null ? `$${fmtInt(r.investment_increment)}` : "-"}
+                        {r.investment_increment != null ? `$${formatInt(r.investment_increment)}` : "-"}
                       </td>
                       <td className="py-1 text-right">
                         {r.marginal_roi != null ? r.marginal_roi.toFixed(2) : "-"}

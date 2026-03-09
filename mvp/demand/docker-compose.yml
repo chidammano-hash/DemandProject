@@ -1,17 +1,4 @@
 services:
-  minio:
-    image: minio/minio:latest
-    container_name: demand-mvp-minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio123
-    ports:
-      - "${MINIO_API_HOST_PORT:-9200}:9000"
-      - "${MINIO_CONSOLE_HOST_PORT:-9201}:9001"
-    volumes:
-      - minio_data:/data
-
   postgres:
     image: pgvector/pgvector:pg16
     container_name: demand-mvp-postgres
@@ -61,57 +48,6 @@ services:
     volumes:
       - mlflow_data:/mlruns
 
-  iceberg-rest:
-    image: tabulario/iceberg-rest:1.6.0
-    container_name: demand-mvp-iceberg-rest
-    depends_on:
-      - minio
-    environment:
-      AWS_ACCESS_KEY_ID: minio
-      AWS_SECRET_ACCESS_KEY: minio123
-      AWS_REGION: us-east-1
-      CATALOG_WAREHOUSE: s3://warehouse/
-      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
-      CATALOG_S3_ENDPOINT: http://minio:9000
-      CATALOG_S3_PATH__STYLE__ACCESS: "true"
-    ports:
-      - "${ICEBERG_REST_HOST_PORT:-8381}:8181"
-
-  spark:
-    image: ${SPARK_IMAGE:-spark:3.5.7-java17-python3}
-    container_name: demand-mvp-spark
-    depends_on:
-      - iceberg-rest
-    environment:
-      HOME: /tmp
-      AWS_ACCESS_KEY_ID: minio
-      AWS_SECRET_ACCESS_KEY: minio123
-      AWS_REGION: us-east-1
-      AWS_EC2_METADATA_DISABLED: "true"
-    command: >
-      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
-      --host 0.0.0.0
-      --port 7077
-      --webui-port 8080
-    ports:
-      - "${SPARK_MASTER_HOST_PORT:-7277}:7077"
-      - "${SPARK_UI_HOST_PORT:-8280}:8080"
-    volumes:
-      - ./scripts:/opt/mvp/scripts
-      - ./data:/opt/mvp/data
-      - ./infra/spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
-
-  trino:
-    image: trinodb/trino:451
-    container_name: demand-mvp-trino
-    depends_on:
-      - iceberg-rest
-    ports:
-      - "${TRINO_HOST_PORT:-8282}:8080"
-    volumes:
-      - ./infra/trino/catalog/iceberg.properties:/etc/trino/catalog/iceberg.properties:ro
-
 volumes:
-  minio_data:
   pg_data:
   mlflow_data:
