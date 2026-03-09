@@ -8,7 +8,7 @@ from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
 
 from api.auth import require_api_key
-from api.core import get_conn, set_cache
+from api.core import _f, _s, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -35,8 +35,6 @@ class ExceptionStatusBody(BaseModel):
     notes: Optional[str] = None
 
 
-def _f(v):
-    return float(v) if v is not None else None
 
 
 @router.get("/inv-planning/exceptions")

@@ -7,13 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.auth import require_api_key
-from api.core import get_conn, set_cache
+from api.core import _f, _s, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
 
-def _f(v: Any) -> float | None:
-    return float(v) if v is not None else None
 
 
 @router.post("/inv-planning/simulation/run", status_code=201)

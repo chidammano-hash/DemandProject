@@ -19,6 +19,15 @@ router = APIRouter(tags=["dashboard"])
 # Shared filter builder for dashboard queries
 # ---------------------------------------------------------------------------
 
+_MAX_FILTER_VALUES = 50
+
+
+def _split(raw: str) -> list[str]:
+    """Split a comma-separated filter string, capped at _MAX_FILTER_VALUES items."""
+    vals = [v.strip() for v in raw.split(",") if v.strip()]
+    return vals[:_MAX_FILTER_VALUES]
+
+
 def _dashboard_filter_clause(
     brand: str, category: str, market: str, channel: str,
     item: str = "", location: str = "",
@@ -29,12 +38,6 @@ def _dashboard_filter_clause(
     fact_external_forecast_monthly has no customer dimension join key.
     Item/location filter on f.dmdunit/f.loc directly (no extra JOINs needed).
     """
-    _MAX_FILTER_VALUES = 50
-
-    def _split(raw: str) -> list[str]:
-        vals = [v.strip() for v in raw.split(",") if v.strip()]
-        return vals[:_MAX_FILTER_VALUES]
-
     clauses: list[str] = []
     params: list[Any] = []
     if brand.strip():

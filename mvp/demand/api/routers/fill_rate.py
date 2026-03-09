@@ -10,7 +10,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import get_conn, set_cache
+from api.core import _f, _s, get_conn, set_cache
 
 router = APIRouter(tags=["fill-rate"])
 
@@ -18,8 +18,6 @@ router = APIRouter(tags=["fill-rate"])
 # Helper
 # ---------------------------------------------------------------------------
 
-def _f(v: Any) -> float | None:
-    return float(v) if v is not None else None
 
 
 # ---------------------------------------------------------------------------

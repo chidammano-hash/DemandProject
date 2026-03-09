@@ -41,7 +41,7 @@ async def get_supplier_lead_times(
             cur.execute(
                 f"SELECT COUNT(*) FROM dim_lead_time_profile WHERE {where}", params
             )
-            total = cur.fetchone()[0]
+            total = cur.fetchone()[0] or 0
             cur.execute(
                 f"""
                 SELECT supplier_id, item_category, loc,
@@ -117,7 +117,7 @@ async def get_lead_time_alerts(
                 "SELECT COUNT(*) FROM fact_lt_review_triggers WHERE review_status = %s",
                 (review_status,),
             )
-            total = cur.fetchone()[0]
+            total = cur.fetchone()[0] or 0
             cur.execute(
                 """
                 SELECT id, supplier_id, trigger_type, old_mean_lt_days, new_mean_lt_days,

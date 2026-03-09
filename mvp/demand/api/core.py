@@ -26,6 +26,20 @@ def _require_env(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Nullable type coercions (shared across router modules)
+# ---------------------------------------------------------------------------
+
+def _f(v: Any) -> float | None:
+    """Coerce a Postgres numeric value to float, returning None for NULL."""
+    return float(v) if v is not None else None
+
+
+def _s(v: Any) -> str | None:
+    """Coerce a Postgres value to str, returning None for NULL."""
+    return str(v) if v is not None else None
+
+
+# ---------------------------------------------------------------------------
 # Connection pool
 # ---------------------------------------------------------------------------
 _pool: ConnectionPool | None = None

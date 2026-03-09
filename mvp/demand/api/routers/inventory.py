@@ -79,7 +79,7 @@ def inventory_position(
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(count_sql, params)
-        total = int(cur.fetchone()[0])
+        total = int(cur.fetchone()[0] or 0)
         cur.execute(data_sql, [*params, limit, offset])
         rows = cur.fetchall()
 

@@ -64,7 +64,7 @@ async def get_echelon_targets(
             cur.execute(
                 f"SELECT COUNT(*) FROM fact_echelon_ss_targets WHERE {where}", params
             )
-            total = cur.fetchone()[0]
+            total = cur.fetchone()[0] or 0
             cur.execute(
                 f"""
                 SELECT item_no, loc, echelon_level,
@@ -146,7 +146,7 @@ async def get_echelon_reorder_points(
             cur.execute(
                 f"SELECT COUNT(*) FROM fact_echelon_reorder_points WHERE {where}", params
             )
-            total = cur.fetchone()[0]
+            total = cur.fetchone()[0] or 0
             cur.execute(
                 f"""
                 SELECT item_no, loc, echelon_level, reorder_point_qty,

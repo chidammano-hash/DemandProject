@@ -76,7 +76,7 @@ async def get_open_pos(
                 FROM fact_open_purchase_orders po
                 WHERE {where}
             """, params)
-            total = cur.fetchone()[0]
+            total = cur.fetchone()[0] or 0
 
             # Check if any PO data exists at all
             cur.execute("SELECT COUNT(*) FROM fact_open_purchase_orders")
@@ -229,7 +229,7 @@ async def get_past_due_pos(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM fact_open_purchase_orders po WHERE {where}", params)
-            total = cur.fetchone()[0]
+            total = cur.fetchone()[0] or 0
 
             cur.execute(f"""
                 SELECT

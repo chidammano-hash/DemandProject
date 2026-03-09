@@ -47,7 +47,7 @@ async def get_bias_corrections(
                 f"SELECT COUNT(*) FROM fact_bias_corrections WHERE {where}",
                 params,
             )
-            total = cur.fetchone()[0]
+            total = cur.fetchone()[0] or 0
             cur.execute(
                 f"""
                 SELECT item_no, loc, plan_month, segment_type, segment_value,
@@ -141,7 +141,7 @@ async def get_flagged_bias_corrections(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM fact_bias_corrections WHERE {where}", params)
-            total = cur.fetchone()[0]
+            total = cur.fetchone()[0] or 0
             cur.execute(
                 f"""
                 SELECT item_no, loc, plan_month, segment_type, rolling_bias_3m,

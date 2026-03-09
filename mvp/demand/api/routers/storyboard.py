@@ -24,17 +24,13 @@ from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
 
 from api.auth import require_api_key
-from api.core import get_conn, set_cache
+from api.core import _f, _s, get_conn, set_cache
 
 router = APIRouter(tags=["storyboard"])
 
 
-def _f(v: Any) -> float | None:
-    return float(v) if v is not None else None
 
 
-def _s(v: Any) -> str | None:
-    return str(v) if v is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +128,7 @@ def list_exceptions(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(count_sql, params)
-            total = cur.fetchone()[0]
+            total = cur.fetchone()[0] or 0
 
             cur.execute(rows_sql, params + [limit, offset])
             col_names = [d[0] for d in cur.description]
@@ -525,7 +521,7 @@ def list_decisions(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(count_sql, params)
-            total = cur.fetchone()[0]
+            total = cur.fetchone()[0] or 0
 
             cur.execute(rows_sql, params + [limit, offset])
             col_names = [d[0] for d in cur.description]

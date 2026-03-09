@@ -10,6 +10,35 @@ from api.core import get_conn, set_cache, compute_kpis
 
 router = APIRouter(tags=["accuracy"])
 
+
+def _add_dim_filters(
+    where_parts: list[str],
+    params: list[Any],
+    *,
+    cluster_assignment: str = "",
+    supplier_desc: str = "",
+    abc_vol: str = "",
+    region: str = "",
+    seasonality_profile: str = "",
+) -> None:
+    """Append the 5 standard DFU dimension filters to where_parts/params in-place."""
+    if cluster_assignment.strip():
+        where_parts.append("cluster_assignment = %s")
+        params.append(cluster_assignment.strip())
+    if supplier_desc.strip():
+        where_parts.append("supplier_desc = %s")
+        params.append(supplier_desc.strip())
+    if abc_vol.strip():
+        where_parts.append("abc_vol = %s")
+        params.append(abc_vol.strip())
+    if region.strip():
+        where_parts.append("region = %s")
+        params.append(region.strip())
+    if seasonality_profile.strip():
+        where_parts.append("seasonality_profile = %s")
+        params.append(seasonality_profile.strip())
+
+
 _ACCURACY_SLICE_DIMS = {
     "cluster_assignment",
     "ml_cluster",
@@ -200,21 +229,9 @@ def forecast_accuracy_slice(
     if month_to.strip():
         where_parts.append("month_start <= %s::date")
         params.append(month_to.strip())
-    if cluster_assignment.strip():
-        where_parts.append("cluster_assignment = %s")
-        params.append(cluster_assignment.strip())
-    if supplier_desc.strip():
-        where_parts.append("supplier_desc = %s")
-        params.append(supplier_desc.strip())
-    if abc_vol.strip():
-        where_parts.append("abc_vol = %s")
-        params.append(abc_vol.strip())
-    if region.strip():
-        where_parts.append("region = %s")
-        params.append(region.strip())
-    if seasonality_profile.strip():
-        where_parts.append("seasonality_profile = %s")
-        params.append(seasonality_profile.strip())
+    _add_dim_filters(where_parts, params,
+                     cluster_assignment=cluster_assignment, supplier_desc=supplier_desc,
+                     abc_vol=abc_vol, region=region, seasonality_profile=seasonality_profile)
 
     where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
@@ -250,21 +267,9 @@ def forecast_accuracy_slice(
         if month_to.strip():
             dfu_where.append("min_month <= %s::date")
             dfu_params.append(month_to.strip())
-        if cluster_assignment.strip():
-            dfu_where.append("cluster_assignment = %s")
-            dfu_params.append(cluster_assignment.strip())
-        if supplier_desc.strip():
-            dfu_where.append("supplier_desc = %s")
-            dfu_params.append(supplier_desc.strip())
-        if abc_vol.strip():
-            dfu_where.append("abc_vol = %s")
-            dfu_params.append(abc_vol.strip())
-        if region.strip():
-            dfu_where.append("region = %s")
-            dfu_params.append(region.strip())
-        if seasonality_profile.strip():
-            dfu_where.append("seasonality_profile = %s")
-            dfu_params.append(seasonality_profile.strip())
+        _add_dim_filters(dfu_where, dfu_params,
+                         cluster_assignment=cluster_assignment, supplier_desc=supplier_desc,
+                         abc_vol=abc_vol, region=region, seasonality_profile=seasonality_profile)
 
         dfu_where_sql = ("WHERE " + " AND ".join(dfu_where)) if dfu_where else ""
         dfu_sql = f"""
@@ -408,21 +413,9 @@ def forecast_accuracy_lag_curve(
         placeholders = ",".join(["%s"] * len(model_list))
         where_parts.append(f"model_id IN ({placeholders})")
         params.extend(model_list)
-    if cluster_assignment.strip():
-        where_parts.append("cluster_assignment = %s")
-        params.append(cluster_assignment.strip())
-    if supplier_desc.strip():
-        where_parts.append("supplier_desc = %s")
-        params.append(supplier_desc.strip())
-    if abc_vol.strip():
-        where_parts.append("abc_vol = %s")
-        params.append(abc_vol.strip())
-    if region.strip():
-        where_parts.append("region = %s")
-        params.append(region.strip())
-    if seasonality_profile.strip():
-        where_parts.append("seasonality_profile = %s")
-        params.append(seasonality_profile.strip())
+    _add_dim_filters(where_parts, params,
+                     cluster_assignment=cluster_assignment, supplier_desc=supplier_desc,
+                     abc_vol=abc_vol, region=region, seasonality_profile=seasonality_profile)
     if month_from.strip():
         where_parts.append("month_start >= %s::date")
         params.append(month_from.strip())
@@ -453,21 +446,9 @@ def forecast_accuracy_lag_curve(
         if model_list:
             dfu_where.append(f"model_id IN ({','.join(['%s'] * len(model_list))})")
             dfu_params.extend(model_list)
-        if cluster_assignment.strip():
-            dfu_where.append("cluster_assignment = %s")
-            dfu_params.append(cluster_assignment.strip())
-        if supplier_desc.strip():
-            dfu_where.append("supplier_desc = %s")
-            dfu_params.append(supplier_desc.strip())
-        if abc_vol.strip():
-            dfu_where.append("abc_vol = %s")
-            dfu_params.append(abc_vol.strip())
-        if region.strip():
-            dfu_where.append("region = %s")
-            dfu_params.append(region.strip())
-        if seasonality_profile.strip():
-            dfu_where.append("seasonality_profile = %s")
-            dfu_params.append(seasonality_profile.strip())
+        _add_dim_filters(dfu_where, dfu_params,
+                         cluster_assignment=cluster_assignment, supplier_desc=supplier_desc,
+                         abc_vol=abc_vol, region=region, seasonality_profile=seasonality_profile)
         if month_from.strip():
             dfu_where.append("max_month >= %s::date")
             dfu_params.append(month_from.strip())
