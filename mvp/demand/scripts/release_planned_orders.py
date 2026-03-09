@@ -43,7 +43,7 @@ import csv
 import json
 import os
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import psycopg
@@ -51,6 +51,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 _cfg = yaml.safe_load(open("config/procurement_config.yaml"))
 _LT_FALLBACK = _cfg["procurement"]["lead_time_fallback_days"]
@@ -130,7 +131,7 @@ def create_po_from_exception(
     lt_days = lead_time or _LT_FALLBACK
     delivery_date = (
         requested_delivery_date
-        or (date.today() + __import__("datetime").timedelta(days=lt_days))
+        or (get_planning_date() + timedelta(days=lt_days))
     )
     currency = currency or _cfg["procurement"]["default_currency"]
 

@@ -73,6 +73,7 @@ export const queryKeys = {
   invBacktestRootCause: (params: Record<string, unknown>) => ["inv-backtest-root-cause", params] as const,
   invBacktestDetail: (params: Record<string, unknown>) => ["inv-backtest-detail", params] as const,
   // Dashboard & filter keys (Feature 36)
+  planningDate: () => ["planning-date"] as const,
   distinctValues: (domain: string, column: string) => ["distinct-values", domain, column] as const,
   dashboardKpis: (params: Record<string, unknown>) => ["dashboard-kpis", params] as const,
   dashboardAlerts: (params: Record<string, unknown>) => ["dashboard-alerts", params] as const,
@@ -564,6 +565,21 @@ function appendFilterParams(qs: URLSearchParams, params?: DashboardFilterParams)
   if (params.channel?.length) qs.set("channel", params.channel.join(","));
   if (params.item?.length) qs.set("item", params.item.join(","));
   if (params.location?.length) qs.set("location", params.location.join(","));
+}
+
+// ---------------------------------------------------------------------------
+// Planning date
+// ---------------------------------------------------------------------------
+
+export interface PlanningDateInfo {
+  planning_date: string;   // ISO date string e.g. "2026-02-24"
+  system_date: string;     // ISO date string e.g. "2026-03-09"
+  is_frozen: boolean;      // true when planning_date !== system_date
+  days_behind: number;     // system_date - planning_date in days
+}
+
+export async function fetchPlanningDate(): Promise<PlanningDateInfo> {
+  return fetchJson("/dashboard/planning-date");
 }
 
 export async function fetchDashboardKpis(

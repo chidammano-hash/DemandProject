@@ -21,6 +21,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 CONFIG_PATH = "config/quantile_forecast_config.yaml"
 SENSING_HORIZON_WEEKS = 4
@@ -218,7 +219,7 @@ def run(
     horizon_weeks = cfg.get("sensing_horizon_weeks", SENSING_HORIZON_WEEKS)
     outlier_threshold = cfg.get("outlier_threshold", OUTLIER_THRESHOLD)
 
-    today = date.today()
+    today = get_planning_date()
     # Week starts on Monday
     week_start_base = today - timedelta(days=today.weekday())
 

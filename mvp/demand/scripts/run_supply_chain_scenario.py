@@ -25,6 +25,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 CONFIG_PATH = "config/supply_scenario_config.yaml"
 
@@ -383,7 +384,7 @@ def run(
             dfus = fetch_affected_dfus(conn, scenario)
             rows_to_write: list[dict] = []
             total_impact = 0.0
-            today = date.today()
+            today = get_planning_date()
 
             for dfu in dfus:
                 adj_lt, lt_increase = compute_adjusted_lead_time(

@@ -22,6 +22,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 CONFIG_PATH = "config/projection_config.yaml"
 
@@ -85,14 +86,20 @@ def get_daily_demand_rates(
     start_date: date,
     horizon_days: int,
     conn,
+    config: dict | None = None,
 ) -> tuple[dict[date, float], str]:
     """
-    Pull production forecast and disaggregate to daily rates.
-    Falls back to 3-month average actuals if no production forecast exists.
-    Returns ({date: daily_qty}, source_label).
+    Pull demand rates for projection, in priority order:
+      1. fact_production_forecast (F1.1 forward forecast, latest plan_version)
+      2. fact_external_forecast_monthly model_id='champion' lag=0 (most recent months)
+      3. Fallback: N-month average of actual sales from fact_sales_monthly
+
+    Returns ({date: daily_qty}, source_label, plan_version).
     """
-    # Try production forecast first
-    sql = """
+    fallback_months = (config or {}).get("projection", {}).get("fallback_history_months", 3)
+
+    # --- Priority 1: production forecast (F1.1 pipeline) ---
+    sql_prod = """
         SELECT forecast_month, forecast_qty, plan_version
         FROM fact_production_forecast
         WHERE item_no = %s AND loc = %s
@@ -104,27 +111,38 @@ def get_daily_demand_rates(
         ORDER BY forecast_month
     """
     with conn.cursor() as cur:
-        cur.execute(sql, (item_no, loc, item_no, loc))
-        rows = cur.fetchall()
+        cur.execute(sql_prod, (item_no, loc, item_no, loc))
+        prod_rows = cur.fetchall()
 
-    if rows:
+    if prod_rows:
         source = "production_forecast"
-        plan_version = rows[0][2]
-        monthly = {r[0]: float(r[1] or 0) for r in rows}
-    else:
-        # Fallback: 3-month average actuals
-        source = "fallback_avg"
+        plan_version = prod_rows[0][2]
+        monthly = {r[0]: float(r[1] or 0) for r in prod_rows}
+        # Disaggregate monthly to daily
+        daily: dict[date, float] = {}
+        for i in range(horizon_days):
+            d = start_date + timedelta(days=i)
+            month_start = d.replace(day=1)
+            days_in_month = calendar.monthrange(d.year, d.month)[1]
+            daily[d] = monthly.get(month_start, 0.0) / days_in_month
+        return daily, source, plan_version
+
+    # --- Priority 2: champion model forecasts (most recent lag=0 months) ---
+    sql_champion = """
+        SELECT startdate, basefcst_pref
+        FROM fact_external_forecast_monthly
+        WHERE dmdunit = %s AND loc = %s AND model_id = 'champion' AND lag = 0
+        ORDER BY startdate DESC
+        LIMIT %s
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql_champion, (item_no, loc, fallback_months))
+        champ_rows = cur.fetchall()
+
+    if champ_rows:
+        source = "champion_forecast"
         plan_version = None
-        sql_fallback = """
-            SELECT AVG(qty)
-            FROM fact_sales_monthly
-            WHERE dmdunit = %s AND loc = %s AND type = 1
-              AND startdate >= CURRENT_DATE - INTERVAL '90 days'
-        """
-        with conn.cursor() as cur:
-            cur.execute(sql_fallback, (item_no, loc))
-            row = cur.fetchone()
-        avg_monthly = float(row[0] or 0.0) if row else 0.0
+        avg_monthly = sum(float(r[1] or 0) for r in champ_rows) / len(champ_rows)
         daily_rate = avg_monthly / 30.0
         return (
             {start_date + timedelta(days=i): daily_rate for i in range(horizon_days)},
@@ -132,16 +150,29 @@ def get_daily_demand_rates(
             plan_version,
         )
 
-    # Disaggregate monthly to daily
-    daily: dict[date, float] = {}
-    for i in range(horizon_days):
-        d = start_date + timedelta(days=i)
-        month_start = d.replace(day=1)
-        days_in_month = calendar.monthrange(d.year, d.month)[1]
-        monthly_qty = monthly.get(month_start, 0.0)
-        daily[d] = monthly_qty / days_in_month
-
-    return daily, source, plan_version
+    # --- Priority 3: historical sales average fallback ---
+    source = "fallback_avg"
+    plan_version = None
+    sql_fallback = """
+        SELECT AVG(qty)
+        FROM fact_sales_monthly
+        WHERE dmdunit = %s AND loc = %s AND type = 1
+          AND startdate >= (
+              SELECT MAX(startdate) - INTERVAL '1 month' * %s
+              FROM fact_sales_monthly
+              WHERE dmdunit = %s AND loc = %s AND type = 1
+          )
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql_fallback, (item_no, loc, fallback_months, item_no, loc))
+        row = cur.fetchone()
+    avg_monthly = float(row[0] or 0.0) if row else 0.0
+    daily_rate = avg_monthly / 30.0
+    return (
+        {start_date + timedelta(days=i): daily_rate for i in range(horizon_days)},
+        source,
+        plan_version,
+    )
 
 
 def get_open_po_receipts(
@@ -284,7 +315,7 @@ def compute_dfu_projection(
     dry_run: bool = False,
 ) -> tuple[int, str]:
     """Compute and write projection for a single DFU. Returns (rows_written, run_id)."""
-    start_date = date.today()
+    start_date = get_planning_date()
     run_id = str(uuid.uuid4())
 
     # Inputs
@@ -293,7 +324,7 @@ def compute_dfu_projection(
     safety_stock = get_safety_stock(item_no, loc, conn)
 
     daily_demand, source, plan_version = get_daily_demand_rates(
-        item_no, loc, start_date, horizon_days, conn
+        item_no, loc, start_date, horizon_days, conn, config=config
     )
     po_receipts = get_open_po_receipts(item_no, loc, start_date, horizon_days, conn)
 

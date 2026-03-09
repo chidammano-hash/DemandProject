@@ -24,6 +24,7 @@ from datetime import date
 from typing import Optional
 
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 CONFIG_PATH = "config/echelon_config.yaml"
 
@@ -302,7 +303,7 @@ def run(
     """Main entry point: compute and write echelon targets."""
     cfg = load_config()
     z_score = cfg.get("z_score_default", 1.645)
-    today = date.today()
+    today = get_planning_date()
 
     rows_to_write: list[dict] = []
     below_rop_count = 0

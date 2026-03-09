@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 from scripts.generate_clustering_features import compute_time_series_features
 from scripts.train_clustering_model import (
     CORE_FEATURES,
@@ -173,7 +174,7 @@ def _run_full_pipeline(
     if isinstance(time_window, str) and time_window.lower() == "all":
         cutoff_date = None
     else:
-        cutoff_date = date.today() - timedelta(days=int(time_window) * 30)
+        cutoff_date = get_planning_date() - timedelta(days=int(time_window) * 30)
 
     with psycopg.connect(**db) as conn:
         sales_query = """

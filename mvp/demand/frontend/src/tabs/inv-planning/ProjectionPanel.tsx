@@ -15,7 +15,7 @@ import {
   Tooltip, Legend, ReferenceLine, ResponsiveContainer,
 } from "recharts";
 import { AlertTriangle, CheckCircle, RefreshCw } from "lucide-react";
-import { projectionKeys, fetchProjection, fetchProjectionAtRisk, refreshProjection } from "@/api/queries";
+import { projectionKeys, fetchProjection, fetchProjectionAtRisk, refreshProjection, fetchPlanningDate, queryKeys, STALE } from "@/api/queries";
 
 const HORIZONS = [30, 60, 90];
 
@@ -25,6 +25,13 @@ export function ProjectionPanel() {
   const [horizonDays, setHorizonDays] = useState(90);
   const [activeItem, setActiveItem] = useState<{ item_no: string; loc: string } | null>(null);
   const qc = useQueryClient();
+
+  // Planning date
+  const { data: planningDateInfo } = useQuery({
+    queryKey: queryKeys.planningDate(),
+    queryFn: fetchPlanningDate,
+    staleTime: STALE.TEN_MIN,
+  });
 
   // At-risk list
   const atRisk = useQuery({
@@ -178,11 +185,22 @@ export function ProjectionPanel() {
               Safety Stock: <b>{data.safety_stock.toLocaleString()} units</b>
             </span>
             <span className="rounded bg-muted px-2 py-1">
-              Forecast: <b>{data.forecast_source === "production_forecast" ? `Plan ${data.plan_version}` : "Fallback Avg"}</b>
+              Forecast: <b>
+                {data.forecast_source === "production_forecast"
+                  ? `Plan ${data.plan_version}`
+                  : data.forecast_source === "champion_forecast"
+                  ? "Champion Model"
+                  : "Historical Avg"}
+              </b>
             </span>
+            {data.forecast_source === "champion_forecast" && (
+              <span className="rounded bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 px-2 py-1">
+                Using champion algorithm forecast as demand rate
+              </span>
+            )}
             {data.forecast_source === "fallback_avg" && (
               <span className="rounded bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 px-2 py-1">
-                ⚠ No production forecast — using 3-month average
+                ⚠ No forecast found — using 3-month historical average
               </span>
             )}
             {!data.open_po_data_available && (
@@ -213,6 +231,14 @@ export function ProjectionPanel() {
                 />
                 <Legend />
                 <ReferenceLine y={data.safety_stock} stroke="#f59e0b" strokeDasharray="6 3" label={{ value: "SS", position: "left", fontSize: 11 }} />
+                {planningDateInfo?.is_frozen && (
+                  <ReferenceLine
+                    x={planningDateInfo.planning_date}
+                    stroke="#f59e0b"
+                    strokeWidth={1.5}
+                    label={{ value: "Plan Date", position: "insideTopLeft", fontSize: 10, fill: "#f59e0b" }}
+                  />
+                )}
                 {stockoutDateNoOrder && (
                   <ReferenceLine x={stockoutDateNoOrder} stroke="#ef4444" strokeDasharray="4 2" label={{ value: "Stockout", position: "top", fontSize: 10 }} />
                 )}

@@ -8,11 +8,31 @@ import logging
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
+from datetime import date
+
 from api.core import get_conn, set_cache
+from common.planning_date import get_planning_date
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["dashboard"])
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard/planning-date
+# ---------------------------------------------------------------------------
+
+@router.get("/dashboard/planning-date")
+async def get_planning_date_info():
+    """Return the current planning date and whether it is frozen (dev mode)."""
+    planning = get_planning_date()
+    system = date.today()
+    return {
+        "planning_date": planning.isoformat(),
+        "system_date": system.isoformat(),
+        "is_frozen": planning != system,
+        "days_behind": (system - planning).days,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 # ---------------------------------------------------------------------------
 # Override type priority (lower = higher priority in conflict resolution)
@@ -249,7 +250,7 @@ def generate_consensus_plan(
     adjust_p = cfg["consensus_plan"]["consensus_plan_output"]["adjust_p10_p90_proportionally"]
 
     if plan_run_date is None:
-        plan_run_date = date.today()
+        plan_run_date = get_planning_date()
 
     with psycopg.connect(**get_db_params()) as conn:
         # Step 1: expire stale overrides

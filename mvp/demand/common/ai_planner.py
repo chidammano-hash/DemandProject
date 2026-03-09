@@ -23,6 +23,7 @@ import logging
 import time
 import uuid
 from datetime import date, datetime
+from common.planning_date import get_planning_date
 from typing import Any, Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -1071,7 +1072,7 @@ class AIPlannerAgent:
             "scan_run_id": scan_run_id,
         }
         self._write_memo(
-            period=date.today().replace(day=1),
+            period=get_planning_date().replace(day=1),
             scope="portfolio",
             narrative_text=final_text or "Portfolio scan completed.",
             content_json=content_json,

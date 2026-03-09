@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import psycopg
 from common.db import get_db_params  # noqa: E402
+from common.planning_date import get_planning_date  # noqa: E402
 
 # Minimum day of month before computing signals (insufficient data before day 5)
 MIN_DAY_OF_MONTH = 5
@@ -105,7 +106,7 @@ def run(signal_date: date | None = None, dry_run: bool = False) -> dict:
                     "SELECT MAX(snapshot_date) FROM fact_inventory_snapshot"
                 )
                 row = cur.fetchone()
-                signal_date = row[0] if row and row[0] else date.today()
+                signal_date = row[0] if row and row[0] else get_planning_date()
 
             month_start = signal_date.replace(day=1)
             day_of_month = signal_date.day

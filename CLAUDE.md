@@ -58,6 +58,8 @@
 | `mvp/demand/common/metrics.py` | Shared accuracy metrics: WAPE, bias, accuracy % |
 | `mvp/demand/common/mlflow_utils.py` | Shared MLflow logging wrapper for backtest runs |
 | `mvp/demand/common/db.py` | Shared DB connection parameters |
+| `mvp/demand/common/planning_date.py` | Shared planning date: `get_planning_date()` replaces `date.today()` across all scripts and routers |
+| `mvp/demand/config/planning_config.yaml` | Planning date config: `planning_date` (frozen dev date) + `use_system_date` flag |
 | `mvp/demand/common/constants.py` | Shared constants: `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output columns, thresholds |
 | `mvp/demand/config/algorithm_config.yaml` | Per-algorithm config: recursive, shap_select, shap_threshold, shap_top_n, shap_sample_size, tune_inline, params_file, default hyperparameters (Feature 44) |
 | `mvp/demand/scripts/run_backtest.py` | LGBM backtest: per-cluster training function; reads config/algorithm_config.yaml (Feature 44) |
@@ -587,6 +589,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Vite dev server proxy:** `frontend/vite.config.ts` proxies all API path prefixes (`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`) to the FastAPI backend at `http://127.0.0.1:8000`. **CRITICAL:** When adding a new API path prefix, you MUST add a corresponding proxy entry in `vite.config.ts` or the frontend will receive HTML instead of JSON. Restart the Vite dev server (`make ui`) after changes.
 - **Health endpoint DB pattern (IPfeature6):** All `inv_planning_*.py` router files use `get_conn()` directly (NOT `Depends(_get_pool)`). Using `Depends(_get_pool)` causes 422 errors when `api.main` is first imported inside a `patch("api.core._get_pool", ...)` test context — FastAPI inspects the MagicMock's signature as `(*args, **kwargs)` and turns them into required query params. All new endpoints in any `inv_planning_*.py` file must use `get_conn()`.
 - **Shared DB params pattern:** All scripts import `from common.db import get_db_params` — no inline `_get_db_params`/`_db_conn` functions. `common/db.py` is the canonical source.
+- **Planning date pattern:** All date-sensitive operations import `from common.planning_date import get_planning_date` and call `get_planning_date()` instead of `date.today()`. Config in `config/planning_config.yaml` (`planning_date: "2026-02-24"`, `use_system_date: false`). Env var overrides: `PLANNING_DATE=2026-02-24` (specific date) or `USE_SYSTEM_DATE=true` (use real system date). Precedence: `USE_SYSTEM_DATE` env > `PLANNING_DATE` env > config file > `date.today()` fallback. Config is cached per-process; use `_reset_cache()` in tests to reset between test cases.
 - **Shared test pool factory:** `tests/api/conftest.py` exports `make_pool(fetchall_return=None, fetchone_return=None)` module-level factory (NOT a pytest fixture). Defaults: fetchall=[], fetchone=(0,). Import with `from tests.api.conftest import make_pool as _make_pool`. For endpoints making multiple `fetchall()` calls, use `cursor.fetchall.side_effect = [list1, list2, ...]`; for single-call endpoints use `cursor.fetchall.return_value = [...]`.
 - **Stub table pattern (IPfeature6):** When a materialized view depends on a table from a future feature (e.g., `fact_safety_stock_targets` for IPfeature6 depends on IPfeature3), create the stub table with the minimum required columns using `CREATE TABLE IF NOT EXISTS`. The LEFT JOIN produces NULL for all rows, causing score components to use neutral scores. When the real table is populated by the upstream feature, real scores flow automatically with zero code changes.
 - **Single theme with light/dark modes:** Only the "General" (Demand Studio) product theme remains. `useTheme()` manages light/dark color mode. `ThemeSelector` in sidebar footer provides light/dark toggle. No theme cycling, no motifs.
@@ -598,12 +601,13 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 
 ## Design Specs
 
-Located in `docs/specs/` — 6 domains, 39 files, `DD-SS-descriptive-name.md` convention:
+Located in `docs/specs/` — 6 domains, 40 files, `DD-SS-descriptive-name.md` convention:
 
 ### 01-data-platform/
 - `01-01-infrastructure.md` — Tech stack, Docker Compose, services, implemented-features master index
 - `01-02-data-models.md` — Data architecture + ERD + dimension tables (Item/Location/Customer/Time/DFU) + fact tables (Sales, Forecast)
 - `01-03-benchmarking.md` — *(removed — benchmarking feature deleted)*
+- `01-03-planning-date.md` — Planning date configuration: `get_planning_date()`, frozen dev date, env var overrides, 22 production files migrated
 
 ### 02-forecasting/ (includes demand intelligence: clustering, seasonality, blended demand)
 - `02-01-accuracy-kpis.md` — Accuracy metrics (WAPE/bias/accuracy%) + multi-dimensional slicing (agg_accuracy_by_dim, lag-curve)

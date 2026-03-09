@@ -28,6 +28,7 @@ import yaml
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 from common.exception_engine import run_exception_detection
 
 
@@ -44,7 +45,7 @@ def _load_config() -> dict:
 def _parse_month(month_str: str | None) -> datetime.date:
     """Parse YYYY-MM string to first-of-month date. Defaults to current month."""
     if not month_str:
-        today = datetime.date.today()
+        today = get_planning_date()
         return today.replace(day=1)
     try:
         dt = datetime.datetime.strptime(month_str, "%Y-%m")

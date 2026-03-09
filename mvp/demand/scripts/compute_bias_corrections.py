@@ -24,6 +24,7 @@ from dateutil.relativedelta import relativedelta
 from typing import Optional
 
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 CONFIG_PATH = "config/bias_correction_config.yaml"
 
@@ -212,7 +213,7 @@ def run(
     """Main entry point: compute bias corrections for the next plan cycle."""
     cfg = load_config()
     if plan_run_date is None:
-        plan_run_date = date.today()
+        plan_run_date = get_planning_date()
 
     weights = cfg.get("rolling_weights", DEFAULT_WEIGHTS)
     clip_min = cfg.get("correction_factor_min", CORRECTION_MIN)

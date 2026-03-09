@@ -30,6 +30,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 QUANTILES = [0.10, 0.50, 0.90]
 
@@ -428,7 +429,7 @@ def run(
     for dfu in dfus:
         by_cluster[dfu.get("cluster_id") or 0].append(dfu)
 
-    today = date.today()
+    today = get_planning_date()
     plan_date = today.replace(day=1)
 
     all_monthly: list[dict] = []

@@ -25,6 +25,7 @@ import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +124,7 @@ def run(dry_run: bool = False) -> dict:
     max_months = float(eoq_config.get("max_eoq_months_supply", 6))
 
     db_params = get_db_params()
-    today = datetime.date.today()
+    today = get_planning_date()
 
     with psycopg.connect(**db_params) as conn:
         with conn.cursor() as cur:

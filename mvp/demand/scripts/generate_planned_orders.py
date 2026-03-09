@@ -27,6 +27,7 @@ from datetime import date, timedelta
 import psycopg
 
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 CONFIG_PATH = "config/order_recommendation_config.yaml"
 
@@ -90,7 +91,7 @@ def compute_net_requirements(inputs: dict, config: dict) -> list:
     demand_by_day: dict = dict(inputs.get("daily_demand_by_date") or {})
 
     orders = []
-    today = date.today()
+    today = get_planning_date()
 
     # Simulate from tomorrow (day 1) — today's qty_on_hand is the starting state
     for i in range(1, horizon_days + 1):
@@ -169,7 +170,7 @@ def compute_confidence_score(inputs: dict, orders: list, config: dict) -> tuple:
         score -= penalties["penalty_no_open_po_data"]
         reasons.append("open PO delivery dates unavailable")
 
-    today = date.today()
+    today = get_planning_date()
     for order in orders:
         if order["order_by_date"] < today:
             score -= penalties["penalty_past_due_order"]

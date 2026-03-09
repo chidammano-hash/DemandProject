@@ -20,6 +20,7 @@ from pydantic import BaseModel, field_validator
 
 from api.auth import require_api_key
 from api.core import get_conn
+from common.planning_date import get_planning_date
 
 router = APIRouter(tags=["consensus-plan"])
 
@@ -70,7 +71,7 @@ class OverrideSubmitRequest(BaseModel):
     @field_validator("override_month")
     @classmethod
     def validate_future_month(cls, v: date) -> date:
-        today = date.today()
+        today = get_planning_date()
         if v < today.replace(day=1):
             raise ValueError("override_month must be current month or future")
         return v

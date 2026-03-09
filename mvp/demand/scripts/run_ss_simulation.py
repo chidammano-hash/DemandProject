@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import psycopg
 from common.db import get_db_params  # noqa: E402
+from common.planning_date import get_planning_date  # noqa: E402
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "simulation_config.yaml"
 
@@ -75,7 +76,7 @@ def run(
     ss_levels_to_test = sim_cfg.get("ss_levels_to_test", 20)
 
     sim_run_id = str(uuid.uuid4())
-    sim_date = date.today()
+    sim_date = get_planning_date()
     t0 = time.time()
 
     with psycopg.connect(**get_db_params()) as conn:

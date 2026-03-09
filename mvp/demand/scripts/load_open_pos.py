@@ -31,6 +31,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 CONFIG_PATH = "config/po_integration_config.yaml"
 
@@ -68,7 +69,7 @@ def validate_po_row(row: dict, config: dict) -> tuple[bool, str]:
     eff_date = (row.get("revised_delivery_date")
                 or row.get("confirmed_delivery_date")
                 or row.get("promised_delivery_date"))
-    if eff_date and (date.today() - eff_date).days > max_past_due:
+    if eff_date and (get_planning_date() - eff_date).days > max_past_due:
         return False, f"past_due_exceeds_{max_past_due}_days"
 
     # Open qty must be positive

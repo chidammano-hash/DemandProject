@@ -38,6 +38,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "replenishment_policy_config.yaml")
 
@@ -139,7 +140,7 @@ def auto_assign_dfus(
     force_overwrite: bool = False,
 ) -> dict[str, int]:
     """Assign DFUs to policies. Returns summary dict."""
-    effective_date = date.today()
+    effective_date = get_planning_date()
     assigned = 0
     skipped = 0
     preserved_manual = 0

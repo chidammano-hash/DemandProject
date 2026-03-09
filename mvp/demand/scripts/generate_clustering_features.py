@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 from common.domain_specs import DFU_SPEC, ITEM_SPEC
 
 
@@ -169,7 +170,7 @@ def main() -> None:
     else:
         try:
             months = int(args.time_window)
-            cutoff_date = date.today() - timedelta(days=months * 30)
+            cutoff_date = get_planning_date() - timedelta(days=months * 30)
         except ValueError:
             print(f"Invalid time-window: {args.time_window}. Use a number or 'all'")
             sys.exit(1)

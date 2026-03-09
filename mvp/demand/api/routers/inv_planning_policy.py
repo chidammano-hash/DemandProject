@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from api.auth import require_api_key
 from api.core import get_conn, set_cache
+from common.planning_date import get_planning_date
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -303,9 +304,7 @@ def assign_policy(body: PolicyAssignBody) -> dict:
     Bulk:       { segment, policy_id }
     Auth required.
     """
-    from datetime import date
-
-    effective_date = date.today()
+    effective_date = get_planning_date()
     assigned_count = 0
     failed_count = 0
     already_assigned_count = 0

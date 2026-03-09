@@ -22,6 +22,7 @@ from dateutil.relativedelta import relativedelta
 from typing import Optional
 
 from common.db import get_db_params
+from common.planning_date import get_planning_date
 
 CONFIG_PATH = "config/financial_plan_config.yaml"
 
@@ -274,7 +275,7 @@ def run(
     """Main entry point: compute financial inventory plan."""
     cfg = load_config()
     if plan_date is None:
-        plan_date = date.today()
+        plan_date = get_planning_date()
 
     carrying_cost_pct = cfg.get("carrying_cost_pct", DEFAULT_CARRYING_COST_PCT)
     excess_dos_threshold = cfg.get("excess_dos_threshold", 180)

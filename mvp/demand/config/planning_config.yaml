@@ -1,0 +1,14 @@
+planning:
+  # Frozen reference date for development/testing against stale data.
+  # When use_system_date is false, all date-sensitive operations use
+  # planning_date instead of the real system clock.
+  planning_date: "2026-02-24"
+
+  # Set to true to use the real system date (date.today()).
+  # Use for production deployments or when data is current.
+  # Can also be overridden via env var: USE_SYSTEM_DATE=true
+  use_system_date: false
+
+# Environment variable overrides (highest priority):
+#   PLANNING_DATE=2026-01-15      -> use that specific date
+#   USE_SYSTEM_DATE=true          -> ignore planning_date, use date.today()

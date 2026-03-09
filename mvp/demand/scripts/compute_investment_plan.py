@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import psycopg
 from common.db import get_db_params  # noqa: E402
+from common.planning_date import get_planning_date  # noqa: E402
 
 # Base CSL at SS=0 (median service level)
 BASE_CSL = 0.5
@@ -43,7 +44,7 @@ def estimate_current_csl(
 
 def run(budget_constraint: float | None = None, target_csl: float | None = None) -> dict:
     plan_id = str(uuid.uuid4())
-    computation_date = date.today()
+    computation_date = get_planning_date()
 
     # ABC class → service level mapping
     abc_sl_map = {"A": 0.98, "B": 0.95, "C": 0.90}

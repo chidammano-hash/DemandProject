@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, X, RotateCcw, Search } from "lucide-react";
+import { ChevronDown, X, RotateCcw, Search, CalendarClock } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
-import { fetchDistinctValues, queryKeys, STALE } from "@/api/queries";
+import { fetchDistinctValues, fetchPlanningDate, queryKeys, STALE } from "@/api/queries";
 import { useDebounce } from "@/hooks/useDebounce";
 
 // ---------------------------------------------------------------------------
@@ -287,6 +287,12 @@ function TimeGrainToggle({ value, onChange }: { value: "month" | "quarter"; onCh
 export function GlobalFilterBar() {
   const { filters, setFilters, resetFilters, hasActiveFilters } = useGlobalFilterContext();
 
+  const { data: planningDateInfo } = useQuery({
+    queryKey: queryKeys.planningDate(),
+    queryFn: fetchPlanningDate,
+    staleTime: STALE.TEN_MIN,
+  });
+
   return (
     <div className="flex items-center gap-2 border-b border-border bg-card/80 px-4 py-2 backdrop-blur-sm" role="toolbar" aria-label="Global filters">
       {FILTERS.map((cfg) =>
@@ -323,6 +329,35 @@ export function GlobalFilterBar() {
           <RotateCcw className="h-3 w-3" />
           Reset
         </button>
+      )}
+
+      {planningDateInfo && (
+        <div className="ml-auto flex items-center">
+          <div
+            className={cn(
+              "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium",
+              planningDateInfo.is_frozen
+                ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                : "border-border bg-muted/50 text-muted-foreground",
+            )}
+            title={
+              planningDateInfo.is_frozen
+                ? `Frozen planning date — ${planningDateInfo.days_behind} day(s) behind system date (${planningDateInfo.system_date})`
+                : "Using live system date"
+            }
+          >
+            <CalendarClock className="h-3 w-3 flex-shrink-0" />
+            <span>
+              {planningDateInfo.is_frozen ? "Plan: " : ""}
+              {new Date(planningDateInfo.planning_date + "T00:00:00").toLocaleDateString("en-GB", {
+                day: "2-digit", month: "short", year: "numeric",
+              })}
+            </span>
+            {planningDateInfo.is_frozen && (
+              <span className="opacity-70">⚠</span>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

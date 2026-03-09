@@ -1,10 +1,59 @@
 """Tests for dashboard endpoints — /dashboard/kpis, /dashboard/alerts,
-/dashboard/top-movers, /dashboard/heatmap."""
+/dashboard/top-movers, /dashboard/heatmap, /dashboard/planning-date."""
 
 import pytest
+from datetime import date
 from unittest.mock import patch, MagicMock
 import httpx
 from httpx import ASGITransport
+
+from common.planning_date import _reset_cache
+
+
+# ===========================================================================
+# /dashboard/planning-date
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_planning_date_frozen(mock_pool):
+    """GET /dashboard/planning-date returns frozen planning date info."""
+    _reset_cache()
+    pool, _, _cursor = mock_pool
+    frozen = date(2026, 2, 24)
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("common.planning_date._resolve_date", return_value=frozen):
+        _reset_cache()
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/planning-date")
+    _reset_cache()
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["planning_date"] == "2026-02-24"
+    assert data["system_date"] == date.today().isoformat()
+    assert data["is_frozen"] is True
+    assert data["days_behind"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_planning_date_live(mock_pool):
+    """GET /dashboard/planning-date reports not frozen when using system date."""
+    _reset_cache()
+    pool, _, _cursor = mock_pool
+    today = date.today()
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("common.planning_date._resolve_date", return_value=today):
+        _reset_cache()
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/planning-date")
+    _reset_cache()
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_frozen"] is False
+    assert data["days_behind"] == 0
 
 
 # ===========================================================================
