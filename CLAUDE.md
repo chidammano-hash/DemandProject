@@ -608,66 +608,61 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 
 ## Design Specs
 
-Located in `docs/design-specs/`:
-- `feature1.md` — Infrastructure & platform setup
-- `feature2.md` — Internal data architecture & data contracts (includes ERD)
-- `feature3.md` — Dimension tables (Item, Location, Customer, Time, DFU)
-- `feature4.md` — Fact tables (Sales, External Forecast)
-- `feature5.md` — Forecast accuracy KPIs
-- `feature6.md` — Multi-model forecast support
-- `feature7.md` — DFU clustering framework
-- `feature8.md` — Backtesting framework (expanding window timeframes)
-- `feature9.md` — LGBM backtesting implementation
-- `feature10.md` — Multi-dimensional accuracy slicing
-- `feature11.md` — Chatbot / natural language queries
-- `feature12.md` — CatBoost backtesting implementation
-- `feature13.md` — XGBoost backtesting implementation
-- `feature14.md` — Transfer learning backtest strategy
-- `feature15.md` — Champion model selection (exec-lag-aware best-of-models per DFU per month, fallback for warm-up gaps)
-- `feature16.md` — Data Explorer performance & UX (type-aware filtering, GIN indexes, column typeahead, loading overlay)
-- `feature17.md` — DFU Analysis tab (sales vs multi-model forecast overlay)
-- `feature18.md` — Market intelligence (web search + LLM narrative briefings)
-- `feature19.md` — PatchTST backtesting implementation (deep learning, Apple MPS GPU)
-- `feature20.md` — DeepAR backtesting implementation (LSTM probabilistic forecasting)
-- `feature21.md` — Prophet backtesting implementation (per-DFU time series)
-- `feature22.md` — UI theming (dark mode + midnight theme)
-- `feature23.md` — Backtest model cleanup utility (selective model removal + view refresh)
-- `feature24.md` — StatsForecast backtesting implementation (vectorized AutoARIMA + AutoETS)
-- `feature25.md` — NeuralProphet backtesting implementation (PyTorch-based Prophet with GPU)
-- `feature26.md` — Postgres vs Trino/Iceberg benchmarking (latency comparison API)
-- `feature27.md` — Figma MCP Integration: Design-to-Code & Code-to-Design Workflow *(not started)*
-- `feature28.md` — UI Architecture & Performance (component decomposition, TanStack Query, lazy loading, error boundaries, keyboard shortcuts, testing)
-- `feature29.md` — What-If / Scenario UI for Clustering (UI implemented; backend routes mounted via include_router)
-- `feature30.md` — DFU Seasonality Detection & Profile Assignment (scripts + DDL implemented; Makefile targets added)
-- `feature31.md` — Comprehensive Testing Strategy (full-stack testing spec, mandatory test requirements)
-- `feature32.md` — Seasonality Profile Filtering (backend router written; frontend UI pending)
-- `feature33.md` — Inventory Overlay in DFU Analysis *(not implemented)*
-- `feature34.md` — Inventory Planning Module Phase 1 (snapshot pipeline, API, UI tab)
-- `feature35.md` — Configurable Multi-Theme / Motif System (motifs removed; simplified to single professional theme with light/dark modes)
-- `feature36.md` — Product-Grade UI Overhaul (sidebar, themes, dashboard, global filters, widgets)
-- `feature37.md` — Inventory Planning Backtesting (forecast-inventory bridge, model comparison, root cause attribution)
-- `feature38.md` — Clustering What-If Scenario Enhancements (background execution, runtime estimation, dashboard alerts, enhanced charts)
-- `feature39.md` — Job Scheduler/Monitor with APScheduler (APScheduler 3.11 engine, 12 API endpoints, cron/interval scheduling, job pipelines, retry logic, automation dashboard UI, agentic AI foundation, scenario queueing, View Results navigation, Past Scenarios history)
-- `feature41.md` — Hyperparameter Tuning for Tree-Based Cluster Models (Optuna Bayesian optimization, walk-forward CV, early stopping, model-scoped output dirs, --params-file integration)
-- `feature42.md` — SHAP-Based Per-Timeframe Feature Selection (LGBM/CatBoost/XGBoost, cumulative importance threshold, cluster-pooled SHAP, CSV output, 4 REST endpoints, Accuracy tab UI panel)
-- `feature43.md` — Recursive Multi-Step Forecasting (--recursive flag, update_grid_with_predictions, _predict_single_month, per-month lag write-back, composable with SHAP + inline tuning, 9 Makefile targets, 19 unit tests)
-- `feature44.md` — Algorithm Configuration & Simplification (algorithm_config.yaml, per-cluster only, removed Prophet/StatsForecast/NeuralProphet/PatchTST/DeepAR, simplified run_tree_backtest, 4 Makefile targets, 512 backend tests)
-- `IPfeature4.md` — EOQ & Cycle Stock Calculator (Wilson EOQ formula, effective EOQ with MOQ + cap, cycle stock metrics, sensitivity curve, fact_eoq_targets table, 3 API endpoints, InvPlanningTab UI, eoq_config.yaml, 39 tests total, 630 backend + 238 frontend)
-- `IPfeature5.md` — Replenishment Policy Management (4 default policies in YAML config, auto-assign by segment, dim_replenishment_policy + fact_dfu_policy_assignment DDL, 5 API endpoints, Policy Management panel in InvPlanningTab, 31 tests total, 663 backend + 243 frontend)
-- `IPfeature6.md` — Inventory Health Score Dashboard (4-component × 25pt scoring, mv_inventory_health_score materialized view, stub fact_safety_stock_targets pattern, 3 API endpoints using get_conn() directly, Portfolio Health panel in InvPlanningTab, 54 tests total, 717 backend + 249 frontend)
-- `IPfeature7.md` — Exception Queue & Replenishment Recommendations (6 exception types, severity-based ordering, recommendation formula, 7-day dedup, fact_replenishment_exceptions DDL, 5 API endpoints, Exception Queue panel in InvPlanningTab, 32 tests total, 749 backend + 253 frontend)
-- `IPfeature8.md` — Fill Rate Analytics (mv_fill_rate_monthly materialized view, fill_rate.py router, 3 API endpoints, FillRatePanel in InvPlanningTab, tests in test_fill_rate.py)
-- `IPfeature9.md` — Demand Sensing & Short-Horizon Signal Integration (fact_demand_signals table, compute_demand_signals.py script, 3 API endpoints in inv_planning.py, unit + API tests)
-- `IPfeature10.md` — Safety Stock Monte Carlo Simulation (fact_ss_simulation_results table, run_ss_simulation.py script, simulation_config.yaml, 3 API endpoints, tests in test_inv_planning_simulation.py)
-- `IPfeature11.md` — ABC-XYZ Policy Matrix (XYZ classification DDL, classify_abc_xyz.py script, 3 API endpoints, AbcXyzPanel in InvPlanningTab, unit + API tests)
-- `IPfeature12.md` — Supplier Performance Analytics (mv_supplier_performance materialized view, 3 API endpoints, SupplierPanel in InvPlanningTab, tests in test_inv_planning_supplier.py)
-- `IPfeature13.md` — Capital Investment Optimization (fact_inventory_investment_plan + fact_efficient_frontier DDL, compute_investment_plan.py script, 4 API endpoints, unit + API tests)
-- `IPfeature14.md` — Intra-Month Stockout Detection (mv_intramonth_stockout materialized view, refresh_intramonth_stockout.py script, 3 API endpoints, IntramonthPanel in InvPlanningTab, tests in test_inv_planning_intramonth.py)
-- `IPfeature15.md` — Unified Control Tower / Command Center (mv_control_tower_kpis materialized view, control_tower.py router, 4 API endpoints, ControlTowerTab frontend component, Vite proxy entry, sidebar nav item, 851 backend + 258 frontend tests total)
-- `IPAIfeature1.md` — AI Planning Agent (NOT a chatbot — proactive exception work-queue; `AIPlannerAgent` with 10 tools via Claude `tool_use` API; `ai_insights` + `ai_planning_memos` tables; 5 API endpoints under /ai-planner/*; AIPlannerTab with insight cards + planning memo; ai_planner_config.yaml; generate_ai_insights.py batch script; `anthropic>=0.40.0` dependency; 1085 backend + 372 frontend tests)
-- `feature_06_01.md` — Production Forecast Generation Pipeline (fact_production_forecast + fact_model_registry tables; generate_production_forecasts.py inference pipeline with recursive multi-step scoring; model_persistence_fn callback in run_tree_backtest(); 3 API endpoints under /forecast/production/*; DemandForecastPanel in InvPlanningTab; generate_production_forecast job type in forecast group; 17 tests total, 1109 backend + 380 frontend)
-- `theme-testing-strategy.md` — Multi-Theme Testing Strategy (unit tests implemented; integration/a11y/perf tests pending)
-- `docs/REFACTORING_RECOMMENDATIONS.md` — Comprehensive codebase refactoring roadmap
+Located in `docs/specs/` — 6 domains, 39 files, `DD-SS-descriptive-name.md` convention:
+
+### 01-data-platform/
+- `01-01-infrastructure.md` — Tech stack, Docker Compose, services, implemented-features master index
+- `01-02-data-models.md` — Data architecture + ERD + dimension tables (Item/Location/Customer/Time/DFU) + fact tables (Sales, Forecast)
+- `01-03-benchmarking.md` — Postgres vs Trino/Iceberg latency comparison API
+
+### 02-forecasting/ (includes demand intelligence: clustering, seasonality, blended demand)
+- `02-01-accuracy-kpis.md` — Accuracy metrics (WAPE/bias/accuracy%) + multi-dimensional slicing (agg_accuracy_by_dim, lag-curve)
+- `02-02-multi-model-support.md` — model_id column, UNIQUE constraint, /models endpoint
+- `02-03-backtest-framework.md` — Expanding window timeframes (A-J), dual-path storage, lag 0-4 archive
+- `02-04-tree-model-implementations.md` — LGBM + CatBoost + XGBoost per-cluster backtests (shared feature engineering, model-specific sections)
+- `02-05-champion-selection.md` — 5 strategies, exec-lag-aware causality, ceiling model, meta-learner, FVA
+- `02-06-advanced-backtest.md` — Hyperparameter tuning (Optuna) + SHAP feature selection + recursive multi-step forecasting
+- `02-07-algorithm-config.md` — algorithm_config.yaml, per-cluster only, removed model types
+- `02-08-production-forecast.md` — Production inference pipeline, fact_production_forecast, versioning, CI bands
+- `02-09-bias-correction.md` — Bias correction in champion selection (F1.2) + bias correction engine (F3.1)
+- `02-10-dfu-clustering.md` — KMeans engine + what-if scenario UI + enhancements (background exec, charts, queuing, past scenarios)
+- `02-11-seasonality.md` — Seasonality detection pipeline + profile filtering in Accuracy/DFU analysis tabs
+- `02-12-blended-demand.md` — Alpha-weighted sensing + statistical blend
+
+### 03-inventory-planning/
+- `03-01-inventory-snapshot.md` — Snapshot ingestion (190M rows, agg views) + backtest/attribution (stockout/excess root cause)
+- `03-02-demand-variability.md` — Demand variability profiling (CV, MAD, skewness) + lead time variability (LT CV, reliability)
+- `03-03-safety-stock.md` — Safety stock engine (Z-score, ROP) + Monte Carlo simulation (service level curves)
+- `03-04-replenishment.md` — EOQ cycle stock + replenishment policies (4 types, auto-assign) + health score (4-component × 25pt)
+- `03-05-exception-queue.md` — 6 exception types, severity ranking, 7-day dedup, recommendations
+- `03-06-analytics.md` — Fill rate analytics + demand signals (short-horizon) + intramonth stockout detection
+- `03-07-abc-xyz-supplier.md` — ABC-XYZ policy matrix (3×3) + supplier performance analytics
+- `03-08-investment-optimization.md` — Efficient frontier, budget allocation, fact_inventory_investment_plan
+- `03-09-inventory-planning-reference.md` — Original world-class design vision (reference; see 03-01 through 03-08 for implementation)
+- `03-10-multi-echelon-ss.md` — Multi-echelon safety stock with cascade risk severity badges
+
+### 04-operations/
+- `04-01-sop-cycle.md` — S&OP stage machine, cycle phases, approval workflow
+- `04-02-financial-planning.md` — Inventory value, carrying cost, budget utilization
+- `04-03-event-calendar.md` — Promotion & event calendar, approval status
+- `04-04-scenario-planning.md` — Disruption scenarios, what-if planning, financial impact results
+
+### 05-ai-platform/
+- `05-01-ai-planning-agent.md` — Claude tool_use agent, 10 tools, proactive exception work-queue, ai_insights tables
+- `05-02-chatbot-market-intel.md` — NL→SQL chatbot (GPT-4o + pgvector) + market intelligence (Google search + GPT-4o narrative)
+- `05-03-control-tower.md` — mv_control_tower_kpis, cross-dimensional KPI cards, active alerts, top-critical
+- `05-04-storyboard.md` — Exception-based planner workflow, causal chain cards, decision logging
+
+### 06-ui-platform/
+- `06-01-data-explorer.md` — Data explorer UX (type-aware filtering, GIN, typeahead) + DFU analysis tab (sales vs multi-model overlay)
+- `06-02-ui-architecture.md` — Component architecture (Vite, TanStack Query, virtualization) + product-grade UI overhaul (sidebar, global filters, dashboard, theme)
+- `06-03-theming.md` — Light/dark modes (single Demand Studio theme)
+- `06-04-job-scheduler.md` — APScheduler 3.11, 12 endpoints, 4 job groups, pipelines, retry logic
+- `06-05-testing-strategy.md` — Full-stack pytest + Vitest testing spec, mandatory test requirements
+- `06-06-backtest-cleanup.md` — clean_backtest_models.py, selective model deletion, view refresh
+
+### Archived specs (deleted code / superseded designs)
+Located in `docs/archive/` — feature14 (transfer learning), feature19-21/24-25 (archived ML models), feature35 (deleted motif themes), theme-testing-strategy (orphaned), feature27 (Figma MCP, not started)
 
 ---
 
@@ -675,14 +670,13 @@ Located in `docs/design-specs/`:
 
 **Whenever ANY code is added, changed, or deleted in the codebase, you MUST update ALL of the following documentation files to keep them in sync:**
 
-1. **`docs/architecture-diagram.md`** — Update the architecture diagram (layers, components, data flow, ML pipeline) to reflect any structural changes — new/removed modules, routers, tabs, scripts, services, tables, or data flows
-2. **`mvp/demand/docs/ARCHITECTURE.md`** — Update architecture, component technologies, tables, or data flow if affected
-3. **`mvp/demand/docs/README.md`** — Update stack, datasets, analytics behavior, quick start, or key paths if affected
-4. **`mvp/demand/docs/RUNBOOK.md`** — Update setup steps, notes, or troubleshooting if affected
-5. **`mvp/demand/docs/WORKFLOW.md`** — Update the end-to-end workflow if any pipeline phase is added, removed, or reordered — new Make targets, new schema steps, new scripts, or changes to the dependency chain between phases
-6. **`docs/design-specs/feature<N>.md`** — Create or update the design spec for the feature
-7. **`docs/design-specs/feature1.md`** — Add the feature to the "Implemented Features (MVP)" list
-8. **`CLAUDE.md`** (this file) — Update Key Files, Common Commands, Data Models, Frontend Features, Important Conventions, or Design Specs list if affected
+1. **`mvp/demand/docs/ARCHITECTURE.md`** — Update architecture, component technologies, tables, or data flow if affected
+2. **`mvp/demand/docs/README.md`** — Update stack, datasets, analytics behavior, quick start, or key paths if affected
+3. **`mvp/demand/docs/RUNBOOK.md`** — Update setup steps, notes, or troubleshooting if affected
+4. **`mvp/demand/docs/WORKFLOW.md`** — Update the end-to-end workflow if any pipeline phase is added, removed, or reordered — new Make targets, new schema steps, new scripts, or changes to the dependency chain between phases
+5. **`docs/specs/<domain>/<DD-SS-name>.md`** — Create or update the design spec for the feature in the appropriate domain folder
+6. **`docs/specs/01-data-platform/01-01-infrastructure.md`** — Add the feature to the "Implemented Features" list
+7. **`CLAUDE.md`** (this file) — Update Key Files, Common Commands, Data Models, Frontend Features, Important Conventions, or Design Specs list if affected
 
 **This applies to ALL changes — additions, modifications, AND deletions. When code is removed, the corresponding references in ALL documentation files above must also be removed or updated.**
 
