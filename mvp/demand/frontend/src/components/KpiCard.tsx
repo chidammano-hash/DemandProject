@@ -32,7 +32,7 @@ function Sparkline({ data }: { data: number[] }) {
     .join(" ");
 
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="mt-1 text-muted-foreground/40">
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="mt-1 text-primary/30">
       <polyline
         fill="none"
         stroke="currentColor"
@@ -59,7 +59,7 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
     : null;
 
   return (
-    <div className={cn("rounded-md border bg-card px-3 py-2", borderClass, className)}>
+    <div className={cn("rounded-lg border border-border/60 bg-card px-4 py-3 shadow-sm hover:shadow-md transition-shadow duration-200", borderClass, className)}>
       <div className="flex items-center gap-1.5">
         {Icon && <Icon className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.5} />}
         <p className="text-xs text-muted-foreground">
@@ -68,7 +68,7 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
         </p>
       </div>
       <p className={cn(
-        "text-xl font-bold tabular-nums",
+        "text-xl font-bold tabular-nums font-mono tracking-tight",
         severity === "best" ? "text-[var(--kpi-best)]" : severity === "warning" ? "text-[var(--kpi-warning)]" : "",
         colorClass,
       )}>

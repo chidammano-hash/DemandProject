@@ -146,7 +146,7 @@ function DfuForecastChart({
 // Main panel
 // ---------------------------------------------------------------------------
 export function DemandForecastPanel() {
-  const [horizonMonths, setHorizonMonths] = useState(3);
+  const [horizonMonths, setHorizonMonths] = useState(18);
   const [dfuItem, setDfuItem] = useState("");
   const [dfuLoc, setDfuLoc] = useState("");
 
@@ -192,7 +192,7 @@ export function DemandForecastPanel() {
             onChange={(e) => setHorizonMonths(Number(e.target.value))}
             className="rounded border bg-background px-2 py-1 text-sm"
           >
-            {[1, 3, 6, 9, 12].map((m) => (
+            {[1, 3, 6, 9, 12, 18].map((m) => (
               <option key={m} value={m}>
                 {m}M
               </option>

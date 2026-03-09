@@ -244,7 +244,7 @@ export function PlannedOrdersPanel() {
                       <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
                         order.status === "proposed" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
                         : order.status === "approved" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-                        : order.status === "released" ? "bg-purple-100 text-purple-700"
+                        : order.status === "released" ? "bg-cyan-100 text-cyan-700"
                         : "bg-muted text-muted-foreground"
                       }`}>
                         {order.status}

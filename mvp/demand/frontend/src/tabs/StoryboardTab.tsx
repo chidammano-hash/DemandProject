@@ -29,7 +29,7 @@ const EXCEPTION_TYPE_COLORS: Record<string, string> = {
   forecast_bias: "bg-blue-100 text-blue-800 border-blue-200",
   stockout_risk: "bg-red-100 text-red-800 border-red-200",
   accuracy_drop: "bg-orange-100 text-orange-800 border-orange-200",
-  excess_risk: "bg-purple-100 text-purple-800 border-purple-200",
+  excess_risk: "bg-cyan-100 text-cyan-800 border-cyan-200",
   model_drift: "bg-yellow-100 text-yellow-800 border-yellow-200",
   new_item: "bg-green-100 text-green-800 border-green-200",
 };

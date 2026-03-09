@@ -153,7 +153,7 @@ export function AppSidebar({ activeTab, onNavigate, collapsed, onToggle, appName
                     "group relative flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors duration-150",
                     collapsed && "justify-center px-0",
                     isActive
-                      ? "bg-sidebar-active/10 font-medium text-sidebar-active"
+                      ? "bg-sidebar-active/15 font-medium text-sidebar-active"
                       : "text-sidebar-foreground hover:bg-sidebar-hover hover:text-foreground",
                   )}
                 >

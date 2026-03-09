@@ -1,9 +1,9 @@
 import type { Theme } from "@/types";
 
 export const TREND_COLORS_BY_THEME: Record<Theme, string[]> = {
-  light: ["#4f46e5", "#0d9488", "#d97706", "#7c3aed", "#dc2626", "#0284c7"],
-  dark: ["#818cf8", "#2dd4bf", "#fbbf24", "#a78bfa", "#fca5a5", "#7dd3fc"],
-  soft: ["#3574C4", "#0E9E72", "#D4890A", "#7A4ED4", "#D44040", "#0598B0"],
+  light: ["#2563EB", "#0D9488", "#D97706", "#0891B2", "#DC2626", "#0284C7"],
+  dark: ["#60A5FA", "#2DD4BF", "#FBBF24", "#22D3EE", "#FCA5A5", "#7DD3FC"],
+  soft: ["#2667C7", "#0E9E72", "#D4890A", "#0891B2", "#D44040", "#0598B0"],
 };
 
 export const CHART_COLORS: Record<Theme, { grid: string; axis: string; tooltip_bg: string; tooltip_border: string }> = {
@@ -19,21 +19,21 @@ export const DFU_SALES_COLORS: Record<string, string> = {
 };
 
 export const DFU_MODEL_COLORS: Record<string, string> = {
-  champion: "#f59e0b",
-  ceiling: "#8b5cf6",
-  external: "#06b6d4",
-  lgbm_global: "#84cc16",
-  lgbm_cluster: "#14b8a6",
+  champion: "#D97706",
+  ceiling: "#0891B2",
+  external: "#06B6D4",
+  lgbm_global: "#84CC16",
+  lgbm_cluster: "#0D9488",
   lgbm_transfer: "#f97316",
-  catboost_global: "#ec4899",
-  catboost_cluster: "#6366f1",
+  catboost_global: "#EC4899",
+  catboost_cluster: "#2563EB",
   catboost_transfer: "#a3e635",
-  xgboost_global: "#a855f7",
-  xgboost_cluster: "#0ea5e9",
+  xgboost_global: "#EA580C",
+  xgboost_cluster: "#0EA5E9",
   xgboost_transfer: "#fb923c",
 };
 
-export const DFU_MODEL_FALLBACK_COLORS = ["#64748b", "#78716c", "#0f766e", "#b45309", "#9333ea", "#e879f9"];
+export const DFU_MODEL_FALLBACK_COLORS = ["#64748B", "#78716C", "#0F766E", "#B45309", "#0891B2", "#EA580C"];
 
 export function dfuModelColor(model: string, idx: number): string {
   return DFU_MODEL_COLORS[model] ?? DFU_MODEL_FALLBACK_COLORS[idx % DFU_MODEL_FALLBACK_COLORS.length];

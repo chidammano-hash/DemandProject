@@ -72,7 +72,7 @@ export function ChampionPanel({
                       <label key={m} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
                         <input
                           type="checkbox"
-                          className="h-3.5 w-3.5 rounded border-input accent-indigo-700"
+                          className="h-3.5 w-3.5 rounded border-input accent-blue-600"
                           checked={checked}
                           disabled={isLast || runningCompetition}
                           onChange={() => onCompetingModelToggle(m)}
@@ -170,7 +170,7 @@ export function ChampionPanel({
                     ? `${championSummary.overall_champion_accuracy_pct.toFixed(2)}%`
                     : "-"
                 }
-                colorClass="text-indigo-700 dark:text-indigo-400"
+                colorClass="text-blue-700 dark:text-blue-400"
               />
               <KpiCard
                 label="Champion WAPE"
@@ -235,7 +235,7 @@ export function ChampionPanel({
                     <span className="w-40 truncate font-mono text-xs text-right">{model}</span>
                     <div className="flex-1 h-5 rounded bg-muted overflow-hidden">
                       <div
-                        className="h-full rounded bg-indigo-500 transition-all"
+                        className="h-full rounded bg-blue-500 transition-all"
                         style={{ width: `${Math.max(pct, 1)}%` }}
                       />
                     </div>

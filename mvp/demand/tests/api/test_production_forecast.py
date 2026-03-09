@@ -190,7 +190,7 @@ async def test_dfu_404_version_exists_but_no_rows():
 
 @pytest.mark.asyncio
 async def test_dfu_horizon_capped():
-    """horizon param is capped at 12 without error."""
+    """horizon param is capped at 18 without error."""
     pool, conn, cursor = _make_pool()
     cursor.fetchall.return_value = [
         (
@@ -205,7 +205,36 @@ async def test_dfu_horizon_capped():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/forecast/production?item_no=ITEM001&loc=LOC1&plan_version=2026-03&horizon=99"
+                "/forecast/production?item_no=ITEM001&loc=LOC1&plan_version=2026-02&horizon=99"
             )
 
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dfu_18_month_horizon():
+    """18-month planning horizon returns all 18 forecast rows."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchall.return_value = [
+        (
+            datetime.date(2026, 2 + i if i < 11 else i - 10, 1),
+            float(100 + i), None, None,
+            "lgbm_cluster", 2, i + 1, i > 0, "actual" if i == 0 else "predicted",
+            datetime.datetime(2026, 2, 24),
+        )
+        for i in range(18)
+    ]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/forecast/production?item_no=ITEM001&loc=LOC1&plan_version=2026-02&horizon=18"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["forecasts"]) == 18
+    assert data["forecasts"][0]["lag_source"] == "actual"
+    assert data["forecasts"][1]["lag_source"] == "predicted"

@@ -76,10 +76,30 @@ const INSIGHT_TYPE_ICONS: Record<InsightType, React.FC<{ className?: string }>> 
 };
 
 const SEVERITY_STYLES = {
-  critical: { dot: "bg-red-500", border: "border-l-red-500", badge: "text-red-600 dark:text-red-400" },
-  high:     { dot: "bg-orange-500", border: "border-l-orange-500", badge: "text-orange-600 dark:text-orange-400" },
-  medium:   { dot: "bg-yellow-500", border: "border-l-yellow-500", badge: "text-yellow-600 dark:text-yellow-400" },
-  low:      { dot: "bg-gray-400", border: "border-l-gray-400", badge: "text-gray-500" },
+  critical: {
+    dot:    "bg-red-500",
+    border: "border-l-red-500 border-red-200 dark:border-red-800",
+    badge:  "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400",
+    icon:   "text-red-500",
+  },
+  high: {
+    dot:    "bg-amber-500",
+    border: "border-l-amber-500 border-amber-200 dark:border-amber-800",
+    badge:  "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400",
+    icon:   "text-amber-500",
+  },
+  medium: {
+    dot:    "bg-yellow-500",
+    border: "border-l-yellow-500 border-yellow-200 dark:border-yellow-800",
+    badge:  "bg-yellow-100 text-yellow-700 dark:bg-yellow-950/50 dark:text-yellow-400",
+    icon:   "text-yellow-500",
+  },
+  low: {
+    dot:    "bg-slate-400",
+    border: "border-l-slate-400 border-slate-200 dark:border-slate-700",
+    badge:  "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",
+    icon:   "text-slate-400",
+  },
 };
 
 // Mini causal chain: 3 inline nodes derived from insight fields
@@ -152,7 +172,7 @@ function WorkQueueItem({
       <div className="min-w-0 flex-1 space-y-1">
         {/* Header row */}
         <div className="flex items-start gap-2 flex-wrap">
-          <span className={cn("text-[10px] font-semibold uppercase tracking-wide", s.badge)}>
+          <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", s.badge)}>
             {insight.severity}
           </span>
           <span className="text-xs font-medium text-foreground">

@@ -47,14 +47,15 @@ export function WidgetCard({ span = 6, title, subtitle, actions, children, class
     <div
       className={cn(
         "col-span-full rounded-lg border border-border bg-card p-4",
+        "shadow-sm hover:shadow-md transition-shadow duration-200",
         SPAN_MAP[span],
         className,
       )}
     >
       {(title || actions) && (
-        <div className="mb-3 flex items-start justify-between">
+        <div className="pb-2 mb-2 border-b border-border/50 flex items-start justify-between">
           <div>
-            {title && <h3 className="text-sm font-semibold text-card-foreground">{title}</h3>}
+            {title && <h3 className="text-sm font-semibold tracking-tight text-card-foreground">{title}</h3>}
             {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
           </div>
           {actions && <div className="flex items-center gap-1">{actions}</div>}

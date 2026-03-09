@@ -49,6 +49,7 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["Inter", "Avenir Next", "Trebuchet MS", "Segoe UI", "sans-serif"],
+        mono: ["JetBrains Mono", "Fira Code", "Cascadia Code", "ui-monospace", "monospace"],
       },
       keyframes: {
         "fade-in": {
@@ -56,8 +57,8 @@ const config: Config = {
           to: { opacity: "1", transform: "translateY(0)" },
         },
         "pulse-glow": {
-          "0%, 100%": { boxShadow: "0 0 0 0 rgba(99, 102, 241, 0.4)" },
-          "50%": { boxShadow: "0 0 16px 4px rgba(99, 102, 241, 0.25)" },
+          "0%, 100%": { boxShadow: "0 0 0 0 rgba(37, 99, 235, 0.35)" },
+          "50%": { boxShadow: "0 0 16px 4px rgba(37, 99, 235, 0.2)" },
         },
       },
       animation: {

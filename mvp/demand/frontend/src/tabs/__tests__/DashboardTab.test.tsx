@@ -132,7 +132,7 @@ describe("DashboardTab", () => {
 
   it("shows loading skeletons initially", () => {
     const { container } = renderDashboard();
-    const skeletons = container.querySelectorAll(".animate-pulse");
+    const skeletons = container.querySelectorAll(".animate-shimmer");
     expect(skeletons.length).toBeGreaterThan(0);
   });
 

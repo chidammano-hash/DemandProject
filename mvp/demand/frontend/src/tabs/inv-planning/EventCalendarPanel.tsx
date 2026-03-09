@@ -22,7 +22,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
-  promotion: "bg-purple-100 text-purple-700",
+  promotion: "bg-cyan-100 text-cyan-700",
   holiday: "bg-blue-100 text-blue-700",
   launch: "bg-teal-100 text-teal-700",
   clearance: "bg-orange-100 text-orange-700",

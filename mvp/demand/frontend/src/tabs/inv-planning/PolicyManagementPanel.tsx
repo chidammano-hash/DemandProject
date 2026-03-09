@@ -14,7 +14,7 @@ import { formatFixed, formatPct } from "@/lib/formatters";
 
 const POLICY_TYPE_COLORS: Record<string, string> = {
   continuous_rop:  "bg-blue-100 text-blue-800",
-  periodic_review: "bg-violet-100 text-violet-800",
+  periodic_review: "bg-sky-100 text-sky-800",
   min_max:         "bg-emerald-100 text-emerald-800",
   manual:          "bg-amber-100 text-amber-800",
 };

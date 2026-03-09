@@ -10,10 +10,10 @@ describe("Skeleton", () => {
     expect(div.tagName).toBe("DIV");
   });
 
-  it("has animate-pulse class", () => {
+  it("has animate-shimmer class", () => {
     const { container } = render(<Skeleton />);
     const div = container.firstChild as HTMLElement;
-    expect(div.className).toContain("animate-pulse");
+    expect(div.className).toContain("animate-shimmer");
   });
 
   it("accepts additional className", () => {

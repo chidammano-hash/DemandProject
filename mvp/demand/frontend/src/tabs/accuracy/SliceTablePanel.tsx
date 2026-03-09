@@ -163,7 +163,7 @@ export function SliceTablePanel({
         <label className="flex items-center gap-1.5 self-end pb-1.5 cursor-pointer select-none">
           <input
             type="checkbox"
-            className="h-3.5 w-3.5 rounded border-input accent-indigo-700"
+            className="h-3.5 w-3.5 rounded border-input accent-blue-600"
             checked={commonDfus}
             onChange={onCommonDfusToggle}
             disabled={loadingSlice}
@@ -212,7 +212,7 @@ export function SliceTablePanel({
             <label key={opt.key} className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
               <input
                 type="checkbox"
-                className="h-3.5 w-3.5 rounded border-input accent-indigo-700"
+                className="h-3.5 w-3.5 rounded border-input accent-blue-600"
                 checked={checked}
                 disabled={isLast}
                 onChange={() => onKpiToggle(opt.key)}
@@ -287,7 +287,7 @@ export function SliceTablePanel({
                               key={`${m}-${k.key}`}
                               className={cn(
                                 "text-right text-sm tabular-nums",
-                                isBestAcc ? "font-bold text-indigo-700 dark:text-indigo-400" : "",
+                                isBestAcc ? "font-bold text-blue-700 dark:text-blue-400" : "",
                                 isBadBias ? "text-red-600 dark:text-red-400" : "",
                               )}
                             >

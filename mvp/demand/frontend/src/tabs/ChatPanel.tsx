@@ -88,7 +88,7 @@ export default function ChatPanel({ domain }: ChatPanelProps) {
                     className={cn(
                       "rounded-lg px-3 py-2 text-sm",
                       msg.role === "user"
-                        ? "ml-8 bg-indigo-100 text-indigo-900"
+                        ? "ml-8 bg-sky-100 text-sky-900"
                         : "mr-8 bg-white border shadow-sm",
                     )}
                   >

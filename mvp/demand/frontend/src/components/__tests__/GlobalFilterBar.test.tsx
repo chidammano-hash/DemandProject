@@ -8,9 +8,11 @@ import type { GlobalFilters } from "@/types/theme";
 vi.mock("@/api/queries", () => ({
   queryKeys: {
     distinctValues: (domain: string, column: string) => ["distinct-values", domain, column],
+    planningDate: () => ["planning-date"],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchDistinctValues: vi.fn().mockResolvedValue({ column: "brand", values: ["BrandA", "BrandB"], total: 2 }),
+  fetchPlanningDate: vi.fn().mockResolvedValue({ planning_date: "2026-02-24", use_system_date: false }),
 }));
 
 const { GlobalFilterBar } = await import("@/components/GlobalFilterBar");

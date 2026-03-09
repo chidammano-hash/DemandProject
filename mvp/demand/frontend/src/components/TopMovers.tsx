@@ -30,7 +30,7 @@ export function TopMovers({ movers, className }: TopMoversProps) {
         return (
           <div
             key={`${mover.item_description}-${idx}`}
-            className="flex items-center gap-2 rounded-md px-2 py-1.5"
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40 transition-colors duration-100 cursor-pointer"
           >
             <span className={cn("flex-shrink-0", isUp ? "text-[var(--kpi-best)]" : "text-[var(--kpi-warning)]")}>
               {isUp ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
@@ -39,7 +39,7 @@ export function TopMovers({ movers, className }: TopMoversProps) {
               {mover.item_description}
             </span>
             <span className={cn(
-              "flex-shrink-0 text-sm font-semibold tabular-nums",
+              "flex-shrink-0 text-sm font-semibold tabular-nums font-mono",
               isUp ? "text-[var(--kpi-best)]" : "text-[var(--kpi-warning)]",
             )}>
               {isUp ? "+" : ""}{formatCompact(mover.delta)}

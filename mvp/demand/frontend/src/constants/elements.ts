@@ -8,9 +8,9 @@ export const ELEMENT_CONFIG: Record<string, { symbol: string; number: number; na
   dfu: { symbol: "Df", number: 110, name: "DFU", color: "bg-lime-50/90 text-lime-800 border-lime-200/60", activeColor: "bg-lime-100 text-lime-950 border-lime-300", glow: "shadow-[0_0_12px_rgba(132,204,22,0.3)]" },
   clusters: { symbol: "Cl", number: 2, name: "Clusters", color: "bg-emerald-50/90 text-emerald-800 border-emerald-200/60", activeColor: "bg-emerald-100 text-emerald-950 border-emerald-300", glow: "shadow-[0_0_12px_rgba(16,185,129,0.3)]" },
   sales: { symbol: "Sa", number: 3, name: "Sales", color: "bg-sky-50/90 text-sky-800 border-sky-200/60", activeColor: "bg-sky-100 text-sky-950 border-sky-300", glow: "shadow-[0_0_12px_rgba(14,165,233,0.3)]" },
-  forecast: { symbol: "Fc", number: 4, name: "Forecast", color: "bg-indigo-50/90 text-indigo-800 border-indigo-200/60", activeColor: "bg-indigo-100 text-indigo-950 border-indigo-300", glow: "shadow-[0_0_12px_rgba(99,102,241,0.3)]" },
+  forecast: { symbol: "Fc", number: 4, name: "Forecast", color: "bg-blue-50/90 text-blue-800 border-blue-200/60", activeColor: "bg-blue-100 text-blue-950 border-blue-300", glow: "shadow-[0_0_12px_rgba(59,130,246,0.3)]" },
   dfuAnalysis: { symbol: "Da", number: 7, name: "DFU Analysis", color: "bg-teal-50/90 text-teal-800 border-teal-200/60", activeColor: "bg-teal-100 text-teal-950 border-teal-300", glow: "shadow-[0_0_12px_rgba(20,184,166,0.3)]" },
-  accuracy: { symbol: "Ac", number: 5, name: "Accuracy", color: "bg-purple-50/90 text-purple-800 border-purple-200/60", activeColor: "bg-purple-100 text-purple-950 border-purple-300", glow: "shadow-[0_0_12px_rgba(168,85,247,0.3)]" },
+  accuracy: { symbol: "Ac", number: 5, name: "Accuracy", color: "bg-cyan-50/90 text-cyan-800 border-cyan-200/60", activeColor: "bg-cyan-100 text-cyan-950 border-cyan-300", glow: "shadow-[0_0_12px_rgba(6,182,212,0.3)]" },
   intel: { symbol: "Mi", number: 6, name: "Intel", color: "bg-cyan-50/90 text-cyan-800 border-cyan-200/60", activeColor: "bg-cyan-100 text-cyan-950 border-cyan-300", glow: "shadow-[0_0_12px_rgba(6,182,212,0.3)]" },
   inventory: { symbol: "In", number: 49, name: "Inventory", color: "bg-amber-50/90 text-amber-800 border-amber-200/60", activeColor: "bg-amber-100 text-amber-950 border-amber-300", glow: "shadow-[0_0_12px_rgba(245,158,11,0.3)]" },
 };

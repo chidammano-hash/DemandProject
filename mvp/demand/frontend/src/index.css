@@ -1,3 +1,5 @@
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
 @import "@fontsource/inter/400.css";
 @import "@fontsource/inter/500.css";
 @import "@fontsource/inter/600.css";
@@ -11,81 +13,93 @@
 /* Base / fallback variables (overridden at runtime by useTheme)       */
 /* ------------------------------------------------------------------ */
 :root {
-  --background: 0 0% 98%;
-  --foreground: 0 0% 9%;
+  --background: 220 20% 97%;
+  --foreground: 222 47% 11%;
   --card: 0 0% 100%;
-  --card-foreground: 0 0% 9%;
-  --primary: 221 83% 53%;
+  --card-foreground: 222 47% 11%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 224 76% 48%;
   --primary-foreground: 0 0% 100%;
   --secondary: 220 14% 96%;
-  --secondary-foreground: 220 9% 46%;
+  --secondary-foreground: 215 25% 27%;
   --muted: 220 14% 96%;
-  --muted-foreground: 220 9% 46%;
+  --muted-foreground: 215 16% 47%;
   --accent: 220 14% 96%;
-  --accent-foreground: 221 83% 53%;
-  --border: 220 13% 91%;
-  --input: 220 13% 91%;
-  --ring: 221 83% 53%;
-  --radius: 0.7rem;
-  --destructive: 0 84% 60%;
+  --accent-foreground: 224 76% 48%;
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 224 76% 48%;
+  --radius: 0.625rem;
+  --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --chart-1: #3B82F6;
-  --chart-2: #10B981;
-  --chart-3: #F59E0B;
-  --chart-4: #8B5CF6;
-  --chart-5: #EF4444;
+  --chart-1: 224 76% 48%;
+  --chart-2: 160 84% 39%;
+  --chart-3: 37 91% 55%;
+  --chart-4: 192 91% 36%;
+  --chart-5: 0 72% 51%;
   --chart-6: #06B6D4;
   --kpi-best: #10B981;
   --kpi-warning: #EF4444;
-  --kpi-ceiling: #8B5CF6;
+  --kpi-ceiling: 192 91% 36%;
   --bg-gradient-primary: rgba(0, 0, 0, 0);
   --bg-gradient-secondary: rgba(0, 0, 0, 0);
   --bg-gradient-base-start: #FAFAFA;
   --bg-gradient-base-mid: #FAFAFA;
   --bg-gradient-base-end: #FAFAFA;
   /* Sidebar tokens */
+  --sidebar-background: 222 47% 11%;
+  --sidebar-foreground: 215 20% 65%;
+  --sidebar-primary: 213 94% 68%;
+  --sidebar-accent: 217 33% 17%;
+  --sidebar-border: 217 33% 17%;
+  --sidebar-ring: 213 94% 68%;
+  /* Legacy sidebar tokens */
   --sidebar-bg: 0 0% 100%;
-  --sidebar-foreground: 220 9% 46%;
-  --sidebar-active: 221 83% 53%;
+  --sidebar-active: 224 76% 48%;
   --sidebar-hover: 220 14% 96%;
 }
 
 /* Dark palette defaults (overridden by useTheme at runtime) */
 .dark {
-  --background: 224 10% 10%;
-  --foreground: 210 20% 98%;
-  --card: 224 10% 12%;
-  --card-foreground: 210 20% 98%;
-  --primary: 217 91% 60%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 217 10% 18%;
-  --secondary-foreground: 218 10% 75%;
-  --muted: 215 10% 16%;
-  --muted-foreground: 218 10% 55%;
-  --accent: 217 10% 18%;
-  --accent-foreground: 217 91% 60%;
-  --border: 215 10% 20%;
-  --input: 215 10% 20%;
-  --ring: 217 91% 60%;
-  --destructive: 0 84% 60%;
+  --background: 222 47% 6%;
+  --foreground: 210 40% 96%;
+  --card: 217 33% 10%;
+  --card-foreground: 210 40% 96%;
+  --primary: 213 94% 68%;
+  --primary-foreground: 222 47% 6%;
+  --secondary: 217 33% 14%;
+  --secondary-foreground: 215 20% 75%;
+  --muted: 217 33% 14%;
+  --muted-foreground: 215 20% 55%;
+  --accent: 217 33% 14%;
+  --accent-foreground: 213 94% 68%;
+  --border: 217 24% 18%;
+  --input: 217 24% 18%;
+  --ring: 213 94% 68%;
+  --destructive: 0 62% 54%;
   --destructive-foreground: 0 0% 100%;
   --chart-1: #60A5FA;
   --chart-2: #34D399;
   --chart-3: #FBBF24;
-  --chart-4: #A78BFA;
+  --chart-4: 187 94% 51%;
   --chart-5: #F87171;
   --chart-6: #22D3EE;
   --kpi-best: #34D399;
   --kpi-warning: #F87171;
-  --kpi-ceiling: #A78BFA;
+  --kpi-ceiling: #22D3EE;
   --bg-gradient-primary: rgba(0, 0, 0, 0);
   --bg-gradient-secondary: rgba(0, 0, 0, 0);
   --bg-gradient-base-start: #18181B;
   --bg-gradient-base-mid: #18181B;
   --bg-gradient-base-end: #18181B;
+  --sidebar-background: 222 47% 5%;
+  --sidebar-foreground: 215 20% 55%;
+  --sidebar-primary: 213 94% 68%;
+  --sidebar-accent: 217 33% 12%;
+  --sidebar-border: 217 33% 12%;
+  /* Legacy sidebar tokens */
   --sidebar-bg: 224 10% 10%;
-  --sidebar-foreground: 218 10% 55%;
-  --sidebar-active: 217 91% 60%;
+  --sidebar-active: 213 94% 68%;
   --sidebar-hover: 215 10% 16%;
 }
 
@@ -123,11 +137,23 @@ html[data-transitioning] * {
   animation: fadeIn 200ms ease-out;
 }
 
+/* Shimmer animation for loading states */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent 0%, hsl(var(--muted)) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in,
   .animate-pulse-glow,
-  .animate-pour-shimmer {
+  .animate-pour-shimmer,
+  .animate-shimmer {
     animation: none !important;
   }
   html[data-transitioning] * {

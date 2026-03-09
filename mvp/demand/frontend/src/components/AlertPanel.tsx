@@ -3,10 +3,10 @@ import { cn } from "@/lib/utils";
 import type { Alert, AlertSeverity } from "@/types/theme";
 
 const SEVERITY_CONFIG: Record<AlertSeverity, { icon: React.ElementType; borderClass: string; iconClass: string }> = {
-  critical: { icon: AlertTriangle, borderClass: "border-l-destructive", iconClass: "text-destructive" },
-  high: { icon: AlertCircle, borderClass: "border-l-[var(--kpi-warning)]", iconClass: "text-[var(--kpi-warning)]" },
-  medium: { icon: AlertCircle, borderClass: "border-l-accent", iconClass: "text-accent-foreground" },
-  low: { icon: Info, borderClass: "border-l-muted", iconClass: "text-muted-foreground" },
+  critical: { icon: AlertTriangle, borderClass: "border-l-red-600 dark:border-l-red-400", iconClass: "text-red-600 dark:text-red-400" },
+  high: { icon: AlertCircle, borderClass: "border-l-amber-500 dark:border-l-amber-400", iconClass: "text-amber-500 dark:text-amber-400" },
+  medium: { icon: AlertCircle, borderClass: "border-l-yellow-500 dark:border-l-yellow-400", iconClass: "text-yellow-600 dark:text-yellow-400" },
+  low: { icon: Info, borderClass: "border-l-slate-300 dark:border-l-slate-600", iconClass: "text-slate-400 dark:text-slate-500" },
 };
 
 const TYPE_ICON_OVERRIDE: Partial<Record<string, React.ElementType>> = {
@@ -44,7 +44,7 @@ export function AlertPanel({ alerts, className, onDismiss, onAlertClick }: Alert
           <div
             key={alert.id}
             className={cn(
-              "flex items-start gap-2.5 rounded-md border border-border border-l-4 bg-card px-3 py-2",
+              "flex items-start gap-2.5 rounded-md border border-border border-l-4 bg-card px-3 py-2 shadow-sm",
               cfg.borderClass,
               isClickable && "cursor-pointer hover:bg-muted/30 transition-colors",
             )}

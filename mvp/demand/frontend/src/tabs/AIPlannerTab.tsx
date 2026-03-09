@@ -123,17 +123,17 @@ function deriveConfidence(insight: AiInsight): ConfidenceTier {
 const CONFIDENCE_STYLES: Record<ConfidenceTier, { label: string; className: string; tooltip: string }> = {
   high:   {
     label: "HIGH",
-    className: "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300",
+    className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-400",
     tooltip: "High confidence — forecast WAPE < 35% with financial impact confirmed. Act on this insight with high certainty.",
   },
   medium: {
     label: "MED",
-    className: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+    className: "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-400",
     tooltip: "Medium confidence — moderate forecast bias or variability detected. Review the AI reasoning before acting.",
   },
   low:    {
     label: "LOW",
-    className: "bg-gray-100 text-gray-600 dark:bg-gray-700/40 dark:text-gray-400",
+    className: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400",
     tooltip: "Low confidence — limited signal strength or no financial impact data. Treat as an early warning, not a directive.",
   },
 };
@@ -1056,7 +1056,7 @@ export default function AIPlannerTab() {
         {/* ---------------------------------------------------------------- */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Brain className="h-6 w-6 text-violet-500" />
+            <Brain className="h-6 w-6 text-teal-600 dark:text-teal-400" />
             <div>
               <h2 className="text-xl font-semibold">AI Planner</h2>
               <p className="text-sm text-muted-foreground">
@@ -1102,7 +1102,7 @@ export default function AIPlannerTab() {
         {/* ---------------------------------------------------------------- */}
         {/* Distinction banner (PL-004)                                     */}
         {/* ---------------------------------------------------------------- */}
-        <div className="rounded-md border border-violet-200 bg-violet-50 px-4 py-2 text-xs text-violet-700 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-300">
+        <div className="rounded-md border border-sky-200 bg-sky-50 px-4 py-2 text-xs text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-300">
           <strong>AI Planner</strong> shows ML-generated insights ranked by financial impact. For rule-based threshold alerts from replenishment policies, see the <strong>Exceptions</strong> tab.
         </div>
 

@@ -714,6 +714,8 @@ def main() -> None:
                         help="Preview without writing to DB")
     parser.add_argument("--model-id", type=str, default=None,
                         help="Override model_id (default: champion assignment per DFU)")
+    parser.add_argument("--plan-version", type=str, default=None,
+                        help="Override plan version label (e.g. '2026-02'). Defaults to current month.")
     args = parser.parse_args()
 
     config = load_config()
@@ -721,7 +723,7 @@ def main() -> None:
     keep_n = config["plan_version"]["keep_last_n_versions"]
     fallback_model_id = config["model_selection"]["fallback_model_id"]
 
-    plan_version = datetime.utcnow().strftime(config["plan_version"]["format"])
+    plan_version = args.plan_version or datetime.utcnow().strftime(config["plan_version"]["format"])
     run_id = str(uuid.uuid4())
 
     item_filter = args.dfu[0] if args.dfu else None

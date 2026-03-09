@@ -131,7 +131,11 @@ export function DataTable({
             )}
           </div>
         ),
-        cell: (info) => formatCell(info.getValue()),
+        cell: (info) => {
+          const raw = info.getValue();
+          const formatted = formatCell(raw);
+          return typeof raw === "number" ? <span className="font-mono">{formatted}</span> : formatted;
+        },
       });
     }
     return defs;
@@ -212,7 +216,7 @@ export function DataTable({
           className="max-h-[680px] overflow-auto rounded-md border pb-2 [scrollbar-gutter:stable]"
         >
           <Table style={{ minWidth: `${Math.max((visibleCols.length + 1) * 200, 1800)}px` }}>
-            <TableHeader className="sticky top-0 z-20 bg-muted/80 backdrop-blur">
+            <TableHeader className="sticky top-0 z-20 bg-muted/90 backdrop-blur">
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id}>
                   {headerGroup.headers.map((header, colIdx) => (
@@ -260,7 +264,7 @@ export function DataTable({
                       <TableRow
                         key={row.id}
                         data-index={virtualRow.index}
-                        className={cn(row.getIsSelected() && "bg-primary/5")}
+                        className={cn("even:bg-muted/30", row.getIsSelected() && "bg-primary/8")}
                       >
                         {row.getVisibleCells().map((cell, colIdx) => (
                           <TableCell
@@ -292,9 +296,9 @@ export function DataTable({
       <div className="flex items-center justify-between gap-2 text-sm">
         <div className="flex items-center gap-3">
           <span className="text-muted-foreground">
-            Showing {start}-{end} of {totalApproximate ? `${(total - 1).toLocaleString()}+` : total.toLocaleString()}
+            Showing <span className="font-mono">{start}-{end}</span> of <span className="font-mono">{totalApproximate ? `${(total - 1).toLocaleString()}+` : total.toLocaleString()}</span>
             {total > 0 && (
-              <span className="ml-2 tabular-nums">
+              <span className="ml-2 font-mono tabular-nums">
                 (Page {Math.floor(offset / limit) + 1} of {totalApproximate ? `${Math.ceil((total - 1) / limit)}+` : Math.ceil(total / limit)})
               </span>
             )}

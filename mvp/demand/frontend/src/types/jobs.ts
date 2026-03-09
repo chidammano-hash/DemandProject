@@ -98,10 +98,10 @@ export const GROUP_CONFIG: Record<string, GroupConfig> = {
   },
   backtest: {
     label: "Backtesting",
-    color: "text-violet-600 dark:text-violet-400",
-    bgColor: "bg-violet-50 dark:bg-violet-950/30",
-    borderColor: "border-violet-200 dark:border-violet-800",
-    iconBg: "bg-violet-100 dark:bg-violet-900/50",
+    color: "text-sky-600 dark:text-sky-400",
+    bgColor: "bg-sky-50 dark:bg-sky-950/30",
+    borderColor: "border-sky-200 dark:border-sky-800",
+    iconBg: "bg-sky-100 dark:bg-sky-900/50",
   },
   seasonality: {
     label: "Seasonality",

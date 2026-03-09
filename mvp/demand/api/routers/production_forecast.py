@@ -31,7 +31,7 @@ router = APIRouter(tags=["production-forecast"])
 async def get_production_forecast(
     item_no: str,
     loc: str,
-    horizon: int = 12,
+    horizon: int = 18,
     plan_version: str | None = None,
 ):
     """Return production forecast series for a specific DFU.
@@ -39,13 +39,13 @@ async def get_production_forecast(
     Args:
         item_no: Item number (exact match).
         loc: Location code (exact match).
-        horizon: Max months ahead to return (1–12).
-        plan_version: Specific plan version (e.g. '2026-03'). Defaults to latest.
+        horizon: Max months ahead to return (1–18).
+        plan_version: Specific plan version (e.g. '2026-02'). Defaults to latest.
 
     Returns:
         Forecast rows with confidence intervals and lag source metadata.
     """
-    horizon = max(1, min(horizon, 12))
+    horizon = max(1, min(horizon, 18))
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -129,7 +129,7 @@ async def get_production_forecast(
 @router.get("/forecast/production/summary")
 async def get_production_forecast_summary(
     plan_version: str | None = None,
-    horizon_months: int = 3,
+    horizon_months: int = 18,
     brand: str | None = None,
     category: str | None = None,
 ):
@@ -137,14 +137,14 @@ async def get_production_forecast_summary(
 
     Args:
         plan_version: Defaults to latest available.
-        horizon_months: Horizon to aggregate over (1–12).
+        horizon_months: Horizon to aggregate over (1–18).
         brand: Filter by brand (optional).
         category: Filter by category (optional, joins dim_item).
 
     Returns:
         Total DFU count, total forecast qty, breakdown by ABC class.
     """
-    horizon_months = max(1, min(horizon_months, 12))
+    horizon_months = max(1, min(horizon_months, 18))
 
     with get_conn() as conn:
         with conn.cursor() as cur:

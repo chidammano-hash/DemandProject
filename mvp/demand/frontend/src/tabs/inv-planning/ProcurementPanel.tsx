@@ -35,7 +35,7 @@ function fmtDate(s: string | null): string {
 const STATUS_COLOR: Record<string, string> = {
   proposed: "bg-muted text-muted-foreground",
   planner_approved: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
-  buyer_released: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300",
+  buyer_released: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",
   po_sent: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
   supplier_confirmed: "border border-green-500 text-green-600",
   partially_received: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
@@ -202,7 +202,7 @@ export function ProcurementPanel() {
                           e.stopPropagation();
                           setReleaseModalPO(po);
                         }}
-                        className="rounded bg-indigo-600 px-2 py-0.5 text-white text-xs hover:bg-indigo-700"
+                        className="rounded bg-sky-600 px-2 py-0.5 text-white text-xs hover:bg-sky-700"
                       >
                         Release
                       </button>
@@ -332,7 +332,7 @@ export function ProcurementPanel() {
               <button
                 onClick={() => releaseMutation.mutate(releaseModalPO)}
                 disabled={releaseMutation.isPending}
-                className="rounded bg-indigo-600 px-3 py-1 text-xs text-white hover:bg-indigo-700 disabled:opacity-50"
+                className="rounded bg-sky-600 px-3 py-1 text-xs text-white hover:bg-sky-700 disabled:opacity-50"
               >
                 Confirm Release
               </button>

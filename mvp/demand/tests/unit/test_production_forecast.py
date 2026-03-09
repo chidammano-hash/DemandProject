@@ -401,3 +401,41 @@ def test_generate_forecasts_batch_nonneg_qty():
     )
     for row in rows:
         assert row["forecast_qty"] >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# 18-month planning horizon
+# ---------------------------------------------------------------------------
+
+def test_build_grid_18_month_horizon():
+    """Grid supports 18-month planning horizon."""
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=18)
+    assert grid is not None
+    assert len(grid) == 18
+    assert list(grid["_horizon"].values) == list(range(1, 19))
+
+
+def test_generate_forecasts_batch_18_months():
+    """Batch inference produces 18 rows per DFU for planning horizon."""
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=18)
+    artifact = _make_artifact(120.0)
+    enc = build_cat_encoders(attrs)
+
+    rows = generate_forecasts_batch(
+        artifact=artifact,
+        dfu_list=[({"item_no": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid)],
+        horizon=18,
+        plan_version="2026-02",
+        run_id="test-run-id",
+        model_id="lgbm_cluster",
+        cat_encoders=enc,
+    )
+    assert len(rows) == 18
+    assert rows[0]["lag_source"] == "actual"
+    assert rows[0]["is_recursive"] is False
+    assert rows[1]["lag_source"] == "predicted"
+    assert rows[1]["is_recursive"] is True

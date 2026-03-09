@@ -260,7 +260,7 @@ export function ExceptionQueuePanel() {
                     <span className={`px-1 py-0.5 rounded text-xs ${
                       row.status === "open" ? "bg-red-100 text-red-700" :
                       row.status === "acknowledged" ? "bg-blue-100 text-blue-700" :
-                      row.status === "ordered" ? "bg-violet-100 text-violet-700" :
+                      row.status === "ordered" ? "bg-sky-100 text-sky-700" :
                       "bg-emerald-100 text-emerald-700"
                     }`}>
                       {row.status}
@@ -278,7 +278,7 @@ export function ExceptionQueuePanel() {
                     )}
                     {row.status === "acknowledged" && (
                       <button
-                        className="px-2 py-0.5 text-xs bg-violet-600 text-white rounded hover:bg-violet-700 disabled:opacity-50"
+                        className="px-2 py-0.5 text-xs bg-sky-600 text-white rounded hover:bg-sky-700 disabled:opacity-50"
                         disabled={statusMutation.isPending}
                         onClick={() => statusMutation.mutate({ id: row.exception_id, status: "ordered" })}
                       >

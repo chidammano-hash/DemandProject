@@ -71,7 +71,7 @@ function FilterDropdown({ config, selected, onSelect }: { config: FilterConfig; 
         className={cn(
           "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors",
           selected.length > 0
-            ? "border-primary/40 bg-primary/5 text-primary"
+            ? "border-primary/30 bg-primary/8 text-primary font-medium"
             : "border-border bg-card text-muted-foreground hover:bg-muted/50",
         )}
       >
@@ -179,7 +179,7 @@ function SearchableFilterDropdown({ config, selected, onSelect }: { config: Filt
         className={cn(
           "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors",
           selected.length > 0
-            ? "border-primary/40 bg-primary/5 text-primary"
+            ? "border-primary/30 bg-primary/8 text-primary font-medium"
             : "border-border bg-card text-muted-foreground hover:bg-muted/50",
         )}
       >
@@ -294,7 +294,7 @@ export function GlobalFilterBar() {
   });
 
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-card/80 px-4 py-2 backdrop-blur-sm" role="toolbar" aria-label="Global filters">
+    <div className="flex items-center gap-2 border-b border-border bg-card/80 px-4 py-2 shadow-sm backdrop-blur-sm" role="toolbar" aria-label="Global filters">
       {FILTERS.map((cfg) =>
         cfg.searchable ? (
           <SearchableFilterDropdown

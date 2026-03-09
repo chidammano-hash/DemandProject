@@ -1,5 +1,5 @@
 /**
- * Vrantis logo mark — a bold angular V on an indigo-to-blue gradient tile.
+ * Vrantis logo mark — a bold angular V on an sapphire-to-blue gradient tile.
  *
  * Concept: two upward arms of unequal height (right arm rises higher) suggest
  * a rising demand forecast. The cyan accent node at the apex of the right arm
@@ -34,9 +34,9 @@ export function VrantisLogo({ size = 32, showWordmark = false, className }: Vran
       >
         <defs>
           <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#4F46E5" />
-            <stop offset="60%" stopColor="#2563EB" />
-            <stop offset="100%" stopColor="#0EA5E9" />
+            <stop offset="0%" stopColor="#2563EB" />
+            <stop offset="60%" stopColor="#3B82F6" />
+            <stop offset="100%" stopColor="#60A5FA" />
           </linearGradient>
         </defs>
 
@@ -72,7 +72,7 @@ export function VrantisLogo({ size = 32, showWordmark = false, className }: Vran
             fontSize: `${size * 0.44}px`,
             letterSpacing: "-0.01em",
             lineHeight: 1,
-            background: "linear-gradient(110deg, #4F46E5 0%, #0EA5E9 100%)",
+            background: "linear-gradient(110deg, #2563EB 0%, #60A5FA 100%)",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
             backgroundClip: "text",

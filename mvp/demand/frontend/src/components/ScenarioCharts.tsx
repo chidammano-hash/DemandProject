@@ -26,7 +26,7 @@ import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 // Helpers
 // ---------------------------------------------------------------------------
 const PIE_COLORS = [
-  "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6",
+  "#2563EB", "#f59e0b", "#10b981", "#ef4444", "#0891B2",
   "#06b6d4", "#ec4899", "#14b8a6", "#f97316", "#84cc16",
 ];
 
@@ -69,7 +69,7 @@ export function ScenarioCharts({ result }: { result: NonNullable<ClusteringScena
     }
     return entry;
   });
-  const radarColors = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"];
+  const radarColors = ["#2563EB", "#059669", "#D97706", "#0891B2", "#DC2626", "#EA580C"];
 
   const featureImportance = (result.feature_importance ?? [])
     .slice(0, 10)
@@ -101,7 +101,7 @@ export function ScenarioCharts({ result }: { result: NonNullable<ClusteringScena
               strokeDasharray="5 5"
               label={{ value: `Optimal K=${result.optimal_k}`, position: "top", fill: "#ef4444", fontSize: 11 }}
             />
-            <Line type="monotone" dataKey="inertia" stroke="#6366f1" name="Inertia" strokeWidth={2} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="inertia" stroke="#2563EB" name="Inertia" strokeWidth={2} dot={{ r: 3 }} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -130,8 +130,8 @@ export function ScenarioCharts({ result }: { result: NonNullable<ClusteringScena
               {kData.map((entry, i) => (
                 <Cell
                   key={i}
-                  fill={entry.k === result.optimal_k ? "#6366f1" : silhouetteColor(entry.silhouette)}
-                  stroke={entry.k === result.optimal_k ? "#312e81" : undefined}
+                  fill={entry.k === result.optimal_k ? "#2563EB" : silhouetteColor(entry.silhouette)}
+                  stroke={entry.k === result.optimal_k ? "#1D4ED8" : undefined}
                   strokeWidth={entry.k === result.optimal_k ? 2 : 0}
                 />
               ))}
@@ -197,9 +197,9 @@ export function ScenarioCharts({ result }: { result: NonNullable<ClusteringScena
               <XAxis type="number" domain={[0, "auto"]} tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
               <YAxis type="category" dataKey="feature" width={75} tick={{ fontSize: 10 }} />
               <Tooltip formatter={(value: number) => [`${(value * 100).toFixed(1)}%`, "Importance"]} />
-              <Bar dataKey="variance_ratio" fill="#8b5cf6" name="Importance">
+              <Bar dataKey="variance_ratio" fill="#0891B2" name="Importance">
                 {featureImportance.map((_, i) => (
-                  <Cell key={i} fill={i === 0 ? "#6366f1" : "#a5b4fc"} />
+                  <Cell key={i} fill={i === 0 ? "#2563EB" : "#60A5FA"} />
                 ))}
               </Bar>
             </BarChart>

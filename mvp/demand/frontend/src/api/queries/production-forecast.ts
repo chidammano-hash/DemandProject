@@ -62,7 +62,7 @@ export async function fetchProductionForecast(params: {
   const qs = new URLSearchParams({
     item_no: params.item_no,
     loc: params.loc,
-    horizon: String(params.horizon ?? 12),
+    horizon: String(params.horizon ?? 18),
   });
   if (params.plan_version) qs.set("plan_version", params.plan_version);
   return fetchJson(`/forecast/production?${qs}`);
@@ -75,7 +75,7 @@ export async function fetchProductionForecastSummary(params: {
   category?: string;
 }): Promise<ProductionForecastSummaryPayload> {
   const qs = new URLSearchParams({
-    horizon_months: String(params.horizon_months ?? 3),
+    horizon_months: String(params.horizon_months ?? 18),
   });
   if (params.plan_version) qs.set("plan_version", params.plan_version);
   if (params.brand?.trim()) qs.set("brand", params.brand.trim());
@@ -174,7 +174,7 @@ export async function fetchDemandPlan(params: {
   const qs = new URLSearchParams({
     item_no: params.item_no,
     loc: params.loc,
-    horizon: String(params.horizon ?? 12),
+    horizon: String(params.horizon ?? 18),
   });
   if (params.plan_version) qs.set("plan_version", params.plan_version);
   if (params.quantile != null) qs.set("quantile", String(params.quantile));

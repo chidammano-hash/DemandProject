@@ -2,7 +2,7 @@
 # Controls the generate_production_forecasts.py inference pipeline.
 
 inference:
-  horizon_months: 12          # How many months ahead to forecast (T+1 through T+12)
+  horizon_months: 18          # How many months ahead to forecast (T+1 through T+18)
   recursive: true             # Use recursive inference: lag_1 for T+2 = model's T+1 prediction
   confidence_interval: false  # Generate P10/P90 bounds (requires quantile-trained models)
   ci_lower_quantile: 0.10

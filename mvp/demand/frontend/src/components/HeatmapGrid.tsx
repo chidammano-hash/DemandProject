@@ -61,7 +61,7 @@ export function HeatmapGrid({
                 <div
                   key={`${row.label}-${colIdx}`}
                   className={cn(
-                    "relative flex items-center justify-center rounded-sm px-1 py-2 text-[11px] font-medium tabular-nums transition-transform",
+                    "relative flex items-center justify-center rounded-sm px-1 py-2 text-[11px] font-medium tabular-nums transition-all duration-150 hover:opacity-90",
                     isHovered && "scale-110 z-10 shadow-md",
                     onCellClick && "cursor-pointer",
                   )}

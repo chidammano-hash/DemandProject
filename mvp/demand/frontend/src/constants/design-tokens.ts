@@ -2,7 +2,7 @@
 // Semantic color palette — use these constants instead of raw hex codes.
 
 // AI-generated content — teal distinguishes AI annotations from human data
-export const AI_COLOR = '#14b8a6';
+export const AI_COLOR = '#0D9488';
 
 // Severity palette — strict semantic meaning
 export const CRITICAL_COLOR = '#ef4444';  // Red   — action required NOW
@@ -12,7 +12,7 @@ export const HEALTHY_COLOR = '#22c55e';  // Green — healthy / positive
 export const NEUTRAL_COLOR = '#6b7280';  // Gray  — inactive / historical / resolved
 
 // Interactive / navigation
-export const INTERACTIVE_COLOR = '#3b82f6';  // Blue — buttons, links, selected state
+export const INTERACTIVE_COLOR = '#2563EB';  // Sapphire-600 — buttons, links, selected state
 
 // UX limits — keep primary views focused
 export const MAX_PRIMARY_KPIS = 4;          // Never show more than 4 on primary view
