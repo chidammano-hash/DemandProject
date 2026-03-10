@@ -15,6 +15,90 @@
 -- Table grain: one row per (item_no, loc, policy_version).
 -- Populated by scripts/compute_safety_stock.py on each SS refresh run.
 
+-- Migrate stub table created by 026_create_inventory_health_score.sql:
+-- Add any columns that are missing from the stub (idempotent).
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'fact_safety_stock_targets') THEN
+        -- Add primary key surrogate if missing
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'ss_sk') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN ss_sk BIGSERIAL PRIMARY KEY;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'ss_ck') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN ss_ck TEXT UNIQUE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'effective_date') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN effective_date DATE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'service_level_target') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN service_level_target NUMERIC(6,4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'z_score') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN z_score NUMERIC(8,4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'demand_mean_monthly') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN demand_mean_monthly NUMERIC(15,4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'demand_std_monthly') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN demand_std_monthly NUMERIC(15,4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'lead_time_mean_days') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN lead_time_mean_days NUMERIC(10,2);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'lead_time_std_days') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN lead_time_std_days NUMERIC(10,2);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'abc_vol') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN abc_vol TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'ss_demand_only') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN ss_demand_only NUMERIC(15,4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'ss_lt_only') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN ss_lt_only NUMERIC(15,4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'ss_method') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN ss_method TEXT NOT NULL DEFAULT 'combined';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'avg_daily_demand') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN avg_daily_demand NUMERIC(15,4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'demand_cv') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN demand_cv NUMERIC(10,6);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'lt_mean_days') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN lt_mean_days NUMERIC(10,2);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'lt_std_days') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN lt_std_days NUMERIC(10,2);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'target_min_qty') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN target_min_qty NUMERIC(15,4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'target_max_qty') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN target_max_qty NUMERIC(15,4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'current_qty_on_hand') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN current_qty_on_hand NUMERIC(15,4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'current_dos') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN current_dos NUMERIC(10,2);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'ss_gap') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN ss_gap NUMERIC(15,4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'computed_at') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN computed_at TIMESTAMPTZ DEFAULT NOW();
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'load_ts') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN load_ts TIMESTAMPTZ DEFAULT NOW();
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'fact_safety_stock_targets' AND column_name = 'modified_ts') THEN
+            ALTER TABLE fact_safety_stock_targets ADD COLUMN modified_ts TIMESTAMPTZ DEFAULT NOW();
+        END IF;
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS fact_safety_stock_targets (
     -- Surrogate / composite keys
     ss_sk                  BIGSERIAL PRIMARY KEY,

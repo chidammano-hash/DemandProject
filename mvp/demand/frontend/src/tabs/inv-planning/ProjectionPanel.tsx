@@ -14,8 +14,9 @@ import {
   ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ReferenceLine, ResponsiveContainer,
 } from "recharts";
-import { AlertTriangle, CheckCircle, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle, RefreshCw, TrendingDown } from "lucide-react";
 import { projectionKeys, fetchProjection, fetchProjectionAtRisk, refreshProjection, fetchPlanningDate, queryKeys, STALE } from "@/api/queries";
+import { EmptyState } from "@/components/EmptyState";
 
 const HORIZONS = [30, 60, 90];
 
@@ -155,15 +156,44 @@ export function ProjectionPanel() {
 
       {data && (
         <>
+          {/* Scenario glossary */}
+          <details className="border rounded p-2 text-xs mb-3 bg-muted/20">
+            <summary className="cursor-pointer font-medium text-foreground">Inventory Projection Scenarios ▸</summary>
+            <div className="mt-2 grid grid-cols-3 gap-2 text-muted-foreground">
+              <div className="p-2 border rounded bg-red-50 dark:bg-red-950/20">
+                <p className="font-medium text-red-700 dark:text-red-400">No Order (Baseline)</p>
+                <p>What happens if no replenishment order is placed. Shows when stockout occurs without action.</p>
+              </div>
+              <div className="p-2 border rounded bg-green-50 dark:bg-green-950/20">
+                <p className="font-medium text-green-700 dark:text-green-400">With Open POs</p>
+                <p>Projection including purchase orders already in transit (confirmed receipts).</p>
+              </div>
+              <div className="p-2 border rounded bg-blue-50 dark:bg-blue-950/20">
+                <p className="font-medium text-blue-700 dark:text-blue-400">With Planned Orders</p>
+                <p>Best-case: includes both open POs and system-recommended planned orders.</p>
+              </div>
+            </div>
+          </details>
+
           {/* Alert strip */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {stockoutDateNoOrder && (
-              <div className="flex items-center gap-2 rounded-md border border-red-300 bg-red-50 dark:bg-red-950/30 p-3 text-sm">
-                <AlertTriangle className="h-4 w-4 text-red-500 shrink-0" />
-                <span className="text-red-800 dark:text-red-300">
-                  <b>STOCKOUT RISK:</b> No-order scenario stocks out in{" "}
-                  <b>{daysNoOrder} days</b> ({stockoutDateNoOrder})
-                </span>
+              <div className="flex flex-col gap-2 rounded-md border border-red-300 bg-red-50 dark:bg-red-950/30 p-3 text-sm">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-red-500 shrink-0" />
+                  <span className="text-red-800 dark:text-red-300">
+                    <b>STOCKOUT RISK:</b> No-order scenario stocks out in{" "}
+                    <b>{daysNoOrder} days</b> ({stockoutDateNoOrder})
+                  </span>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700" onClick={() => document.getElementById("detail-table")?.scrollIntoView()}>
+                    View Detail
+                  </button>
+                  <button className="px-2 py-1 text-xs border rounded hover:bg-muted" title="Go to Planned Orders panel to approve the recommended order">
+                    Review Planned Orders →
+                  </button>
+                </div>
               </div>
             )}
             {!stockoutDateWithPO && stockoutDateNoOrder && (
@@ -234,9 +264,9 @@ export function ProjectionPanel() {
                 {planningDateInfo?.is_frozen && (
                   <ReferenceLine
                     x={planningDateInfo.planning_date}
-                    stroke="#f59e0b"
+                    stroke="var(--primary)"
                     strokeWidth={1.5}
-                    label={{ value: "Plan Date", position: "insideTopLeft", fontSize: 10, fill: "#f59e0b" }}
+                    label={{ value: "Planning Cutoff", position: "insideTopRight", fill: "hsl(var(--muted-foreground))", fontSize: 9 }}
                   />
                 )}
                 {stockoutDateNoOrder && (
@@ -251,7 +281,7 @@ export function ProjectionPanel() {
           </div>
 
           {/* Key dates table */}
-          <div className="rounded-lg border bg-card overflow-x-auto">
+          <div className="rounded-lg border bg-card overflow-x-auto" id="detail-table">
             <table className="text-xs w-full">
               <thead className="bg-muted/40">
                 <tr>
@@ -264,13 +294,25 @@ export function ProjectionPanel() {
               <tbody>
                 {(["reorder_trigger_date", "stockout_date", "days_until_stockout", "excess_date"] as const).map(key => (
                   <tr key={key} className="border-t">
-                    <td className="p-2 text-muted-foreground capitalize">{key.replace(/_/g, " ")}</td>
+                    <td
+                      className="p-2 text-muted-foreground capitalize"
+                      title={
+                        key === "reorder_trigger_date"
+                          ? "Date when on-hand inventory reaches the Reorder Point — when you should place a new order to avoid stockout"
+                          : key === "stockout_date"
+                          ? "Projected date when on-hand inventory reaches zero if no order is placed"
+                          : undefined
+                      }
+                    >
+                      {key.replace(/_/g, " ")}
+                    </td>
                     {(["no_order", "with_open_po", "with_planned_orders"] as const).map(sce => {
                       const val = data.key_dates[sce]?.[key];
                       const isStockout = key === "stockout_date" && val;
+                      const displayVal = key === "days_until_stockout" && val != null ? `${val}d` : (val ?? "—");
                       return (
                         <td key={sce} className={`p-2 text-center ${isStockout ? "text-red-500 font-medium" : ""}`}>
-                          {val ?? "—"}
+                          {displayVal}
                         </td>
                       );
                     })}
@@ -318,9 +360,16 @@ export function ProjectionPanel() {
       )}
 
       {!activeItem && !atRisk.isLoading && (
-        <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground text-sm">
-          Enter an item number and location above to view forward inventory projection.
-        </div>
+        <EmptyState
+          icon={TrendingDown}
+          title="Select a DFU to view inventory projection"
+          description="The inventory projection simulates day-by-day on-hand quantity across 3 scenarios: (1) no new orders, (2) with confirmed open POs, (3) with planned orders included. Key dates — reorder trigger, stockout — are highlighted."
+          steps={[
+            { label: "Enter Item No and Location above, then click Project", command: "e.g. Item: 100320 | Loc: 1401-BULK | Horizon: 90 days" },
+            { label: "Load open PO data for the with-PO scenario", command: "make load-inventory" },
+            { label: "Generate planned orders for the with-planned-orders scenario", command: "make planned-orders-generate" },
+          ]}
+        />
       )}
     </div>
   );

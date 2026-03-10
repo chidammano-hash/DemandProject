@@ -15,8 +15,57 @@ import {
   STALE,
   type HealthDetailRow,
 } from "@/api/queries";
+import { EmptyState } from "@/components/EmptyState";
+import { Activity } from "lucide-react";
 
 const PAGE = 50;
+
+const SCORE_COMPONENTS: Record<string, { label: string; max: number; description: string }> = {
+  ss_coverage: {
+    label: "SS Coverage",
+    max: 25,
+    description: "Safety stock coverage ratio: how much on-hand inventory covers the safety stock target. Score 25 = ≥1.5× target.",
+  },
+  dos_adequacy: {
+    label: "DOS Adequacy",
+    max: 25,
+    description: "Days of Supply adequacy: current inventory covers the policy target number of days. Score 25 = ≥ target DOS.",
+  },
+  fill_rate: {
+    label: "Fill Rate",
+    max: 25,
+    description: "Historical fill rate vs service level target. Score 25 = ≥ target service level (e.g. 98%).",
+  },
+  policy_compliance: {
+    label: "Policy Compliance",
+    max: 25,
+    description: "Percentage of DFUs following their assigned replenishment policy. Score 25 = ≥95% compliant.",
+  },
+  // aliases used by the existing component_avgs keys
+  dos_target: {
+    label: "DOS Target",
+    max: 25,
+    description: "Days of Supply adequacy: current inventory covers the policy target number of days. Score 25 = ≥ target DOS.",
+  },
+  stockout_risk: {
+    label: "Stockout Risk",
+    max: 25,
+    description: "Inverse stockout risk score: lower stockout probability yields a higher score. Score 25 = near-zero stockout risk.",
+  },
+  forecast_accuracy: {
+    label: "Forecast Accuracy",
+    max: 25,
+    description: "Forecast accuracy relative to target WAPE. Score 25 = WAPE ≤ threshold (e.g. ≤ 15%).",
+  },
+};
+
+function scoreColor(val: number | null | undefined): string {
+  if (val == null) return "";
+  if (val >= 20) return "text-green-600";
+  if (val >= 15) return "text-blue-600";
+  if (val >= 10) return "text-amber-600";
+  return "text-red-600";
+}
 
 const TIER_COLORS: Record<string, string> = {
   healthy:  "#22c55e",
@@ -171,32 +220,48 @@ export function PortfolioHealthPanel() {
           {healthSummaryLoading ? (
             <div className="text-xs text-muted-foreground">Loading…</div>
           ) : healthSummary?.component_avgs ? (
-            <div className="flex flex-col gap-2">
-              {(
-                [
-                  ["SS Coverage",       healthSummary.component_avgs.ss_coverage],
-                  ["DOS Target",        healthSummary.component_avgs.dos_target],
-                  ["Stockout Risk",     healthSummary.component_avgs.stockout_risk],
-                  ["Forecast Accuracy", healthSummary.component_avgs.forecast_accuracy],
-                ] as [string, number | null][]
-              ).map(([label, val]) => {
-                const pct = val != null ? Math.min(100, (val / 25) * 100) : 0;
-                return (
-                  <div key={label}>
-                    <div className="flex justify-between text-xs mb-0.5">
-                      <span className="text-muted-foreground">{label}</span>
-                      <span className="font-medium text-foreground">{val?.toFixed(1) ?? "—"}</span>
+            <>
+              <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border mb-3">
+                <span className="font-medium text-foreground">Health Score Components (each /25): </span>
+                <span className="text-green-600">● 20–25 Excellent</span> ·{" "}
+                <span className="text-blue-600 ml-1">● 15–19 Good</span> ·{" "}
+                <span className="text-amber-600 ml-1">● 10–14 Needs Attention</span> ·{" "}
+                <span className="text-red-600 ml-1">● 0–9 Critical</span>
+                <span className="ml-2 text-muted-foreground">Total score = sum of all 4 components (max 100)</span>
+              </div>
+              <div className="flex flex-col gap-2">
+                {(
+                  [
+                    ["ss_coverage",      "SS Coverage",       healthSummary.component_avgs.ss_coverage],
+                    ["dos_target",       "DOS Target",        healthSummary.component_avgs.dos_target],
+                    ["stockout_risk",    "Stockout Risk",     healthSummary.component_avgs.stockout_risk],
+                    ["forecast_accuracy","Forecast Accuracy", healthSummary.component_avgs.forecast_accuracy],
+                  ] as [string, string, number | null][]
+                ).map(([key, label, val]) => {
+                  const pct = val != null ? Math.min(100, (val / 25) * 100) : 0;
+                  const valColor = scoreColor(val);
+                  return (
+                    <div
+                      key={key}
+                      title={SCORE_COMPONENTS[key]?.description ?? ""}
+                    >
+                      <div className="flex justify-between text-xs mb-0.5">
+                        <span className="text-muted-foreground">{label}</span>
+                        <span className={`font-medium ${valColor || "text-foreground"}`}>
+                          {val?.toFixed(1) ?? "—"}
+                        </span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-blue-500"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-blue-500"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            </>
           ) : (
             <p className="text-xs text-muted-foreground">No data.</p>
           )}
@@ -209,6 +274,13 @@ export function PortfolioHealthPanel() {
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
             Avg Health Score by ABC Class x Variability
           </h4>
+          <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border mb-3">
+            <span className="font-medium text-foreground">Health Tiers (total score /100): </span>
+            <span className="text-green-700">● 80–100 Healthy</span> ·{" "}
+            <span className="text-blue-700 ml-1">● 60–79 Monitor</span> ·{" "}
+            <span className="text-amber-700 ml-1">● 40–59 At Risk</span> ·{" "}
+            <span className="text-red-700 ml-1">● 0–39 Critical</span>
+          </div>
           <div className="overflow-x-auto">
             <table className="text-xs w-full">
               <thead>
@@ -232,8 +304,22 @@ export function PortfolioHealthPanel() {
                         : score >= 60 ? "bg-blue-100 text-blue-800"
                         : score >= 40 ? "bg-amber-100 text-amber-800"
                         : "bg-red-100 text-red-800";
+                      const tier =
+                        score == null ? ""
+                        : score >= 80 ? "Healthy"
+                        : score >= 60 ? "Monitor"
+                        : score >= 40 ? "At Risk"
+                        : "Critical";
+                      const cellTitle =
+                        score != null
+                          ? `${y} × ${x}: avg health score ${score.toFixed(0)} (${tier})`
+                          : `${y} × ${x}: no data`;
                       return (
-                        <td key={x} className={`text-center py-1 px-2 rounded font-medium ${bg}`}>
+                        <td
+                          key={x}
+                          className={`text-center py-1 px-2 rounded font-medium ${bg}`}
+                          title={cellTitle}
+                        >
                           {score != null ? score.toFixed(0) : "—"}
                         </td>
                       );
@@ -273,6 +359,16 @@ export function PortfolioHealthPanel() {
         </div>
         {healthDetailLoading ? (
           <div className="text-xs text-muted-foreground">Loading…</div>
+        ) : (healthDetail?.rows ?? []).length === 0 ? (
+          <EmptyState
+            icon={Activity}
+            title="Health scores not yet computed"
+            description="Portfolio Health scores combine SS Coverage, Days of Supply adherence, Stockout Risk, and Forecast Accuracy into a 0–100 score per item-location."
+            steps={[
+              { label: "Apply schema (first time only)", command: "make health-schema" },
+              { label: "Refresh health score view", command: "make health-refresh" },
+            ]}
+          />
         ) : (
           <>
             <div className="overflow-x-auto">
@@ -314,13 +410,6 @@ export function PortfolioHealthPanel() {
                       </tr>
                     );
                   })}
-                  {(healthDetail?.rows ?? []).length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="text-center py-4 text-muted-foreground">
-                        No records. Run <code>make health-schema health-refresh</code> to populate.
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>

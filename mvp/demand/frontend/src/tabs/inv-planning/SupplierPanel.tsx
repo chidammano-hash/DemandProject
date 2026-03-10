@@ -7,6 +7,8 @@ import {
   type SupplierRow,
 } from "@/api/queries";
 import { KpiCard } from "@/components/KpiCard";
+import { EmptyState } from "@/components/EmptyState";
+import { Truck } from "lucide-react";
 
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
@@ -16,9 +18,9 @@ export function SupplierPanel() {
     queryFn: fetchSupplierSummary,
     staleTime: STALE.FIVE_MIN,
   });
-  const { data: detail } = useQuery({
+  const { data: detail, isLoading } = useQuery({
     queryKey: supplierKeys.detail({ limit: 10 }),
-    queryFn: () => fetchSupplierDetail({ limit: 10, sort_by: "supplier_reliability_score", sort_dir: "asc" }),
+    queryFn: () => fetchSupplierDetail({ limit: 10, sort_by: "supplier_reliability_score", sort_dir: "desc" }),
     staleTime: STALE.FIVE_MIN,
   });
 
@@ -26,13 +28,40 @@ export function SupplierPanel() {
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard className={PANEL_KPI} label="Total Suppliers" value={(summary?.total_suppliers ?? 0).toLocaleString()} />
-        <KpiCard className={PANEL_KPI} label="Avg Reliability Score" value={`${Number(summary?.avg_reliability_score ?? 0).toFixed(0)}/100`} />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Avg Reliability Score"
+          value={Number(summary?.avg_reliability_score ?? 0).toFixed(0)}
+          sublabel="/ 100"
+          tooltip={{ title: "Reliability Score", description: "50% × % stable lead time + 50% × (1 − LT CV).", threshold: "Target: ≥ 75" }}
+        />
         <KpiCard className={PANEL_KPI} label="Avg Lead Time (days)" value={Number(summary?.avg_lead_time_days ?? 0).toFixed(1)} />
-        <KpiCard className={PANEL_KPI} label="Low Reliability (<40)" value={(summary?.low_reliability_count ?? 0).toLocaleString()} colorClass="text-red-600" />
+        <KpiCard className={PANEL_KPI} label="Low Reliability (<40)" value={(summary?.low_reliability_count ?? 0).toLocaleString()} colorClass="text-red-600" sublabel="need attention" />
       </div>
+      {!isLoading && (!detail || detail.rows.length === 0) && (
+        <EmptyState
+          icon={Truck}
+          title="No supplier performance data"
+          description="Supplier performance tracks lead time reliability (mean, standard deviation, CV) across all item-supplier-location combinations. Scores below 40 flag unreliable suppliers needing attention."
+          steps={[
+            { label: "Apply schema (first time only)", command: "make supplier-perf-schema" },
+            { label: "Refresh supplier performance view", command: "make supplier-perf-refresh" },
+          ]}
+        />
+      )}
       {detail && detail.rows.length > 0 && (
         <div className="overflow-x-auto">
-          <p className="text-xs font-medium mb-2">Suppliers by Reliability (lowest first)</p>
+          <p className="text-xs font-medium mb-2">Suppliers by Reliability (highest first)</p>
+          <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border mb-2">
+            <span className="font-medium text-foreground">Supplier Risk Tiers: </span>
+            <span className="text-green-600 font-medium">● Trusted ≥ 70</span>
+            <span className="mx-2">·</span>
+            <span className="text-amber-600 font-medium">● Monitor 40–69</span>
+            <span className="mx-2">·</span>
+            <span className="text-red-600 font-medium">● At Risk &lt; 40</span>
+            <span className="mx-2">·</span>
+            <span className="text-muted-foreground">Score = 50% stable LT + 50% (1−LT CV)</span>
+          </div>
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b">
@@ -40,8 +69,8 @@ export function SupplierPanel() {
                 <th className="text-right py-1 px-2">Score</th>
                 <th className="text-right py-1 px-2">SKU-Locs</th>
                 <th className="text-right py-1 px-2">Avg LT (d)</th>
-                <th className="text-right py-1 px-2">LT CV</th>
-                <th className="text-right py-1 px-2">% Stable</th>
+                <th className="text-right py-1 px-2" title="Lead Time Coefficient of Variation: std dev ÷ mean lead time. Lower = more predictable. CV < 0.20 = stable.">LT CV</th>
+                <th className="text-right py-1 px-2" title="Percentage of item-location pairs with stable (low-variance) lead times from this supplier.">% Stable</th>
               </tr>
             </thead>
             <tbody>

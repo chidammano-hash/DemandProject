@@ -11,6 +11,15 @@ import {
 } from "@/api/queries";
 
 import { formatFixed, formatPct } from "@/lib/formatters";
+import { EmptyState } from "@/components/EmptyState";
+import { Shield } from "lucide-react";
+
+const POLICY_TYPE_DESCRIPTIONS: Record<string, string> = {
+  continuous_rop: "Monitor inventory daily; place an order when on-hand reaches the Reorder Point (ROP)",
+  periodic_review: "Review inventory every N days; if below target, order up to max level",
+  min_max: "Order up to max quantity when on-hand falls below the min threshold",
+  manual: "No automatic trigger; planner reviews and orders manually",
+};
 
 const POLICY_TYPE_COLORS: Record<string, string> = {
   continuous_rop:  "bg-blue-100 text-blue-800",
@@ -89,8 +98,10 @@ export function PolicyManagementPanel() {
             className="h-7 rounded border border-input bg-background px-3 text-xs font-medium hover:bg-muted disabled:opacity-50"
             disabled={autoAssignMutation.isPending || policyLoading}
             onClick={() => {
-              setAutoAssignStatus(null);
-              autoAssignMutation.mutate(policyList?.policies ?? []);
+              if (window.confirm("Auto-assign will assign policies to all unassigned DFUs based on segment rules:\n• Lumpy items → Manual Review\n• A-class → Continuous ROP\n• B-class → Periodic Review\n• C-class → Min-Max\n\nManual overrides will not be changed. Proceed?")) {
+                setAutoAssignStatus(null);
+                autoAssignMutation.mutate(policyList?.policies ?? []);
+              }
             }}
           >
             {autoAssignMutation.isPending ? "Assigning…" : "Auto-assign All"}
@@ -140,6 +151,16 @@ export function PolicyManagementPanel() {
       {/* Policy Cards */}
       {policyLoading ? (
         <div className="text-xs text-muted-foreground">Loading policies…</div>
+      ) : (policyList?.policies ?? []).length === 0 ? (
+        <EmptyState
+          icon={Shield}
+          title="No replenishment policies configured"
+          description="Policies define review cycle, service level, and order method (ROP, Min/Max, Periodic, Manual) per demand segment. Auto-assignment maps each DFU to its policy based on ABC class and variability."
+          steps={[
+            { label: "Apply schema (first time only)", command: "make policy-schema" },
+            { label: "Seed default policies and assign DFUs", command: "make policy-assign" },
+          ]}
+        />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
           {(policyList?.policies ?? []).map((policy) => (
@@ -164,8 +185,9 @@ export function PolicyManagementPanel() {
               </div>
               <span
                 className={`self-start rounded px-1.5 py-0.5 text-xs font-medium ${POLICY_TYPE_COLORS[policy.policy_type] ?? "bg-gray-100 text-gray-700"}`}
+                title={POLICY_TYPE_DESCRIPTIONS[policy.policy_type] ?? ""}
               >
-                {policy.policy_type.replace(/_/g, " ")}
+                {policy.policy_type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
               </span>
               <div className="text-xs text-muted-foreground space-y-0.5">
                 {policy.segment && <p>Segment: <span className="font-medium text-foreground">{policy.segment}</span></p>}
@@ -193,9 +215,9 @@ export function PolicyManagementPanel() {
                   <th className="text-left py-1 pr-4">Policy</th>
                   <th className="text-left py-1 pr-4">Type</th>
                   <th className="text-right py-1 pr-4">DFUs</th>
-                  <th className="text-right py-1 pr-4">Below SS%</th>
-                  <th className="text-right py-1 pr-4">SS Coverage</th>
-                  <th className="text-right py-1">Avg DOS</th>
+                  <th className="text-right py-1 pr-4" title="Percentage of DFUs in this policy currently below their safety stock target">Below SS%</th>
+                  <th className="text-right py-1 pr-4" title="Average ratio of on-hand inventory to safety stock target (1.0 = exactly at target, >1.0 = healthy)">SS Coverage</th>
+                  <th className="text-right py-1" title="Average Days of Supply — how many days the current inventory will last at current consumption rate">Avg DOS</th>
                 </tr>
               </thead>
               <tbody>
@@ -205,8 +227,11 @@ export function PolicyManagementPanel() {
                     <tr key={pid} className="border-b last:border-0">
                       <td className="py-1 pr-4 font-medium">{bp.policy_name}</td>
                       <td className="py-1 pr-4">
-                        <span className={`rounded px-1.5 py-0.5 text-xs ${POLICY_TYPE_COLORS[bp.policy_type] ?? ""}`}>
-                          {bp.policy_type.replace(/_/g, " ")}
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-xs ${POLICY_TYPE_COLORS[bp.policy_type] ?? ""}`}
+                          title={POLICY_TYPE_DESCRIPTIONS[bp.policy_type] ?? ""}
+                        >
+                          {bp.policy_type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
                         </span>
                       </td>
                       <td className="py-1 pr-4 text-right">{bp.dfu_count.toLocaleString()}</td>
@@ -239,6 +264,7 @@ export function PolicyManagementPanel() {
                   value={editPolicy.service_level}
                   onChange={(e) => setEditPolicy((s) => s ? { ...s, service_level: e.target.value } : null)}
                 />
+                <span className="text-xs text-muted-foreground">(e.g. 0.95 = 95% fulfillment probability)</span>
               </label>
               {editPolicy.policy.policy_type === "periodic_review" && (
                 <label className="flex flex-col gap-1">

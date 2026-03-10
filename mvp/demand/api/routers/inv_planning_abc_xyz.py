@@ -96,19 +96,19 @@ def get_abc_xyz_detail(
 
     if abc_vol:
         params.append(abc_vol.upper())
-        where_clauses.append(f"abc_vol = ${len(params)}")
+        where_clauses.append("abc_vol = %s")
     if xyz_class:
         params.append(xyz_class.upper())
-        where_clauses.append(f"xyz_class = ${len(params)}")
+        where_clauses.append("xyz_class = %s")
     if segment:
         params.append(segment.upper())
-        where_clauses.append(f"abc_xyz_segment = ${len(params)}")
+        where_clauses.append("abc_xyz_segment = %s")
     if item:
         params.append(f"%{item}%")
-        where_clauses.append(f"dmdunit ILIKE ${len(params)}")
+        where_clauses.append("dmdunit ILIKE %s")
     if location:
         params.append(f"%{location}%")
-        where_clauses.append(f"loc ILIKE ${len(params)}")
+        where_clauses.append("loc ILIKE %s")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -123,7 +123,7 @@ def get_abc_xyz_detail(
         FROM dim_dfu
         {where_sql}
         ORDER BY abc_xyz_segment NULLS LAST, dmdunit
-        LIMIT ${len(params) - 1} OFFSET ${len(params)}
+        LIMIT %s OFFSET %s
     """
 
     with get_conn() as conn:

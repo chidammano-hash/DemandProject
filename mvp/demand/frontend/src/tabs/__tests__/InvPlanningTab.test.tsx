@@ -606,7 +606,7 @@ describe("InvPlanningTab", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Policy" }));
     await waitFor(() => {
-      expect(screen.getByText("Policy Management")).toBeDefined();
+      expect(screen.getAllByText("Policy Management").length).toBeGreaterThan(0);
     });
   });
 
@@ -678,7 +678,7 @@ describe("InvPlanningTab", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Health" }));
     await waitFor(() => {
-      expect(screen.getByText("Portfolio Health Score")).toBeDefined();
+      expect(screen.getAllByText("Portfolio Health Score").length).toBeGreaterThan(0);
     });
   });
 
@@ -768,7 +768,7 @@ describe("InvPlanningTab", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByText("Exception Queue")).toBeDefined();
+      expect(screen.getAllByText("Exception Queue").length).toBeGreaterThan(0);
     });
   });
 
@@ -867,7 +867,7 @@ describe("InvPlanningTab", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Signals" }));
     await waitFor(() => {
-      expect(screen.getByText("Demand Signals")).toBeDefined();
+      expect(screen.getAllByText("Demand Signals").length).toBeGreaterThan(0);
     });
   });
 
@@ -907,7 +907,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Demand Fcst" }));
+    fireEvent.click(screen.getByRole("button", { name: "Demand Forecast" }));
     await waitFor(() => {
       expect(screen.getByText("Production Demand Forecast")).toBeDefined();
     });
@@ -921,10 +921,10 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Demand Fcst" }));
+    fireEvent.click(screen.getByRole("button", { name: "Demand Forecast" }));
     await waitFor(() => {
-      expect(screen.getByText("Plan Version")).toBeDefined();
-      expect(screen.getByText("DFU Coverage")).toBeDefined();
+      expect(screen.getByText("Forecast Version")).toBeDefined();
+      expect(screen.getByText("SKU-Locations Planned")).toBeDefined();
     });
   });
 

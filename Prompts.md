@@ -74,3 +74,5 @@ run 5 agents and go through each spec and add an example for each of the feature
 This is more than demand Studio it will emerge in to inventory optimization network optimization and replenishment. so name it appropriately using 10 creative agents suggest few names and then start 5 review agents one on each perception of brand, ease etc and suggest the final 5 .
 
 Give me a plan to embed AI in Demand and Invnetory planning not as chatbot but somehting tangible. liek it can pick context on the entire workflow and stich the journey through AI
+
+/plan I need a plan for a comprehensive make over to the UI. don't do any changes but provide plan. need state of the art. UI. check the specs for the UI and provide the changes. I need dark and light mode but with professional but nice colors. avoid the purple cue and provide nice themed colors

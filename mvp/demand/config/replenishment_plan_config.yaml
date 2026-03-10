@@ -1,0 +1,95 @@
+# Forward-Looking Replenishment Plan Configuration
+# Script: scripts/compute_replenishment_plan.py
+# Output: fact_replenishment_plan
+# Sources: fact_production_forecast (CI bands) + fact_dfu_policy_assignment + fact_safety_stock_targets
+#
+# All configurable parameters are defined here — no magic numbers in the compute script.
+
+replenishment_plan:
+
+  # ---------------------------------------------------------------------------
+  # Demand variability method
+  # ---------------------------------------------------------------------------
+  # How to derive sigma_demand_monthly from the production forecast CI bands.
+  # 'ci_spread': sigma = (forecast_qty_upper - forecast_qty_lower) / (2 * z_ci)
+  # Assumes the forecast CI is a symmetric normal interval at confidence level ci_confidence.
+  sigma_method: ci_spread
+  ci_confidence: 0.80            # CI band confidence level (P10/P90 = 80% interval)
+  ci_z_score: 1.282              # Z for 80% CI (one-tailed P10/P90; must match ci_confidence)
+
+  # Fallback when CI bands are NULL (e.g. DFUs not yet covered by production forecast):
+  # use dim_dfu.demand_std as sigma_demand_monthly directly.
+  fallback_to_historical: true
+
+  # ---------------------------------------------------------------------------
+  # Service levels by ABC class
+  # ---------------------------------------------------------------------------
+  # Determines z_score for the forward-looking SS formula.
+  # Must match values in safety_stock_config.yaml for consistency.
+  service_levels:
+    A: 0.98            # Top 20% by volume — highest service level
+    B: 0.95            # Middle 30% by volume
+    C: 0.90            # Bottom 50% by volume
+    default: 0.95      # Fallback if abc_vol is NULL or unrecognized
+
+  # Standard normal Z-scores (one-tail).
+  z_table:
+    0.85: 1.036
+    0.90: 1.282
+    0.95: 1.645
+    0.97: 1.881
+    0.98: 2.054
+    0.99: 2.326
+
+  # ---------------------------------------------------------------------------
+  # Safety stock guard rails
+  # ---------------------------------------------------------------------------
+  min_ss_days: 3         # Never compute SS below 3 days of supply (zero-demand items exempted)
+  max_ss_days: 120       # Cap SS at 120 days (prevents outlier spikes from volatile items)
+
+  # ---------------------------------------------------------------------------
+  # Lead time defaults
+  # ---------------------------------------------------------------------------
+  # Used when dim_item_lead_time_profile has no entry for an item-location pair.
+  lt_default_days: 14
+  # When lt_std_days is NULL, approximate as lt_mean_days * lt_std_fallback_pct.
+  lt_std_fallback_pct: 0.20     # Assume LT std = 20% of LT mean
+
+  # ---------------------------------------------------------------------------
+  # EOQ / cycle stock parameters
+  # ---------------------------------------------------------------------------
+  # Number of forward months to sum for annualized demand (forecast_annual_demand).
+  eoq_annualization_months: 12
+
+  costs:
+    default_ordering_cost: 50.00       # $ per order (setup / procurement cost)
+    default_holding_cost_pct: 0.25     # fraction of unit value per year
+    default_unit_cost: 1.00            # $ per unit (placeholder; override per item when available)
+    default_moq: 1                     # minimum order quantity (units)
+
+  constraints:
+    max_eoq_months_supply: 6           # Cap EOQ at this many months of avg demand
+    min_annual_demand: 0.001           # Skip DFUs with effectively zero demand
+
+  # ---------------------------------------------------------------------------
+  # Forward horizon
+  # ---------------------------------------------------------------------------
+  # How many forward months to compute per DFU per run (max 18).
+  # T+1 through T+horizon_months rows are written per DFU.
+  horizon_months: 12
+
+  # ---------------------------------------------------------------------------
+  # Policy-type dispatch
+  # ---------------------------------------------------------------------------
+  # Governs which replenishment parameters are populated per policy_type.
+  #   continuous_rop   — populates reorder_point + order_qty (= effective_eoq)
+  #   periodic_review  — populates order_up_to_level; review_cycle_days drives demand coverage
+  #   min_max          — populates reorder_point (min) + order_up_to_level (max)
+  #   manual / jit     — sets is_jit = TRUE; all replenishment parameters are NULL
+  default_policy_type: continuous_rop   # Applied when DFU has no policy assignment
+
+  # ---------------------------------------------------------------------------
+  # Output / batching
+  # ---------------------------------------------------------------------------
+  # Rows per INSERT ... ON CONFLICT (DO UPDATE) batch.
+  batch_size: 1000

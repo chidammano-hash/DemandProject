@@ -4,9 +4,24 @@
 inference:
   horizon_months: 18          # How many months ahead to forecast (T+1 through T+18)
   recursive: true             # Use recursive inference: lag_1 for T+2 = model's T+1 prediction
-  confidence_interval: false  # Generate P10/P90 bounds (requires quantile-trained models)
-  ci_lower_quantile: 0.10
-  ci_upper_quantile: 0.90
+
+confidence_interval:
+  enabled: true               # Set to false to skip CI band computation entirely
+  # Source of backtest residuals used to estimate per-DFU sigma
+  source_model_ids:           # models whose backtest residuals are pooled
+    - lgbm_cluster
+    - catboost_cluster
+    - xgboost_cluster
+  residual_lag: 0             # Lag-0 = execution-lag residuals (closest to production forecast)
+  min_residual_months: 6      # Min backtest months needed for DFU-level sigma; else use cluster fallback
+  # Z-scores for lower/upper bounds (1.282 ≈ P10/P90, 1.645 ≈ P5/P95)
+  z_lower: 1.282
+  z_upper: 1.282
+  # Horizon uncertainty growth model: "sqrt" (random-walk), "linear", or "none" (flat)
+  horizon_scaling: sqrt
+  # Guard rails applied to sigma before CI computation
+  sigma_floor: 1.0            # Minimum sigma in units (avoids degenerate zero-width CIs)
+  sigma_cap_multiplier: 3.0   # Cap sigma at this multiple of the global median sigma
 
 model_selection:
   strategy: champion          # 'champion' = use each DFU's current champion model assignment

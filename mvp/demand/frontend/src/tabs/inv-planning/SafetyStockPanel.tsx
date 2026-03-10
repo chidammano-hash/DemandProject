@@ -8,7 +8,9 @@ import {
   type SafetyStockRow,
 } from "@/api/queries";
 import { KpiCard } from "@/components/KpiCard";
+import { EmptyState } from "@/components/EmptyState";
 import { formatFixed, formatPct } from "@/lib/formatters";
+import { ArchiveX } from "lucide-react";
 
 const PAGE = 50;
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
@@ -47,8 +49,17 @@ export function SafetyStockPanel() {
   const totalPages = detail ? Math.ceil(detail.total / PAGE) : 0;
   const currentPage = Math.floor(ssOffset / PAGE) + 1;
 
+  const belowSsCount = summary?.below_ss_count ?? 0;
+
   return (
     <div className="space-y-4">
+      {/* Info banner */}
+      <div className="text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2 mb-3">
+        Safety stock is the buffer inventory held to protect against demand variability and lead time uncertainty.{" "}
+        <strong className="text-foreground">Forward SS</strong> uses Monte Carlo simulation;{" "}
+        <strong className="text-foreground">Historical SS</strong> uses the Z-score formula. Items where Forward &gt; Historical need increased buffer.
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard
           className={PANEL_KPI}
@@ -70,8 +81,30 @@ export function SafetyStockPanel() {
           className={PANEL_KPI}
           label="Avg SS Days"
           value={summaryLoading ? "..." : formatFixed(summary?.avg_ss_days)}
+          sublabel="days"
+          tooltip={{
+            title: "Average safety stock expressed in days of supply",
+            description: "Computed from ss_combined / avg_daily_demand. Higher = more buffer relative to daily consumption.",
+          }}
         />
       </div>
+
+      {/* Below SS warning KPI */}
+      {!summaryLoading && belowSsCount > 0 && (
+        <div className="grid grid-cols-1 gap-3">
+          <KpiCard
+            className={PANEL_KPI}
+            label="Below SS Count"
+            value={belowSsCount.toLocaleString()}
+            sublabel="need reorder"
+            severity="warning"
+            tooltip={{
+              title: "Items currently below their safety stock target",
+              description: "These DFUs have on-hand inventory below the computed safety stock level and may be at risk of stockout before the next replenishment arrives.",
+            }}
+          />
+        </div>
+      )}
 
       {summary && summary.by_abc.length > 0 && (
         <div className="overflow-x-auto">
@@ -126,6 +159,18 @@ export function SafetyStockPanel() {
 
       {detailLoading ? (
         <p className="text-xs text-muted-foreground">Loading...</p>
+      ) : (detail?.rows ?? []).length === 0 ? (
+        <EmptyState
+          icon={ArchiveX}
+          title="No safety stock targets computed"
+          description="Safety stock targets are calculated per DFU using the Z-score method: Z × √(lead_time × demand_variance + demand² × LT_variance). Service levels are set by ABC class (A=98%, B=95%, C=90%)."
+          steps={[
+            { label: "Apply schema (first time only)", command: "make ss-schema" },
+            { label: "Compute demand variability", command: "make variability-compute" },
+            { label: "Compute lead time variability", command: "make lt-variability-compute" },
+            { label: "Compute safety stock targets", command: "make ss-compute" },
+          ]}
+        />
       ) : (
         <>
           <div className="overflow-x-auto">
@@ -134,22 +179,54 @@ export function SafetyStockPanel() {
                 <tr className="border-b text-muted-foreground">
                   <th className="text-left py-1 pr-2">Item No</th>
                   <th className="text-left py-1 pr-2">Location</th>
-                  <th className="text-right py-1 pr-2">SS (qty)</th>
+                  <th
+                    className="text-right py-1 pr-2 cursor-help"
+                    title="Combined safety stock: forecast-based simulation target (units)"
+                  >
+                    SS Combined
+                  </th>
+                  <th
+                    className="text-right py-1 pr-2 cursor-help"
+                    title="Historical Z-score safety stock: Z × √(lead_time × σ²_demand + μ²_demand × σ²_LT). Based on historical demand and lead time variability — the classic formula without Monte Carlo."
+                  >
+                    Historical SS
+                  </th>
+                  <th
+                    className="text-right py-1 pr-2 cursor-help"
+                    title="Change from historical to forecast-based target. Positive = forward SS is higher (more conservative). Negative = forward SS is lower (more efficient)."
+                  >
+                    SS Delta
+                  </th>
                   <th className="text-right py-1 pr-2">Coverage %</th>
+                  <th
+                    className="text-right py-1 pr-2 cursor-help"
+                    title="Safety factor — number of standard deviations above mean demand. Z=1.65 → 95% service level, Z=2.05 → 98%, Z=2.33 → 99%"
+                  >
+                    Z-Score
+                  </th>
                   <th className="text-center py-1 pr-2">Below SS</th>
                   <th className="text-right py-1 pr-2">Reorder Point</th>
                   <th className="text-center py-1">ABC</th>
                 </tr>
               </thead>
               <tbody>
-                {(detail?.rows ?? []).length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-4 text-center text-muted-foreground">
-                      No data. Run make health-schema health-refresh to populate.
-                    </td>
-                  </tr>
-                ) : (
-                  (detail?.rows ?? []).map((r: SafetyStockRow, i: number) => (
+                {(detail?.rows ?? []).map((r: SafetyStockRow, i: number) => {
+                  // Historical SS is the demand-only component (Z-score formula result)
+                  const historicalSs = r.ss_demand_only ?? null;
+                  const delta =
+                    r.ss_combined != null && historicalSs != null
+                      ? r.ss_combined - historicalSs
+                      : null;
+                  const deltaClass =
+                    delta == null
+                      ? ""
+                      : delta > 0
+                        ? "text-amber-600"
+                        : delta < 0
+                          ? "text-green-600"
+                          : "";
+
+                  return (
                     <tr
                       key={`${r.item_no}-${r.loc}-${i}`}
                       className={`border-b last:border-0 hover:bg-muted/40 ${r.is_below_ss ? "bg-red-50 dark:bg-red-950/20" : ""}`}
@@ -157,8 +234,19 @@ export function SafetyStockPanel() {
                       <td className="py-1 pr-2 font-mono">{r.item_no}</td>
                       <td className="py-1 pr-2">{r.loc}</td>
                       <td className="py-1 pr-2 text-right">{formatFixed(r.ss_combined)}</td>
+                      <td className="py-1 pr-2 text-right text-muted-foreground">
+                        {formatFixed(historicalSs)}
+                      </td>
+                      <td className={`py-1 pr-2 text-right font-medium ${deltaClass}`}>
+                        {delta == null
+                          ? "—"
+                          : `${delta > 0 ? "+" : ""}${formatFixed(delta)}`}
+                      </td>
                       <td className="py-1 pr-2 text-right">
                         {formatPct(r.ss_coverage != null ? r.ss_coverage * 100 : null)}
+                      </td>
+                      <td className="py-1 pr-2 text-right">
+                        {r.z_score != null ? formatFixed(r.z_score) : "—"}
                       </td>
                       <td className="py-1 pr-2 text-center">
                         {r.is_below_ss ? (
@@ -170,8 +258,8 @@ export function SafetyStockPanel() {
                       <td className="py-1 pr-2 text-right">{formatFixed(r.reorder_point)}</td>
                       <td className="py-1 text-center">{r.abc_vol ?? "-"}</td>
                     </tr>
-                  ))
-                )}
+                  );
+                })}
               </tbody>
             </table>
           </div>

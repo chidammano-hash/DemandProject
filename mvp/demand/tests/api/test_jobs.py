@@ -358,3 +358,54 @@ async def test_submit_pipeline(mock_pool, mock_manager):
             data = response.json()
             assert data["pipeline_id"] == "pipe_xyz789"
             assert data["steps"] == 2
+
+
+@pytest.mark.asyncio
+async def test_new_job_types_registered(mock_pool, mock_manager):
+    """All 22 job types (10 original + 12 new) are in JOB_TYPE_REGISTRY."""
+    from common.job_registry import JOB_TYPE_REGISTRY
+    type_ids = set(JOB_TYPE_REGISTRY.keys())
+    # New inventory group types
+    for expected in [
+        "compute_safety_stock", "compute_eoq", "assign_policies",
+        "generate_exceptions", "classify_abc_xyz", "compute_variability",
+        "compute_demand_signals", "compute_investment",
+        "refresh_health_scores", "refresh_intramonth", "run_ss_simulation",
+    ]:
+        assert expected in type_ids, f"Missing job type: {expected}"
+    # New ai group type
+    assert "generate_storyboard" in type_ids
+    # Verify total count >= 22
+    assert len(type_ids) >= 22
+
+
+@pytest.mark.asyncio
+async def test_pipeline_with_inventory_steps(mock_pool, mock_manager):
+    """POST /jobs/pipeline accepts inventory group job types."""
+    pool, _, _ = mock_pool
+    mock_manager.submit_pipeline.return_value = "pipe_inv_001"
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("api.routers.jobs._get_manager", return_value=mock_manager), \
+         patch("common.job_registry.JOB_TYPE_REGISTRY", {
+             "compute_safety_stock": MagicMock(),
+             "compute_eoq": MagicMock(),
+             "refresh_health_scores": MagicMock(),
+         }):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/jobs/pipeline",
+                json={
+                    "steps": [
+                        {"job_type": "compute_safety_stock", "label": "SS"},
+                        {"job_type": "compute_eoq", "label": "EOQ"},
+                        {"job_type": "refresh_health_scores", "label": "Health"},
+                    ],
+                    "label": "Inventory Refresh",
+                },
+            )
+    assert response.status_code == 202
+    data = response.json()
+    assert data["pipeline_id"] == "pipe_inv_001"
+    assert data["steps"] == 3

@@ -170,4 +170,64 @@ describe("KpiCard", () => {
     render(<KpiCard label="Test" value="42" trend={{ delta: -8.0, direction: "down" }} />);
     expect(screen.getByText("-8.0% vs prior")).toBeInTheDocument();
   });
+
+  it("renders HelpCircle icon when tooltip prop is provided", () => {
+    const { container } = render(
+      <KpiCard
+        label="Fill Rate"
+        value="95%"
+        tooltip={{ title: "Fill Rate", description: "% of orders fulfilled on time" }}
+      />
+    );
+    // HelpCircle renders as an SVG inside a span with cursor-help
+    const helpSpan = container.querySelector("span.cursor-help");
+    expect(helpSpan).not.toBeNull();
+    expect(helpSpan!.querySelector("svg")).not.toBeNull();
+  });
+
+  it("sets title attribute on tooltip span with title and description", () => {
+    const { container } = render(
+      <KpiCard
+        label="Fill Rate"
+        value="95%"
+        tooltip={{ title: "Fill Rate", description: "% of orders fulfilled on time" }}
+      />
+    );
+    const helpSpan = container.querySelector("span.cursor-help");
+    expect(helpSpan?.getAttribute("title")).toBe("Fill Rate — % of orders fulfilled on time");
+  });
+
+  it("includes threshold in title attribute when provided", () => {
+    const { container } = render(
+      <KpiCard
+        label="Fill Rate"
+        value="95%"
+        tooltip={{ title: "Fill Rate", description: "% of orders fulfilled on time", threshold: "Target: 98%" }}
+      />
+    );
+    const helpSpan = container.querySelector("span.cursor-help");
+    expect(helpSpan?.getAttribute("title")).toBe("Fill Rate — % of orders fulfilled on time — Target: 98%");
+  });
+
+  it("does not render HelpCircle when tooltip prop is omitted", () => {
+    const { container } = render(<KpiCard label="Fill Rate" value="95%" />);
+    const helpSpan = container.querySelector("span.cursor-help");
+    expect(helpSpan).toBeNull();
+  });
+
+  it("renders target sub-line with default label when target prop is provided", () => {
+    render(<KpiCard label="Fill Rate" value="95%" target={{ value: "98%" }} />);
+    expect(screen.getByText("Target: 98%")).toBeInTheDocument();
+  });
+
+  it("renders target sub-line with custom label when target.label is provided", () => {
+    render(<KpiCard label="Fill Rate" value="95%" target={{ value: "98%", label: "Goal" }} />);
+    expect(screen.getByText("Goal: 98%")).toBeInTheDocument();
+  });
+
+  it("does not render target sub-line when target prop is omitted", () => {
+    render(<KpiCard label="Fill Rate" value="95%" />);
+    // Neither "Target:" nor any muted sub-line should appear
+    expect(screen.queryByText(/Target:/)).toBeNull();
+  });
 });

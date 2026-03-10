@@ -1,4 +1,4 @@
-import { TrendingUp, TrendingDown, Minus, type LucideIcon } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, HelpCircle, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type KpiCardProps = {
@@ -14,6 +14,10 @@ type KpiCardProps = {
   sparkline?: number[];
   severity?: "best" | "warning" | "neutral";
   icon?: LucideIcon;
+  /** Shows a HelpCircle icon next to the label; hover reveals tooltip content via title attribute */
+  tooltip?: { title: string; description: string; threshold?: string };
+  /** Shows a target sub-line below the main value */
+  target?: { value: string; label?: string };
 };
 
 function Sparkline({ data }: { data: number[] }) {
@@ -45,7 +49,7 @@ function Sparkline({ data }: { data: number[] }) {
   );
 }
 
-export function KpiCard({ label, value, sublabel, colorClass, borderClass, className, trend, sparkline, severity, icon: Icon }: KpiCardProps) {
+export function KpiCard({ label, value, sublabel, colorClass, borderClass, className, trend, sparkline, severity, icon: Icon, tooltip, target }: KpiCardProps) {
   const trendColor = trend
     ? trend.direction === "up"
       ? "text-[var(--kpi-best)]"
@@ -66,6 +70,14 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
           {label}
           {sublabel && <span className="ml-1">{sublabel}</span>}
         </p>
+        {tooltip && (
+          <span
+            title={[tooltip.title, tooltip.description, tooltip.threshold].filter(Boolean).join(" — ")}
+            className="cursor-help"
+          >
+            <HelpCircle className="h-3 w-3 text-muted-foreground/60" strokeWidth={1.5} />
+          </span>
+        )}
       </div>
       <p className={cn(
         "text-xl font-bold tabular-nums font-mono tracking-tight",
@@ -74,6 +86,9 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
       )}>
         {value}
       </p>
+      {target && (
+        <p className="text-xs text-muted-foreground mt-0.5">{target.label ?? "Target"}: {target.value}</p>
+      )}
       {trend && TrendIcon && (
         <div className={cn("flex items-center gap-1 text-xs", trendColor)}>
           <TrendIcon className="h-3 w-3" />

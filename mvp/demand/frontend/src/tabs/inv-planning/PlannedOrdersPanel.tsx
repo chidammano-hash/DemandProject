@@ -17,6 +17,8 @@ import {
   STALE,
 } from "@/api/queries";
 import type { PlannedOrder } from "@/api/queries";
+import { CheckSquare } from "lucide-react";
+import { EmptyState } from "@/components/EmptyState";
 
 function formatCurrency(v: number | null): string {
   if (v == null) return "—";
@@ -104,6 +106,11 @@ export function PlannedOrdersPanel() {
 
   return (
     <div className="space-y-4">
+      {/* Info Banner */}
+      <div className="text-xs text-amber-700 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded px-3 py-2 mb-3">
+        <span className="font-semibold">ℹ System-generated proposals</span> — these are NOT purchase orders placed with suppliers. Approve = ready for release to procurement. See <strong>Open POs</strong> panel for orders already in transit.
+      </div>
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -165,6 +172,13 @@ export function PlannedOrdersPanel() {
         ))}
       </div>
 
+      {/* Confidence Score Legend */}
+      <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border">
+        <span className="font-medium text-foreground">Confidence Score: </span>
+        <span className="text-green-600">● High ≥ 0.8</span> · <span className="text-amber-600">● Medium 0.5–0.79</span> · <span className="text-red-600">● Low &lt; 0.5</span>
+        <span className="ml-2 text-muted-foreground">— Based on forecast accuracy + lead time stability</span>
+      </div>
+
       {/* Filters */}
       <div className="flex flex-wrap gap-2 items-center">
         <input
@@ -206,17 +220,35 @@ export function PlannedOrdersPanel() {
       ) : ordersQ.isError ? (
         <div className="text-xs text-red-600 py-4 text-center">Failed to load planned orders.</div>
       ) : !orders?.items?.length ? (
-        <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
-          No planned orders found. Run <code className="font-mono">Generate</code> to create recommendations.
-        </div>
+        <EmptyState
+          icon={CheckSquare}
+          title="No planned orders generated"
+          description="Planned orders are system-generated replenishment proposals created when projected inventory falls below the reorder point within the lead time window. Each order has a confidence score based on data quality and recommends a quantity based on EOQ."
+          steps={[
+            { label: "Generate production forecasts first", command: "make forecast-generate" },
+            { label: "Compute replenishment plan", command: "make replen-plan-compute" },
+            { label: "Generate planned orders", command: "make planned-orders-generate" },
+          ]}
+        />
       ) : (
         <div className="rounded-lg border overflow-auto">
           <table className="w-full text-xs">
             <thead className="bg-muted/50">
               <tr>
-                {["Item", "Loc", "Supplier", "Rec. Qty", "Value", "Order By", "LT", "Confidence", "Status", "Actions"].map((h) => (
-                  <th key={h} className="px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">
-                    {h}
+                {[
+                  { label: "Item" },
+                  { label: "Loc" },
+                  { label: "Supplier" },
+                  { label: "Rec. Qty" },
+                  { label: "Value" },
+                  { label: "Order By", title: "Latest date to place this order to meet projected demand. Missing this date puts you at stockout risk." },
+                  { label: "LT", title: "Lead time in days from order placement to receipt." },
+                  { label: "Confidence" },
+                  { label: "Status" },
+                  { label: "Actions" },
+                ].map((h) => (
+                  <th key={h.label} title={h.title} className="px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">
+                    {h.label}
                   </th>
                 ))}
               </tr>

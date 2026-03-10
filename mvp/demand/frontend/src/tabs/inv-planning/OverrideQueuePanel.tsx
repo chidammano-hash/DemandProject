@@ -14,6 +14,8 @@ import {
   rejectOverride,
   STALE,
 } from "@/api/queries";
+import { EmptyState } from "@/components/EmptyState";
+import { Edit3 } from "lucide-react";
 
 type OverrideRow = {
   override_id: number;
@@ -159,9 +161,15 @@ export function OverrideQueuePanel() {
       {overridesQ.isLoading ? (
         <div className="text-xs text-muted-foreground py-4 text-center">Loading...</div>
       ) : !overrides?.overrides?.length ? (
-        <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
-          No overrides found for the selected filter.
-        </div>
+        <EmptyState
+          icon={Edit3}
+          title="No pending demand overrides"
+          description="Demand overrides allow planners to adjust the statistical forecast for promotions, new product launches, or known market events. Overrides require manager approval before they flow into the consensus plan."
+          steps={[
+            { label: "Submit an override using the 'New Override' button above", command: "(no CLI command — overrides are submitted in the UI)" },
+            { label: "Or load historical override data", command: "make overrides-load" },
+          ]}
+        />
       ) : (
         <div className="rounded-lg border overflow-auto">
           <table className="w-full text-xs">

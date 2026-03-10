@@ -12,6 +12,7 @@ import {
   deleteJob,
   createSchedule,
   deleteSchedule,
+  submitPipeline,
   STALE,
 } from "@/api/queries";
 import type { Job } from "@/types/jobs";
@@ -22,6 +23,7 @@ import { JobGroupsPanel } from "./jobs/JobGroupsPanel";
 import { ActiveJobsPanel } from "./jobs/ActiveJobsPanel";
 import { SchedulesPanel } from "./jobs/SchedulesPanel";
 import { JobHistoryPanel } from "./jobs/JobHistoryPanel";
+import { PipelineBuilderPanel } from "./jobs/PipelineBuilderPanel";
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -118,6 +120,12 @@ export default function JobsTab({ onNavigateToScenario }: JobsTabProps) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.jobSchedules() }),
   });
 
+  const pipelineMutation = useMutation({
+    mutationFn: ({ steps, label }: { steps: { type: string; params: Record<string, unknown> }[]; label: string }) =>
+      submitPipeline(steps.map((s) => ({ job_type: s.type, params: s.params })), label),
+    onSuccess: invalidateAll,
+  });
+
   // ---- derived data ----
   const jobTypes = typesData?.types || [];
   const activeJobs = activeData?.jobs || [];
@@ -184,6 +192,14 @@ export default function JobsTab({ onNavigateToScenario }: JobsTabProps) {
           submitting={submitMutation.isPending}
         />
       </section>
+
+      {/* Pipeline builder */}
+      <PipelineBuilderPanel
+        jobTypes={jobTypes}
+        activeJobs={activeJobs}
+        onSubmit={({ steps, label }) => pipelineMutation.mutate({ steps, label })}
+        isSubmitting={pipelineMutation.isPending}
+      />
 
       {/* Job history */}
       <JobHistoryPanel

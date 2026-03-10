@@ -4,7 +4,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { DollarSign, TrendingDown, AlertCircle, BarChart2 } from "lucide-react";
+import { Banknote, DollarSign, TrendingDown, AlertCircle, BarChart2 } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -16,6 +16,7 @@ import {
   Legend,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/EmptyState";
 import {
   financialPlanKeys,
   fetchBudgetStatus,
@@ -53,6 +54,11 @@ export function FinancialPlanPanel() {
 
   return (
     <div className="space-y-6 p-4">
+      {/* Carrying cost formula explanation */}
+      <div className="text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2 mb-3">
+        <strong className="text-foreground">Inventory Carrying Cost</strong> = Average On-Hand Value × 25% per annum ÷ 12 (monthly). The 25% rate includes warehouse costs, capital cost, obsolescence risk, and insurance. Reducing excess inventory directly lowers this cost.
+      </div>
+
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
@@ -72,6 +78,20 @@ export function FinancialPlanPanel() {
           </Card>
         ))}
       </div>
+
+      {/* Empty state: shown when both budget rows and working capital data are empty and not loading */}
+      {!budgetLoading && !trendLoading && !budgetList.length && !trendMonths.length && (
+        <EmptyState
+          icon={Banknote}
+          title="No financial inventory plan"
+          description="The financial plan tracks inventory value, carrying cost (holding cost × on-hand value), excess inventory value, and budget utilisation by category over a rolling horizon."
+          steps={[
+            { label: "Load inventory snapshots", command: "make load-inventory" },
+            { label: "Compute investment plan", command: "make investment-plan" },
+            { label: "Compute financial inventory plan", command: "make financial-plan-compute" },
+          ]}
+        />
+      )}
 
       {/* Working capital trend chart */}
       <Card>
@@ -121,31 +141,36 @@ export function FinancialPlanPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {budgetList.map((b, i) => (
-                    <tr key={i} className={`border-t hover:bg-muted/30 ${b.is_breached ? "bg-red-50" : ""}`}>
-                      <td className="px-3 py-2 font-medium">{b.category}</td>
-                      <td className="px-3 py-2 text-xs">{fmtCurrency(b.budget_cap)}</td>
-                      <td className="px-3 py-2 text-xs">{fmtCurrency(b.committed_spend)}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 bg-gray-200 rounded-full h-1.5 min-w-[60px]">
-                            <div
-                              className={`h-1.5 rounded-full ${b.is_breached ? "bg-red-500" : b.utilization_pct > 80 ? "bg-amber-500" : "bg-green-500"}`}
-                              style={{ width: `${Math.min(100, b.utilization_pct)}%` }}
-                            />
+                  {budgetList.map((b, i) => {
+                    const budgetStatus = b.is_breached || b.utilization_pct > 100 ? "BREACHED" : b.utilization_pct > 80 ? "AT RISK" : "OK";
+                    const budgetStatusClass = budgetStatus === "BREACHED" ? "text-red-600 bg-red-50" : budgetStatus === "AT RISK" ? "text-amber-600 bg-amber-50" : "text-green-600 bg-green-50";
+                    return (
+                      <tr key={i} className={`border-t hover:bg-muted/30 ${budgetStatus === "BREACHED" ? "bg-red-50" : budgetStatus === "AT RISK" ? "bg-amber-50/40" : ""}`}>
+                        <td className="px-3 py-2 font-medium">{b.category}</td>
+                        <td className="px-3 py-2 text-xs">{fmtCurrency(b.budget_cap)}</td>
+                        <td className="px-3 py-2 text-xs">{fmtCurrency(b.committed_spend)}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2" title="Budget utilization: committed spend ÷ total budget cap. ≥80% = AT RISK, >100% = BREACHED">
+                            <div className="flex-1 bg-gray-200 rounded-full h-1.5 min-w-[60px]">
+                              <div
+                                className={`h-1.5 rounded-full ${budgetStatus === "BREACHED" ? "bg-red-500" : budgetStatus === "AT RISK" ? "bg-amber-500" : "bg-green-500"}`}
+                                style={{ width: `${Math.min(100, b.utilization_pct)}%` }}
+                              />
+                            </div>
+                            <span className="text-xs font-medium">{b.utilization_pct.toFixed(1)}%</span>
                           </div>
-                          <span className="text-xs font-medium">{b.utilization_pct.toFixed(1)}%</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        {b.is_breached ? (
-                          <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium">BREACHED</span>
-                        ) : (
-                          <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">OK</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-3 py-2">
+                          <span
+                            className={`text-xs px-1.5 py-0.5 rounded font-medium ${budgetStatusClass}`}
+                            title={budgetStatus === "AT RISK" ? "Approaching budget cap (>80%). Monitor closely and consider adjusting planned orders." : undefined}
+                          >
+                            {budgetStatus}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

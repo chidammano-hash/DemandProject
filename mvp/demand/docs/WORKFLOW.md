@@ -61,6 +61,9 @@ make ai-insights-schema        # ai_insights + ai_planning_memos + ai_call_log +
 # Production Forecast (F1.1)
 make forecast-prod-schema      # fact_production_forecast + fact_model_registry + source_model_id migration
 
+# Forward-Looking Replenishment Plan (CI Bands + Repl. Plan)
+make replplan-schema           # fact_replenishment_plan
+
 # Chat
 make db-apply-chat             # pgvector + chat_embeddings (requires OPENAI_API_KEY)
 make generate-embeddings       # Embed schema descriptions (requires OPENAI_API_KEY)
@@ -236,6 +239,23 @@ make forecast-generate-dry
 1. `data/models/lgbm_cluster/cluster_*.pkl` must exist (from Phase 5)
 2. Champion assignments with `source_model_id` must exist (from Phase 6)
 3. Recent sales history must be loaded (from Phase 2)
+
+---
+
+## Phase 7b: Forward-Looking Replenishment Plan (CI Bands + Repl. Plan)
+
+Run after Phase 7 (production forecast must exist). Computes forward SS, EOQ, and order quantities from CI-band forecasts.
+
+```bash
+make replplan-compute        # Compute 12-month replenishment plan → fact_replenishment_plan
+# preview without writing:
+make replplan-compute-dry
+```
+
+**Dependency chain for `make replplan-compute`:**
+1. `fact_production_forecast` must have rows (from Phase 7)
+2. `fact_safety_stock_targets` must have rows (from Phase 3 `ss-compute`)
+3. `fact_eoq_targets` must have rows (from Phase 3 `eoq-compute`)
 
 ---
 

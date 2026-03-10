@@ -46,3 +46,31 @@ export interface ShapTimeframeDetailPayload {
   total_features: number;
   features: ShapFeatureDetail[];
 }
+
+// Per-DFU on-demand SHAP types (new endpoint)
+export interface DfuShapFeatureContribution {
+  name: string;
+  value: number; // signed: positive = feature pushes forecast up
+}
+
+export interface DfuShapPoint {
+  month: string; // "2024-03-01"
+  is_future: boolean;
+  base_value: number; // model's expected value (base prediction)
+  other_shap: number; // sum of contributions from non-top-N features
+  features: DfuShapFeatureContribution[];
+}
+
+export interface DfuShapPayload {
+  item_no: string;
+  loc: string;
+  model_id: string;
+  cluster_id: string;
+  top_n: number;
+  computed_at: string;
+  /** Model whose stored forecasts were used as lag source for future months.
+   *  Differs from model_id when the requested model is not the production champion.
+   *  Future-month SHAP is approximate in that case. */
+  future_lag_model_id: string | null;
+  points: DfuShapPoint[];
+}

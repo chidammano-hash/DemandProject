@@ -22,7 +22,7 @@ import { formatNumber } from "@/lib/formatters";
 import type { InventoryPosition } from "@/types";
 import { TrendChartPanel } from "./TrendChartPanel";
 import { ItemDetailPanel } from "./ItemDetailPanel";
-import type { InventoryTrendPoint } from "@/types";
+import type { InventoryTrendPoint, InventoryTrendParams } from "@/types";
 
 const PAGE_SIZE = 50;
 
@@ -50,8 +50,8 @@ interface PositionTablePanelProps {
   itemFilter: string;
   locationFilter: string;
   months: number;
-  onItemChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onLocationChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onItemChange: (value: string) => void;
+  onLocationChange: (value: string) => void;
   onMonthsChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
 
   // Table data
@@ -75,6 +75,7 @@ interface PositionTablePanelProps {
 
   // Trend chart
   trendData: InventoryTrendPoint[];
+  trendParams?: InventoryTrendParams;
   isLoadingTrend: boolean;
 
   // Item detail
@@ -104,6 +105,7 @@ export function PositionTablePanel({
   selectedRow,
   onRowClick,
   trendData,
+  trendParams,
   isLoadingTrend,
   detailSnapshots,
   isLoadingDetail,
@@ -124,20 +126,24 @@ export function PositionTablePanel({
   const sortIndicator = useCallback(
     (col: SortCol) => {
       if (sortBy !== col) return null;
-      return sortDir === "asc" ? " \u25B2" : " \u25BC";
+      return (
+        <span className="ml-1 text-primary">
+          {sortDir === "asc" ? "↑" : "↓"}
+        </span>
+      );
     },
     [sortBy, sortDir],
   );
 
-  const COLUMNS: { col: SortCol; label: string }[] = [
+  const COLUMNS: { col: SortCol; label: string; tooltip?: string }[] = [
     { col: "item_no", label: "Item" },
     { col: "loc", label: "Location" },
     { col: "snapshot_date", label: "Snapshot Date" },
-    { col: "qty_on_hand", label: "On Hand" },
-    { col: "qty_on_hand_on_order", label: "On Hand+Order" },
-    { col: "qty_on_order", label: "On Order" },
-    { col: "lead_time_days", label: "Lead Time" },
-    { col: "mtd_sales", label: "MTD Sales" },
+    { col: "qty_on_hand", label: "On Hand", tooltip: "Quantity on hand at end of month" },
+    { col: "qty_on_hand_on_order", label: "On Hand+Order", tooltip: "On-hand + on-order combined position" },
+    { col: "qty_on_order", label: "On Order", tooltip: "Open purchase orders not yet received" },
+    { col: "lead_time_days", label: "Lead Time", tooltip: "Average supplier lead time in days for this item-location" },
+    { col: "mtd_sales", label: "MTD Sales", tooltip: "Month-to-date sales quantity" },
   ];
 
   return (
@@ -150,9 +156,14 @@ export function PositionTablePanel({
             <button
               onClick={() => setColPickerOpen((v) => !v)}
               className="flex items-center gap-1 rounded border border-input bg-background px-2 py-1 text-xs hover:bg-muted"
-              title="Choose columns"
+              title="Show/hide columns"
             >
               <Columns className="h-3.5 w-3.5" /> Columns
+              {COLUMNS.length - visibleCols.size > 0 && (
+                <span className="ml-1 rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                  +{COLUMNS.length - visibleCols.size} hidden
+                </span>
+              )}
             </button>
             {colPickerOpen && (
               <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-md border bg-card shadow-lg p-2 space-y-1">
@@ -178,30 +189,61 @@ export function PositionTablePanel({
           </div>
         </div>
         <CardDescription>
-          Browse inventory snapshots by item and location. Click a row to view
-          snapshot history.
+          Monitor stock levels, days of supply, and on-order positions across all item-locations.
+          Rows are color-coded by urgency: red = critical stockout risk (&lt;7d), amber = at risk (7–14d), blue = excess (&gt;180d).
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
+        {/* How-to-use tip — shown only when no filters are active and data is loaded */}
+        {!itemFilter && !locationFilter && positions.length > 0 && (
+          <div className="rounded border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800 px-3 py-2 text-xs text-blue-800 dark:text-blue-200">
+            <strong>Tip:</strong> Filter by item or location to drill into specific inventory positions.
+            Click any row to see the full daily snapshot history for that item-location pair.
+          </div>
+        )}
         {/* Filter controls */}
         <div className="flex flex-wrap items-end gap-3">
           <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Item
-            <input
-              className="h-9 w-44 rounded-md border border-input bg-background px-3 text-sm"
-              placeholder="Filter by item..."
-              value={itemFilter}
-              onChange={onItemChange}
-            />
+            <div className="relative flex items-center">
+              <input
+                className="h-9 w-44 rounded-md border border-input bg-background px-3 pr-7 text-sm"
+                placeholder="e.g. 100320 — filter by item number or name"
+                value={itemFilter}
+                onChange={(e) => onItemChange(e.target.value)}
+              />
+              {itemFilter && (
+                <button
+                  onClick={() => onItemChange("")}
+                  className="absolute right-2 text-muted-foreground hover:text-foreground text-sm leading-none"
+                  title="Clear filter"
+                  type="button"
+                >
+                  ×
+                </button>
+              )}
+            </div>
           </label>
           <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Location
-            <input
-              className="h-9 w-44 rounded-md border border-input bg-background px-3 text-sm"
-              placeholder="Filter by location..."
-              value={locationFilter}
-              onChange={onLocationChange}
-            />
+            <div className="relative flex items-center">
+              <input
+                className="h-9 w-44 rounded-md border border-input bg-background px-3 pr-7 text-sm"
+                placeholder="e.g. 1401-BULK — filter by location code"
+                value={locationFilter}
+                onChange={(e) => onLocationChange(e.target.value)}
+              />
+              {locationFilter && (
+                <button
+                  onClick={() => onLocationChange("")}
+                  className="absolute right-2 text-muted-foreground hover:text-foreground text-sm leading-none"
+                  title="Clear filter"
+                  type="button"
+                >
+                  ×
+                </button>
+              )}
+            </div>
           </label>
           <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Months
@@ -216,10 +258,22 @@ export function PositionTablePanel({
               <option value={14}>14 months</option>
             </select>
           </label>
+          {(itemFilter || locationFilter) && (
+            <button
+              onClick={() => {
+                onItemChange("");
+                onLocationChange("");
+              }}
+              className="text-xs text-primary underline hover:no-underline self-end mb-1"
+              type="button"
+            >
+              Reset filters
+            </button>
+          )}
         </div>
 
         {/* Trend chart */}
-        <TrendChartPanel trendData={trendData} isLoading={isLoadingTrend} />
+        <TrendChartPanel trendData={trendData} isLoading={isLoadingTrend} params={trendParams} />
 
         {/* Position table */}
         {isLoadingPosition ? (
@@ -227,25 +281,35 @@ export function PositionTablePanel({
             tabKey="inventory"
             message="Loading position data..."
           />
-        ) : positions.length > 0 ? (
+        ) : (
           <div className="space-y-2">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Position ({totalPositions.toLocaleString()} row
-              {totalPositions !== 1 ? "s" : ""})
-            </p>
+            {positions.length > 0 && (
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                Position ({totalPositions.toLocaleString()} row
+                {totalPositions !== 1 ? "s" : ""})
+              </p>
+            )}
+            {positions.length > 0 && (
+              <div className="flex gap-3 text-xs items-center mb-2">
+                <span className="font-medium text-muted-foreground">Row color:</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-red-100 border border-red-300" /> Critical (&lt;7d DOS)</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-amber-100 border border-amber-300" /> At Risk (7–14d)</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-blue-100 border border-blue-300" /> Excess (&gt;180d)</span>
+              </div>
+            )}
             <div className="max-h-[420px] overflow-auto rounded-md border border-input">
               <Table>
                 <TableHeader>
                   <TableRow className="border-muted bg-muted/30">
-                    {COLUMNS.filter(({ col }) => visibleCols.has(col)).map(({ col, label }) => (
+                    {COLUMNS.filter(({ col }) => visibleCols.has(col)).map(({ col, label, tooltip }) => (
                       <TableHead
                         key={col}
                         className={cn(
-                          "text-xs cursor-pointer select-none hover:text-foreground",
-                          col !== "item_no" && col !== "loc"
-                            ? "text-right"
-                            : "",
+                          "text-xs cursor-pointer select-none hover:bg-muted/50 hover:text-foreground",
+                          col !== "item_no" && col !== "loc" ? "text-right" : "",
+                          tooltip ? "cursor-help" : "",
                         )}
+                        title={tooltip}
                         onClick={() => onSort(col)}
                       >
                         {label}
@@ -255,100 +319,111 @@ export function PositionTablePanel({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {positions.map((row, idx) => {
-                    const isSelected =
-                      selectedRow?.item === row.item_no &&
-                      selectedRow?.location === row.loc;
-                    // PL-016: compute approximate DOS and apply threshold color
-                    const avgDailySales = row.mtd_sales > 0 ? row.mtd_sales / 30 : null;
-                    const dos = avgDailySales != null ? row.qty_on_hand / avgDailySales : null;
-                    const dosColor = dos == null ? "" :
-                      dos < 7   ? "bg-red-50 dark:bg-red-900/20" :
-                      dos < 14  ? "bg-amber-50 dark:bg-amber-900/20" :
-                      dos > 180 ? "bg-blue-50 dark:bg-blue-900/20" :
-                      "";
-                    return (
-                      <TableRow
-                        key={`${row.item_no}-${row.loc}-${row.snapshot_date}-${idx}`}
-                        className={cn(
-                          "cursor-pointer",
-                          isSelected ? "bg-primary/10" : cn(dosColor, "hover:bg-muted/30"),
-                        )}
-                        onClick={() => onRowClick(row)}
+                  {positions.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={visibleCols.size}
+                        className="py-8 text-center text-sm text-muted-foreground"
                       >
-                        {visibleCols.has("item_no") && (
-                          <TableCell className="text-sm font-medium">{row.item_no}</TableCell>
-                        )}
-                        {visibleCols.has("loc") && (
-                          <TableCell className="text-sm">{row.loc}</TableCell>
-                        )}
-                        {visibleCols.has("snapshot_date") && (
-                          <TableCell className="text-sm text-right tabular-nums">{row.snapshot_date}</TableCell>
-                        )}
-                        {visibleCols.has("qty_on_hand") && (
-                          <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.qty_on_hand)}</TableCell>
-                        )}
-                        {visibleCols.has("qty_on_hand_on_order") && (
-                          <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.qty_on_hand_on_order)}</TableCell>
-                        )}
-                        {visibleCols.has("qty_on_order") && (
-                          <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.qty_on_order)}</TableCell>
-                        )}
-                        {visibleCols.has("lead_time_days") && (
-                          <TableCell className="text-sm text-right tabular-nums">
-                            {row.lead_time_days != null ? formatNumber(row.lead_time_days) : "-"}
-                          </TableCell>
-                        )}
-                        {visibleCols.has("mtd_sales") && (
-                          <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.mtd_sales)}</TableCell>
-                        )}
-                      </TableRow>
-                    );
-                  })}
+                        No inventory positions found. Try adjusting the item or location filter.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    positions.map((row, idx) => {
+                      const isSelected =
+                        selectedRow?.item === row.item_no &&
+                        selectedRow?.location === row.loc;
+                      // PL-016: compute approximate DOS and apply threshold color
+                      const avgDailySales = row.mtd_sales > 0 ? row.mtd_sales / 30 : null;
+                      const dos = avgDailySales != null ? row.qty_on_hand / avgDailySales : null;
+                      const dosColor = dos == null ? "" :
+                        dos < 7   ? "bg-red-50 dark:bg-red-900/20" :
+                        dos < 14  ? "bg-amber-50 dark:bg-amber-900/20" :
+                        dos > 180 ? "bg-blue-50 dark:bg-blue-900/20" :
+                        "";
+                      return (
+                        <TableRow
+                          key={`${row.item_no}-${row.loc}-${row.snapshot_date}-${idx}`}
+                          className={cn(
+                            "cursor-pointer",
+                            isSelected
+                              ? "bg-primary/10 ring-1 ring-primary/50"
+                              : cn(dosColor, "hover:bg-muted/30 transition-colors"),
+                          )}
+                          onClick={() => onRowClick(row)}
+                        >
+                          {visibleCols.has("item_no") && (
+                            <TableCell className="text-sm font-medium">{row.item_no}</TableCell>
+                          )}
+                          {visibleCols.has("loc") && (
+                            <TableCell className="text-sm">{row.loc}</TableCell>
+                          )}
+                          {visibleCols.has("snapshot_date") && (
+                            <TableCell className="text-sm text-right tabular-nums">{row.snapshot_date}</TableCell>
+                          )}
+                          {visibleCols.has("qty_on_hand") && (
+                            <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.qty_on_hand)}</TableCell>
+                          )}
+                          {visibleCols.has("qty_on_hand_on_order") && (
+                            <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.qty_on_hand_on_order)}</TableCell>
+                          )}
+                          {visibleCols.has("qty_on_order") && (
+                            <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.qty_on_order)}</TableCell>
+                          )}
+                          {visibleCols.has("lead_time_days") && (
+                            <TableCell className="text-sm text-right tabular-nums">
+                              {row.lead_time_days != null ? formatNumber(row.lead_time_days) : "-"}
+                            </TableCell>
+                          )}
+                          {visibleCols.has("mtd_sales") && (
+                            <TableCell className="text-sm text-right tabular-nums">{formatNumber(row.mtd_sales)}</TableCell>
+                          )}
+                        </TableRow>
+                      );
+                    })
+                  )}
                 </TableBody>
               </Table>
             </div>
 
-            {/* Pagination */}
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                Page {currentPage} of {totalPages}
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  className={cn(
-                    "inline-flex items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-xs font-medium",
-                    offset === 0
-                      ? "opacity-50 cursor-not-allowed"
-                      : "hover:bg-muted cursor-pointer",
-                  )}
-                  disabled={offset === 0}
-                  onClick={onPrevPage}
-                >
-                  <ChevronLeft className="h-3 w-3" /> Prev
-                </button>
-                <button
-                  className={cn(
-                    "inline-flex items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-xs font-medium",
-                    offset + PAGE_SIZE >= totalPositions
-                      ? "opacity-50 cursor-not-allowed"
-                      : "hover:bg-muted cursor-pointer",
-                  )}
-                  disabled={offset + PAGE_SIZE >= totalPositions}
-                  onClick={onNextPage}
-                >
-                  Next <ChevronRight className="h-3 w-3" />
-                </button>
+            {/* Pagination — only shown when there are rows */}
+            {positions.length > 0 && (
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>
+                  Page {currentPage} of {totalPages}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {offset + 1}–{Math.min(offset + PAGE_SIZE, totalPositions)} of {totalPositions.toLocaleString()}
+                  </span>
+                  <button
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-xs font-medium",
+                      offset === 0
+                        ? "opacity-50 cursor-not-allowed"
+                        : "hover:bg-muted cursor-pointer",
+                    )}
+                    disabled={offset === 0}
+                    onClick={onPrevPage}
+                  >
+                    <ChevronLeft className="h-3 w-3" /> Prev
+                  </button>
+                  <button
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-xs font-medium",
+                      offset + PAGE_SIZE >= totalPositions
+                        ? "opacity-50 cursor-not-allowed"
+                        : "hover:bg-muted cursor-pointer",
+                    )}
+                    disabled={offset + PAGE_SIZE >= totalPositions}
+                    onClick={onNextPage}
+                  >
+                    Next <ChevronRight className="h-3 w-3" />
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            No inventory data found
-            {itemFilter || locationFilter
-              ? " matching current filters. Try broadening the item or location filter."
-              : ". Check that inventory data has been loaded into the database."}
-          </p>
         )}
 
         {/* Item detail panel */}

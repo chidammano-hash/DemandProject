@@ -15,7 +15,9 @@ import {
 } from "@/api/queries";
 
 import { KpiCard } from "@/components/KpiCard";
+import { EmptyState } from "@/components/EmptyState";
 import { formatPct } from "@/lib/formatters";
+import { BarChart2 } from "lucide-react";
 
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
@@ -57,9 +59,22 @@ export function VariabilityPanel() {
         <KpiCard
           className={PANEL_KPI}
           label="Avg CV"
+          sublabel="(lower = more stable)"
           value={isLoading ? "..." : formatPct(summary?.avg_cv != null ? summary.avg_cv * 100 : null)}
         />
       </div>
+
+      {!isLoading && (!summary || summary.total_dfus === 0) && (
+        <EmptyState
+          icon={BarChart2}
+          title="Demand variability not yet profiled"
+          description="Demand variability profiles classify each DFU as Stable (CV < 0.30), Moderate (CV 0.30–0.80), Volatile (CV > 0.80), or Lumpy (intermittent, >30% zero months). These profiles feed safety stock and replenishment policy assignment."
+          steps={[
+            { label: "Run clustering (populates dim_dfu variability_class)", command: "make cluster-all" },
+            { label: "Alternatively compute variability only", command: "make variability-compute" },
+          ]}
+        />
+      )}
 
       {pieData.length > 0 && (
         <div className="flex items-center gap-6">
@@ -89,13 +104,21 @@ export function VariabilityPanel() {
 
       {volatile && volatile.rows.length > 0 && (
         <div className="overflow-x-auto">
+          <div className="text-xs p-2 rounded bg-muted/30 border mb-3">
+            <span className="font-medium text-foreground">Demand CV (Coefficient of Variation = std dev ÷ mean): </span>
+            <span className="text-green-600">● Stable &lt; 0.30</span> ·{" "}
+            <span className="text-amber-600 ml-1">● Moderate 0.30–0.80</span> ·{" "}
+            <span className="text-red-600 ml-1">● Volatile &gt; 0.80</span> ·{" "}
+            <span className="text-purple-600 ml-1">● Lumpy (intermittent, &gt;30% zero months)</span>
+            <span className="ml-2 text-muted-foreground">Lower = more predictable demand. Higher = more safety stock needed.</span>
+          </div>
           <p className="text-xs font-medium mb-2">Top Volatile Items</p>
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b text-muted-foreground">
                 <th className="text-left py-1 pr-2">Item No</th>
                 <th className="text-left py-1 pr-2">Location</th>
-                <th className="text-right py-1 pr-2">Demand CV</th>
+                <th className="text-right py-1 pr-2" title="Coefficient of Variation: standard deviation ÷ mean demand. Lower = more predictable demand, less safety stock needed.">Demand CV</th>
                 <th className="text-center py-1">Class</th>
               </tr>
             </thead>

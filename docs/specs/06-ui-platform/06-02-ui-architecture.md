@@ -212,6 +212,61 @@ src/
 
 ---
 
+## InvPlanningTab — Grouped Sidebar Navigation (PL-009 Extension)
+
+### Problem
+With 26 sub-panels, the original flat `flex-wrap` tab strip overflowed into two rows of small unlabeled buttons with no visual grouping, making navigation unintuitive and the page visually messy.
+
+### Solution
+Redesigned `InvPlanningTab.tsx` as a two-column enterprise layout:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  [Left Sidebar 220px]      │  [Main Content flex-1]          │
+│                            │                                  │
+│  ── DAILY OPERATIONS ─────  │  [Panel Header Bar]             │
+│    ● Exceptions            │    Title + description          │
+│    ● Health                │                                  │
+│                            │  [Active Panel Body]             │
+│  ── OPTIMIZE ─────────────  │    (scrollable)                 │
+│    ● EOQ                   │                                  │
+│    ● Policy                │                                  │
+│                            │                                  │
+│  ── ANALYTICS ─────────────  │                                │
+│    ● Fill Rate             │                                  │
+│    ● ABC-XYZ               │                                  │
+│    ● Supplier              │                                  │
+│    ● Intramonth            │                                  │
+│                            │                                  │
+│  ... (7 groups total)      │                                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Navigation Groups
+| Group | Color | Panels |
+|-------|-------|--------|
+| Daily Operations | Red | Exceptions, Health |
+| Optimize | Blue | EOQ, Policy |
+| Analytics | Emerald | Fill Rate, ABC-XYZ, Supplier, Intramonth |
+| Planning | Violet | Safety Stock, Variability, Lead Time, Signals, Simulation, Investment, Repl. Plan, Demand Fcst |
+| Sensing | Teal | Blended Demand, Echelon SS |
+| Strategic | Amber | Financial Plan, Events, Scenarios |
+| Supply | Slate | Demand Plan, Override Queue, Procurement, Open POs, Projection, Planned Orders |
+
+### Implementation Details
+- **Left sidebar:** `w-52` fixed, `overflow-y-auto`, groups rendered via `GROUPS` config array
+- **Group header:** horizontal divider lines flanking a colored uppercase label; non-interactive
+- **Tab item:** `<button>` with `border-l-2` active left-border, lucide-react icon (13px) + label `<span>`; active tab shows group accent color on icon and `bg-background` background
+- **Panel header bar:** `PANEL_META` map drives title + description for each of the 26 panels; rendered in a sticky bar at the top of the content area
+- **All 26 panels unchanged:** only the wrapper/navigation structure changed; panel components are identical
+- **Height:** `calc(100vh - 108px)` accounts for the app's top nav bar; sidebar and content both scroll independently
+- **Accessibility:** sidebar `<nav>` has `aria-label="Inventory Planning sections"`; active tab has `aria-current="page"`
+
+### Test Compatibility
+Three existing tests updated from `getByText()` to `getAllByText()` because panel titles now appear in both the fixed panel header bar and the panel component's own heading (two DOM nodes with identical text).
+
+---
+
 ## Testing Infrastructure
 
 - **Vitest** configured in `frontend/vitest.config.ts` (jsdom environment, `src/__tests__/setup.ts` setup file)

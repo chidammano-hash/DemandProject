@@ -23,7 +23,7 @@ import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
@@ -164,7 +164,8 @@ def find_optimal_k(
 
     for k in k_values:
         print(f"  K={k}...", end=" ", flush=True)
-        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+        # Use MiniBatchKMeans for K-search speed on large datasets
+        kmeans = MiniBatchKMeans(n_clusters=k, random_state=42, n_init=3, batch_size=10000, max_iter=100)
         labels = kmeans.fit_predict(X_scaled)
 
         inertias.append(kmeans.inertia_)

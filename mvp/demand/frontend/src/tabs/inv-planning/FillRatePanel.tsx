@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  LineChart,
+  ComposedChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  ReferenceLine,
 } from "recharts";
 import {
   fillRateKeys,
@@ -15,7 +16,9 @@ import {
   STALE,
 } from "@/api/queries";
 import { KpiCard } from "@/components/KpiCard";
+import { EmptyState } from "@/components/EmptyState";
 import { formatInt, formatPct } from "@/lib/formatters";
+import { TrendingUp } from "lucide-react";
 
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
@@ -34,23 +37,44 @@ export function FillRatePanel() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard className={PANEL_KPI} label="Portfolio Fill Rate" value={formatPct((summary?.portfolio_fill_rate ?? 0) * 100)} />
+        <KpiCard
+          className={PANEL_KPI}
+          label="Portfolio Fill Rate"
+          value={formatPct((summary?.portfolio_fill_rate ?? 0) * 100)}
+          severity={(summary?.portfolio_fill_rate ?? 0) >= 0.98 ? "best" : (summary?.portfolio_fill_rate ?? 0) < 0.90 ? "warning" : "neutral"}
+          sublabel="Target: 98%"
+        />
         <KpiCard className={PANEL_KPI} label="Total Ordered" value={formatInt(summary?.total_ordered)} />
-        <KpiCard className={PANEL_KPI} label="Total Shortage" value={formatInt(summary?.total_shortage_qty)} colorClass="text-red-600" />
+        <KpiCard className={PANEL_KPI} label="Total Shortage" value={formatInt(summary?.total_shortage_qty)} colorClass="text-red-600" severity={(summary?.total_shortage_qty ?? 0) > 0 ? "warning" : "neutral"} />
         <KpiCard className={PANEL_KPI} label="Partial Fulfillment Events" value={formatInt(summary?.partial_fulfillment_events)} />
       </div>
       {isLoading && <p className="text-xs text-muted-foreground">Loading fill rate data...</p>}
+      {!isLoading && (!trendData?.months || trendData.months.length === 0) && (
+        <EmptyState
+          icon={TrendingUp}
+          title="No fill rate data available"
+          description="Fill rate measures what percentage of ordered quantities were shipped on time. The monthly trend shows fill rate, total orders, and shortage quantities over time."
+          steps={[
+            { label: "Apply schema (first time only)", command: "make fill-rate-schema" },
+            { label: "Refresh fill rate materialized view", command: "make fill-rate-refresh" },
+          ]}
+        />
+      )}
       {trendData?.months && trendData.months.length > 0 && (
         <div>
-          <p className="text-xs font-medium mb-2">Monthly Fill Rate Trend</p>
+          <p className="text-xs font-medium mb-2">Monthly Fill Rate Trend (Target: 98%)</p>
           <ResponsiveContainer width="100%" height={160}>
-            <LineChart data={trendData.months}>
+            <ComposedChart data={trendData.months}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="month_start" tick={{ fontSize: 10 }} />
               <YAxis tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} domain={[0, 1]} tick={{ fontSize: 10 }} />
-              <Tooltip formatter={(v: number) => `${(v * 100).toFixed(1)}%`} />
+              <Tooltip
+                formatter={(v: number, name: string) => [`${(v * 100).toFixed(1)}%`, name === "fill_rate" ? "Fill Rate" : name]}
+                labelFormatter={(l: string) => `Month: ${l}`}
+              />
               <Line type="monotone" dataKey="fill_rate" stroke="#3b82f6" dot={false} strokeWidth={2} />
-            </LineChart>
+              <ReferenceLine y={0.98} stroke="#ef4444" strokeDasharray="4 2" label={{ value: "Target 98%", position: "insideTopRight", fontSize: 9, fill: "#ef4444" }} />
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       )}

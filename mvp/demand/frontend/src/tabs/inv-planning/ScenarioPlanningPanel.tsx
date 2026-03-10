@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Zap, TrendingDown, AlertTriangle, DollarSign } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/EmptyState";
 import {
   scenarioKeys,
   fetchSupplyScenarios,
@@ -116,7 +117,17 @@ export function ScenarioPlanningPanel() {
             {isLoading ? (
               <p className="p-4 text-sm text-muted-foreground">Loading…</p>
             ) : !scenarios.length ? (
-              <p className="p-4 text-sm text-muted-foreground">No scenarios found.</p>
+              <div className="p-6">
+                <EmptyState
+                  icon={Zap}
+                  title="No supply chain scenarios"
+                  description="Scenario planning models the financial impact of supply disruptions: supplier delays, port closures, demand shocks, or capacity constraints. Each scenario computes projected stockout days and revenue at risk per item-location."
+                  steps={[
+                    { label: "Compute safety stock and replenishment plan first", command: "make ss-compute && make replen-plan-compute" },
+                    { label: "Create a scenario via the New Scenario button above", command: "(no CLI command — scenarios are created in the UI)" },
+                  ]}
+                />
+              </div>
             ) : (
               <ul className="divide-y">
                 {scenarios.map((s) => (

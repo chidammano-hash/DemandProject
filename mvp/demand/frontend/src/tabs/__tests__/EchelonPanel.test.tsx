@@ -47,9 +47,9 @@ describe("EchelonPanel", () => {
       </TestQueryWrapper>
     );
     expect(await screen.findByText("Network Nodes")).toBeDefined();
-    expect(await screen.findByText("Critical Risk")).toBeDefined();
+    expect(await screen.findByText("Critical Cascade Risk")).toBeDefined();
     expect(await screen.findByText("High Risk")).toBeDefined();
-    expect(await screen.findByText("Avg Coverage (days)")).toBeDefined();
+    expect(await screen.findByText("Avg Echelon Coverage (days)")).toBeDefined();
   });
 
   it("renders echelon target table row", async () => {

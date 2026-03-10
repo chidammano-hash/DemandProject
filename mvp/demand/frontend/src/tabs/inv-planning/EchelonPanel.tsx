@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Network, ShieldAlert, TrendingDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/EmptyState";
 import {
   echelonKeys,
   fetchEchelonTargets,
@@ -53,17 +54,27 @@ export function EchelonPanel() {
 
   return (
     <div className="space-y-6 p-4">
+      {/* Concept explanation */}
+      <div className="text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2 mb-3">
+        <strong className="text-foreground">Multi-Echelon Safety Stock</strong> models your inventory network (DCs → warehouses → stores) as a connected system. By pooling demand uncertainty across echelons, total network safety stock can be reduced while maintaining the same service level.
+      </div>
+
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { label: "Network Nodes", value: sumLoading ? "…" : (summary?.total_nodes ?? 0).toLocaleString(), icon: <Network size={16} /> },
-          { label: "Critical Risk", value: sumLoading ? "…" : (summary?.critical_count ?? 0).toLocaleString(), icon: <ShieldAlert size={16} />, warn: (summary?.critical_count ?? 0) > 0 },
+          { label: "Critical Cascade Risk", sublabel: "immediate action needed", value: sumLoading ? "…" : (summary?.critical_count ?? 0).toLocaleString(), icon: <ShieldAlert size={16} />, warn: (summary?.critical_count ?? 0) > 0 },
           { label: "High Risk", value: sumLoading ? "…" : (summary?.high_count ?? 0).toLocaleString(), icon: <ShieldAlert size={16} />, warn: (summary?.high_count ?? 0) > 0 },
-          { label: "Avg Coverage (days)", value: sumLoading ? "…" : summary?.avg_coverage_days != null ? summary.avg_coverage_days.toFixed(1) : "—", icon: <TrendingDown size={16} /> },
+          { label: "Avg Echelon Coverage (days)", sublabel: "network-weighted", value: sumLoading ? "…" : summary?.avg_coverage_days != null ? summary.avg_coverage_days.toFixed(1) : "—", icon: <TrendingDown size={16} /> },
         ].map((c) => (
           <Card key={c.label} className={c.warn ? "border-red-400" : ""}>
             <CardHeader className="pb-2 flex flex-row items-center justify-between">
-              <CardTitle className="text-sm font-medium text-muted-foreground">{c.label}</CardTitle>
+              <div>
+                <CardTitle className="text-sm font-medium text-muted-foreground">{c.label}</CardTitle>
+                {"sublabel" in c && c.sublabel && (
+                  <p className="text-xs text-muted-foreground/70">{c.sublabel}</p>
+                )}
+              </div>
               <span className={c.warn ? "text-red-500" : "text-muted-foreground"}>{c.icon}</span>
             </CardHeader>
             <CardContent>
@@ -113,14 +124,34 @@ export function EchelonPanel() {
           {isLoading ? (
             <p className="p-4 text-sm text-muted-foreground">Loading…</p>
           ) : !rows.length ? (
-            <p className="p-4 text-sm text-muted-foreground">No echelon targets found.</p>
+            <div className="p-6">
+              <EmptyState
+                icon={Network}
+                title="No multi-echelon safety stock targets"
+                description="Multi-echelon SS pools demand uncertainty across downstream nodes (stores/DCs) so that the network holds less total stock than the sum of independent SS targets. Risk is propagated upstream with cascade severity scoring."
+                steps={[
+                  { label: "Compute single-echelon SS first", command: "make ss-compute" },
+                  { label: "Compute multi-echelon SS targets", command: "make echelon-ss-compute" },
+                ]}
+              />
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
                   <tr>
-                    {["Item", "Loc", "Node Type", "Pooled σ", "Echelon SS", "Echelon ROP", "Coverage (d)", "Risk Score", "Severity"].map((h) => (
-                      <th key={h} className="px-3 py-2 text-left font-medium">{h}</th>
+                    {[
+                      { label: "Item" },
+                      { label: "Loc" },
+                      { label: "Node Type" },
+                      { label: "Pooled σ", title: "Pooled demand standard deviation: combined variability across all downstream nodes. Lower pooling benefit = more correlated demand." },
+                      { label: "Echelon SS" },
+                      { label: "ROP", title: "Reorder Point: place a replenishment order when inventory reaches this level" },
+                      { label: "Coverage (d)", title: "Days of supply covered by the echelon safety stock (inventory ÷ daily demand)" },
+                      { label: "Risk Score" },
+                      { label: "Severity" },
+                    ].map((h) => (
+                      <th key={h.label} className="px-3 py-2 text-left font-medium" title={h.title}>{h.label}{h.title ? " ⓘ" : ""}</th>
                     ))}
                   </tr>
                 </thead>
@@ -150,6 +181,17 @@ export function EchelonPanel() {
           )}
         </CardContent>
       </Card>
+
+      {/* Cascade risk legend */}
+      <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border mt-3">
+        <span className="font-medium text-foreground">Cascade Risk Score (0–100): </span>
+        <span className="text-green-600">● OK 0–20</span> ·{" "}
+        <span className="text-blue-600 ml-1">● Low 20–40</span> ·{" "}
+        <span className="text-amber-600 ml-1">● Medium 40–60</span> ·{" "}
+        <span className="text-orange-600 ml-1">● High 60–80</span> ·{" "}
+        <span className="text-red-600 ml-1">● Critical 80–100</span>
+        <span className="ml-2 text-muted-foreground">— Higher score = upstream depletion risk propagates downstream</span>
+      </div>
 
       {/* Pagination */}
       {total > PAGE && (

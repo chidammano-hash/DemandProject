@@ -166,7 +166,7 @@ describe("ProcurementPanel", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByText("No purchase orders found.")).toBeDefined();
+      expect(screen.getByText("No purchase orders in workflow")).toBeDefined();
     });
   });
 });

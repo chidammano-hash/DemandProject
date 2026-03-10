@@ -93,6 +93,7 @@ export function InventoryTab() {
   });
 
   const trendData: InventoryTrendPoint[] = trendPayload?.trend ?? [];
+  const trendParams2 = trendPayload?.params;
 
   const { data: positionPayload, isLoading: loadingPosition } = useQuery({
     queryKey: queryKeys.inventoryPosition(positionParams),
@@ -143,8 +144,8 @@ export function InventoryTab() {
   );
 
   const handleItemChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      setItemFilter(e.target.value);
+    (value: string) => {
+      setItemFilter(value);
       setOffset(0);
       setSelectedRow(null);
     },
@@ -152,8 +153,8 @@ export function InventoryTab() {
   );
 
   const handleLocationChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      setLocationFilter(e.target.value);
+    (value: string) => {
+      setLocationFilter(value);
       setOffset(0);
       setSelectedRow(null);
     },
@@ -209,6 +210,7 @@ export function InventoryTab() {
         selectedRow={selectedRow}
         onRowClick={handleRowClick}
         trendData={trendData}
+        trendParams={trendParams2}
         isLoadingTrend={loadingTrend}
         detailSnapshots={detailPayload?.snapshots}
         isLoadingDetail={loadingDetail}

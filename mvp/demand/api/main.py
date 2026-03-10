@@ -57,6 +57,7 @@ from api.routers import inv_planning_demand_signals # noqa: E402
 from api.routers import inv_planning_simulation     # noqa: E402
 from api.routers import inv_planning_investment     # noqa: E402
 from api.routers import inv_planning_safety_stock   # noqa: E402
+from api.routers import inv_planning_replenishment  # noqa: E402
 from api.routers import fill_rate    # noqa: E402
 from api.routers import control_tower  # noqa: E402
 from api.routers import ai_planner  # noqa: E402
@@ -99,6 +100,7 @@ app.include_router(inv_planning_demand_signals.router)
 app.include_router(inv_planning_simulation.router)
 app.include_router(inv_planning_investment.router)
 app.include_router(inv_planning_safety_stock.router)
+app.include_router(inv_planning_replenishment.router)
 app.include_router(fill_rate.router)
 app.include_router(control_tower.router)
 app.include_router(jobs.router)

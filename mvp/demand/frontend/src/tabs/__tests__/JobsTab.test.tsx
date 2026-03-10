@@ -33,6 +33,7 @@ vi.mock("@/api/queries", () => ({
   deleteJob: vi.fn(),
   createSchedule: vi.fn(),
   deleteSchedule: vi.fn(),
+  submitPipeline: vi.fn(),
 }));
 
 // Mock lucide-react to avoid rendering issues
@@ -41,9 +42,11 @@ vi.mock("lucide-react", () => {
   return {
     PlayCircle: Stub, Square: Stub, CheckCircle2: Stub, XCircle: Stub,
     Loader2: Stub, Trash2: Stub, ChevronDown: Stub, ChevronRight: Stub,
-    Clock: Stub, AlertCircle: Stub, BarChart3: Stub, Zap: Stub,
-    Trophy: Stub, Activity: Stub, Network: Stub, TrendingUp: Stub,
-    Calendar: Stub, Timer: Stub, Repeat: Stub, X: Stub,
+    ChevronUp: Stub, Clock: Stub, AlertCircle: Stub, BarChart3: Stub,
+    BarChart2: Stub, Zap: Stub, Trophy: Stub, Activity: Stub,
+    Network: Stub, TrendingUp: Stub, Calendar: Stub, Timer: Stub,
+    Repeat: Stub, X: Stub, Sparkles: Stub, Package: Stub, Boxes: Stub,
+    Play: Stub, Plus: Stub, ArrowRight: Stub,
   };
 });
 
@@ -223,6 +226,40 @@ describe("JobsTab", () => {
     );
     await waitFor(() => {
       expect(screen.queryByTitle("View Results in Clusters Tab")).toBeNull();
+    });
+  });
+
+  it("renders Pipeline Builder section", async () => {
+    render(
+      <TestQueryWrapper>
+        <JobNotificationProvider>
+          <JobsTab />
+        </JobNotificationProvider>
+      </TestQueryWrapper>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Pipeline Builder")).toBeDefined();
+    });
+  });
+
+  it("renders pre-built pipeline template names when expanded", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    render(
+      <TestQueryWrapper>
+        <JobNotificationProvider>
+          <JobsTab />
+        </JobNotificationProvider>
+      </TestQueryWrapper>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Pipeline Builder")).toBeDefined();
+    });
+    // Expand the panel
+    fireEvent.click(screen.getByText("Pipeline Builder").closest("button")!);
+    await waitFor(() => {
+      expect(screen.getByText("Full S&OP Refresh")).toBeDefined();
+      expect(screen.getByText("Inventory Refresh")).toBeDefined();
+      expect(screen.getByText("Weekly Data Refresh")).toBeDefined();
     });
   });
 });

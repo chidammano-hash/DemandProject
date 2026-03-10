@@ -8,7 +8,9 @@ import {
 } from "@/api/queries";
 
 import { KpiCard } from "@/components/KpiCard";
+import { EmptyState } from "@/components/EmptyState";
 import { formatFixed, formatPct } from "@/lib/formatters";
+import { Timer } from "lucide-react";
 
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
@@ -50,6 +52,7 @@ export function LeadTimePanel() {
         <KpiCard
           className={PANEL_KPI}
           label="Avg LT CV"
+          sublabel="(lower = more reliable)"
           value={isLoading ? "..." : formatPct(summary?.avg_lt_cv != null ? summary.avg_lt_cv * 100 : null)}
         />
       </div>
@@ -65,8 +68,27 @@ export function LeadTimePanel() {
         </div>
       )}
 
+      {!isLoading && (!volatile || volatile.rows.length === 0) && (
+        <EmptyState
+          icon={Timer}
+          title="No lead time profiles computed"
+          description="Lead time profiles measure delivery reliability per item-location: mean lead time, standard deviation, CV, and percentile bands (P25/P50/P75/P95). Stable (CV < 0.20), Moderate (CV 0.20–0.40), Volatile (CV > 0.40) — volatile suppliers are flagged for safety stock uplift."
+          steps={[
+            { label: "Load inventory snapshots (source data)", command: "make load-inventory" },
+            { label: "Compute lead time variability profiles", command: "make lt-variability-compute" },
+          ]}
+        />
+      )}
+
       {volatile && volatile.rows.length > 0 && (
         <div className="overflow-x-auto">
+          <div className="text-xs p-2 rounded bg-muted/30 border mb-3">
+            <span className="font-medium text-foreground">Lead Time CV (Coefficient of Variation = std dev ÷ mean): </span>
+            <span className="text-green-600">● Stable &lt; 0.20</span> ·{" "}
+            <span className="text-amber-600 ml-1">● Moderate 0.20–0.40</span> ·{" "}
+            <span className="text-red-600 ml-1">● Volatile &gt; 0.40</span>
+            <span className="ml-2 text-muted-foreground">Lower = more predictable supplier delivery times.</span>
+          </div>
           <p className="text-xs font-medium mb-2">Top Volatile Lead Time Items</p>
           <table className="w-full text-xs">
             <thead>
@@ -75,7 +97,7 @@ export function LeadTimePanel() {
                 <th className="text-left py-1 pr-2">Location</th>
                 <th className="text-right py-1 pr-2">LT Mean (days)</th>
                 <th className="text-right py-1 pr-2">LT Std</th>
-                <th className="text-right py-1 pr-2">CV</th>
+                <th className="text-right py-1 pr-2" title="Coefficient of Variation: standard deviation ÷ mean lead time. Lower = more reliable supplier.">CV</th>
                 <th className="text-center py-1">Class</th>
               </tr>
             </thead>

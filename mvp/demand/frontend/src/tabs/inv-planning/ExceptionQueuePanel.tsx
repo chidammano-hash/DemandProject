@@ -13,6 +13,8 @@ import {
 } from "@/api/queries";
 
 import { formatFixed } from "@/lib/formatters";
+import { EmptyState } from "@/components/EmptyState";
+import { AlertTriangle } from "lucide-react";
 
 const PAGE = 50;
 
@@ -37,6 +39,15 @@ const EXC_TYPE_LABELS: Record<string, string> = {
   stockout:           "Stockout",
   excess:             "Excess",
   zero_velocity:      "Zero Velocity",
+};
+
+const EXC_TYPE_DESCRIPTIONS: Record<string, string> = {
+  reorder_point: "Reorder Point — on-hand fell below ROP; order needed",
+  below_ss: "Below Safety Stock — stock below minimum buffer target",
+  excess: "Excess Inventory — stock exceeds target; review for disposal",
+  zero_velocity: "Zero Velocity — no sales in 90+ days; review for obsolescence",
+  lead_time_risk: "Lead Time Risk — supplier LT variability threatens service level",
+  forecast_miss: "Forecast Miss — actual demand significantly exceeded forecast",
 };
 
 const EXC_TYPES = ["below_rop", "below_ss", "stockout", "excess", "zero_velocity"];
@@ -81,6 +92,9 @@ export function ExceptionQueuePanel() {
       queryClient.invalidateQueries({ queryKey: exceptionKeys.list() });
       queryClient.invalidateQueries({ queryKey: exceptionKeys.summary() });
     },
+    onError: () => {
+      alert("Action failed. Please check your connection and try again.");
+    },
   });
 
   const statusMutation = useMutation({
@@ -89,6 +103,9 @@ export function ExceptionQueuePanel() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: exceptionKeys.list() });
       queryClient.invalidateQueries({ queryKey: exceptionKeys.summary() });
+    },
+    onError: () => {
+      alert("Action failed. Please check your connection and try again.");
     },
   });
 
@@ -157,10 +174,20 @@ export function ExceptionQueuePanel() {
         ))}
       </div>
 
+      {/* Severity legend */}
+      <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border mb-4">
+        <span className="font-medium text-foreground">Severity: </span>
+        <span className="text-red-600 font-medium">● Critical</span> — immediate action required ·
+        <span className="text-orange-500 font-medium ml-2">● High</span> — review within 24h ·
+        <span className="text-amber-500 font-medium ml-2">● Medium</span> — review this week ·
+        <span className="text-blue-500 font-medium ml-2">● Low</span> — informational
+      </div>
+
       {/* Filter bar */}
       <div className="flex flex-wrap gap-2 mb-3">
         {/* Type pills */}
-        <div className="flex gap-1 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap">
+          <span className="text-xs font-medium text-muted-foreground self-center">Type:</span>
           {["", ...EXC_TYPES].map((t) => (
             <button
               key={t || "all-types"}
@@ -176,7 +203,8 @@ export function ExceptionQueuePanel() {
           ))}
         </div>
         {/* Severity pills */}
-        <div className="flex gap-1 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap">
+          <span className="text-xs font-medium text-muted-foreground self-center">Severity:</span>
           {["", ...EXC_SEVERITIES].map((s) => (
             <button
               key={s || "all-sev"}
@@ -192,7 +220,8 @@ export function ExceptionQueuePanel() {
           ))}
         </div>
         {/* Status toggle */}
-        <div className="flex gap-1">
+        <div className="flex items-center gap-1">
+          <span className="text-xs font-medium text-muted-foreground self-center">Status:</span>
           {["open", "acknowledged", ""].map((s) => (
             <button
               key={s || "all-status"}
@@ -222,6 +251,19 @@ export function ExceptionQueuePanel() {
       </div>
 
       {/* Exception Table */}
+      {excLoading ? (
+        <p className="text-xs text-muted-foreground py-6 text-center">Loading…</p>
+      ) : (excList?.rows ?? []).length === 0 ? (
+        <EmptyState
+          icon={AlertTriangle}
+          title="No exceptions in queue"
+          description="Exceptions are automatically detected by comparing on-hand inventory against safety stock and reorder points. Run the generator to scan the portfolio."
+          steps={[
+            { label: "Apply DB schema (first time only)", command: "make exceptions-schema" },
+            { label: "Scan portfolio and generate exceptions", command: "make exceptions-generate" },
+          ]}
+        />
+      ) : (
       <div className="border rounded-lg overflow-auto">
         <table className="w-full text-xs">
           <thead className="bg-muted/50">
@@ -232,12 +274,7 @@ export function ExceptionQueuePanel() {
             </tr>
           </thead>
           <tbody>
-            {excLoading ? (
-              <tr><td colSpan={10} className="px-3 py-4 text-center text-muted-foreground">Loading…</td></tr>
-            ) : (excList?.rows ?? []).length === 0 ? (
-              <tr><td colSpan={10} className="px-3 py-4 text-center text-muted-foreground">No exceptions found</td></tr>
-            ) : (
-              (excList?.rows ?? []).map((row: ExceptionRow) => (
+            {(excList?.rows ?? []).map((row: ExceptionRow) => (
                 <tr
                   key={row.exception_id}
                   className={`border-t ${SEVERITY_ROW_BG[row.severity] ?? ""} ${
@@ -251,7 +288,12 @@ export function ExceptionQueuePanel() {
                   </td>
                   <td className="px-2 py-1.5 font-mono">{row.item_no}</td>
                   <td className="px-2 py-1.5 font-mono">{row.loc}</td>
-                  <td className="px-2 py-1.5">{EXC_TYPE_LABELS[row.exception_type] ?? row.exception_type}</td>
+                  <td
+                    className="px-2 py-1.5"
+                    title={EXC_TYPE_DESCRIPTIONS[row.exception_type] ?? row.exception_type}
+                  >
+                    {row.exception_type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                  </td>
                   <td className="px-2 py-1.5 text-right">{formatFixed(row.current_qty_on_hand)}</td>
                   <td className="px-2 py-1.5 text-right">{formatFixed(row.ss_combined)}</td>
                   <td className="px-2 py-1.5 text-right font-medium">{row.recommended_order_qty ? formatFixed(row.recommended_order_qty) : "—"}</td>
@@ -297,10 +339,11 @@ export function ExceptionQueuePanel() {
                   </td>
                 </tr>
               ))
-            )}
+            }
           </tbody>
         </table>
       </div>
+      )}
 
       {/* Pagination */}
       {excPages > 1 && (

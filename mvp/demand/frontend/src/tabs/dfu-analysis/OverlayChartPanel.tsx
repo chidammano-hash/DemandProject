@@ -22,6 +22,9 @@ import { useChartColors } from "@/hooks/useChartColors";
 import { DFU_SALES_COLORS, dfuModelColor } from "@/constants/colors";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 import type { DfuAnalysisPayload } from "@/types";
+import type { ProductionForecastPayload } from "@/api/queries/production-forecast";
+
+const PROD_FORECAST_COLOR = "#7c3aed"; // violet-700
 
 // ---------------------------------------------------------------------------
 // Hoisted constants for Recharts inline props
@@ -29,6 +32,69 @@ import type { DfuAnalysisPayload } from "@/types";
 const DFU_CHART_MARGIN = { top: 8, right: 16, left: 18, bottom: 8 };
 const ACTIVE_DOT_SM = { r: 4 };
 const ACTIVE_DOT_MD = { r: 5 };
+
+// ---------------------------------------------------------------------------
+// Custom legend renderer — forecast model items are clickable for SHAP
+// ---------------------------------------------------------------------------
+interface LegendPayloadItem {
+  value: string;
+  color: string;
+  dataKey?: string;
+}
+
+function renderCustomLegend(
+  props: { payload?: LegendPayloadItem[] },
+  modelNames: string[],
+  selectedModel: string | null,
+  onModelSelect?: (model: string | null) => void,
+) {
+  const { payload = [] } = props;
+  return (
+    <ul className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs">
+      {payload.map((entry) => {
+        const isModelEntry = modelNames.includes(entry.value);
+        const isSelected = selectedModel === entry.value;
+        return (
+          <li
+            key={entry.value}
+            className={[
+              "flex items-center gap-1.5",
+              isModelEntry && onModelSelect
+                ? "cursor-pointer select-none"
+                : "",
+              isModelEntry && !isSelected && selectedModel !== null
+                ? "opacity-40"
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            onClick={() => {
+              if (isModelEntry && onModelSelect) {
+                onModelSelect(isSelected ? null : entry.value);
+              }
+            }}
+          >
+            <span
+              className={[
+                "inline-block h-2.5 w-2.5 shrink-0 rounded-full",
+                isSelected ? "ring-2 ring-offset-1 ring-primary" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              style={{ backgroundColor: entry.color }}
+            />
+            <span className={isSelected ? "font-semibold text-primary" : ""}>
+              {entry.value}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// Opacity for de-emphasised lines when another is selected
+const DESELECT_OPACITY = 0.25;
 
 // ---------------------------------------------------------------------------
 // Props
@@ -44,6 +110,11 @@ export interface OverlayChartPanelProps {
   dfuDefaultStart: string;
   dfuVisibleSeries: Set<string>;
   setDfuVisibleSeries: (updater: (prev: Set<string>) => Set<string>) => void;
+  prodForecastData?: ProductionForecastPayload | null;
+  /** Currently selected model for SHAP exploration (raw model_id, e.g. "lgbm_cluster") */
+  selectedModel?: string | null;
+  /** Called when user clicks a forecast line to select/deselect it */
+  onModelSelect?: (model: string | null) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -60,13 +131,22 @@ export function OverlayChartPanel({
   dfuDefaultStart,
   dfuVisibleSeries,
   setDfuVisibleSeries,
+  prodForecastData,
+  selectedModel = null,
+  onModelSelect,
 }: OverlayChartPanelProps) {
   const { chartColors } = useChartColors();
+
+  const hasProdForecast = (prodForecastData?.forecasts.length ?? 0) > 0;
+  const prodForecastLabel = hasProdForecast
+    ? `Production Forecast (${prodForecastData!.model_id})`
+    : "Production Forecast";
 
   const allKeys = new Set([
     "tothist_dmd",
     "qty_shipped",
     "qty_ordered",
+    ...(hasProdForecast ? ["production_forecast"] : []),
     ...dfuData.models.map((m) => `forecast_${m}`),
   ]);
   const allSelected = [...allKeys].every((k) => dfuVisibleSeries.has(k));
@@ -105,6 +185,9 @@ export function OverlayChartPanel({
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Visible Measures
+          </span>
+          <span className="text-xs italic text-muted-foreground">
+            Click a forecast model in the legend to explore SHAP
           </span>
           <button
             className="text-xs font-medium text-primary hover:underline"
@@ -155,6 +238,21 @@ export function OverlayChartPanel({
               </label>
             );
           })}
+          {hasProdForecast && (
+            <label className="flex items-center gap-2 text-xs font-medium">
+              <Checkbox
+                checked={dfuVisibleSeries.has("production_forecast")}
+                onCheckedChange={(v) => toggleSeries("production_forecast", v)}
+              />
+              <span className="flex items-center gap-1">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: PROD_FORECAST_COLOR }}
+                />
+                {prodForecastLabel}
+              </span>
+            </label>
+          )}
         </div>
       </div>
 
@@ -220,6 +318,11 @@ export function OverlayChartPanel({
                   : `${dfuData.scope_count} items aggregated`}
               </span>
             )}
+            {selectedModel && (
+              <span className="ml-auto rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                SHAP: {selectedModel}
+              </span>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="h-[380px] pt-2">
@@ -259,7 +362,16 @@ export function OverlayChartPanel({
                       String(name),
                     ]}
                   />
-                  <Legend />
+                  <Legend
+                    content={(props) =>
+                      renderCustomLegend(
+                        props as { payload?: LegendPayloadItem[] },
+                        dfuData.models,
+                        selectedModel,
+                        onModelSelect,
+                      )
+                    }
+                  />
                   {dfuVisibleSeries.has("tothist_dmd") ? (
                     <Line
                       type="monotone"
@@ -298,22 +410,40 @@ export function OverlayChartPanel({
                   ) : null}
                   {dfuData.models
                     .filter((m) => dfuVisibleSeries.has(`forecast_${m}`))
-                    .map((model, idx) => (
-                      <Line
-                        key={model}
-                        type="monotone"
-                        dataKey={`forecast_${model}`}
-                        yAxisId="left"
-                        name={model}
-                        stroke={dfuModelColor(model, idx)}
-                        strokeWidth={model === "champion" ? 2.5 : 1.5}
-                        strokeDasharray={
-                          model === "champion" ? undefined : "5 3"
-                        }
-                        dot={false}
-                        activeDot={ACTIVE_DOT_SM}
-                      />
-                    ))}
+                    .map((model, idx) => {
+                      const isSelected = selectedModel === model;
+                      const isOtherSelected = selectedModel !== null && selectedModel !== model;
+                      return (
+                        <Line
+                          key={model}
+                          type="monotone"
+                          dataKey={`forecast_${model}`}
+                          yAxisId="left"
+                          name={model}
+                          stroke={dfuModelColor(model, idx)}
+                          strokeWidth={isSelected ? 3 : model === "champion" ? 2.5 : 1.5}
+                          strokeDasharray={
+                            model === "champion" ? undefined : "5 3"
+                          }
+                          dot={false}
+                          style={{ opacity: isOtherSelected ? DESELECT_OPACITY : 1 }}
+                          activeDot={{ r: isSelected ? 7 : 4 }}
+                        />
+                      );
+                    })}
+                  {hasProdForecast && dfuVisibleSeries.has("production_forecast") ? (
+                    <Line
+                      type="monotone"
+                      dataKey="production_forecast"
+                      yAxisId="left"
+                      name={prodForecastLabel}
+                      stroke={PROD_FORECAST_COLOR}
+                      strokeWidth={2.5}
+                      strokeDasharray="6 3"
+                      dot={false}
+                      activeDot={ACTIVE_DOT_MD}
+                    />
+                  ) : null}
                 </LineChart>
               </ResponsiveContainer>
             </div>

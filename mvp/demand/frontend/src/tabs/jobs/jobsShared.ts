@@ -4,7 +4,7 @@
 import type { Job } from "@/types/jobs";
 import { CheckCircle2, XCircle, Square, Clock, Loader2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { Network, TrendingUp, Activity, Trophy } from "lucide-react";
+import { Network, TrendingUp, Activity, Trophy, Sparkles, BarChart2, Package, Boxes } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Group icon mapping
@@ -14,6 +14,10 @@ export const GROUP_ICONS: Record<string, LucideIcon> = {
   backtest: TrendingUp,
   seasonality: Activity,
   champion: Trophy,
+  ai: Sparkles,
+  forecast: BarChart2,
+  replenishment: Package,
+  inventory: Boxes,
 };
 
 // ---------------------------------------------------------------------------
@@ -88,10 +92,33 @@ export function jobDuration(job: Job): string {
   return formatDuration((end - start) / 1000);
 }
 
+// Prefix-based fallback group resolver (used when jobType list isn't available)
+const _GROUP_PREFIXES: [string, string][] = [
+  ["cluster", "clustering"],
+  ["backtest", "backtest"],
+  ["seasonality", "seasonality"],
+  ["champion", "champion"],
+  ["generate_ai", "ai"],
+  ["generate_storyboard", "ai"],
+  ["generate_production", "forecast"],
+  ["compute_replenishment", "replenishment"],
+  ["compute_safety", "inventory"],
+  ["compute_eoq", "inventory"],
+  ["assign_policies", "inventory"],
+  ["generate_exceptions", "inventory"],
+  ["classify_abc", "inventory"],
+  ["compute_variability", "inventory"],
+  ["compute_demand_signals", "inventory"],
+  ["compute_investment", "inventory"],
+  ["refresh_health", "inventory"],
+  ["refresh_intramonth", "inventory"],
+  ["run_ss_simulation", "inventory"],
+];
+
 export function getGroupKey(jobType: string): string {
-  return (
-    Object.keys({ clustering: 1, backtest: 1, seasonality: 1, champion: 1 }).find((g) =>
-      jobType.startsWith(g.slice(0, 4)),
-    ) || "clustering"
-  );
+  for (const [prefix, group] of _GROUP_PREFIXES) {
+    if (jobType.startsWith(prefix)) return group;
+  }
+  return "clustering";
 }
+

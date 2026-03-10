@@ -27,12 +27,14 @@ Algorithm:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import pickle
 import sys
 import time
 import uuid
-from datetime import date, datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from collections import defaultdict
@@ -47,14 +49,29 @@ if str(ROOT) not in sys.path:
 
 from common.db import get_db_params
 from common.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
+from common.forecast_ci import build_sigma_lookup, compute_ci_bounds
 
 import psycopg
 
 CONFIG_PATH = ROOT / "config" / "production_forecast_config.yaml"
 
+logger = logging.getLogger(__name__)
+
 
 def _ts() -> str:
     return time.strftime("%H:%M:%S")
+
+
+def _detect_framework(model) -> str:
+    """Return 'catboost', 'lgbm', or 'xgboost' based on model object type."""
+    mod = type(model).__module__
+    if "catboost" in mod:
+        return "catboost"
+    if "lightgbm" in mod:
+        return "lgbm"
+    if "xgboost" in mod:
+        return "xgboost"
+    return "lgbm"
 
 
 def _to_cluster_id(cluster_id) -> int | str | None:
@@ -191,10 +208,17 @@ def load_recent_sales(conn, item_no: str | None = None, loc: str | None = None,
 
     where_sql = " AND ".join(where_clauses)
 
+    # Join dim_dfu to filter by dmdgroup — backtest training joined on dmdunit+dmdgroup+loc,
+    # so inference must use the same single customer group to get matching lag features.
+    # Without the dmdgroup filter, multiple customer-group rows per month would cause
+    # wrong lag values (lag_1 = one customer group's qty, not the DFU-level qty).
     sql = f"""
-        SELECT s.dmdunit AS item_no, s.loc, s.startdate, COALESCE(s.qty, 0) AS qty
+        SELECT s.dmdunit AS item_no, s.loc, s.startdate,
+               SUM(COALESCE(s.qty, 0)) AS qty
         FROM fact_sales_monthly s
+        INNER JOIN dim_dfu d ON d.dmdunit = s.dmdunit AND d.dmdgroup = s.dmdgroup AND d.loc = s.loc
         WHERE {where_sql}
+        GROUP BY s.dmdunit, s.loc, s.startdate
         ORDER BY s.dmdunit, s.loc, s.startdate
     """
 
@@ -234,6 +258,28 @@ def load_dfu_attrs(conn, item_no: str | None = None, loc: str | None = None) -> 
     df = pd.read_sql(sql, conn, params=params)
     print(f"  [{_ts()}] DFU attributes loaded: {len(df):,} rows")
     return df
+
+
+def load_item_attrs(conn, item_no: str | None = None) -> pd.DataFrame:
+    """Load item-level attributes (bpc, item_proof, case_weight) from dim_item."""
+    where_sql = "WHERE item_no = %s" if item_no else ""
+    params = [item_no] if item_no else []
+    sql = f"""
+        SELECT item_no, bpc, item_proof, case_weight
+        FROM dim_item
+        {where_sql}
+    """
+    df = pd.read_sql(sql, conn, params=params)
+    df["bpc"] = pd.to_numeric(df["bpc"], errors="coerce").fillna(0)
+    df["item_proof"] = pd.to_numeric(df["item_proof"], errors="coerce").fillna(0)
+    df["case_weight"] = pd.to_numeric(df["case_weight"], errors="coerce").fillna(0)
+    print(f"  [{_ts()}] Item attributes loaded: {len(df):,} rows")
+    return df
+
+
+def build_item_index(item_attrs: pd.DataFrame) -> dict[str, dict]:
+    """Pre-index item attributes by item_no → {bpc, item_proof, case_weight}."""
+    return item_attrs.set_index("item_no")[["bpc", "item_proof", "case_weight"]].to_dict("index")
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +345,7 @@ def build_inference_grid(
     *,
     sales_index: dict | None = None,
     attrs_index: dict | None = None,
+    item_index: dict | None = None,
 ) -> pd.DataFrame | None:
     """Build a feature matrix for recursive inference over the next `horizon` months.
 
@@ -346,6 +393,9 @@ def build_inference_grid(
         ]
         attrs = dfu_row.iloc[0].to_dict() if len(dfu_row) > 0 else {}
 
+    # Item-level attributes (bpc, item_proof, case_weight from dim_item)
+    item_attrs = (item_index or {}).get(item_no, {})
+
     for h, fmonth in enumerate(future_months):
         # At step h=0 (T+1), qty_series contains all actuals
         # At step h=1+ (T+2+), qty_series[-1] is the model's T+h prediction
@@ -362,7 +412,7 @@ def build_inference_grid(
             window_vals = qty_series[max(0, n - w):n]
             if window_vals:
                 row[f"rolling_mean_{w}m"] = float(np.mean(window_vals))
-                row[f"rolling_std_{w}m"] = float(np.std(window_vals)) if len(window_vals) > 1 else 0.0
+                row[f"rolling_std_{w}m"] = float(np.std(window_vals, ddof=1)) if len(window_vals) > 1 else 0.0
             else:
                 row[f"rolling_mean_{w}m"] = 0.0
                 row[f"rolling_std_{w}m"] = 0.0
@@ -379,6 +429,11 @@ def build_inference_grid(
             row[col] = attrs.get(col, "__unknown__")
         row["execution_lag"] = float(attrs.get("execution_lag", 0) or 0)
         row["total_lt"] = float(attrs.get("total_lt", 14) or 14)
+
+        # Item-level attributes (from dim_item)
+        row["bpc"] = float(item_attrs.get("bpc", 0) or 0)
+        row["item_proof"] = float(item_attrs.get("item_proof", 0) or 0)
+        row["case_weight"] = float(item_attrs.get("case_weight", 0) or 0)
 
         row["_forecast_month"] = fmonth
         row["_horizon"] = h + 1
@@ -446,7 +501,7 @@ def generate_forecast_recursive(
                         lag_vals.append(float(row_data[lag_col].iloc[0]))
                 if lag_vals:
                     row_data[f"rolling_mean_{w}m"] = np.mean(lag_vals)
-                    row_data[f"rolling_std_{w}m"] = np.std(lag_vals) if len(lag_vals) > 1 else 0.0
+                    row_data[f"rolling_std_{w}m"] = np.std(lag_vals, ddof=1) if len(lag_vals) > 1 else 0.0
 
         # Predict using only the features the model was trained on
         X = row_data[available_features].fillna(0)
@@ -475,7 +530,7 @@ def generate_forecast_recursive(
             "is_recursive": h > 0,
             "lag_source": "actual" if h == 0 else "predicted",
             "run_id": run_id,
-            "generated_at": datetime.utcnow(),
+            "generated_at": datetime.now(timezone.utc),
         })
 
     return rows
@@ -494,128 +549,176 @@ def generate_forecasts_batch(
     run_id: str,
     model_id: str,
     cat_encoders: dict,
+    sigma_lookup: dict | None = None,
+    ci_cfg: dict | None = None,
 ) -> list[dict]:
-    """Batch inference for all DFUs in a single cluster group.
+    """Vectorised batch inference for all DFUs in a single cluster group.
 
-    Instead of calling model.predict() once per DFU per month (N×horizon calls),
-    this collects all DFU rows for each horizon step into a single DataFrame and
-    calls model.predict() once per step — reducing ~1.1M predict calls to
-    ~(n_clusters × horizon) calls.
+    Builds a single (n_dfus, n_features) numpy array upfront, then for each
+    horizon step:
+      1. Calls model.predict() once on the full matrix (already fast)
+      2. Updates lag/rolling columns with numpy array operations (vectorised
+         across all DFUs at once, no Python-level per-DFU loop)
 
-    Recursive write-back is still applied per-DFU (their lag series diverge after
-    T+1), but this is cheap Python list arithmetic, not model inference.
-
-    Cat features are encoded as integers using cat_encoders (built from the full
-    dim_dfu vocabulary) so models receive the same dtype they were trained on.
+    This is 5-20× faster than the old approach which did pd.concat() + a
+    Python loop per DFU at every horizon step.
     """
     model = artifact["model"]
     feature_cols = artifact["feature_cols"]
     meta_cols = {"_forecast_month", "_horizon", "_lag_source"}
     available_features = [c for c in feature_cols if c not in meta_cols]
 
-    n = len(dfu_list)
-    # Per-DFU running prediction lists for write-back
-    predicted_values: list[list[float]] = [[] for _ in range(n)]
-    # Per-DFU current qty_series extension (for rolling recalc)
-    # We store the lag state as a flat list per DFU; initial state from grid row 0
-    all_rows: list[dict] = []
+    # Filter valid DFUs (non-None grid)
+    valid_pairs = [(i, champ, grid) for i, (champ, grid) in enumerate(dfu_list) if grid is not None]
+    if not valid_pairs:
+        return []
+
+    valid_orig_idx = [t[0] for t in valid_pairs]
+    valid_champs = [t[1] for t in valid_pairs]
+    valid_grids = [t[2] for t in valid_pairs]
+
+    # Detect model framework to choose correct categorical encoding strategy
+    framework = _detect_framework(model)
+    is_catboost = (framework == "catboost")
+
+    # -----------------------------------------------------------------------
+    # Build initial feature matrix X_np[j, :] from row 0 of each DFU's grid
+    # -----------------------------------------------------------------------
+    init_frames = [g.iloc[[0]] for g in valid_grids]
+    init_df = pd.concat(init_frames, ignore_index=True)
+    avail = [c for c in available_features if c in init_df.columns]
+
+    X_df = init_df[avail].fillna(0).copy()
+
+    if is_catboost:
+        # CatBoost was trained on raw STRING category labels (cat_dtype="str").
+        # Passing integers would hash "3" instead of "NE" — completely different
+        # categorical signal. Keep strings; categorical columns are static across
+        # horizon steps so we store them once and re-inject into Pool each step.
+        cat_cols_in_avail = [c for c in avail if c in CAT_FEATURES]
+        cat_str_df = init_df[cat_cols_in_avail].fillna("__unknown__").astype(str)
+        # Build float numpy for numeric-only columns (updated during recursive loop)
+        numeric_cols = [c for c in avail if c not in CAT_FEATURES]
+        X_np = X_df[numeric_cols].to_numpy(dtype=float)
+        col_idx = {c: i for i, c in enumerate(numeric_cols)}
+    else:
+        # LGBM / XGBoost: trained on pandas Categorical codes (sorted-unique → 0-based int)
+        for col in CAT_FEATURES:
+            if col in X_df.columns and col in cat_encoders:
+                X_df[col] = X_df[col].map(cat_encoders[col]).fillna(0).astype(int)
+        X_np = X_df.to_numpy(dtype=float)            # (n_valid, n_avail)
+        col_idx = {c: i for i, c in enumerate(avail)}
+        cat_cols_in_avail = []
+        cat_str_df = pd.DataFrame()
+
+    # Index positions of lag and rolling columns (only those present in col_idx)
+    lag_pos = {k: col_idx[f"qty_lag_{k}"]
+               for k in LAG_RANGE if f"qty_lag_{k}" in col_idx}
+    rolling_pos: dict[int, tuple] = {}
+    for w in ROLLING_WINDOWS:
+        mi = col_idx.get(f"rolling_mean_{w}m")
+        si = col_idx.get(f"rolling_std_{w}m")
+        if mi is not None:
+            rolling_pos[w] = (mi, si)
+
+    # -----------------------------------------------------------------------
+    # Forecast months for each valid DFU (from their grids)
+    # -----------------------------------------------------------------------
+    forecast_months: list[list] = []
+    for g in valid_grids:
+        fms = []
+        for h in range(min(horizon, len(g))):
+            fm = g.iloc[h]["_forecast_month"]
+            fms.append(fm.date().replace(day=1) if hasattr(fm, "date") else fm)
+        forecast_months.append(fms)
+
+    # -----------------------------------------------------------------------
+    # Recursive inference loop — one predict() call per horizon step
+    # -----------------------------------------------------------------------
+    all_preds = np.zeros((len(valid_pairs), horizon))
 
     for h in range(horizon):
-        batch_frames: list[pd.DataFrame] = []
-        valid_indices: list[int] = []
-
-        for i, (champ, grid) in enumerate(dfu_list):
-            if grid is None or h >= len(grid):
-                continue
-            row_data = grid.iloc[[h]].copy()
-
-            # Write-back: update lag features from this DFU's prior predictions
-            if h > 0 and predicted_values[i]:
-                preds = predicted_values[i]
-                row_data = row_data.copy()
-                row_data["qty_lag_1"] = preds[-1]
-                for k in range(2, min(h + 2, max(LAG_RANGE) + 1)):
-                    lag_col = f"qty_lag_{k}"
-                    prev_idx = h - k
-                    if prev_idx >= 0 and lag_col in row_data.columns:
-                        row_data[lag_col] = preds[prev_idx]
-                # Recompute rolling features from updated lags
-                for w in ROLLING_WINDOWS:
-                    lag_vals = [
-                        float(row_data[f"qty_lag_{k}"].iloc[0])
-                        for k in range(1, w + 1)
-                        if f"qty_lag_{k}" in row_data.columns
-                    ]
-                    if lag_vals:
-                        row_data[f"rolling_mean_{w}m"] = float(np.mean(lag_vals))
-                        row_data[f"rolling_std_{w}m"] = float(np.std(lag_vals)) if len(lag_vals) > 1 else 0.0
-
-            batch_frames.append(row_data)
-            valid_indices.append(i)
-
-        if not batch_frames:
-            break
-
-        # Build stacked feature matrix for this horizon step
-        X_batch = pd.concat(batch_frames, ignore_index=True)
-        avail = [c for c in available_features if c in X_batch.columns]
-        X = X_batch[avail].fillna(0)
-
-        # Encode CAT_FEATURES as integers — matches training-time pandas category codes
-        for col in CAT_FEATURES:
-            if col in X.columns and col in cat_encoders:
-                X[col] = X[col].map(cat_encoders[col]).fillna(0).astype(int)
-
-        # Batch predict — one call for all DFUs in this cluster at this horizon step
+        # Batch predict on current feature matrix
         try:
-            batch_preds = model.predict(X)
-        except Exception:
-            # Per-row fallback if batch fails (e.g. shape mismatch edge case)
-            batch_preds = []
-            for j in range(len(X)):
-                try:
-                    p = float(model.predict(X.iloc[[j]])[0])
-                except Exception:
-                    p = 0.0
-                batch_preds.append(p)
-            batch_preds = np.array(batch_preds)
+            if is_catboost:
+                import catboost as cb
+                # Rebuild dataframe: numeric features (updated) + string categoricals (static)
+                pred_df = pd.DataFrame(X_np, columns=numeric_cols)
+                for col in cat_cols_in_avail:
+                    pred_df[col] = cat_str_df[col].values
+                pool = cb.Pool(pred_df, cat_features=cat_cols_in_avail)
+                step_preds = np.maximum(0.0, model.predict(pool))
+            else:
+                step_preds = np.maximum(0.0, model.predict(X_np))
+        except Exception as exc:
+            logger.error("Prediction failed for cluster group, substituting zeros: %s", exc)
+            step_preds = np.zeros(len(valid_pairs))
 
-        # Distribute predictions back to per-DFU state
-        for j, i in enumerate(valid_indices):
-            pred = max(0.0, round(float(batch_preds[j]), 2))
-            predicted_values[i].append(pred)
+        all_preds[:, h] = step_preds
 
+        if h < horizon - 1:
+            # Vectorised lag shift: lag_k ← lag_{k-1} for k = max_lag … 2
+            for k in sorted(lag_pos.keys(), reverse=True):
+                if k > 1 and (k - 1) in lag_pos:
+                    X_np[:, lag_pos[k]] = X_np[:, lag_pos[k - 1]]
+            # lag_1 ← current predictions
+            if 1 in lag_pos:
+                X_np[:, lag_pos[1]] = step_preds
+
+            # Recompute rolling features from updated lag columns
+            for w, (mean_idx, std_idx) in rolling_pos.items():
+                lag_cols = [lag_pos[k] for k in range(1, w + 1) if k in lag_pos]
+                if lag_cols:
+                    lag_mat = X_np[:, lag_cols]          # (n_valid, w)
+                    X_np[:, mean_idx] = lag_mat.mean(axis=1)
+                    if std_idx is not None and len(lag_cols) > 1:
+                        X_np[:, std_idx] = lag_mat.std(axis=1, ddof=1)
+
+    # -----------------------------------------------------------------------
     # Build output row dicts
-    for i, (champ, grid) in enumerate(dfu_list):
-        if grid is None:
-            continue
+    # -----------------------------------------------------------------------
+    ts_now = datetime.now(timezone.utc)
+    all_rows: list[dict] = []
+    for j, champ in enumerate(valid_champs):
         item_no = champ["item_no"]
         loc = champ["loc"]
-        cluster_id = champ["cluster_id"]
-        preds = predicted_values[i]
+        cluster_id = _to_cluster_id(champ["cluster_id"])
+        months = forecast_months[j]
 
-        for h, pred in enumerate(preds):
-            forecast_month = grid.iloc[h]["_forecast_month"]
-            if hasattr(forecast_month, "date"):
-                forecast_month_date = forecast_month.date().replace(day=1)
+        # Resolve per-DFU sigma for CI bands (None when CI disabled or no backtest history)
+        sigma = sigma_lookup.get((item_no, loc)) if sigma_lookup else None
+
+        for h in range(min(len(months), horizon)):
+            pred = round(float(all_preds[j, h]), 2)
+
+            # Apply CI bands if sigma is available
+            if sigma is not None and ci_cfg:
+                lower, upper = compute_ci_bounds(
+                    point_forecast=pred,
+                    sigma=sigma,
+                    horizon=h + 1,          # h is 0-indexed; horizon is 1-indexed
+                    z_lower=ci_cfg.get("z_lower", 1.282),
+                    z_upper=ci_cfg.get("z_upper", 1.282),
+                    scaling=ci_cfg.get("horizon_scaling", "sqrt"),
+                )
             else:
-                forecast_month_date = forecast_month
+                lower, upper = None, None
 
             all_rows.append({
                 "plan_version": plan_version,
                 "item_no": item_no,
                 "loc": loc,
-                "forecast_month": forecast_month_date,
+                "forecast_month": months[h],
                 "forecast_qty": pred,
-                "forecast_qty_lower": None,
-                "forecast_qty_upper": None,
+                "forecast_qty_lower": lower,
+                "forecast_qty_upper": upper,
                 "model_id": model_id,
-                "cluster_id": _to_cluster_id(cluster_id),
+                "cluster_id": cluster_id,
                 "horizon_months": h + 1,
                 "is_recursive": h > 0,
                 "lag_source": "actual" if h == 0 else "predicted",
                 "run_id": run_id,
-                "generated_at": datetime.utcnow(),
+                "generated_at": ts_now,
             })
 
     return all_rows
@@ -716,6 +819,8 @@ def main() -> None:
                         help="Override model_id (default: champion assignment per DFU)")
     parser.add_argument("--plan-version", type=str, default=None,
                         help="Override plan version label (e.g. '2026-02'). Defaults to current month.")
+    parser.add_argument("--max-dfus", type=int, default=None,
+                        help="Limit to first N DFUs (for testing/sampling). Default: all DFUs.")
     args = parser.parse_args()
 
     config = load_config()
@@ -723,7 +828,7 @@ def main() -> None:
     keep_n = config["plan_version"]["keep_last_n_versions"]
     fallback_model_id = config["model_selection"]["fallback_model_id"]
 
-    plan_version = args.plan_version or datetime.utcnow().strftime(config["plan_version"]["format"])
+    plan_version = args.plan_version or datetime.now(timezone.utc).strftime(config["plan_version"]["format"])
     run_id = str(uuid.uuid4())
 
     item_filter = args.dfu[0] if args.dfu else None
@@ -745,8 +850,13 @@ def main() -> None:
             print(f"[{_ts()}] No champion assignments found. Run 'make champion-select' first.")
             return
 
+        if args.max_dfus and len(champion_df) > args.max_dfus:
+            champion_df = champion_df.head(args.max_dfus)
+            print(f"  [{_ts()}] Sampling limited to {args.max_dfus:,} DFUs (--max-dfus)")
+
         sales_df = load_recent_sales(conn, item_filter, loc_filter)
         dfu_attrs = load_dfu_attrs(conn, item_filter, loc_filter)
+        item_attrs_df = load_item_attrs(conn, item_filter)
 
         # Determine which model_ids we need to load.
         # source_model_id = the underlying algorithm that won per DFU (e.g. lgbm_cluster).
@@ -777,10 +887,24 @@ def main() -> None:
         print(f"\n[{_ts()}] Step 2b: Pre-indexing data structures...")
         sales_index = build_sales_index(sales_df)
         attrs_index = build_attrs_index(dfu_attrs)
+        item_index = build_item_index(item_attrs_df)
         cat_encoders = build_cat_encoders(dfu_attrs)
         print(f"  [{_ts()}] Indexed {len(sales_index):,} DFUs (sales), "
               f"{len(attrs_index):,} DFUs (attrs), "
+              f"{len(item_index):,} items, "
               f"{len(cat_encoders)} cat encoders")
+
+        # Build forecast CI sigma lookup (per-DFU uncertainty from backtest residuals)
+        ci_cfg = config.get("confidence_interval", {})
+        sigma_lookup: dict = {}
+        if ci_cfg.get("enabled", False):
+            print(f"\n[{_ts()}] Step 2c: Building forecast uncertainty (CI bands)...")
+            cluster_map: dict[tuple, str] = {
+                (r["item_no"], r["loc"]): str(r.get("ml_cluster") or "unknown")
+                for r in dfu_attrs[["item_no", "loc", "ml_cluster"]].to_dict("records")
+            }
+            sigma_lookup = build_sigma_lookup(conn, config, cluster_map)
+            print(f"  [{_ts()}] CI sigma lookup: {len(sigma_lookup):,} DFUs mapped")
 
         # Group DFUs by (model_id, cluster_id) for batched inference
         print(f"\n[{_ts()}] Step 3: Building cluster groups for {len(champion_df):,} DFUs...")
@@ -819,6 +943,7 @@ def main() -> None:
                 horizon=horizon,
                 sales_index=sales_index,
                 attrs_index=attrs_index,
+                item_index=item_index,
             )
             if grid is None:
                 skipped += 1
@@ -831,24 +956,36 @@ def main() -> None:
         print(f"  [{_ts()}] {sum(len(v) for v in cluster_groups.values()):,} DFUs in "
               f"{len(cluster_groups)} cluster groups, {skipped:,} skipped (no history/model)")
 
-        # Batch-predict per cluster group
-        print(f"\n[{_ts()}] Step 3b: Running batched inference...")
+        # Batch-predict per cluster group — parallelise across independent groups
+        n_workers = min(len(cluster_groups), min(os.cpu_count() or 4, 4))
+        print(f"\n[{_ts()}] Step 3b: Running batched inference "
+              f"({len(cluster_groups)} groups, {n_workers} workers)...")
         all_rows: list[dict] = []
-        for (model_id, cluster_id), entries in cluster_groups.items():
-            artifact = entries[0][2]  # all entries share same (model_id, cluster_id)
-            dfu_list = [(e[0], e[1]) for e in entries]
-            batch_rows = generate_forecasts_batch(
-                artifact=artifact,
-                dfu_list=dfu_list,
+
+        def _run_group(key_entries):
+            (mid, cid), entries = key_entries
+            art = entries[0][2]
+            dfu_lst = [(e[0], e[1]) for e in entries]
+            rows = generate_forecasts_batch(
+                artifact=art,
+                dfu_list=dfu_lst,
                 horizon=horizon,
                 plan_version=plan_version,
                 run_id=run_id,
-                model_id=model_id,
+                model_id=mid,
                 cat_encoders=cat_encoders,
+                sigma_lookup=sigma_lookup if sigma_lookup else None,
+                ci_cfg=ci_cfg if ci_cfg.get("enabled", False) else None,
             )
-            all_rows.extend(batch_rows)
-            print(f"  [{_ts()}] ({model_id}, cluster {cluster_id}): "
-                  f"{len(dfu_list):,} DFUs → {len(batch_rows):,} rows")
+            return (mid, cid, len(dfu_lst), rows)
+
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {executor.submit(_run_group, item): item for item in cluster_groups.items()}
+            for future in as_completed(futures):
+                mid, cid, n_dfus, batch_rows = future.result()
+                all_rows.extend(batch_rows)
+                print(f"  [{_ts()}] ({mid}, cluster {cid}): "
+                      f"{n_dfus:,} DFUs → {len(batch_rows):,} rows")
 
         print(f"\n[{_ts()}] Step 3 complete: {len(all_rows):,} rows, {skipped:,} skipped")
 

@@ -19,6 +19,8 @@ import {
   type EoqDetailRow,
 } from "@/api/queries";
 import { formatFixed, formatInt } from "@/lib/formatters";
+import { EmptyState } from "@/components/EmptyState";
+import { Package2 } from "lucide-react";
 
 const PAGE = 50;
 
@@ -72,6 +74,11 @@ export function EoqPanel() {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Info Banner */}
+      <div className="text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2 mb-3">
+        <strong className="text-foreground">Economic Order Quantity (EOQ)</strong> balances ordering frequency vs holding cost. Large orders reduce ordering cost but increase holding cost; small orders do the reverse. EOQ is the mathematically optimal balance point.
+      </div>
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="rounded-lg border bg-card p-4">
@@ -83,7 +90,10 @@ export function EoqPanel() {
           </p>
           <p className="text-xs text-muted-foreground mt-1">units (avg EOQ/2)</p>
         </div>
-        <div className="rounded-lg border bg-card p-4">
+        <div
+          className="rounded-lg border bg-card p-4"
+          title="Economic Order Quantity: the order size that minimizes total annual ordering + holding costs. Formula: √(2 × D × S / H)"
+        >
           <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
             Avg EOQ Size
           </p>
@@ -162,12 +172,14 @@ export function EoqPanel() {
           <input
             className="h-8 rounded border border-input bg-background px-2 text-xs w-32"
             placeholder="Item No (optional)"
+            title="Enter an item number to use that DFU's annual demand for the sensitivity curve (e.g. 100320)"
             value={sensitivityItem}
             onChange={(e) => setSensitivityItem(e.target.value)}
           />
           <input
             className="h-8 rounded border border-input bg-background px-2 text-xs w-32"
             placeholder="Location (optional)"
+            title="Enter a location code to use that DFU's demand (e.g. 1401-BULK). Must be paired with an item number."
             value={sensitivityLoc}
             onChange={(e) => setSensitivityLoc(e.target.value)}
           />
@@ -177,15 +189,25 @@ export function EoqPanel() {
         ) : sensitivity && sensitivity.curve.length > 0 ? (
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={sensitivity.curve} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+              <LineChart data={sensitivity.curve} margin={{ top: 4, right: 16, left: 8, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis
                   dataKey="ordering_cost"
                   tickFormatter={(v) => `$${v}`}
                   tick={{ fontSize: 10 }}
+                  label={{ value: "Ordering Cost ($)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
                 />
-                <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
-                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
+                <YAxis
+                  yAxisId="left"
+                  tick={{ fontSize: 10 }}
+                  label={{ value: "EOQ (units)", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={{ fontSize: 10 }}
+                  label={{ value: "Annual Total Cost ($)", angle: 90, position: "insideRight", fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                />
                 <Tooltip
                   formatter={(value: number, name: string) => [
                     name === "Total Cost" ? `$${Number(value).toFixed(2)}` : Number(value).toFixed(1),
@@ -228,12 +250,14 @@ export function EoqPanel() {
           <input
             className="h-8 rounded border border-input bg-background px-2 text-xs w-36"
             placeholder="Filter by item…"
+            title="Filter rows by item number (e.g. 100320)"
             value={itemFilter}
             onChange={(e) => { setItemFilter(e.target.value); setEoqOffset(0); }}
           />
           <input
             className="h-8 rounded border border-input bg-background px-2 text-xs w-36"
             placeholder="Filter by location…"
+            title="Filter rows by location code (e.g. 1401-BULK)"
             value={locFilter}
             onChange={(e) => { setLocFilter(e.target.value); setEoqOffset(0); }}
           />
@@ -251,6 +275,16 @@ export function EoqPanel() {
 
         {detailLoading ? (
           <div className="text-xs text-muted-foreground">Loading…</div>
+        ) : (eoqDetail?.rows ?? []).length === 0 ? (
+          <EmptyState
+            icon={Package2}
+            title="No EOQ targets computed"
+            description="Economic Order Quantity targets minimise total annual inventory cost (ordering + holding) for each item-location based on demand history and cost parameters."
+            steps={[
+              { label: "Apply schema (first time only)", command: "make eoq-schema" },
+              { label: "Compute EOQ for all DFUs", command: "make eoq-compute" },
+            ]}
+          />
         ) : (
           <>
             <div className="overflow-x-auto">
@@ -260,11 +294,11 @@ export function EoqPanel() {
                     <th className="text-left py-1 pr-3">Item</th>
                     <th className="text-left py-1 pr-3">Loc</th>
                     <th className="py-1 pr-3">ABC</th>
-                    <th className="py-1 pr-3">EOQ</th>
-                    <th className="py-1 pr-3">Eff. EOQ</th>
-                    <th className="py-1 pr-3">Cycle Stock</th>
-                    <th className="py-1 pr-3">Orders/Yr</th>
-                    <th className="py-1">Annual Cost</th>
+                    <th className="py-1 pr-3 cursor-help" title="Economic Order Quantity (units): cost-optimal order size">EOQ</th>
+                    <th className="py-1 pr-3 cursor-help" title="Effective EOQ after applying minimum order quantity (MOQ) constraints">Eff. EOQ</th>
+                    <th className="py-1 pr-3 cursor-help" title="Cycle Stock: average inventory held during a replenishment cycle = EOQ ÷ 2">Cycle Stock</th>
+                    <th className="py-1 pr-3 cursor-help" title="How many purchase orders are placed per year at this EOQ = Annual Demand ÷ EOQ">Orders/Yr</th>
+                    <th className="py-1 cursor-help" title="Total annual inventory cost = ordering cost + holding cost at EOQ">Annual Cost</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -282,13 +316,6 @@ export function EoqPanel() {
                       </td>
                     </tr>
                   ))}
-                  {(eoqDetail?.rows ?? []).length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="py-4 text-center text-muted-foreground">
-                        No data.
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>

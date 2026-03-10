@@ -37,6 +37,7 @@ make investment-schema     # fact_inventory_investment_plan + fact_efficient_fro
 make intramonth-schema     # mv_intramonth_stockout materialized view (IPfeature14)
 make control-tower-schema  # mv_control_tower_kpis materialized view (IPfeature15)
 make ai-insights-schema    # ai_insights + ai_planning_memos tables (IPAIfeature1)
+make replplan-schema       # fact_replenishment_plan table (CI Bands + Repl. Plan)
 ```
 
 > Run once when setting up a new environment. Safe to re-run (uses `IF NOT EXISTS`).
@@ -163,6 +164,14 @@ make ai-insights-schema     # Apply DDL: ai_insights + ai_planning_memos tables 
 make ai-insights-scan       # Run portfolio scan (requires anthropic API key + data loaded)
 make ai-insights-dfu ITEM=<item_no> LOC=<loc>   # Analyze a single DFU
 make ai-insights-all        # ai-insights-schema + ai-insights-scan (full pipeline)
+```
+
+**Forward-Looking Replenishment Plan** (CI Bands + Repl. Plan — requires production forecast):
+```bash
+make replplan-schema         # Apply DDL for fact_replenishment_plan (one-time)
+make replplan-compute        # Compute forward replenishment plan from latest production forecast CI bands
+make replplan-compute-dry    # Preview computation without writing to DB
+make replplan-all            # replplan-schema + replplan-compute (full pipeline)
 ```
 
 ### 2.3 Chatbot embeddings (requires `OPENAI_API_KEY` in `.env`)

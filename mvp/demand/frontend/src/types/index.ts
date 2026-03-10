@@ -165,6 +165,8 @@ export type InventoryKpis = {
   total_on_order: number;
   avg_lead_time_days: number | null;
   dos: number | null;
+  dos_delta?: number | null;
+  dos_prev_month?: number | null;
   woc: number | null;
   inventory_turns: number | null;
   lt_coverage: number | null;
@@ -180,6 +182,21 @@ export type InventoryTrendPoint = {
   monthly_sales: number;
   avg_lead_time: number;
   dos: number | null;
+  safety_stock?: number | null;
+  cycle_stock?: number | null;
+};
+
+export type InventoryTrendParams = {
+  safety_stock?: number | null;
+  reorder_point_units?: number | null;
+  service_level_target?: number | null;
+  z_score?: number | null;
+  demand_cv?: number | null;
+  eoq?: number | null;
+  eoq_cycle_stock?: number | null;
+  order_frequency?: number | null;
+  order_policy?: string | null;
+  policy_type?: string | null;
 };
 
 export type InventoryPositionPayload = {
@@ -191,6 +208,7 @@ export type InventoryPositionPayload = {
 
 export type InventoryTrendPayload = {
   trend: InventoryTrendPoint[];
+  params?: InventoryTrendParams;
 };
 
 export type InventoryItemDetailPayload = {

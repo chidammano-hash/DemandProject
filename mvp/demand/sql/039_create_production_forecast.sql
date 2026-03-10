@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS fact_production_forecast (
     forecast_qty_lower  NUMERIC(12, 2),             -- P10 confidence interval (optional)
     forecast_qty_upper  NUMERIC(12, 2),             -- P90 confidence interval (optional)
     model_id            VARCHAR(100)    NOT NULL,   -- e.g. 'lgbm_cluster'
-    cluster_id          INTEGER,                    -- ml_cluster used for inference
+    cluster_id          TEXT,                       -- ml_cluster used for inference (string label)
     horizon_months      SMALLINT        NOT NULL,   -- 1=T+1, 2=T+2, ... 12=T+12
     is_recursive        BOOLEAN         NOT NULL DEFAULT FALSE,
     lag_source          VARCHAR(20),                -- 'actual' (T+1) or 'predicted' (T+2+)
@@ -54,7 +54,7 @@ CREATE INDEX IF NOT EXISTS idx_prod_fcst_run_id
 CREATE TABLE IF NOT EXISTS fact_model_registry (
     id               BIGSERIAL PRIMARY KEY,
     model_id         VARCHAR(100)    NOT NULL,   -- e.g. 'lgbm_cluster'
-    cluster_id       INTEGER         NOT NULL,
+    cluster_id       TEXT            NOT NULL,   -- ml_cluster label (string)
     timeframe        VARCHAR(20)     NOT NULL,   -- backtest timeframe label ('J' = most recent)
     model_path       TEXT            NOT NULL,   -- relative path: 'data/models/lgbm_cluster/cluster_3.pkl'
     feature_cols     TEXT[],                     -- ordered feature column names used during training

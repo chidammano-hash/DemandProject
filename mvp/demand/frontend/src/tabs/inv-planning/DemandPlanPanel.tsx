@@ -13,6 +13,8 @@ import {
   fetchDemandPlanWeekly,
   STALE,
 } from "@/api/queries";
+import { EmptyState } from "@/components/EmptyState";
+import { ClipboardList } from "lucide-react";
 
 function formatQty(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -96,6 +98,11 @@ export function DemandPlanPanel() {
 
   return (
     <div className="space-y-4">
+      {/* Info banner */}
+      <div className="text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2">
+        <strong className="text-foreground">Demand Plan</strong> shows probabilistic multi-horizon forecasts (P10/P50/P90 quantiles) for a single item-location pair. P50 is the median forecast; P10 and P90 bound the likely demand range. Weekly disaggregation provides near-term visibility for replenishment scheduling.
+      </div>
+
       {/* Header */}
       <div>
         <h3 className="font-semibold text-base">Demand Plan</h3>
@@ -110,7 +117,7 @@ export function DemandPlanPanel() {
           <label className="text-xs text-muted-foreground">Item No</label>
           <input
             className="rounded-md border bg-background px-2 py-1 text-xs w-32"
-            placeholder="100320"
+            placeholder="e.g. 100320"
             value={itemNo}
             onChange={(e) => setItemNo(e.target.value)}
           />
@@ -119,7 +126,7 @@ export function DemandPlanPanel() {
           <label className="text-xs text-muted-foreground">Location</label>
           <input
             className="rounded-md border bg-background px-2 py-1 text-xs w-32"
-            placeholder="1401-BULK"
+            placeholder="e.g. 1401-BULK"
             value={loc}
             onChange={(e) => setLoc(e.target.value)}
           />
@@ -188,9 +195,15 @@ export function DemandPlanPanel() {
 
       {/* Monthly quantile table */}
       {!submitted ? (
-        <div className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
-          Enter an Item No and Location, then click <strong>View Plan</strong>.
-        </div>
+        <EmptyState
+          icon={ClipboardList}
+          title="Enter an item and location to view the demand plan"
+          description="The demand plan shows monthly forecast quantiles (P10/P50/P90) and weekly disaggregation for a single DFU. It combines the statistical baseline with any approved demand overrides."
+          steps={[
+            { label: "Enter Item No and Location in the fields above", command: "e.g. Item: 100320 | Loc: 1401-BULK" },
+            { label: "Generate demand plans if no data appears", command: "make demand-plan-compute" },
+          ]}
+        />
       ) : planQ.isLoading ? (
         <div className="text-xs text-muted-foreground py-4 text-center">Loading demand plan...</div>
       ) : planQ.isError ? (
@@ -198,6 +211,16 @@ export function DemandPlanPanel() {
           No demand plan found for this item/location. Run{" "}
           <code className="font-mono">make quantile-train</code> to generate.
         </div>
+      ) : !plan?.rows?.length ? (
+        <EmptyState
+          icon={ClipboardList}
+          title="Enter an item and location to view the demand plan"
+          description="The demand plan shows monthly forecast quantiles (P10/P50/P90) and weekly disaggregation for a single DFU. It combines the statistical baseline with any approved demand overrides."
+          steps={[
+            { label: "Enter Item No and Location in the fields above", command: "e.g. Item: 100320 | Loc: 1401-BULK" },
+            { label: "Generate demand plans if no data appears", command: "make demand-plan-compute" },
+          ]}
+        />
       ) : (
         <div className="rounded-lg border overflow-auto">
           <table className="w-full text-xs">

@@ -72,7 +72,8 @@ Data flows: raw CSVs → normalize scripts → PostgreSQL → FastAPI → React 
 - **Jobs tab**: live progress bars, elapsed timers, schedule dialog, expandable history, cross-tab completion alerts
 
 ### 7. UI Platform
-- **14-tab sidebar** navigation: Dashboard, Data Explorer, Accuracy, DFU Analysis, Clusters, Market Intel, Inventory, Inv. Backtest, Inv. Planning (26 sub-tabs), Control Tower, AI Planner, Storyboard, S&OP, Jobs
+- **14-tab sidebar** navigation: Dashboard, Data Explorer, Accuracy, DFU Analysis, Clusters, Market Intel, Inventory, Inv. Backtest, Inv. Planning, Control Tower, AI Planner, Storyboard, S&OP, Jobs
+- **Inventory Planning tab**: two-column layout — fixed 220px grouped sidebar navigation (7 color-coded groups: Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) on the left, scrollable panel body with a fixed header bar on the right; 26 panel components unchanged
 - **Global filter bar**: brand, category, item, location, market, channel — synced across tabs via URL state
 - Light/dark mode, keyboard shortcuts (1–9 tab switch, `[` sidebar, `d` dark mode, `?` help), virtualized data grid with CSV export
 - TanStack Query caching (stale-while-revalidate), lazy-loaded tab components with per-tab error boundaries
@@ -91,6 +92,6 @@ Data flows: raw CSVs → normalize scripts → PostgreSQL → FastAPI → React 
 
 ## Testing
 
-- **1,467 backend tests** (pytest, fully mocked DB — no infrastructure needed, ~0.7s)
-- **426 frontend tests** (Vitest + React Testing Library)
+- **1,552 backend tests** (pytest, fully mocked DB — no infrastructure needed, ~0.7s)
+- **442 frontend tests** (Vitest + React Testing Library)
 - Every feature ships with tests; every removed feature removes its tests

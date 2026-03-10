@@ -135,6 +135,8 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - Per-model KPI cards: Accuracy %, WAPE, Bias, Total Forecast, Total Actual
    - Toggleable measure visibility (sales line + per-model forecast lines)
    - Typeahead item/location filters with cross-filtering, auto-sample on first visit
+   - **Clickable forecast lines**: clicking any backtest model line sets `selectedModel` state in `DfuAnalysisTab`; selected line renders thicker + unselected lines fade to 30% opacity; hint text "↑ click a forecast line to explore SHAP" near toggles
+   - **Per-DFU SHAP Panel** (`DfuShapPanel.tsx`): on model selection renders a stacked Recharts BarChart below the overlay chart showing signed SHAP feature contributions per month; future months rendered at 45% fill opacity; 15-color palette per feature; scrollable container (min 800px); dual-stack with `ReferenceLine y={0}` baseline; falls back to cluster-level summary SHAP (existing `/forecast/shap/{model}/summary` endpoint) with warning banner when per-DFU pkl artifacts are not available (404); placeholder card when no model selected
 20. Market intelligence (feature18):
    - `POST /market-intelligence` endpoint combining Google Custom Search + GPT-4o narrative
    - Item metadata lookup from `dim_item` (item_desc, brand_name, category, producer_name)
@@ -168,6 +170,7 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 20. `mv_control_tower_kpis` — materialized view aggregating cross-dimensional KPIs for the Control Tower dashboard (IPfeature15)
 21. `ai_insights` — AI-generated planning exception records (IPAIfeature1); grain: `(insight_id)` PK; 5 insight types (stockout_risk, excess_inventory, forecast_bias, policy_gap, champion_degradation); 4 severity levels; open/acknowledged/resolved workflow; financial_impact_estimate, reasoning, recommendation
 22. `ai_planning_memos` — AI-generated planning narrative memos (IPAIfeature1); grain: `(memo_id)` PK; scope: portfolio or DFU; narrative_text + content_json; indexed by period + scope
+23. `fact_replenishment_plan` — forward-looking replenishment plan per item-location-month (CI Bands + Repl. Plan); grain: `(item_no, loc, plan_month, plan_version)`; measures: forecast_qty with P10/P90 CI bands (forecast_qty_lower, forecast_qty_upper), ss_combined (forecast-driven SS), historical_ss, ss_delta, eoq, cycle_stock, reorder_point, order_qty, order_up_to_level, is_below_ss, horizon_months, avg_daily_demand, sigma_method
 
 ## Accuracy Slice Materialized Views (feature10)
 Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-table joins:
@@ -181,8 +184,8 @@ Performance impact: aggregate queries (cluster-level, supplier-level) drop from 
 
 `api/main.py` is a ~65-line shell that only creates the app, adds middleware, and mounts all 30 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/`. `domains.py` is mounted last (catch-all `{domain}` path parameter).
 
-**29 active router modules** (as of IPAIfeature1 + Feature 40):
-accuracy, ai_planner, analysis, chat, clusters, competition, control_tower, dashboard, domains, fill_rate, intel, inv_backtest, inventory, inv_planning (shim), inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, jobs, shap, storyboard
+**30 active router modules** (as of CI Bands + Repl. Plan):
+accuracy, ai_planner, analysis, chat, clusters, competition, control_tower, dashboard, domains, fill_rate, intel, inv_backtest, inventory, inv_planning (shim), inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, jobs, shap, storyboard
 
 **16 Vite proxy path prefixes** in `frontend/vite.config.ts`:
 `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`
@@ -258,8 +261,8 @@ Each model script (LGBM, CatBoost, XGBoost) implements only `train_and_predict_p
    - For per_cluster/transfer strategies: SHAP pooled across cluster models weighted by cluster size via `_weighted_pool_cluster_shap`; `ml_cluster` excluded from effective feature set
    - Feature selection: cumulative importance threshold (default 95%) or exact top-N; minimum 5 features guaranteed
    - Output: `data/backtest/<model_id>/shap/shap_timeframe_XX.csv` (per-timeframe) + `shap_summary.csv` (cross-timeframe aggregated)
-   - API: 4 read-only endpoints under `/forecast/shap/` served directly from CSVs (no DB queries) via `api/routers/shap.py`
-   - Frontend: collapsible "Feature Importance (SHAP)" panel in Accuracy tab; indigo=selected / gray=dropped bar chart
+   - API: 4 read-only endpoints (models list, summary, timeframes, per-timeframe detail) under `/forecast/shap/` served from CSVs (no DB queries), plus **1 on-demand compute endpoint** `GET /forecast/shap/{model_id}/dfu?item_no=&loc=&top_n=` that loads persisted pkl from `data/models/{model_id}/cluster_{ml_cluster}.pkl`, rebuilds the exact feature matrix (lags 1–12, rolling mean/std with ddof=1, calendar, categoricals, item numerics), runs SHAP, and returns per-month signed contributions for both historical and future production-forecast months — all via `api/routers/shap.py`
+   - Frontend: collapsible "Feature Importance (SHAP)" panel in Accuracy tab; indigo=selected / gray=dropped bar chart; **per-DFU interactive SHAP panel** (`DfuShapPanel.tsx`) in DFU Analysis tab
    - Config keys in `config/algorithm_config.yaml`: `shap_select`, `shap_top_n`, `shap_threshold`, `shap_sample_size`; composable with `tune_inline` and `params_file` (Feature 44)
    - Activated by setting `shap_select: true` in the algorithm section; run via `make backtest-lgbm`, `make backtest-catboost`, or `make backtest-xgboost`
    - Graceful degradation: SHAP failures log warning and keep all features; backtest continues uninterrupted
@@ -491,6 +494,7 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_jobs.py` | `api/routers/jobs.py` — job scheduler endpoints (types, submit, list, cancel, delete, stats, schedules, pipeline) | 16 |
 | `test_shap_selector.py` | `common/shap_selector.py` — SHAP extraction, feature selection, cluster pooling, CSV output, error fallback | 22 |
 | `test_shap.py` | `api/routers/shap.py` — SHAP endpoints (models list, summary, timeframes, per-timeframe detail, 404 cases) | 8 |
+| `test_shap_dfu.py` | `api/routers/shap.py` — per-DFU SHAP endpoint (200 lgbm, no model dir, DFU not found, pkl missing, top_n clamp, catboost path) | 6 |
 | `test_backtest_recursive.py` | `common/backtest_framework.py` — `_fill_predict_nans`, `_predict_single_month` (global/cluster/transfer), recursive loop integration | 13 |
 | `test_eoq.py` | `scripts/compute_eoq.py` — Wilson EOQ formula, effective EOQ with MOQ+cap, sensitivity curve | 23 |
 | `test_inv_planning_eoq.py` | `api/routers/inv_planning.py` — EOQ summary, detail, sensitivity endpoints | 10 |
@@ -545,6 +549,7 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `ExplorerTab.test.tsx` | Data Explorer tab | 2 |
 | `AccuracyTab.test.tsx` | Accuracy tab | 1 |
 | `DfuAnalysisTab.test.tsx` | DFU Analysis tab | 1 |
+| `DfuShapPanel.test.tsx` | Per-DFU SHAP stacked bar chart panel (placeholder, non-item_location note, skeleton, success chart, 404 fallback) | 5 |
 | `ClustersTab.test.tsx` | Clusters tab | 1 |
 | `MarketIntelTab.test.tsx` | Market Intelligence tab | 1 |
 | `ChatPanel.test.tsx` | Chat panel | 1 |
@@ -577,11 +582,11 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | Tab Shell | Subfolder | Extracted Panels |
 |-----------|-----------|-----------------|
 | `tabs/AccuracyTab.tsx` (224L) | `tabs/accuracy/` | KpiSection, TrendChartPanel, SliceTablePanel, ChampionPanel, ShapPanel |
-| `tabs/DfuAnalysisTab.tsx` (252L) | `tabs/dfu-analysis/` | SelectorPanel, OverlayChartPanel, ModelKpiSection |
+| `tabs/DfuAnalysisTab.tsx` | `tabs/dfu-analysis/` | SelectorPanel, OverlayChartPanel, ModelKpiSection, DfuShapPanel |
 | `tabs/InventoryTab.tsx` (222L) | `tabs/inventory/` | KpiSection, TrendChartPanel, PositionTablePanel, ItemDetailPanel, DemandVariabilityPanel, LeadTimeProfilePanel |
 | `tabs/JobsTab.tsx` (202L) | `tabs/jobs/` | KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel, jobsShared.ts |
 | `tabs/ClustersTab.tsx` (224L) | `tabs/clusters/` | ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel |
-| `tabs/InvPlanningTab.tsx` | `tabs/inv-planning/` | ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel |
+| `tabs/InvPlanningTab.tsx` | `tabs/inv-planning/` | Two-column layout: fixed 220px grouped sidebar navigation (7 groups with colored dividers, icons, and labels — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) + scrollable main content area with per-panel header bar (title + description). 26 panels: ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel, ReplenishmentPlanPanel, DemandForecastPanel, BlendedDemandPanel, EchelonPanel, FinancialPlanPanel, EventCalendarPanel, ScenarioPlanningPanel, and Supply group panels |
 
 ### API Query Sub-modules
 `frontend/src/api/queries.ts` is a thin re-export barrel (`export * from "./queries/index"`). All domain query modules live under `frontend/src/api/queries/`:

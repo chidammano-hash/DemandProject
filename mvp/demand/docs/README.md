@@ -258,7 +258,8 @@ Inventory Planning (feature34):
 - API: `GET /inventory/position`, `GET /inventory/kpis`, `GET /inventory/trend`, `GET /inventory/item-detail`
 
 EOQ & Inventory Planning (IPfeature4):
-- Inventory Planning tab with KPI cards (Avg EOQ, Total Cycle Stock, Avg Annual Cost), EOQ sensitivity chart (total cost vs order quantity), and paginated detail table
+- Inventory Planning tab uses a two-column layout: fixed 220px grouped sidebar navigation (7 groups — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply — each with a colored divider, group label, and icon-labeled buttons) + scrollable main content area with a per-panel header bar showing the panel title and description. All 26 panels remain unchanged; only the navigation/layout wrapper changed.
+- EOQ panel: KPI cards (Avg EOQ, Total Cycle Stock, Avg Annual Cost), EOQ sensitivity chart (total cost vs order quantity), and paginated detail table
 - Per-item EOQ computed via Wilson formula with MOQ floor and max-months-supply cap
 - Config: `config/eoq_config.yaml` (ordering_cost: 50, holding_cost_pct: 0.25, moq: 1, max_eoq_months_supply: 6)
 - Script: `scripts/compute_eoq.py` — reads from `agg_inventory_monthly`, writes to `fact_eoq_targets`
@@ -336,6 +337,15 @@ Supplier Performance Analytics (IPfeature12):
 - API: `GET /inv-planning/supplier-performance/summary`, `/detail`, `/items`
 - UI: SupplierPanel in InvPlanningTab
 - Pipeline: `make supplier-perf-schema`, `make supplier-perf-refresh`, `make supplier-perf-all`
+
+Forward-Looking Replenishment Plan (CI Bands + Repl. Plan):
+- Production forecast now includes P10/P90 confidence interval (CI) bands computed from residual distributions in `backtest_lag_archive`; stored as `forecast_qty_lower`/`forecast_qty_upper` in `fact_production_forecast`
+- Forward replenishment plan combines CI-band forecast with safety stock engine: EOQ, ROP, order-up-to-level per item-location across 12 forward months
+- DDL: `sql/041_create_replenishment_plan.sql` — `fact_replenishment_plan` table
+- Script: `scripts/compute_replenishment_plan.py`
+- API: `GET /inv-planning/replenishment/summary`, `/detail`, `/comparison`, `/dfu` (4 endpoints)
+- UI: ReplenishmentPlanPanel in InvPlanningTab — KPI cards, SS comparison bar chart, paginated detail table, DFU drill-down line chart with CI bands
+- Pipeline: `make replplan-schema`, `make replplan-compute`, `make replplan-all`
 
 Capital Investment Optimization (IPfeature13):
 - Portfolio-level investment planning with efficient frontier computation

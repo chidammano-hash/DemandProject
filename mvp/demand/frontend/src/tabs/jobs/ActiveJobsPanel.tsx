@@ -1,42 +1,41 @@
 /**
  * ActiveJobsPanel — live monitoring of running and queued jobs.
- * Displays animated progress bars, elapsed timers, and cancel buttons.
+ * Displays animated progress bars, elapsed timers, cancel buttons, and a
+ * collapsible log panel that accumulates progress messages in real-time.
  */
-import { useEffect, useState } from "react";
-import { Timer } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Timer, ScrollText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Job } from "@/types/jobs";
 import { GROUP_CONFIG } from "@/types/jobs";
-import { formatDuration, jobDuration, getGroupKey, STATUS_CONFIG } from "./jobsShared";
+import { formatDuration, jobDuration, getGroupKey } from "./jobsShared";
+import { StatusBadge } from "./StatusBadge";
 
-// ---------------------------------------------------------------------------
-// StatusBadge
-// ---------------------------------------------------------------------------
-function StatusBadge({ status }: { status: string }) {
-  const config = STATUS_CONFIG[status] || STATUS_CONFIG.queued;
-  const Icon = config.icon;
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
-        config.bg,
-        config.color,
-      )}
-    >
-      <Icon className={cn("h-3 w-3", status === "running" && "animate-spin")} />
-      {config.label}
-    </span>
-  );
-}
+const MAX_LOG_ENTRIES = 500;
 
 // ---------------------------------------------------------------------------
 // ActiveJobCard — single live job card
 // ---------------------------------------------------------------------------
+interface LogEntry {
+  ts: string; // HH:MM:SS
+  pct: number;
+  msg: string;
+}
+
+function nowTs() {
+  return new Date().toLocaleTimeString("en-US", { hour12: false });
+}
+
 function ActiveJobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => void }) {
   const [elapsed, setElapsed] = useState("");
+  const [showLogs, setShowLogs] = useState(false);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const lastMsgRef = useRef<string>("");
+  const logEndRef = useRef<HTMLDivElement>(null);
   const groupKey = getGroupKey(job.job_type);
   const cfg = GROUP_CONFIG[groupKey] || GROUP_CONFIG.clustering;
 
+  // Elapsed timer
   useEffect(() => {
     if (!job.started_at || job.status !== "running") return;
     const update = () => {
@@ -47,6 +46,25 @@ function ActiveJobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => 
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
   }, [job.started_at, job.status]);
+
+  // Accumulate progress_msg changes into a log (capped to MAX_LOG_ENTRIES)
+  useEffect(() => {
+    const msg = job.progress_msg || "";
+    if (msg && msg !== lastMsgRef.current) {
+      lastMsgRef.current = msg;
+      setLogs((prev) => {
+        const next = [...prev, { ts: nowTs(), pct: job.progress_pct ?? 0, msg }];
+        return next.length > MAX_LOG_ENTRIES ? next.slice(-MAX_LOG_ENTRIES) : next;
+      });
+    }
+  }, [job.progress_msg, job.progress_pct]);
+
+  // Auto-scroll log panel to bottom
+  useEffect(() => {
+    if (showLogs) {
+      logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [logs, showLogs]);
 
   return (
     <div className={cn("rounded-xl border-2 p-4 transition-all", cfg.borderColor, cfg.bgColor)}>
@@ -89,6 +107,19 @@ function ActiveJobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => 
             <Timer className="h-3 w-3 inline mr-0.5" />
             {elapsed || jobDuration(job)}
           </span>
+          <button
+            onClick={() => setShowLogs((v) => !v)}
+            className={cn(
+              "flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium transition-colors",
+              showLogs
+                ? "border-primary/40 bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:bg-muted",
+            )}
+            title="Toggle logs"
+          >
+            <ScrollText className="h-3 w-3" />
+            Logs{logs.length > 0 && ` (${logs.length})`}
+          </button>
           {(job.status === "running" || job.status === "queued") && (
             <button
               onClick={() => onCancel(job.job_id)}
@@ -99,6 +130,24 @@ function ActiveJobCard({ job, onCancel }: { job: Job; onCancel: (id: string) => 
           )}
         </div>
       </div>
+
+      {/* Log panel */}
+      {showLogs && (
+        <div className="mt-3 rounded-md border border-border bg-black/80 dark:bg-black/60 px-3 py-2 max-h-48 overflow-y-auto font-mono text-[10px] leading-relaxed">
+          {logs.length === 0 ? (
+            <span className="text-muted-foreground/60">Waiting for first log entry…</span>
+          ) : (
+            logs.map((entry, i) => (
+              <div key={i} className="flex gap-2">
+                <span className="text-muted-foreground/50 shrink-0">{entry.ts}</span>
+                <span className="text-green-400/70 shrink-0 w-7 text-right">{entry.pct}%</span>
+                <span className="text-green-300">{entry.msg}</span>
+              </div>
+            ))
+          )}
+          <div ref={logEndRef} />
+        </div>
+      )}
     </div>
   );
 }

@@ -82,8 +82,12 @@ async def test_summary_no_data():
 async def test_summary_with_version_param():
     """When plan_version is provided, skips resolution and returns summary."""
     pool, conn, cursor = _make_pool()
-    # fetchone called once for summary row; fetchall for abc breakdown
-    cursor.fetchone.return_value = (1000, 55000.0, datetime.datetime(2026, 3, 1, 6, 0, 0))
+    # plan_version provided → no version-resolution fetchone.
+    # Call order: fetchone (summary), fetchall (abc_rows), fetchone (ci_row).
+    cursor.fetchone.side_effect = [
+        (1000, 55000.0, datetime.datetime(2026, 3, 1, 6, 0, 0)),  # summary row
+        (800, 1000, 35.0),                                          # ci_row
+    ]
     cursor.fetchall.return_value = [
         ("A", 200, 20000.0),
         ("B", 500, 25000.0),
@@ -101,6 +105,8 @@ async def test_summary_with_version_param():
     assert data["plan_version"] == "2026-03"
     assert data["total_dfu_count"] == 1000
     assert len(data["by_abc_class"]) == 3
+    assert "ci_coverage_pct" in data
+    assert "avg_ci_width" in data
 
 
 # ---------------------------------------------------------------------------

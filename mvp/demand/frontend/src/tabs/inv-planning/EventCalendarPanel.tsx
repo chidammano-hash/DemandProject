@@ -5,8 +5,9 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Calendar, Plus, CheckCircle, Clock } from "lucide-react";
+import { Calendar, CalendarDays, Plus, CheckCircle, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/EmptyState";
 import {
   eventKeys,
   fetchEventCalendar,
@@ -161,8 +162,17 @@ export function EventCalendarPanel() {
         <CardContent className="p-0">
           {isLoading ? (
             <p className="p-4 text-sm text-muted-foreground">Loading…</p>
-          ) : !events.length ? (
-            <p className="p-4 text-sm text-muted-foreground">No events found for this month.</p>
+          ) : events?.length === 0 ? (
+            <div className="p-6">
+              <EmptyState
+                icon={CalendarDays}
+                title="No events or promotions planned"
+                description="The event calendar records promotions, seasonal uplifts, product launches, and clearance events that override the baseline statistical forecast. Each event requires approval before it flows into the consensus demand plan."
+                steps={[
+                  { label: "Click 'New Event' above to create the first event", command: "(no CLI command — events are created in the UI)" },
+                ]}
+              />
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

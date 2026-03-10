@@ -1,17 +1,42 @@
 /**
- * IPfeature4 + IPfeature5 + IPfeature6 + IPfeature7 + IPfeature8–IPfeature14 + F1.1
- * F3.1–F3.5 (Bias, Service Level, Lead Time, Blended, Echelon) + F4.1–F4.4
- * EOQ & Cycle Stock + Replenishment Policy + Health Score + Exception Queue +
- * Fill Rate + ABC-XYZ + Supplier + Intramonth + Safety Stock + Variability +
- * Lead Time + Demand Signals + Simulation + Investment Plan + Production Forecast +
- * Blended Demand + Echelon Planning + Financial Plan + Events + Scenarios
+ * Inventory Planning — 26-panel tab with grouped sidebar navigation.
  *
- * PL-009: Sub-navigation added — shows one panel at a time to reduce scroll
- * and initial API call overhead.
+ * IPfeature4–IPfeature14 + F1.1–F4.4
+ * Redesigned with left-sidebar grouped navigation (PL-009 extended).
  */
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import {
+  AlertTriangle,
+  Activity,
+  Package2,
+  Shield,
+  TrendingUp,
+  Grid3x3,
+  Truck,
+  Clock,
+  ArchiveX,
+  BarChart2,
+  Timer,
+  Radio,
+  FlaskConical,
+  DollarSign,
+  RefreshCw,
+  Target,
+  Layers,
+  Network,
+  Banknote,
+  CalendarDays,
+  Zap,
+  ClipboardList,
+  Edit3,
+  ShoppingCart,
+  FileText,
+  TrendingDown,
+  CheckSquare,
+} from "lucide-react";
+
 import { ExceptionQueuePanel } from "./inv-planning/ExceptionQueuePanel";
 import { PortfolioHealthPanel } from "./inv-planning/PortfolioHealthPanel";
 import { EoqPanel } from "./inv-planning/EoqPanel";
@@ -38,250 +63,247 @@ import { EchelonPanel } from "./inv-planning/EchelonPanel";
 import { FinancialPlanPanel } from "./inv-planning/FinancialPlanPanel";
 import { EventCalendarPanel } from "./inv-planning/EventCalendarPanel";
 import { ScenarioPlanningPanel } from "./inv-planning/ScenarioPlanningPanel";
+import { ReplenishmentPlanPanel } from "./inv-planning/ReplenishmentPlanPanel";
 
 // ---------------------------------------------------------------------------
-// Sub-navigation config
+// Navigation config
 // ---------------------------------------------------------------------------
-const SUB_TABS = [
-  { key: "exceptions",  label: "Exceptions",   group: "Daily" },
-  { key: "health",      label: "Health",        group: "Daily" },
-  { key: "eoq",         label: "EOQ",           group: "Optimize" },
-  { key: "policy",      label: "Policy",        group: "Optimize" },
-  { key: "fillrate",    label: "Fill Rate",     group: "Analytics" },
-  { key: "abcxyz",      label: "ABC-XYZ",       group: "Analytics" },
-  { key: "supplier",    label: "Supplier",      group: "Analytics" },
-  { key: "intramonth",  label: "Intramonth",    group: "Analytics" },
-  { key: "safetystock", label: "Safety Stock",  group: "Planning" },
-  { key: "variability", label: "Variability",   group: "Planning" },
-  { key: "leadtime",    label: "Lead Time",     group: "Planning" },
-  { key: "signals",     label: "Signals",       group: "Planning" },
-  { key: "simulation",  label: "Simulation",    group: "Planning" },
-  { key: "investment",  label: "Investment",    group: "Planning" },
-  { key: "forecast",    label: "Demand Fcst",   group: "Planning" },
-  { key: "blended",     label: "Blended Demand", group: "Sensing" },
-  { key: "echelon",     label: "Echelon SS",    group: "Sensing" },
-  { key: "finance",     label: "Financial Plan", group: "Strategic" },
-  { key: "events",      label: "Events",        group: "Strategic" },
-  { key: "scenarios",   label: "Scenarios",     group: "Strategic" },
-  { key: "demandplan",    label: "Demand Plan",    group: "Supply" },
-  { key: "overridequeue",  label: "Override Queue", group: "Supply" },
-  { key: "procurement",   label: "Procurement",    group: "Supply" },
-  { key: "openpos",       label: "Open POs",       group: "Supply" },
-  { key: "projection",   label: "Projection",     group: "Supply" },
-  { key: "plannedorders", label: "Planned Orders", group: "Supply" },
+const GROUPS = [
+  {
+    id: "daily",
+    label: "Daily Operations",
+    tooltip: "Morning routine: triage exceptions, check portfolio health",
+    accent: "text-red-600",
+    divider: "bg-red-500",
+    tabs: [
+      { key: "exceptions", label: "Exceptions", icon: AlertTriangle },
+      { key: "health",     label: "Health",     icon: Activity },
+    ],
+  },
+  {
+    id: "optimize",
+    label: "Replenishment Optimization",
+    tooltip: "EOQ, safety stock, policies, and forward planning",
+    accent: "text-blue-600",
+    divider: "bg-blue-500",
+    tabs: [
+      { key: "eoq",    label: "EOQ",    icon: Package2 },
+      { key: "policy", label: "Policy", icon: Shield },
+    ],
+  },
+  {
+    id: "analytics",
+    label: "Analytics",
+    tooltip: "Fill rate, ABC-XYZ, supplier performance, intramonth stockouts",
+    accent: "text-emerald-600",
+    divider: "bg-emerald-500",
+    tabs: [
+      { key: "fillrate",   label: "Fill Rate",  icon: TrendingUp },
+      { key: "abcxyz",     label: "ABC-XYZ",    icon: Grid3x3 },
+      { key: "supplier",   label: "Supplier",   icon: Truck },
+      { key: "intramonth", label: "Intramonth", icon: Clock },
+    ],
+  },
+  {
+    id: "planning",
+    label: "Planning",
+    tooltip: "Demand forecast, replenishment plan, projection",
+    accent: "text-violet-600",
+    divider: "bg-violet-500",
+    tabs: [
+      { key: "safetystock", label: "Safety Stock",      icon: ArchiveX },
+      { key: "variability", label: "Variability",       icon: BarChart2 },
+      { key: "leadtime",    label: "Lead Time",         icon: Timer },
+      { key: "signals",     label: "Signals",           icon: Radio },
+      { key: "simulation",  label: "Simulation",        icon: FlaskConical },
+      { key: "investment",  label: "Investment",        icon: DollarSign },
+      { key: "replplan",    label: "Replenishment Plan", icon: RefreshCw },
+      { key: "forecast",    label: "Demand Forecast",   icon: Target },
+    ],
+  },
+  {
+    id: "sensing",
+    label: "Demand Intelligence",
+    tooltip: "Blended demand signals and short-horizon sensing",
+    accent: "text-teal-600",
+    divider: "bg-teal-500",
+    tabs: [
+      { key: "blended", label: "Blended Demand", icon: Layers },
+      { key: "echelon", label: "Echelon SS",     icon: Network },
+    ],
+  },
+  {
+    id: "strategic",
+    label: "Strategic",
+    tooltip: "Multi-echelon SS, investment optimization, financial planning",
+    accent: "text-amber-600",
+    divider: "bg-amber-500",
+    tabs: [
+      { key: "finance",   label: "Financial Plan", icon: Banknote },
+      { key: "events",    label: "Events",         icon: CalendarDays },
+      { key: "scenarios", label: "Scenarios",      icon: Zap },
+    ],
+  },
+  {
+    id: "supply",
+    label: "Order-to-Cash",
+    tooltip: "Planned orders, procurement, purchase order tracking",
+    accent: "text-slate-600",
+    divider: "bg-slate-400",
+    tabs: [
+      { key: "demandplan",    label: "Demand Plan",    icon: ClipboardList },
+      { key: "overridequeue", label: "Override Queue", icon: Edit3 },
+      { key: "procurement",   label: "Procurement",    icon: ShoppingCart },
+      { key: "openpos",       label: "Open POs",       icon: FileText },
+      { key: "projection",    label: "Projection",     icon: TrendingDown },
+      { key: "plannedorders", label: "Planned Orders", icon: CheckSquare },
+    ],
+  },
 ] as const;
 
-type SubTabKey = (typeof SUB_TABS)[number]["key"];
+type SubTabKey = (typeof GROUPS)[number]["tabs"][number]["key"];
 
+// Panel title + description for each tab
+const PANEL_META: Record<SubTabKey, { title: string; description?: string }> = {
+  exceptions:    { title: "Exception Queue", description: "Replenishment exceptions ranked by severity and financial impact." },
+  health:        { title: "Portfolio Health Score", description: "4-component health scoring across safety stock, DOS, stockout risk, and forecast accuracy." },
+  eoq:           { title: "EOQ & Cycle Stock", description: "Economic Order Quantity targets and annual inventory cost breakdown." },
+  policy:        { title: "Policy Management", description: "Replenishment policies, DFU assignments, and compliance tracking." },
+  fillrate:      { title: "Fill Rate Analytics", description: "Monthly order fulfilment rates and shortage trends." },
+  abcxyz:        { title: "ABC-XYZ Segmentation", description: "Volume × variability classification matrix for policy targeting." },
+  supplier:      { title: "Supplier Performance", description: "Lead time reliability scores and variability by supplier." },
+  intramonth:    { title: "Intra-Month Stockout Detection", description: "Mid-month zero-inventory events and estimated lost sales." },
+  safetystock:   { title: "Safety Stock", description: "Calculated safety stock targets vs current on-hand by DFU." },
+  variability:   { title: "Demand Variability", description: "CV-based volatility profiles for demand segmentation." },
+  leadtime:      { title: "Lead Time Analysis", description: "Lead time mean, standard deviation, and CV by item-supplier." },
+  signals:       { title: "Demand Signals", description: "Short-horizon sensing signals: above plan, below plan, urgent alerts." },
+  simulation:    { title: "Safety Stock Simulation", description: "Monte Carlo simulation for service-level vs safety-stock trade-off." },
+  investment:    { title: "Investment Plan", description: "Efficient frontier: capital investment vs portfolio service level." },
+  replplan:      { title: "Forward-Looking Replenishment Plan", description: "Forecast-driven SS, EOQ, and ROP for the next 12 months." },
+  forecast:      { title: "Production Demand Forecast", description: "Champion ML forecasts with CI bands per DFU." },
+  blended:       { title: "Blended Demand Plan", description: "Alpha-weighted sensing signal blended with statistical forecast." },
+  echelon:       { title: "Multi-Echelon Safety Stock", description: "Risk-pooled DC-level SS with cascade severity scoring." },
+  finance:       { title: "Financial Inventory Plan", description: "Inventory value, carrying cost, and budget utilization tracking." },
+  events:        { title: "Event & Promotion Planning", description: "Promotional events, seasonal uplifts, and approval workflow." },
+  scenarios:     { title: "Supply Chain Scenario Planning", description: "Disruption scenarios with quantified financial impact." },
+  demandplan:    { title: "Demand Plan", description: "Multi-horizon consensus demand plan with quantile bands." },
+  overridequeue: { title: "Override Queue", description: "Planner demand overrides pending approval." },
+  procurement:   { title: "Procurement Workflow", description: "Purchase order approval and release pipeline." },
+  openpos:       { title: "Open Purchase Orders", description: "In-flight PO lines with delivery dates and risk flags." },
+  projection:    { title: "Forward Inventory Projection", description: "Day-by-day projected position: no orders, with POs, with planned orders." },
+  plannedorders: { title: "Planned Orders", description: "System-generated replenishment proposals awaiting approval." },
+};
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 export function InvPlanningTab() {
   const [activePanel, setActivePanel] = useState<SubTabKey>("exceptions");
 
+  const meta = PANEL_META[activePanel];
+  const activeGroup = GROUPS.find((g) =>
+    (g.tabs as ReadonlyArray<{ key: string; label: string; icon: unknown }>).some((t) => t.key === activePanel)
+  );
+  const activeTab = activeGroup?.tabs.find((t) => t.key === activePanel);
+
   return (
-    <div className="flex flex-col gap-4 p-4">
-      {/* Header */}
-      <div>
-        <h2 className="text-xl font-semibold text-foreground">Inventory Planning</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Exception queue, health scoring, EOQ targets, replenishment policy, and demand analytics per item-location.
-        </p>
-      </div>
+    <div className="flex overflow-hidden" style={{ height: "calc(100vh - 108px)" }}>
+      {/* ------------------------------------------------------------------ */}
+      {/* Left sidebar navigation                                             */}
+      {/* ------------------------------------------------------------------ */}
+      <nav
+        className="flex-shrink-0 w-52 overflow-y-auto border-r bg-muted/20 py-3"
+        aria-label="Inventory Planning sections"
+      >
+        {GROUPS.map((group) => (
+          <div key={group.id} className="mb-1">
+            {/* Group header */}
+            <div className="flex items-center gap-2 px-3 pt-3 pb-1" title={group.tooltip}>
+              <div className={cn("h-px flex-1", group.divider, "opacity-40")} />
+              <span className={cn("text-[10px] font-bold uppercase tracking-widest whitespace-nowrap", group.accent)}>
+                {group.label}
+              </span>
+              <div className={cn("h-px flex-1", group.divider, "opacity-40")} />
+            </div>
 
-      {/* Sub-navigation tab strip (PL-009) */}
-      <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/30 p-1">
-        {SUB_TABS.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActivePanel(tab.key)}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-              activePanel === tab.key
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground hover:bg-card/50",
-            )}
-          >
-            {tab.label}
-          </button>
+            {/* Tab items */}
+            {group.tabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activePanel === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setActivePanel(tab.key as SubTabKey)}
+                  className={cn(
+                    "flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-medium transition-all",
+                    "rounded-none border-l-2",
+                    isActive
+                      ? "border-l-foreground bg-background text-foreground shadow-sm"
+                      : "border-l-transparent text-muted-foreground hover:border-l-muted-foreground/40 hover:bg-accent hover:text-foreground",
+                  )}
+                  aria-current={isActive ? "page" : undefined}
+                >
+                  <Icon
+                    size={13}
+                    className={cn(
+                      "flex-shrink-0",
+                      isActive ? group.accent : "text-muted-foreground",
+                    )}
+                  />
+                  <span className="truncate">{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
         ))}
+      </nav>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Main content area                                                   */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="flex flex-1 flex-col min-w-0 overflow-y-auto">
+        {/* Panel header breadcrumb */}
+        <div className="flex-shrink-0 border-b bg-background px-6 py-3">
+          <p className="text-xs text-muted-foreground mb-1">
+            Inventory Planning › {activeGroup?.label ?? ""} › {activeTab?.label ?? ""}
+          </p>
+          <h2 className="text-base font-semibold text-foreground leading-none">{meta.title}</h2>
+          {meta.description && (
+            <p className="mt-1 text-xs text-muted-foreground">{meta.description}</p>
+          )}
+        </div>
+
+        {/* Panel body */}
+        <div className="flex-1 p-5">
+          {activePanel === "exceptions"    && <ExceptionQueuePanel />}
+          {activePanel === "health"        && <PortfolioHealthPanel />}
+          {activePanel === "eoq"           && <EoqPanel />}
+          {activePanel === "policy"        && <PolicyManagementPanel />}
+          {activePanel === "fillrate"      && <FillRatePanel />}
+          {activePanel === "abcxyz"        && <AbcXyzPanel />}
+          {activePanel === "supplier"      && <SupplierPanel />}
+          {activePanel === "intramonth"    && <IntramonthPanel />}
+          {activePanel === "safetystock"   && <SafetyStockPanel />}
+          {activePanel === "variability"   && <VariabilityPanel />}
+          {activePanel === "leadtime"      && <LeadTimePanel />}
+          {activePanel === "signals"       && <DemandSignalsPanel />}
+          {activePanel === "simulation"    && <SimulationPanel />}
+          {activePanel === "investment"    && <InvestmentPanel />}
+          {activePanel === "replplan"      && <ReplenishmentPlanPanel />}
+          {activePanel === "forecast"      && <DemandForecastPanel />}
+          {activePanel === "blended"       && <BlendedDemandPanel />}
+          {activePanel === "echelon"       && <EchelonPanel />}
+          {activePanel === "finance"       && <FinancialPlanPanel />}
+          {activePanel === "events"        && <EventCalendarPanel />}
+          {activePanel === "scenarios"     && <ScenarioPlanningPanel />}
+          {activePanel === "demandplan"    && <DemandPlanPanel />}
+          {activePanel === "overridequeue" && <OverrideQueuePanel />}
+          {activePanel === "procurement"   && <ProcurementPanel />}
+          {activePanel === "openpos"       && <OpenPOPanel />}
+          {activePanel === "projection"    && <ProjectionPanel />}
+          {activePanel === "plannedorders" && <PlannedOrdersPanel />}
+        </div>
       </div>
-
-      {/* Active panel */}
-      {activePanel === "exceptions" && <ExceptionQueuePanel />}
-
-      {activePanel === "health" && <PortfolioHealthPanel />}
-
-      {activePanel === "eoq" && <EoqPanel />}
-
-      {activePanel === "policy" && <PolicyManagementPanel />}
-
-      {activePanel === "fillrate" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Fill Rate Analytics</h3>
-          <FillRatePanel />
-        </div>
-      )}
-
-      {activePanel === "abcxyz" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">ABC-XYZ Segmentation</h3>
-          <AbcXyzPanel />
-        </div>
-      )}
-
-      {activePanel === "supplier" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Supplier Performance</h3>
-          <SupplierPanel />
-        </div>
-      )}
-
-      {activePanel === "intramonth" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Intra-Month Stockout Detection</h3>
-          <IntramonthPanel />
-        </div>
-      )}
-
-      {activePanel === "safetystock" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Safety Stock</h3>
-          <SafetyStockPanel />
-        </div>
-      )}
-
-      {activePanel === "variability" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Demand Variability</h3>
-          <VariabilityPanel />
-        </div>
-      )}
-
-      {activePanel === "leadtime" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Lead Time Analysis</h3>
-          <LeadTimePanel />
-        </div>
-      )}
-
-      {activePanel === "signals" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Demand Signals</h3>
-          <DemandSignalsPanel />
-        </div>
-      )}
-
-      {activePanel === "simulation" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Safety Stock Simulation</h3>
-          <SimulationPanel />
-        </div>
-      )}
-
-      {activePanel === "investment" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Investment Plan</h3>
-          <InvestmentPanel />
-        </div>
-      )}
-
-      {activePanel === "forecast" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Production Demand Forecast</h3>
-          <p className="text-xs text-muted-foreground">
-            Forward-looking ML forecasts generated from champion models. Run{" "}
-            <code className="font-mono">make forecast-generate</code> to refresh.
-          </p>
-          <DemandForecastPanel />
-        </div>
-      )}
-
-      {activePanel === "demandplan" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <DemandPlanPanel />
-        </div>
-      )}
-
-      {activePanel === "overridequeue" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <OverrideQueuePanel />
-        </div>
-      )}
-
-      {activePanel === "procurement" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <ProcurementPanel />
-        </div>
-      )}
-
-      {activePanel === "openpos" && (
-        <OpenPOPanel />
-      )}
-
-      {activePanel === "projection" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Forward Inventory Projection</h3>
-          <p className="text-xs text-muted-foreground">
-            Day-by-day projected inventory position across 3 scenarios: no new orders,
-            with confirmed open POs, and with planned orders.
-          </p>
-          <ProjectionPanel />
-        </div>
-      )}
-
-      {activePanel === "plannedorders" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <PlannedOrdersPanel />
-        </div>
-      )}
-
-      {activePanel === "blended" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Blended Demand Plan</h3>
-          <p className="text-xs text-muted-foreground">
-            Short-horizon demand sensing signal blended with statistical forecast using linearly decaying alpha weights.
-          </p>
-          <BlendedDemandPanel />
-        </div>
-      )}
-
-      {activePanel === "echelon" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Multi-Echelon Safety Stock</h3>
-          <p className="text-xs text-muted-foreground">
-            Risk-pooled DC-level safety stock targets with cascade risk scoring across downstream stores.
-          </p>
-          <EchelonPanel />
-        </div>
-      )}
-
-      {activePanel === "finance" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Financial Inventory Plan</h3>
-          <p className="text-xs text-muted-foreground">
-            Inventory value, carrying cost projections, excess inventory, and budget utilization tracking.
-          </p>
-          <FinancialPlanPanel />
-        </div>
-      )}
-
-      {activePanel === "events" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Event & Promotion Planning</h3>
-          <p className="text-xs text-muted-foreground">
-            Manage promotional events, seasonal uplifts, and forecast adjustments with approval workflow.
-          </p>
-          <EventCalendarPanel />
-        </div>
-      )}
-
-      {activePanel === "scenarios" && (
-        <div className="rounded-lg border bg-card p-4 space-y-4">
-          <h3 className="font-semibold text-base">Supply Chain Scenario Planning</h3>
-          <p className="text-xs text-muted-foreground">
-            Model disruption scenarios (supplier delay, capacity constraints, demand shocks) and quantify financial impact.
-          </p>
-          <ScenarioPlanningPanel />
-        </div>
-      )}
     </div>
   );
 }

@@ -4,7 +4,7 @@
 
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
-export type JobGroup = "clustering" | "backtest" | "seasonality" | "champion";
+export type JobGroup = "clustering" | "backtest" | "seasonality" | "champion" | "ai" | "forecast" | "replenishment" | "inventory";
 
 export interface JobType {
   type_id: string;
@@ -116,5 +116,33 @@ export const GROUP_CONFIG: Record<string, GroupConfig> = {
     bgColor: "bg-amber-50 dark:bg-amber-950/30",
     borderColor: "border-amber-200 dark:border-amber-800",
     iconBg: "bg-amber-100 dark:bg-amber-900/50",
+  },
+  ai: {
+    label: "AI Planning",
+    color: "text-teal-600 dark:text-teal-400",
+    bgColor: "bg-teal-50 dark:bg-teal-950/30",
+    borderColor: "border-teal-200 dark:border-teal-800",
+    iconBg: "bg-teal-100 dark:bg-teal-900/50",
+  },
+  forecast: {
+    label: "Forecasting",
+    color: "text-purple-600 dark:text-purple-400",
+    bgColor: "bg-purple-50 dark:bg-purple-950/30",
+    borderColor: "border-purple-200 dark:border-purple-800",
+    iconBg: "bg-purple-100 dark:bg-purple-900/50",
+  },
+  replenishment: {
+    label: "Replenishment",
+    color: "text-orange-600 dark:text-orange-400",
+    bgColor: "bg-orange-50 dark:bg-orange-950/30",
+    borderColor: "border-orange-200 dark:border-orange-800",
+    iconBg: "bg-orange-100 dark:bg-orange-900/50",
+  },
+  inventory: {
+    label: "Inventory Planning",
+    color: "text-cyan-600 dark:text-cyan-400",
+    bgColor: "bg-cyan-50 dark:bg-cyan-950/30",
+    borderColor: "border-cyan-200 dark:border-cyan-800",
+    iconBg: "bg-cyan-100 dark:bg-cyan-900/50",
   },
 };

@@ -17,6 +17,8 @@ import {
   STALE,
 } from "@/api/queries";
 import type { PurchaseOrderLine } from "@/api/queries";
+import { EmptyState } from "@/components/EmptyState";
+import { ShoppingCart } from "lucide-react";
 
 function fmt(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -147,9 +149,15 @@ export function ProcurementPanel() {
           {ordersQ.isLoading ? (
             <div className="p-6 text-center text-xs text-muted-foreground">Loading...</div>
           ) : orders.length === 0 ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">
-              No purchase orders found.
-            </div>
+            <EmptyState
+              icon={ShoppingCart}
+              title="No purchase orders in workflow"
+              description="The procurement workflow manages proposed → planner-approved → buyer-released purchase orders generated from planned replenishment. Each order goes through a two-step approval before being released to the supplier."
+              steps={[
+                { label: "Generate planned orders first", command: "make planned-orders-generate" },
+                { label: "Approve planned orders to create POs", command: "(approve via Planned Orders panel)" },
+              ]}
+            />
           ) : (
             <div className="divide-y">
               {orders.map((po) => (

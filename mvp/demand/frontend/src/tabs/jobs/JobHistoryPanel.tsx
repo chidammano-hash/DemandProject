@@ -7,27 +7,8 @@ import { BarChart3, ChevronDown, ChevronRight, Trash2, Zap } from "lucide-react"
 import { cn } from "@/lib/utils";
 import type { Job, JobType } from "@/types/jobs";
 import { GROUP_CONFIG } from "@/types/jobs";
-import { formatTimestamp, jobDuration, getGroupKey, STATUS_CONFIG, GROUP_ICONS } from "./jobsShared";
-
-// ---------------------------------------------------------------------------
-// StatusBadge (local, avoids cross-panel import of ActiveJobsPanel)
-// ---------------------------------------------------------------------------
-function StatusBadge({ status }: { status: string }) {
-  const config = STATUS_CONFIG[status] || STATUS_CONFIG.queued;
-  const Icon = config.icon;
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
-        config.bg,
-        config.color,
-      )}
-    >
-      <Icon className={cn("h-3 w-3", status === "running" && "animate-spin")} />
-      {config.label}
-    </span>
-  );
-}
+import { formatTimestamp, jobDuration, getGroupKey, GROUP_ICONS } from "./jobsShared";
+import { StatusBadge } from "./StatusBadge";
 
 // ---------------------------------------------------------------------------
 // JobHistoryRow — expandable table row
@@ -143,11 +124,27 @@ function JobHistoryRow({
               )}
 
               {job.result && (
-                <div>
-                  <span className="font-semibold text-foreground/80 block mb-1">Result</span>
-                  <pre className="text-muted-foreground bg-muted/50 rounded-lg p-2 overflow-x-auto text-[10px] font-mono">
-                    {JSON.stringify(job.result, null, 2)}
-                  </pre>
+                <div className="space-y-2">
+                  {typeof job.result.output_log === "string" && job.result.output_log && (
+                    <div>
+                      <span className="font-semibold text-foreground/80 block mb-1">Output Log</span>
+                      <pre className="text-green-300 bg-black/80 rounded-lg p-2 overflow-x-auto overflow-y-auto max-h-48 text-[10px] font-mono whitespace-pre-wrap">
+                        {job.result.output_log}
+                      </pre>
+                    </div>
+                  )}
+                  {Object.keys(job.result).filter((k) => k !== "output_log").length > 0 && (
+                    <div>
+                      <span className="font-semibold text-foreground/80 block mb-1">Result</span>
+                      <pre className="text-muted-foreground bg-muted/50 rounded-lg p-2 overflow-x-auto text-[10px] font-mono">
+                        {JSON.stringify(
+                          Object.fromEntries(Object.entries(job.result).filter(([k]) => k !== "output_log")),
+                          null,
+                          2,
+                        )}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

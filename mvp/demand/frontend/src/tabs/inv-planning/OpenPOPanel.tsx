@@ -6,9 +6,10 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle, Package, Clock } from "lucide-react";
+import { AlertTriangle, CheckCircle, Package, Clock, FileText } from "lucide-react";
 import { fetchOpenPOs, fetchOpenPOSummary, fetchPastDuePOs } from "@/api/queries/supply";
 import { queryKeys } from "@/api/queries/core";
+import { EmptyState } from "@/components/EmptyState";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -138,6 +139,18 @@ export function OpenPOPanel() {
         />
       </div>
 
+      {/* PO Status Legend */}
+      <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border mb-3">
+        <span className="font-medium text-foreground">PO Status: </span>
+        <span className="text-blue-600">● Open</span> · <span className="text-amber-600">● In Transit</span> · <span className="text-yellow-600">● Partial</span> · <span className="text-green-600">● Received</span>
+      </div>
+
+      {/* Delivery Status Legend */}
+      <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border mb-3">
+        <span className="font-medium text-foreground">Delivery Status: </span>
+        <span className="text-green-600">● On Time (0d)</span> · <span className="text-amber-600">● At Risk (1–7d late, monitor)</span> · <span className="text-red-600">● Late (&gt;7d, escalate)</span>
+      </div>
+
       {/* Past-due alert strip */}
       {(pastDueQuery.data?.total ?? 0) > 0 && (
         <div className="rounded-lg border border-yellow-300 bg-yellow-50 dark:bg-yellow-900/10 p-3">
@@ -204,6 +217,17 @@ export function OpenPOPanel() {
       </div>
 
       {/* PO Table */}
+      {!posQuery.isLoading && pos?.items.length === 0 ? (
+        <EmptyState
+          icon={FileText}
+          title="No open purchase orders loaded"
+          description="Open POs track confirmed in-flight supplier orders with their promised delivery dates. This data feeds the inventory projection scenarios (with-PO scenario) and planned order confidence scores."
+          steps={[
+            { label: "Load open PO data from inventory files", command: "make load-inventory" },
+            { label: "Or manually upload a PO CSV", command: "make load-open-pos" },
+          ]}
+        />
+      ) : (
       <div className="rounded-lg border overflow-auto">
         <table className="w-full text-xs">
           <thead className="bg-muted/40">
@@ -220,14 +244,6 @@ export function OpenPOPanel() {
               <tr>
                 <td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">
                   Loading...
-                </td>
-              </tr>
-            )}
-            {!posQuery.isLoading && pos?.items.length === 0 && (
-              <tr>
-                <td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">
-                  No open purchase orders found.{" "}
-                  <span className="font-mono text-xs">Run make po-load</span> to ingest data.
                 </td>
               </tr>
             )}
@@ -253,6 +269,7 @@ export function OpenPOPanel() {
           </tbody>
         </table>
       </div>
+      )}
 
       {/* Pagination */}
       {pos && pos.total > PAGE_SIZE && (

@@ -12,6 +12,7 @@ import {
   ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
+import { Target } from "lucide-react";
 import {
   queryKeys,
   fetchProductionForecastSummary,
@@ -22,6 +23,7 @@ import {
   type ProductionForecastPoint,
 } from "@/api/queries";
 
+import { EmptyState } from "@/components/EmptyState";
 import { formatFixed } from "@/lib/formatters";
 
 function fmtDate(iso: string | null | undefined): string {
@@ -108,6 +110,11 @@ function DfuForecastChart({
         <span>
           Generated: <strong className="text-foreground">{fmtDate(data.generated_at)}</strong>
         </span>
+        {data?.generated_at && new Date(data.generated_at) < new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) && (
+          <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded mt-1">
+            ⚠ Forecast is more than 7 days old. Run <code className="font-mono text-[11px]">make forecast-generate</code> to refresh.
+          </p>
+        )}
         {data.is_recursive && (
           <span className="rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 px-2 py-0.5 text-[10px] font-semibold">
             RECURSIVE
@@ -119,17 +126,26 @@ function DfuForecastChart({
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
           <XAxis dataKey="month" tick={{ fontSize: 11 }} />
           <YAxis tick={{ fontSize: 11 }} />
-          <Tooltip formatter={(v: number) => formatFixed(v, 1)} />
+          <Tooltip
+            formatter={(v: number, name: string) => {
+              const labelMap: Record<string, string> = {
+                "P10 Floor": "P10 Floor",
+                "P50 Median": "P50 Median",
+                "P90 Ceiling": "P90 Ceiling",
+              };
+              return [formatFixed(v, 1), labelMap[name] ?? name];
+            }}
+          />
           <Legend iconSize={12} wrapperStyle={{ fontSize: 11 }} />
           {data.forecasts.some((p) => p.forecast_qty_lower != null) && (
-            <Bar dataKey="lower" name="Lower CI" fill="var(--muted)" opacity={0.4} />
+            <Bar dataKey="lower" name="P10 Floor" fill="var(--muted)" opacity={0.4} />
           )}
-          <Bar dataKey="qty" name="Forecast Qty" fill="var(--primary)" radius={[2, 2, 0, 0]} />
+          <Bar dataKey="qty" name="P50 Median" fill="var(--primary)" radius={[2, 2, 0, 0]} />
           {data.forecasts.some((p) => p.forecast_qty_upper != null) && (
             <Line
               type="monotone"
               dataKey="upper"
-              name="Upper CI"
+              name="P90 Ceiling"
               stroke="var(--muted-foreground)"
               strokeDasharray="4 2"
               dot={false}
@@ -138,6 +154,9 @@ function DfuForecastChart({
           <ReferenceLine x={chartData[0]?.month ?? ""} stroke="var(--primary)" strokeWidth={1.5} label="" />
         </ComposedChart>
       </ResponsiveContainer>
+      <p className="text-xs text-muted-foreground mt-1">
+        <strong>P10</strong> (dashed lower) = conservative floor · <strong>P50</strong> (solid) = median forecast · <strong>P90</strong> (dashed upper) = cautious ceiling. Use P10 for safety stock, P50 for consensus demand planning.
+      </p>
     </div>
   );
 }
@@ -150,7 +169,7 @@ export function DemandForecastPanel() {
   const [dfuItem, setDfuItem] = useState("");
   const [dfuLoc, setDfuLoc] = useState("");
 
-  const { data: versions } = useQuery({
+  const { data: versions, isLoading: versionsLoading } = useQuery({
     queryKey: queryKeys.productionForecastVersions(),
     queryFn: fetchProductionForecastVersions,
     staleTime: STALE.TEN_MIN,
@@ -201,15 +220,15 @@ export function DemandForecastPanel() {
         </div>
         {versions && versions.versions.length > 0 && (
           <div className="flex items-center gap-2 text-sm">
-            <label className="text-muted-foreground whitespace-nowrap">Version</label>
+            <span className="text-xs text-muted-foreground">Forecast Version:</span>
             <select
               value={effectiveVersion ?? ""}
               onChange={(e) => setSelectedVersion(e.target.value || undefined)}
               className="rounded border bg-background px-2 py-1 text-sm"
             >
-              {versions.versions.map((v) => (
+              {versions.versions.map((v, idx) => (
                 <option key={v.plan_version} value={v.plan_version}>
-                  {v.plan_version} ({v.dfu_count.toLocaleString()} DFUs)
+                  {idx === 0 ? `▶ Latest — ${v.plan_version}` : v.plan_version} ({v.dfu_count.toLocaleString()} DFUs)
                 </option>
               ))}
             </select>
@@ -217,20 +236,35 @@ export function DemandForecastPanel() {
         )}
       </div>
 
+      {/* Empty state — shown when versions list is loaded but empty */}
+      {!versionsLoading && (versions?.versions?.length ?? 0) === 0 && (
+        <EmptyState
+          icon={Target}
+          title="No production forecasts generated"
+          description="Production forecasts are generated by running champion ML models (LGBM/CatBoost/XGBoost) forward across the planning horizon. Each DFU gets a per-month forecast with P10/P90 confidence bands derived from backtest residuals."
+          steps={[
+            { label: "Run backtests to train models", command: "make backtest-all" },
+            { label: "Select champion model per DFU", command: "make champion-select" },
+            { label: "Apply schema (first time only)", command: "make forecast-prod-schema" },
+            { label: "Generate production forecasts", command: "make forecast-generate" },
+          ]}
+        />
+      )}
+
       {/* KPI cards */}
       {summaryLoading ? (
         <p className="text-sm text-muted-foreground">Loading summary…</p>
       ) : summary ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KpiCard
-            label="Plan Version"
+            label="Forecast Version"
             value={summary.plan_version ?? "—"}
             sub={`Generated ${fmtDate(summary.generated_at)}`}
           />
           <KpiCard
-            label="DFU Coverage"
+            label="SKU-Locations Planned"
             value={formatFixed(summary.total_dfu_count)}
-            sub="item-locations with forecasts"
+            sub="item-location pairs"
           />
           <KpiCard
             label={`Total Forecast (${horizonMonths}M)`}
@@ -243,16 +277,13 @@ export function DemandForecastPanel() {
             sub="forward-looking window"
           />
         </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          No production forecasts available. Run <code className="font-mono text-xs">make forecast-generate</code> to generate.
-        </p>
-      )}
+      ) : null}
 
       {/* ABC class breakdown chart */}
       {abcChartData.length > 0 && (
         <div className="rounded-lg border bg-card p-4 space-y-3">
           <h4 className="text-sm font-semibold">Forecast by ABC Class</h4>
+          <p className="text-xs text-muted-foreground" title="A = top 80% of demand value · B = next 15% · C = bottom 5%">Forecast by ABC Class <span className="cursor-help underline decoration-dotted">(?)</span></p>
           <ResponsiveContainer width="100%" height={180}>
             <ComposedChart data={abcChartData} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -271,18 +302,19 @@ export function DemandForecastPanel() {
         <h4 className="text-sm font-semibold">DFU Forecast Series</h4>
         <div className="flex flex-wrap gap-2">
           <input
-            placeholder="Item No"
+            placeholder="e.g. 100320"
             value={dfuItem}
             onChange={(e) => setDfuItem(e.target.value)}
             className="rounded border bg-background px-3 py-1.5 text-sm w-36"
           />
           <input
-            placeholder="Location"
+            placeholder="e.g. 1401-BULK"
             value={dfuLoc}
             onChange={(e) => setDfuLoc(e.target.value)}
             className="rounded border bg-background px-3 py-1.5 text-sm w-36"
           />
         </div>
+        <p className="text-xs text-muted-foreground mt-1">Enter exact item and location codes from master data.</p>
         <DfuForecastChart item={dfuItem} loc={dfuLoc} planVersion={effectiveVersion} />
       </div>
     </div>

@@ -9,6 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { DollarSign } from "lucide-react";
 import {
   investmentKeys,
   fetchInvestmentSummary,
@@ -20,6 +21,7 @@ import {
 } from "@/api/queries";
 
 import { KpiCard } from "@/components/KpiCard";
+import { EmptyState } from "@/components/EmptyState";
 import { formatInt, formatPct } from "@/lib/formatters";
 
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
@@ -102,20 +104,25 @@ export function InvestmentPanel() {
       {frontier && frontier.length > 0 && (
         <div>
           <p className="text-xs font-medium mb-2">Efficient Frontier</p>
+          <div className="text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2 mb-3">
+            <strong className="text-foreground">Efficient Frontier</strong>: Each point shows the portfolio fill rate achievable at a given capital investment. Use the curve to answer "What service level can we reach with a $2M budget?" or "How much investment do we need to reach 98% SL?"
+          </div>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={frontier} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+              <LineChart data={frontier} margin={{ top: 4, right: 16, left: 16, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                 <XAxis
                   dataKey="cumulative_investment"
-                  tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
                   tick={{ fontSize: 10 }}
+                  label={{ value: "Total Capital Investment ($)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
+                  tickFormatter={(v: number) => v >= 1000000 ? `$${(v/1000000).toFixed(1)}M` : v >= 1000 ? `$${(v/1000).toFixed(0)}K` : `$${v}`}
                 />
                 <YAxis
                   dataKey="achievable_csl"
                   tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`}
                   domain={[0, 1]}
                   tick={{ fontSize: 10 }}
+                  label={{ value: "Portfolio Service Level (%)", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }}
                 />
                 <Tooltip
                   formatter={(v: number, name: string) =>
@@ -137,53 +144,58 @@ export function InvestmentPanel() {
         </div>
       )}
 
-      {detailLoading ? (
+      {detailLoading || summaryLoading ? (
         <p className="text-xs text-muted-foreground">Loading...</p>
+      ) : (detail?.rows ?? []).length === 0 && !frontier?.length && !summary ? (
+        <EmptyState
+          icon={DollarSign}
+          title="No investment plan computed"
+          description="The investment plan computes an efficient frontier: each point shows the portfolio service level achievable at a given capital investment. Use this to answer 'What fill rate can we reach with a $2M inventory budget?'"
+          steps={[
+            { label: "Compute safety stock targets first", command: "make ss-compute" },
+            { label: "Apply schema (first time only)", command: "make investment-schema" },
+            { label: "Compute efficient frontier", command: "make investment-plan" },
+          ]}
+        />
       ) : (
         <>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b text-muted-foreground">
-                  <th className="text-right py-1 pr-2">Rank</th>
+                  <th className="text-right py-1 pr-2" title="Priority rank: allocate capital starting from rank 1 (highest marginal ROI) for maximum service level improvement">Rank</th>
                   <th className="text-left py-1 pr-2">Item No</th>
                   <th className="text-left py-1 pr-2">Loc</th>
                   <th className="text-center py-1 pr-2">ABC</th>
-                  <th className="text-right py-1 pr-2">Current CSL</th>
-                  <th className="text-right py-1 pr-2">Target CSL</th>
-                  <th className="text-right py-1 pr-2">Inv. Gap ($)</th>
-                  <th className="text-right py-1">Marginal ROI</th>
+                  <th className="text-right py-1 pr-2" title="Current fill rate for this item-location">Current Fill Rate</th>
+                  <th className="text-right py-1 pr-2" title="Recommended fill rate based on ABC class and policy">Target Fill Rate</th>
+                  <th className="text-right py-1 pr-2" title="Additional capital needed to reach this DFU's target service level">Additional SS Investment ($)</th>
+                  <th className="text-right py-1" title="Fill rate improvement per dollar invested. Higher = more efficient capital allocation. Rank items by this to maximize service level within budget.">Marginal ROI</th>
                 </tr>
               </thead>
               <tbody>
-                {(detail?.rows ?? []).length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="py-4 text-center text-muted-foreground">
-                      No data. Click Run Plan to compute the investment plan.
+                {(detail?.rows ?? []).map((r: InvestmentRow) => (
+                  <tr key={`${r.investment_rank}`} className={`border-b last:border-0 hover:bg-muted/30 ${
+                    r.investment_rank <= Math.ceil((detail?.total ?? 0) / 4) ? "bg-green-50 dark:bg-green-950/20" : ""
+                  }`}>
+                    <td className="py-1 pr-2 text-right text-muted-foreground">{r.investment_rank}</td>
+                    <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                    <td className="py-1 pr-2">{r.loc}</td>
+                    <td className="py-1 pr-2 text-center">{r.abc_vol ?? "-"}</td>
+                    <td className="py-1 pr-2 text-right">
+                      {r.current_csl != null ? `${(r.current_csl * 100).toFixed(1)}%` : "-"}
+                    </td>
+                    <td className="py-1 pr-2 text-right text-green-600">
+                      {r.recommended_csl != null ? `${(r.recommended_csl * 100).toFixed(1)}%` : "-"}
+                    </td>
+                    <td className="py-1 pr-2 text-right text-amber-600">
+                      {r.investment_increment != null ? (r.investment_increment >= 1000000 ? `$${(r.investment_increment/1000000).toFixed(1)}M` : r.investment_increment >= 1000 ? `$${(r.investment_increment/1000).toFixed(0)}K` : `$${r.investment_increment.toFixed(0)}`) : "—"}
+                    </td>
+                    <td className="py-1 text-right">
+                      {r.marginal_roi != null ? r.marginal_roi.toFixed(2) : "-"}
                     </td>
                   </tr>
-                ) : (
-                  (detail?.rows ?? []).map((r: InvestmentRow) => (
-                    <tr key={`${r.investment_rank}`} className="border-b last:border-0 hover:bg-muted/30">
-                      <td className="py-1 pr-2 text-right text-muted-foreground">{r.investment_rank}</td>
-                      <td className="py-1 pr-2 font-mono">{r.item_no}</td>
-                      <td className="py-1 pr-2">{r.loc}</td>
-                      <td className="py-1 pr-2 text-center">{r.abc_vol ?? "-"}</td>
-                      <td className="py-1 pr-2 text-right">
-                        {r.current_csl != null ? `${(r.current_csl * 100).toFixed(1)}%` : "-"}
-                      </td>
-                      <td className="py-1 pr-2 text-right text-green-600">
-                        {r.recommended_csl != null ? `${(r.recommended_csl * 100).toFixed(1)}%` : "-"}
-                      </td>
-                      <td className="py-1 pr-2 text-right text-amber-600">
-                        {r.investment_increment != null ? `$${formatInt(r.investment_increment)}` : "-"}
-                      </td>
-                      <td className="py-1 text-right">
-                        {r.marginal_roi != null ? r.marginal_roi.toFixed(2) : "-"}
-                      </td>
-                    </tr>
-                  ))
-                )}
+                ))}
               </tbody>
             </table>
           </div>

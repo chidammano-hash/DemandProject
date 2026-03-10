@@ -27,6 +27,11 @@ export interface SafetyStockRow {
   abc_vol: string;
   ss_demand_only: number;
   ss_lt_only: number;
+  z_score: number | null;
+  ss_gap: number | null;
+  current_qty_on_hand: number | null;
+  current_dos: number | null;
+  service_level_target: number | null;
 }
 
 export interface SafetyStockWaterfall {

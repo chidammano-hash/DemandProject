@@ -19,6 +19,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from api.core import get_conn
+from common.planning_date import get_planning_date
 
 router = APIRouter(tags=["production-forecast"])
 
@@ -166,6 +167,8 @@ async def get_production_forecast_summary(
                         "total_forecast_qty": 0.0,
                         "generated_at": None,
                         "by_abc_class": [],
+                        "ci_coverage_pct": 0.0,
+                        "avg_ci_width": None,
                     }
                 plan_version = row[0]
 
@@ -179,6 +182,9 @@ async def get_production_forecast_summary(
                 if brand:
                     where_extra += " AND d.brand = %s"
                     params.append(brand)
+                if category:
+                    where_extra += " AND d.category = %s"
+                    params.append(category)
 
             # Summary query
             cur.execute(f"""
@@ -210,6 +216,23 @@ async def get_production_forecast_summary(
             """, params)
             abc_rows = cur.fetchall()
 
+            # CI coverage stats
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE forecast_qty_lower IS NOT NULL) AS ci_count,
+                    COUNT(*) AS total_count,
+                    AVG(forecast_qty_upper - forecast_qty_lower)
+                        FILTER (WHERE forecast_qty_lower IS NOT NULL) AS avg_ci_width
+                FROM fact_production_forecast
+                WHERE plan_version = %s
+            """, [plan_version])
+            ci_row = cur.fetchone()
+
+    ci_count = int(ci_row[0]) if ci_row and ci_row[0] else 0
+    total_count = int(ci_row[1]) if ci_row and ci_row[1] else 0
+    avg_ci_width = float(ci_row[2]) if ci_row and ci_row[2] is not None else None
+    ci_coverage_pct = round(ci_count / total_count * 100, 1) if total_count > 0 else 0.0
+
     return {
         "plan_version": plan_version,
         "horizon_months": horizon_months,
@@ -224,6 +247,8 @@ async def get_production_forecast_summary(
             }
             for r in abc_rows
         ],
+        "ci_coverage_pct": ci_coverage_pct,
+        "avg_ci_width": avg_ci_width,
     }
 
 
@@ -318,28 +343,6 @@ async def get_demand_plan_comparison(
             cur.execute("""
                 SELECT
                     plan_month,
-                    quantile,
-                    forecast_qty
-                FROM fact_demand_plan
-                WHERE item_no = %s AND loc = %s
-                  AND plan_version IN (%s, %s)
-                  AND quantile IN (0.10, 0.50, 0.90)
-                ORDER BY plan_month, plan_version, quantile
-            """, [item_no, loc, v1, v2])
-            rows = cur.fetchall()
-
-    # Pivot: {plan_month: {version: {quantile: qty}}}
-    from collections import defaultdict
-    pivot: dict = defaultdict(lambda: {v1: {}, v2: {}})
-    for plan_month, quantile, qty in rows:
-        key = plan_month.isoformat()
-        # Which version does this row belong to? We need a second pass with version col
-    # Redo with version column included
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                    plan_month,
                     plan_version,
                     quantile,
                     forecast_qty
@@ -351,14 +354,15 @@ async def get_demand_plan_comparison(
             """, [item_no, loc, v1, v2])
             rows = cur.fetchall()
 
-    pivot2: dict = defaultdict(lambda: defaultdict(dict))
+    from collections import defaultdict
+    pivot: dict = defaultdict(lambda: defaultdict(dict))
     for plan_month, plan_version, quantile, qty in rows:
-        pivot2[plan_month.isoformat()][plan_version][float(quantile)] = float(qty) if qty else None
+        pivot[plan_month.isoformat()][plan_version][float(quantile)] = float(qty) if qty else None
 
     months = []
-    for month_key in sorted(pivot2.keys()):
-        d1 = pivot2[month_key].get(v1, {})
-        d2 = pivot2[month_key].get(v2, {})
+    for month_key in sorted(pivot.keys()):
+        d1 = pivot[month_key].get(v1, {})
+        d2 = pivot[month_key].get(v2, {})
         v1_p50 = d1.get(0.50)
         v2_p50 = d2.get(0.50)
         delta_p50 = round(v1_p50 - v2_p50, 2) if v1_p50 is not None and v2_p50 is not None else None
@@ -414,16 +418,17 @@ async def get_demand_plan_weekly(
                     )
                 plan_version = row[0]
 
+            planning_dt = get_planning_date()
             cur.execute("""
                 SELECT
                     plan_week, iso_week, iso_year, plan_month,
                     quantile, forecast_qty, weekly_weight
                 FROM fact_demand_plan_weekly
                 WHERE item_no = %s AND loc = %s AND plan_version = %s
-                  AND plan_week >= CURRENT_DATE
+                  AND plan_week >= %s
                 ORDER BY plan_week, quantile
                 LIMIT %s
-            """, [item_no, loc, plan_version, weeks_ahead * 3])  # 3 quantiles per week
+            """, [item_no, loc, plan_version, planning_dt, weeks_ahead * 3])  # 3 quantiles per week
             rows = cur.fetchall()
 
     # Group by week

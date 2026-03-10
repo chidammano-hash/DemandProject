@@ -148,18 +148,13 @@ async def test_get_demand_plan_versions_list():
 async def test_get_demand_plan_comparison_delta():
     """delta_p50 = v1_p50 - v2_p50, delta_pct computed correctly."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchall.side_effect = [
-        # first fetchall (unused — unused in fixed impl)
-        [],
-        # second fetchall with version column
-        [
-            (datetime.date(2026, 4, 1), "v1", 0.50, 450.0),
-            (datetime.date(2026, 4, 1), "v2", 0.50, 410.0),
-            (datetime.date(2026, 4, 1), "v1", 0.10, 320.0),
-            (datetime.date(2026, 4, 1), "v2", 0.10, 290.0),
-            (datetime.date(2026, 4, 1), "v1", 0.90, 580.0),
-            (datetime.date(2026, 4, 1), "v2", 0.90, 540.0),
-        ],
+    cursor.fetchall.return_value = [
+        (datetime.date(2026, 4, 1), "v1", 0.50, 450.0),
+        (datetime.date(2026, 4, 1), "v2", 0.50, 410.0),
+        (datetime.date(2026, 4, 1), "v1", 0.10, 320.0),
+        (datetime.date(2026, 4, 1), "v2", 0.10, 290.0),
+        (datetime.date(2026, 4, 1), "v1", 0.90, 580.0),
+        (datetime.date(2026, 4, 1), "v2", 0.90, 540.0),
     ]
 
     with patch("api.core._get_pool", return_value=pool):
@@ -245,6 +240,56 @@ async def test_get_demand_plan_weekly_404_no_data():
             resp = await client.get(
                 "/forecast/demand-plan/weekly",
                 params={"item_no": "UNKNOWN", "loc": "X"},
+            )
+
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Branch coverage: quantile filter (lines 505-506) + no-rows 404 (line 536)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_demand_plan_quantile_filter():
+    """?quantile param appended to query (lines 505-506)."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [
+        ("v1",),                    # version lookup
+        None,                       # plan_versions table lookup
+    ]
+    cursor.fetchall.return_value = [_plan_row(quantile=0.50, qty=450.0)]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/forecast/demand-plan",
+                params={"item_no": "100320", "loc": "1401-BULK", "quantile": 0.50},
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["rows"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_demand_plan_no_rows_raises_404():
+    """Empty rows after version found → 404 (line 536)."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [
+        ("v1",),    # version lookup OK
+        None,       # plan_versions table lookup
+    ]
+    cursor.fetchall.return_value = []   # no data rows
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/forecast/demand-plan",
+                params={"item_no": "100320", "loc": "1401-BULK", "plan_version": "v1"},
             )
 
     assert resp.status_code == 404

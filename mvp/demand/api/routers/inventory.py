@@ -106,7 +106,13 @@ def inventory_kpis(
     location: str = Query(default="", max_length=120),
     months: int = Query(default=3, ge=1, le=60),
 ):
-    """Inventory KPIs: point-in-time totals from latest snapshot + supply chain metrics."""
+    """Inventory KPIs: point-in-time totals from latest snapshot + supply chain metrics.
+
+    DOS and Turns use the *current month* sales rate (most recent month in
+    agg_inventory_monthly) rather than a trailing average, so declining-demand
+    items are not understated. dos_delta and dos_prev_month expose the
+    period-over-period direction.
+    """
     set_cache(response, max_age=120)
 
     filter_parts: list[str] = []
@@ -119,12 +125,16 @@ def inventory_kpis(
         filter_params.append(f"%{location.strip()}%")
     filter_sql = f"AND {' AND '.join(filter_parts)}" if filter_parts else ""
 
+    # ------------------------------------------------------------------
+    # Query 1: point-in-time totals from the latest inventory snapshot
+    # ------------------------------------------------------------------
     latest_sql = f"""
         SELECT
             COALESCE(SUM(qty_on_hand), 0)::double precision   AS total_on_hand,
             COALESCE(SUM(qty_on_order), 0)::double precision   AS total_on_order,
             COUNT(DISTINCT item_no)::bigint                    AS distinct_items,
-            COUNT(DISTINCT loc)::bigint                        AS distinct_locations
+            COUNT(DISTINCT loc)::bigint                        AS distinct_locations,
+            MAX(snapshot_date)                                 AS last_snapshot_date
         FROM fact_inventory_snapshot
         WHERE snapshot_date = (
             SELECT MAX(snapshot_date) FROM fact_inventory_snapshot
@@ -132,65 +142,138 @@ def inventory_kpis(
         {filter_sql}
     """
 
-    agg_parts: list[str] = ["month_start >= (CURRENT_DATE - (%s || ' months')::interval)"]
-    agg_params: list[Any] = [months]
+    # ------------------------------------------------------------------
+    # Query 2: current month (latest month_start in agg_inventory_monthly)
+    # Used for DOS, WOC, Turns, Lead Time, LT Coverage
+    # ------------------------------------------------------------------
+    cur_parts: list[str] = [
+        "month_start = (SELECT MAX(month_start) FROM agg_inventory_monthly)"
+    ]
+    cur_params: list[Any] = []
     if item.strip():
-        agg_parts.append("item_no ILIKE %s")
-        agg_params.append(f"%{item.strip()}%")
+        cur_parts.append("item_no ILIKE %s")
+        cur_params.append(f"%{item.strip()}%")
     if location.strip():
-        agg_parts.append("loc ILIKE %s")
-        agg_params.append(f"%{location.strip()}%")
-    agg_where = f"WHERE {' AND '.join(agg_parts)}"
+        cur_parts.append("loc ILIKE %s")
+        cur_params.append(f"%{location.strip()}%")
+    cur_where = f"WHERE {' AND '.join(cur_parts)}"
 
-    agg_sql = f"""
+    cur_month_sql = f"""
         SELECT
-            COALESCE(SUM(avg_qty_on_hand), 0)::double precision   AS sum_avg_on_hand,
-            COALESCE(SUM(monthly_sales), 0)::double precision      AS sum_monthly_sales,
+            COALESCE(SUM(monthly_sales), 0)::double precision       AS monthly_sales,
+            COALESCE(SUM(avg_qty_on_hand), 0)::double precision     AS avg_on_hand,
             CASE WHEN SUM(monthly_sales) > 0
                  THEN (SUM(latest_lead_time_days * monthly_sales)
                        / SUM(monthly_sales))::double precision
-                 ELSE 0 END                                        AS weighted_lead_time,
-            COUNT(DISTINCT month_start)::integer                   AS count_months
+                 ELSE 0 END                                         AS weighted_lt
         FROM agg_inventory_monthly
-        {agg_where}
+        {cur_where}
+    """
+
+    # ------------------------------------------------------------------
+    # Query 3: previous month (one step before the latest month_start)
+    # Used for dos_delta and dos_prev_month
+    # ------------------------------------------------------------------
+    prev_parts: list[str] = [
+        "month_start = ("
+        "  SELECT MAX(month_start) FROM agg_inventory_monthly"
+        "  WHERE month_start < (SELECT MAX(month_start) FROM agg_inventory_monthly)"
+        ")"
+    ]
+    prev_params: list[Any] = []
+    if item.strip():
+        prev_parts.append("item_no ILIKE %s")
+        prev_params.append(f"%{item.strip()}%")
+    if location.strip():
+        prev_parts.append("loc ILIKE %s")
+        prev_params.append(f"%{location.strip()}%")
+    prev_where = f"WHERE {' AND '.join(prev_parts)}"
+
+    prev_month_sql = f"""
+        SELECT
+            COALESCE(SUM(monthly_sales), 0)::double precision       AS monthly_sales,
+            COALESCE(SUM(avg_qty_on_hand), 0)::double precision     AS avg_on_hand
+        FROM agg_inventory_monthly
+        {prev_where}
     """
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(latest_sql, filter_params)
         latest_row = cur.fetchone()
-        cur.execute(agg_sql, agg_params)
-        agg_row = cur.fetchone()
+        cur.execute(cur_month_sql, cur_params)
+        cur_row = cur.fetchone()
+        cur.execute(prev_month_sql, prev_params)
+        prev_row = cur.fetchone()
 
+    # --- point-in-time snapshot values ---
     total_on_hand = float(latest_row[0]) if latest_row else 0.0
     total_on_order = float(latest_row[1]) if latest_row else 0.0
     distinct_items = int(latest_row[2]) if latest_row else 0
     distinct_locations = int(latest_row[3]) if latest_row else 0
+    last_snapshot_date = latest_row[4] if latest_row else None
 
-    sum_avg_oh = float(agg_row[0]) if agg_row and agg_row[0] else 0.0
-    sum_monthly = float(agg_row[1]) if agg_row and agg_row[1] else 0.0
-    w_lead_time = float(agg_row[2]) if agg_row and agg_row[2] else 0.0
-    count_months = int(agg_row[3]) if agg_row and agg_row[3] else 0
+    # --- current-month aggregates ---
+    cur_monthly_sales = float(cur_row[0]) if cur_row and cur_row[0] else 0.0
+    cur_avg_on_hand = float(cur_row[1]) if cur_row and cur_row[1] else 0.0
+    w_lead_time = float(cur_row[2]) if cur_row and cur_row[2] else 0.0
 
-    portfolio_daily = (sum_monthly / count_months / 30.44) if count_months > 0 else 0.0
-    dos = round(total_on_hand / portfolio_daily, 1) if portfolio_daily > 0 else None
+    # --- previous-month aggregates ---
+    prev_monthly_sales = float(prev_row[0]) if prev_row and prev_row[0] else 0.0
+    prev_avg_on_hand = float(prev_row[1]) if prev_row and prev_row[1] else 0.0
+
+    # ------------------------------------------------------------------
+    # KPI computations
+    # ------------------------------------------------------------------
+    # Daily sales rate based on the single most-recent month (not a trailing avg)
+    current_daily = cur_monthly_sales / 30.44 if cur_monthly_sales > 0 else 0.0
+
+    # DOS: current on-hand ÷ current daily rate
+    dos = round(total_on_hand / current_daily, 1) if current_daily > 0 else None
     woc = round(dos / 7, 1) if dos is not None else None
-    avg_inventory = sum_avg_oh / count_months if count_months > 0 else 0.0
-    annual_demand = (sum_monthly / count_months * 12) if count_months > 0 else 0.0
-    turns = round(annual_demand / avg_inventory, 1) if avg_inventory > 0 else None
-    lt_demand = w_lead_time * portfolio_daily
-    lt_coverage = round((total_on_hand + total_on_order) / lt_demand, 2) if lt_demand > 0 else None
+
+    # Previous month approximation: prev avg on-hand / prev daily rate
+    prev_daily = prev_monthly_sales / 30.44 if prev_monthly_sales > 0 else 0.0
+    prev_dos = (
+        round(prev_avg_on_hand / prev_daily, 1)
+        if prev_daily > 0 and prev_avg_on_hand > 0
+        else None
+    )
+    dos_delta = (
+        round(dos - prev_dos, 1)
+        if dos is not None and prev_dos is not None
+        else None
+    )
+
+    # Inventory Turns: annualise current month sales ÷ current avg on-hand
+    # (current state, not diluted by older high-inventory periods)
+    turns = (
+        round((cur_monthly_sales * 12) / cur_avg_on_hand, 1)
+        if cur_avg_on_hand > 0
+        else None
+    )
+
+    # Lead-time coverage uses current daily rate
+    lt_demand = w_lead_time * current_daily
+    lt_coverage = (
+        round((total_on_hand + total_on_order) / lt_demand, 2)
+        if lt_demand > 0
+        else None
+    )
 
     return {
         "total_on_hand": total_on_hand,
         "total_on_order": total_on_order,
         "avg_lead_time_days": round(w_lead_time, 1) if w_lead_time else None,
         "dos": dos,
+        "dos_prev_month": prev_dos,
+        "dos_delta": dos_delta,
         "woc": woc,
         "inventory_turns": turns,
         "lt_coverage": lt_coverage,
         "distinct_items": distinct_items,
         "distinct_locations": distinct_locations,
         "months_covered": months,
+        "last_snapshot_date": str(last_snapshot_date) if last_snapshot_date else None,
     }
 
 
@@ -224,10 +307,9 @@ def inventory_trend(
                  THEN (SUM(latest_lead_time_days * monthly_sales)
                        / SUM(monthly_sales))::double precision
                  ELSE 0 END                                                AS avg_lead_time,
-            CASE WHEN SUM(avg_daily_sls * snapshot_days) > 0
+            CASE WHEN SUM(avg_daily_sls) > 0
                  THEN (SUM(eom_qty_on_hand)
-                       / (SUM(avg_daily_sls * snapshot_days)
-                          / NULLIF(SUM(snapshot_days), 0)))::double precision
+                       / NULLIF(SUM(avg_daily_sls), 0))::double precision
                  ELSE NULL END                                             AS dos
         FROM agg_inventory_monthly
         {where_sql}
@@ -235,10 +317,54 @@ def inventory_trend(
         ORDER BY 1 ASC
     """
 
+    # Optional: fetch safety stock, EOQ, and order policy when item+location filter is set
+    inv_params: dict = {}
+    if item.strip() and location.strip():
+        params_sql = """
+            SELECT
+                s.ss_combined,
+                s.reorder_point,
+                s.service_level_target,
+                s.z_score,
+                s.demand_cv,
+                e.effective_eoq,
+                e.eoq_cycle_stock,
+                e.order_frequency,
+                p.policy_id,
+                p.policy_type
+            FROM fact_safety_stock_targets s
+            LEFT JOIN fact_eoq_targets e
+                   ON e.item_no = s.item_no AND e.loc = s.loc
+            LEFT JOIN fact_dfu_policy_assignment a
+                   ON a.item_no = s.item_no AND a.loc = s.loc
+            LEFT JOIN dim_replenishment_policy p
+                   ON p.policy_id = a.policy_id
+            WHERE s.item_no ILIKE %s AND s.loc ILIKE %s
+            ORDER BY s.computed_at DESC
+            LIMIT 1
+        """
+
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
+        if item.strip() and location.strip():
+            cur.execute(params_sql, [f"%{item.strip()}%", f"%{location.strip()}%"])
+            prow = cur.fetchone()
+            if prow:
+                inv_params = {
+                    "safety_stock": round(float(prow[0]), 1) if prow[0] is not None else None,
+                    "reorder_point_units": round(float(prow[1]), 1) if prow[1] is not None else None,
+                    "service_level_target": float(prow[2]) if prow[2] is not None else None,
+                    "z_score": round(float(prow[3]), 3) if prow[3] is not None else None,
+                    "demand_cv": round(float(prow[4]), 4) if prow[4] is not None else None,
+                    "eoq": round(float(prow[5]), 1) if prow[5] is not None else None,
+                    "eoq_cycle_stock": round(float(prow[6]), 1) if prow[6] is not None else None,
+                    "order_frequency": round(float(prow[7]), 1) if prow[7] is not None else None,
+                    "order_policy": str(prow[8]) if prow[8] is not None else None,
+                    "policy_type": str(prow[9]) if prow[9] is not None else None,
+                }
 
+    ss = inv_params.get("safety_stock")
     trend = [
         {
             "month": str(r[0]),
@@ -247,10 +373,12 @@ def inventory_trend(
             "monthly_sales": round(float(r[3]), 2),
             "avg_lead_time": round(float(r[4]), 2),
             "dos": round(float(r[5]), 1) if r[5] is not None else None,
+            "safety_stock": ss,
+            "cycle_stock": round(max(0.0, float(r[1]) - ss), 1) if ss is not None else None,
         }
         for r in rows
     ]
-    return {"trend": trend}
+    return {"trend": trend, "params": inv_params}
 
 
 @router.get("/inventory/item-detail")

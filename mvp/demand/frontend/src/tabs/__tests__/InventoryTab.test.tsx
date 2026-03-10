@@ -135,13 +135,13 @@ describe("InventoryTab", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByText("Total On-Hand")).toBeDefined();
-      expect(screen.getByText("Total On-Order")).toBeDefined();
-      expect(screen.getByText("Avg Lead Time")).toBeDefined();
-      expect(screen.getByText("Days of Supply")).toBeDefined();
-      expect(screen.getByText("Weeks of Cover")).toBeDefined();
-      expect(screen.getByText("Inventory Turns")).toBeDefined();
-      expect(screen.getByText("LT Coverage")).toBeDefined();
+      expect(screen.getAllByText("Total On-Hand").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Total On-Order").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Avg Lead Time").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Days of Supply").length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/Weeks of Cover/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/Inventory Turns/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText("LT Coverage").length).toBeGreaterThan(0);
     });
   });
 
@@ -181,8 +181,8 @@ describe("InventoryTab", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByPlaceholderText("Filter by item...")).toBeDefined();
-      expect(screen.getByPlaceholderText("Filter by location...")).toBeDefined();
+      expect(screen.getByPlaceholderText("e.g. 100320 — filter by item number or name")).toBeDefined();
+      expect(screen.getByPlaceholderText("e.g. 1401-BULK — filter by location code")).toBeDefined();
     });
   });
 });

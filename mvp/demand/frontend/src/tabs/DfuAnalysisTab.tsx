@@ -6,6 +6,8 @@ import { LoadingElement } from "@/components/LoadingElement";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useDebounce } from "@/hooks/useDebounce";
 import { fetchSeasonalityProfileNames } from "@/api/queries";
+import { fetchProductionForecast } from "@/api/queries/production-forecast";
+import type { ProductionForecastPayload } from "@/api/queries/production-forecast";
 import { ELEMENT_CONFIG } from "@/constants/elements";
 import type {
   DfuAnalysisMode,
@@ -18,6 +20,7 @@ import type {
 import { SelectorPanel } from "./dfu-analysis/SelectorPanel";
 import { OverlayChartPanel } from "./dfu-analysis/OverlayChartPanel";
 import { ModelKpiSection } from "./dfu-analysis/ModelKpiSection";
+import { DfuShapPanel } from "./dfu-analysis/DfuShapPanel";
 
 export function DfuAnalysisTab() {
   // ---- state ----
@@ -39,6 +42,8 @@ export function DfuAnalysisTab() {
   const [dfuLocationSuggestions, setDfuLocationSuggestions] = useState<string[]>([]);
   const [seasonalityProfile, setSeasonalityProfile] = useState("");
   const [seasonalityProfiles, setSeasonalityProfiles] = useState<string[]>([]);
+  const [prodForecastData, setProdForecastData] = useState<ProductionForecastPayload | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
 
   const { filters: globalFilters } = useGlobalFilterContext();
   const debouncedDfuItem = useDebounce(dfuItem, 500);
@@ -103,7 +108,8 @@ export function DfuAnalysisTab() {
         const payload = (await res.json()) as DfuAnalysisPayload;
         if (!cancelled) {
           setDfuData(payload);
-          const allKeys = new Set(["tothist_dmd", "qty_shipped", "qty_ordered", ...payload.models.map((m) => `forecast_${m}`)]);
+          setSelectedModel(null);
+          const allKeys = new Set(["tothist_dmd", "qty_shipped", "qty_ordered", "production_forecast", ...payload.models.map((m) => `forecast_${m}`)]);
           setDfuVisibleSeries(allKeys);
           const measureKeys = new Set<string>();
           for (const pt of payload.series) for (const k of Object.keys(pt)) if (k !== "month") measureKeys.add(k);
@@ -122,6 +128,17 @@ export function DfuAnalysisTab() {
     loadAnalysis();
     return () => { cancelled = true; };
   }, [dfuMode, debouncedDfuItem, debouncedDfuLocation, dfuPoints, seasonalityProfile]);
+
+  // ---- fetch production forecast (future months) ----
+  useEffect(() => {
+    if (dfuMode !== "item_location") { setProdForecastData(null); return; }
+    if (!debouncedDfuItem.trim() || !debouncedDfuLocation.trim()) { setProdForecastData(null); return; }
+    let cancelled = false;
+    fetchProductionForecast({ item_no: debouncedDfuItem.trim(), loc: debouncedDfuLocation.trim() })
+      .then((payload) => { if (!cancelled) setProdForecastData(payload); })
+      .catch(() => { if (!cancelled) setProdForecastData(null); });
+    return () => { cancelled = true; };
+  }, [dfuMode, debouncedDfuItem, debouncedDfuLocation]);
 
   // ---- item typeahead suggestions ----
   useEffect(() => {
@@ -184,6 +201,26 @@ export function DfuAnalysisTab() {
     return dfuData.series.filter((p) => { const m = String(p.month); return m >= start && m <= end; });
   }, [dfuData, dfuMonths, dfuTimeStart, dfuTimeEnd]);
 
+  // Merge production forecast (future months) into filtered series
+  const mergedFilteredSeries = useMemo(() => {
+    if (!prodForecastData?.forecasts.length) return dfuFilteredSeries as Record<string, unknown>[];
+    const lastHistMonth = dfuMonths[dfuMonths.length - 1] ?? "";
+    const prodMap = new Map<string, number | null>(
+      prodForecastData.forecasts.map((pt) => [pt.forecast_month, pt.forecast_qty])
+    );
+    // Add production_forecast field to overlapping historical points
+    const enhanced = dfuFilteredSeries.map((pt) => {
+      const m = String(pt.month);
+      return prodMap.has(m) ? { ...pt, production_forecast: prodMap.get(m) } : pt;
+    });
+    // Append pure-future months not in historical series
+    const futurePts = prodForecastData.forecasts
+      .filter((pt) => pt.forecast_month > lastHistMonth)
+      .sort((a, b) => a.forecast_month.localeCompare(b.forecast_month))
+      .map((pt) => ({ month: pt.forecast_month, production_forecast: pt.forecast_qty }));
+    return [...enhanced, ...futurePts] as Record<string, unknown>[];
+  }, [dfuFilteredSeries, dfuMonths, prodForecastData]);
+
   function handleReset() {
     setDfuData(null);
     setDfuAutoSampled(false);
@@ -221,14 +258,26 @@ export function DfuAnalysisTab() {
             <>
               <OverlayChartPanel
                 dfuData={dfuData}
-                dfuFilteredSeries={dfuFilteredSeries as Record<string, unknown>[]}
+                dfuFilteredSeries={mergedFilteredSeries}
                 dfuMonths={dfuMonths}
                 dfuTimeStart={dfuTimeStart} setDfuTimeStart={setDfuTimeStart}
                 dfuTimeEnd={dfuTimeEnd} setDfuTimeEnd={setDfuTimeEnd}
                 dfuDefaultStart={dfuDefaultStart}
                 dfuVisibleSeries={dfuVisibleSeries}
                 setDfuVisibleSeries={setDfuVisibleSeries}
+                prodForecastData={prodForecastData}
+                selectedModel={selectedModel}
+                onModelSelect={setSelectedModel}
               />
+              {dfuMode === "item_location" && (
+                <DfuShapPanel
+                  selectedModel={selectedModel}
+                  itemNo={debouncedDfuItem}
+                  loc={debouncedDfuLocation}
+                  dfuMode={dfuMode}
+                  visibleMonths={mergedFilteredSeries.map((p) => String(p.month))}
+                />
+              )}
               <ModelKpiSection
                 dfuData={dfuData}
                 dfuKpis={dfuKpis}

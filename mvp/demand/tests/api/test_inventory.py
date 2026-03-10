@@ -138,11 +138,13 @@ async def test_inventory_position_limit_validation(mock_pool):
 async def test_inventory_kpis_returns_200(mock_pool):
     """GET /inventory/kpis returns 200 with supply chain KPIs."""
     pool, _, cursor = mock_pool
-    # Query 1: latest snapshot (on_hand, on_order, items, locations)
-    # Query 2: agg trailing months (sum_avg_oh, sum_monthly, w_lead_time, count_months)
+    # Query 1: latest snapshot (on_hand, on_order, items, locations, last_snapshot_date)
+    # Query 2: current month  (monthly_sales, avg_on_hand, weighted_lt)
+    # Query 3: previous month (monthly_sales, avg_on_hand)
     cursor.fetchone.side_effect = [
-        (50000.0, 15000.0, 500, 50),
-        (40000.0, 120000.0, 30.5, 3),
+        (50000.0, 15000.0, 500, 50, date(2025, 6, 30)),
+        (40000.0, 120000.0, 30.5),
+        (38000.0, 115000.0),
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -155,14 +157,18 @@ async def test_inventory_kpis_returns_200(mock_pool):
             assert "total_on_order" in data
             assert "avg_lead_time_days" in data
             assert "dos" in data
+            assert "dos_prev_month" in data
+            assert "dos_delta" in data
             assert "woc" in data
             assert "inventory_turns" in data
             assert "lt_coverage" in data
             assert "distinct_items" in data
             assert "distinct_locations" in data
             assert "months_covered" in data
+            assert "last_snapshot_date" in data
             assert data["total_on_hand"] == 50000.0
             assert data["distinct_items"] == 500
+            assert data["last_snapshot_date"] == "2025-06-30"
             # Removed fields should NOT be present
             assert "total_inventory_value" not in data
             assert "snapshot_count" not in data
@@ -173,8 +179,9 @@ async def test_inventory_kpis_with_filters(mock_pool):
     """GET /inventory/kpis with item, location, and months filters."""
     pool, _, cursor = mock_pool
     cursor.fetchone.side_effect = [
-        (200.0, 100.0, 5, 2),
-        (180.0, 600.0, 15.0, 6),
+        (200.0, 100.0, 5, 2, date(2025, 5, 31)),
+        (600.0, 180.0, 15.0),
+        (580.0, 175.0),
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -190,7 +197,8 @@ async def test_inventory_kpis_with_filters(mock_pool):
 async def test_inventory_kpis_no_data(mock_pool):
     """When fetchone returns None, endpoint should return zeros/nulls."""
     pool, _, cursor = mock_pool
-    cursor.fetchone.side_effect = [None, None]
+    cursor.fetchone.side_effect = [None, None, None]
+    # also verify last_snapshot_date is null when row is None
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -201,19 +209,25 @@ async def test_inventory_kpis_no_data(mock_pool):
             assert data["total_on_hand"] == 0.0
             assert data["distinct_items"] == 0
             assert data["dos"] is None
+            assert data["dos_prev_month"] is None
+            assert data["dos_delta"] is None
             assert data["woc"] is None
             assert data["months_covered"] == 3
+            assert data["last_snapshot_date"] is None
 
 
 @pytest.mark.asyncio
 async def test_inventory_kpis_dos_calculation(mock_pool):
-    """DOS = total_on_hand / portfolio_daily_demand."""
+    """DOS = total_on_hand / current_daily_rate (current month only, not trailing avg)."""
     pool, _, cursor = mock_pool
-    # on_hand = 1000, sum_monthly=608.8, count_months=1
-    # portfolio_daily = 608.8 / 1 / 30.44 = 20.0 => DOS = 1000 / 20 = 50
+    # on_hand=1000, cur_monthly_sales=608.8
+    # current_daily = 608.8 / 30.44 = 20.0 => DOS = 1000 / 20 = 50.0
+    # prev: monthly_sales=500.0, avg_on_hand=800.0
+    # prev_daily = 500.0 / 30.44 = 16.42..., prev_dos = 800 / 16.42 = 48.7
     cursor.fetchone.side_effect = [
-        (1000.0, 200.0, 10, 5),
-        (900.0, 608.8, 14.0, 1),
+        (1000.0, 200.0, 10, 5, date(2025, 6, 30)),
+        (608.8, 900.0, 14.0),   # current month: monthly_sales, avg_on_hand, weighted_lt
+        (500.0, 800.0),          # previous month: monthly_sales, avg_on_hand
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -224,6 +238,8 @@ async def test_inventory_kpis_dos_calculation(mock_pool):
             data = resp.json()
             assert data["dos"] == 50.0
             assert data["woc"] is not None
+            assert data["dos_prev_month"] is not None
+            assert data["dos_delta"] is not None
 
 
 @pytest.mark.asyncio
@@ -231,8 +247,9 @@ async def test_inventory_kpis_zero_demand_null_dos(mock_pool):
     """When daily sales is zero, DOS/WOC should be null."""
     pool, _, cursor = mock_pool
     cursor.fetchone.side_effect = [
-        (500.0, 100.0, 5, 2),
-        (400.0, 0.0, 15.0, 3),
+        (500.0, 100.0, 5, 2, date(2025, 4, 30)),
+        (0.0, 400.0, 15.0),   # cur monthly_sales=0 → current_daily=0
+        (0.0, 350.0),          # prev monthly_sales=0 too
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -242,6 +259,53 @@ async def test_inventory_kpis_zero_demand_null_dos(mock_pool):
             data = resp.json()
             assert data["dos"] is None
             assert data["woc"] is None
+            assert data["dos_prev_month"] is None
+            assert data["dos_delta"] is None
+
+
+@pytest.mark.asyncio
+async def test_inventory_kpis_dos_delta_positive(mock_pool):
+    """dos_delta = dos_current - dos_prev_month; positive means more supply days."""
+    pool, _, cursor = mock_pool
+    # current: on_hand=300, daily=300/30.44=9.86, DOS=30.4
+    # prev: avg_oh=200, daily=200/30.44=6.57, DOS=30.4 (same → delta~0 in this case)
+    # Use numbers that give a clear positive delta:
+    # cur: monthly_sales=304.4 → daily=10, DOS=300/10=30
+    # prev: monthly_sales=608.8 → daily=20, prev_dos=200/20=10 → delta=20
+    cursor.fetchone.side_effect = [
+        (300.0, 50.0, 3, 1, date(2025, 6, 30)),
+        (304.4, 250.0, 20.0),   # current month
+        (608.8, 200.0),          # previous month
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inventory/kpis")
+            data = resp.json()
+            assert data["dos"] == 30.0
+            assert data["dos_prev_month"] == 10.0
+            assert data["dos_delta"] == 20.0
+
+
+@pytest.mark.asyncio
+async def test_inventory_kpis_turns_uses_current_month(mock_pool):
+    """Inventory turns = annualised current monthly sales / current avg on-hand."""
+    pool, _, cursor = mock_pool
+    # cur_monthly_sales=500, cur_avg_on_hand=1000
+    # turns = (500*12) / 1000 = 6.0
+    cursor.fetchone.side_effect = [
+        (2000.0, 300.0, 10, 5, date(2025, 6, 30)),
+        (500.0, 1000.0, 25.0),  # current month
+        (480.0, 950.0),          # previous month
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inventory/kpis")
+            data = resp.json()
+            assert data["inventory_turns"] == 6.0
 
 
 # ---------------------------------------------------------------------------
@@ -294,9 +358,10 @@ async def test_inventory_trend_empty(mock_pool):
 
 @pytest.mark.asyncio
 async def test_inventory_trend_with_filters(mock_pool):
-    """GET /inventory/trend with item and location filters."""
+    """GET /inventory/trend with item and location filters returns trend + empty params."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
+    cursor.fetchone.return_value = None
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)

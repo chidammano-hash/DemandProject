@@ -24,6 +24,7 @@ import type {
   ShapSummaryPayload,
   ShapTimeframesPayload,
   ShapTimeframeDetailPayload,
+  DfuShapPayload,
 } from "@/types/shap";
 import type {
   DashboardKpis,
@@ -104,6 +105,7 @@ export const queryKeys = {
   shapSummary: (modelId: string, topN: number) => ["shap-summary", modelId, topN] as const,
   shapTimeframes: (modelId: string) => ["shap-timeframes", modelId] as const,
   shapTimeframeDetail: (modelId: string, idx: number, topN: number) => ["shap-timeframe-detail", modelId, idx, topN] as const,
+  dfuShap: (modelId: string, itemNo: string, loc: string, topN: number) => ["dfu-shap", modelId, itemNo, loc, topN] as const,
   // AI Planner keys (IPAIfeature1)
   aiInsights: (params: Record<string, unknown>) => ["ai-insights", params] as const,
   aiMemos: (params: Record<string, unknown>) => ["ai-memos", params] as const,
@@ -816,6 +818,20 @@ export async function fetchShapTimeframeDetail(
   topN = 15,
 ): Promise<ShapTimeframeDetailPayload> {
   return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/timeframe/${idx}?top_n=${topN}`);
+}
+
+export async function fetchDfuShap(
+  modelId: string,
+  itemNo: string,
+  loc: string,
+  topN = 10,
+): Promise<DfuShapPayload> {
+  const qs = new URLSearchParams({
+    item_no: itemNo,
+    loc,
+    top_n: String(topN),
+  });
+  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/dfu?${qs}`);
 }
 
 // ---------------------------------------------------------------------------

@@ -69,11 +69,17 @@ _SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 _UV = "uv"
 
 
+_SUBPROCESS_TIMEOUT = 7200  # 2 hours — prevents hung jobs from blocking the executor thread
+
+
 def _run_subprocess(cmd: list[str], progress_cb: Callable | None = None, step_msg: str = "") -> str:
-    """Run a subprocess command, returning stdout. Raises on failure."""
+    """Run a subprocess command, returning stdout. Raises on failure or timeout."""
     if progress_cb and step_msg:
         progress_cb(msg=step_msg)
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(_SCRIPTS_DIR.parent))
+    result = subprocess.run(
+        cmd, capture_output=True, text=True,
+        cwd=str(_SCRIPTS_DIR.parent), timeout=_SUBPROCESS_TIMEOUT,
+    )
     if result.returncode != 0:
         error_msg = (result.stderr or result.stdout or "Unknown error").strip()
         raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{error_msg}")
@@ -122,7 +128,7 @@ def _run_cluster_pipeline(params: dict[str, Any], progress_cb: Callable | None =
             progress_cb(pct=pct, msg=msg)
         out = _run_subprocess(cmd)
         outputs.append(out)
-    return {"steps_completed": len(steps), "output_summary": "Pipeline completed successfully"}
+    return {"steps_completed": len(steps), "output_log": "Pipeline completed successfully"}
 
 
 def _run_seasonality(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
@@ -138,7 +144,7 @@ def _run_seasonality(params: dict[str, Any], progress_cb: Callable | None = None
         if progress_cb:
             progress_cb(pct=pct, msg=msg)
         _run_subprocess(cmd)
-    return {"steps_completed": len(steps), "output_summary": "Seasonality pipeline completed"}
+    return {"steps_completed": len(steps), "output_log": "Seasonality pipeline completed"}
 
 
 def _run_backtest(model: str, params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
@@ -156,7 +162,7 @@ def _run_backtest(model: str, params: dict[str, Any], progress_cb: Callable | No
         progress_cb(pct=10, msg=f"Running {model.upper()} backtest ({strategy})")
     cmd = [_UV, "run", "python", script, "--cluster-strategy", strategy]
     output = _run_subprocess(cmd)
-    return {"model": model, "strategy": strategy, "output_summary": output[:500] if output else "Completed"}
+    return {"model": model, "strategy": strategy, "output_log": output if output else "Completed"}
 
 
 def _run_backtest_lgbm(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
@@ -177,7 +183,7 @@ def _run_champion_select(params: dict[str, Any], progress_cb: Callable | None = 
         progress_cb(pct=10, msg="Running champion selection")
     cmd = [_UV, "run", "python", "scripts/run_champion_selection.py"]
     output = _run_subprocess(cmd)
-    return {"output_summary": output[:500] if output else "Champion selection completed"}
+    return {"output_log": output if output else "Champion selection completed"}
 
 
 def _run_generate_production_forecast(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
@@ -189,7 +195,18 @@ def _run_generate_production_forecast(params: dict[str, Any], progress_cb: Calla
     output = _run_subprocess(cmd, progress_cb, "Generating production forecasts")
     if progress_cb:
         progress_cb(pct=100, msg="Production forecast generation complete")
-    return {"horizon": horizon, "output_summary": output[:500] if output else "Production forecast generation completed"}
+    return {"horizon": horizon, "output_log": output if output else "Production forecast generation completed"}
+
+
+def _run_compute_replenishment_plan(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Run the forward-looking replenishment plan computation (CI Bands + Repl. Plan)."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Starting replenishment plan computation")
+    cmd = [_UV, "run", "python", "scripts/compute_replenishment_plan.py"]
+    output = _run_subprocess(cmd, progress_cb, "Computing replenishment plan from production forecast")
+    if progress_cb:
+        progress_cb(pct=100, msg="Replenishment plan computation complete")
+    return {"output_log": output if output else "Replenishment plan computation completed"}
 
 
 def _run_generate_ai_insights(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
@@ -200,7 +217,117 @@ def _run_generate_ai_insights(params: dict[str, Any], progress_cb: Callable | No
     output = _run_subprocess(cmd, progress_cb, "Scanning portfolio for exceptions")
     if progress_cb:
         progress_cb(pct=100, msg="AI insights generation complete")
-    return {"output_summary": output[:500] if output else "AI insights generation completed"}
+    return {"output_log": output if output else "AI insights generation completed"}
+
+
+def _run_generate_storyboard(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Generate storyboard exceptions for all DFUs."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Generating storyboard exceptions")
+    cmd = [_UV, "run", "python", "scripts/generate_storyboard_exceptions.py"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "Storyboard exceptions generated"}
+
+
+def _run_compute_safety_stock(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Compute safety stock targets for all DFUs."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Computing safety stock targets")
+    cmd = [_UV, "run", "python", "scripts/compute_safety_stock.py", "--config", "config/safety_stock_config.yaml"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "Safety stock computation completed"}
+
+
+def _run_compute_eoq(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Compute EOQ cycle stock targets."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Computing EOQ targets")
+    cmd = [_UV, "run", "python", "scripts/compute_eoq.py", "--config", "config/eoq_config.yaml"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "EOQ computation completed"}
+
+
+def _run_assign_policies(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Upsert replenishment policies and auto-assign DFUs by segment."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Assigning replenishment policies")
+    cmd = [_UV, "run", "python", "scripts/assign_replenishment_policies.py",
+           "--config", "config/replenishment_policy_config.yaml"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "Policy assignment completed"}
+
+
+def _run_generate_exceptions(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Detect replenishment exceptions and write to queue."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Detecting replenishment exceptions")
+    cmd = [_UV, "run", "python", "scripts/generate_replenishment_exceptions.py"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "Exception detection completed"}
+
+
+def _run_classify_abc_xyz(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Run ABC-XYZ classification and write to dim_dfu."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Running ABC-XYZ classification")
+    cmd = [_UV, "run", "python", "scripts/classify_abc_xyz.py"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "ABC-XYZ classification completed"}
+
+
+def _run_compute_variability(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Compute demand variability (CV, MAD) per DFU."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Computing demand variability")
+    cmd = [_UV, "run", "python", "scripts/compute_demand_variability.py",
+           "--config", "config/variability_config.yaml"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "Demand variability computation completed"}
+
+
+def _run_compute_demand_signals(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Compute short-horizon demand signals from sales velocity."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Computing demand signals")
+    cmd = [_UV, "run", "python", "scripts/compute_demand_signals.py"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "Demand signals computation completed"}
+
+
+def _run_compute_investment(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Compute efficient frontier and capital investment allocation."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Computing investment plan")
+    cmd = [_UV, "run", "python", "scripts/compute_investment_plan.py"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "Investment plan computation completed"}
+
+
+def _run_refresh_health_scores(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Refresh the inventory health score materialized view."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Refreshing inventory health scores")
+    cmd = [_UV, "run", "python", "scripts/refresh_health_scores.py"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "Health scores refreshed"}
+
+
+def _run_refresh_intramonth(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Refresh the intramonth stockout materialized view."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Refreshing intramonth stockout view")
+    cmd = [_UV, "run", "python", "scripts/refresh_intramonth_stockout.py"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "Intramonth stockout view refreshed"}
+
+
+def _run_ss_simulation(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Run Monte Carlo safety stock simulation."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Running Monte Carlo SS simulation")
+    cmd = [_UV, "run", "python", "scripts/run_ss_simulation.py"]
+    output = _run_subprocess(cmd)
+    return {"output_log": output if output else "SS simulation completed"}
 
 
 # ---------------------------------------------------------------------------

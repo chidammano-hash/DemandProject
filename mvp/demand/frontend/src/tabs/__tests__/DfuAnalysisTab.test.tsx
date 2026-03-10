@@ -5,6 +5,15 @@ import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
 import type { GlobalFilterContextValue } from "@/context/GlobalFilterContext";
 import type { GlobalFilters } from "@/types/theme";
 
+vi.mock("@/api/queries/core", () => ({
+  fetchDfuShap: vi.fn().mockResolvedValue(null),
+  fetchShapSummary: vi.fn().mockResolvedValue({ model_id: "lgbm_cluster", total_features: 0, features: [] }),
+}));
+
+vi.mock("@/api/queries/production-forecast", () => ({
+  fetchProductionForecast: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("@/api/queries", () => ({
   queryKeys: {
     samplePair: (d: string) => ["sample-pair", d],

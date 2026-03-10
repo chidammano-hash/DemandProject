@@ -92,7 +92,7 @@ describe("DemandPlanPanel", () => {
         <DemandPlanPanel />
       </TestQueryWrapper>
     );
-    expect(screen.getByText("Demand Plan")).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Demand Plan" })).toBeDefined();
   });
 
   it("shows item and location inputs", () => {
@@ -101,8 +101,8 @@ describe("DemandPlanPanel", () => {
         <DemandPlanPanel />
       </TestQueryWrapper>
     );
-    expect(screen.getByPlaceholderText("100320")).toBeDefined();
-    expect(screen.getByPlaceholderText("1401-BULK")).toBeDefined();
+    expect(screen.getByPlaceholderText("e.g. 100320")).toBeDefined();
+    expect(screen.getByPlaceholderText("e.g. 1401-BULK")).toBeDefined();
   });
 
   it("renders horizon buttons", () => {
@@ -122,7 +122,7 @@ describe("DemandPlanPanel", () => {
         <DemandPlanPanel />
       </TestQueryWrapper>
     );
-    expect(screen.getByText(/Enter an Item No/i)).toBeDefined();
+    expect(screen.getByText(/Enter an item and location/i)).toBeDefined();
   });
 
   it("renders demand plan table after submitting", async () => {
@@ -132,10 +132,10 @@ describe("DemandPlanPanel", () => {
       </TestQueryWrapper>
     );
 
-    fireEvent.change(screen.getByPlaceholderText("100320"), {
+    fireEvent.change(screen.getByPlaceholderText("e.g. 100320"), {
       target: { value: "100320" },
     });
-    fireEvent.change(screen.getByPlaceholderText("1401-BULK"), {
+    fireEvent.change(screen.getByPlaceholderText("e.g. 1401-BULK"), {
       target: { value: "1401-BULK" },
     });
     fireEvent.click(screen.getByRole("button", { name: "View Plan" }));
@@ -154,10 +154,10 @@ describe("DemandPlanPanel", () => {
       </TestQueryWrapper>
     );
 
-    fireEvent.change(screen.getByPlaceholderText("100320"), {
+    fireEvent.change(screen.getByPlaceholderText("e.g. 100320"), {
       target: { value: "100320" },
     });
-    fireEvent.change(screen.getByPlaceholderText("1401-BULK"), {
+    fireEvent.change(screen.getByPlaceholderText("e.g. 1401-BULK"), {
       target: { value: "1401-BULK" },
     });
     fireEvent.click(screen.getByRole("button", { name: "View Plan" }));
@@ -175,10 +175,10 @@ describe("DemandPlanPanel", () => {
       </TestQueryWrapper>
     );
 
-    fireEvent.change(screen.getByPlaceholderText("100320"), {
+    fireEvent.change(screen.getByPlaceholderText("e.g. 100320"), {
       target: { value: "100320" },
     });
-    fireEvent.change(screen.getByPlaceholderText("1401-BULK"), {
+    fireEvent.change(screen.getByPlaceholderText("e.g. 1401-BULK"), {
       target: { value: "1401-BULK" },
     });
     fireEvent.click(screen.getByRole("button", { name: "View Plan" }));

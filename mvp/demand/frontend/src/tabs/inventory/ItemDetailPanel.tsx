@@ -47,6 +47,10 @@ export function ItemDetailPanel({
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <div className="mb-2 rounded bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Daily inventory snapshots for <strong>{selectedRow.item}</strong> at <strong>{selectedRow.location}</strong>.{" "}
+          Rows show end-of-day positions — use to trace stockout events or intra-month inventory movements.
+        </div>
         {isLoading ? (
           <LoadingElement
             tabKey="inventory"
@@ -58,13 +62,36 @@ export function ItemDetailPanel({
               <TableHeader>
                 <TableRow className="border-muted bg-muted/30">
                   <TableHead className="text-xs">Snapshot Date</TableHead>
-                  <TableHead className="text-xs text-right">On Hand</TableHead>
-                  <TableHead className="text-xs text-right">
-                    On Hand+Order
+                  <TableHead
+                    className="text-xs text-right"
+                    title="Inventory units in stock at the time of this daily snapshot"
+                  >
+                    On Hand
                   </TableHead>
-                  <TableHead className="text-xs text-right">On Order</TableHead>
-                  <TableHead className="text-xs text-right">Lead Time</TableHead>
-                  <TableHead className="text-xs text-right">MTD Sales</TableHead>
+                  <TableHead
+                    className="text-xs text-right"
+                    title="Combined inventory position: in stock plus already ordered"
+                  >
+                    On Hand + On Order
+                  </TableHead>
+                  <TableHead
+                    className="text-xs text-right"
+                    title="Units on open purchase orders not yet received"
+                  >
+                    On Order
+                  </TableHead>
+                  <TableHead
+                    className="text-xs text-right"
+                    title="Supplier lead time in days for this item at this location"
+                  >
+                    Lead Time (days)
+                  </TableHead>
+                  <TableHead
+                    className="text-xs text-right"
+                    title="Cumulative sales units month-to-date at snapshot date"
+                  >
+                    MTD Sales
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -77,27 +104,31 @@ export function ItemDetailPanel({
                       {snap.snapshot_date}
                     </TableCell>
                     <TableCell className="text-sm text-right tabular-nums">
-                      {formatNumber(snap.qty_on_hand)}
+                      {snap.qty_on_hand.toLocaleString()}
                     </TableCell>
                     <TableCell className="text-sm text-right tabular-nums">
-                      {formatNumber(snap.qty_on_hand_on_order)}
+                      {snap.qty_on_hand_on_order.toLocaleString()}
                     </TableCell>
                     <TableCell className="text-sm text-right tabular-nums">
-                      {formatNumber(snap.qty_on_order)}
+                      {snap.qty_on_order.toLocaleString()}
                     </TableCell>
                     <TableCell className="text-sm text-right tabular-nums">
                       {snap.lead_time_days != null
-                        ? formatNumber(snap.lead_time_days)
+                        ? snap.lead_time_days.toLocaleString()
                         : "-"}
                     </TableCell>
                     <TableCell className="text-sm text-right tabular-nums">
-                      {formatNumber(snap.mtd_sales)}
+                      {snap.mtd_sales.toLocaleString()}
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
+        ) : snapshots && snapshots.length === 0 ? (
+          <p className="py-4 text-center text-sm text-muted-foreground">
+            No snapshot history found for this item-location.
+          </p>
         ) : (
           <p className="text-sm text-muted-foreground">
             No snapshot history available for this item-location pair.

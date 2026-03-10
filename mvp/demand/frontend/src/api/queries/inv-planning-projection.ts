@@ -31,7 +31,7 @@ export interface ProjectionPayload {
   current_qty_on_hand: number;
   safety_stock: number;
   reorder_point: number;
-  forecast_source: "production_forecast" | "fallback_avg";
+  forecast_source: "production_forecast" | "champion_forecast" | "fallback_avg";
   plan_version: string | null;
   open_po_data_available: boolean;
   computed_at: string | null;

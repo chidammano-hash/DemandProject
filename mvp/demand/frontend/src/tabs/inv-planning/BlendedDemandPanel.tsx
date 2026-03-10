@@ -5,8 +5,9 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, AlertCircle, Radio } from "lucide-react";
+import { Activity, AlertCircle, Layers, Radio } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/EmptyState";
 import {
   blendedKeys,
   fetchBlendedForecast,
@@ -45,6 +46,13 @@ export function BlendedDemandPanel() {
 
   return (
     <div className="space-y-6 p-4">
+      {/* Info banner */}
+      <div className="text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2">
+        <strong className="text-foreground">Blended Demand</strong> combines short-horizon sensing signals with statistical forecasts using a linearly decaying alpha weight:
+        <code className="mx-1 font-mono bg-muted px-1 rounded">Blended = (α × Sensing) + ((1−α) × Forecast)</code>
+        Week 1: α=1.0 (100% sensing) · Week 2: α=0.8 · Week 3: α=0.6 · Beyond sensing horizon: α=0 (100% forecast).
+      </div>
+
       {/* KPI summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
@@ -99,15 +107,31 @@ export function BlendedDemandPanel() {
           {isLoading ? (
             <p className="p-4 text-sm text-muted-foreground">Loading…</p>
           ) : !rows.length ? (
-            <p className="p-4 text-sm text-muted-foreground">No blended demand data found.</p>
+            <div className="p-6">
+              <EmptyState
+                icon={Layers}
+                title="No blended demand data"
+                description="Blended demand combines real-time sensing signals with statistical forecasts using a linearly decaying alpha weight: near-term weeks trust sensing more, future weeks trust the statistical model more. Outlier spikes are capped to prevent over-ordering."
+                steps={[
+                  { label: "Compute demand signals first", command: "make demand-signals-compute" },
+                  { label: "Compute blended demand plan", command: "make blended-demand-compute" },
+                ]}
+              />
+            </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto px-4 pb-4">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
                   <tr>
-                    {["Item", "Loc", "Week Start", "Alpha", "Sensing Qty", "Stat Fcst", "Blended Qty", "Spike Ratio", "Capped?"].map((h) => (
-                      <th key={h} className="px-3 py-2 text-left font-medium">{h}</th>
-                    ))}
+                    <th className="px-3 py-2 text-left font-medium">Item</th>
+                    <th className="px-3 py-2 text-left font-medium">Loc</th>
+                    <th className="px-3 py-2 text-left font-medium">Week Start</th>
+                    <th className="px-3 py-2 text-left font-medium cursor-help" title="Weighting factor: 1.0 = trust sensing 100%, 0.0 = trust forecast 100%. Decays linearly over the sensing horizon.">Alpha</th>
+                    <th className="px-3 py-2 text-left font-medium cursor-help" title="Short-horizon demand signal: extrapolated from current week's actual sales velocity">Sensing Qty</th>
+                    <th className="px-3 py-2 text-left font-medium cursor-help" title="Champion statistical model forecast for this DFU-month">Stat Fcst</th>
+                    <th className="px-3 py-2 text-left font-medium cursor-help" title="Alpha-weighted blend of sensing signal and statistical forecast">Blended Qty</th>
+                    <th className="px-3 py-2 text-left font-medium cursor-help" title="Sensing ÷ Forecast ratio. Values >1.5× flag a demand surge; blended is capped at 1.5× forecast to prevent over-ordering.">Spike Ratio</th>
+                    <th className="px-3 py-2 text-left font-medium">Capped?</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -144,6 +168,9 @@ export function BlendedDemandPanel() {
                   ))}
                 </tbody>
               </table>
+              <p className="text-xs text-muted-foreground mt-2">
+                <strong>Spike Detection:</strong> When sensing signal exceeds 1.5× the statistical forecast, demand is flagged as a surge and the blended quantity is capped to prevent over-ordering.
+              </p>
             </div>
           )}
         </CardContent>
