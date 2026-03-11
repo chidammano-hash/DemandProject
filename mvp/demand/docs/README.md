@@ -40,11 +40,14 @@ AI/Chatbot:
 - `chat_embeddings` table (pgvector) — stores schema metadata embeddings for NL query context
 
 Clustering:
-- DFU clustering framework — groups DFUs by historical demand patterns for improved LGBM model performance
+- DFU clustering framework — groups DFUs by historical demand patterns for improved tree-model performance
 - Cluster assignments stored in `dim_dfu.cluster_assignment` column
-- Features: time series (volume, trend, seasonality, volatility), item attributes, DFU attributes
-- Clustering: KMeans with optimal K selection (elbow, silhouette, gap statistic)
-- Automated labeling: high_volume_steady, seasonal_high_volume, intermittent_low_volume, etc.
+- 14 core features across 6 dimensions: volume (mean, CV, IQR), trend (normalized slope, R-squared, CAGR), seasonality (amplitude, OLS R-squared, YoY correlation), periodicity (FFT strength), intermittency (zero-demand pct, Croston ADI), lifecycle (months available, recency ratio)
+- 36-month time window (configurable), minimum 12 months history
+- KMeans with combined Silhouette + Calinski-Harabasz scoring (0.5*sil + 0.5*CH); gap statistic removed
+- Hard 5% minimum cluster size constraint; k_range [5, 18]; post-hoc small cluster merge
+- Priority-ordered taxonomy labeling: Intermittency -> Periodicity -> Seasonality -> Trend -> Volatility -> Volume (5 tiers)
+- Compound labels: high_volume_seasonal_growing, low_volume_intermittent, very_high_volume_growing, etc.
 - MLflow integration for experiment tracking
 
 ## Why this refactor
@@ -138,9 +141,10 @@ Chatbot:
 Clustering:
 - Run full pipeline: `make cluster-all`
 - Individual steps: `cluster-features`, `cluster-train`, `cluster-label`, `cluster-update`
-- Feature generation extracts time series patterns from sales history (default: 24 months, min 12 months)
-- Optimal K selection via elbow method, silhouette score, and gap statistic
-- Cluster labels assigned automatically based on volume and pattern characteristics
+- Feature generation extracts 14 core features across 6 dimensions from sales history (default: 36 months, min 12 months)
+- Optimal K selection via combined Silhouette + Calinski-Harabasz scoring with 5% minimum cluster size constraint (k_range [5, 18])
+- Priority-ordered taxonomy labeling: Intermittency -> Periodicity -> Seasonality -> Trend -> Volatility -> Volume (5 tiers)
+- Compound labels: high_volume_seasonal_growing, low_volume_intermittent, etc.
 - Results logged to MLflow experiment `dfu_clustering`
 - Cluster assignments updated in `dim_dfu.cluster_assignment` column
 - API endpoint: `GET /domains/dfu/clusters` returns cluster summary statistics
@@ -178,15 +182,17 @@ Recursive Multi-Step Forecasting (feature43):
 - `"recursive": true` in `backtest_metadata.json` distinguishes runs at the file level
 - No API, frontend, or database changes — compute-side only
 
-Backtesting (Feature 44 — config-driven, per-cluster only):
+Backtesting (Feature 44 — config-driven):
 - All algorithm options are controlled by `config/algorithm_config.yaml` — no CLI flags needed
+- Training strategy: set `cluster_strategy: "per_cluster"` (default) or `"global"` per algorithm
+- `ml_cluster` is always a hard feature — never stripped from feature_cols in either strategy
 - Enable SHAP selection: set `shap_select: true` in the relevant section
 - Enable recursive inference: set `recursive: true`
 - Enable inline tuning (PL-002): set `tune_inline: true`
 - Apply pre-tuned params: set `params_file: data/tuning/best_params_lgbm.json`
-- Run LGBM per-cluster backtest: `make backtest-lgbm` (model ID: `lgbm_cluster`)
-- Run CatBoost per-cluster backtest: `make backtest-catboost` (model ID: `catboost_cluster`)
-- Run XGBoost per-cluster backtest: `make backtest-xgboost` (model ID: `xgboost_cluster`)
+- Run LGBM backtest: `make backtest-lgbm` (model ID: `lgbm_cluster` or `lgbm_global`)
+- Run CatBoost backtest: `make backtest-catboost` (model ID: `catboost_cluster` or `catboost_global`)
+- Run XGBoost backtest: `make backtest-xgboost` (model ID: `xgboost_cluster` or `xgboost_global`)
 - Run all three sequentially: `make backtest-all`
 - Run all three in parallel (faster on servers): `make backtest-all-parallel` — logs written to `data/backtest/logs/<model>.log`
 - Load predictions: `make backtest-load MODEL=lgbm_cluster` (or `make backtest-load-all` for all models)

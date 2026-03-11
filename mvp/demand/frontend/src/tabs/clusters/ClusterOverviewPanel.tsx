@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { queryKeys, fetchDfuClusters, fetchClusterProfiles, STALE } from "@/api/queries";
+import { queryKeys, fetchDfuClusters, fetchClusterProfiles, submitJob, STALE } from "@/api/queries";
 import type { ClusterInfo } from "@/types";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,10 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
   const [clusterSource, setClusterSource] = useState<"ml" | "source">("ml");
   const [selectedCluster, setSelectedCluster] = useState("");
   const [showClusterViz, setShowClusterViz] = useState(false);
+  const [showRunConfirm, setShowRunConfirm] = useState(false);
+  const [pipelineRunning, setPipelineRunning] = useState(false);
+  const [pipelineJobId, setPipelineJobId] = useState<string | null>(null);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
 
   const { data: clustersPayload } = useQuery({
     queryKey: queryKeys.dfuClusters(clusterSource),
@@ -31,6 +35,20 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
 
   const clusterSummary: ClusterInfo[] = clustersPayload?.clusters ?? [];
   const clusterMeta = profilesPayload?.metadata ?? null;
+
+  const handleRunPipeline = async () => {
+    setShowRunConfirm(false);
+    setPipelineRunning(true);
+    setPipelineError(null);
+    setPipelineJobId(null);
+    try {
+      const resp = await submitJob("cluster_pipeline", {}, "Production Clustering Pipeline");
+      setPipelineJobId(resp.job_id);
+    } catch (err) {
+      setPipelineRunning(false);
+      setPipelineError(err instanceof Error ? err.message : "Failed to start pipeline");
+    }
+  };
 
   return (
     <Card className="mt-4 animate-fade-in">
@@ -172,17 +190,128 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
                 ) : null}
               </>
             ) : null}
+
+            {/* Run Production Pipeline button */}
+            {clusterSource === "ml" ? (
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  className={cn(
+                    "rounded-md px-4 py-2 text-sm font-medium transition-colors",
+                    pipelineRunning
+                      ? "cursor-wait bg-primary/50 text-primary-foreground"
+                      : "bg-primary text-primary-foreground hover:bg-primary/90",
+                  )}
+                  disabled={pipelineRunning}
+                  onClick={() => setShowRunConfirm(true)}
+                >
+                  {pipelineRunning ? (
+                    <span className="flex items-center gap-2">
+                      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                      Pipeline Running...
+                    </span>
+                  ) : (
+                    "Re-run Clustering Pipeline"
+                  )}
+                </button>
+                {pipelineJobId && (
+                  <span className="text-[10px] font-mono text-muted-foreground bg-muted rounded px-1.5 py-0.5">
+                    {pipelineJobId}
+                  </span>
+                )}
+              </div>
+            ) : null}
+            {pipelineError && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                {pipelineError}
+              </div>
+            )}
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            No cluster assignments yet. Run the clustering pipeline:{" "}
-            <code className="rounded bg-muted px-1">make cluster-features</code>, then{" "}
-            <code className="rounded bg-muted px-1">make cluster-train</code>,{" "}
-            <code className="rounded bg-muted px-1">make cluster-label</code>, and{" "}
-            <code className="rounded bg-muted px-1">make cluster-update</code> to see clusters here.
-          </p>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              No cluster assignments yet. Run the clustering pipeline to group DFUs by demand patterns.
+            </p>
+            <button
+              className={cn(
+                "rounded-md px-4 py-2 text-sm font-medium transition-colors",
+                pipelineRunning
+                  ? "cursor-wait bg-primary/50 text-primary-foreground"
+                  : "bg-primary text-primary-foreground hover:bg-primary/90",
+              )}
+              disabled={pipelineRunning}
+              onClick={() => setShowRunConfirm(true)}
+            >
+              {pipelineRunning ? (
+                <span className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                  Pipeline Running...
+                </span>
+              ) : (
+                "Run Clustering Pipeline"
+              )}
+            </button>
+            {pipelineJobId && (
+              <div className="rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 p-3 text-sm flex items-center justify-between">
+                <span className="text-blue-700 dark:text-blue-300 text-xs">
+                  Pipeline job scheduled. Track progress in the Jobs tab.
+                </span>
+                <span className="text-[10px] font-mono text-blue-500 bg-blue-100 dark:bg-blue-900/50 rounded px-1.5 py-0.5">
+                  {pipelineJobId}
+                </span>
+              </div>
+            )}
+            {pipelineError && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                {pipelineError}
+              </div>
+            )}
+          </div>
         )}
       </CardContent>
+
+      {/* Run Pipeline Confirmation Dialog */}
+      {showRunConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-lg border border-border bg-card p-6 shadow-xl">
+            <p className="text-base font-semibold">Run Production Clustering Pipeline?</p>
+
+            <div className="mt-3 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-3">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                This will overwrite existing cluster assignments
+              </p>
+              <ul className="mt-1.5 space-y-1 text-xs text-amber-700 dark:text-amber-400">
+                <li>1. <strong>Generate features</strong> — extract demand patterns from sales history</li>
+                <li>2. <strong>Train model</strong> — find optimal K and fit KMeans</li>
+                <li>3. <strong>Label clusters</strong> — assign business labels (e.g., high_volume_steady)</li>
+                <li>4. <strong>Update assignments</strong> — write new labels to <code className="text-[10px] bg-amber-100 dark:bg-amber-900/50 rounded px-0.5">dim_dfu.ml_cluster</code></li>
+              </ul>
+              <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-500">
+                After completion, re-run backtests to validate model accuracy with the new clusters.
+              </p>
+            </div>
+
+            <p className="mt-3 text-xs text-muted-foreground">
+              Uses default parameters from <code className="text-[10px] bg-muted rounded px-0.5">clustering_config.yaml</code>.
+              Use What-If Scenarios below to experiment with custom parameters first.
+            </p>
+
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                className="rounded-md border border-input bg-background px-4 py-2 text-sm hover:bg-muted/50"
+                onClick={() => setShowRunConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="rounded-md bg-primary hover:bg-primary/90 px-4 py-2 text-sm font-medium text-primary-foreground"
+                onClick={handleRunPipeline}
+              >
+                Run Pipeline
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

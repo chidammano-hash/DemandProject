@@ -1,19 +1,22 @@
 """
 Train clustering model on DFU features with optimal K selection.
 
-This script performs KMeans clustering with multiple K selection methods
-(elbow, silhouette, gap statistic) and logs results to MLflow.
+This script performs KMeans clustering with combined Silhouette + Calinski-Harabasz
+K selection and logs results to MLflow.
 
 Key design choices for balanced clusters (tree-model friendly):
   1. Log-transform skewed volume features before scaling
-  2. Select only volume/trend/seasonality features (drop item attributes)
-  3. Merge small clusters into nearest large neighbor post-hoc
+  2. Select only core demand-pattern features (volume/trend/seasonality/intermittency)
+  3. Enforce 5% minimum cluster size during K selection (hard constraint)
+  4. Merge any remaining small clusters into nearest large neighbor post-hoc
+  5. Combined score = 0.5 * silhouette_norm + 0.5 * calinski_norm for robust K selection
 """
 
 import argparse
 import json
 import os
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +29,7 @@ import seaborn as sns
 from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import silhouette_score, calinski_harabasz_score
 from scipy.spatial.distance import cdist
 import mlflow
 import mlflow.sklearn
@@ -38,21 +41,28 @@ if str(ROOT) not in sys.path:
 
 # ── Feature groups ──────────────────────────────────────────────────────────
 # Core features that drive business-meaningful clusters for tree models.
-# Volume + trend + seasonality + history length.
+# Covers volume, trend, seasonality, periodicity, intermittency, and lifecycle.
 CORE_FEATURES = [
-    # Volume (will be log-transformed)
+    # Volume (log-transformed)
     "mean_demand",
     "cv_demand",
-    # Trend
-    "trend_slope",
-    "growth_rate",
+    "iqr_demand",
+    # Trend (scale-invariant)
+    "trend_slope_norm",
+    "trend_r2",
+    "cagr",
     # Seasonality
-    "seasonality_strength",
-    # History
-    "months_available",
-    # Volatility / pattern
+    "seasonal_amplitude",
+    "seasonal_r2",
+    "yoy_correlation",
+    # Periodicity
+    "periodicity_strength",
+    # Intermittency
     "zero_demand_pct",
-    "demand_stability",
+    "adi",
+    # Lifecycle
+    "months_available",
+    "recency_ratio",
 ]
 
 # Features that get log1p-transformed (highly skewed, spans orders of magnitude)
@@ -62,34 +72,9 @@ LOG_TRANSFORM_FEATURES = [
     "std_demand",
     "total_demand",
     "max_demand",
-    "min_demand",
-    "seasonal_index_std",
+    "iqr_demand",
+    "adi",
 ]
-
-
-def gap_statistic(X: np.ndarray, k: int, n_refs: int = 10, random_state: int = 42) -> float:
-    """Compute gap statistic for K selection."""
-    np.random.seed(random_state)
-
-    # Fit KMeans to actual data
-    kmeans = KMeans(n_clusters=k, random_state=random_state, n_init=10)
-    kmeans.fit(X)
-    actual_inertia = kmeans.inertia_
-
-    # Generate reference datasets
-    ref_inertias = []
-    for _ in range(n_refs):
-        random_data = np.random.uniform(
-            low=X.min(axis=0),
-            high=X.max(axis=0),
-            size=X.shape
-        )
-        ref_kmeans = KMeans(n_clusters=k, random_state=random_state, n_init=10)
-        ref_kmeans.fit(random_data)
-        ref_inertias.append(ref_kmeans.inertia_)
-
-    gap = np.log(np.mean(ref_inertias)) - np.log(actual_inertia)
-    return gap
 
 
 def merge_small_clusters(
@@ -114,7 +99,7 @@ def merge_small_clusters(
 
     print(f"\nMerging {len(small)} small clusters (min_size={min_size}):")
     for sc in sorted(small):
-        print(f"  Cluster {sc} ({size_map[sc]} DFUs) → ", end="")
+        print(f"  Cluster {sc} ({size_map[sc]} DFUs) -> ", end="")
         # Find nearest large cluster by centroid distance
         sc_centroid = centroids[sc]
         best_dist = np.inf
@@ -142,89 +127,170 @@ def merge_small_clusters(
     return labels, new_centroids
 
 
+def _evaluate_single_k(
+    k: int,
+    X_scaled: np.ndarray,
+    n_samples: int,
+    min_cluster_size: int,
+    silhouette_sample_size: int | None,
+) -> dict[str, Any]:
+    """Evaluate a single K value.  Designed for parallel execution.
+
+    Returns a dict with k, inertia, sil, ch, cluster_sizes, smallest, feasible.
+    """
+    kmeans = MiniBatchKMeans(
+        n_clusters=k, random_state=42, n_init=5, batch_size=10000, max_iter=200
+    )
+    labels = kmeans.fit_predict(X_scaled)
+
+    # Use sampling for silhouette on large datasets (>50K) for speed
+    sil_kwargs: dict[str, Any] = {}
+    if silhouette_sample_size is not None:
+        sil_kwargs["sample_size"] = silhouette_sample_size
+        sil_kwargs["random_state"] = 42
+    sil = silhouette_score(X_scaled, labels, **sil_kwargs)
+    ch = calinski_harabasz_score(X_scaled, labels)
+
+    unique, counts = np.unique(labels, return_counts=True)
+    smallest = int(min(counts))
+    feasible = smallest >= min_cluster_size
+
+    return {
+        "k": k,
+        "inertia": float(kmeans.inertia_),
+        "sil": float(sil),
+        "ch": float(ch),
+        "cluster_sizes": dict(zip(unique.tolist(), counts.tolist())),
+        "smallest": smallest,
+        "feasible": feasible,
+    }
+
+
 def find_optimal_k(
     X_scaled: np.ndarray,
     k_range: tuple[int, int],
-    min_cluster_size_pct: float = 0.01,
-    skip_gap: bool = False,
+    min_cluster_size_pct: float = 5.0,
+    n_workers: int = 1,
 ) -> dict[str, Any]:
-    """Find optimal K using multiple methods."""
+    """Find optimal K using combined Silhouette + Calinski-Harabasz score.
+
+    Enforces a hard minimum cluster size constraint: any K where any cluster
+    falls below the threshold is penalized (score set to -1) so the optimizer
+    steers toward well-balanced solutions.
+
+    Parameters
+    ----------
+    n_workers : int
+        Number of parallel workers for K evaluation.  1 = serial (default).
+
+    Returns a dict with k_values, inertias, silhouette_scores, ch_scores,
+    combined_scores, feasible_mask, and optimal_k variants.
+    """
     k_min, k_max = k_range
     k_values = list(range(k_min, k_max + 1))
 
-    inertias = []
-    silhouette_scores = []
-    gap_stats = []
-    cluster_sizes_list = []
-
     n_samples = len(X_scaled)
-    min_cluster_size = int(n_samples * min_cluster_size_pct)
+    min_cluster_size = int(n_samples * min_cluster_size_pct / 100.0)
 
-    print(f"Testing K values from {k_min} to {k_max} ({n_samples} samples, skip_gap={skip_gap})...")
+    # Use silhouette sampling for large datasets (>50K) — O(n^2) otherwise
+    silhouette_sample_size = 10_000 if n_samples > 50_000 else None
 
-    for k in k_values:
-        print(f"  K={k}...", end=" ", flush=True)
-        # Use MiniBatchKMeans for K-search speed on large datasets
-        kmeans = MiniBatchKMeans(n_clusters=k, random_state=42, n_init=3, batch_size=10000, max_iter=100)
-        labels = kmeans.fit_predict(X_scaled)
+    print(
+        f"Testing K values from {k_min} to {k_max} "
+        f"({n_samples} samples, min_cluster_size={min_cluster_size} "
+        f"[{min_cluster_size_pct:.1f}%]"
+        f"{f', silhouette_sample={silhouette_sample_size}' if silhouette_sample_size else ''}"
+        f", workers={n_workers})..."
+    )
 
-        inertias.append(kmeans.inertia_)
-        sil = silhouette_score(X_scaled, labels)
-        silhouette_scores.append(sil)
+    # Evaluate K values — parallel if workers > 1
+    results_by_k: dict[int, dict] = {}
 
-        # Gap statistic (expensive — skip for large datasets)
-        if not skip_gap and k >= 2:
-            gap = gap_statistic(X_scaled, k, n_refs=5)
-            gap_stats.append(gap)
-        else:
-            gap_stats.append(0.0)
+    if n_workers > 1 and len(k_values) > 1:
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(
+                    _evaluate_single_k, k, X_scaled, n_samples,
+                    min_cluster_size, silhouette_sample_size,
+                ): k
+                for k in k_values
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                k = result["k"]
+                results_by_k[k] = result
+                smallest = result["smallest"]
+                smallest_pct = smallest / n_samples * 100
+                status = "OK" if result["feasible"] else f"PENALIZED (smallest={smallest} = {smallest_pct:.1f}%)"
+                print(
+                    f"  K={k}... sil={result['sil']:.4f}, CH={result['ch']:.1f}, "
+                    f"smallest={smallest} ({smallest_pct:.1f}%) [{status}]"
+                )
+    else:
+        for k in k_values:
+            print(f"  K={k}...", end=" ", flush=True)
+            result = _evaluate_single_k(
+                k, X_scaled, n_samples, min_cluster_size, silhouette_sample_size,
+            )
+            results_by_k[k] = result
+            smallest = result["smallest"]
+            smallest_pct = smallest / n_samples * 100
+            status = "OK" if result["feasible"] else f"PENALIZED (smallest={smallest} = {smallest_pct:.1f}%)"
+            print(f"sil={result['sil']:.4f}, CH={result['ch']:.1f}, smallest={smallest} ({smallest_pct:.1f}%) [{status}]")
 
-        # Check cluster sizes
-        unique, counts = np.unique(labels, return_counts=True)
-        cluster_sizes_list.append(dict(zip(unique, counts)))
+    # Collect results in k_values order
+    inertias = [results_by_k[k]["inertia"] for k in k_values]
+    silhouette_scores_list = [results_by_k[k]["sil"] for k in k_values]
+    ch_scores = [results_by_k[k]["ch"] for k in k_values]
+    cluster_sizes_list = [results_by_k[k]["cluster_sizes"] for k in k_values]
+    feasible_mask = [results_by_k[k]["feasible"] for k in k_values]
 
-        smallest = min(counts)
-        print(f"silhouette={sil:.4f}, smallest_cluster={smallest}")
-        if smallest < min_cluster_size:
-            print(f"    Warning: smallest cluster {smallest} < {min_cluster_size}")
+    # Normalize metrics to [0, 1] across all K values
+    sil_arr = np.array(silhouette_scores_list)
+    ch_arr = np.array(ch_scores)
 
-    # Find optimal K by silhouette score
-    optimal_k_silhouette = k_values[np.argmax(silhouette_scores)]
+    sil_norm = (sil_arr - sil_arr.min()) / (sil_arr.max() - sil_arr.min() + 1e-8)
+    ch_norm = (ch_arr - ch_arr.min()) / (ch_arr.max() - ch_arr.min() + 1e-8)
+    combined = 0.5 * sil_norm + 0.5 * ch_norm
 
-    # Find optimal K by gap statistic
-    optimal_k_gap = optimal_k_silhouette
-    if not skip_gap and any(g > 0 for g in gap_stats):
-        gaps = np.array(gap_stats)
-        s = np.zeros(len(k_values))
-        for i, k in enumerate(k_values):
-            if gaps[i] > 0:
-                ref_gaps = [gap_statistic(X_scaled, k, n_refs=5, random_state=seed) for seed in [42, 123, 456]]
-                s[i] = np.std(ref_gaps)
-        for i in range(len(gaps) - 1):
-            if gaps[i] >= gaps[i + 1] - s[i + 1]:
-                optimal_k_gap = k_values[i]
-                break
+    # Penalize K values that violate the min-cluster-size constraint
+    for i, feasible in enumerate(feasible_mask):
+        if not feasible:
+            combined[i] = -1.0
 
-    # Elbow method: find point of maximum curvature
+    combined_scores = combined.tolist()
+
+    # Best K: highest combined score among feasible K values
+    if any(feasible_mask):
+        optimal_k = k_values[int(np.argmax(combined))]
+    else:
+        # All K values violated the constraint — fall back to best silhouette
+        print(
+            "Warning: no K passed the min-cluster-size constraint. "
+            "Falling back to best silhouette score."
+        )
+        optimal_k = k_values[int(np.argmax(sil_arr))]
+
+    # Elbow method: point of maximum curvature (secondary reference)
     if len(inertias) >= 3:
         diffs = np.diff(inertias)
         second_diffs = np.diff(diffs)
-        optimal_k_elbow = k_values[np.argmin(second_diffs) + 1] if len(second_diffs) > 0 else optimal_k_silhouette
+        optimal_k_elbow = k_values[int(np.argmin(second_diffs)) + 1] if len(second_diffs) > 0 else optimal_k
     else:
-        optimal_k_elbow = optimal_k_silhouette
+        optimal_k_elbow = optimal_k
 
-    # Choose best K (prefer silhouette, fallback to elbow)
-    optimal_k = optimal_k_silhouette
+    optimal_k_silhouette = k_values[int(np.argmax(sil_arr))]
 
     return {
         "k_values": k_values,
         "inertias": inertias,
-        "silhouette_scores": silhouette_scores,
-        "gap_stats": gap_stats,
+        "silhouette_scores": silhouette_scores_list,
+        "ch_scores": ch_scores,
+        "combined_scores": combined_scores,
+        "feasible_mask": feasible_mask,
         "optimal_k": optimal_k,
         "optimal_k_silhouette": optimal_k_silhouette,
         "optimal_k_elbow": optimal_k_elbow,
-        "optimal_k_gap": optimal_k_gap,
         "cluster_sizes": cluster_sizes_list,
     }
 
@@ -233,36 +299,63 @@ def plot_k_selection(
     k_values: list[int],
     inertias: list[float],
     silhouette_scores: list[float],
-    gap_stats: list[float],
-    output_dir: Path
+    ch_scores: list[float],
+    combined_scores: list[float],
+    feasible_mask: list[bool],
+    optimal_k: int,
+    output_dir: Path,
 ) -> None:
-    """Generate visualization plots for K selection."""
+    """Generate visualization plots for K selection (elbow, silhouette, CH score)."""
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
     # Elbow plot
     axes[0].plot(k_values, inertias, "bo-")
+    axes[0].axvline(x=optimal_k, color="red", linestyle="--", alpha=0.7, label=f"K={optimal_k}")
     axes[0].set_xlabel("Number of Clusters (K)")
     axes[0].set_ylabel("Within-Cluster Sum of Squares (WCSS)")
     axes[0].set_title("Elbow Method")
+    axes[0].legend()
     axes[0].grid(True)
 
-    # Silhouette plot
-    axes[1].plot(k_values, silhouette_scores, "ro-")
+    # Silhouette plot — color infeasible K values differently
+    colors_sil = ["green" if f else "lightcoral" for f in feasible_mask]
+    axes[1].bar(k_values, silhouette_scores, color=colors_sil, alpha=0.7)
+    axes[1].plot(k_values, silhouette_scores, "o-", color="darkblue", alpha=0.8)
+    axes[1].axvline(x=optimal_k, color="red", linestyle="--", alpha=0.7, label=f"K={optimal_k}")
     axes[1].set_xlabel("Number of Clusters (K)")
     axes[1].set_ylabel("Silhouette Score")
-    axes[1].set_title("Silhouette Score")
-    axes[1].grid(True)
+    axes[1].set_title("Silhouette Score\n(red=infeasible <5%)")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.4)
 
-    # Gap statistic plot
-    if len(gap_stats) > 0:
-        axes[2].plot(k_values, gap_stats, "go-")
-        axes[2].set_xlabel("Number of Clusters (K)")
-        axes[2].set_ylabel("Gap Statistic")
-        axes[2].set_title("Gap Statistic")
-        axes[2].grid(True)
+    # Calinski-Harabasz score plot
+    colors_ch = ["green" if f else "lightcoral" for f in feasible_mask]
+    axes[2].bar(k_values, ch_scores, color=colors_ch, alpha=0.7)
+    axes[2].plot(k_values, ch_scores, "o-", color="darkorange", alpha=0.8)
+    axes[2].axvline(x=optimal_k, color="red", linestyle="--", alpha=0.7, label=f"K={optimal_k}")
+    axes[2].set_xlabel("Number of Clusters (K)")
+    axes[2].set_ylabel("Calinski-Harabasz Score")
+    axes[2].set_title("Calinski-Harabasz Score\n(higher = better separation)")
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.4)
 
     plt.tight_layout()
     plt.savefig(output_dir / "k_selection_plots.png", dpi=150, bbox_inches="tight")
+    plt.close()
+
+    # Additional combined-score plot
+    fig2, ax = plt.subplots(figsize=(8, 5))
+    colors_comb = ["green" if f else "lightcoral" for f in feasible_mask]
+    combined_display = [max(s, 0) for s in combined_scores]  # clip -1 to 0 for display
+    ax.bar(k_values, combined_display, color=colors_comb, alpha=0.7)
+    ax.axvline(x=optimal_k, color="red", linestyle="--", alpha=0.9, label=f"Selected K={optimal_k}")
+    ax.set_xlabel("Number of Clusters (K)")
+    ax.set_ylabel("Combined Score (0.5*sil + 0.5*CH, normalized)")
+    ax.set_title("Combined K Selection Score\n(green=feasible >=5%, red=penalized)")
+    ax.legend()
+    ax.grid(True, alpha=0.4)
+    plt.tight_layout()
+    plt.savefig(output_dir / "combined_score_plot.png", dpi=150, bbox_inches="tight")
     plt.close()
 
 
@@ -270,7 +363,7 @@ def plot_cluster_visualization(
     X_scaled: np.ndarray,
     labels: np.ndarray,
     feature_names: list[str],
-    output_dir: Path
+    output_dir: Path,
 ) -> None:
     """Generate 2D PCA visualization of clusters."""
     if X_scaled.shape[1] < 2:
@@ -280,7 +373,7 @@ def plot_cluster_visualization(
     X_pca = pca.fit_transform(X_scaled)
 
     plt.figure(figsize=(10, 8))
-    scatter = plt.scatter(X_pca[:, 0], X_pca[:, 1], c=labels, cmap="tab10", alpha=0.6)
+    scatter = plt.scatter(X_pca[:, 0], X_pca[:, 1], c=labels, cmap="tab20", alpha=0.6)
     plt.colorbar(scatter, label="Cluster")
     plt.xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.2%} variance)")
     plt.ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.2%} variance)")
@@ -293,17 +386,31 @@ def plot_cluster_visualization(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train clustering model with optimal K selection")
     parser.add_argument("--input", type=str, default="data/clustering_features.csv", help="Input feature matrix")
-    parser.add_argument("--k-range", type=int, nargs=2, default=[3, 12], metavar=("MIN", "MAX"), help="K range to test")
-    parser.add_argument("--min-cluster-size-pct", type=float, default=0.02, help="Minimum cluster size as pct of total (clusters below this get merged)")
+    parser.add_argument("--k-range", type=int, nargs=2, default=None, metavar=("MIN", "MAX"), help="K range to test (default: from config)")
+    parser.add_argument("--min-cluster-size-pct", type=float, default=None, help="Minimum cluster size as pct of total (default: from config)")
     parser.add_argument("--use-pca", action="store_true", help="Use PCA for dimensionality reduction")
     parser.add_argument("--pca-components", type=int, default=None, help="Number of PCA components (auto if not specified)")
     parser.add_argument("--output-dir", type=str, default="data/clustering", help="Output directory for artifacts")
-    parser.add_argument("--skip-gap", action="store_true", help="Skip gap statistic (much faster for large datasets)")
     parser.add_argument("--all-features", action="store_true", help="Use all numeric features instead of core volume/trend/seasonality subset")
+    parser.add_argument("--config", type=str, default="config/clustering_config.yaml", help="Clustering config YAML")
+    parser.add_argument("--workers", type=int, default=None, help="Parallel workers for K-search (default: min(cpu_count, 8); 1 for serial)")
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
     load_dotenv(root / ".env")
+
+    # Load config — CLI args override config values
+    config_path = root / args.config
+    cfg = {}
+    if config_path.exists():
+        import yaml
+        with open(config_path, "r") as f:
+            cfg = yaml.safe_load(f).get("clustering", {})
+
+    k_range = tuple(args.k_range) if args.k_range is not None else tuple(cfg.get("k_range", [5, 18]))
+    min_cluster_size_pct = args.min_cluster_size_pct if args.min_cluster_size_pct is not None else cfg.get("min_cluster_size_pct", 5.0)
+    use_pca = args.use_pca or cfg.get("use_pca", False)
+    pca_components = args.pca_components or cfg.get("pca_components", None)
 
     # Load feature matrix
     input_path = root / args.input
@@ -322,7 +429,7 @@ def main() -> None:
         feature_cols = [c for c in df.columns if c not in metadata_cols]
         numeric_cols = df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
     else:
-        # Use only core volume/trend/seasonality features
+        # Use only core demand-pattern features
         numeric_cols = [c for c in CORE_FEATURES if c in df.columns]
         missing = [c for c in CORE_FEATURES if c not in df.columns]
         if missing:
@@ -336,7 +443,6 @@ def main() -> None:
     log_applied = []
     for col in numeric_cols:
         if col in LOG_TRANSFORM_FEATURES and col in X_df.columns:
-            # Only log-transform non-negative columns
             col_min = X_df[col].min()
             if col_min >= 0:
                 X_df[col] = np.log1p(X_df[col])
@@ -349,10 +455,12 @@ def main() -> None:
     if log_applied:
         print(f"Log-transformed: {log_applied}")
 
-    # Also log-transform trend_slope (can be negative, use sign-preserving log)
-    if "trend_slope" in X_df.columns:
-        X_df["trend_slope"] = np.sign(X_df["trend_slope"]) * np.log1p(np.abs(X_df["trend_slope"]))
-        print("Sign-preserving log applied to trend_slope")
+    # Sign-preserving log for trend_slope_norm (can be negative)
+    if "trend_slope_norm" in X_df.columns:
+        X_df["trend_slope_norm"] = (
+            np.sign(X_df["trend_slope_norm"]) * np.log1p(np.abs(X_df["trend_slope_norm"]))
+        )
+        print("Sign-preserving log applied to trend_slope_norm")
 
     X = X_df.values
     feature_names = list(numeric_cols)
@@ -369,32 +477,36 @@ def main() -> None:
     X_scaled = scaler.fit_transform(X)
 
     # Optional PCA
-    pca = None
-    if args.use_pca:
-        n_components = args.pca_components or min(50, X_scaled.shape[1])
-        pca = PCA(n_components=n_components, random_state=42)
-        X_scaled = pca.fit_transform(X_scaled)
-        print(f"Applied PCA: {X_scaled.shape[1]} components ({pca.explained_variance_ratio_.sum():.2%} variance explained)")
+    pca_model = None
+    if use_pca:
+        n_components = pca_components or min(50, X_scaled.shape[1])
+        pca_model = PCA(n_components=n_components, random_state=42)
+        X_scaled = pca_model.fit_transform(X_scaled)
+        print(f"Applied PCA: {X_scaled.shape[1]} components ({pca_model.explained_variance_ratio_.sum():.2%} variance explained)")
 
-    # Find optimal K
-    k_range = tuple(args.k_range)
-    k_results = find_optimal_k(X_scaled, k_range, args.min_cluster_size_pct, skip_gap=args.skip_gap)
+    # Determine worker count for parallel K-search
+    n_workers = args.workers if args.workers is not None else min(os.cpu_count() or 1, 8)
+    n_workers = max(1, n_workers)
+
+    # Find optimal K using combined silhouette + CH score with min-size constraint
+    k_results = find_optimal_k(X_scaled, k_range, min_cluster_size_pct, n_workers=n_workers)
     optimal_k = k_results["optimal_k"]
 
     print(f"\nOptimal K selection:")
-    print(f"  Silhouette method: K={k_results['optimal_k_silhouette']}")
+    print(f"  Combined score method: K={optimal_k}")
+    print(f"  Silhouette-only method: K={k_results['optimal_k_silhouette']}")
     print(f"  Elbow method: K={k_results['optimal_k_elbow']}")
-    print(f"  Gap statistic: K={k_results['optimal_k_gap']}")
     print(f"  Selected: K={optimal_k}")
 
-    # Train final model with more inits for stability
-    print(f"\nTraining final KMeans with K={optimal_k}...")
-    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=20)
+    # Train final model with n_init=30 for robustness with 14 features
+    # algorithm="elkan" is faster than "lloyd" for dense low-dimensional data
+    print(f"\nTraining final KMeans with K={optimal_k}, n_init=30, algorithm=elkan, max_iter=300...")
+    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=30, algorithm="elkan", max_iter=300)
     labels = kmeans.fit_predict(X_scaled)
 
     # ── Merge small clusters ────────────────────────────────────────────────
     n_samples = len(X_scaled)
-    min_cluster_size = int(n_samples * args.min_cluster_size_pct)
+    min_cluster_size = int(n_samples * min_cluster_size_pct / 100.0)
     unique_pre, counts_pre = np.unique(labels, return_counts=True)
     small_count = sum(1 for c in counts_pre if c < min_cluster_size)
 
@@ -407,10 +519,11 @@ def main() -> None:
         optimal_k = final_k
     else:
         centroids_scaled = kmeans.cluster_centers_
-        print("All clusters meet minimum size — no merging needed.")
+        print("All clusters meet minimum size -- no merging needed.")
 
-    # Compute metrics
+    # Compute final metrics
     silhouette = silhouette_score(X_scaled, labels)
+    ch_score_final = calinski_harabasz_score(X_scaled, labels)
     inertia = kmeans.inertia_
 
     # Cluster sizes
@@ -420,6 +533,7 @@ def main() -> None:
     print(f"\nFinal results:")
     print(f"  Clusters: {optimal_k}")
     print(f"  Silhouette score: {silhouette:.4f}")
+    print(f"  Calinski-Harabasz score: {ch_score_final:.2f}")
     print(f"  Inertia: {inertia:.2f}")
     for cid, sz in sorted(cluster_sizes.items()):
         pct = sz / n_samples * 100
@@ -435,8 +549,11 @@ def main() -> None:
         k_results["k_values"],
         k_results["inertias"],
         k_results["silhouette_scores"],
-        k_results["gap_stats"],
-        output_dir
+        k_results["ch_scores"],
+        k_results["combined_scores"],
+        k_results["feasible_mask"],
+        optimal_k,
+        output_dir,
     )
 
     if X_scaled.shape[1] >= 2:
@@ -455,19 +572,22 @@ def main() -> None:
     cluster_metadata = {
         "optimal_k": int(optimal_k),
         "silhouette_score": float(silhouette),
+        "calinski_harabasz_score": float(ch_score_final),
         "inertia": float(inertia),
         "n_clusters": int(optimal_k),
         "cluster_sizes": {str(k): int(v) for k, v in cluster_sizes.items()},
         "feature_names": feature_names,
         "log_transformed": log_applied,
         "feature_selection": "core" if not args.all_features else "all",
-        "min_cluster_size_pct": args.min_cluster_size_pct,
+        "min_cluster_size_pct": min_cluster_size_pct,
         "k_selection_results": {
             "k_values": [int(k) for k in k_results["k_values"]],
             "inertias": [float(x) for x in k_results["inertias"]],
             "silhouette_scores": [float(x) for x in k_results["silhouette_scores"]],
-            "gap_stats": [float(x) for x in k_results["gap_stats"]],
-        }
+            "ch_scores": [float(x) for x in k_results["ch_scores"]],
+            "combined_scores": [float(x) for x in k_results["combined_scores"]],
+            "feasible_mask": k_results["feasible_mask"],
+        },
     }
 
     metadata_path = output_dir / "cluster_metadata.json"
@@ -475,22 +595,25 @@ def main() -> None:
         json.dump(cluster_metadata, f, indent=2)
     print(f"Saved cluster metadata to {metadata_path}")
 
-    # Save centroids — inverse-transform back to original feature space
-    if pca is None:
+    # Save centroids -- inverse-transform back to original feature space
+    if pca_model is None:
         centroids_original = scaler.inverse_transform(centroids_scaled)
     else:
-        centroids_pca_inv = pca.inverse_transform(centroids_scaled)
+        centroids_pca_inv = pca_model.inverse_transform(centroids_scaled)
         centroids_original = scaler.inverse_transform(centroids_pca_inv)
 
     # Note: centroids are in log-space for log-transformed features.
-    # For interpretability in label_clusters.py, expm1 to get back to original scale.
+    # expm1 to get back to original scale for interpretability in label_clusters.py.
     centroids_df = pd.DataFrame(centroids_original, columns=feature_names)
     for col in feature_names:
         if col in LOG_TRANSFORM_FEATURES:
             centroids_df[col] = np.expm1(centroids_df[col])
-    # Undo sign-preserving log for trend_slope
-    if "trend_slope" in centroids_df.columns:
-        centroids_df["trend_slope"] = np.sign(centroids_df["trend_slope"]) * np.expm1(np.abs(centroids_df["trend_slope"]))
+    # Undo sign-preserving log for trend_slope_norm
+    if "trend_slope_norm" in centroids_df.columns:
+        centroids_df["trend_slope_norm"] = (
+            np.sign(centroids_df["trend_slope_norm"])
+            * np.expm1(np.abs(centroids_df["trend_slope_norm"]))
+        )
 
     centroids_df["cluster_id"] = range(optimal_k)
     centroids_path = output_dir / "cluster_centroids.csv"
@@ -506,39 +629,45 @@ def main() -> None:
         with mlflow.start_run():
             mlflow.set_tag("model_type", "clustering")
             mlflow.set_tag("feature_set", "core" if not args.all_features else "all")
-            mlflow.set_tag("version", "v2.0")
+            mlflow.set_tag("version", "v3.0")
+            mlflow.set_tag("k_selection_method", "combined_silhouette_ch")
 
             mlflow.log_params({
                 "k": int(optimal_k),
                 "k_min": int(k_range[0]),
                 "k_max": int(k_range[1]),
-                "min_cluster_size_pct": args.min_cluster_size_pct,
-                "use_pca": args.use_pca,
+                "min_cluster_size_pct": min_cluster_size_pct,
+                "use_pca": use_pca,
                 "n_features": len(feature_names),
                 "log_transform": True,
                 "feature_selection": "core" if not args.all_features else "all",
+                "n_init_final": 30,
             })
 
             mlflow.log_metrics({
                 "silhouette_score": float(silhouette),
+                "calinski_harabasz_score": float(ch_score_final),
                 "inertia": float(inertia),
                 "n_clusters": int(optimal_k),
             })
 
             for cluster_id, size in cluster_sizes.items():
                 mlflow.log_metric(f"cluster_{cluster_id}_size", int(size))
+                mlflow.log_metric(f"cluster_{cluster_id}_pct", float(size / n_samples * 100))
 
             mlflow.log_artifact(str(assignments_path), "cluster_assignments.csv")
             mlflow.log_artifact(str(metadata_path), "cluster_metadata.json")
             mlflow.log_artifact(str(centroids_path), "cluster_centroids.csv")
             mlflow.log_artifact(str(output_dir / "k_selection_plots.png"), "k_selection_plots.png")
+            if (output_dir / "combined_score_plot.png").exists():
+                mlflow.log_artifact(str(output_dir / "combined_score_plot.png"), "combined_score_plot.png")
             if (output_dir / "cluster_visualization.png").exists():
                 mlflow.log_artifact(str(output_dir / "cluster_visualization.png"), "cluster_visualization.png")
 
             mlflow.sklearn.log_model(kmeans, "model")
 
             print(f"\nLogged to MLflow: {mlflow.get_artifact_uri()}")
-    except Exception as e:  # ConnectionError, MlflowException, etc.
+    except (ConnectionError, OSError, mlflow.exceptions.MlflowException) as e:
         print(f"\nMLflow logging skipped (server unavailable or error): {e}")
         print("Clustering outputs were saved to disk. Start MLflow (e.g. make up) to enable experiment tracking.")
 

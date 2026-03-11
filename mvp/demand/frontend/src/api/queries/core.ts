@@ -226,7 +226,6 @@ export interface ClusteringDefaultsPayload {
     min_cluster_size_pct: number;
     use_pca: boolean;
     pca_components: number | null;
-    skip_gap: boolean;
     all_features: boolean;
   };
   label_params: {
@@ -277,7 +276,9 @@ export interface ClusteringScenarioResult {
       k_values: number[];
       inertias: number[];
       silhouette_scores: number[];
-      gap_stats?: number[] | null;
+      ch_scores?: number[];
+      combined_scores?: number[];
+      feasible_mask?: boolean[];
     };
     profiles: ScenarioProfile[];
     feature_importance?: { feature: string; variance_ratio: number }[];
@@ -291,7 +292,6 @@ export interface ScenarioEstimate {
   training_sample: number;
   sampled: boolean;
   k_range: number;
-  skip_gap: boolean;
 }
 
 export interface ScenarioStatusResponse {
@@ -306,12 +306,10 @@ export interface ScenarioStatusResponse {
 export async function fetchScenarioEstimate(params: {
   k_min: number;
   k_max: number;
-  skip_gap: boolean;
 }): Promise<ScenarioEstimate> {
   const qs = new URLSearchParams({
     k_min: String(params.k_min),
     k_max: String(params.k_max),
-    skip_gap: String(params.skip_gap),
   });
   return fetchJson(`/clustering/scenario/estimate?${qs}`);
 }

@@ -8,6 +8,7 @@ What-If Scenarios UI.
 
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -22,6 +23,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import yaml
+
 from common.db import get_db_params
 from common.planning_date import get_planning_date
 from scripts.generate_clustering_features import compute_time_series_features
@@ -35,6 +38,36 @@ from scripts.label_clusters import assign_cluster_labels
 
 # Directory to store scenario temp data
 SCENARIO_BASE = Path("/tmp/clustering_scenarios")
+
+# Scenario IDs must match this pattern (same regex as enforced in clusters.py router)
+_SCENARIO_ID_RE = re.compile(r"^sc_\d{8}_\d{6}_[0-9a-f]{4}$")
+
+
+def _safe_scenario_dir(scenario_id: str) -> Path:
+    """Return the scenario directory path after validating scenario_id.
+
+    Raises ValueError if the ID format is invalid or if the resolved path
+    would escape SCENARIO_BASE (path traversal guard).
+    """
+    if not _SCENARIO_ID_RE.match(scenario_id):
+        raise ValueError(
+            f"Invalid scenario_id '{scenario_id}'. "
+            "Expected format: sc_YYYYMMDD_HHMMSS_<4hex>"
+        )
+    resolved = (SCENARIO_BASE / scenario_id).resolve()
+    base_resolved = SCENARIO_BASE.resolve()
+    if not str(resolved).startswith(str(base_resolved) + "/"):
+        raise ValueError(f"scenario_id '{scenario_id}' resolves outside SCENARIO_BASE")
+    return resolved
+
+
+def _load_config_defaults() -> dict[str, Any]:
+    """Load default parameters from clustering_config.yaml."""
+    config_path = ROOT / "config" / "clustering_config.yaml"
+    if not config_path.exists():
+        return {}
+    with open(config_path) as f:
+        return yaml.safe_load(f).get("clustering", {})
 
 
 def generate_scenario_id() -> str:
@@ -72,29 +105,37 @@ def run_scenario(
     if scenario_id is None:
         scenario_id = generate_scenario_id()
 
-    # Merge with defaults
-    fp = {"time_window_months": 24, "min_months_history": 1}
+    # Load defaults from clustering_config.yaml
+    cfg = _load_config_defaults()
+    labeling_cfg = cfg.get("labeling", {})
+    vol_cfg = labeling_cfg.get("volume_thresholds", {})
+    cv_cfg = labeling_cfg.get("cv_thresholds", {})
+
+    # Merge with config-driven defaults (user params override)
+    fp = {
+        "time_window_months": cfg.get("time_window_months", 36),
+        "min_months_history": cfg.get("min_months_history", 12),
+    }
     if feature_params:
         fp.update(feature_params)
 
     mp = {
-        "k_range": [3, 12],
-        "min_cluster_size_pct": 2.0,
-        "use_pca": False,
-        "pca_components": None,
-        "skip_gap": True,
+        "k_range": cfg.get("k_range", [5, 18]),
+        "min_cluster_size_pct": cfg.get("min_cluster_size_pct", 5.0),
+        "use_pca": cfg.get("use_pca", False),
+        "pca_components": cfg.get("pca_components", None),
         "all_features": False,
     }
     if model_params:
         mp.update(model_params)
 
     lp = {
-        "volume_high": 0.75,
-        "volume_low": 0.25,
-        "cv_steady": 0.3,
-        "cv_volatile": 0.8,
-        "seasonality_threshold": 0.5,
-        "zero_demand_threshold": 0.2,
+        "volume_high": vol_cfg.get("high", 0.75),
+        "volume_low": vol_cfg.get("low", 0.25),
+        "cv_steady": cv_cfg.get("steady", 0.4),
+        "cv_volatile": cv_cfg.get("volatile", 0.8),
+        "seasonality_threshold": labeling_cfg.get("seasonality_threshold", 0.3),
+        "zero_demand_threshold": labeling_cfg.get("zero_demand_threshold", 0.15),
     }
     if label_params:
         lp.update(label_params)
@@ -105,8 +146,8 @@ def run_scenario(
         "label_params": lp,
     }
 
-    # Create scenario directory
-    scenario_dir = SCENARIO_BASE / scenario_id
+    # Create scenario directory (validates scenario_id format + path containment)
+    scenario_dir = _safe_scenario_dir(scenario_id)
     scenario_dir.mkdir(parents=True, exist_ok=True)
 
     start_time = time.time()
@@ -157,6 +198,56 @@ def run_scenario(
 MAX_DFUS_FOR_TRAINING = 20_000  # Sample if DFU count exceeds this
 
 
+def _build_thresholds(
+    lp: dict, mean_demands: np.ndarray
+) -> tuple[dict, dict, dict]:
+    """Build volume_thresholds, cv_thresholds, and labeling_config from label params.
+
+    Args:
+        lp: Merged label params dict (from config + user overrides).
+        mean_demands: 1-D array of centroid mean_demand values used to derive
+                      percentile-based absolute volume thresholds.
+
+    Returns:
+        (volume_thresholds, cv_thresholds, labeling_config)
+    """
+    if len(mean_demands) == 0:
+        raise ValueError("Cannot build volume thresholds: mean_demands array is empty")
+    if "mean_demand" not in lp and len(mean_demands) == 0:
+        pass  # validated above
+
+    vol_very_high_pctl = lp.get("volume_very_high", 0.90)
+    vol_high_pctl = lp.get("volume_high", 0.75)
+    vol_low_pctl = lp.get("volume_low", 0.25)
+    vol_very_low_pctl = lp.get("volume_very_low", 0.10)
+
+    volume_thresholds = {
+        "very_high": float(np.percentile(mean_demands, vol_very_high_pctl * 100)),
+        "high":      float(np.percentile(mean_demands, vol_high_pctl * 100)),
+        "low":       float(np.percentile(mean_demands, vol_low_pctl * 100)),
+        "very_low":  float(np.percentile(mean_demands, vol_very_low_pctl * 100)),
+    }
+    cv_thresholds = {
+        "very_steady":  lp.get("cv_very_steady", 0.2),
+        "steady":       lp.get("cv_steady", 0.4),
+        "volatile":     lp.get("cv_volatile", 0.8),
+        "very_volatile": lp.get("cv_very_volatile", 1.2),
+    }
+    labeling_config = {
+        "seasonality_threshold":   lp.get("seasonality_threshold", 0.3),
+        "seasonality_r2_threshold": lp.get("seasonality_r2_threshold", 0.25),
+        "periodicity_threshold":   lp.get("periodicity_threshold", 0.25),
+        "zero_demand_threshold":   lp.get("zero_demand_threshold", 0.15),
+        "adi_threshold":           lp.get("adi_threshold", 1.5),
+        "trend_r2_threshold":      lp.get("trend_r2_threshold", 0.25),
+        "cagr_growing":            lp.get("cagr_growing", 5.0),
+        "cagr_declining":          lp.get("cagr_declining", -5.0),
+        "recency_ratio_high":      lp.get("recency_ratio_high", 1.2),
+        "recency_ratio_low":       lp.get("recency_ratio_low", 0.8),
+    }
+    return volume_thresholds, cv_thresholds, labeling_config
+
+
 def _run_full_pipeline(
     fp: dict, mp: dict, lp: dict, scenario_dir: Path
 ) -> dict[str, Any]:
@@ -188,6 +279,10 @@ def _run_full_pipeline(
         if cutoff_date:
             sales_query += " AND s.startdate >= %(cutoff)s"
             params["cutoff"] = cutoff_date
+        # Cap at planning date — exclude any data beyond current planning horizon
+        planning_upper = get_planning_date().replace(day=1)
+        sales_query += " AND s.startdate <= %(planning_upper)s"
+        params["planning_upper"] = planning_upper
         sales_query += " ORDER BY d.dfu_ck, s.startdate"
 
         sales_df = pd.read_sql(sales_query, conn, params=params if params else None)
@@ -227,8 +322,8 @@ def _run_full_pipeline(
                 X_df[col] = np.log1p(X_df[col])
             else:
                 X_df[col] = np.log1p(X_df[col] - col_min)
-    if "trend_slope" in X_df.columns:
-        X_df["trend_slope"] = np.sign(X_df["trend_slope"]) * np.log1p(np.abs(X_df["trend_slope"]))
+    if "trend_slope_norm" in X_df.columns:
+        X_df["trend_slope_norm"] = np.sign(X_df["trend_slope_norm"]) * np.log1p(np.abs(X_df["trend_slope_norm"]))
 
     X = X_df.values
     feature_names = list(numeric_cols)
@@ -264,7 +359,7 @@ def _run_full_pipeline(
     # Step 4: Find optimal K (on sample if large)
     k_range = tuple(mp["k_range"])
     k_results = find_optimal_k(
-        X_train, k_range, mp["min_cluster_size_pct"], skip_gap=mp["skip_gap"]
+        X_train, k_range, mp["min_cluster_size_pct"]
     )
     optimal_k = k_results["optimal_k"]
 
@@ -304,21 +399,20 @@ def _run_full_pipeline(
     for col in feature_names:
         if col in LOG_TRANSFORM_FEATURES:
             centroids_df[col] = np.expm1(centroids_df[col])
-    if "trend_slope" in centroids_df.columns:
-        centroids_df["trend_slope"] = np.sign(centroids_df["trend_slope"]) * np.expm1(np.abs(centroids_df["trend_slope"]))
+    if "trend_slope_norm" in centroids_df.columns:
+        centroids_df["trend_slope_norm"] = np.sign(centroids_df["trend_slope_norm"]) * np.expm1(np.abs(centroids_df["trend_slope_norm"]))
 
     centroids_df["cluster_id"] = range(optimal_k)
 
     # Step 5: Label clusters
-    mean_demands = centroids_df["mean_demand"].values
-    vol_high_abs = np.percentile(mean_demands, lp["volume_high"] * 100)
-    vol_low_abs = np.percentile(mean_demands, lp["volume_low"] * 100)
-    volume_thresholds = {"very_high": vol_high_abs * 10, "high": vol_high_abs, "low": vol_low_abs}
-    cv_thresholds = {"steady": lp["cv_steady"], "volatile": lp["cv_volatile"]}
+    if "mean_demand" not in centroids_df.columns:
+        raise ValueError("Centroids CSV missing required column 'mean_demand'")
+    volume_thresholds, cv_thresholds, labeling_config = _build_thresholds(
+        lp, centroids_df["mean_demand"].values
+    )
 
     cluster_labels = assign_cluster_labels(
-        centroids_df, volume_thresholds, cv_thresholds,
-        lp["seasonality_threshold"], lp["zero_demand_threshold"]
+        centroids_df, volume_thresholds, cv_thresholds, labeling_config
     )
 
     # Save artifacts
@@ -344,8 +438,8 @@ def _run_full_pipeline(
             "mean_demand": round(float(row.get("mean_demand", 0)), 2),
             "cv_demand": round(float(row.get("cv_demand", 0)), 4),
             "seasonality_strength": round(float(row.get("seasonality_strength", 0)), 4),
-            "trend_slope": round(float(row.get("trend_slope", 0)), 4),
-            "growth_rate": round(float(row.get("growth_rate", 0)), 4),
+            "trend_slope": round(float(row.get("trend_slope_norm", 0)), 4),
+            "growth_rate": round(float(row.get("cagr", 0)), 4),
             "zero_demand_pct": round(float(row.get("zero_demand_pct", 0)), 4),
         })
 
@@ -371,7 +465,9 @@ def _run_full_pipeline(
             "k_values": [int(k) for k in k_results["k_values"]],
             "inertias": [float(x) for x in k_results["inertias"]],
             "silhouette_scores": [float(x) for x in k_results["silhouette_scores"]],
-            "gap_stats": [float(x) for x in k_results["gap_stats"]] if k_results["gap_stats"] else None,
+            "ch_scores": [float(x) for x in k_results["ch_scores"]],
+            "combined_scores": [float(x) for x in k_results["combined_scores"]],
+            "feasible_mask": k_results["feasible_mask"],
         },
         "profiles": profiles,
         "feature_importance": feature_importance,
@@ -382,7 +478,7 @@ def _run_relabel_only(
     previous_scenario_id: str, lp: dict, scenario_dir: Path
 ) -> dict[str, Any]:
     """Re-label clusters from a previous scenario using new thresholds."""
-    prev_dir = SCENARIO_BASE / previous_scenario_id
+    prev_dir = _safe_scenario_dir(previous_scenario_id)
 
     centroids_path = prev_dir / "cluster_centroids.csv"
     result_path = prev_dir / "scenario_result.json"
@@ -397,15 +493,14 @@ def _run_relabel_only(
         prev_result = json.load(f)
 
     # Re-label with new thresholds
-    mean_demands = centroids_df["mean_demand"].values
-    vol_high_abs = np.percentile(mean_demands, lp["volume_high"] * 100)
-    vol_low_abs = np.percentile(mean_demands, lp["volume_low"] * 100)
-    volume_thresholds = {"very_high": vol_high_abs * 10, "high": vol_high_abs, "low": vol_low_abs}
-    cv_thresholds = {"steady": lp["cv_steady"], "volatile": lp["cv_volatile"]}
+    if "mean_demand" not in centroids_df.columns:
+        raise ValueError("Centroids CSV missing required column 'mean_demand'")
+    volume_thresholds, cv_thresholds, labeling_config = _build_thresholds(
+        lp, centroids_df["mean_demand"].values
+    )
 
     cluster_labels = assign_cluster_labels(
-        centroids_df, volume_thresholds, cv_thresholds,
-        lp["seasonality_threshold"], lp["zero_demand_threshold"]
+        centroids_df, volume_thresholds, cv_thresholds, labeling_config
     )
 
     # Copy and update from previous result
@@ -444,7 +539,11 @@ def _run_relabel_only(
 
 def get_scenario_result(scenario_id: str) -> dict[str, Any] | None:
     """Retrieve a previously run scenario result."""
-    result_path = SCENARIO_BASE / scenario_id / "scenario_result.json"
+    try:
+        scenario_dir = _safe_scenario_dir(scenario_id)
+    except ValueError:
+        return None
+    result_path = scenario_dir / "scenario_result.json"
     if not result_path.exists():
         return None
     with open(result_path) as f:
@@ -456,7 +555,7 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
     import shutil
     import psycopg
 
-    scenario_dir = SCENARIO_BASE / scenario_id
+    scenario_dir = _safe_scenario_dir(scenario_id)
     labels_path = scenario_dir / "cluster_labels.csv"
 
     if not labels_path.exists():
@@ -472,6 +571,22 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
         src = scenario_dir / fname
         if src.exists():
             shutil.copy2(src, prod_dir / fname)
+
+    # Update cluster_metadata.json so the overview panel shows correct metrics
+    result_path = scenario_dir / "scenario_result.json"
+    if result_path.exists():
+        with open(result_path) as f:
+            scenario_data = json.load(f)
+        scenario_result = scenario_data.get("result", {})
+        metadata = {
+            "optimal_k": scenario_result.get("optimal_k"),
+            "silhouette_score": scenario_result.get("silhouette_score"),
+            "inertia": scenario_result.get("inertia"),
+            "total_dfus": scenario_result.get("total_dfus"),
+            "k_selection_results": scenario_result.get("k_selection_results"),
+        }
+        with open(prod_dir / "cluster_metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2)
 
     # Update database
     df = pd.read_csv(labels_path)

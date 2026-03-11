@@ -31,11 +31,11 @@ vi.mock("@/api/queries", () => ({
   }),
   fetchClusteringDefaults: vi.fn().mockResolvedValue({
     feature_params: { time_window_months: 24, min_months_history: 1 },
-    model_params: { k_range: [3, 12], min_cluster_size_pct: 2.0, use_pca: false, pca_components: null, skip_gap: true, all_features: false },
+    model_params: { k_range: [3, 12], min_cluster_size_pct: 2.0, use_pca: false, pca_components: null, all_features: false },
     label_params: { volume_high: 0.75, volume_low: 0.25, cv_steady: 0.3, cv_volatile: 0.8, seasonality_threshold: 0.5, zero_demand_threshold: 0.2 },
   }),
   fetchSeasonalityProfiles: vi.fn().mockResolvedValue({ profiles: [] }),
-  fetchScenarioEstimate: vi.fn().mockResolvedValue({ estimated_seconds: 45, dfu_count: 1200, k_range: 10, skip_gap: true }),
+  fetchScenarioEstimate: vi.fn().mockResolvedValue({ estimated_seconds: 45, dfu_count: 1200, k_range: 10, }),
   fetchScenarioStatus: vi.fn(),
   fetchScenarioHistory: vi.fn().mockResolvedValue([]),
   fetchJobDetail: vi.fn(),
@@ -85,7 +85,7 @@ const MOCK_SCENARIO_RESULT = {
   runtime_seconds: 12.5,
   params: {
     feature_params: { time_window_months: 24, min_months_history: 1 },
-    model_params: { k_range: [3, 12], min_cluster_size_pct: 2.0, use_pca: false, pca_components: null, skip_gap: true, all_features: false },
+    model_params: { k_range: [3, 12], min_cluster_size_pct: 2.0, use_pca: false, pca_components: null, all_features: false },
     label_params: { volume_high: 0.75, volume_low: 0.25, cv_steady: 0.3, cv_volatile: 0.8, seasonality_threshold: 0.5, zero_demand_threshold: 0.2 },
   },
   result: {
@@ -160,6 +160,30 @@ describe("WhatIfScenarios", () => {
       expect(screen.getByText("Min Cluster Size (%)")).toBeDefined();
       expect(screen.getByText("Volume High (pctl)")).toBeDefined();
       expect(screen.getByText("CV Steady (<)")).toBeDefined();
+    });
+  });
+
+  it("shows parameter descriptions when expanded", async () => {
+    render(
+      <TestQueryWrapper>
+        <ScenarioNotificationProvider>
+          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
+        </ScenarioNotificationProvider>
+      </TestQueryWrapper>
+    );
+    fireEvent.click(await screen.findByText("What-If Scenarios"));
+    await waitFor(() => {
+      // Data Scope descriptions
+      expect(screen.getByText(/Longer windows capture more patterns/)).toBeDefined();
+      expect(screen.getByText(/DFUs with fewer months of data are excluded/)).toBeDefined();
+      // Model descriptions
+      expect(screen.getByText(/Range of cluster counts to evaluate/)).toBeDefined();
+      expect(screen.getByText(/Minimum percentage of DFUs required/)).toBeDefined();
+      // Labeling Threshold descriptions
+      expect(screen.getByText(/Percentile threshold for 'high volume'/)).toBeDefined();
+      expect(screen.getByText(/Coefficient of Variation threshold below which/)).toBeDefined();
+      expect(screen.getByText(/Seasonal amplitude ratio above which/)).toBeDefined();
+      expect(screen.getByText(/Fraction of months with zero sales/)).toBeDefined();
     });
   });
 

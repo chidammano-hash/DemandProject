@@ -20,6 +20,12 @@ algorithms:
     enabled: true
     model_id: lgbm_cluster
 
+    # ── Training strategy ─────────────────────────────────────────────────────
+    # cluster_strategy: how to split training data
+    #   per_cluster = one model per ml_cluster (ml_cluster kept as hard feature)
+    #   global      = one model on ALL data (ml_cluster kept as hard feature)
+    cluster_strategy: "per_cluster"
+
     # ── Inference mode ────────────────────────────────────────────────────────
     # recursive: feed each month's prediction back as qty_lag_1 for the next
     #   true  = recursive multi-step (best for short-horizon lag signal)
@@ -54,6 +60,10 @@ algorithms:
     enabled: true
     model_id: catboost_cluster
 
+    # ── Training strategy ─────────────────────────────────────────────────────
+    # cluster_strategy: "per_cluster" | "global"
+    cluster_strategy: "per_cluster"
+
     recursive: true
 
     shap_select: true
@@ -72,6 +82,10 @@ algorithms:
   xgboost:
     enabled: true
     model_id: xgboost_cluster
+
+    # ── Training strategy ─────────────────────────────────────────────────────
+    # cluster_strategy: "per_cluster" | "global"
+    cluster_strategy: "per_cluster"
 
     recursive: true
 

@@ -88,7 +88,7 @@ def main() -> None:
 
             print(f"Loaded {len(valid)} rows into temp table")
 
-            # Single UPDATE join
+            # Single UPDATE join — assign new labels
             cur.execute("""
                 UPDATE dim_dfu d
                 SET ml_cluster = u.cluster_label,
@@ -97,8 +97,20 @@ def main() -> None:
                 WHERE d.dfu_ck = u.dfu_ck
             """)
             updated_count = cur.rowcount
+
+            # Clear stale labels on DFUs not in this clustering run
+            cur.execute("""
+                UPDATE dim_dfu
+                SET ml_cluster = NULL,
+                    modified_ts = NOW()
+                WHERE ml_cluster IS NOT NULL
+                  AND dfu_ck NOT IN (SELECT dfu_ck FROM _cluster_updates)
+            """)
+            cleared_count = cur.rowcount
             conn.commit()
             print(f"Updated {updated_count} DFU cluster assignments")
+            if cleared_count > 0:
+                print(f"Cleared {cleared_count} stale cluster labels from DFUs not in this run")
 
             # Validate updates
             cur.execute("SELECT ml_cluster, COUNT(*) FROM dim_dfu GROUP BY ml_cluster ORDER BY COUNT(*) DESC")

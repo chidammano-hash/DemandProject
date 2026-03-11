@@ -26,14 +26,17 @@ Data flows: raw CSVs → normalize scripts → PostgreSQL → FastAPI → React 
 
 ### 1. Demand Forecasting & Accuracy
 - Imports external forecasts and computes accuracy metrics: **WAPE, Bias, MAPE** at multiple dimensional slices (item, location, brand, channel)
-- **Three tree-based backtest models**: LightGBM, CatBoost, XGBoost — all per-cluster, config-driven via `algorithm_config.yaml`
+- **Three tree-based backtest models**: LightGBM, CatBoost, XGBoost — configurable `cluster_strategy` (per_cluster or global) via `algorithm_config.yaml`; `ml_cluster` always a hard feature
 - **Expanding-window backtesting** across 10 timeframes (A–J), storing all lag 0–4 predictions in an archive table
 - **Champion model selection**: 5 strategies (expanding, rolling, decay, ensemble, meta-learner) — picks the best model per DFU per month with causal safeguards
 - **Production forecast inference**: full pipeline generates versioned forward-looking forecasts from champion models
 - Advanced options: recursive multi-step forecasting, SHAP-based feature selection, Bayesian hyperparameter tuning (Optuna), per-timeframe inline causal tuning
 
 ### 2. DFU Clustering & Segmentation
-- **KMeans clustering** groups ~112K Demand Forecast Units (DFUs) by demand patterns into labeled segments (e.g., `high_volume_steady`, `seasonal_medium_volume`)
+- **KMeans clustering** groups ~112K Demand Forecast Units (DFUs) by demand patterns using **14 core features across 6 dimensions** (volume, trend, seasonality, periodicity, intermittency, lifecycle) into labeled segments
+- Feature engineering: FFT periodicity strength, OLS seasonal R-squared, Croston ADI, scale-invariant trend slope, IQR, CAGR, recency ratio, YoY correlation (36-month window)
+- Optimal K via **combined Silhouette + Calinski-Harabasz scoring** (0.5*sil + 0.5*CH) with hard **5% minimum cluster size** constraint (k_range [5,18])
+- **Priority-ordered taxonomy labeling**: Intermittency -> Periodicity -> Seasonality -> Trend -> Volatility -> Volume (5 tiers); compound labels like `high_volume_seasonal_growing`
 - **What-If scenario engine**: run trial clusterings with custom parameters without touching production; promote winning scenarios; background execution with progress tracking
 - **Seasonality detection**: computes strength, profile label, peak/trough months per DFU and stores them in `dim_dfu`
 - **ABC-XYZ classification**: cross-segments DFUs by revenue volume (ABC) × demand variability (XYZ) into a 3×3 policy matrix

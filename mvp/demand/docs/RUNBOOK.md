@@ -188,7 +188,7 @@ Pipelines run in this order: **clustering → tuning (optional) → backtesting 
 
 ### 3.1 DFU Clustering
 
-Groups DFUs by historical demand patterns. Required before running per-cluster backtest strategies.
+Groups DFUs by historical demand patterns (14 core features across 6 dimensions). Required before running backtest strategies.
 
 **Full pipeline (recommended):**
 ```bash
@@ -197,9 +197,9 @@ make cluster-all
 
 **Individual steps:**
 ```bash
-make cluster-features  # Generate time series + attribute features
-make cluster-train     # Train KMeans with optimal K selection (logged to MLflow: dfu_clustering)
-make cluster-label     # Assign business labels to clusters
+make cluster-features  # Extract 14 core features (volume, trend, seasonality, periodicity, intermittency, lifecycle) from 36-month sales history
+make cluster-train     # KMeans with combined Silhouette + Calinski-Harabasz scoring, 5% min cluster size, k_range [5,18] (logged to MLflow: dfu_clustering)
+make cluster-label     # Priority-ordered taxonomy labeling: Intermittency → Periodicity → Seasonality → Trend → Volatility → Volume (5 tiers)
 make cluster-update    # Write cluster_assignment to dim_dfu in Postgres
 ```
 
@@ -236,7 +236,7 @@ Each backtest run writes to a **model-scoped subdirectory** so multiple models c
 - `data/backtest/<model_id>/backtest_predictions.csv` — execution-lag predictions (→ `fact_external_forecast_monthly`)
 - `data/backtest/<model_id>/backtest_predictions_all_lags.csv` — lag 0–4 archive (→ `backtest_lag_archive`)
 
-**Architecture (Feature 44):** Tree-based models (LGBM, CatBoost, XGBoost) share `common/backtest_framework.py` via `run_tree_backtest()` — per-cluster strategy only. Each script provides only `train_and_predict_per_cluster()`. Algorithm options (recursive, shap_select, tune_inline, params_file, hyperparameters) are read from `config/algorithm_config.yaml`. Shared modules: `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py`, `shap_selector.py`.
+**Architecture (Feature 44):** Tree-based models (LGBM, CatBoost, XGBoost) share `common/backtest_framework.py` via `run_tree_backtest()`. Each script provides both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting based on the `cluster_strategy` config key (`per_cluster` or `global`). **`ml_cluster` is always a hard feature** — never stripped from feature_cols in either strategy. Algorithm options (cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparameters) are read from `config/algorithm_config.yaml`. Shared modules: `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py`, `shap_selector.py`.
 
 ---
 
@@ -246,6 +246,7 @@ Before running any backtest, edit `config/algorithm_config.yaml` to set options 
 
 ```yaml
 lgbm:
+  cluster_strategy: "per_cluster"  # "per_cluster" or "global" — ml_cluster always a hard feature
   recursive: false       # Set true for recursive multi-step inference (Feature 43)
   shap_select: false     # Set true for per-timeframe SHAP feature selection (Feature 42)
   shap_threshold: 0.95   # Cumulative SHAP importance threshold
@@ -254,7 +255,7 @@ lgbm:
   tune_inline: false     # Set true for per-timeframe causal tuning (PL-002)
   params_file: null      # Set to data/tuning/best_params_lgbm.json for pre-tuned params
   # Default hyperparameters used when params_file is null and tune_inline is false
-  n_estimators: 300
+  n_estimators: 500
   learning_rate: 0.05
   # ... (see full file for all keys)
 ```
@@ -311,13 +312,13 @@ make backtest-load-all                # Scan data/backtest/*/ and load all model
 
 `--replace` is built into `backtest-load` — it only deletes rows for the loaded `model_id`, leaving all other models untouched. Accuracy materialized views are refreshed automatically after every load.
 
-**Available model IDs (Feature 44 — per-cluster only):**
+**Available model IDs (Feature 44):**
 
-| Framework | model_ids |
-|---|---|
-| LGBM | `lgbm_cluster` |
-| CatBoost | `catboost_cluster` |
-| XGBoost | `xgboost_cluster` |
+| Framework | Per-Cluster (default) | Global |
+|---|---|---|
+| LGBM | `lgbm_cluster` | `lgbm_global` |
+| CatBoost | `catboost_cluster` | `catboost_global` |
+| XGBoost | `xgboost_cluster` | `xgboost_global` |
 
 Verify archive data:
 ```bash

@@ -57,7 +57,6 @@ export default function ClustersTab({ domain, onDomainChange }: ClustersTabProps
     min_cluster_size_pct: 2.0,
     use_pca: false,
     pca_components: null,
-    skip_gap: true,
     all_features: false,
   });
   const [labelParams, setLabelParams] = useState<ClusteringDefaultsPayload["label_params"]>({
@@ -76,8 +75,8 @@ export default function ClustersTab({ domain, onDomainChange }: ClustersTabProps
   });
 
   const { data: estimate } = useQuery({
-    queryKey: queryKeys.scenarioEstimate({ k_min: modelParams.k_range[0], k_max: modelParams.k_range[1], skip_gap: modelParams.skip_gap }),
-    queryFn: () => fetchScenarioEstimate({ k_min: modelParams.k_range[0], k_max: modelParams.k_range[1], skip_gap: modelParams.skip_gap }),
+    queryKey: queryKeys.scenarioEstimate({ k_min: modelParams.k_range[0], k_max: modelParams.k_range[1] }),
+    queryFn: () => fetchScenarioEstimate({ k_min: modelParams.k_range[0], k_max: modelParams.k_range[1] }),
     staleTime: STALE.THIRTY_SEC,
     enabled: showWhatIf,
   });

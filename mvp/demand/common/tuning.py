@@ -303,6 +303,7 @@ def train_xgboost_fold(
 
     model = xgb.XGBRegressor(
         n_estimators=n_estimators_max,
+        early_stopping_rounds=early_stopping_rounds,
         verbosity=0,
         random_state=42,
         n_jobs=-1,
@@ -313,7 +314,6 @@ def train_xgboost_fold(
     model.fit(
         X_train, y_train,
         eval_set=[(X_val, y_val)],
-        early_stopping_rounds=early_stopping_rounds,
         verbose=False,
     )
     preds = np.maximum(model.predict(X_val), 0)

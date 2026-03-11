@@ -117,6 +117,58 @@ def test_build_grid_horizon_months_tracked():
     assert list(grid["_horizon"].values) == [1, 2, 3, 4, 5]
 
 
+def test_build_grid_calendar_features_present():
+    """Grid contains is_quarter_end, is_year_end, days_in_month."""
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=3)
+    assert "is_quarter_end" in grid.columns
+    assert "is_year_end" in grid.columns
+    assert "days_in_month" in grid.columns
+
+
+def test_build_grid_derived_features_present():
+    """Grid contains mom_growth, demand_accel, volatility_ratio."""
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=3)
+    assert "mom_growth" in grid.columns
+    assert "demand_accel" in grid.columns
+    assert "volatility_ratio" in grid.columns
+
+
+def test_build_grid_is_quarter_end_values():
+    """is_quarter_end is 1 for months 3,6,9,12 and 0 otherwise."""
+    sales = _make_sales(n_months=24, start="2024-01-01")
+    attrs = _make_dfu_attrs()
+    # Start from 2024-01-01 with 24 months, last month is 2025-12-01
+    # So T+1 = 2026-01-01, T+2 = 2026-02-01, T+3 = 2026-03-01
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=3)
+    months = [grid.iloc[i]["_forecast_month"].month for i in range(3)]
+    for i, m in enumerate(months):
+        expected = 1 if m in (3, 6, 9, 12) else 0
+        assert grid.iloc[i]["is_quarter_end"] == expected, f"Month {m}: expected {expected}"
+
+
+def test_build_grid_mom_growth_bounded():
+    """mom_growth is clipped to [-2, 2]."""
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=3)
+    for i in range(3):
+        assert -2.0 <= grid.iloc[i]["mom_growth"] <= 2.0
+
+
+def test_build_grid_days_in_month_values():
+    """days_in_month is a positive float (28-31)."""
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=6)
+    for i in range(6):
+        dim = grid.iloc[i]["days_in_month"]
+        assert 28 <= dim <= 31
+
+
 # ---------------------------------------------------------------------------
 # generate_forecast_recursive
 # ---------------------------------------------------------------------------
@@ -439,3 +491,43 @@ def test_generate_forecasts_batch_18_months():
     assert rows[0]["is_recursive"] is False
     assert rows[1]["lag_source"] == "predicted"
     assert rows[1]["is_recursive"] is True
+
+
+# ---------------------------------------------------------------------------
+# Planning date compliance
+# ---------------------------------------------------------------------------
+
+def test_load_recent_sales_uses_planning_date():
+    """load_recent_sales must use get_planning_date(), not Timestamp.now()."""
+    import inspect
+    from scripts.generate_production_forecasts import load_recent_sales
+    source = inspect.getsource(load_recent_sales)
+    assert "get_planning_date" in source, "load_recent_sales must use get_planning_date()"
+    assert "Timestamp.now()" not in source, "load_recent_sales must NOT use Timestamp.now()"
+
+
+def test_main_plan_version_uses_planning_date():
+    """plan_version generation must use get_planning_date(), not datetime.now()."""
+    import inspect
+    from scripts.generate_production_forecasts import main
+    source = inspect.getsource(main)
+    assert "get_planning_date" in source, "plan_version must use get_planning_date()"
+
+
+# ---------------------------------------------------------------------------
+# Feature alignment: inference grid matches backtest feature matrix
+# ---------------------------------------------------------------------------
+
+def test_inference_grid_feature_parity_with_backtest():
+    """build_inference_grid must produce the same features as build_feature_matrix."""
+    from common.constants import CALENDAR_FEATURES, DERIVED_FEATURES
+    sales = _make_sales(n_months=24)
+    attrs = _make_dfu_attrs()
+    grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=3)
+    grid_cols = set(grid.columns)
+    # All calendar features from constants must be present
+    for feat in CALENDAR_FEATURES:
+        assert feat in grid_cols, f"Missing calendar feature: {feat}"
+    # All derived features from constants must be present
+    for feat in DERIVED_FEATURES:
+        assert feat in grid_cols, f"Missing derived feature: {feat}"

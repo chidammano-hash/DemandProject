@@ -19,6 +19,19 @@ from common.constants import (
 )
 
 
+def _recompute_derived_features(df: pd.DataFrame) -> None:
+    """Recompute derived demand features in-place after lag/rolling features are updated.
+
+    Called after any qty mutation (masking, recursive write-back). Centralises
+    the logic to prevent three-way duplication across build_feature_matrix,
+    mask_future_sales, and update_grid_with_predictions.
+    """
+    df["mom_growth"] = (df["qty_lag_1"] - df["qty_lag_2"]) / (df["qty_lag_2"].abs() + 1.0)
+    df["mom_growth"] = df["mom_growth"].clip(-2.0, 2.0)
+    df["demand_accel"] = df["rolling_mean_3m"] - df["rolling_mean_6m"]
+    df["volatility_ratio"] = df["rolling_std_3m"] / (df["rolling_mean_3m"].abs() + 1.0)
+
+
 def _ts() -> str:
     return time.strftime("%H:%M:%S")
 
@@ -91,6 +104,14 @@ def build_feature_matrix(
     grid["month_sin"] = np.sin(2 * np.pi * grid["month"] / 12)
     grid["month_cos"] = np.cos(2 * np.pi * grid["month"] / 12)
 
+    # Additional calendar features (leakage-free — derived from forecast date)
+    grid["is_quarter_end"] = grid["startdate"].dt.month.isin([3, 6, 9, 12]).astype(int)
+    grid["is_year_end"] = (grid["startdate"].dt.month == 12).astype(int)
+    grid["days_in_month"] = grid["startdate"].dt.days_in_month.astype(float)
+
+    # Derived demand features (strictly causal — computed from lag/rolling features already built)
+    _recompute_derived_features(grid)
+
     # DFU attributes
     t1 = time.time()
     dfu_feat_cols = ["dfu_ck"] + CAT_FEATURES + NUMERIC_DFU_FEATURES
@@ -148,6 +169,9 @@ def mask_future_sales(grid: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame:
         df[f"rolling_mean_{w}m"] = rolling.mean().reset_index(level=0, drop=True)
         df[f"rolling_std_{w}m"] = rolling.std().fillna(0).reset_index(level=0, drop=True)
 
+    # Recompute derived demand features after lag/rolling update
+    _recompute_derived_features(df)
+
     return df
 
 
@@ -181,5 +205,8 @@ def update_grid_with_predictions(
         rolling = shifted.groupby(df["dfu_ck"], sort=False).rolling(w, min_periods=1)
         df[f"rolling_mean_{w}m"] = rolling.mean().reset_index(level=0, drop=True)
         df[f"rolling_std_{w}m"] = rolling.std().fillna(0).reset_index(level=0, drop=True)
+
+    # Recompute derived demand features after recursive prediction write-back
+    _recompute_derived_features(df)
 
     return df

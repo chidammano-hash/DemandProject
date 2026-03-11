@@ -116,7 +116,7 @@ def _run_cluster_pipeline(params: dict[str, Any], progress_cb: Callable | None =
          [_UV, "run", "python", "scripts/generate_clustering_features.py", "--time-window", str(tw)]),
         (50, "Training clustering model",
          [_UV, "run", "python", "scripts/train_clustering_model.py",
-          "--k-range", str(k_range[0]), str(k_range[1]), "--skip-gap"]),
+          "--k-range", str(k_range[0]), str(k_range[1])]),
         (75, "Labeling clusters",
          [_UV, "run", "python", "scripts/label_clusters.py"]),
         (95, "Updating DFU assignments",

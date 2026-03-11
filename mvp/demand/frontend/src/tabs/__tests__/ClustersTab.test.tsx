@@ -27,14 +27,13 @@ vi.mock("@/api/queries", () => ({
   }),
   fetchClusteringDefaults: vi.fn().mockResolvedValue({
     feature_params: { time_window_months: 24, min_months_history: 1 },
-    model_params: { k_range: [3, 12], min_cluster_size_pct: 2.0, use_pca: false, pca_components: null, skip_gap: true, all_features: false },
+    model_params: { k_range: [3, 12], min_cluster_size_pct: 2.0, use_pca: false, pca_components: null, all_features: false },
     label_params: { volume_high: 0.75, volume_low: 0.25, cv_steady: 0.3, cv_volatile: 0.8, seasonality_threshold: 0.5, zero_demand_threshold: 0.2 },
   }),
   fetchScenarioEstimate: vi.fn().mockResolvedValue({
     estimated_seconds: 45,
     dfu_count: 1200,
     k_range: 10,
-    skip_gap: true,
   }),
   fetchScenarioStatus: vi.fn().mockResolvedValue({
     scenario_id: "sc_test",
@@ -45,6 +44,7 @@ vi.mock("@/api/queries", () => ({
   fetchJobDetail: vi.fn(),
   runClusteringScenario: vi.fn(),
   promoteScenario: vi.fn(),
+  submitJob: vi.fn().mockResolvedValue({ job_id: "job_pipeline_123", status: "queued" }),
 }));
 
 vi.mock("@/hooks/useUrlState", async (importOriginal) => {
@@ -149,6 +149,38 @@ describe("ClustersTab", () => {
     renderTab();
     await waitFor(() => {
       expect(fetchJobDetail).toHaveBeenCalledWith("job_test123");
+    });
+  });
+
+  it("renders Re-run Clustering Pipeline button", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByText("Re-run Clustering Pipeline")).toBeDefined();
+    });
+  });
+
+  it("shows confirmation dialog when Run Pipeline is clicked", async () => {
+    renderTab();
+    const btn = await screen.findByText("Re-run Clustering Pipeline");
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(screen.getByText("Run Production Clustering Pipeline?")).toBeDefined();
+      expect(screen.getByText(/This will overwrite existing cluster assignments/)).toBeDefined();
+    });
+  });
+
+  it("submits pipeline job on confirm and shows job ID", async () => {
+    const { submitJob } = await import("@/api/queries");
+    renderTab();
+    const btn = await screen.findByText("Re-run Clustering Pipeline");
+    fireEvent.click(btn);
+    const confirmBtn = await screen.findByText("Run Pipeline");
+    fireEvent.click(confirmBtn);
+    await waitFor(() => {
+      expect(submitJob).toHaveBeenCalledWith("cluster_pipeline", {}, "Production Clustering Pipeline");
+    });
+    await waitFor(() => {
+      expect(screen.getByText("job_pipeline_123")).toBeDefined();
     });
   });
 

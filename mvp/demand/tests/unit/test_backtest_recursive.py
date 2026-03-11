@@ -147,13 +147,14 @@ class TestPredictSingleMonth:
         assert len(result) == 0
         assert "basefcst_pref" in result.columns
 
-    def test_drops_ml_cluster_from_feature_cols(self, predict_data_one_month):
-        """ml_cluster is excluded from X passed to per-cluster models."""
+    def test_passes_all_feature_cols_including_ml_cluster(self, predict_data_one_month):
+        """ml_cluster is included in X passed to per-cluster models (trained with it)."""
         feature_cols = ["qty_lag_1", "ml_cluster"]
         models = self._make_cluster_models()
         _predict_single_month(models, predict_data_one_month, feature_cols)
         call_arg = models["cluster_A"].predict.call_args[0][0]
-        assert "ml_cluster" not in call_arg.columns
+        assert "ml_cluster" in call_arg.columns
+        assert list(call_arg.columns) == feature_cols
 
 
 # ---------------------------------------------------------------------------

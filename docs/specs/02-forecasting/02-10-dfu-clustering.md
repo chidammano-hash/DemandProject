@@ -20,25 +20,34 @@ The clustering pipeline consists of:
 
 ## Feature Engineering
 
-### Time Series Features (per DFU)
+Feature engineering covers **6 dimensions with 14 core features** extracted from historical sales data (default: 36-month window, minimum 12 months history).
 
-**Volume Metrics:**
-- `mean_demand`, `median_demand`, `std_demand`, `cv_demand`, `min_demand`, `max_demand`, `total_demand`
+### 14 Core Features (used for clustering)
 
-**Trend Features:**
-- `trend_slope`: Linear regression slope (demand vs. time)
-- `trend_pct_change`: Percentage change from first to last period
-- `trend_direction`: Positive/negative/stable indicator
+| Dimension | Feature | Description |
+|---|---|---|
+| **Volume** | `mean_demand` | Average monthly demand (log-transformed before scaling) |
+| | `cv_demand` | Coefficient of variation (std/mean) |
+| | `iqr_demand` | Interquartile range — robust spread measure (log-transformed) |
+| **Trend** | `trend_slope_norm` | Scale-invariant OLS slope: `slope * n_months / mean_demand` |
+| | `trend_r2` | R-squared from linear regression (demand vs time index) |
+| | `cagr` | Compound Annual Growth Rate (%) from first-year to last-year average |
+| **Seasonality** | `seasonal_amplitude` | (max monthly mean - min monthly mean) / overall mean |
+| | `seasonal_r2` | OLS R-squared from 11 monthly dummy variables (STL-lite) |
+| | `yoy_correlation` | Pearson correlation of year-over-year demand patterns |
+| **Periodicity** | `periodicity_strength` | FFT dominant non-DC component power / total power |
+| **Intermittency** | `zero_demand_pct` | Fraction of months with zero demand |
+| | `adi` | Croston Average Demand Interval — mean gap between non-zero months |
+| **Lifecycle** | `months_available` | Number of months with sales history |
+| | `recency_ratio` | Last-6-month average / full-history average (>1 = accelerating) |
 
-**Seasonality Features:**
-- `seasonality_strength`: Amplitude of seasonal pattern (via monthly means)
-- `peak_month`, `seasonal_index_std`, `year_over_year_correlation`
+### Additional Features (computed but not used in clustering)
 
-**Volatility Features:**
-- `zero_demand_pct`, `sparsity_score`, `demand_stability`, `outlier_count`
-
-**Growth Patterns:**
-- `growth_rate` (CAGR), `acceleration`, `recent_vs_historical`
+**Volume (extended):** `median_demand`, `std_demand`, `min_demand`, `max_demand`, `total_demand`
+**Trend (extended):** `trend_slope` (raw OLS slope), `trend_pct_change`, `trend_direction`
+**Seasonality (extended):** `peak_month`, `seasonal_index_std`
+**Volatility:** `sparsity_score`, `demand_stability`, `outlier_count`
+**Growth:** `growth_rate`, `acceleration`, `recent_vs_historical`
 
 ### Item Features (from dim_item)
 - Categorical: `category`, `class`, `sub_class`, `brand_name`, `country`, `national_service_model`
@@ -53,41 +62,62 @@ The clustering pipeline consists of:
 ### Primary Method: KMeans with Optimal K Selection
 
 **K Selection Methods:**
-1. Elbow Method (WCSS vs. K)
-2. Silhouette Score
-3. Gap Statistic
-4. Business Constraints (minimum cluster size)
+1. Elbow Method (WCSS vs. K) — visual aid
+2. Silhouette Score — cluster separation quality
+3. Calinski-Harabasz Score — between/within variance ratio
+4. **Combined score**: `0.5 * silhouette_norm + 0.5 * calinski_norm` (min-max normalized to [0,1])
+5. **Hard 5% minimum cluster size constraint** — K values where any cluster < 5% of DFUs are rejected
 
-**Optimal K Range**: 3-12 clusters (configurable)
+**Optimal K Range**: 5-18 clusters (configurable via `k_range` in `clustering_config.yaml`)
+
+> **Note:** Gap statistic was removed in favor of the combined Silhouette + Calinski-Harabasz scoring, which is faster and more robust for tree-model-friendly cluster sizing.
 
 ### Feature Scaling & Preprocessing
-- StandardScaler (mean=0, std=1)
-- Optional PCA for dimensionality reduction
-- Low-variance feature removal (< 0.01)
+- Log-transform highly skewed volume features (`mean_demand`, `median_demand`, `std_demand`, `total_demand`, `max_demand`, `iqr_demand`, `adi`) via `log1p` before scaling
+- StandardScaler (mean=0, std=1) on the 14 core features only
+- Optional PCA for dimensionality reduction (disabled by default)
+- `merge_small_clusters()` post-hoc: any cluster below the minimum size threshold is merged into its nearest large neighbor by centroid distance
 
 ## Cluster Labeling Strategy
 
-**Composite Labels** based on volume tier + pattern type:
-- `high_volume_steady`, `seasonal_high_volume`, `intermittent_low_volume`
-- `high_volume_growing`, `low_volume_declining`, `seasonal_medium_volume`
-- `medium_volume_steady`
+Labels are assigned using a **priority-ordered taxonomy** that evaluates pattern characteristics from most distinctive to least:
 
-**Label Priority Logic:**
-1. Check volume tier (high/medium/low based on percentiles)
-2. Check pattern type (seasonal/trending/intermittent/volatile/steady)
-3. Combine into composite label
+**Priority Order:**
+1. **Intermittency** — checked first (ADI > 1.5 or zero_demand_pct > 15%)
+2. **Periodicity** — non-12-month cycles (periodicity_strength > 0.25)
+3. **Seasonality** — amplitude + seasonal_r2 thresholds
+4. **Trend** — trend_r2 + CAGR together (growing/declining)
+5. **Volatility** — cv_demand thresholds (volatile/very_volatile)
+6. **Volume tier** — always appended (5 tiers: very_high/high/medium/low/very_low based on percentiles)
+
+**Volume Tiers (5 levels):**
+- `very_high` (top 10%), `high` (top 25%), `medium` (25th-75th pctile), `low` (bottom 25%), `very_low` (bottom 10%)
+
+**Example Compound Labels:**
+- `high_volume_seasonal_growing`, `medium_volume_steady_seasonal`
+- `low_volume_intermittent`, `high_volume_periodic`
+- `very_high_volume_growing`, `medium_volume_volatile`
+- `high_volume_declining`, `very_low_volume_intermittent`
+
+**Disambiguation:** Two-pass approach — first assigns base labels from volume + pattern, then disambiguates any remaining duplicates using secondary features (recency_ratio for accelerating/decelerating, trend for growing/declining).
 
 ## Implementation Components
 
 ### 1. Feature Engineering Script
 `mvp/demand/scripts/generate_clustering_features.py`
-- Parameters: `--min-months` (default: 12), `--time-window` (default: 24), `--output`
+- Parameters: `--min-months` (default: 12), `--time-window` (default: 36), `--output`
 - Output: `data/clustering_features.csv`
+- Computes 14 core features across 6 dimensions (volume, trend, seasonality, periodicity, intermittency, lifecycle)
+- New features (vs original): FFT periodicity, OLS seasonal R-squared, Croston ADI, scale-invariant trend slope, IQR, CAGR, recency ratio, YoY correlation
 
 ### 2. Clustering Model Script
 `mvp/demand/scripts/train_clustering_model.py`
-- Parameters: `--input`, `--k-range` (default: 3 12), `--min-cluster-size-pct`, `--use-pca`, `--output-dir`
+- Parameters: `--input`, `--k-range` (default: 5 18), `--min-cluster-size-pct` (default: 5.0), `--use-pca`, `--output-dir`
 - Output: `cluster_assignments.csv`, `cluster_centroids.csv`, `cluster_metadata.json`, visualization PNGs
+- Uses only 14 CORE_FEATURES for clustering (not all computed features)
+- Log-transforms skewed volume features before StandardScaler
+- Combined score: 0.5 * silhouette_norm + 0.5 * calinski_norm (Calinski-Harabasz replaces gap statistic)
+- Hard 5% minimum cluster size constraint; post-hoc merge of small clusters
 - MLflow: experiment `dfu_clustering` with params, metrics, artifacts
 
 ### 3. Cluster Labeling Script
@@ -116,16 +146,33 @@ File: `mvp/demand/config/clustering_config.yaml`
 ```yaml
 clustering:
   min_months_history: 12
-  time_window_months: 24
-  k_range: [3, 12]
-  min_cluster_size_pct: 1.0
+  time_window_months: 36           # 3 years for better seasonality detection
+  k_range: [5, 18]                 # 5% min = max 20 clusters; start at 5 for business meaningfulness
+  min_cluster_size_pct: 5.0        # CRITICAL: each cluster must be >= 5% of DFUs
   feature_scaling: "standard"
   use_pca: false
+
   labeling:
-    volume_thresholds: { high: 0.75, low: 0.25 }
-    cv_thresholds: { steady: 0.3, volatile: 0.8 }
-    seasonality_threshold: 0.5
-    zero_demand_threshold: 0.2
+    volume_thresholds:
+      very_high: 0.90              # top 10%
+      high: 0.75                   # top 25%
+      low: 0.25                    # bottom 25%
+      very_low: 0.10               # bottom 10%
+    cv_thresholds:
+      very_steady: 0.2
+      steady: 0.4
+      volatile: 0.8
+      very_volatile: 1.2
+    seasonality_threshold: 0.3
+    seasonality_r2_threshold: 0.25
+    periodicity_threshold: 0.25
+    zero_demand_threshold: 0.15
+    adi_threshold: 1.5
+    trend_r2_threshold: 0.25
+    cagr_growing: 5.0
+    cagr_declining: -5.0
+    recency_ratio_high: 1.2
+    recency_ratio_low: 0.8
 ```
 
 ## API Integration
@@ -161,11 +208,11 @@ Index: `idx_dim_dfu_cluster_assignment` in `sql/005_create_dim_dfu.sql`.
 - Response includes `pct_of_total` per cluster
 
 ### Training Script Enhancements
-- `CORE_FEATURES`: mean_demand, cv_demand, trend_slope, growth_rate, seasonality_strength, months_available, zero_demand_pct, demand_stability
-- `LOG_TRANSFORM_FEATURES`: mean_demand, median_demand, std_demand, total_demand, max_demand, min_demand, seasonal_index_std
-- `merge_small_clusters()` post-processing function
-- `gap_statistic()` function for K selection
-- `--skip-gap` and `--all-features` CLI flags
+- `CORE_FEATURES` (14 features across 6 dimensions): mean_demand, cv_demand, iqr_demand, trend_slope_norm, trend_r2, cagr, seasonal_amplitude, seasonal_r2, yoy_correlation, periodicity_strength, zero_demand_pct, adi, months_available, recency_ratio
+- `LOG_TRANSFORM_FEATURES`: mean_demand, median_demand, std_demand, total_demand, max_demand, iqr_demand, adi
+- `merge_small_clusters()` post-processing: merges clusters below min_cluster_size_pct into nearest large neighbor by centroid distance
+- Combined K scoring: `0.5 * silhouette_norm + 0.5 * calinski_norm` (gap statistic removed)
+- Hard 5% minimum cluster size constraint during K selection (K values violating the constraint are rejected)
 
 ### Integration
 - `POST /clustering/scenario` delegates to APScheduler-powered `JobManager` (Feature 39)
@@ -204,14 +251,21 @@ FROM dim_dfu GROUP BY 1 ORDER BY 2 DESC LIMIT 5;
 ```yaml
 # config/clustering_config.yaml
 clustering:
-  k_range: [3, 12]
-  min_cluster_size_pct: 1.0
+  time_window_months: 36
+  k_range: [5, 18]
+  min_cluster_size_pct: 5.0
   feature_scaling: standard
   labeling:
-    volume_thresholds: {high: 0.75, low: 0.25}
-    cv_thresholds: {steady: 0.3, volatile: 0.8}
-    seasonality_threshold: 0.5
-    zero_demand_threshold: 0.2
+    volume_thresholds: {very_high: 0.90, high: 0.75, low: 0.25, very_low: 0.10}
+    cv_thresholds: {very_steady: 0.2, steady: 0.4, volatile: 0.8, very_volatile: 1.2}
+    seasonality_threshold: 0.3
+    seasonality_r2_threshold: 0.25
+    periodicity_threshold: 0.25
+    zero_demand_threshold: 0.15
+    adi_threshold: 1.5
+    trend_r2_threshold: 0.25
+    cagr_growing: 5.0
+    cagr_declining: -5.0
 ```
 
 ### Example: What-If scenario — test K=5
@@ -241,7 +295,7 @@ Today the clustering pipeline is entirely CLI-driven:
 1. **No parameter visibility** — users see the final cluster table and static PNGs but have no way to understand how K, time window, feature set, or labeling thresholds produced those results
 2. **No experimentation** — changing a single parameter (e.g., K range, PCA toggle, CV threshold) requires editing `clustering_config.yaml`, re-running `make cluster-all`, and waiting for the full pipeline
 3. **No comparison** — there is no way to compare two configurations side-by-side (e.g., "K=5 with PCA" vs "K=8 without PCA") to evaluate trade-offs
-4. **No interactive charts** — the K-selection data (`k_values`, `inertias`, `silhouette_scores`, `gap_stats`) is already returned by the `/domains/dfu/clusters/profiles` API but is displayed only as static PNGs; users cannot hover, zoom, or overlay multiple runs
+4. **No interactive charts** — the K-selection data (`k_values`, `inertias`, `silhouette_scores`, `ch_scores`, `combined_scores`) is already returned by the `/domains/dfu/clusters/profiles` API but is displayed only as static PNGs; users cannot hover, zoom, or overlay multiple runs
 5. **No labeling tuning** — the volume/CV/seasonality thresholds in the labeling step directly control business labels but can only be changed in YAML
 
 ## Goals
@@ -314,7 +368,6 @@ Runs a trial clustering pipeline with user-specified parameters. Results are sto
     "min_cluster_size_pct": 2.0,
     "use_pca": false,
     "pca_components": null,
-    "skip_gap": true,
     "all_features": false
   },
   "label_params": {
@@ -349,7 +402,9 @@ All fields are optional — omitted fields use the defaults from `clustering_con
       "k_values": [3, 4, 5, 6, 7, 8, 9, 10],
       "inertias": [18432, 14221, 11003, 8341, 7102, 6244, 5811, 5503],
       "silhouette_scores": [0.31, 0.35, 0.39, 0.41, 0.38, 0.36, 0.33, 0.31],
-      "gap_stats": null
+      "ch_scores": [1200, 1400, 1500, 1450, 1380, 1320, 1260, 1210],
+      "combined_scores": [0.2, 0.45, 0.78, 0.85, 0.72, 0.55, 0.35, 0.2],
+      "feasible_mask": [true, true, true, true, true, true, true, true]
     },
     "profiles": [
       {
@@ -412,7 +467,6 @@ Returns the current default parameter values from `clustering_config.yaml` so th
     "min_cluster_size_pct": 2.0,
     "use_pca": false,
     "pca_components": null,
-    "skip_gap": false,
     "all_features": false
   },
   "label_params": {
@@ -611,11 +665,6 @@ A **2-panel** line chart (or 3-panel if gap stats are available):
 - Highlighted peak point (optimal K)
 - Tooltip: `K=6, Silhouette=0.412`
 
-**Optional third panel — Gap Statistic** (shown only when `skip_gap=false`):
-- X-axis: K values
-- Y-axis: Gap statistic
-- Same overlay pattern
-
 #### 2. Cluster Profile Radar Chart
 
 A **Recharts RadarChart** with one polygon per cluster:
@@ -708,7 +757,6 @@ interface ScenarioParams {
     min_cluster_size_pct: number;
     use_pca: boolean;
     pca_components: number | null;
-    skip_gap: boolean;
     all_features: boolean;
   };
   label_params: {
@@ -737,7 +785,9 @@ interface ScenarioResult {
       k_values: number[];
       inertias: number[];
       silhouette_scores: number[];
-      gap_stats: number[] | null;
+      ch_scores?: number[];
+      combined_scores?: number[];
+      feasible_mask?: boolean[];
     };
     profiles: ClusterProfile[];
     feature_importance: { feature: string; variance_ratio: number }[];
@@ -883,7 +933,7 @@ Backend: no new Python packages. Uses existing `scikit-learn`, `pandas`, `yaml`,
 ## Performance Considerations
 
 - **Feature generation** is the slowest step (~5–15s) due to SQL queries and joins. Consider caching the base feature matrix and only regenerating when `time_window_months` or `min_months_history` changes.
-- **Gap statistic** adds ~20–40s. Default `skip_gap=true` in the UI for faster iteration, with a note explaining the trade-off.
+- **Combined Silhouette + CH scoring** is fast (~0.002s per DFU per K) since it reuses the same KMeans fit.
 - **Relabel shortcut** avoids the expensive steps entirely when only thresholds change.
 - **Chart rendering** — Recharts handles up to 20 clusters and 20 K values without performance issues. No virtualization needed.
 
@@ -927,7 +977,7 @@ Backend: no new Python packages. Uses existing `scikit-learn`, `pandas`, `yaml`,
 - Silhouette: **BarChart** with per-bar colors and quality zone ReferenceLines (not LineChart)
 - Cluster sizes: **PieChart** (not horizontal BarChart)
 - Feature importance: horizontal BarChart (top 10 features by variance ratio)
-- Gap statistic: conditional LineChart (only when gap_stats present)
+- Combined score: conditional BarChart (green=feasible, red=penalized, only when combined_scores present)
 
 ### Cross-Tab Notifications
 - `ScenarioNotificationContext` (`context/ScenarioNotificationContext.tsx`) with `startScenario`, `completeScenario`, `failScenario`, `dismissNotification`
@@ -1029,11 +1079,10 @@ Feature 38 enhances the Clustering What-If Scenarios panel (Feature 29) with fou
 |-------|------|---------|-------------|
 | `k_min` | int | 3 | Min K value |
 | `k_max` | int | 12 | Max K value |
-| `skip_gap` | bool | true | Skip gap statistic calculation |
 
 **Response:**
 ```json
-{ "estimated_seconds": 45, "dfu_count": 1200, "k_range": 10, "skip_gap": true }
+{ "estimated_seconds": 45, "dfu_count": 1200, "k_range": 10 }
 ```
 
 ### `POST /clustering/scenario` (Updated)
@@ -1141,7 +1190,7 @@ Now returns **HTTP 202** immediately instead of blocking:
 
 ### Pydantic Models (not in spec)
 - `FeatureParams`: time_window_months, min_months_history
-- `ModelParams`: k_range, min_cluster_size_pct, use_pca, pca_components, skip_gap, all_features
+- `ModelParams`: k_range, min_cluster_size_pct, use_pca, pca_components, all_features
 - `LabelParams`: volume_high, volume_low, cv_steady, cv_volatile, seasonality_threshold, zero_demand_threshold
 - `ClusteringScenarioRequest`: feature_params, model_params, label_params, relabel_only, previous_scenario_id
 
@@ -1154,8 +1203,8 @@ Now returns **HTTP 202** immediately instead of blocking:
 
 ```bash
 # 1. Get runtime estimate
-curl -s "http://localhost:8000/clustering/scenario/estimate?k_max=8&gap=true" | jq .
-# {"estimated_seconds": 72, "dfu_count": 18432, "k_range": 5, "skip_gap": false}
+curl -s "http://localhost:8000/clustering/scenario/estimate?k_max=8" | jq .
+# {"estimated_seconds": 72, "dfu_count": 18432, "k_range": 5}
 
 # 2. Submit (202 Accepted — non-blocking)
 SCENARIO_ID=$(curl -s -X POST http://localhost:8000/clustering/scenario \
@@ -1179,7 +1228,6 @@ curl -s -X POST "http://localhost:8000/clustering/scenario/$SCENARIO_ID/promote"
 - **Silhouette chart**: Bar chart with quality zones: Strong (≥0.7), Reasonable (0.5-0.7), Weak (0.25-0.5)
 - **Feature importance**: Horizontal bars showing top 10 features driving cluster separation
 - **Cluster size pie**: Pie chart with percentage labels, n_dfus per cluster
-- **Gap statistic**: Line chart comparing gap statistic vs reference — shown only when `skip_gap=False`
 
 ### Example: Scenario queueing when group is busy
 

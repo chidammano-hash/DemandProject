@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 from typing import Any
+import datetime
 import json
 import logging
+import re
 import time
-import threading
 
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from psycopg import sql as psycopg_sql
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.core import get_conn
 from api.auth import require_api_key
@@ -18,6 +20,21 @@ from api.auth import require_api_key
 log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["clustering"])
+
+# Scenario IDs are generated as  sc_YYYYMMDD_HHMMSS_<4hex>  e.g. sc_20250310_142305_a3f1
+# Enforcing this pattern at the router level prevents path traversal attacks where an
+# attacker could submit  ../../../etc/passwd  as a scenario_id.
+_SCENARIO_ID_RE = re.compile(r"^sc_\d{8}_\d{6}_[0-9a-f]{4}$")
+
+
+def _validate_scenario_id(scenario_id: str) -> str:
+    """Raise 400 if scenario_id doesn't match the expected format."""
+    if not _SCENARIO_ID_RE.match(scenario_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid scenario_id format. Expected: sc_YYYYMMDD_HHMMSS_<4hex>",
+        )
+    return scenario_id
 
 
 # ---------------------------------------------------------------------------
@@ -31,8 +48,9 @@ def dfu_clusters(source: str = Query(default="ml", pattern="^(ml|source)$")):
     source=source -> original source-file clusters (cluster_assignment column)
     """
     col = "ml_cluster" if source == "ml" else "cluster_assignment"
+    col_id = psycopg_sql.Identifier(col)
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(f"""
+        cur.execute(psycopg_sql.SQL("""
             WITH cluster_counts AS (
                 SELECT
                     {col} AS cluster_label,
@@ -71,7 +89,7 @@ def dfu_clusters(source: str = Query(default="ml", pattern="^(ml|source)$")):
             CROSS JOIN total t
             LEFT JOIN cluster_demand cd ON cd.cluster_label = cc.cluster_label
             ORDER BY cc.dfu_count DESC
-        """)
+        """).format(col=col_id))
         rows = cur.fetchall()
 
         clusters = []
@@ -160,31 +178,54 @@ def dfu_seasonality_profiles():
 # ---------------------------------------------------------------------------
 # Clustering what-if scenarios (feature 29)
 # ---------------------------------------------------------------------------
-_scenario_lock = threading.Lock()
-_scenario_running = False
 
 
 class FeatureParams(BaseModel):
     time_window_months: int | str = 24
     min_months_history: int = 1
 
+    @field_validator("time_window_months")
+    @classmethod
+    def _validate_time_window(cls, v: int | str) -> int | str:
+        if isinstance(v, str) and v != "all":
+            raise ValueError("time_window_months must be a positive integer or 'all'")
+        if isinstance(v, int) and not (1 <= v <= 120):
+            raise ValueError("time_window_months must be between 1 and 120")
+        return v
+
 
 class ModelParams(BaseModel):
     k_range: list[int] = [3, 12]
-    min_cluster_size_pct: float = 2.0
+    min_cluster_size_pct: float = Field(default=2.0, ge=0.0, lt=50.0)
     use_pca: bool = False
     pca_components: int | None = None
-    skip_gap: bool = True
     all_features: bool = False
+
+    @model_validator(mode="after")
+    def _validate_k_range(self) -> "ModelParams":
+        kr = self.k_range
+        if len(kr) != 2:
+            raise ValueError("k_range must have exactly 2 elements: [min_k, max_k]")
+        if kr[0] < 2:
+            raise ValueError("k_range min must be >= 2")
+        if kr[0] >= kr[1]:
+            raise ValueError("k_range[0] must be less than k_range[1]")
+        return self
 
 
 class LabelParams(BaseModel):
-    volume_high: float = 0.75
-    volume_low: float = 0.25
-    cv_steady: float = 0.3
-    cv_volatile: float = 0.8
-    seasonality_threshold: float = 0.5
-    zero_demand_threshold: float = 0.2
+    volume_high: float = Field(default=0.75, ge=0.0, le=1.0)
+    volume_low: float = Field(default=0.25, ge=0.0, le=1.0)
+    cv_steady: float = Field(default=0.3, ge=0.0)
+    cv_volatile: float = Field(default=0.8, ge=0.0)
+    seasonality_threshold: float = Field(default=0.5, ge=0.0)
+    zero_demand_threshold: float = Field(default=0.2, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _validate_volume_ordering(self) -> "LabelParams":
+        if self.volume_low >= self.volume_high:
+            raise ValueError("volume_low must be less than volume_high")
+        return self
 
 
 class ClusteringScenarioRequest(BaseModel):
@@ -207,7 +248,7 @@ def get_clustering_defaults():
             "model_params": {
                 "k_range": [3, 12], "min_cluster_size_pct": 2.0,
                 "use_pca": False, "pca_components": None,
-                "skip_gap": False, "all_features": False,
+                "all_features": False,
             },
             "label_params": {
                 "volume_high": 0.75, "volume_low": 0.25,
@@ -234,7 +275,6 @@ def get_clustering_defaults():
             "min_cluster_size_pct": clustering.get("min_cluster_size_pct", 2.0),
             "use_pca": clustering.get("use_pca", False),
             "pca_components": clustering.get("pca_components", None),
-            "skip_gap": clustering.get("skip_gap", False),
             "all_features": clustering.get("all_features", False),
         },
         "label_params": {
@@ -248,16 +288,11 @@ def get_clustering_defaults():
     }
 
 
-_scenario_start_time: float | None = None
-_running_scenario_id: str | None = None
-
-
 @router.get("/clustering/scenario/estimate")
 def estimate_scenario_runtime(
     scope: str = Query(default="all"),
     k_min: int = Query(default=3),
     k_max: int = Query(default=12),
-    skip_gap: bool = Query(default=True),
 ):
     """Estimate scenario runtime based on parameters."""
     with get_conn() as conn, conn.cursor() as cur:
@@ -272,13 +307,12 @@ def estimate_scenario_runtime(
     feature_gen_per_dfu = 0.001
     # KMeans training: ~0.002s per training DFU per K (runs on sample if large)
     kmeans_per_dfu_per_k = 0.002
-    gap_multiplier = 2.5 if not skip_gap else 1.0
     # Fixed overhead for SQL query + data loading
     overhead_seconds = 10.0
 
     training_dfus = min(dfu_count, max_training_dfus)
     feature_gen_time = feature_gen_per_dfu * dfu_count
-    kmeans_time = kmeans_per_dfu_per_k * training_dfus * k_range * gap_multiplier
+    kmeans_time = kmeans_per_dfu_per_k * training_dfus * k_range
     estimated = overhead_seconds + feature_gen_time + kmeans_time
 
     return {
@@ -287,7 +321,6 @@ def estimate_scenario_runtime(
         "training_sample": training_dfus,
         "sampled": dfu_count > max_training_dfus,
         "k_range": k_range,
-        "skip_gap": skip_gap,
     }
 
 
@@ -297,7 +330,6 @@ async def run_clustering_scenario(req: ClusteringScenarioRequest):
 
     Delegates to the JobManager so the scenario appears in the Jobs tab.
     """
-    global _scenario_running, _scenario_start_time, _running_scenario_id
     from common.job_registry import JobManager
 
     manager = JobManager()
@@ -311,43 +343,16 @@ async def run_clustering_scenario(req: ClusteringScenarioRequest):
         "previous_scenario_id": req.previous_scenario_id,
     }
 
-    # Also embed the scenario_id so _run_cluster_scenario uses it
+    # Embed scenario_id so _run_cluster_scenario uses it
     from scripts.run_clustering_scenario import generate_scenario_id
     scenario_id = generate_scenario_id()
     params["scenario_id"] = scenario_id
 
-    job_id = manager.submit_job("cluster_scenario", params, label=f"What-If Scenario")
+    job_id = manager.submit_job("cluster_scenario", params, label="What-If Scenario")
 
     # Determine if the job is queued or running immediately
     job_status = manager.get_status(job_id)
     is_queued = job_status and job_status.get("status") == "queued"
-
-    if not is_queued:
-        # Track for the legacy status polling endpoint
-        _running_scenario_id = scenario_id
-        _scenario_running = True
-        _scenario_start_time = time.time()
-
-        # Wire up legacy state cleanup when job finishes
-        _original_start = manager.start_job_in_background
-
-        def _start_with_cleanup(jid: str) -> None:
-            """Wrap start to clear legacy globals on completion."""
-            _original_start(jid)
-
-            def _wait_and_cleanup():
-                import time as _t
-                while jid in manager._active_jobs:
-                    _t.sleep(1)
-                global _scenario_running, _scenario_start_time, _running_scenario_id
-                _scenario_running = False
-                _scenario_start_time = None
-                _running_scenario_id = None
-
-            cleanup_thread = threading.Thread(target=_wait_and_cleanup, daemon=True)
-            cleanup_thread.start()
-
-        _start_with_cleanup(job_id)
 
     return JSONResponse(
         status_code=202,
@@ -359,32 +364,86 @@ async def run_clustering_scenario(req: ClusteringScenarioRequest):
     )
 
 
+def _get_job_manager():
+    """Lazy import and instantiate JobManager (testable seam)."""
+    from common.job_registry import JobManager
+    return JobManager()
+
+
+def _find_job_by_scenario_id(scenario_id: str) -> dict[str, Any] | None:
+    """Look up a job in job_history DB by scenario_id embedded in params."""
+    try:
+        manager = _get_job_manager()
+        # Search recent jobs (active + completed). 500 covers ~months of job history.
+        rows, _ = manager.list_jobs(limit=500)
+        for job in rows:
+            params = job.get("params")
+            if isinstance(params, str):
+                try:
+                    params = json.loads(params)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if params and params.get("scenario_id") == scenario_id:
+                return job
+    except Exception:
+        log.warning("Job lookup failed for scenario %s", scenario_id, exc_info=True)
+    return None
+
+
 @router.get("/clustering/scenario/{scenario_id}/status")
 def get_scenario_status(scenario_id: str):
     """Poll scenario execution status."""
-    # Check if this scenario is currently running
-    if _running_scenario_id == scenario_id and _scenario_running:
-        elapsed = round(time.time() - (_scenario_start_time or time.time()), 1)
-        return {"scenario_id": scenario_id, "status": "running", "elapsed_seconds": elapsed}
-
-    # Check for completed/failed result on disk
+    _validate_scenario_id(scenario_id)
+    # 1. Check for completed/failed result on disk (fastest path)
     from scripts.run_clustering_scenario import get_scenario_result
 
     result = get_scenario_result(scenario_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found")
+    if result is not None:
+        return {
+            "scenario_id": scenario_id,
+            "status": result.get("status", "completed"),
+            "runtime_seconds": result.get("runtime_seconds", 0),
+            "result": result,
+        }
 
-    return {
-        "scenario_id": scenario_id,
-        "status": result.get("status", "completed"),
-        "runtime_seconds": result.get("runtime_seconds", 0),
-        "result": result,
-    }
+    # 2. Check job_history DB for running/queued/failed status
+    job = _find_job_by_scenario_id(scenario_id)
+    if job is not None:
+        job_status = job.get("status", "unknown")
+        if job_status == "running":
+            # Compute elapsed from submitted_at
+            submitted = job.get("submitted_at")
+            elapsed = 0.0
+            if submitted:
+                if isinstance(submitted, str):
+                    submitted = datetime.datetime.fromisoformat(submitted)
+                if hasattr(submitted, "timestamp"):
+                    elapsed = round(time.time() - submitted.timestamp(), 1)
+            return {"scenario_id": scenario_id, "status": "running", "elapsed_seconds": elapsed}
+        if job_status == "completed" and job.get("result"):
+            job_result = job["result"] if isinstance(job["result"], dict) else json.loads(job["result"])
+            return {
+                "scenario_id": scenario_id,
+                "status": job_result.get("status", "completed"),
+                "runtime_seconds": job_result.get("runtime_seconds", 0),
+                "result": job_result,
+            }
+        if job_status == "failed":
+            return {
+                "scenario_id": scenario_id,
+                "status": "failed",
+                "error": job.get("error", "Scenario failed"),
+            }
+        if job_status == "queued":
+            return {"scenario_id": scenario_id, "status": "queued"}
+
+    raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found")
 
 
 @router.get("/clustering/scenario/{scenario_id}")
 def get_clustering_scenario(scenario_id: str):
     """Retrieve a previously run scenario result."""
+    _validate_scenario_id(scenario_id)
     from scripts.run_clustering_scenario import get_scenario_result
 
     result = get_scenario_result(scenario_id)
@@ -396,6 +455,7 @@ def get_clustering_scenario(scenario_id: str):
 @router.post("/clustering/scenario/{scenario_id}/promote", dependencies=[Depends(require_api_key)])
 def promote_clustering_scenario(scenario_id: str):
     """Promote a scenario to production (updates dim_dfu.ml_cluster)."""
+    _validate_scenario_id(scenario_id)
     from scripts.run_clustering_scenario import promote_scenario
 
     try:

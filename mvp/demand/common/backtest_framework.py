@@ -33,6 +33,7 @@ from common.constants import (
 from common.db import get_db_params
 from common.metrics import compute_accuracy_metrics
 from common.mlflow_utils import log_backtest_run
+from common.planning_date import get_planning_date
 
 
 def _ts() -> str:
@@ -79,9 +80,13 @@ def load_backtest_data(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Load sales, DFU attributes, and item attributes from Postgres.
 
+    Sales are capped at the planning date (first of month) to ensure
+    no future data leaks into backtesting.
+
     Returns (sales_df, dfu_attrs, item_attrs).
     """
     t1 = time.time()
+    planning_cutoff = get_planning_date().replace(day=1)
     with psycopg.connect(**db) as conn:
         sales_df = pd.read_sql("""
             SELECT d.dfu_ck, s.dmdunit, s.dmdgroup, s.loc, s.startdate, s.qty
@@ -89,8 +94,9 @@ def load_backtest_data(
             INNER JOIN dim_dfu d
                 ON d.dmdunit = s.dmdunit AND d.dmdgroup = s.dmdgroup AND d.loc = s.loc
             WHERE s.qty IS NOT NULL
+              AND s.startdate <= %(planning_cutoff)s
             ORDER BY d.dfu_ck, s.startdate
-        """, conn)
+        """, conn, params={"planning_cutoff": planning_cutoff})
 
         dfu_attrs = pd.read_sql("""
             SELECT dfu_ck, dmdunit, dmdgroup, loc,
@@ -405,13 +411,15 @@ def _predict_single_month(
         predict_data: Feature matrix for one month, all DFUs (must have ``ml_cluster``).
         feature_cols: Ordered list of feature columns passed to each model.
     """
-    feat_no_cluster = [c for c in feature_cols if c != "ml_cluster"]
     parts = []
     for cluster, group in predict_data.groupby("ml_cluster"):
         m = models.get(cluster)
         if m is None:
             continue
-        preds = np.maximum(m.predict(group[feat_no_cluster]), 0)
+        # Models were trained with all feature_cols (including ml_cluster as a
+        # categorical feature constant within each cluster partition). Pass the
+        # same feature set to maintain feature alignment.
+        preds = np.maximum(m.predict(group[feature_cols]), 0)
         r = group[_PREDICT_META_COLS].copy()
         r["basefcst_pref"] = preds
         parts.append(r)
@@ -467,9 +475,15 @@ def run_tree_backtest(
     exec_lag_map = dfu_attrs.set_index("dfu_ck")["execution_lag"].fillna(0).astype(int).to_dict()
 
     # ── Step 2: Generate timeframes ──────────────────────────────────────────
-    latest_month = sales_df["startdate"].max()
+    planning_dt = pd.Timestamp(get_planning_date())
+    # Cap to first-of-planning-month so we only use complete months
+    planning_cutoff = planning_dt.normalize().replace(day=1)
+    latest_month = min(sales_df["startdate"].max(), planning_cutoff)
     earliest_month = sales_df["startdate"].min()
-    print(f"  [{_ts()}] Date range: {earliest_month.date()} → {latest_month.date()}")
+    # Filter out any sales beyond the planning date
+    sales_df = sales_df[sales_df["startdate"] <= latest_month].copy()
+    print(f"  [{_ts()}] Date range: {earliest_month.date()} → {latest_month.date()} "
+          f"(planning date: {planning_dt.date()})")
 
     timeframes = generate_timeframes(earliest_month, latest_month, n_timeframes)
     print(f"\n[{_ts()}] Step 2: Generated {len(timeframes)} timeframes:")

@@ -38,7 +38,7 @@ class TestGetScenarioResult:
         assert result is None
 
     def test_returns_saved_result(self, tmp_path):
-        scenario_id = "sc_test_saved"
+        scenario_id = "sc_20250101_120000_ab34"
         scenario_dir = tmp_path / scenario_id
         scenario_dir.mkdir()
         expected = {"scenario_id": scenario_id, "status": "completed", "result": {"optimal_k": 5}}
@@ -68,7 +68,7 @@ class TestRunScenarioErrorHandling:
             assert "test error" in result["error"]
 
     def test_merges_default_params(self):
-        """run_scenario should merge user params with defaults."""
+        """run_scenario should merge user params with config-driven defaults."""
         from scripts.run_clustering_scenario import run_scenario
 
         with patch("scripts.run_clustering_scenario._run_full_pipeline", side_effect=ValueError("skip")), \
@@ -79,10 +79,11 @@ class TestRunScenarioErrorHandling:
             params = result["params"]
             # User-specified k_range should be present
             assert params["model_params"]["k_range"] == [4, 8]
-            # Defaults should fill in the rest
-            assert params["model_params"]["skip_gap"] is True
-            assert params["feature_params"]["time_window_months"] == 24
-            assert params["label_params"]["volume_high"] == 0.75
+            # Defaults from clustering_config.yaml (time_window_months: 36, min_months_history: 12)
+            assert params["feature_params"]["time_window_months"] == 36
+            # Label params filled from config
+            assert "volume_high" in params["label_params"]
+            assert "cv_steady" in params["label_params"]
 
 
 class TestRelabelOnly:

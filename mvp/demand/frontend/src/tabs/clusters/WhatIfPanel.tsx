@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 // ---------------------------------------------------------------------------
 function ParamInput({
   label,
+  description,
   value,
   onChange,
   step,
@@ -16,6 +17,7 @@ function ParamInput({
   max,
 }: {
   label: string;
+  description?: string;
   value: number;
   onChange: (v: number) => void;
   step?: number;
@@ -25,6 +27,9 @@ function ParamInput({
   return (
     <label className="flex flex-col gap-1 text-xs">
       <span className="font-semibold text-muted-foreground">{label}</span>
+      {description && (
+        <span className="text-[10px] leading-tight text-muted-foreground/70">{description}</span>
+      )}
       <input
         type="number"
         className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm tabular-nums"
@@ -116,6 +121,7 @@ export default function WhatIfPanel({
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Data Scope</p>
               <ParamInput
                 label="Time Window (months)"
+                description="How many months of sales history to analyze. Longer windows capture more patterns but may include outdated trends. Recommended: 24-48 months."
                 value={featureParams.time_window_months}
                 onChange={(v) => setFeatureParams((p) => ({ ...p, time_window_months: v }))}
                 min={1}
@@ -123,6 +129,7 @@ export default function WhatIfPanel({
               />
               <ParamInput
                 label="Min History (months)"
+                description="DFUs with fewer months of data are excluded from clustering. Lower values include newer products but may produce noisy features."
                 value={featureParams.min_months_history}
                 onChange={(v) => setFeatureParams((p) => ({ ...p, min_months_history: v }))}
                 min={1}
@@ -135,6 +142,7 @@ export default function WhatIfPanel({
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Model</p>
               <div>
                 <span className="text-xs font-semibold text-muted-foreground">K Range</span>
+                <span className="block text-[10px] leading-tight text-muted-foreground/70 mt-0.5">Range of cluster counts to evaluate. The algorithm tests each K value and selects the optimal one using combined Silhouette + Calinski-Harabasz scoring.</span>
                 <div className="mt-1 flex items-center gap-2">
                   <input
                     type="number"
@@ -159,6 +167,7 @@ export default function WhatIfPanel({
               </div>
               <ParamInput
                 label="Min Cluster Size (%)"
+                description="Minimum percentage of DFUs required in each cluster. Prevents tiny, unstable clusters. Higher values produce more balanced groups for model training."
                 value={modelParams.min_cluster_size_pct}
                 onChange={(v) => setModelParams((p) => ({ ...p, min_cluster_size_pct: v }))}
                 step={0.5}
@@ -172,6 +181,7 @@ export default function WhatIfPanel({
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Labeling Thresholds</p>
               <ParamInput
                 label="Volume High (pctl)"
+                description="Percentile threshold for 'high volume' classification. DFUs above this percentile are labeled high/very_high volume."
                 value={labelParams.volume_high}
                 onChange={(v) => setLabelParams((p) => ({ ...p, volume_high: v }))}
                 step={0.05}
@@ -180,6 +190,7 @@ export default function WhatIfPanel({
               />
               <ParamInput
                 label="Volume Low (pctl)"
+                description="Percentile threshold for 'low volume' classification. DFUs below this percentile are labeled low/very_low volume."
                 value={labelParams.volume_low}
                 onChange={(v) => setLabelParams((p) => ({ ...p, volume_low: v }))}
                 step={0.05}
@@ -188,6 +199,7 @@ export default function WhatIfPanel({
               />
               <ParamInput
                 label="CV Steady (<)"
+                description="Coefficient of Variation threshold below which demand is considered 'steady'. Lower CV = more predictable demand."
                 value={labelParams.cv_steady}
                 onChange={(v) => setLabelParams((p) => ({ ...p, cv_steady: v }))}
                 step={0.05}
@@ -195,6 +207,7 @@ export default function WhatIfPanel({
               />
               <ParamInput
                 label="CV Volatile (>)"
+                description="Coefficient of Variation threshold above which demand is considered 'volatile'. Higher CV = more erratic demand patterns."
                 value={labelParams.cv_volatile}
                 onChange={(v) => setLabelParams((p) => ({ ...p, cv_volatile: v }))}
                 step={0.05}
@@ -202,6 +215,7 @@ export default function WhatIfPanel({
               />
               <ParamInput
                 label="Seasonality Threshold"
+                description="Seasonal amplitude ratio above which a DFU is classified as 'seasonal'. Measures peak-to-trough swing relative to average demand."
                 value={labelParams.seasonality_threshold}
                 onChange={(v) => setLabelParams((p) => ({ ...p, seasonality_threshold: v }))}
                 step={0.05}
@@ -210,6 +224,7 @@ export default function WhatIfPanel({
               />
               <ParamInput
                 label="Zero Demand Threshold"
+                description="Fraction of months with zero sales above which a DFU is classified as 'intermittent'. E.g., 0.15 means >15% zero months."
                 value={labelParams.zero_demand_threshold}
                 onChange={(v) => setLabelParams((p) => ({ ...p, zero_demand_threshold: v }))}
                 step={0.05}

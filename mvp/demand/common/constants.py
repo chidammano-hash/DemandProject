@@ -7,6 +7,9 @@ NUMERIC_ITEM_FEATURES = ["case_weight", "item_proof", "bpc"]
 
 LAG_RANGE = range(1, 13)  # qty_lag_1 .. qty_lag_12
 ROLLING_WINDOWS = [3, 6, 12]
+CALENDAR_FEATURES = ["month", "quarter", "month_sin", "month_cos",
+                     "is_quarter_end", "is_year_end", "days_in_month"]
+DERIVED_FEATURES = ["mom_growth", "demand_accel", "volatility_ratio"]
 
 # Output column ordering for fact_external_forecast_monthly
 OUTPUT_COLS = [

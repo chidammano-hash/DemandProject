@@ -50,6 +50,7 @@ if str(ROOT) not in sys.path:
 from common.db import get_db_params
 from common.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
 from common.forecast_ci import build_sigma_lookup, compute_ci_bounds
+from common.planning_date import get_planning_date
 
 import psycopg
 
@@ -194,10 +195,12 @@ def load_recent_sales(conn, item_no: str | None = None, loc: str | None = None,
 
     Returns DataFrame with columns: item_no, loc, startdate, qty.
     """
-    cutoff = pd.Timestamp.now().normalize() - pd.DateOffset(months=lookback_months)
+    planning_dt = pd.Timestamp(get_planning_date())
+    planning_upper = planning_dt.normalize().replace(day=1)
+    cutoff = planning_dt.normalize() - pd.DateOffset(months=lookback_months)
 
-    where_clauses = ["s.startdate >= %s", "s.type = 1"]
-    params: list = [cutoff.date()]
+    where_clauses = ["s.startdate >= %s", "s.startdate <= %s", "s.type = 1"]
+    params: list = [cutoff.date(), planning_upper.date()]
 
     if item_no:
         where_clauses.append("s.dmdunit = %s")
@@ -423,6 +426,9 @@ def build_inference_grid(
         row["quarter"] = (month_num - 1) // 3 + 1
         row["month_sin"] = float(np.sin(2 * np.pi * month_num / 12))
         row["month_cos"] = float(np.cos(2 * np.pi * month_num / 12))
+        row["is_quarter_end"] = 1 if month_num in (3, 6, 9, 12) else 0
+        row["is_year_end"] = 1 if month_num == 12 else 0
+        row["days_in_month"] = float(fmonth.days_in_month if hasattr(fmonth, "days_in_month") else pd.Timestamp(fmonth).days_in_month)
 
         # DFU attributes (categorical and numeric)
         for col in CAT_FEATURES:
@@ -434,6 +440,16 @@ def build_inference_grid(
         row["bpc"] = float(item_attrs.get("bpc", 0) or 0)
         row["item_proof"] = float(item_attrs.get("item_proof", 0) or 0)
         row["case_weight"] = float(item_attrs.get("case_weight", 0) or 0)
+
+        # Derived demand features (same as feature_engineering._recompute_derived_features)
+        lag1 = row.get("qty_lag_1", 0.0)
+        lag2 = row.get("qty_lag_2", 0.0)
+        row["mom_growth"] = max(-2.0, min(2.0, (lag1 - lag2) / (abs(lag2) + 1.0)))
+        rm3 = row.get("rolling_mean_3m", 0.0)
+        rm6 = row.get("rolling_mean_6m", 0.0)
+        row["demand_accel"] = rm3 - rm6
+        rs3 = row.get("rolling_std_3m", 0.0)
+        row["volatility_ratio"] = rs3 / (abs(rm3) + 1.0)
 
         row["_forecast_month"] = fmonth
         row["_horizon"] = h + 1
@@ -502,6 +518,15 @@ def generate_forecast_recursive(
                 if lag_vals:
                     row_data[f"rolling_mean_{w}m"] = np.mean(lag_vals)
                     row_data[f"rolling_std_{w}m"] = np.std(lag_vals, ddof=1) if len(lag_vals) > 1 else 0.0
+            # Recompute derived features after lag/rolling update
+            l1 = float(row_data["qty_lag_1"].iloc[0]) if "qty_lag_1" in row_data.columns else 0.0
+            l2 = float(row_data["qty_lag_2"].iloc[0]) if "qty_lag_2" in row_data.columns else 0.0
+            row_data["mom_growth"] = max(-2.0, min(2.0, (l1 - l2) / (abs(l2) + 1.0)))
+            rm3 = float(row_data["rolling_mean_3m"].iloc[0]) if "rolling_mean_3m" in row_data.columns else 0.0
+            rm6 = float(row_data["rolling_mean_6m"].iloc[0]) if "rolling_mean_6m" in row_data.columns else 0.0
+            row_data["demand_accel"] = rm3 - rm6
+            rs3 = float(row_data["rolling_std_3m"].iloc[0]) if "rolling_std_3m" in row_data.columns else 0.0
+            row_data["volatility_ratio"] = rs3 / (abs(rm3) + 1.0)
 
         # Predict using only the features the model was trained on
         X = row_data[available_features].fillna(0)
@@ -674,6 +699,25 @@ def generate_forecasts_batch(
                     if std_idx is not None and len(lag_cols) > 1:
                         X_np[:, std_idx] = lag_mat.std(axis=1, ddof=1)
 
+            # Recompute derived demand features (vectorised across all DFUs)
+            mom_idx = col_idx.get("mom_growth")
+            da_idx = col_idx.get("demand_accel")
+            vr_idx = col_idx.get("volatility_ratio")
+            lag1_idx = lag_pos.get(1)
+            lag2_idx = lag_pos.get(2)
+            rm3_idx = rolling_pos.get(3, (None, None))[0]
+            rm6_idx = rolling_pos.get(6, (None, None))[0]
+            rs3_idx = rolling_pos.get(3, (None, None))[1]
+
+            if mom_idx is not None and lag1_idx is not None and lag2_idx is not None:
+                l1 = X_np[:, lag1_idx]
+                l2 = X_np[:, lag2_idx]
+                X_np[:, mom_idx] = np.clip((l1 - l2) / (np.abs(l2) + 1.0), -2.0, 2.0)
+            if da_idx is not None and rm3_idx is not None and rm6_idx is not None:
+                X_np[:, da_idx] = X_np[:, rm3_idx] - X_np[:, rm6_idx]
+            if vr_idx is not None and rs3_idx is not None and rm3_idx is not None:
+                X_np[:, vr_idx] = X_np[:, rs3_idx] / (np.abs(X_np[:, rm3_idx]) + 1.0)
+
     # -----------------------------------------------------------------------
     # Build output row dicts
     # -----------------------------------------------------------------------
@@ -828,7 +872,7 @@ def main() -> None:
     keep_n = config["plan_version"]["keep_last_n_versions"]
     fallback_model_id = config["model_selection"]["fallback_model_id"]
 
-    plan_version = args.plan_version or datetime.now(timezone.utc).strftime(config["plan_version"]["format"])
+    plan_version = args.plan_version or get_planning_date().strftime(config["plan_version"]["format"])
     run_id = str(uuid.uuid4())
 
     item_filter = args.dfu[0] if args.dfu else None

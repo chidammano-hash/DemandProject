@@ -23,26 +23,24 @@ The following backtest scripts and all their associated Makefile targets were de
 | `scripts/run_backtest_patchtst.py` | `patchtst_global`, `patchtst_cluster`, `patchtst_transfer` |
 | `scripts/run_backtest_deepar.py` | `deepar_global`, `deepar_cluster`, `deepar_transfer` |
 
-### Removed Strategies Per Remaining Algorithms
+### Supported Training Strategies
 
-The global and transfer strategies were removed from the three remaining tree-based scripts:
+Each algorithm now supports a `cluster_strategy` config key:
 
-| Removed Model ID | Notes |
-|---|---|
-| `lgbm_global` | global strategy removed |
-| `lgbm_transfer` | transfer learning removed |
-| `catboost_global` | global strategy removed |
-| `catboost_transfer` | transfer learning removed |
-| `xgboost_global` | global strategy removed |
-| `xgboost_transfer` | transfer learning removed |
+| Strategy | Description | Model ID Example |
+|---|---|---|
+| `per_cluster` (default) | One model per `ml_cluster` partition; `ml_cluster` kept as a hard feature (constant within each partition, provides cluster identity signal) | `lgbm_cluster` |
+| `global` | One model trained on ALL data; `ml_cluster` kept as a hard feature (provides cluster identity signal across the full dataset) | `lgbm_global` |
 
-### Kept Algorithms (Per-Cluster Only)
+> **Key convention:** `ml_cluster` is always a **hard feature** — it is never stripped from `feature_cols` in either strategy. In `per_cluster` mode it provides a constant identity signal; in `global` mode it provides the inter-cluster discrimination signal.
 
-| Script | Model ID |
-|---|---|
-| `scripts/run_backtest.py` | `lgbm_cluster` |
-| `scripts/run_backtest_catboost.py` | `catboost_cluster` |
-| `scripts/run_backtest_xgboost.py` | `xgboost_cluster` |
+### Kept Algorithms
+
+| Script | Default Model ID | Strategies |
+|---|---|---|
+| `scripts/run_backtest.py` | `lgbm_cluster` | per_cluster, global |
+| `scripts/run_backtest_catboost.py` | `catboost_cluster` | per_cluster, global |
+| `scripts/run_backtest_xgboost.py` | `xgboost_cluster` | per_cluster, global |
 
 Champion selection and ceiling computation are unchanged.
 
@@ -56,6 +54,7 @@ Controls all algorithm behavior previously specified via CLI flags. Each backtes
 
 ```yaml
 lgbm:
+  cluster_strategy: "per_cluster"  # "per_cluster" or "global"
   recursive: false           # Recursive multi-step inference (Feature 43)
   shap_select: false         # SHAP-based feature selection per timeframe (Feature 42)
   shap_threshold: 0.95       # Cumulative importance threshold (0.0–1.0)
@@ -64,16 +63,13 @@ lgbm:
   tune_inline: false         # Per-timeframe causal Optuna tuning (PL-002)
   params_file: null          # Path to pre-tuned params JSON (null = use defaults)
   # Default model hyperparameters (used when params_file is null and tune_inline is false)
-  n_estimators: 300
+  n_estimators: 500
   learning_rate: 0.05
   num_leaves: 31
   min_child_samples: 20
-  subsample: 0.8
-  colsample_bytree: 0.8
-  reg_alpha: 0.1
-  reg_lambda: 0.1
 
 catboost:
+  cluster_strategy: "per_cluster"
   recursive: false
   shap_select: false
   shap_threshold: 0.95
@@ -81,14 +77,13 @@ catboost:
   shap_sample_size: 500
   tune_inline: false
   params_file: null
-  # Default model hyperparameters
-  iterations: 300
+  iterations: 500
   learning_rate: 0.05
   depth: 6
   l2_leaf_reg: 3.0
-  border_count: 128
 
 xgboost:
+  cluster_strategy: "per_cluster"
   recursive: false
   shap_select: false
   shap_threshold: 0.95
@@ -96,21 +91,19 @@ xgboost:
   shap_sample_size: 500
   tune_inline: false
   params_file: null
-  # Default model hyperparameters
-  n_estimators: 300
+  n_estimators: 500
   learning_rate: 0.05
   max_depth: 6
-  min_child_weight: 1
+  min_child_weight: 5
   subsample: 0.8
   colsample_bytree: 0.8
-  reg_alpha: 0.1
-  reg_lambda: 1.0
 ```
 
 ### Config Keys Reference
 
 | Key | Type | Default | Description |
 |---|---|---|---|
+| `cluster_strategy` | str | `"per_cluster"` | Training strategy: `"per_cluster"` (one model per ml_cluster partition) or `"global"` (one model on all data). `ml_cluster` is always a hard feature in both modes. |
 | `recursive` | bool | `false` | Enable recursive multi-step inference (Feature 43). Each predict month is scored individually; model's prediction for month T is written back as `qty_lag_1` for month T+1. |
 | `shap_select` | bool | `false` | Enable SHAP-based per-timeframe feature selection (Feature 42). Trains initial model → computes SHAP → selects features → retrains. |
 | `shap_threshold` | float | `0.95` | Cumulative importance threshold. Features covering this fraction of total SHAP mass are selected. Ignored if `shap_top_n` is set. |

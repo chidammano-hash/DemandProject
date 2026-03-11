@@ -9,9 +9,12 @@ Produces two CSVs under data/backtest/catboost_cluster/:
   - backtest_predictions_all_lags.csv (lag 0-4 archive)
 """
 
+import json
+import os
 import pickle
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -44,10 +47,12 @@ def train_and_predict_per_cluster(
     cat_cols: list[str],
     params: dict,
 ) -> tuple[pd.DataFrame, dict]:
-    """Train separate CatBoost per ml_cluster."""
-    feat_cols_no_cluster = [c for c in feature_cols if c != "ml_cluster"]
-    cat_cols_no_cluster = [c for c in cat_cols if c != "ml_cluster"]
-    cat_indices_no_cluster = [feat_cols_no_cluster.index(c) for c in cat_cols_no_cluster if c in feat_cols_no_cluster]
+    """Train separate CatBoost per ml_cluster.
+
+    ml_cluster is kept as a hard feature (constant within each cluster partition,
+    but required for consistent feature alignment with global models).
+    """
+    cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
 
     all_results = []
     models = {}
@@ -67,21 +72,53 @@ def train_and_predict_per_cluster(
                 all_results.append(result)
             continue
 
-        X_train = train_c[feat_cols_no_cluster]
+        X_train = train_c[feature_cols]
         y_train = train_c["qty"]
-        X_pred = pred_c[feat_cols_no_cluster]
+        X_pred = pred_c[feature_cols]
 
         t0 = time.time()
-        model = cb.CatBoostRegressor(**params)
-        model.fit(X_train, y_train, cat_features=cat_indices_no_cluster, verbose=False)
+        # Time-aware train/val split — last 20% of cluster rows for validation
+        n_val = max(1, int(len(X_train) * 0.20))
+        X_tr, X_val = X_train.iloc[:-n_val], X_train.iloc[-n_val:]
+        y_tr, y_val = y_train.iloc[:-n_val], y_train.iloc[-n_val:]
+
+        # Guard: CatBoost crashes on constant targets ("All train targets are equal")
+        if y_tr.nunique() <= 1:
+            const_val = float(y_tr.iloc[0]) if len(y_tr) > 0 else 0.0
+            print(f"    [{_ts()}] Cluster {ci}/{len(clusters)} '{cluster_label}': "
+                  f"skipped (constant target={const_val:.0f}), using constant for {len(pred_c)} predictions")
+            result = pred_c[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
+            result["basefcst_pref"] = const_val
+            all_results.append(result)
+            continue
+
+        fit_params = {**params, "iterations": max(params.get("iterations", 1000), 1000)}
+        model = cb.CatBoostRegressor(**fit_params)
+        eval_pool = cb.Pool(X_val, y_val, cat_features=cat_indices)
+        model.fit(
+            X_tr, y_tr,
+            cat_features=cat_indices,
+            eval_set=eval_pool,
+            early_stopping_rounds=50,
+            verbose=False,
+        )
         preds = model.predict(X_pred)
+
+        # Per-cluster validation WAPE
+        val_preds = model.predict(X_val)
+        val_denom = float(abs(y_val.sum()))
+        val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2) if val_denom > 0 else 0.0
+        model._val_wape = val_wape
+        model._train_rows = len(X_tr)
 
         result = pred_c[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
         result["basefcst_pref"] = np.maximum(preds, 0)
         all_results.append(result)
         models[cluster_label] = model
+        n_est_used = model.best_iteration_ if model.best_iteration_ is not None else fit_params["iterations"]
         print(f"    [{_ts()}] Cluster {ci}/{len(clusters)} '{cluster_label}': "
-              f"train={len(train_c):,}, pred={len(pred_c):,} ({time.time() - t0:.1f}s)")
+              f"train={len(train_c):,}, pred={len(pred_c):,}, "
+              f"best_iter={n_est_used}, val_wape={val_wape:.1f}% ({time.time() - t0:.1f}s)")
 
     no_cluster = predict_df[
         predict_df["ml_cluster"].isna() | (
@@ -95,6 +132,54 @@ def train_and_predict_per_cluster(
         all_results.append(result)
 
     return pd.concat(all_results, ignore_index=True), models
+
+
+def train_and_predict_global(
+    train_df: pd.DataFrame,
+    predict_df: pd.DataFrame,
+    feature_cols: list[str],
+    cat_cols: list[str],
+    params: dict,
+) -> tuple[pd.DataFrame, dict]:
+    """Train a single global CatBoost on ALL data with ml_cluster as categorical feature."""
+    # CatBoost keeps string categoricals — ml_cluster is INCLUDED as a feature
+    cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
+    print(f"    [{_ts()}] Training global CatBoost on {len(train_df):,} rows, "
+          f"{len(feature_cols)} features (includes ml_cluster)...")
+
+    X_train = train_df[feature_cols]
+    y_train = train_df["qty"]
+    X_pred = predict_df[feature_cols]
+
+    # Time-aware train/val split — last 15% of rows for validation
+    n_val = max(1, int(len(X_train) * 0.15))
+    X_tr, X_val = X_train.iloc[:-n_val], X_train.iloc[-n_val:]
+    y_tr, y_val = y_train.iloc[:-n_val], y_train.iloc[-n_val:]
+
+    fit_params = {**params, "iterations": max(params.get("iterations", 1200), 1200)}
+    model = cb.CatBoostRegressor(**fit_params)
+    eval_pool = cb.Pool(X_val, y_val, cat_features=cat_indices)
+    model.fit(
+        X_tr, y_tr,
+        cat_features=cat_indices,
+        eval_set=eval_pool,
+        early_stopping_rounds=50,
+        verbose=False,
+    )
+    preds = model.predict(X_pred)
+
+    val_preds = model.predict(X_val)
+    val_denom = float(abs(y_val.sum()))
+    val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2) if val_denom > 0 else 0.0
+    model._val_wape = val_wape
+    n_est_used = model.best_iteration_ if model.best_iteration_ else fit_params["iterations"]
+    print(f"    [{_ts()}] Global CatBoost: val_WAPE={val_wape:.1f}%, "
+          f"best_iter={n_est_used}, train={len(train_df):,}, pred={len(predict_df):,}")
+
+    result = predict_df[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
+    result["basefcst_pref"] = np.clip(preds, 0, None)
+    # Use "global" as the single key so persist logic saves one file
+    return result, {"global": model}
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -120,7 +205,15 @@ def main() -> None:
     algo = cfg["algorithms"]["catboost"]
     backtest_cfg = cfg.get("backtest", {})
 
-    model_id = args.model_id or algo.get("model_id", "catboost_cluster")
+    cluster_strategy = algo.get("cluster_strategy", "per_cluster")
+    if cluster_strategy == "global":
+        train_fn = train_and_predict_global
+        default_model_id = "catboost_global"
+    else:
+        train_fn = train_and_predict_per_cluster
+        default_model_id = "catboost_cluster"
+
+    model_id = args.model_id or algo.get("model_id", default_model_id)
     n_timeframes = args.n_timeframes or backtest_cfg.get("n_timeframes", 10)
     output_dir = ROOT / backtest_cfg.get("output_dir", "data/backtest")
     recursive = algo.get("recursive", False)
@@ -131,18 +224,27 @@ def main() -> None:
     tune_inline = algo.get("tune_inline", False)
     params_file = algo.get("params_file", None)
 
-    print(f"[{_ts()}] CatBoost config: model_id={model_id}, recursive={recursive}, "
-          f"shap_select={shap_select}, tune_inline={tune_inline}, n_timeframes={n_timeframes}")
+    print(f"[{_ts()}] CatBoost config: model_id={model_id}, cluster_strategy={cluster_strategy}, "
+          f"recursive={recursive}, shap_select={shap_select}, tune_inline={tune_inline}, "
+          f"n_timeframes={n_timeframes}")
 
-    # Detect GPU support for CatBoost
+    # GPU detection with env-var override: DEMAND_GPU=on|off|auto (default: auto)
+    _gpu_pref = os.getenv("DEMAND_GPU", "auto").lower()
     _use_gpu = False
-    try:
-        _test = cb.CatBoostRegressor(task_type="GPU", iterations=1, verbose=0)
-        _test.fit([[0]], [0])
+    if _gpu_pref == "on":
         _use_gpu = True
-        print(f"[{_ts()}] Using GPU for CatBoost")
-    except Exception:
-        print(f"[{_ts()}] GPU not available, falling back to CPU")
+        print(f"[{_ts()}] GPU forced ON via DEMAND_GPU env var")
+    elif _gpu_pref == "off":
+        _use_gpu = False
+        print(f"[{_ts()}] GPU disabled via DEMAND_GPU env var")
+    else:  # auto
+        try:
+            _test = cb.CatBoostRegressor(task_type="GPU", iterations=1, verbose=0)
+            _test.fit([[0]], [0])
+            _use_gpu = True
+            print(f"[{_ts()}] Using GPU for CatBoost")
+        except Exception:
+            print(f"[{_ts()}] GPU not available, falling back to CPU")
 
     cb_params = {
         "iterations": algo.get("iterations", 500),
@@ -236,9 +338,33 @@ def main() -> None:
         out_dir = ROOT / base_path / model_id
         out_dir.mkdir(parents=True, exist_ok=True)
         for cluster_label, model in models.items():
-            artifact = {"model": model, "feature_cols": feature_cols, "model_id": model_id}
+            n_est_used = getattr(model, "best_iteration_", None) or 0
+            importance_raw = model.get_feature_importance()
+            importance_dict = dict(zip(feature_cols, [float(v) for v in importance_raw])) if len(importance_raw) == len(feature_cols) else {}
+            artifact = {
+                "model": model,
+                "feature_cols": feature_cols,
+                "model_id": model_id,
+                "cluster_label": str(cluster_label),
+                "n_estimators_used": n_est_used,
+                "train_rows": getattr(model, "_train_rows", None),
+                "val_wape": getattr(model, "_val_wape", None),
+                "trained_at": datetime.now(timezone.utc).isoformat(),
+                "timeframe": timeframe_label,
+                "feature_importance": importance_dict,
+            }
             with open(out_dir / f"cluster_{cluster_label}.pkl", "wb") as f:
                 pickle.dump(artifact, f)
+
+        # Write feature importance JSON per cluster
+        fi_dir = out_dir / "feature_importance"
+        fi_dir.mkdir(parents=True, exist_ok=True)
+        for cluster_label, model in models.items():
+            imp = model.get_feature_importance()
+            if len(imp) == len(feature_cols):
+                fi_sorted = dict(sorted(zip(feature_cols, [float(v) for v in imp]), key=lambda x: x[1], reverse=True))
+                with open(fi_dir / f"cluster_{cluster_label}.json", "w") as f:
+                    json.dump(fi_sorted, f, indent=2)
         print(f"  [{_ts()}] Persisted {len(models)} {model_id} cluster models (timeframe={timeframe_label})")
 
     run_tree_backtest(
@@ -248,7 +374,7 @@ def main() -> None:
         model_params=cb_params,
         model_params_key="catboost_params",
         model_type_tag="catboost_backtest",
-        train_fn_per_cluster=train_and_predict_per_cluster,
+        train_fn_per_cluster=train_fn,
         extra_metadata={"params_source": params_source},
         cat_dtype="str",
         inline_tuner_fn=inline_tuner_fn,

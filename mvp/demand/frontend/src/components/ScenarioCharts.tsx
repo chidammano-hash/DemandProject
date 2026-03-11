@@ -52,7 +52,8 @@ export function ScenarioCharts({ result }: { result: NonNullable<ClusteringScena
     k,
     inertia: result.k_selection_results.inertias[i],
     silhouette: result.k_selection_results.silhouette_scores[i],
-    ...(result.k_selection_results.gap_stats?.[i] != null ? { gap: result.k_selection_results.gap_stats[i] } : {}),
+    ...(result.k_selection_results.ch_scores?.[i] != null ? { ch: result.k_selection_results.ch_scores[i] } : {}),
+    ...(result.k_selection_results.combined_scores?.[i] != null ? { combined: result.k_selection_results.combined_scores[i] } : {}),
   }));
 
   const sizeData = result.profiles.map((p) => ({
@@ -75,7 +76,7 @@ export function ScenarioCharts({ result }: { result: NonNullable<ClusteringScena
     .slice(0, 10)
     .map((f) => ({ ...f, pct: Math.round(f.variance_ratio * 100) }));
 
-  const hasGapStats = result.k_selection_results.gap_stats && result.k_selection_results.gap_stats.length > 0;
+  const hasCombinedScores = result.k_selection_results.combined_scores && result.k_selection_results.combined_scores.length > 0;
 
   return (
     <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -207,17 +208,17 @@ export function ScenarioCharts({ result }: { result: NonNullable<ClusteringScena
         </div>
       )}
 
-      {/* Gap statistic chart (conditional) */}
-      {hasGapStats && (
+      {/* Combined score chart (Silhouette + CH, conditional) */}
+      {hasCombinedScores && (
         <div>
-          <p className="mb-1 text-xs font-semibold text-muted-foreground">Gap Statistic</p>
+          <p className="mb-1 text-xs font-semibold text-muted-foreground">Combined Score (0.5×Sil + 0.5×CH)</p>
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={kData}>
+            <BarChart data={kData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="k" />
-              <YAxis />
+              <YAxis domain={[-0.1, 1]} />
               <Tooltip
-                formatter={(value: number) => [value.toFixed(4), "Gap"]}
+                formatter={(value: number) => [value.toFixed(4), "Combined"]}
                 labelFormatter={(k) => `K = ${k}${Number(k) === result.optimal_k ? " (Optimal)" : ""}`}
               />
               <ReferenceLine
@@ -226,8 +227,15 @@ export function ScenarioCharts({ result }: { result: NonNullable<ClusteringScena
                 strokeDasharray="5 5"
                 label={{ value: `K=${result.optimal_k}`, position: "top", fill: "#ef4444", fontSize: 11 }}
               />
-              <Line type="monotone" dataKey="gap" stroke="#f59e0b" name="Gap" strokeWidth={2} dot={{ r: 3 }} />
-            </LineChart>
+              <Bar dataKey="combined" name="Combined Score">
+                {kData.map((entry, i) => (
+                  <Cell
+                    key={i}
+                    fill={entry.k === result.optimal_k ? "#2563EB" : (entry.combined ?? 0) < 0 ? "#fca5a5" : "#86efac"}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
           </ResponsiveContainer>
         </div>
       )}
