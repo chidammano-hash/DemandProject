@@ -17,6 +17,10 @@ export interface AiInsightParams {
   insight_type?: InsightType;
   item_no?: string;
   loc?: string;
+  brand?: string;
+  category?: string;
+  market?: string;
+  channel?: string;
   page?: number;
   page_size?: number;
 }
@@ -28,6 +32,10 @@ export async function fetchAiInsights(params: AiInsightParams = {}): Promise<Ins
   if (params.insight_type) qs.set("insight_type", params.insight_type);
   if (params.item_no) qs.set("item_no", params.item_no);
   if (params.loc) qs.set("loc", params.loc);
+  if (params.brand) qs.set("brand", params.brand);
+  if (params.category) qs.set("category", params.category);
+  if (params.market) qs.set("market", params.market);
+  if (params.channel) qs.set("channel", params.channel);
   if (params.page) qs.set("page", String(params.page));
   if (params.page_size) qs.set("page_size", String(params.page_size));
   return fetchJson(`/ai-planner/insights?${qs}`);

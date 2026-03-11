@@ -34,6 +34,9 @@ def get_fill_rate_summary(
     abc_vol: Optional[str] = Query(None, max_length=10),
     cluster_assignment: Optional[str] = Query(None, max_length=120),
     region: Optional[str] = Query(None, max_length=120),
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
 ) -> dict:
     """Portfolio fill rate summary with by_abc breakdown, worst items, and trend.
 
@@ -46,25 +49,34 @@ def get_fill_rate_summary(
 
     if month_from:
         params.append(month_from)
-        where_parts.append(f"month_start >= ${len(params)}")
+        where_parts.append("month_start >= %s")
     if month_to:
         params.append(month_to)
-        where_parts.append(f"month_start <= ${len(params)}")
+        where_parts.append("month_start <= %s")
     if item:
         params.append(f"%{item}%")
-        where_parts.append(f"item_no ILIKE ${len(params)}")
+        where_parts.append("item_no ILIKE %s")
     if location:
         params.append(f"%{location}%")
-        where_parts.append(f"loc ILIKE ${len(params)}")
+        where_parts.append("loc ILIKE %s")
     if abc_vol:
         params.append(abc_vol.upper())
-        where_parts.append(f"abc_vol = ${len(params)}")
+        where_parts.append("abc_vol = %s")
     if cluster_assignment:
         params.append(cluster_assignment)
-        where_parts.append(f"cluster_assignment = ${len(params)}")
+        where_parts.append("cluster_assignment = %s")
     if region:
         params.append(region)
-        where_parts.append(f"region = ${len(params)}")
+        where_parts.append("region = %s")
+    if brand:
+        params.append(brand.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
@@ -77,7 +89,7 @@ def get_fill_rate_summary(
             COALESCE(SUM(total_shipped), 0)                AS total_shipped,
             COALESCE(SUM(shortage_qty), 0)                 AS total_shortage_qty,
             COUNT(*) FILTER (WHERE had_partial_fulfillment) AS partial_fulfillment_events
-        FROM mv_fill_rate_monthly
+        FROM mv_fill_rate_monthly t
         {where_sql}
     """
 
@@ -88,25 +100,17 @@ def get_fill_rate_summary(
                  THEN SUM(total_shipped) / SUM(total_ordered) ELSE NULL END AS avg_fill_rate,
             COALESCE(SUM(shortage_qty), 0)                                  AS total_shortage_qty,
             COUNT(*) FILTER (WHERE had_partial_fulfillment)                 AS events
-        FROM mv_fill_rate_monthly
+        FROM mv_fill_rate_monthly t
         {where_sql}
         GROUP BY abc_vol
         ORDER BY abc_vol
     """
 
-    worst_sql = f"""
-        SELECT item_no, loc, fill_rate, shortage_qty, abc_vol
-        FROM mv_fill_rate_monthly
-        {where_sql}
-        {'AND' if where_parts else 'WHERE'} shortage_qty > 0
-        ORDER BY shortage_qty DESC
-        LIMIT 10
-    """
     # If there are existing filters, we need AND, else WHERE
     if where_parts:
         worst_sql = f"""
             SELECT item_no, loc, fill_rate, shortage_qty, abc_vol
-            FROM mv_fill_rate_monthly
+            FROM mv_fill_rate_monthly t
             WHERE {' AND '.join(where_parts)} AND shortage_qty > 0
             ORDER BY shortage_qty DESC
             LIMIT 10
@@ -114,7 +118,7 @@ def get_fill_rate_summary(
     else:
         worst_sql = """
             SELECT item_no, loc, fill_rate, shortage_qty, abc_vol
-            FROM mv_fill_rate_monthly
+            FROM mv_fill_rate_monthly t
             WHERE shortage_qty > 0
             ORDER BY shortage_qty DESC
             LIMIT 10
@@ -126,7 +130,7 @@ def get_fill_rate_summary(
             CASE WHEN SUM(total_ordered) > 0
                  THEN SUM(total_shipped) / SUM(total_ordered) ELSE NULL END AS portfolio_fill_rate,
             COALESCE(SUM(shortage_qty), 0) AS total_shortage_qty
-        FROM mv_fill_rate_monthly
+        FROM mv_fill_rate_monthly t
         {where_sql}
         GROUP BY month_start
         ORDER BY month_start
@@ -201,6 +205,9 @@ def get_fill_rate_trend(
     item: Optional[str] = Query(None, max_length=120),
     location: Optional[str] = Query(None, max_length=120),
     abc_vol: Optional[str] = Query(None, max_length=10),
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
 ) -> dict:
     """Monthly fill rate trend.
 
@@ -213,19 +220,28 @@ def get_fill_rate_trend(
 
     if month_from:
         params.append(month_from)
-        where_parts.append(f"month_start >= ${len(params)}")
+        where_parts.append("month_start >= %s")
     if month_to:
         params.append(month_to)
-        where_parts.append(f"month_start <= ${len(params)}")
+        where_parts.append("month_start <= %s")
     if item:
         params.append(f"%{item}%")
-        where_parts.append(f"item_no ILIKE ${len(params)}")
+        where_parts.append("item_no ILIKE %s")
     if location:
         params.append(f"%{location}%")
-        where_parts.append(f"loc ILIKE ${len(params)}")
+        where_parts.append("loc ILIKE %s")
     if abc_vol:
         params.append(abc_vol.upper())
-        where_parts.append(f"abc_vol = ${len(params)}")
+        where_parts.append("abc_vol = %s")
+    if brand:
+        params.append(brand.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
@@ -237,7 +253,7 @@ def get_fill_rate_trend(
             COALESCE(SUM(total_ordered), 0)  AS total_ordered,
             COALESCE(SUM(total_shipped), 0)  AS total_shipped,
             COALESCE(SUM(shortage_qty), 0)   AS shortage_qty
-        FROM mv_fill_rate_monthly
+        FROM mv_fill_rate_monthly t
         {where_sql}
         GROUP BY month_start
         ORDER BY month_start
@@ -275,6 +291,9 @@ def get_fill_rate_detail(
     location: Optional[str] = Query(None, max_length=120),
     abc_vol: Optional[str] = Query(None, max_length=10),
     had_partial_fulfillment: Optional[bool] = Query(None),
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     sort_by: str = Query("shortage_qty", max_length=40),
@@ -295,27 +314,37 @@ def get_fill_rate_detail(
 
     if month_from:
         params.append(month_from)
-        where_parts.append(f"month_start >= ${len(params)}")
+        where_parts.append("month_start >= %s")
     if month_to:
         params.append(month_to)
-        where_parts.append(f"month_start <= ${len(params)}")
+        where_parts.append("month_start <= %s")
     if item:
         params.append(f"%{item}%")
-        where_parts.append(f"item_no ILIKE ${len(params)}")
+        where_parts.append("item_no ILIKE %s")
     if location:
         params.append(f"%{location}%")
-        where_parts.append(f"loc ILIKE ${len(params)}")
+        where_parts.append("loc ILIKE %s")
     if abc_vol:
         params.append(abc_vol.upper())
-        where_parts.append(f"abc_vol = ${len(params)}")
+        where_parts.append("abc_vol = %s")
     if had_partial_fulfillment is not None:
         params.append(had_partial_fulfillment)
-        where_parts.append(f"had_partial_fulfillment = ${len(params)}")
+        where_parts.append("had_partial_fulfillment = %s")
+    if brand:
+        params.append(brand.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
-    count_sql = f"SELECT COUNT(*) FROM mv_fill_rate_monthly {where_sql}"
+    count_sql = f"SELECT COUNT(*) FROM mv_fill_rate_monthly t {where_sql}"
 
+    filter_params = list(params)
     params.append(limit)
     params.append(offset)
     data_sql = f"""
@@ -325,16 +354,15 @@ def get_fill_rate_detail(
             fill_rate, shortage_qty,
             had_partial_fulfillment,
             abc_vol, cluster_assignment, region
-        FROM mv_fill_rate_monthly
+        FROM mv_fill_rate_monthly t
         {where_sql}
         ORDER BY {order_col} {order_dir} NULLS LAST
-        LIMIT ${len(params) - 1} OFFSET ${len(params)}
+        LIMIT %s OFFSET %s
     """
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # count with params minus last 2 (limit/offset)
-            cur.execute(count_sql, params[:-2])
+            cur.execute(count_sql, filter_params)
             total = cur.fetchone()[0] or 0
 
             cur.execute(data_sql, params)

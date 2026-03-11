@@ -16,10 +16,29 @@ router = APIRouter(tags=["inv-planning"])
 @router.get("/inv-planning/supplier-performance/summary")
 def get_supplier_performance_summary(
     response: FastAPIResponse,
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
 ) -> dict:
     """Portfolio-level supplier reliability summary."""
     set_cache(response, max_age=3600)
-    sql = """
+
+    where_clauses: list[str] = []
+    params: list = []
+
+    if brand:
+        params.append(brand.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.supplier_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.supplier_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    sql = f"""
         SELECT
             COUNT(*)                             AS total_suppliers,
             AVG(supplier_reliability_score)      AS avg_reliability_score,
@@ -29,11 +48,12 @@ def get_supplier_performance_summary(
             AVG(pct_volatile_lt)                 AS avg_pct_volatile,
             SUM(total_ss_value)                  AS total_ss_value,
             COUNT(*) FILTER (WHERE supplier_reliability_score < 40) AS low_reliability_count
-        FROM mv_supplier_performance
+        FROM mv_supplier_performance t
+        {where_sql}
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, [])
+            cur.execute(sql, params)
             row = cur.fetchone()
             cols = [d[0] for d in cur.description]
 
@@ -48,6 +68,9 @@ def get_supplier_performance_detail(
     supplier: Optional[str] = Query(None, max_length=120),
     min_score: Optional[int] = Query(None, ge=0, le=100),
     max_score: Optional[int] = Query(None, ge=0, le=100),
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     sort_by: str = Query("supplier_reliability_score", max_length=40),
@@ -65,17 +88,28 @@ def get_supplier_performance_detail(
 
     if supplier:
         params.append(f"%{supplier}%")
-        where_clauses.append(f"(supplier_no ILIKE ${len(params)} OR supplier_name ILIKE ${len(params)})")
+        where_clauses.append("(supplier_no ILIKE %s OR supplier_name ILIKE %s)")
+        params.append(f"%{supplier}%")
     if min_score is not None:
         params.append(min_score)
-        where_clauses.append(f"supplier_reliability_score >= ${len(params)}")
+        where_clauses.append("supplier_reliability_score >= %s")
     if max_score is not None:
         params.append(max_score)
-        where_clauses.append(f"supplier_reliability_score <= ${len(params)}")
+        where_clauses.append("supplier_reliability_score <= %s")
+    if brand:
+        params.append(brand.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.supplier_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.supplier_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
-    count_sql = f"SELECT COUNT(*) FROM mv_supplier_performance {where_sql}"
+    count_sql = f"SELECT COUNT(*) FROM mv_supplier_performance t {where_sql}"
+    filter_params = list(params)
     params.append(limit)
     params.append(offset)
     data_sql = f"""
@@ -84,15 +118,15 @@ def get_supplier_performance_detail(
                pct_stable_lt, pct_volatile_lt,
                total_safety_stock_units, total_ss_value,
                supplier_reliability_score
-        FROM mv_supplier_performance
+        FROM mv_supplier_performance t
         {where_sql}
         ORDER BY {order_col} {order_dir} NULLS LAST
-        LIMIT ${len(params) - 1} OFFSET ${len(params)}
+        LIMIT %s OFFSET %s
     """
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(count_sql, params[:-2])
+            cur.execute(count_sql, filter_params)
             total = cur.fetchone()[0] or 0
             cur.execute(data_sql, params)
             rows = cur.fetchall()

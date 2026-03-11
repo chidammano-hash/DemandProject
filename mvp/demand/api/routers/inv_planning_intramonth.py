@@ -19,6 +19,9 @@ def get_intramonth_stockout_summary(
     month_from: Optional[str] = Query(None),
     month_to: Optional[str] = Query(None),
     abc_vol: Optional[str] = Query(None, max_length=10),
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
 ) -> dict:
     """Portfolio-level intra-month stockout summary."""
     set_cache(response, max_age=600)
@@ -28,13 +31,22 @@ def get_intramonth_stockout_summary(
 
     if month_from:
         params.append(month_from)
-        where_clauses.append(f"month_start >= ${len(params)}")
+        where_clauses.append("month_start >= %s")
     if month_to:
         params.append(month_to)
-        where_clauses.append(f"month_start <= ${len(params)}")
+        where_clauses.append("month_start <= %s")
     if abc_vol:
         params.append(abc_vol.upper())
-        where_clauses.append(f"abc_vol = ${len(params)}")
+        where_clauses.append("abc_vol = %s")
+    if brand:
+        params.append(brand.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -47,7 +59,7 @@ def get_intramonth_stockout_summary(
             SUM(stockout_days)                        AS total_stockout_days,
             SUM(est_lost_sales)                       AS total_est_lost_sales,
             AVG(avg_qty_on_hand)                      AS avg_qty_on_hand
-        FROM mv_intramonth_stockout
+        FROM mv_intramonth_stockout t
         {where_sql}
     """
 
@@ -71,6 +83,9 @@ def get_intramonth_stockout_detail(
     abc_vol: Optional[str] = Query(None, max_length=10),
     had_stockout: Optional[bool] = Query(None),
     had_extended: Optional[bool] = Query(None),
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     sort_by: str = Query("stockout_day_rate", max_length=40),
@@ -88,29 +103,39 @@ def get_intramonth_stockout_detail(
 
     if month_from:
         params.append(month_from)
-        where_clauses.append(f"month_start >= ${len(params)}")
+        where_clauses.append("month_start >= %s")
     if month_to:
         params.append(month_to)
-        where_clauses.append(f"month_start <= ${len(params)}")
+        where_clauses.append("month_start <= %s")
     if item:
         params.append(f"%{item}%")
-        where_clauses.append(f"item_no ILIKE ${len(params)}")
+        where_clauses.append("item_no ILIKE %s")
     if location:
         params.append(f"%{location}%")
-        where_clauses.append(f"loc ILIKE ${len(params)}")
+        where_clauses.append("loc ILIKE %s")
     if abc_vol:
         params.append(abc_vol.upper())
-        where_clauses.append(f"abc_vol = ${len(params)}")
+        where_clauses.append("abc_vol = %s")
     if had_stockout is not None:
         params.append(had_stockout)
-        where_clauses.append(f"had_full_stockout = ${len(params)}")
+        where_clauses.append("had_full_stockout = %s")
     if had_extended is not None:
         params.append(had_extended)
-        where_clauses.append(f"had_extended_stockout = ${len(params)}")
+        where_clauses.append("had_extended_stockout = %s")
+    if brand:
+        params.append(brand.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-    count_sql = f"SELECT COUNT(*) FROM mv_intramonth_stockout {where_sql}"
+    count_sql = f"SELECT COUNT(*) FROM mv_intramonth_stockout t {where_sql}"
 
+    filter_params = list(params)
     params.append(limit)
     params.append(offset)
     data_sql = f"""
@@ -119,15 +144,15 @@ def get_intramonth_stockout_detail(
                min_qty_on_hand, max_qty_on_hand, avg_qty_on_hand,
                est_lost_sales, had_full_stockout, had_extended_stockout,
                abc_vol, abc_xyz_segment, cluster_assignment
-        FROM mv_intramonth_stockout
+        FROM mv_intramonth_stockout t
         {where_sql}
         ORDER BY {order_col} {order_dir} NULLS LAST
-        LIMIT ${len(params) - 1} OFFSET ${len(params)}
+        LIMIT %s OFFSET %s
     """
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(count_sql, params[:-2])
+            cur.execute(count_sql, filter_params)
             total = cur.fetchone()[0] or 0
             cur.execute(data_sql, params)
             rows = cur.fetchall()

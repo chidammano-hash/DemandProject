@@ -45,6 +45,9 @@ def get_exceptions(
     status: str = "open",
     item: Optional[str] = None,
     location: Optional[str] = None,
+    brand: Optional[str] = None,
+    category: Optional[str] = None,
+    market: Optional[str] = None,
     sort_by: str = "severity",
     sort_dir: str = "asc",
     limit: int = 50,
@@ -75,6 +78,15 @@ def get_exceptions(
     if location:
         wheres.append("loc ILIKE %s")
         params.append(f"%{location}%")
+    if brand:
+        params.append(brand.split(","))
+        wheres.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        wheres.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        wheres.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_clause = ("WHERE " + " AND ".join(wheres)) if wheres else ""
 
@@ -86,14 +98,14 @@ def get_exceptions(
     else:
         order_clause = f"{col} {direction} NULLS LAST"
 
-    count_sql = f"SELECT COUNT(*) FROM fact_replenishment_exceptions {where_clause}"
+    count_sql = f"SELECT COUNT(*) FROM fact_replenishment_exceptions t {where_clause}"
     rows_sql = f"""
         SELECT
             exception_id, item_no, loc, exception_date, exception_type, severity,
             current_qty_on_hand, current_dos, ss_combined, reorder_point,
             recommended_order_qty, recommended_order_by, expected_receipt_date,
             estimated_order_value, policy_id, status, acknowledged_by, notes
-        FROM fact_replenishment_exceptions
+        FROM fact_replenishment_exceptions t
         {where_clause}
         ORDER BY {order_clause}
         LIMIT %s OFFSET %s
@@ -140,6 +152,9 @@ def get_exceptions(
 def get_exception_summary(
     response: FastAPIResponse,
     status: str = "open",
+    brand: Optional[str] = None,
+    category: Optional[str] = None,
+    market: Optional[str] = None,
 ) -> dict:
     """Aggregate exception counts by type and severity.
 
@@ -147,8 +162,23 @@ def get_exception_summary(
     """
     set_cache(response, max_age=60)
 
-    where = "WHERE status = %s" if status in _VALID_STATUSES else ""
-    params_status = [status] if where else []
+    wheres: list[str] = []
+    params: list = []
+
+    if status in _VALID_STATUSES:
+        wheres.append("status = %s")
+        params.append(status)
+    if brand:
+        params.append(brand.split(","))
+        wheres.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        wheres.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        wheres.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+
+    where = ("WHERE " + " AND ".join(wheres)) if wheres else ""
 
     sql = f"""
         SELECT
@@ -168,13 +198,13 @@ def get_exception_summary(
                 MAX(EXTRACT(DAY FROM NOW() - exception_date::TIMESTAMPTZ))::INT,
                 0
             ) AS oldest_open_days
-        FROM fact_replenishment_exceptions
+        FROM fact_replenishment_exceptions t
         {where}
     """
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, params_status)
+            cur.execute(sql, params)
             row = cur.fetchone() or (0,) * 13
 
     return {

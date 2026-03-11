@@ -1,0 +1,32 @@
+# reporting_config.yaml — Spec 08-08: Report generation and delivery configuration
+
+smtp:
+  host: "${SMTP_HOST}"
+  port: 587
+  user: "${SMTP_USER}"
+  password: "${SMTP_PASSWORD}"
+
+pdf:
+  page_size: A4
+  branding: "Demand Studio"
+
+system_templates:
+  - name: accuracy_summary
+    type: accuracy
+    default_schedule: "0 6 * * 1"        # Weekly Monday 6 AM
+  - name: exception_digest
+    type: exceptions
+    default_schedule: "0 7 * * *"        # Daily 7 AM
+  - name: sop_packet
+    type: sop
+    default_schedule: "0 8 1 * *"        # Monthly 1st at 8 AM
+  - name: inventory_health
+    type: inventory
+    default_schedule: "0 6 * * 1"        # Weekly Monday 6 AM
+  - name: fva_summary
+    type: fva
+    default_schedule: "0 8 1 * *"        # Monthly 1st at 8 AM
+
+delivery_retry:
+  max_attempts: 3
+  backoff_seconds: 60

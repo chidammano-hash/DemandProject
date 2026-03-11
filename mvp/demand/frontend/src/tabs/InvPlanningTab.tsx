@@ -1,11 +1,11 @@
 /**
- * Inventory Planning — 26-panel tab with grouped sidebar navigation.
+ * Inventory Planning — 26-panel tab with horizontal group pills + sub-tab strip.
  *
  * IPfeature4–IPfeature14 + F1.1–F4.4
- * Redesigned with left-sidebar grouped navigation (PL-009 extended).
+ * Redesigned: replaced inner sidebar with horizontal navigation (PL-009 v2).
  */
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
@@ -35,6 +35,7 @@ import {
   FileText,
   TrendingDown,
   CheckSquare,
+  Repeat2,
 } from "lucide-react";
 
 import { ExceptionQueuePanel } from "./inv-planning/ExceptionQueuePanel";
@@ -64,6 +65,7 @@ import { FinancialPlanPanel } from "./inv-planning/FinancialPlanPanel";
 import { EventCalendarPanel } from "./inv-planning/EventCalendarPanel";
 import { ScenarioPlanningPanel } from "./inv-planning/ScenarioPlanningPanel";
 import { ReplenishmentPlanPanel } from "./inv-planning/ReplenishmentPlanPanel";
+import { RebalancingPanel } from "./inv-planning/RebalancingPanel";
 
 // ---------------------------------------------------------------------------
 // Navigation config
@@ -72,9 +74,12 @@ const GROUPS = [
   {
     id: "daily",
     label: "Daily Operations",
+    shortLabel: "Daily Ops",
     tooltip: "Morning routine: triage exceptions, check portfolio health",
     accent: "text-red-600",
-    divider: "bg-red-500",
+    accentBg: "bg-red-600",
+    accentBgMuted: "bg-red-50 dark:bg-red-950/30",
+    accentBorder: "border-red-600",
     tabs: [
       { key: "exceptions", label: "Exceptions", icon: AlertTriangle },
       { key: "health",     label: "Health",     icon: Activity },
@@ -83,20 +88,27 @@ const GROUPS = [
   {
     id: "optimize",
     label: "Replenishment Optimization",
+    shortLabel: "Optimize",
     tooltip: "EOQ, safety stock, policies, and forward planning",
     accent: "text-blue-600",
-    divider: "bg-blue-500",
+    accentBg: "bg-blue-600",
+    accentBgMuted: "bg-blue-50 dark:bg-blue-950/30",
+    accentBorder: "border-blue-600",
     tabs: [
-      { key: "eoq",    label: "EOQ",    icon: Package2 },
-      { key: "policy", label: "Policy", icon: Shield },
+      { key: "eoq",          label: "EOQ",          icon: Package2 },
+      { key: "policy",       label: "Policy",       icon: Shield },
+      { key: "rebalancing",  label: "Rebalancing",  icon: Repeat2 },
     ],
   },
   {
     id: "analytics",
     label: "Analytics",
+    shortLabel: "Analytics",
     tooltip: "Fill rate, ABC-XYZ, supplier performance, intramonth stockouts",
     accent: "text-emerald-600",
-    divider: "bg-emerald-500",
+    accentBg: "bg-emerald-600",
+    accentBgMuted: "bg-emerald-50 dark:bg-emerald-950/30",
+    accentBorder: "border-emerald-600",
     tabs: [
       { key: "fillrate",   label: "Fill Rate",  icon: TrendingUp },
       { key: "abcxyz",     label: "ABC-XYZ",    icon: Grid3x3 },
@@ -107,9 +119,12 @@ const GROUPS = [
   {
     id: "planning",
     label: "Planning",
+    shortLabel: "Planning",
     tooltip: "Demand forecast, replenishment plan, projection",
     accent: "text-violet-600",
-    divider: "bg-violet-500",
+    accentBg: "bg-violet-600",
+    accentBgMuted: "bg-violet-50 dark:bg-violet-950/30",
+    accentBorder: "border-violet-600",
     tabs: [
       { key: "safetystock", label: "Safety Stock",      icon: ArchiveX },
       { key: "variability", label: "Variability",       icon: BarChart2 },
@@ -117,16 +132,19 @@ const GROUPS = [
       { key: "signals",     label: "Signals",           icon: Radio },
       { key: "simulation",  label: "Simulation",        icon: FlaskConical },
       { key: "investment",  label: "Investment",        icon: DollarSign },
-      { key: "replplan",    label: "Replenishment Plan", icon: RefreshCw },
+      { key: "replplan",    label: "Repl. Plan",        icon: RefreshCw },
       { key: "forecast",    label: "Demand Forecast",   icon: Target },
     ],
   },
   {
     id: "sensing",
     label: "Demand Intelligence",
+    shortLabel: "Sensing",
     tooltip: "Blended demand signals and short-horizon sensing",
     accent: "text-teal-600",
-    divider: "bg-teal-500",
+    accentBg: "bg-teal-600",
+    accentBgMuted: "bg-teal-50 dark:bg-teal-950/30",
+    accentBorder: "border-teal-600",
     tabs: [
       { key: "blended", label: "Blended Demand", icon: Layers },
       { key: "echelon", label: "Echelon SS",     icon: Network },
@@ -135,9 +153,12 @@ const GROUPS = [
   {
     id: "strategic",
     label: "Strategic",
+    shortLabel: "Strategic",
     tooltip: "Multi-echelon SS, investment optimization, financial planning",
     accent: "text-amber-600",
-    divider: "bg-amber-500",
+    accentBg: "bg-amber-600",
+    accentBgMuted: "bg-amber-50 dark:bg-amber-950/30",
+    accentBorder: "border-amber-600",
     tabs: [
       { key: "finance",   label: "Financial Plan", icon: Banknote },
       { key: "events",    label: "Events",         icon: CalendarDays },
@@ -147,9 +168,12 @@ const GROUPS = [
   {
     id: "supply",
     label: "Order-to-Cash",
+    shortLabel: "OTC",
     tooltip: "Planned orders, procurement, purchase order tracking",
     accent: "text-slate-600",
-    divider: "bg-slate-400",
+    accentBg: "bg-slate-500",
+    accentBgMuted: "bg-slate-50 dark:bg-slate-900/30",
+    accentBorder: "border-slate-500",
     tabs: [
       { key: "demandplan",    label: "Demand Plan",    icon: ClipboardList },
       { key: "overridequeue", label: "Override Queue", icon: Edit3 },
@@ -169,6 +193,7 @@ const PANEL_META: Record<SubTabKey, { title: string; description?: string }> = {
   health:        { title: "Portfolio Health Score", description: "4-component health scoring across safety stock, DOS, stockout risk, and forecast accuracy." },
   eoq:           { title: "EOQ & Cycle Stock", description: "Economic Order Quantity targets and annual inventory cost breakdown." },
   policy:        { title: "Policy Management", description: "Replenishment policies, DFU assignments, and compliance tracking." },
+  rebalancing:   { title: "Inventory Rebalancing", description: "Cross-location transfer optimization to balance network inventory." },
   fillrate:      { title: "Fill Rate Analytics", description: "Monthly order fulfilment rates and shortage trends." },
   abcxyz:        { title: "ABC-XYZ Segmentation", description: "Volume × variability classification matrix for policy targeting." },
   supplier:      { title: "Supplier Performance", description: "Lead time reliability scores and variability by supplier." },
@@ -201,62 +226,76 @@ export function InvPlanningTab() {
   const [activePanel, setActivePanel] = useState<SubTabKey>("exceptions");
 
   const meta = PANEL_META[activePanel];
-  const activeGroup = GROUPS.find((g) =>
-    (g.tabs as ReadonlyArray<{ key: string; label: string; icon: unknown }>).some((t) => t.key === activePanel)
+  const activeGroup = useMemo(
+    () => GROUPS.find((g) =>
+      (g.tabs as ReadonlyArray<{ key: string }>).some((t) => t.key === activePanel)
+    ),
+    [activePanel],
   );
   const activeTab = activeGroup?.tabs.find((t) => t.key === activePanel);
 
   return (
-    <div className="flex overflow-hidden" style={{ height: "calc(100vh - 108px)" }}>
+    <div className="flex flex-col overflow-hidden" style={{ height: "calc(100vh - 108px)" }}>
       {/* ------------------------------------------------------------------ */}
-      {/* Left sidebar navigation                                             */}
+      {/* Row 1: Group pills                                                  */}
       {/* ------------------------------------------------------------------ */}
-      <nav
-        className="flex-shrink-0 w-52 overflow-y-auto border-r bg-muted/20 py-3"
-        aria-label="Inventory Planning sections"
-      >
-        {GROUPS.map((group) => (
-          <div key={group.id} className="mb-1">
-            {/* Group header */}
-            <div className="flex items-center gap-2 px-3 pt-3 pb-1" title={group.tooltip}>
-              <div className={cn("h-px flex-1", group.divider, "opacity-40")} />
-              <span className={cn("text-[10px] font-bold uppercase tracking-widest whitespace-nowrap", group.accent)}>
-                {group.label}
-              </span>
-              <div className={cn("h-px flex-1", group.divider, "opacity-40")} />
-            </div>
+      <div className="flex-shrink-0 flex items-center gap-1.5 border-b bg-muted/30 px-5 py-2 overflow-x-auto" role="tablist" aria-label="Inventory Planning groups">
+        {GROUPS.map((group) => {
+          const isActive = activeGroup?.id === group.id;
+          return (
+            <button
+              key={group.id}
+              onClick={() => setActivePanel(group.tabs[0].key as SubTabKey)}
+              title={group.tooltip}
+              role="tab"
+              aria-selected={isActive}
+              className={cn(
+                "flex-shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-all",
+                isActive
+                  ? cn("text-white", group.accentBg, "shadow-sm")
+                  : cn("text-muted-foreground border border-border hover:border-muted-foreground/40 hover:text-foreground"),
+              )}
+            >
+              {group.shortLabel}
+            </button>
+          );
+        })}
+      </div>
 
-            {/* Tab items */}
-            {group.tabs.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activePanel === tab.key;
-              return (
-                <button
-                  key={tab.key}
-                  onClick={() => setActivePanel(tab.key as SubTabKey)}
+      {/* ------------------------------------------------------------------ */}
+      {/* Row 2: Sub-tab strip for active group                               */}
+      {/* ------------------------------------------------------------------ */}
+      {activeGroup && (
+        <div className="flex-shrink-0 flex items-center gap-0.5 border-b bg-background px-5 py-0 overflow-x-auto" role="tablist" aria-label={`${activeGroup.label} panels`}>
+          {activeGroup.tabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activePanel === tab.key;
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setActivePanel(tab.key as SubTabKey)}
+                role="tab"
+                aria-selected={isActive}
+                className={cn(
+                  "flex-shrink-0 flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all border-b-2",
+                  isActive
+                    ? cn("text-foreground", activeGroup.accentBorder)
+                    : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30",
+                )}
+              >
+                <Icon
+                  size={13}
                   className={cn(
-                    "flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs font-medium transition-all",
-                    "rounded-none border-l-2",
-                    isActive
-                      ? "border-l-foreground bg-background text-foreground shadow-sm"
-                      : "border-l-transparent text-muted-foreground hover:border-l-muted-foreground/40 hover:bg-accent hover:text-foreground",
+                    "flex-shrink-0",
+                    isActive ? activeGroup.accent : "text-muted-foreground",
                   )}
-                  aria-current={isActive ? "page" : undefined}
-                >
-                  <Icon
-                    size={13}
-                    className={cn(
-                      "flex-shrink-0",
-                      isActive ? group.accent : "text-muted-foreground",
-                    )}
-                  />
-                  <span className="truncate">{tab.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        ))}
-      </nav>
+                />
+                <span className="whitespace-nowrap">{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ------------------------------------------------------------------ */}
       {/* Main content area                                                   */}
@@ -302,6 +341,7 @@ export function InvPlanningTab() {
           {activePanel === "openpos"       && <OpenPOPanel />}
           {activePanel === "projection"    && <ProjectionPanel />}
           {activePanel === "plannedorders" && <PlannedOrdersPanel />}
+          {activePanel === "rebalancing"  && <RebalancingPanel />}
         </div>
       </div>
     </div>

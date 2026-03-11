@@ -228,6 +228,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
     channel: filters.channel,
     item: filters.item,
     location: filters.location,
+    time_grain: filters.timeGrain,
   };
   const fk = filterParams as unknown as Record<string, unknown>;
 

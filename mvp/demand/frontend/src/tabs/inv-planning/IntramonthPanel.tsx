@@ -6,6 +6,7 @@ import {
   STALE,
   type IntramonthStockoutRow,
 } from "@/api/queries";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
 import { Clock, CheckCircle2 } from "lucide-react";
@@ -13,14 +14,23 @@ import { Clock, CheckCircle2 } from "lucide-react";
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function IntramonthPanel() {
+  const { filters } = useGlobalFilterContext();
+  const gf = {
+    brand: filters.brand.length > 0 ? filters.brand.join(",") : undefined,
+    category: filters.category.length > 0 ? filters.category.join(",") : undefined,
+    market: filters.market.length > 0 ? filters.market.join(",") : undefined,
+    item: filters.item.length === 1 ? filters.item[0] : undefined,
+    location: filters.location.length === 1 ? filters.location[0] : undefined,
+  };
+
   const { data: summary } = useQuery({
-    queryKey: intramonthKeys.summary(),
-    queryFn: () => fetchIntramonthSummary(),
+    queryKey: intramonthKeys.summary(gf),
+    queryFn: () => fetchIntramonthSummary(gf),
     staleTime: STALE.FIVE_MIN,
   });
   const { data: detail, isLoading } = useQuery({
-    queryKey: intramonthKeys.detail({ limit: 10, had_stockout: true }),
-    queryFn: () => fetchIntramonthDetail({ limit: 10, had_stockout: "true", sort_by: "stockout_day_rate", sort_dir: "desc" }),
+    queryKey: intramonthKeys.detail({ ...gf, limit: 10, had_stockout: true }),
+    queryFn: () => fetchIntramonthDetail({ ...gf, limit: 10, had_stockout: "true", sort_by: "stockout_day_rate", sort_dir: "desc" }),
     staleTime: STALE.FIVE_MIN,
   });
 
@@ -59,7 +69,7 @@ export function IntramonthPanel() {
           description="No intra-month stockout events were detected across the portfolio. Daily inventory snapshots are being scanned and all items maintained positive on-hand quantities throughout the month."
         />
       )}
-      {detail && detail.rows.length > 0 && (
+      {(detail?.rows?.length ?? 0) > 0 && detail && (
         <div className="overflow-x-auto">
           <p className="text-xs font-medium mb-2">Top Stockout Items (current period)</p>
           <table className="w-full text-xs">

@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, X, RotateCcw, Search, CalendarClock } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
-import { fetchDistinctValues, fetchPlanningDate, queryKeys, STALE } from "@/api/queries";
+import { fetchDistinctValues, fetchPlanningDate, queryKeys, STALE, filterMetaKeys, fetchDfuCount } from "@/api/queries";
+import type { CascadeFilterParams } from "@/api/queries";
+import type { GlobalFilters } from "@/types/theme";
 import { useDebounce } from "@/hooks/useDebounce";
 
 // ---------------------------------------------------------------------------
@@ -26,17 +28,32 @@ const FILTERS: FilterConfig[] = [
   { key: "channel", label: "Channel", domain: "customer", column: "rpt_channel_desc" },
 ];
 
+/** Build cascade params from all filters EXCEPT the one being queried. */
+function buildCascade(
+  filters: GlobalFilters,
+  excludeKey: FilterConfig["key"],
+): CascadeFilterParams | undefined {
+  const c: CascadeFilterParams = {};
+  if (excludeKey !== "brand" && filters.brand.length > 0) c.brand = filters.brand.join(",");
+  if (excludeKey !== "category" && filters.category.length > 0) c.category = filters.category.join(",");
+  if (excludeKey !== "item" && filters.item.length > 0) c.item = filters.item.join(",");
+  if (excludeKey !== "location" && filters.location.length > 0) c.location = filters.location.join(",");
+  if (excludeKey !== "market" && filters.market.length > 0) c.market = filters.market.join(",");
+  if (excludeKey !== "channel" && filters.channel.length > 0) c.channel = filters.channel.join(",");
+  return Object.keys(c).length > 0 ? c : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Multi-select dropdown (low-cardinality — preloads all values)
 // ---------------------------------------------------------------------------
-function FilterDropdown({ config, selected, onSelect }: { config: FilterConfig; selected: string[]; onSelect: (vals: string[]) => void }) {
+function FilterDropdown({ config, selected, onSelect, cascade }: { config: FilterConfig; selected: string[]; onSelect: (vals: string[]) => void; cascade?: CascadeFilterParams }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   const { data } = useQuery({
-    queryKey: queryKeys.distinctValues(config.domain, config.column),
-    queryFn: () => fetchDistinctValues(config.domain, config.column),
-    staleTime: STALE.FIVE_MIN,
+    queryKey: [...queryKeys.distinctValues(config.domain, config.column), cascade ?? null],
+    queryFn: () => fetchDistinctValues(config.domain, config.column, undefined, 100, cascade),
+    staleTime: STALE.THIRTY_SEC,
   });
   const values = data?.values ?? [];
 
@@ -121,7 +138,7 @@ function FilterDropdown({ config, selected, onSelect }: { config: FilterConfig; 
 // ---------------------------------------------------------------------------
 // Searchable multi-select dropdown (high-cardinality — search-as-you-type)
 // ---------------------------------------------------------------------------
-function SearchableFilterDropdown({ config, selected, onSelect }: { config: FilterConfig; selected: string[]; onSelect: (vals: string[]) => void }) {
+function SearchableFilterDropdown({ config, selected, onSelect, cascade }: { config: FilterConfig; selected: string[]; onSelect: (vals: string[]) => void; cascade?: CascadeFilterParams }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -129,9 +146,9 @@ function SearchableFilterDropdown({ config, selected, onSelect }: { config: Filt
   const debouncedSearch = useDebounce(search, 250);
 
   const { data, isFetching } = useQuery({
-    queryKey: queryKeys.distinctValues(config.domain, config.column + ":" + debouncedSearch),
-    queryFn: () => fetchDistinctValues(config.domain, config.column, debouncedSearch, 20),
-    enabled: open && debouncedSearch.length >= 1,
+    queryKey: [...queryKeys.distinctValues(config.domain, config.column + ":" + debouncedSearch), cascade ?? null],
+    queryFn: () => fetchDistinctValues(config.domain, config.column, debouncedSearch || undefined, 20, cascade),
+    enabled: open,
     staleTime: STALE.THIRTY_SEC,
   });
   const suggestions = (data?.values ?? []).filter((v) => !selected.includes(v));
@@ -240,11 +257,8 @@ function SearchableFilterDropdown({ config, selected, onSelect }: { config: Filt
                 <span className="truncate">{val}</span>
               </button>
             ))}
-            {debouncedSearch.length >= 1 && suggestions.length === 0 && !isFetching && (
+            {suggestions.length === 0 && !isFetching && (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">No matches</p>
-            )}
-            {debouncedSearch.length === 0 && selected.length === 0 && (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">Type to search...</p>
             )}
           </div>
         </div>
@@ -293,6 +307,22 @@ export function GlobalFilterBar() {
     staleTime: STALE.TEN_MIN,
   });
 
+  const { data: dfuCountData } = useQuery({
+    queryKey: filterMetaKeys.dfuCount(filters),
+    queryFn: () => fetchDfuCount(filters),
+    staleTime: STALE.FIVE_MIN,
+    enabled: hasActiveFilters,
+  });
+
+  // Memoize cascade params per filter key so dropdown queries re-fetch when other filters change
+  const cascades = useMemo(() => {
+    const result: Record<string, CascadeFilterParams | undefined> = {};
+    for (const cfg of FILTERS) {
+      result[cfg.key] = buildCascade(filters, cfg.key);
+    }
+    return result;
+  }, [filters]);
+
   return (
     <div className="flex items-center gap-2 border-b border-border bg-card/80 px-4 py-2 shadow-sm backdrop-blur-sm" role="toolbar" aria-label="Global filters">
       {FILTERS.map((cfg) =>
@@ -302,6 +332,7 @@ export function GlobalFilterBar() {
             config={cfg}
             selected={filters[cfg.key]}
             onSelect={(vals) => setFilters({ [cfg.key]: vals })}
+            cascade={cascades[cfg.key]}
           />
         ) : (
           <FilterDropdown
@@ -309,6 +340,7 @@ export function GlobalFilterBar() {
             config={cfg}
             selected={filters[cfg.key]}
             onSelect={(vals) => setFilters({ [cfg.key]: vals })}
+            cascade={cascades[cfg.key]}
           />
         ),
       )}
@@ -319,6 +351,12 @@ export function GlobalFilterBar() {
         value={filters.timeGrain}
         onChange={(v) => setFilters({ timeGrain: v })}
       />
+
+      {hasActiveFilters && dfuCountData != null && (
+        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+          {dfuCountData.count.toLocaleString()} DFUs
+        </span>
+      )}
 
       {hasActiveFilters && (
         <button

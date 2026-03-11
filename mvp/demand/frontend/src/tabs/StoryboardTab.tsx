@@ -6,7 +6,7 @@
  * Zone 2: Exception Queue (left, 40% width)
  * Zone 3: Investigation Panel (right, 60% width)
  */
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   StoryboardException,
@@ -21,6 +21,7 @@ import {
   updateSbStatus,
   submitSbDecision,
 } from "@/api/queries";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 // ---------------------------------------------------------------------------
 // Color maps
@@ -117,6 +118,7 @@ const PAGE_SIZE = 20;
 // ---------------------------------------------------------------------------
 export default function StoryboardTab() {
   const queryClient = useQueryClient();
+  const { filters: globalFilters } = useGlobalFilterContext();
 
   const [selectedExceptionId, setSelectedExceptionId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("open");
@@ -124,6 +126,15 @@ export default function StoryboardTab() {
   const [itemFilter, setItemFilter] = useState<string>("");
   const [locFilter, setLocFilter] = useState<string>("");
   const [page, setPage] = useState<number>(0);
+
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setItemFilter(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setLocFilter(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   // Panel action state
   const [newStatus, setNewStatus] = useState<string>("investigating");

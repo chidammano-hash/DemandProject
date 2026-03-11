@@ -14,7 +14,9 @@ import {
   fetchHealthHeatmap,
   STALE,
   type HealthDetailRow,
+  type HealthSummaryFilters,
 } from "@/api/queries";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { EmptyState } from "@/components/EmptyState";
 import { Activity } from "lucide-react";
 
@@ -85,16 +87,28 @@ export function PortfolioHealthPanel() {
   const [healthTierFilter, setHealthTierFilter] = useState("");
   const [healthDetailOffset, setHealthDetailOffset] = useState(0);
 
+  const { filters } = useGlobalFilterContext();
+  const gf = {
+    brand: filters.brand.length > 0 ? filters.brand.join(",") : undefined,
+    category: filters.category.length > 0 ? filters.category.join(",") : undefined,
+    market: filters.market.length > 0 ? filters.market.join(",") : undefined,
+    item: filters.item.length === 1 ? filters.item[0] : undefined,
+    location: filters.location.length === 1 ? filters.location[0] : undefined,
+  };
+
+  const healthFilters: HealthSummaryFilters = {};
   const { data: healthSummary, isLoading: healthSummaryLoading } = useQuery({
-    queryKey: healthKeys.summary(),
-    queryFn: () => fetchHealthSummary(),
+    queryKey: healthKeys.summary(healthFilters),
+    queryFn: () => fetchHealthSummary(healthFilters),
     staleTime: STALE.FIVE_MIN,
   });
 
   const { data: healthDetail, isLoading: healthDetailLoading } = useQuery({
-    queryKey: healthKeys.detail({ health_tier: healthTierFilter || undefined, limit: PAGE, offset: healthDetailOffset }),
+    queryKey: healthKeys.detail({ ...gf, health_tier: healthTierFilter || undefined, limit: PAGE, offset: healthDetailOffset }),
     queryFn: () =>
       fetchHealthDetail({
+        item: gf.item,
+        location: gf.location,
         health_tier: healthTierFilter || undefined,
         limit: PAGE,
         offset: healthDetailOffset,
@@ -269,7 +283,7 @@ export function PortfolioHealthPanel() {
       </div>
 
       {/* Heatmap: ABC x Variability */}
-      {healthHeatmap && healthHeatmap.cells.length > 0 && (
+      {(healthHeatmap?.cells?.length ?? 0) > 0 && healthHeatmap && (
         <div className="rounded-lg border bg-card p-4 mb-4">
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
             Avg Health Score by ABC Class x Variability

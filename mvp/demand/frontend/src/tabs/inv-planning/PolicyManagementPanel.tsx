@@ -9,6 +9,7 @@ import {
   STALE,
   type ReplenishmentPolicy,
 } from "@/api/queries";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 import { formatFixed, formatPct } from "@/lib/formatters";
 import { EmptyState } from "@/components/EmptyState";
@@ -39,15 +40,21 @@ export function PolicyManagementPanel() {
   const [editPolicy, setEditPolicy] = useState<EditPolicyState | null>(null);
   const [autoAssignStatus, setAutoAssignStatus] = useState<string | null>(null);
 
+  const { filters } = useGlobalFilterContext();
+  const gf = {
+    item: filters.item.length === 1 ? filters.item[0] : undefined,
+    location: filters.location.length === 1 ? filters.location[0] : undefined,
+  };
+
   const { data: policyList, isLoading: policyLoading } = useQuery({
-    queryKey: queryKeys.policyList(),
-    queryFn: fetchPolicies,
+    queryKey: queryKeys.policyList(gf),
+    queryFn: () => fetchPolicies(gf),
     staleTime: STALE.FIVE_MIN,
   });
 
   const { data: compliance, isLoading: complianceLoading, refetch: refetchCompliance } = useQuery({
-    queryKey: queryKeys.policyCompliance(),
-    queryFn: fetchPolicyCompliance,
+    queryKey: queryKeys.policyCompliance(gf),
+    queryFn: () => fetchPolicyCompliance(gf),
     staleTime: STALE.FIVE_MIN,
   });
 
@@ -55,8 +62,8 @@ export function PolicyManagementPanel() {
     mutationFn: ({ policyId, body }: { policyId: string; body: Parameters<typeof updatePolicy>[1] }) =>
       updatePolicy(policyId, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.policyList() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.policyCompliance() });
+      queryClient.invalidateQueries({ queryKey: ["policy-list"] });
+      queryClient.invalidateQueries({ queryKey: ["policy-compliance"] });
       setEditPolicy(null);
     },
   });
@@ -73,7 +80,7 @@ export function PolicyManagementPanel() {
     },
     onSuccess: (result) => {
       setAutoAssignStatus(`Assigned ${result.assigned} DFUs${result.failed ? `, ${result.failed} failed` : ""}`);
-      queryClient.invalidateQueries({ queryKey: queryKeys.policyCompliance() });
+      queryClient.invalidateQueries({ queryKey: ["policy-compliance"] });
       refetchCompliance();
     },
     onError: () => {

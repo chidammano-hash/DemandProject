@@ -6,6 +6,7 @@ import {
   STALE,
   type LtProfileRow,
 } from "@/api/queries";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
@@ -15,15 +16,24 @@ import { Timer } from "lucide-react";
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function LeadTimePanel() {
+  const { filters } = useGlobalFilterContext();
+  const gf = {
+    brand: filters.brand.length > 0 ? filters.brand.join(",") : undefined,
+    category: filters.category.length > 0 ? filters.category.join(",") : undefined,
+    market: filters.market.length > 0 ? filters.market.join(",") : undefined,
+    item: filters.item.length === 1 ? filters.item[0] : undefined,
+    location: filters.location.length === 1 ? filters.location[0] : undefined,
+  };
+
   const { data: summary, isLoading } = useQuery({
-    queryKey: queryKeys.ltSummary({}),
+    queryKey: queryKeys.ltSummary(gf),
     queryFn: () => fetchLtSummary({}),
     staleTime: STALE.FIVE_MIN,
   });
 
   const { data: volatile } = useQuery({
-    queryKey: queryKeys.ltProfile({ lt_variability_class: "volatile", limit: 10 }),
-    queryFn: () => fetchLtProfile({ lt_variability_class: "volatile", limit: 10 }),
+    queryKey: queryKeys.ltProfile({ ...gf, lt_variability_class: "volatile", limit: 10 }),
+    queryFn: () => fetchLtProfile({ item: gf.item, location: gf.location, lt_variability_class: "volatile", limit: 10 }),
     staleTime: STALE.FIVE_MIN,
   });
 
@@ -80,7 +90,7 @@ export function LeadTimePanel() {
         />
       )}
 
-      {volatile && volatile.rows.length > 0 && (
+      {(volatile?.rows?.length ?? 0) > 0 && volatile && (
         <div className="overflow-x-auto">
           <div className="text-xs p-2 rounded bg-muted/30 border mb-3">
             <span className="font-medium text-foreground">Lead Time CV (Coefficient of Variation = std dev ÷ mean): </span>

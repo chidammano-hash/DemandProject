@@ -60,6 +60,33 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - Anthropic Claude `claude-opus-4-6` via `anthropic>=0.40.0` SDK (tool_use API)
    - `AIPlannerAgent` in `common/ai_planner.py`: 10 tools, agentic loop, insight creation
    - Not a chatbot — proactive exception work-queue scanner writing structured insights to DB
+6c. Data Quality & Pipeline Observability:
+   - `DQEngine` in `common/dq_engine.py`: rule-based data quality checks (completeness, freshness, schema drift, outliers, referential integrity)
+   - 5 API endpoints under `/data-quality/` (dashboard, rules, history, run, acknowledge)
+   - Config: `config/dq_config.yaml` (rules, thresholds, schedules)
+6d. User Management & RBAC:
+   - JWT authentication via `common/auth.py` with bcrypt password hashing
+   - 4 roles: viewer, planner, manager, admin — role-based endpoint access control
+   - Audit logging: all mutations recorded with user, timestamp, action, resource
+   - Router: `api/routers/auth_router.py` (login, register, refresh) + `api/routers/users.py` (CRUD, role assignment)
+6e. Performance & Caching:
+   - `InMemoryBackend` cache in `common/cache.py` with configurable TTL per endpoint
+   - Query performance tracking: slow query detection, response time histograms
+   - Config: `config/cache_config.yaml` (TTL, max entries, eviction policy)
+6f. Notifications & Alerting:
+   - `NotificationEngine` in `common/notification_engine.py` with pluggable adapter pattern
+   - 4 adapters: Slack, Teams, Email (SMTP), PagerDuty
+   - Router: `api/routers/notifications.py` (channels, preferences, send, history)
+   - Config: `config/notification_config.yaml` (channels, routing rules, severity thresholds)
+6g. Webhooks:
+   - `WebhookDispatcher` in `common/webhook_dispatcher.py` with HMAC-SHA256 signed payloads
+   - Retry with exponential backoff (configurable max attempts)
+   - Router: `api/routers/webhooks.py` (register, list, test, delivery history)
+   - Config: `config/webhook_config.yaml` (retry policy, signing secrets, event types)
+6h. API Governance:
+   - Rate limiting via `common/rate_limiter.py` (token bucket algorithm)
+   - API versioning support (v1/v2 path prefixes)
+   - Router: `api/routers/api_governance.py` (rate limit status, usage metrics)
 7. Multi-model forecasting:
    - `model_id` column on forecast fact table
    - Per-model analytics and model selector in UI
@@ -174,6 +201,31 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 21. `ai_insights` — AI-generated planning exception records (IPAIfeature1); grain: `(insight_id)` PK; 5 insight types (stockout_risk, excess_inventory, forecast_bias, policy_gap, champion_degradation); 4 severity levels; open/acknowledged/resolved workflow; financial_impact_estimate, reasoning, recommendation
 22. `ai_planning_memos` — AI-generated planning narrative memos (IPAIfeature1); grain: `(memo_id)` PK; scope: portfolio or DFU; narrative_text + content_json; indexed by period + scope
 23. `fact_replenishment_plan` — forward-looking replenishment plan per item-location-month (CI Bands + Repl. Plan); grain: `(item_no, loc, plan_month, plan_version)`; measures: forecast_qty with P10/P90 CI bands (forecast_qty_lower, forecast_qty_upper), ss_combined (forecast-driven SS), historical_ss, ss_delta, eoq, cycle_stock, reorder_point, order_qty, order_up_to_level, is_below_ss, horizon_months, avg_daily_demand, sigma_method
+24. `dq_rule_results` — data quality rule execution results (08-01); grain: `(result_id)` PK; columns: rule_id, rule_name, rule_type, dataset, status (pass/fail/warn), metric_value, threshold, message, run_id, executed_at; DDL: `sql/062_create_dq_tables.sql`
+25. `dq_run_history` — data quality run history with aggregate metrics (08-01); grain: `(run_id)` PK; columns: triggered_by, started_at, completed_at, total_rules, passed, failed, warned
+26. `app_users` — user accounts with bcrypt password hashes (08-02); grain: `(user_id)` PK; columns: username, email, password_hash, role (viewer/planner/manager/admin), is_active, created_at, last_login; DDL: `sql/063_create_user_tables.sql`
+27. `audit_log` — mutation audit trail (08-02); grain: `(audit_id)` PK; columns: user_id, action, resource_type, resource_id, details_json, ip_address, timestamp
+28. `refresh_tokens` — JWT refresh token storage (08-02); grain: `(token_id)` PK; columns: user_id, token_hash, expires_at, revoked
+29. `notification_channels` — notification channel configurations (08-04); grain: `(channel_id)` PK; columns: channel_type (slack/teams/email/pagerduty), config_json, active; DDL: `sql/065_create_notification_tables.sql`
+30. `notification_history` — sent notification log (08-04); grain: `(notification_id)` PK; columns: channel_id, event_type, recipient, payload_json, status, sent_at, error_message
+31. `notification_preferences` — per-user notification routing preferences (08-04); columns: user_id, event_type, channel_id, enabled
+32. `collaboration_threads` — threaded comment discussions (08-05); grain: `(thread_id)` PK; columns: resource_type, resource_id, created_by, created_at; DDL: `sql/066_create_collaboration_tables.sql`
+33. `collaboration_comments` — individual comments with @mentions (08-05); grain: `(comment_id)` PK; columns: thread_id (FK), parent_id (self-FK for nesting), author_id, body, mentions (array), created_at, updated_at
+34. `shared_views` — saved shared view configurations (08-05); grain: `(view_id)` PK; columns: name, owner_id, view_config_json, shared_with (array), is_public, created_at
+35. `external_signal_sources` — external demand signal source registrations (08-06); grain: `(source_id)` PK; columns: source_name, source_type, config_json, active, last_fetched_at; DDL: `sql/067_create_external_signals_tables.sql`
+36. `fact_external_signals` — ingested external demand signal values (08-06); grain: `(signal_id)` PK; columns: source_id (FK), item_no, loc, signal_date, signal_type, signal_value, confidence
+37. `demand_decomposition` — demand decomposition results (08-06); grain: `(decomp_id)` PK; columns: item_no, loc, period, base_demand, trend_component, seasonal_component, external_signal_component, residual
+38. `fva_waterfall` — forecast value added tracking (08-07); grain: `(fva_id)` PK; columns: item_no, loc, period, stage (statistical/planner/consensus), model_id, forecast_qty, actual_qty, wape, bias, value_added_pct; DDL: `sql/068_create_fva_tables.sql`
+39. `fva_interventions` — planner forecast interventions (08-07); grain: `(intervention_id)` PK; columns: item_no, loc, period, user_id, original_forecast, adjusted_forecast, reason, intervention_type, created_at
+40. `report_templates` — report template definitions (08-08); grain: `(template_id)` PK; columns: name, description, report_type, config_json, created_by, created_at; DDL: `sql/069_create_report_tables.sql`
+41. `report_schedules` — scheduled report delivery definitions (08-08); grain: `(schedule_id)` PK; columns: template_id (FK), cron_expr, recipients, delivery_method (email/slack/s3), active, last_run_at
+42. `report_deliveries` — report delivery tracking (08-08); grain: `(delivery_id)` PK; columns: schedule_id (FK), template_id (FK), status, file_path, delivered_at, error_message
+43. `webhook_registrations` — registered webhook endpoints (08-10); grain: `(webhook_id)` PK; columns: url, secret (HMAC key), event_types (array), active, created_by, created_at; DDL: `sql/070_create_webhook_tables.sql`
+44. `webhook_deliveries` — webhook delivery log with retry tracking (08-10); grain: `(delivery_id)` PK; columns: webhook_id (FK), event_type, payload_json, status, http_status, attempts, next_retry_at, last_attempt_at
+45. `dim_transfer_lane` — network topology for cross-location inventory rebalancing (IPfeature-rebalancing); grain: `(lane_id)` PK; unique on `(source_loc, dest_loc)`; columns: source_loc, dest_loc, transfer_cost, transit_days, min_transfer_qty, max_transfer_qty, active; enables greedy + LP solver optimization
+46. `fact_rebalancing_plan` — rebalancing plan header (IPfeature-rebalancing); grain: `(plan_id)` PK; columns: plan_date, status (draft/approved/executed/cancelled), solver (greedy/lp), total_transfers, total_qty, total_cost, total_benefit, net_benefit, created_by, approved_by, approved_at, executed_at
+47. `fact_rebalancing_transfer` — individual transfer recommendations within a plan (IPfeature-rebalancing); grain: `(transfer_id)` PK; columns: plan_id (FK), item_no, source_loc, dest_loc, transfer_qty, transfer_cost, transit_days, source_dos_before, source_dos_after, dest_dos_before, dest_dos_after, benefit_estimate
+48. `mv_network_balance` — materialized view computing per-item DOS coefficient of variation across locations to detect network imbalances (IPfeature-rebalancing); grain: `(item_no)`; columns: loc_count, avg_dos, min_dos, max_dos, dos_cv, imbalance_flag
 
 ## Accuracy Slice Materialized Views (feature10)
 Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-table joins:
@@ -185,13 +237,13 @@ Performance impact: aggregate queries (cluster-level, supplier-level) drop from 
 
 ## API Router Architecture
 
-`api/main.py` is a ~65-line shell that only creates the app, adds middleware, and mounts all 30 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/`. `domains.py` is mounted last (catch-all `{domain}` path parameter).
+`api/main.py` is a ~65-line shell that only creates the app, adds middleware, and mounts all 40 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/`. `domains.py` is mounted last (catch-all `{domain}` path parameter).
 
-**30 active router modules** (as of CI Bands + Repl. Plan):
-accuracy, ai_planner, analysis, chat, clusters, competition, control_tower, dashboard, domains, fill_rate, intel, inv_backtest, inventory, inv_planning (shim), inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, jobs, shap, storyboard
+**41 active router modules** (as of 08-01 through 08-10 + IPfeature-rebalancing):
+accuracy, ai_planner, analysis, api_governance, auth_router, chat, clusters, collaboration, competition, control_tower, dashboard, data_quality, domains, external_signals, fill_rate, fva, intel, inv_backtest, inventory, inv_planning (shim), inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, jobs, notifications, reports, shap, storyboard, users, webhooks
 
-**16 Vite proxy path prefixes** in `frontend/vite.config.ts`:
-`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`
+**26 Vite proxy path prefixes** in `frontend/vite.config.ts`:
+`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/auth`, `/users`, `/notifications`, `/collaboration`, `/external-signals`, `/fva`, `/reports`, `/api`, `/webhooks`
 
 **CRITICAL:** Every new API path prefix must be added to `frontend/vite.config.ts` or the frontend receives HTML instead of JSON. Restart the Vite dev server after changes.
 
@@ -210,6 +262,12 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 | `common/shap_selector.py` | SHAP-based feature selection: `compute_shap_global` (LGBM/XGBoost via `shap.TreeExplainer`), `compute_shap_catboost` (native ShapValues), `compute_timeframe_shap` (cluster-pooled or global), `build_shap_summary`, `save_shap_outputs` (Feature 42) |
 | `common/job_state.py` | In-memory job state: `_active_jobs`, `_pending_queues`, `_cancel_flags`, state lock, status constants; extracted from `job_registry.py` for separation of concerns |
 | `common/job_scheduler.py` | APScheduler wrapper: `make_scheduler()`, `make_trigger()` utilities; extracted from `job_registry.py` to isolate APScheduler-specific initialization and trigger creation |
+| `common/auth.py` | JWT authentication: `create_access_token()`, `create_refresh_token()`, `verify_token()`, `hash_password()`, `verify_password()`, `get_current_user()` FastAPI dependency, role-based `require_role(role)` dependency factory (08-02) |
+| `common/cache.py` | `InMemoryBackend` cache: `get()`, `set()`, `invalidate()`, `invalidate_pattern()` with TTL, LRU eviction, max entry count; `cache_response()` FastAPI middleware decorator (08-03) |
+| `common/rate_limiter.py` | Token bucket rate limiter: `RateLimiter` class with per-endpoint and per-user rate tracking, `check_rate_limit()` FastAPI dependency, 429 response with `Retry-After` header (08-09) |
+| `common/dq_engine.py` | `DQEngine` data quality engine: `run_rules()`, `evaluate_rule()`, pluggable rule types (completeness, freshness, schema_drift, outlier, referential_integrity), severity scoring, result persistence (08-01) |
+| `common/notification_engine.py` | `NotificationEngine` with adapter pattern: `send()`, `register_channel()`, `route_event()`; adapters: `SlackAdapter`, `TeamsAdapter`, `EmailAdapter`, `PagerDutyAdapter`; event routing by type × severity (08-04) |
+| `common/webhook_dispatcher.py` | `WebhookDispatcher`: `dispatch()`, `sign_payload()` (HMAC-SHA256), `retry_delivery()` with exponential backoff; `deliver_webhook()` async worker; event type filtering per registration (08-10) |
 
 Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting which to pass to `run_tree_backtest()` based on the `cluster_strategy` key in `config/algorithm_config.yaml` (`per_cluster` or `global`). **`ml_cluster` is always a hard feature** — it is never stripped from `feature_cols` in either strategy. In `per_cluster` mode it provides a constant identity signal within each partition; in `global` mode it provides inter-cluster discrimination across the full dataset. Algorithm behavior (cluster_strategy, recursive, SHAP selection, inline tuning, params file, hyperparameters) is read from `config/algorithm_config.yaml`, not from CLI flags. `run_tree_backtest()` accepts optional `feature_selector_fn` callable (Feature 42): when provided, each timeframe computes SHAP after the initial model train and retrains on the selected feature subset before generating predictions. `run_tree_backtest()` also accepts `recursive: bool = False` (Feature 43): when `True`, each predict month is scored one at a time using `_predict_single_month(models, predict_data, feature_cols)`, and predictions are written back into the feature grid via `update_grid_with_predictions()` so that `qty_lag_1` for month T+1 reflects the model's own prediction for month T rather than zero.
 
@@ -463,6 +521,105 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Makefile: `ai-insights-schema`, `ai-insights-scan`, `ai-insights-dfu`, `ai-insights-all`
    - Tests: 18 backend unit, 10 API, 7 frontend
 
+38. Data Quality & Pipeline Observability (08-01):
+   - `DQEngine` in `common/dq_engine.py`: rule-based data quality validation engine with pluggable rule types
+   - 5 rule types: completeness (null/missing checks), freshness (data staleness detection), schema_drift (column type/count changes), outlier (statistical outlier detection), referential_integrity (FK consistency)
+   - DDL: `sql/062_create_dq_tables.sql` — `dq_rule_results` + `dq_run_history` tables
+   - Config: `config/dq_config.yaml` (rules per dataset, thresholds, severity mapping, schedule)
+   - 5 API endpoints in `api/routers/data_quality.py`: `GET /data-quality/dashboard` (aggregate pass/fail/warn counts), `GET /data-quality/rules` (rule definitions), `GET /data-quality/history` (run history with trends), `POST /data-quality/run` (trigger DQ scan), `PUT /data-quality/rules/{id}/acknowledge`
+   - Frontend: Data Quality dashboard panel with pass/fail/warn KPI cards, rule results table, trend chart
+   - Makefile: `dq-schema`, `dq-run`, `dq-all`
+
+39. User Management & RBAC (08-02):
+   - JWT authentication via `common/auth.py` with bcrypt password hashing (`passlib[bcrypt]`)
+   - 4 roles with hierarchical permissions: viewer (read-only), planner (read + override forecasts), manager (planner + approve + manage users), admin (full access)
+   - DDL: `sql/063_create_user_tables.sql` — `app_users` + `audit_log` + `refresh_tokens` tables
+   - Config: `config/auth_config.yaml` (JWT secret, token expiry, password policy, role permissions matrix)
+   - Router: `api/routers/auth_router.py` — `POST /auth/login` (JWT issuance), `POST /auth/register`, `POST /auth/refresh` (token rotation), `POST /auth/logout` (revoke refresh token)
+   - Router: `api/routers/users.py` — `GET /users` (list, admin only), `GET /users/{id}`, `PUT /users/{id}/role` (role assignment, admin only), `DELETE /users/{id}` (deactivate, admin only)
+   - Audit logging middleware: all mutation endpoints automatically log user, action, resource, timestamp to `audit_log`
+   - Dependencies: `PyJWT>=2.8`, `passlib[bcrypt]>=1.7`
+
+40. Performance & Caching (08-03):
+   - `InMemoryBackend` cache in `common/cache.py` with configurable TTL per endpoint pattern
+   - LRU eviction with max entry count; cache key derivation from request path + query params + global filters
+   - Query performance tracking: per-endpoint response time percentiles (p50/p95/p99), slow query detection (>2s threshold)
+   - Config: `config/cache_config.yaml` (default TTL, per-endpoint TTL overrides, max entries, eviction policy)
+   - Cache invalidation: automatic on POST/PUT/DELETE to related resources; manual via `POST /cache/invalidate`
+   - Middleware integration: transparent caching for GET endpoints, cache-control headers
+
+41. Notifications & Alerting (08-04):
+   - `NotificationEngine` in `common/notification_engine.py` with adapter pattern for pluggable channels
+   - 4 channel adapters: Slack (webhook + Bot API), Teams (incoming webhook), Email (SMTP with templates), PagerDuty (Events API v2)
+   - Event-driven: exceptions, DQ failures, AI insights, job completions trigger notifications based on routing rules
+   - DDL: `sql/065_create_notification_tables.sql` — `notification_channels` + `notification_history` + `notification_preferences` tables
+   - Config: `config/notification_config.yaml` (channel configs, routing rules by event type × severity, throttle settings)
+   - Router: `api/routers/notifications.py` — `GET /notifications/channels`, `POST /notifications/channels` (register), `GET /notifications/preferences`, `PUT /notifications/preferences`, `POST /notifications/send` (manual send), `GET /notifications/history`
+   - Makefile: `notification-schema`
+
+42. Collaboration & Annotations (08-05):
+   - Threaded comment system anchored to any resource (DFU, insight, exception, forecast override)
+   - @mention support with notification integration (triggers alert to mentioned users)
+   - Shared views: save and share dashboard/filter configurations with team members
+   - DDL: `sql/066_create_collaboration_tables.sql` — `collaboration_threads` + `collaboration_comments` + `shared_views` tables
+   - Router: `api/routers/collaboration.py` — `GET /collaboration/threads` (by resource), `POST /collaboration/threads`, `POST /collaboration/threads/{id}/comments`, `GET /collaboration/shared-views`, `POST /collaboration/shared-views`, `DELETE /collaboration/shared-views/{id}`
+
+43. External Demand Signals (08-06):
+   - External signal source registry: weather, promotions, economic indicators, social media, POS data
+   - Signal ingestion pipeline: fetch, normalize, align to DFU grain, store in `fact_external_signals`
+   - Demand decomposition: break demand into base + trend + seasonal + external signal components
+   - DDL: `sql/067_create_external_signals_tables.sql` — `external_signal_sources` + `fact_external_signals` + `demand_decomposition` tables
+   - Config: `config/external_signals_config.yaml` (source definitions, fetch schedules, normalization rules)
+   - Router: `api/routers/external_signals.py` — `GET /external-signals/sources`, `POST /external-signals/sources` (register), `GET /external-signals/data` (query signals), `GET /external-signals/decomposition` (decomposed demand), `POST /external-signals/fetch` (trigger fetch)
+   - Makefile: `ext-signals-schema`, `ext-signals-fetch`, `ext-signals-decompose`
+
+44. FVA Tracking (08-07):
+   - Forecast Value Added (FVA) waterfall: measure incremental accuracy at each forecast stage (statistical → planner → consensus)
+   - Intervention tracking: log every planner adjustment with reason, original vs. adjusted values, user
+   - ROI computation: quantify financial impact of forecast interventions vs. statistical baseline
+   - DDL: `sql/068_create_fva_tables.sql` — `fva_waterfall` + `fva_interventions` tables
+   - Config: `config/fva_config.yaml` (stages, metrics, ROI computation parameters)
+   - Router: `api/routers/fva.py` — `GET /fva/waterfall` (stage-by-stage accuracy), `GET /fva/interventions` (intervention log), `GET /fva/roi` (intervention ROI metrics), `POST /fva/interventions` (log new intervention)
+   - Frontend: FVA waterfall chart showing value added/destroyed at each stage
+
+45. Reporting & Distribution (08-08):
+   - Report template system: define reusable report layouts with configurable sections (KPIs, charts, tables)
+   - Scheduled distribution: cron-based report generation and delivery via email, Slack, or S3
+   - Delivery tracking: log all report deliveries with status, recipients, file paths
+   - DDL: `sql/069_create_report_tables.sql` — `report_templates` + `report_schedules` + `report_deliveries` tables
+   - Config: `config/report_config.yaml` (template defaults, delivery methods, S3 bucket config)
+   - Router: `api/routers/reports.py` — `GET /reports/templates`, `POST /reports/templates`, `GET /reports/schedules`, `POST /reports/schedules`, `POST /reports/generate` (on-demand), `GET /reports/deliveries`
+   - Makefile: `report-schema`
+
+46. API Governance (08-09):
+   - Rate limiting via `common/rate_limiter.py`: token bucket algorithm with configurable rates per endpoint and per user
+   - API versioning: `v1` prefix on all existing routes, `v2` available for breaking changes
+   - Usage metrics: per-endpoint call counts, error rates, latency histograms
+   - Config: `config/api_governance_config.yaml` (rate limits by role, versioning policy, deprecation schedule)
+   - Router: `api/routers/api_governance.py` — `GET /api/rate-limit-status` (current usage vs. limits), `GET /api/usage-metrics` (aggregate API usage)
+   - Middleware: rate limit enforcement returns 429 with `Retry-After` header; `X-RateLimit-*` headers on all responses
+
+47. Webhooks (08-10):
+   - `WebhookDispatcher` in `common/webhook_dispatcher.py`: event-driven webhook delivery with HMAC-SHA256 payload signing
+   - Supported events: exception.created, insight.created, job.completed, dq.failed, forecast.published
+   - Retry with exponential backoff: configurable max attempts (default 5), backoff factor, timeout
+   - Payload format: JSON with `event_type`, `timestamp`, `data`, `signature` headers (`X-Webhook-Signature`)
+   - DDL: `sql/070_create_webhook_tables.sql` — `webhook_registrations` + `webhook_deliveries` tables
+   - Config: `config/webhook_config.yaml` (retry policy, signing algorithm, event types, timeout)
+   - Router: `api/routers/webhooks.py` — `GET /webhooks` (list registrations), `POST /webhooks` (register endpoint), `DELETE /webhooks/{id}`, `POST /webhooks/{id}/test` (send test payload), `GET /webhooks/{id}/deliveries` (delivery log)
+   - Makefile: `webhook-schema`
+
+48. Inventory Rebalancing (IPfeature-rebalancing):
+   - Cross-location transfer optimization to reduce network-wide DOS imbalance
+   - Computation engine: `scripts/compute_rebalancing.py` — greedy solver (fast heuristic: iterates items by DOS CV, transfers from highest-DOS to lowest-DOS locations) + LP solver (scipy.optimize.linprog for globally optimal transfer plan minimizing total cost subject to DOS constraints)
+   - Network topology: `dim_transfer_lane` table defines location-to-location transfer lanes with cost, lead time, and min/max quantity constraints
+   - Plans: `fact_rebalancing_plan` (plan header with status workflow: draft → approved → executed/cancelled) + `fact_rebalancing_transfer` (individual item-level transfer recommendations with before/after DOS, cost, and benefit estimates)
+   - Network balance detection: `mv_network_balance` materialized view computes per-item DOS CV across locations; items with DOS CV above threshold flagged as imbalanced
+   - Config: `config/rebalancing_config.yaml` (solver selection, DOS CV threshold, max transfers per plan, cost parameters, transit time constraints, approval workflow settings)
+   - Router: `api/routers/inv_planning_rebalancing.py` — 12 endpoints: `GET /inv-planning/rebalancing/kpis` (network balance summary), `GET /inv-planning/rebalancing/imbalanced` (items with high DOS CV), `GET /inv-planning/rebalancing/network` (transfer lane topology), `POST /inv-planning/rebalancing/network` (add/update lanes), `DELETE /inv-planning/rebalancing/network/{lane_id}`, `POST /inv-planning/rebalancing/compute` (run solver), `GET /inv-planning/rebalancing/plans` (list plans), `GET /inv-planning/rebalancing/plans/{plan_id}` (plan detail with transfers), `PUT /inv-planning/rebalancing/plans/{plan_id}/approve`, `PUT /inv-planning/rebalancing/plans/{plan_id}/execute`, `PUT /inv-planning/rebalancing/plans/{plan_id}/cancel`, `GET /inv-planning/rebalancing/plans/{plan_id}/transfers`
+   - Frontend: `RebalancingPanel.tsx` — 27th sub-panel in Inventory Planning tab (Optimize group); network KPI cards (imbalanced items, avg DOS CV, potential savings), imbalanced items table, transfer lane network editor, compute plan button with solver selection, plan detail with transfer table and before/after DOS visualization, approval workflow buttons
+   - Makefile: `rebalancing-schema`, `rebalancing-compute`, `rebalancing-refresh`, `rebalancing-all`
+
 ## Testing Infrastructure
 
 Full-stack automated testing covering backend (Python) and frontend (TypeScript):
@@ -582,6 +739,25 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 
 **Combined total: 1457 tests.** `make test-all` runs backend + frontend.
 
+### E2E Testing (Playwright)
+
+End-to-end smoke tests run against the full stack (API + UI must be running).
+
+| Layer | Tool | Location |
+|---|---|---|
+| E2E smoke tests | Playwright | `frontend/e2e/` (8 test files) |
+| Shared fixtures | Playwright fixtures | `frontend/e2e/fixtures/base.ts` |
+| Config | Playwright config | `frontend/e2e/playwright.config.ts` |
+
+**Commands:**
+- `make e2e-install` — install Playwright browsers (one-time)
+- `make e2e` — run all E2E smoke tests (headless)
+- `make e2e-ui` — Playwright UI mode (interactive debugging)
+- `make e2e-headed` — run in headed browser
+- `make e2e-report` — open HTML test report
+
+**E2E test files:** navigation, dashboard, accuracy, global-filters, inv-planning, ai-planner, control-tower, theme.
+
 **Mandatory rule:** Every new feature, endpoint, component, or utility must include corresponding tests. See `docs/design-specs/feature31.md` for the full testing strategy.
 
 ## Frontend Component Architecture
@@ -596,7 +772,7 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | `tabs/InventoryTab.tsx` (222L) | `tabs/inventory/` | KpiSection, TrendChartPanel, PositionTablePanel, ItemDetailPanel, DemandVariabilityPanel, LeadTimeProfilePanel |
 | `tabs/JobsTab.tsx` (202L) | `tabs/jobs/` | KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel, jobsShared.ts |
 | `tabs/ClustersTab.tsx` (224L) | `tabs/clusters/` | ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel |
-| `tabs/InvPlanningTab.tsx` | `tabs/inv-planning/` | Two-column layout: fixed 220px grouped sidebar navigation (7 groups with colored dividers, icons, and labels — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) + scrollable main content area with per-panel header bar (title + description). 26 panels: ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel, ReplenishmentPlanPanel, DemandForecastPanel, BlendedDemandPanel, EchelonPanel, FinancialPlanPanel, EventCalendarPanel, ScenarioPlanningPanel, and Supply group panels |
+| `tabs/InvPlanningTab.tsx` | `tabs/inv-planning/` | Two-column layout: fixed 220px grouped sidebar navigation (7 groups with colored dividers, icons, and labels — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) + scrollable main content area with per-panel header bar (title + description). 27 panels: ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, RebalancingPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel, ReplenishmentPlanPanel, DemandForecastPanel, BlendedDemandPanel, EchelonPanel, FinancialPlanPanel, EventCalendarPanel, ScenarioPlanningPanel, and Supply group panels |
 
 ### API Query Sub-modules
 `frontend/src/api/queries.ts` is a thin re-export barrel (`export * from "./queries/index"`). All domain query modules live under `frontend/src/api/queries/`:
@@ -618,6 +794,13 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | `queries/control-tower.ts` | Control Tower query keys + fetch functions (IPfeature15) |
 | `queries/fill-rate.ts` | Fill rate query keys + fetch functions (IPfeature8) |
 | `queries/storyboard.ts` | Storyboard exception query keys + fetch/mutate functions (Feature 40) |
+| `queries/data-quality.ts` | Data quality dashboard + rule results query keys + fetch functions (08-01) |
+| `queries/notifications.ts` | Notification channels + preferences + history query keys + fetch/mutate functions (08-04) |
+| `queries/collaboration.ts` | Collaboration threads + comments + shared views query keys + fetch/mutate functions (08-05) |
+| `queries/external-signals.ts` | External signal sources + data + decomposition query keys + fetch functions (08-06) |
+| `queries/fva.ts` | FVA waterfall + interventions + ROI query keys + fetch/mutate functions (08-07) |
+| `queries/reports.ts` | Report templates + schedules + deliveries query keys + fetch/mutate functions (08-08) |
+| `queries/webhooks.ts` | Webhook registrations + deliveries query keys + fetch/mutate functions (08-10) |
 
 ## How to add next dataset
 1. Add `<DATASET>_SPEC` in `common/domain_specs.py`

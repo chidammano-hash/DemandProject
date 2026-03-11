@@ -12,6 +12,7 @@ import {
   MessageSquare,
   PlayCircle,
   Brain, Monitor, Sparkles, BookOpen, CalendarDays,
+  Shield, BarChart3,
   PanelLeftClose,
   PanelLeft,
   Menu,
@@ -47,8 +48,11 @@ const NAV_ITEMS: NavItem[] = [
   { key: "sop",          label: "S&OP",          icon: CalendarDays,    section: "supply" },
   { key: "clusters",     label: "Clusters",      icon: Network,         section: "supply" },
   { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,        section: "supply" },
+  // Analyze — continued
+  { key: "fva",           label: "FVA & ROI",     icon: BarChart3,       section: "demand" },
   // System section
   { key: "jobs",         label: "Jobs",          icon: PlayCircle,      section: "system",       shortcut: "9" },
+  { key: "dataQuality",  label: "Data Quality",  icon: Shield,          section: "system" },
   { key: "explorer",     label: "Explorer",      icon: Database,        section: "system" },
   { key: "intel",        label: "Market Intel",  icon: Globe,           section: "system" },
   { key: "chat",         label: "Chat",          icon: MessageSquare,   section: "system" },

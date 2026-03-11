@@ -20,13 +20,21 @@ export interface SupplierRow {
 }
 
 export const supplierKeys = {
-  summary: () => ["supplier-perf-summary"] as const,
+  summary: (f?: Record<string, unknown>) => ["supplier-perf-summary", f ?? {}] as const,
   detail:  (f?: Record<string, unknown>) => ["supplier-perf-detail", f ?? {}] as const,
   items:   (supplierNo: string) => ["supplier-perf-items", supplierNo] as const,
 };
 
-export const fetchSupplierSummary = (): Promise<Record<string, number | null>> =>
-  fetchJson("/inv-planning/supplier-performance/summary");
+export async function fetchSupplierSummary(
+  params: Record<string, unknown> = {},
+): Promise<Record<string, number | null>> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/supplier-performance/summary${q ? `?${q}` : ""}`);
+}
 
 export async function fetchSupplierDetail(
   params: Record<string, unknown> = {},

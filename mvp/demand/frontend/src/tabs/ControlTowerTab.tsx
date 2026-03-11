@@ -22,6 +22,7 @@ import {
   type ControlTowerCriticalItem,
 } from "@/api/queries";
 import { formatFixed as fmt } from "@/lib/formatters";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 function pct(n: number | null | undefined, scale = 1): string {
   if (n == null) return "—";
@@ -52,8 +53,17 @@ const TREND_WINDOWS = [
 
 export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: string) => void }) {
   const queryClient = useQueryClient();
+  const { filters } = useGlobalFilterContext();
   const [trendMonths, setTrendMonths] = useState(6); // PL-014
   const [showMoreKpis, setShowMoreKpis] = useState(false);
+
+  const filterParams = {
+    item: filters.item,
+    location: filters.location,
+    brand: filters.brand,
+    category: filters.category,
+    market: filters.market,
+  };
 
   // Reduce auto-refresh interval when tab is hidden (10 min instead of 2 min)
   const [isTabVisible, setIsTabVisible] = useState(!document.hidden);
@@ -72,15 +82,15 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
   });
 
   const { data: alertsData } = useQuery({
-    queryKey: controlTowerKeys.alerts({ limit: 10 }),
-    queryFn: () => fetchControlTowerAlerts({ limit: 10 }),
+    queryKey: controlTowerKeys.alerts({ limit: 10, ...filterParams }),
+    queryFn: () => fetchControlTowerAlerts({ limit: 10, ...filterParams }),
     staleTime: STALE.FIVE_MIN,
     refetchInterval: refreshInterval,
   });
 
   const { data: topCritical } = useQuery({
-    queryKey: controlTowerKeys.topCritical(10),
-    queryFn: () => fetchControlTowerTopCritical(10),
+    queryKey: controlTowerKeys.topCritical({ limit: 10, ...filterParams }),
+    queryFn: () => fetchControlTowerTopCritical({ limit: 10, ...filterParams }),
     staleTime: STALE.FIVE_MIN,
     refetchInterval: refreshInterval,
   });

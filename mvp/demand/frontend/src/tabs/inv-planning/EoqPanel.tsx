@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useQuery } from "@tanstack/react-query";
 import {
   LineChart,
@@ -29,11 +30,28 @@ export function EoqPanel() {
   const [itemFilter, setItemFilter] = useState("");
   const [locFilter, setLocFilter] = useState("");
   const [eoqOffset, setEoqOffset] = useState(0);
+
+  // ── Global filter sync ──────────────────────────────────────────────────
+  const { filters: globalFilters } = useGlobalFilterContext();
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setItemFilter(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setLocFilter(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
   const [sensitivityItem, setSensitivityItem] = useState("");
   const [sensitivityLoc, setSensitivityLoc] = useState("");
 
+  const gf = {
+    brand: globalFilters.brand.length > 0 ? globalFilters.brand.join(",") : undefined,
+    category: globalFilters.category.length > 0 ? globalFilters.category.join(",") : undefined,
+    market: globalFilters.market.length > 0 ? globalFilters.market.join(",") : undefined,
+  };
+
   const { data: eoqSummary, isLoading: summaryLoading } = useQuery({
-    queryKey: queryKeys.eoqSummary({ abc_vol: abcFilter }),
+    queryKey: queryKeys.eoqSummary({ ...gf, abc_vol: abcFilter }),
     queryFn: () => fetchEoqSummary({ abc_vol: abcFilter || undefined }),
     staleTime: STALE.FIVE_MIN,
   });
@@ -127,7 +145,7 @@ export function EoqPanel() {
       </div>
 
       {/* By-ABC breakdown */}
-      {eoqSummary && eoqSummary.by_abc.length > 0 && (
+      {(eoqSummary?.by_abc?.length ?? 0) > 0 && eoqSummary && (
         <div className="rounded-lg border bg-card p-4">
           <h3 className="text-sm font-semibold text-foreground mb-3">By ABC Class</h3>
           <div className="overflow-x-auto">
@@ -186,7 +204,7 @@ export function EoqPanel() {
         </div>
         {sensLoading ? (
           <div className="text-xs text-muted-foreground">Loading…</div>
-        ) : sensitivity && sensitivity.curve.length > 0 ? (
+        ) : (sensitivity?.curve?.length ?? 0) > 0 && sensitivity ? (
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={sensitivity.curve} margin={{ top: 4, right: 16, left: 8, bottom: 20 }}>

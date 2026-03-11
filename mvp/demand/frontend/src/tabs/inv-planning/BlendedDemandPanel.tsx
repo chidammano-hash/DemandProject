@@ -3,7 +3,7 @@
  * Shows blended forecast (sensing signal + statistical model) by DFU and week.
  */
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, AlertCircle, Layers, Radio } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,13 +14,24 @@ import {
   fetchBlendedSummary,
   STALE_EVO,
 } from "@/api/queries/evolution";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 const PAGE = 50;
 
 export function BlendedDemandPanel() {
+  const { filters: globalFilters } = useGlobalFilterContext();
   const [itemNo, setItemNo] = useState("");
   const [loc, setLoc] = useState("");
   const [page, setPage] = useState(1);
+
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setItemNo(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setLoc(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   const params = {
     item_no: itemNo || undefined,

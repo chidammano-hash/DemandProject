@@ -54,6 +54,41 @@ async def test_accuracy_slice_endpoint(mock_pool):
 
 
 @pytest.mark.asyncio
+async def test_accuracy_slice_with_brand_filter(mock_pool):
+    """brand param triggers raw-table path when no common_dfus."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = []
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                "/forecast/accuracy/slice?group_by=cluster_assignment&brand=BrandA"
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert "rows" in data
+            assert data.get("source") == "fact_external_forecast_monthly"
+
+
+@pytest.mark.asyncio
+async def test_accuracy_slice_with_category_and_market_filter(mock_pool):
+    """category and market params trigger raw-table path."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = []
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                "/forecast/accuracy/slice?group_by=model_id&category=CAT1,CAT2&market=NY"
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert "rows" in data
+
+
+@pytest.mark.asyncio
 async def test_lag_curve_endpoint(mock_pool):
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
@@ -65,3 +100,19 @@ async def test_lag_curve_endpoint(mock_pool):
             assert response.status_code == 200
             data = response.json()
             assert "by_lag" in data
+
+
+@pytest.mark.asyncio
+async def test_lag_curve_with_brand_filter(mock_pool):
+    """brand param triggers raw backtest_lag_archive path."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = []
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/forecast/accuracy/lag-curve?brand=BrandA,BrandB")
+            assert response.status_code == 200
+            data = response.json()
+            assert "by_lag" in data
+            assert data.get("source") == "backtest_lag_archive"

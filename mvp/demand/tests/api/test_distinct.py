@@ -272,3 +272,113 @@ async def test_distinct_allows_location_id(mock_pool):
             data = resp.json()
             assert data["column"] == "location_id"
             assert data["values"] == ["1401-BULK", "1402-BULK"]
+
+
+# ---------------------------------------------------------------------------
+# Cascading filter tests — narrowing dropdown options by other active filters
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_distinct_cascade_brand_filtered_by_location(mock_pool):
+    """Brand dropdown narrows when location filter is active."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("BrandX",)]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=brand_name&location=1401-BULK")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["values"] == ["BrandX"]
+            # Verify the SQL used dim_dfu-based cascading (not plain dim_item table)
+            executed_sql = cursor.execute.call_args[0][0]
+            assert "dim_dfu" in executed_sql
+            assert "dim_item" in executed_sql
+
+
+@pytest.mark.asyncio
+async def test_distinct_cascade_location_filtered_by_brand(mock_pool):
+    """Location dropdown narrows when brand filter is active."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("LOC1",), ("LOC2",)]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/location/distinct?column=location_id&brand=Nike")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["values"] == ["LOC1", "LOC2"]
+            executed_sql = cursor.execute.call_args[0][0]
+            assert "dim_dfu" in executed_sql
+
+
+@pytest.mark.asyncio
+async def test_distinct_cascade_item_filtered_by_brand_and_location(mock_pool):
+    """Item dropdown narrows when both brand and location are active."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("100320",)]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=item_no&brand=Nike&location=1401-BULK&search=100")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["values"] == ["100320"]
+            executed_sql = cursor.execute.call_args[0][0]
+            assert "dim_dfu" in executed_sql
+            assert "ILIKE" in executed_sql
+
+
+@pytest.mark.asyncio
+async def test_distinct_cascade_market_filtered_by_brand(mock_pool):
+    """Market (state_id) dropdown narrows when brand filter is active."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("CA",), ("TX",)]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/location/distinct?column=state_id&brand=Nike")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["values"] == ["CA", "TX"]
+            executed_sql = cursor.execute.call_args[0][0]
+            assert "dim_dfu" in executed_sql
+            assert "dim_location" in executed_sql
+
+
+@pytest.mark.asyncio
+async def test_distinct_no_cascade_without_filter_params(mock_pool):
+    """Without cascade params, uses original simple query path."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("A",), ("B",)]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=brand_name")
+            assert resp.status_code == 200
+            executed_sql = cursor.execute.call_args[0][0]
+            assert "dim_dfu" not in executed_sql
+            assert "dim_item" in executed_sql
+
+
+@pytest.mark.asyncio
+async def test_distinct_cascade_multiple_values(mock_pool):
+    """Cascade params with comma-separated multiple values work correctly."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [("ItemA",)]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/domains/item/distinct?column=brand_name&location=1401-BULK,1402-BULK")
+            assert resp.status_code == 200
+            executed_sql = cursor.execute.call_args[0][0]
+            assert "dim_dfu" in executed_sql
+            # Verify multi-value was passed as array
+            executed_params = cursor.execute.call_args[0][1]
+            assert ["1401-BULK", "1402-BULK"] in executed_params

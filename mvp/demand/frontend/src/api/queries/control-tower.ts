@@ -43,10 +43,18 @@ export interface ControlTowerCriticalItem {
   fill_rate_last_3m: number | null; stockout_days_this_month: number;
 }
 
+export interface ControlTowerFilterParams {
+  location?: string[];
+  brand?: string[];
+  category?: string[];
+  market?: string[];
+  item?: string[];
+}
+
 export const controlTowerKeys = {
   kpis:       () => ["ct-kpis"] as const,
   alerts:     (f?: Record<string, unknown>) => ["ct-alerts", f ?? {}] as const,
-  topCritical:(limit?: number) => ["ct-top-critical", limit ?? 10] as const,
+  topCritical:(f?: Record<string, unknown>) => ["ct-top-critical", f ?? {}] as const,
   trend:      (months?: number) => ["ct-trend", months ?? 6] as const,
 };
 
@@ -54,19 +62,32 @@ export const fetchControlTowerKpis = (): Promise<ControlTowerKpis> =>
   fetchJson("/control-tower/kpis");
 
 export async function fetchControlTowerAlerts(
-  params: { limit?: number; severity?: string } = {},
+  params: { limit?: number; severity?: string } & ControlTowerFilterParams = {},
 ): Promise<{ total: number; alerts: ControlTowerAlert[] }> {
   const qs = new URLSearchParams();
   if (params.limit) qs.set("limit", String(params.limit));
   if (params.severity) qs.set("severity", params.severity);
+  if (params.location?.length === 1) qs.set("location", params.location[0]);
+  if (params.brand?.length === 1) qs.set("brand", params.brand[0]);
+  if (params.category?.length === 1) qs.set("category", params.category[0]);
+  if (params.market?.length === 1) qs.set("market", params.market[0]);
+  if (params.item?.length === 1) qs.set("item", params.item[0]);
   const q = qs.toString();
   return fetchJson(`/control-tower/alerts${q ? `?${q}` : ""}`);
 }
 
-export const fetchControlTowerTopCritical = (
-  limit = 10,
-): Promise<{ items: ControlTowerCriticalItem[] }> =>
-  fetchJson(`/control-tower/top-critical?limit=${limit}`);
+export async function fetchControlTowerTopCritical(
+  params: { limit?: number } & ControlTowerFilterParams = {},
+): Promise<{ items: ControlTowerCriticalItem[] }> {
+  const qs = new URLSearchParams();
+  qs.set("limit", String(params.limit ?? 10));
+  if (params.location?.length === 1) qs.set("location", params.location[0]);
+  if (params.brand?.length === 1) qs.set("brand", params.brand[0]);
+  if (params.category?.length === 1) qs.set("category", params.category[0]);
+  if (params.market?.length === 1) qs.set("market", params.market[0]);
+  if (params.item?.length === 1) qs.set("item", params.item[0]);
+  return fetchJson(`/control-tower/top-critical?${qs.toString()}`);
+}
 
 export const fetchControlTowerTrend = (
   months = 6,

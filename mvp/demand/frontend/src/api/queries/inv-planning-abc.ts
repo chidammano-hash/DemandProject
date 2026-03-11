@@ -29,16 +29,32 @@ export interface AbcXyzDetailRow {
 }
 
 export const abcXyzKeys = {
-  matrix:  () => ["abc-xyz-matrix"] as const,
-  summary: () => ["abc-xyz-summary"] as const,
+  matrix:  (f?: Record<string, unknown>) => ["abc-xyz-matrix", f ?? {}] as const,
+  summary: (f?: Record<string, unknown>) => ["abc-xyz-summary", f ?? {}] as const,
   detail:  (f?: Record<string, unknown>) => ["abc-xyz-detail", f ?? {}] as const,
 };
 
-export const fetchAbcXyzMatrix = (): Promise<{ cells: AbcXyzCell[]; total_classified: number }> =>
-  fetchJson("/inv-planning/abc-xyz/matrix");
+export async function fetchAbcXyzMatrix(
+  params: Record<string, unknown> = {},
+): Promise<{ cells: AbcXyzCell[]; total_classified: number }> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/abc-xyz/matrix${q ? `?${q}` : ""}`);
+}
 
-export const fetchAbcXyzSummary = (): Promise<Record<string, number | null>> =>
-  fetchJson("/inv-planning/abc-xyz/summary");
+export async function fetchAbcXyzSummary(
+  params: Record<string, unknown> = {},
+): Promise<Record<string, number | null>> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/abc-xyz/summary${q ? `?${q}` : ""}`);
+}
 
 export async function fetchAbcXyzDetail(
   params: Record<string, unknown> = {},

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { GlobalFilters } from "@/types/theme";
+import { fetchPlanningDate, queryKeys, STALE } from "@/api/queries";
 
 const DEFAULT_FILTERS: GlobalFilters = {
   brand: [],
@@ -55,6 +57,12 @@ export function useGlobalFilters() {
     ...readFiltersFromUrl(),
   }));
 
+  const { data: planningDateInfo } = useQuery({
+    queryKey: queryKeys.planningDate(),
+    queryFn: fetchPlanningDate,
+    staleTime: STALE.TEN_MIN,
+  });
+
   // Debounce URL sync
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
@@ -79,5 +87,6 @@ export function useGlobalFilters() {
     setFilters,
     resetFilters,
     hasActiveFilters,
+    planningDate: planningDateInfo?.planning_date ?? null,
   };
 }

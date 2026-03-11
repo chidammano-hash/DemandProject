@@ -1,0 +1,275 @@
+# data_quality_config.yaml
+# Data quality check definitions by domain (Spec 08-01)
+
+schedule:
+  cron: "0 */4 * * *"          # Run every 4 hours
+  on_load: true                 # Also run after each data load
+
+global_defaults:
+  severity: warning
+  enabled: true
+
+checks:
+  # ── Freshness checks ──────────────────────────────────────────
+  freshness:
+    item:
+      table: dim_item
+      max_hours_since_load: 168        # 7 days
+      severity: warning
+    location:
+      table: dim_location
+      max_hours_since_load: 168
+      severity: warning
+    customer:
+      table: dim_customer
+      max_hours_since_load: 168
+      severity: warning
+    time:
+      table: dim_time
+      max_hours_since_load: 720        # 30 days (static)
+      severity: info
+    dfu:
+      table: dim_dfu
+      max_hours_since_load: 168
+      severity: warning
+    sales:
+      table: fact_sales_monthly
+      max_hours_since_load: 48         # 2 days
+      severity: critical
+    forecast:
+      table: fact_external_forecast_monthly
+      max_hours_since_load: 48
+      severity: critical
+    inventory:
+      table: fact_inventory_snapshot
+      max_hours_since_load: 24         # 1 day
+      severity: critical
+
+  # ── Completeness checks (null % on critical columns) ──────────
+  completeness:
+    item:
+      table: dim_item
+      columns:
+        - column: item_no
+          null_pct_threshold: 0.0
+          severity: critical
+        - column: description
+          null_pct_threshold: 5.0
+          severity: warning
+        - column: brand
+          null_pct_threshold: 10.0
+          severity: warning
+        - column: category
+          null_pct_threshold: 10.0
+          severity: warning
+    location:
+      table: dim_location
+      columns:
+        - column: loc
+          null_pct_threshold: 0.0
+          severity: critical
+        - column: state
+          null_pct_threshold: 5.0
+          severity: warning
+    customer:
+      table: dim_customer
+      columns:
+        - column: customer_group
+          null_pct_threshold: 0.0
+          severity: critical
+    dfu:
+      table: dim_dfu
+      columns:
+        - column: dmdunit
+          null_pct_threshold: 0.0
+          severity: critical
+        - column: loc
+          null_pct_threshold: 0.0
+          severity: critical
+        - column: cluster_assignment
+          null_pct_threshold: 20.0
+          severity: warning
+    sales:
+      table: fact_sales_monthly
+      columns:
+        - column: dmdunit
+          null_pct_threshold: 0.0
+          severity: critical
+        - column: qty
+          null_pct_threshold: 0.0
+          severity: critical
+        - column: startdate
+          null_pct_threshold: 0.0
+          severity: critical
+    forecast:
+      table: fact_external_forecast_monthly
+      columns:
+        - column: dmdunit
+          null_pct_threshold: 0.0
+          severity: critical
+        - column: loc
+          null_pct_threshold: 0.0
+          severity: critical
+        - column: basefcst_pref
+          null_pct_threshold: 0.0
+          severity: critical
+    inventory:
+      table: fact_inventory_snapshot
+      columns:
+        - column: item_no
+          null_pct_threshold: 0.0
+          severity: critical
+        - column: loc
+          null_pct_threshold: 0.0
+          severity: critical
+        - column: qty_on_hand
+          null_pct_threshold: 1.0
+          severity: warning
+        - column: snapshot_date
+          null_pct_threshold: 0.0
+          severity: critical
+
+  # ── Uniqueness checks (duplicate detection on key columns) ────
+  uniqueness:
+    item:
+      table: dim_item
+      key_columns: ["item_no"]
+      severity: critical
+    location:
+      table: dim_location
+      key_columns: ["loc"]
+      severity: critical
+    customer:
+      table: dim_customer
+      key_columns: ["customer_group"]
+      severity: critical
+    dfu:
+      table: dim_dfu
+      key_columns: ["dmdunit", "loc"]
+      severity: critical
+    sales:
+      table: fact_sales_monthly
+      key_columns: ["dmdunit", "customer_group", "loc", "startdate", "type"]
+      severity: warning
+    forecast:
+      table: fact_external_forecast_monthly
+      key_columns: ["forecast_ck", "model_id"]
+      severity: critical
+    inventory:
+      table: fact_inventory_snapshot
+      key_columns: ["item_no", "loc", "snapshot_date"]
+      severity: warning
+
+  # ── Range checks (min/max bounds for qty fields) ──────────────
+  range:
+    sales:
+      table: fact_sales_monthly
+      columns:
+        - column: qty
+          min: 0
+          max: 10000000
+          severity: warning
+        - column: qty_shipped
+          min: 0
+          max: 10000000
+          severity: warning
+    forecast:
+      table: fact_external_forecast_monthly
+      columns:
+        - column: basefcst_pref
+          min: -1000000
+          max: 100000000
+          severity: warning
+    inventory:
+      table: fact_inventory_snapshot
+      columns:
+        - column: qty_on_hand
+          min: -100000
+          max: 100000000
+          severity: warning
+        - column: qty_on_order
+          min: 0
+          max: 100000000
+          severity: warning
+        - column: lead_time_days
+          min: 0
+          max: 730
+          severity: warning
+
+  # ── Volume delta checks (max % change between loads) ──────────
+  volume_delta:
+    sales:
+      table: fact_sales_monthly
+      max_pct_change: 50.0
+      severity: warning
+    forecast:
+      table: fact_external_forecast_monthly
+      max_pct_change: 50.0
+      severity: warning
+    inventory:
+      table: fact_inventory_snapshot
+      max_pct_change: 30.0
+      severity: warning
+    item:
+      table: dim_item
+      max_pct_change: 20.0
+      severity: info
+    location:
+      table: dim_location
+      max_pct_change: 20.0
+      severity: info
+    dfu:
+      table: dim_dfu
+      max_pct_change: 25.0
+      severity: warning
+
+  # ── Referential integrity checks (FK relationships) ───────────
+  referential_integrity:
+    sales_to_dfu:
+      source_table: fact_sales_monthly
+      source_columns: ["dmdunit", "loc"]
+      target_table: dim_dfu
+      target_columns: ["dmdunit", "loc"]
+      severity: warning
+    forecast_to_dfu:
+      source_table: fact_external_forecast_monthly
+      source_columns: ["dmdunit", "loc"]
+      target_table: dim_dfu
+      target_columns: ["dmdunit", "loc"]
+      severity: warning
+    inventory_to_item:
+      source_table: fact_inventory_snapshot
+      source_columns: ["item_no"]
+      target_table: dim_item
+      target_columns: ["item_no"]
+      severity: warning
+    inventory_to_location:
+      source_table: fact_inventory_snapshot
+      source_columns: ["loc"]
+      target_table: dim_location
+      target_columns: ["loc"]
+      severity: warning
+    dfu_to_item:
+      source_table: dim_dfu
+      source_columns: ["dmdunit"]
+      target_table: dim_item
+      target_columns: ["item_no"]
+      severity: info
+    dfu_to_location:
+      source_table: dim_dfu
+      source_columns: ["loc"]
+      target_table: dim_location
+      target_columns: ["loc"]
+      severity: info
+    sales_to_customer:
+      source_table: fact_sales_monthly
+      source_columns: ["customer_group"]
+      target_table: dim_customer
+      target_columns: ["customer_group"]
+      severity: info
+    sales_to_time:
+      source_table: fact_sales_monthly
+      source_columns: ["startdate"]
+      target_table: dim_time
+      target_columns: ["startdate"]
+      severity: info

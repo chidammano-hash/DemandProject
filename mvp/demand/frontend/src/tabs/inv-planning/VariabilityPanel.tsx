@@ -13,6 +13,7 @@ import {
   STALE,
   type VariabilityDetailRow,
 } from "@/api/queries";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
@@ -22,15 +23,24 @@ import { BarChart2 } from "lucide-react";
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function VariabilityPanel() {
+  const { filters } = useGlobalFilterContext();
+  const gf = {
+    brand: filters.brand.length > 0 ? filters.brand.join(",") : undefined,
+    category: filters.category.length > 0 ? filters.category.join(",") : undefined,
+    market: filters.market.length > 0 ? filters.market.join(",") : undefined,
+    item: filters.item.length === 1 ? filters.item[0] : undefined,
+    location: filters.location.length === 1 ? filters.location[0] : undefined,
+  };
+
   const { data: summary, isLoading } = useQuery({
-    queryKey: queryKeys.variabilitySummary({}),
+    queryKey: queryKeys.variabilitySummary(gf),
     queryFn: () => fetchVariabilitySummary({}),
     staleTime: STALE.FIVE_MIN,
   });
 
   const { data: volatile } = useQuery({
-    queryKey: queryKeys.variabilityDetail({ variability_class: "high", limit: 10 }),
-    queryFn: () => fetchVariabilityDetail({ variability_class: "high", limit: 10 }),
+    queryKey: queryKeys.variabilityDetail({ ...gf, variability_class: "high", limit: 10 }),
+    queryFn: () => fetchVariabilityDetail({ item: gf.item, location: gf.location, variability_class: "high", limit: 10 }),
     staleTime: STALE.FIVE_MIN,
   });
 
@@ -102,7 +112,7 @@ export function VariabilityPanel() {
         </div>
       )}
 
-      {volatile && volatile.rows.length > 0 && (
+      {volatile?.rows?.length > 0 && (
         <div className="overflow-x-auto">
           <div className="text-xs p-2 rounded bg-muted/30 border mb-3">
             <span className="font-medium text-foreground">Demand CV (Coefficient of Variation = std dev ÷ mean): </span>

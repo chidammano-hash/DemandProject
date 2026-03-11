@@ -75,6 +75,17 @@ from api.routers import financial_plan    # noqa: E402
 from api.routers import sop               # noqa: E402
 from api.routers import events            # noqa: E402
 from api.routers import supply_scenarios  # noqa: E402
+from api.routers import inv_planning_rebalancing  # noqa: E402
+# --- Spec 08-xx: Next-gen platform routers ---
+from api.routers import auth_router       # noqa: E402  # 08-02 RBAC
+from api.routers import users             # noqa: E402  # 08-02 User mgmt
+from api.routers import data_quality      # noqa: E402  # 08-01 DQ
+from api.routers import notifications     # noqa: E402  # 08-04 Alerts
+from api.routers import collaboration     # noqa: E402  # 08-05 Annotations
+from api.routers import external_signals  # noqa: E402  # 08-06 Demand signals
+from api.routers import fva              # noqa: E402  # 08-07 FVA tracking
+from api.routers import reports          # noqa: E402  # 08-08 Reporting
+from api.routers import webhooks         # noqa: E402  # 08-10 Webhooks
 from api.routers import domains    # noqa: E402
 
 # Specific-path routers first
@@ -119,7 +130,19 @@ app.include_router(financial_plan.router)
 app.include_router(sop.router)
 app.include_router(events.router)
 app.include_router(supply_scenarios.router)
+app.include_router(inv_planning_rebalancing.router)
 app.include_router(shap.router)
+
+# --- Spec 08-xx: Next-gen platform routers ---
+app.include_router(auth_router.router)
+app.include_router(users.router)
+app.include_router(data_quality.router)
+app.include_router(notifications.router)
+app.include_router(collaboration.router)
+app.include_router(external_signals.router)
+app.include_router(fva.router)
+app.include_router(reports.router)
+app.include_router(webhooks.router)
 
 # domains.py has catch-all /domains/{domain}/* — mount last
 app.include_router(domains.router)

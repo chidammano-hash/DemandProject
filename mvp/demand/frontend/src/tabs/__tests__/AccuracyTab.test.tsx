@@ -76,6 +76,7 @@ function makeFilterContext(): GlobalFilterContextValue {
     setFilters: vi.fn(),
     resetFilters: vi.fn(),
     hasActiveFilters: false,
+    planningDate: null,
   };
 }
 
@@ -167,6 +168,45 @@ describe("AccuracyTab", () => {
 
     // Panel body should not be visible by default (no shap model selector)
     expect(screen.queryByText(/All timeframes \(average\)/)).toBeNull();
+  });
+
+  it("includes brand/category/market in slice query when global filters are set", async () => {
+    const { fetchAccuracySlice } = await import("@/api/queries");
+    const mockSlice = fetchAccuracySlice as ReturnType<typeof vi.fn>;
+    mockSlice.mockClear();
+
+    const filtersWithBrand: GlobalFilters = {
+      brand: ["BrandA", "BrandB"],
+      category: ["CAT1"],
+      market: ["NY"],
+      channel: [],
+      item: [],
+      location: [],
+      timeGrain: "month",
+    };
+    const ctx: GlobalFilterContextValue = {
+      filters: filtersWithBrand,
+      setFilters: vi.fn(),
+      resetFilters: vi.fn(),
+      hasActiveFilters: true,
+      planningDate: null,
+    };
+
+    render(
+      <TestQueryWrapper>
+        <GlobalFilterProvider value={ctx}>
+          <AccuracyTab />
+        </GlobalFilterProvider>
+      </TestQueryWrapper>
+    );
+
+    await waitFor(() => {
+      expect(mockSlice).toHaveBeenCalled();
+      const callArg = mockSlice.mock.calls[0][0] as Record<string, unknown>;
+      expect(callArg.brand).toBe("BrandA,BrandB");
+      expect(callArg.category).toBe("CAT1");
+      expect(callArg.market).toBe("NY");
+    });
   });
 
   it("renders SHAP panel with 'no outputs' message when models list is empty", async () => {

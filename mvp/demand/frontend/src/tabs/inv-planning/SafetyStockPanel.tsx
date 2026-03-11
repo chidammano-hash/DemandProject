@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   safetyStockKeys,
@@ -11,15 +11,26 @@ import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
 import { formatFixed, formatPct } from "@/lib/formatters";
 import { ArchiveX } from "lucide-react";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 const PAGE = 50;
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function SafetyStockPanel() {
+  const { filters: globalFilters } = useGlobalFilterContext();
   const [belowOnly, setBelowOnly] = useState(false);
   const [ssItemFilter, setSsItemFilter] = useState("");
   const [ssLocFilter, setSsLocFilter] = useState("");
   const [ssOffset, setSsOffset] = useState(0);
+
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setSsItemFilter(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setSsLocFilter(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: safetyStockKeys.summary(),
@@ -106,7 +117,7 @@ export function SafetyStockPanel() {
         </div>
       )}
 
-      {summary && summary.by_abc.length > 0 && (
+      {(summary?.by_abc?.length ?? 0) > 0 && summary && (
         <div className="overflow-x-auto">
           <p className="text-xs font-medium mb-2">Safety Stock by ABC Class</p>
           <table className="w-full text-xs">

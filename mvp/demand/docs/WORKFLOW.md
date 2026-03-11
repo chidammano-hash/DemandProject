@@ -55,6 +55,9 @@ make investment-schema         # fact_inventory_investment_plan + fact_efficient
 make intramonth-schema         # mv_intramonth_stockout
 make control-tower-schema      # mv_control_tower_kpis
 
+# Inventory Rebalancing
+make rebalancing-schema        # mv_network_balance + fact_rebalancing_recommendations
+
 # AI Planning Agent
 make ai-insights-schema        # ai_insights + ai_planning_memos + ai_call_log + ai_recommendation_outcomes
 
@@ -70,9 +73,50 @@ make generate-embeddings       # Embed schema descriptions (requires OPENAI_API_
 
 # Storyboard
 make storyboard-schema         # fact_storyboard_exceptions
+
+# Auth / RBAC (Spec 08-02)
+make auth-schema               # dim_user + fact_audit_log (sql/062)
+
+# Data Quality (Spec 08-01)
+make dq-schema                 # dim_dq_check_catalog + fact_dq_check_results + mv_dq_dashboard (sql/063)
+
+# Cache Performance Tracking (Spec 08-03)
+make cache-perf-schema         # fact_query_performance (sql/064)
+
+# Notifications (Spec 08-04)
+make notification-schema       # dim_notification_channel + fact_notification_log (sql/065)
+
+# Collaboration (Spec 08-05)
+make collaboration-schema      # fact_annotations (sql/066)
+
+# External Signals (Spec 08-06)
+make external-signals-schema   # fact_external_signals (sql/067)
+
+# FVA Tracking (Spec 08-07)
+make fva-schema                # fact_fva_tracking (sql/068)
+
+# Reporting (Spec 08-08)
+make report-schema             # dim_report_template + fact_report_schedule + fact_report_delivery (sql/069)
 ```
 
 > **Tip:** `make db-apply-sql` covers the majority of tables. The remaining `make *-schema` commands add feature-specific tables on top.
+
+---
+
+## Phase 1b: Auth & RBAC Setup
+
+Run after schema setup. Seeds default admin user and configures JWT-based authentication.
+
+```bash
+# Auth config lives in config/auth_config.yaml (JWT secret, token TTL, role hierarchy)
+# common/auth.py provides: CurrentUser, get_current_user, require_role dependencies
+# api/routers/auth_router.py provides: POST /auth/login, POST /auth/refresh
+# api/routers/users.py provides: CRUD for dim_user (admin-only)
+
+# No Make target needed — auth is auto-initialized when API starts.
+# All mutation endpoints use require_role() for RBAC enforcement.
+# Audit log entries written to fact_audit_log on every state-changing request.
+```
 
 ---
 
@@ -108,6 +152,28 @@ make load-forecast-replace-no-archive       # Same, skip 45M-row archive (faster
 ```bash
 make inventory-pipeline    # normalize + load + refresh (all-in-one, ~190M rows)
 ```
+
+---
+
+## Phase 2b: Data Quality Checks
+
+Run after Phase 2 ingestion to validate loaded data. Can also be scheduled as a recurring pipeline step.
+
+```bash
+# Data quality checks are config-driven (config/data_quality_config.yaml)
+# common/dq_engine.py runs SQL-based checks: freshness, completeness, uniqueness,
+#   range validation, volume delta, referential integrity
+# Results written to fact_dq_check_results; domain health scores in mv_dq_dashboard
+
+make dq-run                  # Run all enabled DQ checks → fact_dq_check_results
+make dq-run-dry              # Preview checks without writing (--dry-run)
+```
+
+API endpoints (`/data-quality/*`):
+- `GET /data-quality/dashboard` — domain health scores and recent check trends
+- `GET /data-quality/checks` — list all check definitions from catalog
+- `GET /data-quality/results` — recent check results with pass/fail/warn status
+- `POST /data-quality/run` — trigger ad-hoc DQ check run (requires planner role)
 
 ---
 
@@ -157,6 +223,14 @@ make investment-plan         # Efficient frontier → fact_inventory_investment_
 
 # Intramonth stockout (IPfeature14 — requires inventory loaded)
 make intramonth-refresh      # Refresh mv_intramonth_stockout
+
+# Inventory Rebalancing (requires agg_inventory_monthly + fact_safety_stock_targets)
+make rebalancing-refresh     # Refresh mv_network_balance (network surplus/deficit view)
+make rebalancing-compute     # Compute rebalancing recommendations → fact_rebalancing_recommendations
+# preview without writing:
+make rebalancing-compute-dry # Preview recommendations (--dry-run)
+# or all-in-one:
+make rebalancing-all         # rebalancing-schema + rebalancing-refresh + rebalancing-compute
 
 # Control Tower KPIs (IPfeature15 — requires all above)
 make control-tower-refresh   # Refresh mv_control_tower_kpis
@@ -278,7 +352,69 @@ make storyboard-generate     # Detect planning exceptions → fact_storyboard_ex
 
 ---
 
+## Phase 9b: Notification & Webhook Configuration
+
+Configure notification channels and webhook subscriptions. These fire automatically
+when pipeline events occur (DQ failures, AI insights, exception alerts, report delivery).
+
+```bash
+# Notification channels configured via config/notification_config.yaml
+# common/notification_engine.py dispatches to Slack, Teams, Email, PagerDuty
+# Delivery history stored in fact_notification_log (sql/065)
+```
+
+API endpoints (`/notifications/*`):
+- `GET /notifications/history` — past notification deliveries with status
+- `POST /notifications/test` — send a test notification to verify channel config
+
+```bash
+# Webhook subscriptions registered via API (no Make target needed)
+# common/webhook_dispatcher.py signs and dispatches HTTPS callbacks on events
+# Event types: dq.check.failed, insight.created, exception.detected,
+#              forecast.generated, report.delivered, etc.
+```
+
+API endpoints (`/webhooks/*`):
+- `POST /webhooks/register` — register a webhook URL + event types (requires admin)
+- `GET /webhooks/list` — list active webhook subscriptions
+- `DELETE /webhooks/{id}` — deactivate a webhook subscription
+
+---
+
+## Phase 9c: Report Generation Pipeline
+
+Configure and schedule automated report generation and distribution.
+
+```bash
+# Report templates + schedules configured via config/reporting_config.yaml
+# dim_report_template stores reusable report definitions (SQL query config + layout)
+# fact_report_schedule stores cron-based recurring report jobs
+# fact_report_delivery tracks generation + distribution history
+```
+
+API endpoints (`/reports/*`):
+- `GET /reports/templates` — list available report templates (system + user-created)
+- `POST /reports/schedule` — create a recurring report schedule (cron + recipients)
+- `GET /reports/schedules` — list active report schedules
+- `POST /reports/generate` — trigger ad-hoc report generation
+- `GET /reports/history` — past report deliveries with download links
+
+---
+
 ## Phase 10: Start Services
+
+### 10.1 API Middleware Stack
+
+The FastAPI backend includes platform middleware applied in `api/main.py`:
+- **GZip compression** — responses > 1KB are gzip-compressed
+- **CORS** — allows `localhost:5173` (dev) origins
+- **Cache layer** — `common/cache.py` provides `@cached` decorator with TTL-based caching.
+  Two backends: Redis (when `REDIS_URL` env var set) or in-memory fallback.
+  Config in `config/cache_config.yaml`. Cache invalidation on write endpoints.
+- **Query performance tracking** — endpoint latency + DB query counts logged to
+  `fact_query_performance` for API governance and observability.
+
+### 10.2 Start Services
 
 ```bash
 # Terminal 1 — FastAPI backend
@@ -304,17 +440,25 @@ make db-apply-inventory db-apply-inv-backtest db-apply-jobs
 make ss-schema eoq-schema policy-schema health-schema exceptions-schema
 make fill-rate-schema demand-signals-schema sim-schema abc-xyz-schema
 make supplier-perf-schema investment-schema intramonth-schema control-tower-schema
+make rebalancing-schema
 make ai-insights-schema storyboard-schema forecast-prod-schema
+make auth-schema dq-schema cache-perf-schema notification-schema
+make collaboration-schema external-signals-schema fva-schema report-schema
 
 # 2. Ingest
 make normalize-all && make load-all
 make inventory-pipeline
 
+# 2b. Data Quality
+make dq-run
+
 # 3. Inventory Planning
 make ss-compute eoq-compute policy-assign health-refresh
 make exceptions-generate fill-rate-refresh variability-compute lt-profile-compute
 make demand-signals-compute sim-run abc-xyz-classify
-make supplier-perf-refresh investment-plan intramonth-refresh control-tower-refresh
+make supplier-perf-refresh investment-plan intramonth-refresh
+make rebalancing-refresh rebalancing-compute
+make control-tower-refresh
 
 # 4. Clustering + Seasonality
 make cluster-all && make seasonality-all
@@ -350,9 +494,14 @@ When new monthly data files are added:
 make load-forecast-replace       # New external forecast (preserves ML rows)
 make inventory-pipeline          # New inventory snapshots
 
+# Validate ingested data
+make dq-run                      # Run data quality checks on refreshed data
+
 # Re-compute dependent views
 make health-refresh fill-rate-refresh intramonth-refresh
-make demand-signals-compute control-tower-refresh
+make demand-signals-compute
+make rebalancing-refresh rebalancing-compute
+make control-tower-refresh
 
 # Re-run backtests (if model needs refreshing)
 make backtest-all && make backtest-load-all
@@ -363,6 +512,9 @@ make forecast-generate
 
 # Refresh AI insights
 make ai-insights-scan
+
+# Notifications & webhooks fire automatically on pipeline events
+# (DQ failures, new AI insights, exception alerts, forecast generation)
 ```
 
 ---
@@ -373,6 +525,10 @@ make ai-insights-scan
 make check-db    # Table row counts in Postgres
 make check-api   # curl API health + sample endpoints
 make test-all    # Full test suite (backend + frontend)
+
+# E2E smoke tests (requires API + UI running)
+make e2e-install # Install Playwright browsers (one-time)
+make e2e         # Run all E2E smoke tests (headless)
 ```
 
 ---
@@ -380,11 +536,20 @@ make test-all    # Full test suite (backend + frontend)
 ## Key Dependencies Between Phases
 
 ```
-Phase 2 (Ingest)
-    └─► Phase 3 (Inv Planning)
-    └─► Phase 4 (Clustering + Seasonality)  ──► Phase 5 (Backtesting)
-                                                    └─► Phase 6 (Champion Select)
-                                                            └─► Phase 7 (Prod Forecast)
-    └─► Phase 8 (AI Insights)  [needs 3 + 6 + 7]
-    └─► Phase 9 (Storyboard)   [needs 3]
+Phase 1  (Schema)
+    └─► Phase 1b (Auth/RBAC)  [auto-init on API start]
+Phase 2  (Ingest)
+    └─► Phase 2b (Data Quality Checks)
+    └─► Phase 3  (Inv Planning)
+    └─► Phase 4  (Clustering + Seasonality)  ──► Phase 5 (Backtesting)
+                                                     └─► Phase 6 (Champion Select)
+                                                             └─► Phase 7 (Prod Forecast)
+    └─► Phase 8  (AI Insights)  [needs 3 + 6 + 7]
+    └─► Phase 9  (Storyboard)   [needs 3]
+    └─► Phase 9b (Notifications + Webhooks)  [config-only, no data deps]
+    └─► Phase 9c (Report Generation)  [needs loaded data for report queries]
+Phase 10 (Start Services)
+    └─► Cache layer active (Redis or in-memory fallback)
+    └─► Query performance tracking active (fact_query_performance)
+    └─► Auth/RBAC middleware enforced on mutation endpoints
 ```

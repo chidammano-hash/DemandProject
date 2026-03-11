@@ -501,7 +501,14 @@ function makeFilterContext(): GlobalFilterContextValue {
     setFilters: vi.fn(),
     resetFilters: vi.fn(),
     hasActiveFilters: false,
+    planningDate: null,
   };
+}
+
+/** Navigate to a panel by clicking the group pill then the sub-tab. */
+function navigateTo(groupShortLabel: string, tabLabel: string) {
+  fireEvent.click(screen.getByRole("tab", { name: groupShortLabel }));
+  fireEvent.click(screen.getByRole("tab", { name: tabLabel }));
 }
 
 describe("InvPlanningTab", () => {
@@ -526,7 +533,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "EOQ" }));
+    navigateTo("Optimize", "EOQ");
     await waitFor(() => {
       expect(screen.getByText("Total Cycle Stock")).toBeDefined();
       expect(screen.getByText("Avg EOQ Size")).toBeDefined();
@@ -543,7 +550,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "EOQ" }));
+    navigateTo("Optimize", "EOQ");
     await waitFor(() => {
       expect(screen.getByText("EOQ Sensitivity")).toBeDefined();
     });
@@ -557,7 +564,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "EOQ" }));
+    navigateTo("Optimize", "EOQ");
     await waitFor(() => {
       expect(screen.getByText("EOQ Detail")).toBeDefined();
     });
@@ -571,7 +578,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "EOQ" }));
+    navigateTo("Optimize", "EOQ");
     await waitFor(() => {
       const items = screen.getAllByText("ITEM001");
       expect(items.length).toBeGreaterThan(0);
@@ -586,7 +593,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "EOQ" }));
+    navigateTo("Optimize", "EOQ");
     await waitFor(() => {
       // Multiple item/location filter inputs may exist across sections
       const itemInputs = screen.getAllByPlaceholderText("Filter by item…");
@@ -604,7 +611,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Policy" }));
+    navigateTo("Optimize", "Policy");
     await waitFor(() => {
       expect(screen.getAllByText("Policy Management").length).toBeGreaterThan(0);
     });
@@ -618,7 +625,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Policy" }));
+    navigateTo("Optimize", "Policy");
     await waitFor(() => {
       expect(screen.getByText("Auto-assign All")).toBeDefined();
     });
@@ -632,7 +639,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Policy" }));
+    navigateTo("Optimize", "Policy");
     await waitFor(() => {
       // Policy name appears in both the card and the compliance table — use getAllByText
       const els = screen.getAllByText("A-Class Continuous Review (ROP/EOQ)");
@@ -648,7 +655,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Policy" }));
+    navigateTo("Optimize", "Policy");
     await waitFor(() => {
       expect(screen.getByText("DFU Coverage")).toBeDefined();
     });
@@ -662,7 +669,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Policy" }));
+    navigateTo("Optimize", "Policy");
     await waitFor(() => {
       expect(screen.getByText("Policy Compliance")).toBeDefined();
     });
@@ -676,7 +683,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Health" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
     await waitFor(() => {
       expect(screen.getAllByText("Portfolio Health Score").length).toBeGreaterThan(0);
     });
@@ -690,7 +697,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Health" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
     await waitFor(() => {
       expect(screen.getByText("Healthy")).toBeDefined();
       expect(screen.getByText("Monitor")).toBeDefined();
@@ -709,7 +716,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Health" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
     await waitFor(() => {
       expect(screen.getByText("Health Detail")).toBeDefined();
     });
@@ -723,7 +730,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Health" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
     await waitFor(() => {
       // item_no appears in both EOQ and health detail tables
       const items = screen.getAllByText("ITEM001");
@@ -739,7 +746,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Health" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
     await waitFor(() => {
       expect(screen.getByText("Health Distribution")).toBeDefined();
     });
@@ -753,7 +760,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Health" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
     await waitFor(() => {
       expect(screen.getByText(/Score Components/i)).toBeDefined();
     });
@@ -824,8 +831,9 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    navigateTo("Planning", "Safety Stock");
     await waitFor(() => {
-      expect(screen.getByText("Safety Stock")).toBeDefined();
+      expect(screen.getAllByText("Safety Stock").length).toBeGreaterThan(0);
     });
   });
 
@@ -837,7 +845,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Variability" }));
+    navigateTo("Planning", "Variability");
     await waitFor(() => {
       expect(screen.getByText("Demand Variability")).toBeDefined();
     });
@@ -851,7 +859,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Lead Time" }));
+    navigateTo("Planning", "Lead Time");
     await waitFor(() => {
       expect(screen.getByText("Lead Time Analysis")).toBeDefined();
     });
@@ -865,7 +873,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Signals" }));
+    navigateTo("Planning", "Signals");
     await waitFor(() => {
       expect(screen.getAllByText("Demand Signals").length).toBeGreaterThan(0);
     });
@@ -879,7 +887,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Simulation" }));
+    navigateTo("Planning", "Simulation");
     await waitFor(() => {
       expect(screen.getByText("Safety Stock Simulation")).toBeDefined();
     });
@@ -893,7 +901,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Investment" }));
+    navigateTo("Planning", "Investment");
     await waitFor(() => {
       expect(screen.getByText("Investment Plan")).toBeDefined();
     });
@@ -907,7 +915,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Demand Forecast" }));
+    navigateTo("Planning", "Demand Forecast");
     await waitFor(() => {
       expect(screen.getByText("Production Demand Forecast")).toBeDefined();
     });
@@ -921,7 +929,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Demand Forecast" }));
+    navigateTo("Planning", "Demand Forecast");
     await waitFor(() => {
       expect(screen.getByText("Forecast Version")).toBeDefined();
       expect(screen.getByText("SKU-Locations Planned")).toBeDefined();
@@ -936,7 +944,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Planned Orders" }));
+    navigateTo("OTC", "Planned Orders");
     await waitFor(() => {
       expect(screen.getAllByText("Planned Orders").length).toBeGreaterThan(0);
       expect(screen.getByText("Proposed")).toBeDefined();
@@ -952,7 +960,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("button", { name: "Planned Orders" }));
+    navigateTo("OTC", "Planned Orders");
     await waitFor(() => {
       const items = screen.getAllByText("100320");
       expect(items.length).toBeGreaterThan(0);

@@ -103,6 +103,7 @@ def dashboard_kpis(
     channel: str = Query(default=""),
     item: str = Query(default=""),
     location: str = Query(default=""),
+    time_grain: str = Query(default="month"),
 ):
     """Aggregated KPI metrics for the overview dashboard."""
     set_cache(response, max_age=120)
@@ -200,6 +201,7 @@ def dashboard_alerts(
     channel: str = Query(default=""),
     item: str = Query(default=""),
     location: str = Query(default=""),
+    time_grain: str = Query(default="month"),
 ):
     """Active alerts based on threshold-breaching metrics."""
     set_cache(response, max_age=120)

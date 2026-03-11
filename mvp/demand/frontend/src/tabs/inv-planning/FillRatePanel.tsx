@@ -15,6 +15,7 @@ import {
   fetchFillRateTrend,
   STALE,
 } from "@/api/queries";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
 import { formatInt, formatPct } from "@/lib/formatters";
@@ -23,14 +24,23 @@ import { TrendingUp } from "lucide-react";
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function FillRatePanel() {
+  const { filters } = useGlobalFilterContext();
+  const gf = {
+    brand: filters.brand.length > 0 ? filters.brand.join(",") : undefined,
+    category: filters.category.length > 0 ? filters.category.join(",") : undefined,
+    market: filters.market.length > 0 ? filters.market.join(",") : undefined,
+    item: filters.item.length === 1 ? filters.item[0] : undefined,
+    location: filters.location.length === 1 ? filters.location[0] : undefined,
+  };
+
   const { data: summary, isLoading } = useQuery({
-    queryKey: fillRateKeys.summary(),
-    queryFn: () => fetchFillRateSummary(),
+    queryKey: fillRateKeys.summary(gf),
+    queryFn: () => fetchFillRateSummary(gf),
     staleTime: STALE.FIVE_MIN,
   });
   const { data: trendData } = useQuery({
-    queryKey: fillRateKeys.trend(),
-    queryFn: () => fetchFillRateTrend(),
+    queryKey: fillRateKeys.trend(gf),
+    queryFn: () => fetchFillRateTrend(gf),
     staleTime: STALE.FIVE_MIN,
   });
 
@@ -60,7 +70,7 @@ export function FillRatePanel() {
           ]}
         />
       )}
-      {trendData?.months && trendData.months.length > 0 && (
+      {trendData?.months?.length > 0 && (
         <div>
           <p className="text-xs font-medium mb-2">Monthly Fill Rate Trend (Target: 98%)</p>
           <ResponsiveContainer width="100%" height={160}>

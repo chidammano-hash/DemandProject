@@ -3,7 +3,7 @@
  * Shows DC-level risk-pooled safety stock targets and cascade risk scores.
  */
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Network, ShieldAlert, TrendingDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import {
   fetchEchelonSummary,
   STALE_EVO,
 } from "@/api/queries/evolution";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 const PAGE = 50;
 
@@ -26,9 +27,18 @@ const SEVERITY_COLORS: Record<string, string> = {
 };
 
 export function EchelonPanel() {
+  const { filters: globalFilters } = useGlobalFilterContext();
   const [itemNo, setItemNo] = useState("");
   const [severity, setSeverity] = useState("");
   const [page, setPage] = useState(1);
+
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setItemNo(globalFilters.item[0]);
+  }, [globalFilters.item]);
 
   const params = {
     item_no: itemNo || undefined,

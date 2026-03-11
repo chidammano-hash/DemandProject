@@ -1,7 +1,7 @@
 """Inventory Planning — IPfeature1: Demand Variability endpoints."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
@@ -18,6 +18,9 @@ def variability_summary(
     response: FastAPIResponse,
     abc_vol: str = Query(default="", max_length=10),
     cluster_assignment: str = Query(default="", max_length=120),
+    brand: Optional[str] = Query(default=None, max_length=120),
+    category: Optional[str] = Query(default=None, max_length=120),
+    market: Optional[str] = Query(default=None, max_length=120),
 ) -> dict:
     """Portfolio-level demand variability summary.
 
@@ -35,6 +38,15 @@ def variability_summary(
     if cluster_assignment.strip():
         where_parts.append("cluster_assignment ILIKE %s")
         params.append(f"%{cluster_assignment.strip()}%")
+    if brand:
+        params.append(brand.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.dmdunit AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.dmdunit AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
@@ -51,7 +63,7 @@ def variability_summary(
             PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY demand_cv)   AS cv_p75,
             PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY demand_cv)   AS cv_p95,
             AVG(intermittency_ratio)                                   AS avg_intermittency_ratio
-        FROM dim_dfu
+        FROM dim_dfu t
         {where_clause}
     """
 
@@ -67,7 +79,7 @@ def variability_summary(
             demand_mad,
             intermittency_ratio,
             variability_class
-        FROM dim_dfu
+        FROM dim_dfu t
         {where_clause}
         ORDER BY demand_cv DESC NULLS LAST
         LIMIT 20
@@ -117,6 +129,9 @@ def variability_detail(
     location: str = Query(default="", max_length=120),
     abc_vol: str = Query(default="", max_length=10),
     variability_class: str = Query(default="", max_length=20),
+    brand: Optional[str] = Query(default=None, max_length=120),
+    category: Optional[str] = Query(default=None, max_length=120),
+    market: Optional[str] = Query(default=None, max_length=120),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     sort_by: str = Query(default="demand_cv", max_length=40),
@@ -150,10 +165,19 @@ def variability_detail(
     if variability_class.strip():
         where_parts.append("variability_class = %s")
         params.append(variability_class.strip().lower())
+    if brand:
+        params.append(brand.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.dmdunit AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.dmdunit AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
-    count_sql = f"SELECT COUNT(*) FROM dim_dfu {where_clause}"
+    count_sql = f"SELECT COUNT(*) FROM dim_dfu t {where_clause}"
     data_sql = f"""
         SELECT
             dmdunit          AS item_no,
@@ -173,7 +197,7 @@ def variability_detail(
             intermittency_ratio,
             variability_class,
             demand_profile_ts
-        FROM dim_dfu
+        FROM dim_dfu t
         {where_clause}
         ORDER BY {order_col} {order_dir} NULLS LAST
         LIMIT %s OFFSET %s

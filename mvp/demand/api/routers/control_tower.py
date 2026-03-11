@@ -110,6 +110,11 @@ def get_control_tower_alerts(
     response: FastAPIResponse,
     limit: int = Query(20, ge=1, le=100),
     severity: Optional[str] = Query(None, max_length=20),
+    item: Optional[str] = Query(None, max_length=100),
+    location: Optional[str] = Query(None, max_length=100),
+    brand: Optional[str] = Query(None, max_length=100),
+    category: Optional[str] = Query(None, max_length=100),
+    market: Optional[str] = Query(None, max_length=100),
 ) -> dict:
     """Merged alert list from exceptions + demand signals + health drops.
 
@@ -207,6 +212,11 @@ def get_control_tower_alerts(
 def get_top_critical_items(
     response: FastAPIResponse,
     limit: int = Query(10, ge=1, le=50),
+    item: Optional[str] = Query(None, max_length=100),
+    location: Optional[str] = Query(None, max_length=100),
+    brand: Optional[str] = Query(None, max_length=100),
+    category: Optional[str] = Query(None, max_length=100),
+    market: Optional[str] = Query(None, max_length=100),
 ) -> dict:
     """Top critical items from health score view, enriched with exception and fill rate data.
 
@@ -214,7 +224,18 @@ def get_top_critical_items(
     """
     set_cache(response, max_age=120)
 
-    sql = """
+    where_clauses = []
+    params: list[Any] = []
+    if item:
+        params.append(item)
+        where_clauses.append(f"h.item_no = %s")
+    if location:
+        params.append(location)
+        where_clauses.append(f"h.loc = %s")
+
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    sql = f"""
         SELECT
             h.item_no, h.loc,
             d.abc_vol, d.abc_xyz_segment,
@@ -238,13 +259,15 @@ def get_top_critical_items(
              LIMIT 1) AS stockout_days_this_month
         FROM mv_inventory_health_score h
         LEFT JOIN dim_dfu d ON h.item_no = d.dmdunit AND h.loc = d.loc
+        {where_sql}
         ORDER BY h.health_score ASC NULLS LAST
         LIMIT %s
     """
+    params.append(limit)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, [limit])
+            cur.execute(sql, params)
             rows = cur.fetchall()
 
     return {

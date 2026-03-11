@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ComposedChart,
@@ -25,6 +25,7 @@ import {
 
 import { EmptyState } from "@/components/EmptyState";
 import { formatFixed } from "@/lib/formatters";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -165,9 +166,19 @@ function DfuForecastChart({
 // Main panel
 // ---------------------------------------------------------------------------
 export function DemandForecastPanel() {
+  const { filters: globalFilters } = useGlobalFilterContext();
   const [horizonMonths, setHorizonMonths] = useState(18);
   const [dfuItem, setDfuItem] = useState("");
   const [dfuLoc, setDfuLoc] = useState("");
+
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setDfuItem(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setDfuLoc(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   const { data: versions, isLoading: versionsLoading } = useQuery({
     queryKey: queryKeys.productionForecastVersions(),
@@ -218,7 +229,7 @@ export function DemandForecastPanel() {
             ))}
           </select>
         </div>
-        {versions && versions.versions.length > 0 && (
+        {(versions?.versions?.length ?? 0) > 0 && versions && (
           <div className="flex items-center gap-2 text-sm">
             <span className="text-xs text-muted-foreground">Forecast Version:</span>
             <select
@@ -226,7 +237,7 @@ export function DemandForecastPanel() {
               onChange={(e) => setSelectedVersion(e.target.value || undefined)}
               className="rounded border bg-background px-2 py-1 text-sm"
             >
-              {versions.versions.map((v, idx) => (
+              {versions?.versions?.map((v, idx) => (
                 <option key={v.plan_version} value={v.plan_version}>
                   {idx === 0 ? `▶ Latest — ${v.plan_version}` : v.plan_version} ({v.dfu_count.toLocaleString()} DFUs)
                 </option>

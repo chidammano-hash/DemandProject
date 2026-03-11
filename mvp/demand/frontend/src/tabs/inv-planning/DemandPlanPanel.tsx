@@ -5,7 +5,7 @@
  * version selector, sigma uncertainty chips, and SS recommendation.
  */
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   fetchDemandPlan,
@@ -15,6 +15,7 @@ import {
 } from "@/api/queries";
 import { EmptyState } from "@/components/EmptyState";
 import { ClipboardList } from "lucide-react";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 function formatQty(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -41,11 +42,21 @@ const HORIZON_OPTIONS = [
 ];
 
 export function DemandPlanPanel() {
+  const { filters: globalFilters } = useGlobalFilterContext();
   const [itemNo, setItemNo] = useState("");
   const [loc, setLoc] = useState("");
   const [horizon, setHorizon] = useState(12);
   const [selectedVersion, setSelectedVersion] = useState<string>("");
   const [submitted, setSubmitted] = useState(false);
+
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setItemNo(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setLoc(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   const versionsQ = useQuery({
     queryKey: ["demand-plan-versions"],
@@ -266,7 +277,7 @@ export function DemandPlanPanel() {
       )}
 
       {/* Weekly disaggregation */}
-      {submitted && weekly?.weeks && weekly.weeks.length > 0 && (
+      {submitted && (weekly?.weeks?.length ?? 0) > 0 && weekly && (
         <div className="space-y-2">
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
             Weekly View (next 8 weeks)

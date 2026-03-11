@@ -1,0 +1,47 @@
+import { test, expect } from "@playwright/test";
+import { navigateToTab } from "../fixtures/base";
+
+test.describe("Global Filter Bar", () => {
+  test("visible on Overview tab", async ({ page }) => {
+    await navigateToTab(page, "overview");
+
+    // Filter bar contains Brand, Category, Item, Location buttons
+    for (const label of ["Brand", "Category", "Item", "Location"]) {
+      const btn = page.getByRole("button", { name: label, exact: true });
+      await expect(btn).toBeVisible();
+    }
+  });
+
+  test("hidden on AI Planner tab", async ({ page }) => {
+    await navigateToTab(page, "aiPlanner");
+
+    // Brand filter should NOT be visible (filter bar hidden)
+    const brandBtn = page.getByRole("button", { name: "Brand", exact: true });
+    await expect(brandBtn).not.toBeVisible();
+  });
+
+  test("hidden on Jobs tab", async ({ page }) => {
+    await navigateToTab(page, "jobs");
+
+    const brandBtn = page.getByRole("button", { name: "Brand", exact: true });
+    await expect(brandBtn).not.toBeVisible();
+  });
+
+  test("Brand dropdown opens on click", async ({ page }) => {
+    await navigateToTab(page, "overview");
+
+    const brandBtn = page.getByRole("button", { name: "Brand", exact: true });
+    await brandBtn.click();
+
+    // Dropdown renders as a div with shadow-lg class containing brand value buttons
+    const dropdown = page.locator(".shadow-lg");
+    await expect(dropdown.first()).toBeVisible({ timeout: 5_000 });
+  });
+
+  test("filter bar visible on Accuracy tab", async ({ page }) => {
+    await navigateToTab(page, "accuracy");
+
+    const brandBtn = page.getByRole("button", { name: "Brand", exact: true });
+    await expect(brandBtn).toBeVisible();
+  });
+});

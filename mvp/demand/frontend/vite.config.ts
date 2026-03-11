@@ -100,6 +100,47 @@ export default defineConfig({
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
+      // --- Spec 08-xx: Next-gen platform proxies ---
+      "/auth": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/users": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/data-quality": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/notifications": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/collaboration": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/demand-signals": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/fva": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/reports": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/webhooks": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/cache": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
     },
   },
   build: {

@@ -172,9 +172,152 @@ make replplan-schema         # Apply DDL for fact_replenishment_plan (one-time)
 make replplan-compute        # Compute forward replenishment plan from latest production forecast CI bands
 make replplan-compute-dry    # Preview computation without writing to DB
 make replplan-all            # replplan-schema + replplan-compute (full pipeline)
+make rebalancing-schema      # dim_transfer_lane + fact_rebalancing_plan + fact_rebalancing_transfer + mv_network_balance (one-time)
 ```
 
-### 2.3 Chatbot embeddings (requires `OPENAI_API_KEY` in `.env`)
+**Inventory Rebalancing** (requires inventory + safety stock data loaded):
+```bash
+make rebalancing-all           # Apply schema + compute rebalancing plan (full pipeline)
+make rebalancing-schema        # Apply DDL: dim_transfer_lane, fact_rebalancing_plan, fact_rebalancing_transfer, mv_network_balance (one-time)
+make rebalancing-compute       # Compute rebalancing plan from inventory positions + safety stock targets
+make rebalancing-compute-dry   # Preview rebalancing computation without writing to DB (--dry-run)
+make rebalancing-refresh       # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_network_balance
+```
+
+**Tables:**
+- `dim_transfer_lane` — valid transfer lanes between locations (source → destination, lead time, cost)
+- `fact_rebalancing_plan` — computed rebalancing recommendations (item, source/dest, qty, priority)
+- `fact_rebalancing_transfer` — executed/planned transfer records with status tracking
+- `mv_network_balance` — materialized view aggregating network-wide inventory balance metrics
+
+**SQL files:** `sql/071_create_transfer_network.sql` (dim_transfer_lane), `sql/072_create_rebalancing_plan.sql` (fact_rebalancing_plan + fact_rebalancing_transfer), `sql/073_create_rebalancing_views.sql` (mv_network_balance)
+
+**Config:** `config/rebalancing_config.yaml` — transfer cost thresholds, minimum transfer qty, priority scoring weights, network constraints.
+
+### 2.4 Platform Services (specs 08-01 through 08-10)
+
+All new DDL files (062–070) are applied by `make db-apply-sql` alongside the core schemas. No separate schema targets needed.
+
+```bash
+make db-apply-sql   # Applies all DDL including 062-070 (auth, data quality, cache, notifications, webhooks, reports, rate limiting)
+```
+
+**New Python dependencies** (added to `pyproject.toml`):
+- `bcrypt` — password hashing for user accounts
+- `PyJWT` — JWT token creation and validation
+
+#### Authentication & Authorization (spec 08-01)
+
+Set `JWT_SECRET` in `.env` to enable JWT-based auth:
+
+```bash
+# .env
+JWT_SECRET=your-secret-key-here    # Required for token signing/verification
+JWT_ALGORITHM=HS256                # Default algorithm (optional, defaults to HS256)
+JWT_EXPIRY_MINUTES=60              # Token lifetime (optional, defaults to 60)
+```
+
+**Default dev mode:** When `JWT_SECRET` is not set, the API runs in anonymous admin mode — all requests are treated as authenticated with admin privileges. Set `JWT_SECRET` in any non-local environment.
+
+Passwords are hashed with bcrypt (12 rounds). Plaintext passwords are never stored.
+
+#### Data Quality (spec 08-02)
+
+Run data quality checks via API or schedule them through the job engine:
+
+```bash
+# Run checks via API
+curl http://localhost:8000/data-quality/run          # Execute all configured checks
+curl http://localhost:8000/data-quality/results       # View latest results
+curl http://localhost:8000/data-quality/catalog        # View/manage check catalog
+```
+
+Check definitions are managed through the catalog API — create, update, enable/disable individual checks.
+
+#### Cache Management (spec 08-03)
+
+Default backend is **InMemory** (no external dependencies). For production, configure Redis:
+
+```bash
+# .env (optional — InMemory is the default)
+CACHE_BACKEND=redis               # "memory" (default) or "redis"
+CACHE_REDIS_URL=redis://localhost:6379/0
+CACHE_DEFAULT_TTL=300             # Default TTL in seconds (optional)
+```
+
+InMemory cache is cleared on process restart. Redis cache persists across restarts and is shared across workers.
+
+#### Notifications (spec 08-04)
+
+Configure notification channels in `config/notification_config.yaml`:
+
+```yaml
+channels:
+  email:
+    enabled: false
+    smtp_host: smtp.example.com
+    smtp_port: 587
+    from_address: alerts@example.com
+  slack:
+    enabled: false
+    webhook_url: https://hooks.slack.com/services/...
+  webhook:
+    enabled: false
+    url: https://your-endpoint.com/notify
+```
+
+Channels are disabled by default. Enable and configure as needed. Notification preferences are per-user and managed via the API.
+
+#### Webhooks (spec 08-05)
+
+Webhooks use **HMAC-SHA256 signing** for payload verification. Each webhook subscription has its own signing secret.
+
+```bash
+# Create a webhook subscription via API
+curl -X POST http://localhost:8000/webhooks/subscriptions \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://your-endpoint.com/hook", "events": ["insight.created", "exception.generated"]}'
+```
+
+Failed deliveries are retried with exponential backoff (3 attempts by default). Delivery history is available via `GET /webhooks/deliveries`.
+
+#### Reports (spec 08-06)
+
+Report templates are managed via API. Schedules use the existing job engine:
+
+```bash
+# List available report templates
+curl http://localhost:8000/reports/templates
+
+# Schedule a recurring report
+curl -X POST http://localhost:8000/reports/schedule \
+  -H "Content-Type: application/json" \
+  -d '{"template_id": "portfolio_summary", "schedule": "0 8 * * 1", "recipients": ["team@example.com"]}'
+```
+
+Templates define the data queries, layout, and output format (PDF/CSV/Excel).
+
+#### Rate Limiting (spec 08-07)
+
+Configure rate limits in `config/api_governance_config.yaml`:
+
+```yaml
+rate_limiting:
+  enabled: true
+  default_limit: "100/minute"
+  burst_limit: "20/second"
+  per_endpoint:
+    /ai-planner/portfolio-scan: "5/hour"
+    /chat: "30/minute"
+  per_user: true          # Apply limits per authenticated user (vs global)
+  backend: "memory"       # "memory" or "redis" (for multi-worker deployments)
+```
+
+When rate limited, the API returns HTTP 429 with `Retry-After` header. Limits are applied per authenticated user when `per_user: true`; otherwise globally.
+
+---
+
+### 2.5 Chatbot embeddings (requires `OPENAI_API_KEY` in `.env`)
 ```bash
 make generate-embeddings
 ```
@@ -485,6 +628,29 @@ frontend/src/
 
 Run `make test-all` after every code change. Every new feature must include tests — see `docs/design-specs/feature31.md`.
 
+### 6.2 E2E Testing (Playwright)
+
+E2E tests run against the full stack — both API (`make api`) and UI (`make ui`) must be running.
+
+**One-time setup:**
+```bash
+make e2e-install       # Install Playwright browsers (Chromium)
+```
+
+**Run E2E smoke tests:**
+```bash
+make e2e               # Headless (CI-friendly)
+make e2e-headed        # Headed browser (local debugging)
+make e2e-ui            # Playwright UI mode (interactive step-through)
+make e2e-report        # Open HTML report from last run
+```
+
+> **Prerequisite:** Start API and UI in separate terminals before running E2E tests: `make api` (terminal 1), `make ui` (terminal 2).
+
+**Test coverage:** 8 E2E test files — navigation, dashboard, accuracy, global-filters, inv-planning, ai-planner, control-tower, theme.
+
+**Config:** `frontend/e2e/playwright.config.ts`. Shared fixtures: `frontend/e2e/fixtures/base.ts`.
+
 ---
 
 ## 7. Data Cleanup
@@ -558,6 +724,27 @@ After any cleanup that affects champion/ceiling rows, re-run `make champion-sele
 | Champion selection finds no DFUs | Load backtest predictions: `make backtest-load`; lower `min_dfu_rows` in `config/model_competition.yaml`; verify models exist: `SELECT DISTINCT model_id FROM fact_external_forecast_monthly` |
 | Chat endpoint errors | Set `OPENAI_API_KEY` in `.env`; run `make generate-embeddings`; check API logs for rate limit errors |
 | AI Planner errors | Set `ANTHROPIC_API_KEY` in `.env`; verify insight schema exists: `make ai-insights-schema`; check API logs for rate limit or tool dispatch errors |
+
+### Inventory Rebalancing
+
+| Problem | Fix |
+|---|---|
+| `mv_network_balance` refresh fails | Ensure dependent tables are populated first: `fact_rebalancing_plan`, `dim_transfer_lane`; run `make rebalancing-refresh` after data is loaded |
+| Rebalancing compute finds no candidates | Verify safety stock targets exist (`SELECT COUNT(*) FROM fact_safety_stock_targets`); verify inventory snapshots are loaded; check `config/rebalancing_config.yaml` thresholds are not too restrictive |
+| Dry-run shows transfers but compute writes nothing | Confirm you are running `make rebalancing-compute` (not `make rebalancing-compute-dry`); check DB connectivity and table permissions |
+
+### Platform Services (specs 08-01 through 08-10)
+
+| Problem | Fix |
+|---|---|
+| JWT auth returns 401 on all requests | Verify `JWT_SECRET` is set in `.env`; check token expiry; re-authenticate to get a fresh token |
+| `bcrypt` or `PyJWT` import error | Run `make init` or `uv sync` to install new dependencies |
+| Data quality checks return empty results | Run `make db-apply-sql` to ensure DDL 062-070 are applied; verify check catalog has entries via `GET /data-quality/catalog` |
+| Cache not working (stale data) | Check `CACHE_BACKEND` env var; for Redis, verify connectivity: `redis-cli ping`; InMemory cache clears on restart |
+| Notifications not sending | Verify channel is `enabled: true` in `config/notification_config.yaml`; check SMTP credentials / Slack webhook URL |
+| Webhook deliveries failing | Check delivery history via `GET /webhooks/deliveries`; verify target URL is reachable; check HMAC signature validation on receiver |
+| Rate limiting too aggressive | Adjust limits in `config/api_governance_config.yaml`; increase `default_limit` or add per-endpoint overrides |
+| Anonymous admin mode in production | Set `JWT_SECRET` in `.env` — without it, all requests bypass auth |
 
 ### Frontend / API
 

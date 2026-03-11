@@ -138,6 +138,59 @@ async def test_list_exceptions_severity_min_filter():
     assert resp.status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_list_exceptions_brand_filter():
+    """brand param is accepted and returns 200."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = (2,)
+    cursor.fetchall.return_value = []
+    cursor.description = _EXCEPTION_COLS
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/storyboard/exceptions?brand=BrandA")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "rows" in data
+
+
+@pytest.mark.asyncio
+async def test_list_exceptions_category_filter():
+    """category param is accepted and returns 200."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = (3,)
+    cursor.fetchall.return_value = []
+    cursor.description = _EXCEPTION_COLS
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/storyboard/exceptions?category=CAT1,CAT2")
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_list_exceptions_market_filter():
+    """market param is accepted and returns 200."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = (1,)
+    cursor.fetchall.return_value = []
+    cursor.description = _EXCEPTION_COLS
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/storyboard/exceptions?market=NY,CA")
+
+    assert resp.status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # GET /storyboard/exceptions/summary
 # ---------------------------------------------------------------------------

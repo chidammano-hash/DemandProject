@@ -1,9 +1,9 @@
 """Inventory Planning — IPfeature4: EOQ & Cycle Stock endpoints."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from api.core import get_conn
 
@@ -18,7 +18,12 @@ _EOQ_SORT_COLS = {
 
 
 @router.get("/inv-planning/eoq/summary")
-async def eoq_summary(abc_vol: str | None = None):
+async def eoq_summary(
+    abc_vol: str | None = None,
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
+):
     """Portfolio EOQ summary with by-ABC breakdown."""
     wheres = []
     params: list = []
@@ -26,6 +31,15 @@ async def eoq_summary(abc_vol: str | None = None):
     if abc_vol:
         wheres.append("abc_vol = %s")
         params.append(abc_vol)
+    if brand:
+        params.append(brand.split(","))
+        wheres.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        wheres.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        wheres.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
     where_clause = ("WHERE " + " AND ".join(wheres)) if wheres else ""
 
     summary_sql = f"""
@@ -35,7 +49,7 @@ async def eoq_summary(abc_vol: str | None = None):
             SUM(eoq_cycle_stock)            AS total_cycle_stock,
             AVG(order_frequency)            AS avg_order_frequency,
             SUM(total_annual_cost)          AS total_annual_cost
-        FROM fact_eoq_targets
+        FROM fact_eoq_targets t
         {where_clause}
     """
     abc_sql = f"""
@@ -46,7 +60,7 @@ async def eoq_summary(abc_vol: str | None = None):
             SUM(eoq_cycle_stock)            AS total_cycle_stock,
             SUM(total_annual_cost)          AS total_annual_cost,
             AVG(order_frequency)            AS avg_order_frequency
-        FROM fact_eoq_targets
+        FROM fact_eoq_targets t
         {where_clause}
         GROUP BY abc_vol
         ORDER BY abc_vol
@@ -96,6 +110,9 @@ async def eoq_detail(
     item: str | None = None,
     loc: str | None = None,
     abc_vol: str | None = None,
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
     sort_by: str = "total_annual_cost",
     sort_dir: str = "desc",
     limit: int = 50,
@@ -116,9 +133,18 @@ async def eoq_detail(
     if abc_vol:
         wheres.append("abc_vol = %s")
         params.append(abc_vol)
+    if brand:
+        params.append(brand.split(","))
+        wheres.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        wheres.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        wheres.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
     where_clause = ("WHERE " + " AND ".join(wheres)) if wheres else ""
 
-    count_sql = f"SELECT COUNT(*) FROM fact_eoq_targets {where_clause}"
+    count_sql = f"SELECT COUNT(*) FROM fact_eoq_targets t {where_clause}"
     rows_sql = f"""
         SELECT
             item_no, loc, abc_vol,
@@ -127,7 +153,7 @@ async def eoq_detail(
             eoq, effective_eoq, eoq_cycle_stock, order_frequency,
             annual_holding_cost, annual_order_cost, total_annual_cost,
             computed_at
-        FROM fact_eoq_targets
+        FROM fact_eoq_targets t
         {where_clause}
         ORDER BY {col} {direction} NULLS LAST
         LIMIT %s OFFSET %s

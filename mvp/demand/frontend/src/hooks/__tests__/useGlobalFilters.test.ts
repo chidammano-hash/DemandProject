@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
+import { createElement } from "react";
+import type { ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useGlobalFilters } from "@/hooks/useGlobalFilters";
 
 // Mock window.history.replaceState to avoid jsdom errors
@@ -8,6 +11,21 @@ Object.defineProperty(window, "history", {
   value: { ...window.history, replaceState: replaceStateSpy },
   writable: true,
 });
+
+// Mock fetchPlanningDate so useQuery doesn't hit the network
+vi.mock("@/api/queries", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/api/queries")>();
+  return {
+    ...mod,
+    fetchPlanningDate: vi.fn().mockResolvedValue({ planning_date: "2026-02-24" }),
+  };
+});
+
+function makeWrapper() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  return ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client }, children);
+}
 
 describe("useGlobalFilters", () => {
   beforeEach(() => {
@@ -25,7 +43,7 @@ describe("useGlobalFilters", () => {
   });
 
   it("defaults to empty filters", () => {
-    const { result } = renderHook(() => useGlobalFilters());
+    const { result } = renderHook(() => useGlobalFilters(), { wrapper: makeWrapper() });
     expect(result.current.filters).toEqual({
       brand: [],
       category: [],
@@ -39,7 +57,7 @@ describe("useGlobalFilters", () => {
   });
 
   it("setFilters updates state with partial filters", () => {
-    const { result } = renderHook(() => useGlobalFilters());
+    const { result } = renderHook(() => useGlobalFilters(), { wrapper: makeWrapper() });
 
     act(() => {
       result.current.setFilters({ brand: ["BrandA", "BrandB"] });
@@ -52,7 +70,7 @@ describe("useGlobalFilters", () => {
   });
 
   it("setFilters updates timeGrain", () => {
-    const { result } = renderHook(() => useGlobalFilters());
+    const { result } = renderHook(() => useGlobalFilters(), { wrapper: makeWrapper() });
 
     act(() => {
       result.current.setFilters({ timeGrain: "quarter" });
@@ -61,7 +79,7 @@ describe("useGlobalFilters", () => {
   });
 
   it("setFilters can update multiple filter keys at once", () => {
-    const { result } = renderHook(() => useGlobalFilters());
+    const { result } = renderHook(() => useGlobalFilters(), { wrapper: makeWrapper() });
 
     act(() => {
       result.current.setFilters({ brand: ["X"], market: ["CA"] });
@@ -71,7 +89,7 @@ describe("useGlobalFilters", () => {
   });
 
   it("resetFilters clears all filters", () => {
-    const { result } = renderHook(() => useGlobalFilters());
+    const { result } = renderHook(() => useGlobalFilters(), { wrapper: makeWrapper() });
 
     // Set some filters first
     act(() => {
@@ -102,7 +120,7 @@ describe("useGlobalFilters", () => {
   });
 
   it("hasActiveFilters is false when only timeGrain is non-default", () => {
-    const { result } = renderHook(() => useGlobalFilters());
+    const { result } = renderHook(() => useGlobalFilters(), { wrapper: makeWrapper() });
 
     act(() => {
       result.current.setFilters({ timeGrain: "quarter" });
@@ -112,7 +130,7 @@ describe("useGlobalFilters", () => {
   });
 
   it("hasActiveFilters is true when any filter array is non-empty", () => {
-    const { result } = renderHook(() => useGlobalFilters());
+    const { result } = renderHook(() => useGlobalFilters(), { wrapper: makeWrapper() });
 
     act(() => {
       result.current.setFilters({ channel: ["Retail"] });
@@ -121,7 +139,7 @@ describe("useGlobalFilters", () => {
   });
 
   it("setFilters updates item filter", () => {
-    const { result } = renderHook(() => useGlobalFilters());
+    const { result } = renderHook(() => useGlobalFilters(), { wrapper: makeWrapper() });
 
     act(() => {
       result.current.setFilters({ item: ["100320"] });
@@ -131,7 +149,7 @@ describe("useGlobalFilters", () => {
   });
 
   it("setFilters updates location filter", () => {
-    const { result } = renderHook(() => useGlobalFilters());
+    const { result } = renderHook(() => useGlobalFilters(), { wrapper: makeWrapper() });
 
     act(() => {
       result.current.setFilters({ location: ["1401-BULK"] });
@@ -141,7 +159,7 @@ describe("useGlobalFilters", () => {
   });
 
   it("hasActiveFilters is true when item array is non-empty", () => {
-    const { result } = renderHook(() => useGlobalFilters());
+    const { result } = renderHook(() => useGlobalFilters(), { wrapper: makeWrapper() });
 
     act(() => {
       result.current.setFilters({ item: ["100320", "100321"] });

@@ -16,23 +16,35 @@ def get_health_summary(
     cluster_assignment: Optional[str] = None,
     region:             Optional[str] = None,
     variability_class:  Optional[str] = None,
+    brand:              Optional[str] = None,
+    category:           Optional[str] = None,
+    market:             Optional[str] = None,
 ):
     """Aggregate health score summary with tier breakdown."""
     where_clauses: list[str] = []
     params: list = []
 
     if abc_vol:
-        where_clauses.append(f"abc_vol = ${len(params)+1}")
+        where_clauses.append("abc_vol = %s")
         params.append(abc_vol)
     if cluster_assignment:
-        where_clauses.append(f"cluster_assignment = ${len(params)+1}")
+        where_clauses.append("cluster_assignment = %s")
         params.append(cluster_assignment)
     if region:
-        where_clauses.append(f"region = ${len(params)+1}")
+        where_clauses.append("region = %s")
         params.append(region)
     if variability_class:
-        where_clauses.append(f"variability_class = ${len(params)+1}")
+        where_clauses.append("variability_class = %s")
         params.append(variability_class)
+    if brand:
+        params.append(brand.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -48,7 +60,7 @@ def get_health_summary(
             AVG(score_dos_target)                                       AS avg_score_dos,
             AVG(score_stockout_risk)                                    AS avg_score_stockout,
             AVG(score_forecast_accuracy)                                AS avg_score_forecast
-        FROM mv_inventory_health_score
+        FROM mv_inventory_health_score t
         {where_sql}
     """
 
@@ -62,7 +74,7 @@ def get_health_summary(
                 ELSE '80-100'
             END AS bucket,
             COUNT(*) AS count
-        FROM mv_inventory_health_score
+        FROM mv_inventory_health_score t
         {where_sql}
         GROUP BY 1
         ORDER BY 1
@@ -119,6 +131,9 @@ def get_health_detail(
     abc_vol:            Optional[str] = None,
     cluster_assignment: Optional[str] = None,
     variability_class:  Optional[str] = None,
+    brand:              Optional[str] = None,
+    category:           Optional[str] = None,
+    market:             Optional[str] = None,
     limit:  int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     sort_by:  str = Query("health_score"),
@@ -139,27 +154,36 @@ def get_health_detail(
     params: list = []
 
     if item:
-        where_clauses.append(f"item_no ILIKE ${len(params)+1}")
+        where_clauses.append("item_no ILIKE %s")
         params.append(f"%{item}%")
     if location:
-        where_clauses.append(f"loc ILIKE ${len(params)+1}")
+        where_clauses.append("loc ILIKE %s")
         params.append(f"%{location}%")
     if health_tier:
-        where_clauses.append(f"health_tier = ${len(params)+1}")
+        where_clauses.append("health_tier = %s")
         params.append(health_tier)
     if abc_vol:
-        where_clauses.append(f"abc_vol = ${len(params)+1}")
+        where_clauses.append("abc_vol = %s")
         params.append(abc_vol)
     if cluster_assignment:
-        where_clauses.append(f"cluster_assignment = ${len(params)+1}")
+        where_clauses.append("cluster_assignment = %s")
         params.append(cluster_assignment)
     if variability_class:
-        where_clauses.append(f"variability_class = ${len(params)+1}")
+        where_clauses.append("variability_class = %s")
         params.append(variability_class)
+    if brand:
+        params.append(brand.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
-    count_sql = f"SELECT COUNT(*) FROM mv_inventory_health_score {where_sql}"
+    count_sql = f"SELECT COUNT(*) FROM mv_inventory_health_score t {where_sql}"
     rows_sql = f"""
         SELECT
             item_no, loc, abc_vol, variability_class, cluster_assignment,
@@ -167,10 +191,10 @@ def get_health_detail(
             score_ss_coverage, score_dos_target, score_stockout_risk, score_forecast_accuracy,
             ss_coverage, current_dos, target_dos_min, target_dos_max, is_below_ss,
             recent_wape, stockout_count_3m
-        FROM mv_inventory_health_score
+        FROM mv_inventory_health_score t
         {where_sql}
         ORDER BY {sort_by} {sort_dir}
-        LIMIT ${len(params)+1} OFFSET ${len(params)+2}
+        LIMIT %s OFFSET %s
     """
 
     with get_conn() as conn:

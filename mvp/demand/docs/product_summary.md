@@ -10,7 +10,7 @@
 
 | Layer | Technology |
 |---|---|
-| Backend API | Python + FastAPI (30 modular routers) |
+| Backend API | Python + FastAPI (~40 modular routers) |
 | Frontend | React + Vite + TypeScript + Tailwind + shadcn/ui |
 | Database | PostgreSQL 16 (~190M+ rows inventory snapshots) |
 | ML Pipeline | scikit-learn, LightGBM, CatBoost, XGBoost, pandas |
@@ -41,7 +41,7 @@ Data flows: raw CSVs → normalize scripts → PostgreSQL → FastAPI → React 
 - **Seasonality detection**: computes strength, profile label, peak/trough months per DFU and stores them in `dim_dfu`
 - **ABC-XYZ classification**: cross-segments DFUs by revenue volume (ABC) × demand variability (XYZ) into a 3×3 policy matrix
 
-### 3. Inventory Planning (14 sub-features)
+### 3. Inventory Planning (15 sub-features)
 - **Safety Stock Engine**: Z-score service level targets with Monte Carlo simulation (configurable confidence curves)
 - **EOQ Cycle Stock**: Economic Order Quantity with sensitivity analysis and MOQ guardrails
 - **Replenishment Policies**: 4 policy types (ROP, periodic, min-max, custom) with auto-assignment rules by ABC-XYZ segment
@@ -52,6 +52,7 @@ Data flows: raw CSVs → normalize scripts → PostgreSQL → FastAPI → React 
 - **Supplier Performance**: delivery reliability KPIs from receipt data
 - **Capital Investment Optimization**: efficient frontier computation for budget-vs-service-level trade-offs
 - **Portfolio Health Score**: 4-component 100-point health score per DFU
+- **Inventory Rebalancing**: cross-location transfer optimization with greedy + LP solvers, network topology model, financial ROI analysis, and approval workflow; 12 API endpoints under `/inv-planning/rebalancing/`
 
 ### 4. AI Planning Agent
 - A **proactive exception work-queue** (not a chatbot) powered by Claude (`claude-opus-4-6`) via the `tool_use` API
@@ -68,15 +69,74 @@ Data flows: raw CSVs → normalize scripts → PostgreSQL → FastAPI → React 
 - **Market Intelligence**: Google Search + GPT-4o narrative briefing per item/location pair
 - **NL→SQL Chatbot**: pgvector-powered schema retrieval + GPT-4o SQL generation (read-only, 5s timeout)
 
-### 6. Automation & Jobs
+### 6. RBAC & Access Control (08-01)
+- **Role-based access control**: Users, Roles, Permissions model with JWT authentication
+- Role hierarchy: Admin, Planner, Analyst, Viewer — each with scoped permissions on endpoints and data domains
+- Session management with token refresh and audit logging of access events
+- SQL tables: `dim_user`, `dim_role`, `fact_user_role`, `fact_permission`, `fact_audit_log`
+
+### 7. Data Quality & Monitoring (08-02)
+- **Automated data quality checks**: completeness, freshness, outlier detection, schema drift monitoring
+- Quality scores computed per table/column with configurable thresholds
+- **Data Quality tab** in the UI: quality scorecards, issue drill-down, trend charts, remediation queue
+- SQL tables: `fact_data_quality_check`, `fact_data_quality_issue`, `mv_data_quality_summary`
+
+### 8. Caching & Performance (08-03)
+- **Multi-tier caching**: in-memory (LRU) + Redis for frequently accessed endpoints
+- Cache invalidation on data refresh events; configurable TTLs per endpoint category
+- Query result caching for expensive materialized view refreshes and aggregation queries
+
+### 9. Notifications & Alerting (08-04)
+- **Multi-channel notifications**: Slack, email, and in-app notification delivery
+- Configurable alert rules: threshold breaches, job completions/failures, exception queue escalations
+- Notification preferences per user with digest/immediate delivery modes
+- SQL tables: `fact_notification`, `dim_notification_channel`, `fact_alert_rule`
+
+### 10. Collaboration & Annotations (08-05)
+- **Planner annotations**: attach notes, comments, and decisions to DFUs, forecasts, and exceptions
+- Threaded discussions on insight cards and exception queue items
+- Annotation history with user attribution and timestamps
+- SQL tables: `fact_annotation`, `fact_comment_thread`
+
+### 11. External Signals Integration (08-06)
+- **External data enrichment**: weather, economic indicators, promotional calendars, and market indices
+- Signal ingestion pipeline with configurable source adapters
+- Correlation scoring: automatic assessment of signal relevance to demand patterns per DFU
+- SQL tables: `fact_external_signal`, `dim_signal_source`, `fact_signal_correlation`
+
+### 12. Forecast Value Add (FVA) Analysis (08-07)
+- **FVA decomposition**: quantifies the value added (or destroyed) at each stage of the forecasting process (statistical baseline, planner override, consensus adjustment)
+- Stage-over-stage accuracy comparison with waterfall visualization
+- **FVA tab** in the UI: waterfall charts, stage-level KPIs, top value-add/value-destroy items
+- SQL tables: `fact_fva_stage`, `mv_fva_summary`
+
+### 13. Reporting & Export (08-08)
+- **Scheduled report generation**: PDF/Excel export of dashboards, KPI summaries, and exception reports
+- Report templates with configurable filters, date ranges, and distribution lists
+- On-demand report builder with drag-and-drop metric selection
+- SQL tables: `dim_report_template`, `fact_report_execution`
+
+### 14. API Governance (08-09)
+- **Rate limiting**: per-user and per-endpoint throttling with configurable quotas
+- API versioning strategy with backward compatibility guarantees
+- Request/response validation, structured error codes, and OpenAPI documentation enhancements
+- Usage analytics: per-endpoint call volume, latency percentiles, error rates
+
+### 15. Webhooks (08-10)
+- **Outbound webhook subscriptions**: register HTTP callbacks for system events (job completion, exception generation, forecast publication, data quality alerts)
+- Retry with exponential backoff on delivery failure; dead-letter queue for persistent failures
+- Webhook management endpoints: CRUD, test delivery, delivery history
+- SQL tables: `dim_webhook_subscription`, `fact_webhook_delivery`
+
+### 16. Automation & Jobs
 - **APScheduler-powered job engine**: 7 job types across 4 groups (clustering, backtest, seasonality, champion)
 - Per-group FIFO concurrency: one active job per group, others queue automatically
 - Scheduling: cron/interval presets, job pipelines (sequential chaining), retry with exponential backoff
 - **Jobs tab**: live progress bars, elapsed timers, schedule dialog, expandable history, cross-tab completion alerts
 
-### 7. UI Platform
-- **14-tab sidebar** navigation: Dashboard, Data Explorer, Accuracy, DFU Analysis, Clusters, Market Intel, Inventory, Inv. Backtest, Inv. Planning, Control Tower, AI Planner, Storyboard, S&OP, Jobs
-- **Inventory Planning tab**: two-column layout — fixed 220px grouped sidebar navigation (7 color-coded groups: Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) on the left, scrollable panel body with a fixed header bar on the right; 26 panel components unchanged
+### 17. UI Platform
+- **16-tab sidebar** navigation: Dashboard, Data Explorer, Accuracy, DFU Analysis, Clusters, Market Intel, Inventory, Inv. Backtest, Inv. Planning, Control Tower, AI Planner, Storyboard, S&OP, FVA, Data Quality, Jobs
+- **Inventory Planning tab**: two-column layout — fixed 220px grouped sidebar navigation (7 color-coded groups: Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) on the left, scrollable panel body with a fixed header bar on the right; 27 panel components total
 - **Global filter bar**: brand, category, item, location, market, channel — synced across tabs via URL state
 - Light/dark mode, keyboard shortcuts (1–9 tab switch, `[` sidebar, `d` dark mode, `?` help), virtualized data grid with CSV export
 - TanStack Query caching (stale-while-revalidate), lazy-loaded tab components with per-tab error boundaries
@@ -89,12 +149,13 @@ Data flows: raw CSVs → normalize scripts → PostgreSQL → FastAPI → React 
 - **~112K DFUs** across item × location combinations
 - **45M+ rows** in the backtest lag archive
 - **8 domain tables**: 5 dimensions (item, location, customer, time, DFU) + 3 facts (sales, forecast, inventory)
-- **30+ materialized views** for O(1) KPI query performance
+- **35+ materialized views and fact tables** for O(1) KPI query performance (includes RBAC, data quality, notifications, FVA, webhook, reporting, and rebalancing tables: `dim_transfer_lane`, `fact_rebalancing_plan`, `fact_rebalancing_transfer`, `mv_network_balance`)
 
 ---
 
 ## Testing
 
-- **1,552 backend tests** (pytest, fully mocked DB — no infrastructure needed, ~0.7s)
-- **442 frontend tests** (Vitest + React Testing Library)
+- **1,801 backend tests** (pytest, fully mocked DB — no infrastructure needed, ~0.7s)
+- **485 frontend tests** (Vitest + React Testing Library)
+- **8 E2E test suites** (Playwright — navigation, dashboard, accuracy, global filters, inv-planning, AI planner, control tower, theme)
 - Every feature ships with tests; every removed feature removes its tests

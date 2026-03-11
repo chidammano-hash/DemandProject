@@ -6,6 +6,7 @@ export interface GlobalFilterContextValue {
   setFilters: (partial: Partial<GlobalFilters>) => void;
   resetFilters: () => void;
   hasActiveFilters: boolean;
+  planningDate: string | null;
 }
 
 const GlobalFilterContext = createContext<GlobalFilterContextValue | null>(null);

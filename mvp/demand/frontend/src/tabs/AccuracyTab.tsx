@@ -33,7 +33,7 @@ import { BiasCorrectionsPanel } from "./accuracy/BiasCorrectionsPanel";
 
 export function AccuracyTab() {
   const queryClient = useQueryClient();
-  const { filters } = useGlobalFilterContext();
+  const { filters, planningDate } = useGlobalFilterContext();
 
   // ── Slice / filter state ────────────────────────────────────────────────
   const [sliceGroupBy, setSliceGroupBy] = useState("cluster_assignment");
@@ -66,26 +66,33 @@ export function AccuracyTab() {
   // ── Derived params ──────────────────────────────────────────────────────
   const globalItem = filters.item.length > 0 ? filters.item.join(",") : undefined;
   const globalLocation = filters.location.length > 0 ? filters.location.join(",") : undefined;
+  const brandParam = filters.brand.length > 0 ? filters.brand.join(",") : undefined;
+  const categoryParam = filters.category.length > 0 ? filters.category.join(",") : undefined;
+  const marketParam = filters.market.length > 0 ? filters.market.join(",") : undefined;
   const needDfuCount = sliceKpis.includes("dfu_count");
 
   const monthFrom = useMemo(() => {
     if (sliceGroupBy === "month_start") return "";
-    const now = new Date();
-    const from = new Date(now.getFullYear(), now.getMonth() - sliceMonths, 1);
+    const anchor = planningDate ? new Date(planningDate + "T00:00:00") : new Date();
+    const from = new Date(anchor.getFullYear(), anchor.getMonth() - sliceMonths, 1);
     return from.toISOString().slice(0, 10);
-  }, [sliceGroupBy, sliceMonths]);
+  }, [sliceGroupBy, sliceMonths, planningDate]);
 
   const sliceParams: SliceParams = useMemo(() => ({
     group_by: sliceGroupBy, lag: sliceLag, models: sliceModels, month_from: monthFrom,
     common_dfus: commonDfus, include_dfu_count: needDfuCount,
     item: globalItem, location: globalLocation, seasonality_profile: seasonalityProfile || undefined,
-  }), [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile]);
+    time_grain: filters.timeGrain,
+    brand: brandParam, category: categoryParam, market: marketParam,
+  }), [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, filters.timeGrain, brandParam, categoryParam, marketParam]);
 
   const lagCurveParams: LagCurveParams = useMemo(() => ({
     models: sliceModels, month_from: monthFrom, common_dfus: commonDfus,
     include_dfu_count: needDfuCount, item: globalItem, location: globalLocation,
     seasonality_profile: seasonalityProfile || undefined,
-  }), [sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile]);
+    time_grain: filters.timeGrain,
+    brand: brandParam, category: categoryParam, market: marketParam,
+  }), [sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, filters.timeGrain, brandParam, categoryParam, marketParam]);
 
   // ── Queries ─────────────────────────────────────────────────────────────
   const { data: slicePayload, isLoading: loadingSlice } = useQuery({

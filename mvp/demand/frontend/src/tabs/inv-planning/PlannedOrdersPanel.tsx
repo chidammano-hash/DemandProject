@@ -5,7 +5,7 @@
  * Shows KPI cards, filterable table, approve/reject workflow.
  */
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   queryKeys,
@@ -19,6 +19,7 @@ import {
 import type { PlannedOrder } from "@/api/queries";
 import { CheckSquare } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 function formatCurrency(v: number | null): string {
   if (v == null) return "—";
@@ -41,6 +42,7 @@ function confidenceLabel(score: number | null): { label: string; cls: string } {
 }
 
 export function PlannedOrdersPanel() {
+  const { filters: globalFilters } = useGlobalFilterContext();
   const qc = useQueryClient();
   const [itemFilter, setItemFilter] = useState("");
   const [locFilter, setLocFilter] = useState("");
@@ -48,6 +50,15 @@ export function PlannedOrdersPanel() {
   const [pastDueOnly, setPastDueOnly] = useState(false);
   const [rejectModalId, setRejectModalId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setItemFilter(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setLocFilter(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   const summaryQ = useQuery({
     queryKey: queryKeys.plannedOrdersSummary(),

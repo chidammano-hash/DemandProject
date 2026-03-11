@@ -67,6 +67,9 @@ Clustering:
 - OpenAI (GPT-4o + text-embedding-3-small) for NL→SQL chatbot
 - APScheduler 3.11 (job scheduling engine — BackgroundScheduler + ThreadPoolExecutor)
 - Anthropic Claude (claude-opus-4-6 tool_use agent for AI Planning Agent — IPAIfeature1)
+- bcrypt (password hashing for user management)
+- PyJWT (JSON Web Token authentication for RBAC)
+- Playwright (E2E smoke tests)
 - Docker Compose
 
 ## Performance defaults
@@ -93,6 +96,8 @@ make load-all
 make generate-embeddings   # populate chat embeddings (requires OPENAI_API_KEY in .env)
 make cluster-all            # optional: run DFU clustering (requires sales data)
 make inventory-pipeline     # optional: normalize + load inventory snapshots
+make auth-schema            # optional: create user/role tables for RBAC
+make auth-seed-admin        # optional: create initial admin user (requires bcrypt, PyJWT)
 ```
 
 Run API:
@@ -264,7 +269,7 @@ Inventory Planning (feature34):
 - API: `GET /inventory/position`, `GET /inventory/kpis`, `GET /inventory/trend`, `GET /inventory/item-detail`
 
 EOQ & Inventory Planning (IPfeature4):
-- Inventory Planning tab uses a two-column layout: fixed 220px grouped sidebar navigation (7 groups — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply — each with a colored divider, group label, and icon-labeled buttons) + scrollable main content area with a per-panel header bar showing the panel title and description. All 26 panels remain unchanged; only the navigation/layout wrapper changed.
+- Inventory Planning tab uses a two-column layout: fixed 220px grouped sidebar navigation (7 groups — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply — each with a colored divider, group label, and icon-labeled buttons) + scrollable main content area with a per-panel header bar showing the panel title and description. All 27 panels remain unchanged; only the navigation/layout wrapper changed.
 - EOQ panel: KPI cards (Avg EOQ, Total Cycle Stock, Avg Annual Cost), EOQ sensitivity chart (total cost vs order quantity), and paginated detail table
 - Per-item EOQ computed via Wilson formula with MOQ floor and max-months-supply cap
 - Config: `config/eoq_config.yaml` (ordering_cost: 50, holding_cost_pct: 0.25, moq: 1, max_eoq_months_supply: 6)
@@ -368,6 +373,19 @@ Intra-Month Stockout Detection (IPfeature14):
 - UI: IntramonthPanel in InvPlanningTab
 - Pipeline: `make intramonth-schema`, `make intramonth-refresh`, `make intramonth-all`
 
+Inventory Rebalancing (IPfeature16):
+- Cross-location transfer optimization: identifies surplus/deficit locations and recommends transfers to balance network inventory
+- Solver modes: greedy heuristic (fast, default) + LP solver (optimal, requires scipy.optimize.linprog)
+- Network topology: `dim_transfer_lane` defines allowed origin-destination pairs with per-lane transfer cost, lead time, and capacity constraints
+- Financial ROI analysis: projected savings from reduced stockouts and excess vs. transfer costs
+- Approval workflow: proposed transfers go through review (proposed → approved → in_transit → completed / rejected)
+- DDL: `sql/071_create_rebalancing.sql` — `dim_transfer_lane`, `fact_rebalancing_plan`, `fact_rebalancing_transfer`, `mv_network_balance` materialized view
+- Script: `scripts/compute_rebalancing.py` — reads inventory positions + transfer lanes, solves rebalancing problem, writes plan + transfers
+- Config: `config/rebalancing_config.yaml` — solver mode, cost parameters, capacity limits, approval settings
+- API: `GET /inv-planning/rebalancing/summary`, `/plan`, `/transfers`, `/network-balance`, `POST /inv-planning/rebalancing/compute`, `PUT /inv-planning/rebalancing/transfers/{id}/status`
+- UI: RebalancingPanel in InvPlanningTab (27th sub-panel) — network balance heatmap, transfer recommendation table, ROI summary cards, approval action buttons
+- Pipeline: `make rebalancing-schema`, `make rebalancing-compute`, `make rebalancing-compute-dry`, `make rebalancing-refresh`, `make rebalancing-all`
+
 Control Tower / Command Center (IPfeature15):
 - Unified operational dashboard aggregating KPIs, alerts, critical items, and trend data
 - DDL: `sql/035_create_control_tower_kpis.sql` — `mv_control_tower_kpis` materialized view
@@ -390,6 +408,111 @@ AI Planning Agent (IPAIfeature1):
 - TypeScript types: `frontend/src/types/ai-planner.ts`
 - Dependency: `anthropic>=0.40.0`
 - Pipeline: `make ai-insights-schema`, `make ai-insights-scan`, `make ai-insights-dfu ITEM=<item> LOC=<loc>`, `make ai-insights-all`
+
+User Management & Role-Based Access Control (08-01):
+- JWT-based authentication with bcrypt password hashing and refresh token rotation
+- 4 roles: admin, planner, analyst, viewer — each with granular permission scopes
+- Role hierarchy: admin > planner > analyst > viewer (higher roles inherit lower permissions)
+- Admin: full CRUD on users, roles, system config; planner: write insights, run jobs, modify policies; analyst: read all data, run reports; viewer: read-only dashboards
+- DDL: `sql/042_create_users_roles.sql` — `dim_user`, `dim_role`, `fact_user_sessions` tables
+- Config: `config/auth_config.yaml` — JWT secret, token expiry (access: 30min, refresh: 7d), password policy, max sessions
+- Router: `api/routers/auth.py` — `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/users` (admin), `GET /auth/users` (admin), `PUT /auth/users/{id}/role` (admin)
+- Middleware: `api/middleware/auth.py` — JWT validation, role-based route guards via `require_role(min_role)` dependency
+- Dependencies: `bcrypt>=4.0`, `PyJWT>=2.8`
+- Pipeline: `make auth-schema`, `make auth-seed-admin` (creates initial admin user)
+
+Data Quality Monitoring (08-02):
+- Automated data quality checks on ingestion: completeness, consistency, timeliness, and accuracy scoring
+- Quality dimensions: missing value rate, duplicate detection, outlier detection (IQR method), schema drift detection, freshness monitoring
+- Per-domain quality scores (0–100) with configurable thresholds for pass/warn/fail
+- DDL: `sql/043_create_data_quality.sql` — `fact_data_quality_checks`, `fact_data_quality_scores` tables
+- Config: `config/data_quality_config.yaml` — thresholds per domain, check schedules, alert rules
+- Script: `scripts/run_data_quality_checks.py` — scans all domains, writes quality scores
+- Router: `api/routers/data_quality.py` — `GET /data-quality/scores`, `/checks`, `/history`, `/domain/{domain}`
+- Pipeline: `make dq-schema`, `make dq-check`, `make dq-all`
+
+Caching Infrastructure (08-03):
+- Application-level caching layer for expensive query results and materialized view data
+- Two-tier cache: in-memory LRU (per-process, TTL-based) + optional Redis backend for shared cache across workers
+- Cache-aside pattern: endpoints check cache first, fall back to DB, populate cache on miss
+- Automatic cache invalidation on data mutations (job completion, policy updates, exception acknowledgment)
+- Cache key namespacing by domain + filter hash for granular invalidation
+- Config: `config/cache_config.yaml` — default TTL (5min), max entries (10K), Redis URL (optional), per-endpoint TTL overrides
+- Middleware: `api/middleware/cache.py` — `@cached(ttl=300)` decorator for router endpoints
+- Router: `api/routers/cache.py` — `GET /cache/stats`, `POST /cache/invalidate` (admin), `POST /cache/flush` (admin)
+
+Notifications — Slack, Teams, Email, PagerDuty (08-04):
+- Multi-channel notification dispatch for alerts, job completions, exception escalations, and AI insight delivery
+- 4 channels: Slack (webhook + Bot API), Microsoft Teams (incoming webhook), Email (SMTP), PagerDuty (Events API v2)
+- Notification types: job_completed, job_failed, exception_critical, ai_insight_generated, data_quality_failed, stockout_alert
+- User notification preferences: per-channel opt-in/out, severity thresholds, quiet hours
+- DDL: `sql/044_create_notifications.sql` — `dim_notification_channel`, `fact_notification_log`, `fact_notification_preferences` tables
+- Config: `config/notification_config.yaml` — channel credentials (env var references), routing rules, retry policy, batch window
+- Module: `common/notifications.py` — `NotificationDispatcher` class, channel adapters, template rendering (Jinja2)
+- Router: `api/routers/notifications.py` — `GET /notifications/channels`, `POST /notifications/test`, `GET /notifications/log`, `PUT /notifications/preferences`
+- Pipeline: `make notifications-schema`, `make notifications-test` (sends test to all configured channels)
+
+Collaboration — Annotations & Shared Views (08-05):
+- Threaded annotations on any data point (DFU, chart, insight, exception) with @mentions and resolution tracking
+- Shared views: save and share filter/tab/chart state as named bookmarks with role-based visibility
+- Annotation types: comment, question, action_item, decision — each with status workflow (open → in_progress → resolved)
+- DDL: `sql/045_create_collaboration.sql` — `fact_annotations`, `fact_annotation_threads`, `dim_shared_views` tables
+- Router: `api/routers/collaboration.py` — `POST /annotations`, `GET /annotations`, `PUT /annotations/{id}`, `POST /annotations/{id}/reply`, `POST /shared-views`, `GET /shared-views`, `DELETE /shared-views/{id}`
+
+External Demand Signals Integration (08-06):
+- Ingest and blend external demand signals (weather, economic indicators, social media trends, promotional calendars) with internal forecast
+- Signal types: weather_forecast, economic_index, social_sentiment, promotion_calendar, competitor_pricing
+- Automated signal scoring: each signal source gets a correlation score against historical demand for relevance ranking
+- DDL: `sql/046_create_external_signals.sql` — `dim_signal_source`, `fact_external_signal_values`, `fact_signal_correlations` tables
+- Config: `config/external_signals_config.yaml` — source definitions, refresh schedules, correlation window, blend weights
+- Script: `scripts/ingest_external_signals.py` — fetches from configured APIs, normalizes, writes to DB
+- Script: `scripts/score_signal_correlations.py` — computes lagged cross-correlation between signal and demand per DFU
+- Router: `api/routers/external_signals.py` — `GET /signals/sources`, `GET /signals/values`, `GET /signals/correlations`, `POST /signals/ingest`
+- Pipeline: `make signals-schema`, `make signals-ingest`, `make signals-correlate`, `make signals-all`
+
+FVA Tracking & ROI Measurement (08-07):
+- Forecast Value Added (FVA) tracking: measures incremental accuracy improvement at each step of the forecasting process
+- FVA waterfall: statistical baseline → ML model → champion selection → planner override → consensus → final
+- ROI measurement: translates accuracy improvements into financial impact (inventory carrying cost reduction, stockout cost avoidance)
+- DDL: `sql/047_create_fva_tracking.sql` — `fact_fva_waterfall`, `fact_forecast_roi` tables
+- Config: `config/fva_config.yaml` — waterfall stages, cost parameters (holding_cost_per_unit, stockout_cost_per_unit), ROI calculation method
+- Script: `scripts/compute_fva_waterfall.py` — computes per-DFU FVA at each pipeline stage
+- Script: `scripts/compute_forecast_roi.py` — translates WAPE improvements into dollar savings
+- Router: `api/routers/fva.py` — `GET /fva/waterfall`, `/summary`, `/roi`, `/roi/trend`
+- Pipeline: `make fva-schema`, `make fva-compute`, `make fva-roi`, `make fva-all`
+
+Reporting & Distribution (08-08):
+- Scheduled report generation and distribution: PDF/Excel/CSV export with template-based formatting
+- Report types: executive_summary, accuracy_report, inventory_health, exception_digest, planner_scorecard
+- Distribution: email attachment, Slack file upload, S3/shared drive drop, webhook POST
+- Template engine: Jinja2 HTML templates rendered to PDF via WeasyPrint, Excel via openpyxl
+- DDL: `sql/048_create_reports.sql` — `dim_report_template`, `fact_report_runs`, `fact_report_subscriptions` tables
+- Config: `config/reporting_config.yaml` — template definitions, distribution channels, schedules, retention policy
+- Script: `scripts/generate_report.py` — renders report from template + data, distributes to subscribers
+- Router: `api/routers/reports.py` — `POST /reports/generate`, `GET /reports`, `GET /reports/{id}/download`, `POST /reports/subscriptions`, `GET /reports/subscriptions`
+- Pipeline: `make reports-schema`, `make reports-generate REPORT=executive_summary`
+
+API Governance — Rate Limiting & Versioning (08-09):
+- Per-user and per-role rate limiting with configurable burst and sustained limits
+- Rate limit tiers: viewer (100 req/min), analyst (200 req/min), planner (500 req/min), admin (1000 req/min)
+- Token bucket algorithm with Redis backend for distributed rate limiting (falls back to in-memory for single-worker)
+- API versioning: `/v1/` prefix for current stable API, `/v2/` for next-generation endpoints
+- Deprecation headers: `Sunset` and `Deprecation` headers on deprecated endpoints with migration guidance
+- Config: `config/api_governance_config.yaml` — rate limits per role, burst multiplier, versioning strategy, deprecation schedule
+- Middleware: `api/middleware/rate_limit.py` — `RateLimitMiddleware` with sliding window counter, `X-RateLimit-*` response headers
+- Middleware: `api/middleware/versioning.py` — API version routing and deprecation header injection
+- Router: `api/routers/api_governance.py` — `GET /api/rate-limit/status`, `GET /api/versions`
+
+Webhooks — HMAC-SHA256 Signed Event Delivery (08-10):
+- Outbound webhook system for real-time event notifications to external consumers
+- Events: job.completed, job.failed, exception.created, insight.generated, forecast.published, data_quality.failed
+- HMAC-SHA256 signature verification: each webhook delivery is signed with a per-subscription secret; consumers verify via `X-Webhook-Signature` header
+- Retry policy: exponential backoff (1s, 2s, 4s, 8s, 16s) with 5 max retries; dead letter queue for persistent failures
+- DDL: `sql/049_create_webhooks.sql` — `dim_webhook_subscription`, `fact_webhook_deliveries`, `fact_webhook_dead_letter` tables
+- Config: `config/webhook_config.yaml` — retry policy, delivery timeout (10s), max payload size (1MB), event type registry
+- Module: `common/webhooks.py` — `WebhookDispatcher` class, HMAC signing, async delivery with `httpx.AsyncClient`, dead letter management
+- Router: `api/routers/webhooks.py` — `POST /webhooks`, `GET /webhooks`, `PUT /webhooks/{id}`, `DELETE /webhooks/{id}`, `GET /webhooks/{id}/deliveries`, `POST /webhooks/{id}/test`, `POST /webhooks/dead-letter/{id}/retry`
+- Pipeline: `make webhooks-schema`, `make webhooks-test` (sends test event to all subscriptions)
 
 Backtest Cleanup (feature23):
 - List model row counts: `make backtest-list`
@@ -423,6 +546,19 @@ make cluster-all  # Full pipeline: features -> train -> label -> update
 Optional job scheduler setup:
 ```bash
 make db-apply-jobs         # Create job_history + job_schedule tables (one-time)
+```
+
+Optional platform services setup:
+```bash
+make auth-schema           # Create user/role tables for RBAC (08-01)
+make auth-seed-admin       # Create initial admin user
+make dq-schema             # Create data quality tables (08-02)
+make notifications-schema  # Create notification tables (08-04)
+make signals-schema        # Create external signals tables (08-06)
+make fva-schema            # Create FVA tracking tables (08-07)
+make reports-schema        # Create reporting tables (08-08)
+make webhooks-schema       # Create webhook tables (08-10)
+make rebalancing-schema    # Create rebalancing tables: dim_transfer_lane, fact_rebalancing_plan, fact_rebalancing_transfer, mv_network_balance
 ```
 
 Job Scheduler/Monitor with APScheduler (feature39):
@@ -470,6 +606,18 @@ Both:
 cd mvp/demand
 make test-all          # Backend + frontend
 ```
+
+E2E Testing (Playwright):
+```bash
+cd mvp/demand
+make e2e-install       # Install Playwright browsers (one-time)
+make e2e               # Run all E2E smoke tests (headless, requires API + UI running)
+make e2e-ui            # Playwright UI mode (interactive debugging)
+make e2e-headed        # Run in headed browser
+make e2e-report        # Open HTML test report
+```
+
+E2E tests cover: navigation, dashboard, accuracy, global filters, inventory planning, AI planner, control tower, theme switching.
 
 Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py` (timeframe generation + recursive helpers), `common/feature_engineering.py` (update_grid_with_predictions), `common/mlflow_utils.py`, `common/db.py`, `common/shap_selector.py`, `scripts/compute_eoq.py` (EOQ formulas, sensitivity curve), replenishment policy assignment logic, inventory health score components, exception generation (detect_exception_type, compute_recommendation), demand signal computation, ABC-XYZ classification, investment plan computation, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters, dashboard, distinct values, jobs, shap, inv-planning eoq/policy/health/exceptions/demand-signals/simulation/abc-xyz/supplier/investment/intramonth, fill-rate, control-tower).
 
@@ -536,6 +684,9 @@ Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, 
 - ABC-XYZ script: `mvp/demand/scripts/classify_abc_xyz.py`
 - Investment plan script: `mvp/demand/scripts/compute_investment_plan.py`
 - Intramonth stockout script: `mvp/demand/scripts/refresh_intramonth_stockout.py`
+- Rebalancing script: `mvp/demand/scripts/compute_rebalancing.py`
+- Rebalancing config: `mvp/demand/config/rebalancing_config.yaml`
+- Rebalancing DDL: `mvp/demand/sql/071_create_rebalancing.sql`
 - Simulation config: `mvp/demand/config/simulation_config.yaml`
 - AI Planner agent: `mvp/demand/common/ai_planner.py`
 - AI Planner config: `mvp/demand/config/ai_planner_config.yaml`

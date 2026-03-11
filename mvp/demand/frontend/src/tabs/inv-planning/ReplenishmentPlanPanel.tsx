@@ -203,7 +203,7 @@ export function ReplenishmentPlanPanel() {
       </div>
 
       {/* Comparison chart: Forecast SS vs Historical SS by ABC */}
-      {comparison && comparison.by_abc.length > 0 && (
+      {(comparison?.by_abc?.length ?? 0) > 0 && comparison && (
         <div className="rounded-lg border bg-card p-4">
           <h3 className="mb-3 text-sm font-semibold text-foreground">
             SS Comparison: Forecast vs Historical by ABC Class
@@ -397,7 +397,7 @@ export function ReplenishmentPlanPanel() {
 
           {dfuQ.isLoading ? (
             <p className="text-xs text-muted-foreground">Loading…</p>
-          ) : dfu && dfu.series.length > 0 ? (
+          ) : (dfu?.series?.length ?? 0) > 0 && dfu ? (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart

@@ -46,6 +46,8 @@ const AIPlannerTab = lazy(() => import("./tabs/AIPlannerTab"));
 const StoryboardTab = lazy(() => import("./tabs/StoryboardTab"));
 const ExceptionsTab = StoryboardTab; // alias — PL-003 rename
 const SopTab = lazy(() => import("./tabs/SopTab"));
+const FVATab = lazy(() => import("./tabs/FVATab"));
+const DataQualityTab = lazy(() => import("./tabs/DataQualityTab"));
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -249,6 +251,20 @@ export default function App() {
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="sop" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="sop" />}>
                       <SopTab />
+                    </Suspense>
+                  </ErrorBoundary>
+                )}
+                {activeTab === "fva" && (
+                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="fva" />} resetKeys={[activeTab]}>
+                    <Suspense fallback={<TabSuspenseFallback tabKey="fva" />}>
+                      <FVATab />
+                    </Suspense>
+                  </ErrorBoundary>
+                )}
+                {activeTab === "dataQuality" && (
+                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="dataQuality" />} resetKeys={[activeTab]}>
+                    <Suspense fallback={<TabSuspenseFallback tabKey="dataQuality" />}>
+                      <DataQualityTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}

@@ -97,9 +97,9 @@ export const queryKeys = {
   eoqDetail: (params: Record<string, unknown>) => ["eoq-detail", params] as const,
   eoqSensitivity: (params: Record<string, unknown>) => ["eoq-sensitivity", params] as const,
   // IPfeature5 — Replenishment Policy Management
-  policyList: () => ["policy-list"] as const,
+  policyList: (f?: Record<string, unknown>) => ["policy-list", f ?? {}] as const,
   policyAssignments: (params: Record<string, unknown>) => ["policy-assignments", params] as const,
-  policyCompliance: () => ["policy-compliance"] as const,
+  policyCompliance: (f?: Record<string, unknown>) => ["policy-compliance", f ?? {}] as const,
   // SHAP feature importance keys (Feature 42)
   shapModels: () => ["shap-models"] as const,
   shapSummary: (modelId: string, topN: number) => ["shap-summary", modelId, topN] as const,
@@ -347,6 +347,10 @@ export interface SliceParams {
   item?: string;
   location?: string;
   seasonality_profile?: string;
+  time_grain?: string;
+  brand?: string;
+  category?: string;
+  market?: string;
 }
 
 export async function fetchAccuracySlice(params: SliceParams): Promise<AccuracySlicePayload> {
@@ -358,6 +362,10 @@ export async function fetchAccuracySlice(params: SliceParams): Promise<AccuracyS
   if (params.item) qs.set("item", params.item);
   if (params.location) qs.set("location", params.location);
   if (params.seasonality_profile) qs.set("seasonality_profile", params.seasonality_profile);
+  if (params.time_grain) qs.set("time_grain", params.time_grain);
+  if (params.brand) qs.set("brand", params.brand);
+  if (params.category) qs.set("category", params.category);
+  if (params.market) qs.set("market", params.market);
   return fetchJson(`/forecast/accuracy/slice?${qs}`);
 }
 
@@ -369,6 +377,10 @@ export interface LagCurveParams {
   item?: string;
   location?: string;
   seasonality_profile?: string;
+  time_grain?: string;
+  brand?: string;
+  category?: string;
+  market?: string;
 }
 
 export async function fetchLagCurve(params: LagCurveParams): Promise<LagCurvePayload> {
@@ -380,6 +392,10 @@ export async function fetchLagCurve(params: LagCurveParams): Promise<LagCurvePay
   if (params.item) qs.set("item", params.item);
   if (params.location) qs.set("location", params.location);
   if (params.seasonality_profile) qs.set("seasonality_profile", params.seasonality_profile);
+  if (params.time_grain) qs.set("time_grain", params.time_grain);
+  if (params.brand) qs.set("brand", params.brand);
+  if (params.category) qs.set("category", params.category);
+  if (params.market) qs.set("market", params.market);
   return fetchJson(`/forecast/accuracy/lag-curve?${qs}`);
 }
 
@@ -534,14 +550,32 @@ export async function fetchInventoryItemDetail(params: { item: string; location:
 // ---------------------------------------------------------------------------
 // Distinct values (Feature 36 — global filter dropdowns)
 // ---------------------------------------------------------------------------
+export interface CascadeFilterParams {
+  brand?: string;
+  category?: string;
+  item?: string;
+  location?: string;
+  market?: string;
+  channel?: string;
+}
+
 export async function fetchDistinctValues(
   domain: string,
   column: string,
   search?: string,
   limit = 100,
+  cascade?: CascadeFilterParams,
 ): Promise<DistinctValuesPayload> {
   const qs = new URLSearchParams({ column, limit: String(limit) });
   if (search) qs.set("search", search);
+  if (cascade) {
+    if (cascade.brand) qs.set("brand", cascade.brand);
+    if (cascade.category) qs.set("category", cascade.category);
+    if (cascade.item) qs.set("item", cascade.item);
+    if (cascade.location) qs.set("location", cascade.location);
+    if (cascade.market) qs.set("market", cascade.market);
+    if (cascade.channel) qs.set("channel", cascade.channel);
+  }
   return fetchJson(`/domains/${encodeURIComponent(domain)}/distinct?${qs}`);
 }
 
@@ -555,6 +589,7 @@ export interface DashboardFilterParams {
   channel?: string[];
   item?: string[];
   location?: string[];
+  time_grain?: "month" | "quarter";
 }
 
 function appendFilterParams(qs: URLSearchParams, params?: DashboardFilterParams) {
@@ -565,6 +600,7 @@ function appendFilterParams(qs: URLSearchParams, params?: DashboardFilterParams)
   if (params.channel?.length) qs.set("channel", params.channel.join(","));
   if (params.item?.length) qs.set("item", params.item.join(","));
   if (params.location?.length) qs.set("location", params.location.join(","));
+  if (params.time_grain) qs.set("time_grain", params.time_grain);
 }
 
 // ---------------------------------------------------------------------------

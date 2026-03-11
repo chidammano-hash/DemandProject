@@ -4,12 +4,13 @@
  * Displays portfolio-level PO KPIs, filterable PO line table, and past-due alerts.
  */
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle, Package, Clock, FileText } from "lucide-react";
 import { fetchOpenPOs, fetchOpenPOSummary, fetchPastDuePOs } from "@/api/queries/supply";
 import { queryKeys } from "@/api/queries/core";
 import { EmptyState } from "@/components/EmptyState";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,11 +72,21 @@ function KpiCard({
 // ---------------------------------------------------------------------------
 
 export function OpenPOPanel() {
+  const { filters: globalFilters } = useGlobalFilterContext();
   const [itemFilter, setItemFilter] = useState("");
   const [locFilter, setLocFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("open,partially_received");
   const [pastDueOnly, setPastDueOnly] = useState(false);
   const [page, setPage] = useState(1);
+
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setItemFilter(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setLocFilter(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   const PAGE_SIZE = 50;
 
@@ -217,7 +228,7 @@ export function OpenPOPanel() {
       </div>
 
       {/* PO Table */}
-      {!posQuery.isLoading && pos?.items.length === 0 ? (
+      {!posQuery.isLoading && (pos?.items?.length ?? 0) === 0 ? (
         <EmptyState
           icon={FileText}
           title="No open purchase orders loaded"

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   exceptionKeys,
@@ -61,6 +62,17 @@ export function ExceptionQueuePanel() {
   const [excItem, setExcItem] = useState("");
   const [excLoc, setExcLoc] = useState("");
   const [excOffset, setExcOffset] = useState(0);
+
+  // ── Global filter sync ──────────────────────────────────────────────────
+  const { filters: globalFilters } = useGlobalFilterContext();
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setExcItem(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setExcLoc(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
   const [generateStatus, setGenerateStatus] = useState("");
 
   const excParams: ExceptionListParams = {

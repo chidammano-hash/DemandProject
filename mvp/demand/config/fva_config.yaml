@@ -1,0 +1,13 @@
+# fva_config.yaml — Spec 08-07: Forecast Value Added tracking configuration
+
+measurement_windows:
+  forecast_override: 3    # months
+  ss_change: 6            # months
+  policy_change: 6        # months
+  ai_insight_action: 3    # months
+  sop_approval: 6         # months
+
+financial_impact:
+  carrying_cost_pct: 0.25
+  stockout_cost_per_unit: 50
+  service_level_target: 0.95

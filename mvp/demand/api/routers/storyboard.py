@@ -69,10 +69,15 @@ def list_exceptions(
     loc: str = Query(default="", max_length=100),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    brand: Optional[str] = Query(default=None, max_length=500),
+    category: Optional[str] = Query(default=None, max_length=500),
+    market: Optional[str] = Query(default=None, max_length=500),
 ) -> dict:
     """Paginated list of exceptions, sorted by severity descending.
 
-    Filters: status, exception_type, severity_min, item (partial match), loc (partial match).
+    Filters: status, exception_type, severity_min, item (partial match), loc (partial match),
+    brand (comma-separated brand_name values), category (comma-separated class_ values),
+    market (comma-separated state_id values).
     Cache: 30s.
     """
     set_cache(response, max_age=30)
@@ -99,6 +104,33 @@ def list_exceptions(
     if loc.strip():
         where_parts.append("loc ILIKE %s")
         params.append(f"%{loc.strip()}%")
+
+    if brand:
+        values = [v.strip() for v in brand.split(",") if v.strip()]
+        if values:
+            ph = ",".join(["%s"] * len(values))
+            where_parts.append(
+                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = item_no AND di.brand_name = ANY(ARRAY[{ph}]))"
+            )
+            params.extend(values)
+
+    if category:
+        values = [v.strip() for v in category.split(",") if v.strip()]
+        if values:
+            ph = ",".join(["%s"] * len(values))
+            where_parts.append(
+                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = item_no AND di.class_ = ANY(ARRAY[{ph}]))"
+            )
+            params.extend(values)
+
+    if market:
+        values = [v.strip() for v in market.split(",") if v.strip()]
+        if values:
+            ph = ",".join(["%s"] * len(values))
+            where_parts.append(
+                f"EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = loc AND dl.state_id = ANY(ARRAY[{ph}]))"
+            )
+            params.extend(values)
 
     where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 

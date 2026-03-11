@@ -6,6 +6,7 @@ import {
   STALE,
   type SupplierRow,
 } from "@/api/queries";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
 import { Truck } from "lucide-react";
@@ -13,14 +14,23 @@ import { Truck } from "lucide-react";
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
 export function SupplierPanel() {
+  const { filters } = useGlobalFilterContext();
+  const gf = {
+    brand: filters.brand.length > 0 ? filters.brand.join(",") : undefined,
+    category: filters.category.length > 0 ? filters.category.join(",") : undefined,
+    market: filters.market.length > 0 ? filters.market.join(",") : undefined,
+    item: filters.item.length === 1 ? filters.item[0] : undefined,
+    location: filters.location.length === 1 ? filters.location[0] : undefined,
+  };
+
   const { data: summary } = useQuery({
-    queryKey: supplierKeys.summary(),
-    queryFn: fetchSupplierSummary,
+    queryKey: supplierKeys.summary(gf),
+    queryFn: () => fetchSupplierSummary(gf),
     staleTime: STALE.FIVE_MIN,
   });
   const { data: detail, isLoading } = useQuery({
-    queryKey: supplierKeys.detail({ limit: 10 }),
-    queryFn: () => fetchSupplierDetail({ limit: 10, sort_by: "supplier_reliability_score", sort_dir: "desc" }),
+    queryKey: supplierKeys.detail({ ...gf, limit: 10 }),
+    queryFn: () => fetchSupplierDetail({ ...gf, limit: 10, sort_by: "supplier_reliability_score", sort_dir: "desc" }),
     staleTime: STALE.FIVE_MIN,
   });
 
@@ -49,7 +59,7 @@ export function SupplierPanel() {
           ]}
         />
       )}
-      {detail && detail.rows.length > 0 && (
+      {(detail?.rows?.length ?? 0) > 0 && detail && (
         <div className="overflow-x-auto">
           <p className="text-xs font-medium mb-2">Suppliers by Reliability (highest first)</p>
           <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border mb-2">

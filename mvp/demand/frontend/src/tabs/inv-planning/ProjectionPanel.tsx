@@ -8,7 +8,7 @@
  * With safety stock reference line and key dates table.
  */
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid,
@@ -17,15 +17,26 @@ import {
 import { AlertTriangle, CheckCircle, RefreshCw, TrendingDown } from "lucide-react";
 import { projectionKeys, fetchProjection, fetchProjectionAtRisk, refreshProjection, fetchPlanningDate, queryKeys, STALE } from "@/api/queries";
 import { EmptyState } from "@/components/EmptyState";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 const HORIZONS = [30, 60, 90];
 
 export function ProjectionPanel() {
+  const { filters: globalFilters } = useGlobalFilterContext();
   const [itemNo, setItemNo] = useState("");
   const [loc, setLoc] = useState("");
   const [horizonDays, setHorizonDays] = useState(90);
   const [activeItem, setActiveItem] = useState<{ item_no: string; loc: string } | null>(null);
   const qc = useQueryClient();
+
+  const syncedGlobalRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
+    if (key === syncedGlobalRef.current) return;
+    syncedGlobalRef.current = key;
+    if (globalFilters.item.length === 1) setItemNo(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setLoc(globalFilters.location[0]);
+  }, [globalFilters.item, globalFilters.location]);
 
   // Planning date
   const { data: planningDateInfo } = useQuery({

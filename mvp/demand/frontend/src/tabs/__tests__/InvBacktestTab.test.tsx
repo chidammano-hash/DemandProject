@@ -123,6 +123,7 @@ function makeFilterContext(): GlobalFilterContextValue {
     setFilters: vi.fn(),
     resetFilters: vi.fn(),
     hasActiveFilters: false,
+    planningDate: null,
   };
 }
 

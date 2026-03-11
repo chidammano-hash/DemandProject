@@ -92,8 +92,8 @@ export interface HealthHeatmapPayload {
 }
 
 export const healthKeys = {
-  summary: (filters?: HealthSummaryFilters) => ["health-summary", filters ?? {}] as const,
-  detail:  (params?: HealthDetailParams)   => ["health-detail",  params ?? {}]   as const,
+  summary: (filters?: Record<string, unknown>) => ["health-summary", filters ?? {}] as const,
+  detail:  (params?: Record<string, unknown>) => ["health-detail",  params ?? {}]   as const,
   heatmap: (groupX?: string, groupY?: string) => ["health-heatmap", groupX ?? "abc_vol", groupY ?? "variability_class"] as const,
 };
 

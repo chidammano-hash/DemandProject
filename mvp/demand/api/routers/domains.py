@@ -592,6 +592,61 @@ def list_forecasts_page(
 
 
 # ---------------------------------------------------------------------------
+# DFU count with optional global filters (used by GlobalFilterBar badge)
+# ---------------------------------------------------------------------------
+
+@router.get("/domains/dfu/count")
+def dfu_count(
+    response: FastAPIResponse,
+    brand: str = Query(default="", max_length=500),
+    category: str = Query(default="", max_length=500),
+    item: str = Query(default="", max_length=500),
+    location: str = Query(default="", max_length=500),
+    market: str = Query(default="", max_length=500),
+    channel: str = Query(default="", max_length=500),
+) -> dict:
+    """Count distinct DFUs matching the active global filter combination."""
+    set_cache(response, max_age=60)
+
+    conditions: list[str] = []
+    params: list = []
+
+    if brand:
+        params.append(brand.split(","))
+        conditions.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = d.dmdunit AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        conditions.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = d.dmdunit AND di.class = ANY(%s))")
+    if item:
+        params.append(item.split(","))
+        conditions.append("d.dmdunit = ANY(%s)")
+    if location:
+        params.append(location.split(","))
+        conditions.append("d.loc = ANY(%s)")
+    if market:
+        params.append(market.split(","))
+        conditions.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.location_id = d.loc AND dl.state_id = ANY(%s))")
+    if channel:
+        params.append(channel.split(","))
+        conditions.append(
+            "EXISTS (SELECT 1 FROM dim_customer dc "
+            "JOIN fact_sales_monthly fsm ON fsm.cust_grp = dc.customer_group "
+            "WHERE fsm.dmdunit = d.dmdunit AND fsm.loc = d.loc AND dc.rpt_channel_desc = ANY(%s))"
+        )
+
+    where_sql = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    sql = f"SELECT COUNT(*) FROM dim_dfu d {where_sql}"
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+
+    return {"count": int(row[0]) if row else 0}
+
+
+# ---------------------------------------------------------------------------
 # Distinct values (used by global filter dropdowns)
 # ---------------------------------------------------------------------------
 
@@ -603,6 +658,74 @@ _DISTINCT_ALLOWED: dict[str, list[str]] = {
 }
 
 
+# Mapping: (domain, column) → SQL expression to extract value through dim_dfu joins
+_CASCADING_EXPR: dict[tuple[str, str], tuple[str, str]] = {
+    # (domain, column) → (join_clause, select_expr)
+    ("item", "brand_name"): (
+        "JOIN dim_item di ON di.item_no = d.dmdunit",
+        "di.brand_name",
+    ),
+    ("item", "class"): (
+        "JOIN dim_item di ON di.item_no = d.dmdunit",
+        "di.class",
+    ),
+    ("item", "item_no"): (
+        "",  # dmdunit lives on dim_dfu
+        "d.dmdunit",
+    ),
+    ("location", "location_id"): (
+        "",  # loc lives on dim_dfu
+        "d.loc",
+    ),
+    ("location", "state_id"): (
+        "JOIN dim_location dl ON dl.location_id = d.loc",
+        "dl.state_id",
+    ),
+    ("customer", "rpt_channel_desc"): (
+        "JOIN fact_sales_monthly fsm ON fsm.dmdunit = d.dmdunit AND fsm.loc = d.loc "
+        "JOIN dim_customer dc ON dc.customer_group = fsm.cust_grp",
+        "dc.rpt_channel_desc",
+    ),
+}
+
+
+def _build_cascade_conditions(
+    params: list[Any],
+    *,
+    brand: str = "",
+    category: str = "",
+    item: str = "",
+    location: str = "",
+    market: str = "",
+    channel: str = "",
+) -> list[str]:
+    """Build WHERE conditions for cascading filter narrowing via dim_dfu d."""
+    conds: list[str] = []
+    if brand:
+        params.append(brand.split(","))
+        conds.append("EXISTS (SELECT 1 FROM dim_item _di WHERE _di.item_no = d.dmdunit AND _di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        conds.append("EXISTS (SELECT 1 FROM dim_item _di WHERE _di.item_no = d.dmdunit AND _di.class = ANY(%s))")
+    if item:
+        params.append(item.split(","))
+        conds.append("d.dmdunit = ANY(%s)")
+    if location:
+        params.append(location.split(","))
+        conds.append("d.loc = ANY(%s)")
+    if market:
+        params.append(market.split(","))
+        conds.append("EXISTS (SELECT 1 FROM dim_location _dl WHERE _dl.location_id = d.loc AND _dl.state_id = ANY(%s))")
+    if channel:
+        params.append(channel.split(","))
+        conds.append(
+            "EXISTS (SELECT 1 FROM dim_customer _dc "
+            "JOIN fact_sales_monthly _fsm ON _fsm.cust_grp = _dc.customer_group "
+            "WHERE _fsm.dmdunit = d.dmdunit AND _fsm.loc = d.loc AND _dc.rpt_channel_desc = ANY(%s))"
+        )
+    return conds
+
+
 @router.get("/domains/{domain}/distinct")
 def domain_distinct(
     domain: str,
@@ -610,23 +733,54 @@ def domain_distinct(
     column: str = Query(..., min_length=1, max_length=120),
     limit: int = Query(default=100, ge=1, le=500),
     search: str = Query(default="", max_length=120),
+    # Cascading filter params — narrow results by other active filters
+    brand: str = Query(default="", max_length=500),
+    category: str = Query(default="", max_length=500),
+    item: str = Query(default="", max_length=500),
+    location: str = Query(default="", max_length=500),
+    market: str = Query(default="", max_length=500),
+    channel: str = Query(default="", max_length=500),
 ):
-    """Distinct values for a column -- used by global filter dropdowns."""
-    set_cache(response, max_age=300)
+    """Distinct values for a column -- used by global filter dropdowns.
+
+    When cascading filter params are provided, results are narrowed to only
+    values that co-exist with the active filter selection (via dim_dfu joins).
+    """
+    set_cache(response, max_age=120)
     spec = get_spec_or_404(domain)
     allowed = _DISTINCT_ALLOWED.get(spec.name, [])
     sql_col = to_sql_col(spec, column)
     if sql_col not in allowed:
         raise HTTPException(400, f"Column '{column}' not allowed for distinct on domain '{domain}'")
 
-    where = f"WHERE {sql_col} IS NOT NULL"
-    params: list[Any] = []
-    if search.strip():
-        where += f" AND {sql_col}::text ILIKE %s"
-        params.append(f"{search.strip()}%")
+    has_cascade = bool(brand or category or item or location or market or channel)
+    cascade_key = (spec.name, sql_col)
 
-    sql = f"SELECT DISTINCT {sql_col} FROM {spec.table} {where} ORDER BY {sql_col} LIMIT %s"
-    params.append(limit)
+    # If cascading filters are active AND we have a mapping for this column,
+    # query through dim_dfu to narrow results.
+    if has_cascade and cascade_key in _CASCADING_EXPR:
+        join_clause, select_expr = _CASCADING_EXPR[cascade_key]
+        params: list[Any] = []
+        conds = [f"{select_expr} IS NOT NULL"]
+        conds.extend(_build_cascade_conditions(
+            params, brand=brand, category=category, item=item,
+            location=location, market=market, channel=channel,
+        ))
+        if search.strip():
+            conds.append(f"{select_expr}::text ILIKE %s")
+            params.append(f"{search.strip()}%")
+        where_sql = "WHERE " + " AND ".join(conds)
+        sql = f"SELECT DISTINCT {select_expr} FROM dim_dfu d {join_clause} {where_sql} ORDER BY {select_expr} LIMIT %s"
+        params.append(limit)
+    else:
+        # Original non-cascading path
+        params = []
+        where = f"WHERE {sql_col} IS NOT NULL"
+        if search.strip():
+            where += f" AND {sql_col}::text ILIKE %s"
+            params.append(f"{search.strip()}%")
+        sql = f"SELECT DISTINCT {sql_col} FROM {spec.table} {where} ORDER BY {sql_col} LIMIT %s"
+        params.append(limit)
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)

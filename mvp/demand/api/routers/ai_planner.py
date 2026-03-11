@@ -143,6 +143,10 @@ async def get_insights(
     insight_type: Optional[str] = Query(None),
     item_no: Optional[str] = Query(None),
     loc: Optional[str] = Query(None),
+    brand: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    market: Optional[str] = Query(None),
+    channel: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
@@ -168,6 +172,28 @@ async def get_insights(
     if loc:
         conditions.append("loc = %s")
         params.append(loc)
+    if brand:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = ai.item_no AND di.brand_name = ANY(%s))"
+        )
+        params.append(brand.split(","))
+    if category:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = ai.item_no AND di.class = ANY(%s))"
+        )
+        params.append(category.split(","))
+    if market:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = ai.loc AND dl.market = ANY(%s))"
+        )
+        params.append(market.split(","))
+    if channel:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM dim_customer dc "
+            "JOIN fact_sales_monthly fsm ON fsm.cust_grp = dc.customer_group "
+            "WHERE fsm.dmdunit = ai.item_no AND fsm.loc = ai.loc AND dc.channel = ANY(%s))"
+        )
+        params.append(channel.split(","))
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     offset = (page - 1) * page_size

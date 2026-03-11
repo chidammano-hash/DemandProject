@@ -222,6 +222,35 @@ def _detect_model_framework(model, model_id: str) -> str:
     return "xgboost"
 
 
+def _extract_model_feature_names(model, model_id: str) -> list[str] | None:
+    """Extract the actual feature names the model was trained on.
+
+    Returns None if the framework doesn't expose feature names or if the
+    returned value is not a valid list of strings.
+    """
+    framework = _detect_model_framework(model, model_id)
+    try:
+        names = None
+        if framework == "catboost":
+            names = getattr(model, "feature_names_", None)
+        elif framework == "lgbm":
+            names = getattr(model, "feature_name_", None)
+            if names is None and hasattr(model, "booster_"):
+                booster = getattr(model, "booster_", None)
+                if booster is not None and hasattr(booster, "feature_name"):
+                    names = booster.feature_name()
+        else:
+            # XGBoost: get_booster().feature_names
+            booster = model.get_booster() if hasattr(model, "get_booster") else model
+            names = getattr(booster, "feature_names", None)
+        # Validate: must be a real list of strings (not a MagicMock or other proxy)
+        if names is not None and isinstance(names, (list, tuple)) and len(names) > 0 and isinstance(names[0], str):
+            return list(names)
+        return None
+    except Exception:
+        return None
+
+
 def _compute_shap_full(model, X: pd.DataFrame, model_id: str, feature_cols: list[str]) -> tuple[np.ndarray, np.ndarray]:
     """Compute SIGNED SHAP values + per-row base values.
 
@@ -344,6 +373,17 @@ async def shap_dfu(
         feature_cols: list[str] = artifact["feature_cols"]
         # Per-cluster models exclude ml_cluster from features (mirrors train_fn)
         effective_feature_cols = [c for c in feature_cols if c != "ml_cluster"]
+
+        # If SHAP feature selection (Feature 42) was active, the model was retrained
+        # on a subset of features but the pkl's feature_cols may still list the full
+        # pre-selection set.  Extract the model's actual trained feature names to avoid
+        # a feature_names mismatch error at SHAP computation time.
+        model_feature_names = _extract_model_feature_names(model, model_id)
+        if model_feature_names is not None:
+            model_feature_set = set(model_feature_names)
+            if model_feature_set != set(effective_feature_cols):
+                # Model was trained on fewer features; use the model's own list
+                effective_feature_cols = [c for c in model_feature_names if c != "ml_cluster"]
 
         # -- Step 4: load historical sales --
         # Filter by dmdgroup to match backtest training data exactly.
@@ -476,6 +516,19 @@ async def shap_dfu(
         row["bpc"] = attrs["bpc"]
         row["item_proof"] = attrs["item_proof"]
         row["case_weight"] = attrs["case_weight"]
+        # Derived features matching common/feature_engineering.py
+        lag1 = row.get("qty_lag_1", 0.0)
+        lag2 = row.get("qty_lag_2", 0.0)
+        row["mom_growth"] = max(-2.0, min(2.0, (lag1 - lag2) / (abs(lag2) + 1.0)))
+        rm3 = row.get("rolling_mean_3m", 0.0)
+        rm6 = row.get("rolling_mean_6m", 0.0)
+        rs3 = row.get("rolling_std_3m", 0.0)
+        row["demand_accel"] = rm3 - rm6
+        row["volatility_ratio"] = rs3 / (abs(rm3) + 1.0)
+        row["is_quarter_end"] = 1 if month_num in (3, 6, 9, 12) else 0
+        row["is_year_end"] = 1 if month_num == 12 else 0
+        import calendar as _cal
+        row["days_in_month"] = float(_cal.monthrange(month_date.year if hasattr(month_date, "year") else 2025, month_num)[1])
         return row
 
     all_rows = []

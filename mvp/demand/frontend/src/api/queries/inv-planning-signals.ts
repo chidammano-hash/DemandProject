@@ -137,9 +137,9 @@ export async function runSimulation(body: {
 // ---------------------------------------------------------------------------
 
 export const investmentKeys = {
-  summary: (planId?: string) => ["investment", "summary", planId] as const,
+  summary: (planId?: string, filters?: Record<string, unknown>) => ["investment", "summary", planId, filters ?? {}] as const,
   detail: (params?: Record<string, unknown>) => ["investment", "detail", params] as const,
-  frontier: (planId?: string) => ["investment", "frontier", planId] as const,
+  frontier: (planId?: string, filters?: Record<string, unknown>) => ["investment", "frontier", planId, filters ?? {}] as const,
 };
 
 export interface InvestmentSummary {
@@ -180,32 +180,48 @@ export interface FrontierPoint {
   marginal_item: string;
 }
 
-export async function fetchInvestmentSummary(planId?: string): Promise<InvestmentSummary> {
-  const p = planId ? `?plan_id=${planId}` : "";
-  const res = await fetch(`/inv-planning/investment/summary${p}`);
+export async function fetchInvestmentSummary(
+  paramsOrPlanId?: string | Record<string, unknown>,
+): Promise<InvestmentSummary> {
+  const qs = new URLSearchParams();
+  if (typeof paramsOrPlanId === "string") {
+    if (paramsOrPlanId) qs.set("plan_id", paramsOrPlanId);
+  } else if (paramsOrPlanId) {
+    Object.entries(paramsOrPlanId).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+    });
+  }
+  const q = qs.toString();
+  const res = await fetch(`/inv-planning/investment/summary${q ? `?${q}` : ""}`);
   if (!res.ok) throw new Error("Failed to fetch investment summary");
   return res.json();
 }
 
-export async function fetchInvestmentDetail(params?: {
-  plan_id?: string;
-  abc_vol?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<{ total: number; rows: InvestmentRow[] }> {
+export async function fetchInvestmentDetail(params?: Record<string, unknown>): Promise<{ total: number; rows: InvestmentRow[] }> {
   const p = new URLSearchParams();
-  if (params?.plan_id) p.set("plan_id", params.plan_id);
-  if (params?.abc_vol) p.set("abc_vol", params.abc_vol);
-  if (params?.limit !== undefined) p.set("limit", String(params.limit));
-  if (params?.offset !== undefined) p.set("offset", String(params.offset));
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") p.set(k, String(v));
+    });
+  }
   const res = await fetch(`/inv-planning/investment/detail?${p}`);
   if (!res.ok) throw new Error("Failed to fetch investment detail");
   return res.json();
 }
 
-export async function fetchInvestmentFrontier(planId?: string): Promise<FrontierPoint[]> {
-  const p = planId ? `?plan_id=${planId}` : "";
-  const res = await fetch(`/inv-planning/investment/efficient-frontier${p}`);
+export async function fetchInvestmentFrontier(
+  paramsOrPlanId?: string | Record<string, unknown>,
+): Promise<FrontierPoint[]> {
+  const qs = new URLSearchParams();
+  if (typeof paramsOrPlanId === "string") {
+    if (paramsOrPlanId) qs.set("plan_id", paramsOrPlanId);
+  } else if (paramsOrPlanId) {
+    Object.entries(paramsOrPlanId).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+    });
+  }
+  const q = qs.toString();
+  const res = await fetch(`/inv-planning/investment/efficient-frontier${q ? `?${q}` : ""}`);
   if (!res.ok) throw new Error("Failed to fetch investment frontier");
   return res.json();
 }

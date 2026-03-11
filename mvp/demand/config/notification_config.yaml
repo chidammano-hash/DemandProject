@@ -1,0 +1,112 @@
+# notification_config.yaml
+# Notification channel and routing configuration (Spec 08-04)
+
+channels:
+  slack:
+    enabled: true
+    webhook_url: ${SLACK_WEBHOOK_URL}
+    default_channel: "#demand-alerts"
+    username: "Demand Studio"
+    icon_emoji: ":bar_chart:"
+
+  teams:
+    enabled: false
+    webhook_url: ${TEAMS_WEBHOOK_URL}
+
+  email:
+    enabled: false
+    smtp_host: ${SMTP_HOST:-localhost}
+    smtp_port: ${SMTP_PORT:-587}
+    smtp_user: ${SMTP_USER}
+    smtp_password: ${SMTP_PASSWORD}
+    from_address: ${SMTP_FROM:-noreply@demandstudio.local}
+    use_tls: true
+
+  pagerduty:
+    enabled: false
+    routing_key: ${PAGERDUTY_ROUTING_KEY}
+    severity_map:
+      critical: critical
+      warning: warning
+      info: info
+
+# Routing rules: which event types + severities go to which channels
+routing_rules:
+  # AI planner insights
+  - event_type: ai_insight
+    severity: [critical]
+    channels: [slack, pagerduty]
+  - event_type: ai_insight
+    severity: [warning]
+    channels: [slack]
+  - event_type: ai_insight
+    severity: [info]
+    channels: [email]
+
+  # Storyboard exceptions
+  - event_type: storyboard_exception
+    severity: [critical]
+    channels: [slack, pagerduty]
+  - event_type: storyboard_exception
+    severity: [warning, info]
+    channels: [slack]
+
+  # Data quality failures
+  - event_type: dq_check_fail
+    severity: [critical]
+    channels: [slack, pagerduty, email]
+  - event_type: dq_check_fail
+    severity: [warning]
+    channels: [slack]
+
+  # Job failures
+  - event_type: job_failed
+    severity: [critical, warning]
+    channels: [slack]
+  - event_type: job_completed
+    severity: [info]
+    channels: [email]
+
+  # Inventory alerts
+  - event_type: stockout_alert
+    severity: [critical]
+    channels: [slack, pagerduty]
+  - event_type: stockout_alert
+    severity: [warning]
+    channels: [slack]
+  - event_type: excess_inventory
+    severity: [warning]
+    channels: [email]
+
+  # Forecast accuracy degradation
+  - event_type: accuracy_degradation
+    severity: [critical, warning]
+    channels: [slack]
+
+  # Control tower alerts
+  - event_type: control_tower_alert
+    severity: [critical]
+    channels: [slack, pagerduty]
+  - event_type: control_tower_alert
+    severity: [warning]
+    channels: [slack]
+
+  # S&OP cycle events
+  - event_type: sop_stage_change
+    severity: [info]
+    channels: [email, slack]
+  - event_type: sop_approval_needed
+    severity: [warning]
+    channels: [slack, email]
+
+  # System events
+  - event_type: system_error
+    severity: [critical]
+    channels: [pagerduty, slack]
+
+# Rate limiting
+rate_limits:
+  max_per_minute_per_channel: 10       # Max notifications per channel per minute
+  cooldown_seconds: 300                # 5 min dedup window for same event+severity+recipient
+  burst_limit: 5                       # Max burst before throttling kicks in
+  backoff_multiplier: 2.0              # Exponential backoff on repeated throttling

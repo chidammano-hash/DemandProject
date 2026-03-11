@@ -1,7 +1,7 @@
 """Inventory Planning — IPfeature2: Lead Time Variability endpoints."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
@@ -17,6 +17,9 @@ router = APIRouter(tags=["inv-planning"])
 def lt_summary(
     response: FastAPIResponse,
     abc_vol: str = Query(default="", max_length=10),
+    brand: Optional[str] = Query(default=None, max_length=120),
+    category: Optional[str] = Query(default=None, max_length=120),
+    market: Optional[str] = Query(default=None, max_length=120),
 ) -> dict:
     """Portfolio-level lead time variability summary.
 
@@ -28,9 +31,21 @@ def lt_summary(
     where_parts: list[str] = ["p.lt_variability_class IS NOT NULL"]
     params: list[Any] = []
 
+    needs_dfu_join = abc_vol.strip() != ""
     if abc_vol.strip():
         where_parts.append("d.abc_vol = %s")
         params.append(abc_vol.strip().upper())
+    if brand:
+        params.append(brand.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = p.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = p.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = p.loc AND dl.state_id = ANY(%s))")
+
+    if needs_dfu_join:
         from_clause = (
             "dim_item_lead_time_profile p "
             "LEFT JOIN dim_dfu d ON d.dmdunit = p.item_no AND d.loc = p.loc"
@@ -104,6 +119,9 @@ def lt_profile(
     item: str = Query(default="", max_length=120),
     location: str = Query(default="", max_length=120),
     lt_variability_class: str = Query(default="", max_length=20),
+    brand: Optional[str] = Query(default=None, max_length=120),
+    category: Optional[str] = Query(default=None, max_length=120),
+    market: Optional[str] = Query(default=None, max_length=120),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     sort_by: str = Query(default="lt_cv", max_length=40),
@@ -131,10 +149,19 @@ def lt_profile(
     if lt_variability_class.strip():
         where_parts.append("lt_variability_class = %s")
         params.append(lt_variability_class.strip().lower())
+    if brand:
+        params.append(brand.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
-    count_sql = f"SELECT COUNT(*) FROM dim_item_lead_time_profile {where_clause}"
+    count_sql = f"SELECT COUNT(*) FROM dim_item_lead_time_profile t {where_clause}"
     data_sql = f"""
         SELECT
             item_no, loc,
@@ -143,7 +170,7 @@ def lt_profile(
             lt_p25_days, lt_p50_days, lt_p75_days, lt_p95_days,
             observation_count, observation_months,
             lt_variability_class, computed_at
-        FROM dim_item_lead_time_profile
+        FROM dim_item_lead_time_profile t
         {where_clause}
         ORDER BY {order_col} {order_dir} NULLS LAST
         LIMIT %s OFFSET %s

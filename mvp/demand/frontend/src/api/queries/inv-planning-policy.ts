@@ -61,13 +61,20 @@ export interface PolicyAssignResult {
 }
 
 export const policyKeys = {
-  list: () => ["policy-list"] as const,
+  list: (f?: Record<string, unknown>) => ["policy-list", f ?? {}] as const,
   assignments: (params?: Record<string, unknown>) => ["policy-assignments", params ?? {}] as const,
-  compliance: () => ["policy-compliance"] as const,
+  compliance: (f?: Record<string, unknown>) => ["policy-compliance", f ?? {}] as const,
 };
 
-export async function fetchPolicies(): Promise<PolicyListPayload> {
-  return fetchJson("/inv-planning/policies");
+export async function fetchPolicies(
+  params: Record<string, unknown> = {},
+): Promise<PolicyListPayload> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/policies${q ? `?${q}` : ""}`);
 }
 
 export async function createPolicy(body: {
@@ -142,6 +149,13 @@ export async function assignPolicy(body: {
   });
 }
 
-export async function fetchPolicyCompliance(): Promise<PolicyCompliancePayload> {
-  return fetchJson("/inv-planning/policy-assignments/compliance");
+export async function fetchPolicyCompliance(
+  params: Record<string, unknown> = {},
+): Promise<PolicyCompliancePayload> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  });
+  const q = qs.toString();
+  return fetchJson(`/inv-planning/policy-assignments/compliance${q ? `?${q}` : ""}`);
 }

@@ -1,0 +1,35 @@
+# Inventory Rebalancing Configuration
+
+network:
+  default_transfer_lt_days: 3
+  default_cost_per_unit: 0.50
+  default_min_transfer_qty: 10
+  default_batch_size: 1
+
+optimization:
+  solver: "greedy"               # greedy | lp
+  horizon_weeks: 4               # rolling planning horizon
+  time_limit_seconds: 60         # solver wall clock limit
+  objective: "min_cost"          # min_cost | max_service | equalize_dos
+
+triggers:
+  excess_threshold_pct: 1.50     # on_hand / ss_target > 150% = excess
+  shortage_threshold_pct: 0.80   # on_hand / ss_target < 80% = shortage
+  dos_cv_threshold: 0.40         # network DOS CV > 0.40 = imbalanced
+  min_benefit_per_transfer: 5.0  # minimum net benefit ($) to recommend
+
+costs:
+  default_handling_cost: 0.10    # $/unit at source
+  default_freight_cost: 0.30     # $/unit inter-location
+  default_receiving_cost: 0.10   # $/unit at destination
+  stockout_cost_multiplier: 5.0  # revenue multiplier for missed sales
+  carrying_cost_annual_pct: 0.25 # annual holding cost as % of unit value
+
+constraints:
+  frozen_period_days: 7          # no transfers in first N days of approved plan
+  max_source_drawdown_pct: 0.30  # never take more than 30% of source on_hand
+  abc_priority_order: ["A", "B", "C"]  # A-class items prioritised first
+
+scheduling:
+  auto_compute_cron: "0 5 * * 1" # weekly Monday at 5 AM
+  auto_compute_enabled: false

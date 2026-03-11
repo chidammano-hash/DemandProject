@@ -6,6 +6,7 @@
  * NOT a chatbot — a proactive scan-and-triage system for planners.
  */
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   queryKeys,
@@ -828,6 +829,16 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
 // ---------------------------------------------------------------------------
 export default function AIPlannerTab() {
   const qc = useQueryClient();
+  const { filters } = useGlobalFilterContext();
+
+  const globalFilterParams = {
+    brand: filters.brand.length > 0 ? filters.brand.join(",") : undefined,
+    category: filters.category.length > 0 ? filters.category.join(",") : undefined,
+    market: filters.market.length > 0 ? filters.market.join(",") : undefined,
+    channel: filters.channel.length > 0 ? filters.channel.join(",") : undefined,
+    item_no: filters.item.length === 1 ? filters.item[0] : undefined,
+    loc: filters.location.length === 1 ? filters.location[0] : undefined,
+  };
 
   // ── Persistent URL filter state ──────────────────────────────────────────
   // Read initial values from URL params so filters survive page refresh
@@ -886,6 +897,7 @@ export default function AIPlannerTab() {
     ...(severityFilter !== "all" && { severity: severityFilter as InsightSeverity }),
     ...(statusFilter !== "all" && { status: statusFilter as InsightStatus }),
     ...(typeFilter !== "all" && { insight_type: typeFilter as InsightType }),
+    ...globalFilterParams,
     page_size: 50,
   };
 

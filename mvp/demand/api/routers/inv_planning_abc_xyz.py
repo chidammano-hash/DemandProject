@@ -85,6 +85,9 @@ def get_abc_xyz_detail(
     segment: Optional[str] = Query(None, max_length=10),
     item: Optional[str] = Query(None, max_length=120),
     location: Optional[str] = Query(None, max_length=120),
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -109,10 +112,19 @@ def get_abc_xyz_detail(
     if location:
         params.append(f"%{location}%")
         where_clauses.append("loc ILIKE %s")
+    if brand:
+        params.append(brand.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.dmdunit AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.dmdunit AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
-    count_sql = f"SELECT COUNT(*) FROM dim_dfu {where_sql}"
+    count_sql = f"SELECT COUNT(*) FROM dim_dfu t {where_sql}"
     params.append(limit)
     params.append(offset)
     data_sql = f"""
@@ -120,7 +132,7 @@ def get_abc_xyz_detail(
                abc_vol, xyz_class, abc_xyz_segment,
                demand_cv, intermittency_ratio,
                abc_xyz_dos_min, abc_xyz_dos_max, abc_xyz_service_level
-        FROM dim_dfu
+        FROM dim_dfu t
         {where_sql}
         ORDER BY abc_xyz_segment NULLS LAST, dmdunit
         LIMIT %s OFFSET %s

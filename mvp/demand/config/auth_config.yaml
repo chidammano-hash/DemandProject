@@ -1,0 +1,37 @@
+# 08-02: Authentication & RBAC configuration
+
+jwt:
+  algorithm: HS256
+  access_token_expire_minutes: 30
+  refresh_token_expire_days: 7
+
+password_policy:
+  min_length: 8
+
+# Role hierarchy: admin > manager > planner > viewer
+# Each role inherits permissions of all lower roles
+role_permissions:
+  viewer:
+    - "GET"
+  planner:
+    - "GET"
+    - "POST"
+    - "PUT"
+  manager:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+  admin:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "ADMIN"
+
+# Role hierarchy level (higher number = more privileges)
+role_level:
+  viewer: 1
+  planner: 2
+  manager: 3
+  admin: 4

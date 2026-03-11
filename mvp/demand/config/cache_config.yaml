@@ -1,0 +1,87 @@
+# cache_config.yaml
+# API response caching configuration (Spec 08-03)
+
+backend: memory                        # memory or redis
+redis_url: ${REDIS_URL:-redis://localhost:6379/0}
+
+default_ttl_seconds: 120               # 2 minutes
+max_memory_mb: 256                     # in-memory cache size cap
+
+# Per-group TTL overrides (seconds)
+group_ttls:
+  dashboard: 60
+  accuracy: 300
+  inv-planning: 120
+  control-tower: 60
+  domains: 180
+  inventory: 120
+  ai-planner: 180
+  storyboard: 120
+  fill-rate: 120
+  clustering: 300
+  forecast: 300
+  jobs: 30
+
+# Invalidation rules: mutation endpoints → cache groups to clear
+invalidation_rules:
+  # Inventory planning mutations
+  "POST /inv-planning/exceptions/generate":
+    - "inv-planning"
+    - "control-tower"
+  "POST /inv-planning/exceptions/acknowledge":
+    - "inv-planning"
+  "PUT /inv-planning/policy/assign":
+    - "inv-planning"
+  "POST /inv-planning/policy":
+    - "inv-planning"
+  "PUT /inv-planning/policy/*":
+    - "inv-planning"
+
+  # AI planner mutations
+  "POST /ai-planner/portfolio-scan":
+    - "ai-planner"
+  "PUT /ai-planner/insights/*/status":
+    - "ai-planner"
+  "POST /ai-planner/analyze":
+    - "ai-planner"
+
+  # Storyboard mutations
+  "POST /storyboard/generate":
+    - "storyboard"
+    - "control-tower"
+  "PUT /storyboard/*/acknowledge":
+    - "storyboard"
+
+  # Clustering mutations
+  "POST /clustering/scenario":
+    - "clustering"
+  "POST /clustering/scenario/*/promote":
+    - "clustering"
+    - "accuracy"
+    - "dashboard"
+
+  # Competition / champion
+  "POST /competition/run":
+    - "accuracy"
+    - "forecast"
+    - "dashboard"
+  "PUT /competition/config":
+    - "accuracy"
+
+  # Job mutations
+  "POST /jobs/*":
+    - "jobs"
+  "DELETE /jobs/*":
+    - "jobs"
+
+  # Domain data loads
+  "POST /domains/*/reload":
+    - "domains"
+    - "dashboard"
+    - "accuracy"
+    - "inventory"
+
+  # Forecast production
+  "POST /forecast/production/generate":
+    - "forecast"
+    - "inv-planning"

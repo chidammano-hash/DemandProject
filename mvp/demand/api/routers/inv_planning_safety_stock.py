@@ -30,6 +30,9 @@ def get_ss_summary(
     abc_vol: Optional[str] = Query(None, max_length=10),
     cluster_assignment: Optional[str] = Query(None, max_length=120),
     policy_version: str = Query("v1", max_length=20),
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
 ) -> dict:
     """Portfolio-level safety stock summary with by-class breakdown and top gaps.
 
@@ -52,6 +55,15 @@ def get_ss_summary(
     if cluster_assignment:
         where_parts.append("d.cluster_assignment ILIKE %s")
         params.append(f"%{cluster_assignment.strip()}%")
+    if brand:
+        params.append(brand.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = s.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = s.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = s.loc AND dl.state_id = ANY(%s))")
 
     where_sql = "WHERE " + " AND ".join(where_parts)
 
@@ -164,6 +176,9 @@ def get_ss_detail(
     is_below_ss: Optional[bool] = Query(None),
     cluster_assignment: Optional[str] = Query(None, max_length=120),
     policy_version: str = Query("v1", max_length=20),
+    brand: Optional[str] = Query(None, max_length=120),
+    category: Optional[str] = Query(None, max_length=120),
+    market: Optional[str] = Query(None, max_length=120),
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     sort_by: str = Query("ss_gap", max_length=40),
@@ -200,6 +215,15 @@ def get_ss_detail(
     if cluster_assignment:
         where_parts.append("d.cluster_assignment ILIKE %s")
         params.append(f"%{cluster_assignment.strip()}%")
+    if brand:
+        params.append(brand.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = s.item_no AND di.brand_name = ANY(%s))")
+    if category:
+        params.append(category.split(","))
+        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = s.item_no AND di.class_ = ANY(%s))')
+    if market:
+        params.append(market.split(","))
+        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = s.loc AND dl.state_id = ANY(%s))")
 
     where_sql = "WHERE " + " AND ".join(where_parts)
 

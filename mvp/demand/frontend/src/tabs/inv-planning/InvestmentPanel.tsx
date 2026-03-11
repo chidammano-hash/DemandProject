@@ -19,6 +19,7 @@ import {
   STALE,
   type InvestmentRow,
 } from "@/api/queries";
+import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
@@ -31,21 +32,30 @@ export function InvestmentPanel() {
   const [invOffset, setInvOffset] = useState(0);
   const [runStatus, setRunStatus] = useState("");
 
+  const { filters } = useGlobalFilterContext();
+  const gf = {
+    brand: filters.brand.length > 0 ? filters.brand.join(",") : undefined,
+    category: filters.category.length > 0 ? filters.category.join(",") : undefined,
+    market: filters.market.length > 0 ? filters.market.join(",") : undefined,
+    item: filters.item.length === 1 ? filters.item[0] : undefined,
+    location: filters.location.length === 1 ? filters.location[0] : undefined,
+  };
+
   const { data: summary, isLoading: summaryLoading } = useQuery({
-    queryKey: investmentKeys.summary(),
-    queryFn: () => fetchInvestmentSummary(),
+    queryKey: investmentKeys.summary(undefined, gf),
+    queryFn: () => fetchInvestmentSummary(gf),
     staleTime: STALE.TEN_MIN,
   });
 
   const { data: detail, isLoading: detailLoading } = useQuery({
-    queryKey: investmentKeys.detail({ limit: 20, offset: invOffset }),
-    queryFn: () => fetchInvestmentDetail({ limit: 20, offset: invOffset }),
+    queryKey: investmentKeys.detail({ ...gf, limit: 20, offset: invOffset }),
+    queryFn: () => fetchInvestmentDetail({ ...gf, limit: 20, offset: invOffset }),
     staleTime: STALE.TEN_MIN,
   });
 
   const { data: frontier } = useQuery({
-    queryKey: investmentKeys.frontier(),
-    queryFn: () => fetchInvestmentFrontier(),
+    queryKey: investmentKeys.frontier(undefined, gf),
+    queryFn: () => fetchInvestmentFrontier(gf),
     staleTime: STALE.TEN_MIN,
   });
 
@@ -53,9 +63,7 @@ export function InvestmentPanel() {
     mutationFn: () => runInvestmentPlan(),
     onSuccess: () => {
       setRunStatus("Plan computed successfully.");
-      queryClient.invalidateQueries({ queryKey: investmentKeys.summary() });
-      queryClient.invalidateQueries({ queryKey: investmentKeys.detail() });
-      queryClient.invalidateQueries({ queryKey: investmentKeys.frontier() });
+      queryClient.invalidateQueries({ queryKey: ["investment"] });
     },
     onError: () => setRunStatus("Failed to compute plan. Check auth settings."),
   });
