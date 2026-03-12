@@ -86,7 +86,7 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 6h. API Governance:
    - Rate limiting via `common/rate_limiter.py` (token bucket algorithm)
    - API versioning support (v1/v2 path prefixes)
-   - Router: `api/routers/api_governance.py` (rate limit status, usage metrics)
+   - Rate limiting logic in `common/rate_limiter.py`; no dedicated router (governance endpoints planned, not yet mounted)
 7. Multi-model forecasting:
    - `model_id` column on forecast fact table
    - Per-model analytics and model selector in UI
@@ -237,10 +237,10 @@ Performance impact: aggregate queries (cluster-level, supplier-level) drop from 
 
 ## API Router Architecture
 
-`api/main.py` is a ~65-line shell that only creates the app, adds middleware, and mounts all 40 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/`. `domains.py` is mounted last (catch-all `{domain}` path parameter).
+`api/main.py` is a ~149-line shell that only creates the app, adds middleware, and mounts all 53 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/`. `domains.py` is mounted last (catch-all `{domain}` path parameter). Note: `inv_planning.py` is a thin compatibility shim (not directly mounted); `api_governance.py` does not exist as a router file (governance logic is in `common/rate_limiter.py`).
 
-**41 active router modules** (as of 08-01 through 08-10 + IPfeature-rebalancing):
-accuracy, ai_planner, analysis, api_governance, auth_router, chat, clusters, collaboration, competition, control_tower, dashboard, data_quality, domains, external_signals, fill_rate, fva, intel, inv_backtest, inventory, inv_planning (shim), inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, jobs, notifications, reports, shap, storyboard, users, webhooks
+**53 mounted routers** (as of 08-01 through 08-10 + all evolution features):
+accuracy, ai_planner, analysis, auth_router, bias_corrections, blended_forecast, chat, clusters, collaboration, competition, consensus_plan, control_tower, dashboard, data_quality, domains, echelon_planning, events, external_signals, fill_rate, financial_plan, fva, intel, inv_backtest, inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_projection, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, inventory, jobs, lead_time_learning, notifications, production_forecast, reports, service_level, shap, sop, storyboard, supply, supply_scenarios, users, webhooks
 
 **26 Vite proxy path prefixes** in `frontend/vite.config.ts`:
 `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/auth`, `/users`, `/notifications`, `/collaboration`, `/external-signals`, `/fva`, `/reports`, `/api`, `/webhooks`
@@ -596,7 +596,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - API versioning: `v1` prefix on all existing routes, `v2` available for breaking changes
    - Usage metrics: per-endpoint call counts, error rates, latency histograms
    - Config: `config/api_governance_config.yaml` (rate limits by role, versioning policy, deprecation schedule)
-   - Router: `api/routers/api_governance.py` — `GET /api/rate-limit-status` (current usage vs. limits), `GET /api/usage-metrics` (aggregate API usage)
+   - Rate limiting logic in `common/rate_limiter.py`; dedicated governance router planned but not yet implemented
    - Middleware: rate limit enforcement returns 429 with `Retry-After` header; `X-RateLimit-*` headers on all responses
 
 47. Webhooks (08-10):
@@ -794,13 +794,13 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | `queries/control-tower.ts` | Control Tower query keys + fetch functions (IPfeature15) |
 | `queries/fill-rate.ts` | Fill rate query keys + fetch functions (IPfeature8) |
 | `queries/storyboard.ts` | Storyboard exception query keys + fetch/mutate functions (Feature 40) |
-| `queries/data-quality.ts` | Data quality dashboard + rule results query keys + fetch functions (08-01) |
-| `queries/notifications.ts` | Notification channels + preferences + history query keys + fetch/mutate functions (08-04) |
-| `queries/collaboration.ts` | Collaboration threads + comments + shared views query keys + fetch/mutate functions (08-05) |
-| `queries/external-signals.ts` | External signal sources + data + decomposition query keys + fetch functions (08-06) |
-| `queries/fva.ts` | FVA waterfall + interventions + ROI query keys + fetch/mutate functions (08-07) |
-| `queries/reports.ts` | Report templates + schedules + deliveries query keys + fetch/mutate functions (08-08) |
-| `queries/webhooks.ts` | Webhook registrations + deliveries query keys + fetch/mutate functions (08-10) |
+| `queries/platform.ts` | Platform query keys + fetch functions: data quality, notifications, collaboration, FVA, reports, webhooks (08-01 through 08-10) |
+| `queries/evolution.ts` | Evolution-to-operations query keys + fetch functions (F3.1–F4.4: bias, blended, echelon, financial, events, scenarios, S&OP) |
+| `queries/supply.ts` | Supply chain query keys + fetch functions |
+| `queries/filter-meta.ts` | Filter metadata query keys + fetch functions |
+| `queries/inv-planning-projection.ts` | Inventory projection query keys + fetch functions (F1.2) |
+| `queries/inv-planning-rebalancing.ts` | Inventory rebalancing query keys + fetch functions |
+| `queries/inv-planning-replenishment.ts` | Replenishment plan query keys + fetch functions |
 
 ## How to add next dataset
 1. Add `<DATASET>_SPEC` in `common/domain_specs.py`

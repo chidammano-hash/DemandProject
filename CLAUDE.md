@@ -78,9 +78,9 @@
 | `mvp/demand/sql/010_create_backtest_lag_archive.sql` | DDL for backtest all-lags archive table |
 | `mvp/demand/sql/008_perf_indexes_and_agg.sql` | Performance indexes (B-tree, GIN trigram) + materialized views |
 | `mvp/demand/frontend/src/api/queries.ts` | Thin re-export barrel: `export * from "./queries/index"` — all domain query modules in `queries/` subfolder |
-| `mvp/demand/frontend/src/api/queries/` | Domain query modules: `core.ts`, `inv-planning.ts`, `ai-planner.ts`, `control-tower.ts`, `fill-rate.ts`, `storyboard.ts`, `index.ts` |
-| `mvp/demand/frontend/src/tabs/` | Extracted tab components (DashboardTab, ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, InvBacktestTab, ChatPanel, JobsTab, InvPlanningTab, ControlTowerTab) |
-| `mvp/demand/frontend/src/tabs/inv-planning/` | Inventory Planning panel components: ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel |
+| `mvp/demand/frontend/src/api/queries/` | Domain query modules: `core.ts`, `inv-planning.ts`, `ai-planner.ts`, `control-tower.ts`, `fill-rate.ts`, `storyboard.ts`, `platform.ts`, `evolution.ts`, `supply.ts`, `filter-meta.ts`, `production-forecast.ts`, `index.ts` |
+| `mvp/demand/frontend/src/tabs/` | Extracted tab components (DashboardTab, ExplorerTab, AccuracyTab, DfuAnalysisTab, ClustersTab, MarketIntelTab, InvBacktestTab, ChatPanel, JobsTab, InvPlanningTab, ControlTowerTab, AIPlannerTab, StoryboardTab, SopTab, DataQualityTab, FVATab, InventoryTab) |
+| `mvp/demand/frontend/src/tabs/inv-planning/` | Inventory Planning panel components: 28 panels including ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel, RebalancingPanel, DemandForecastPanel, BlendedDemandPanel, EchelonPanel, FinancialPlanPanel, EventCalendarPanel, ScenarioPlanningPanel, ReplenishmentPlanPanel, DemandPlanPanel, OverrideQueuePanel, ProcurementPanel, OpenPOPanel, ProjectionPanel, PlannedOrdersPanel |
 | `mvp/demand/frontend/src/hooks/useTheme.ts` | Color mode management (light/dark) for the General theme |
 | `mvp/demand/frontend/src/hooks/useUrlState.ts` | URL state synchronization (13 tabs, overview default) |
 | `mvp/demand/frontend/src/hooks/useKeyboardShortcuts.ts` | Keyboard shortcuts handler (1-9 tabs, sidebar, dark mode) |
@@ -97,7 +97,7 @@
 | `mvp/demand/frontend/src/context/JobNotificationContext.tsx` | Cross-tab job notification context (Feature 39) |
 | `mvp/demand/frontend/src/types/theme.ts` | TypeScript types for theme, sidebar, filters, dashboard |
 | `mvp/demand/frontend/src/constants/themes/general.ts` | Single professional theme config (Demand Studio, light + dark) |
-| `mvp/demand/frontend/src/components/AppSidebar.tsx` | Collapsible sidebar navigation (14 items, 5 sections) |
+| `mvp/demand/frontend/src/components/AppSidebar.tsx` | Collapsible sidebar navigation (17 items, 5 sections) |
 | `mvp/demand/frontend/src/components/ThemeSelector.tsx` | Light/dark mode toggle (sidebar footer) |
 | `mvp/demand/frontend/src/components/GlobalFilterBar.tsx` | Cross-tab filter bar (brand, category, item, location, market, channel) |
 | `mvp/demand/frontend/src/components/WidgetGrid.tsx` | CSS Grid dashboard layout (WidgetGrid + WidgetCard) |
@@ -125,7 +125,7 @@
 | `docs/design-specs/` | Feature specs organized in 5 functional subfolders: 01-platform-infrastructure/, 02-forecasting-models/, 03-clustering-seasonality/, 04-inventory-planning/, 05-ui-automation/ |
 | `mvp/demand/api/core.py` | Shared API utilities: connection pool, OpenAI client, SQL helpers used by router modules |
 | `mvp/demand/api/auth.py` | Optional API key auth (`require_api_key` dependency; disabled when `API_KEY` env var unset) |
-| `mvp/demand/api/routers/` | Modular FastAPI router modules: 31 active routers (all with OpenAPI tags; see inv_planning_* split below) |
+| `mvp/demand/api/routers/` | Modular FastAPI router modules: 53 active routers (all with OpenAPI tags; see inv_planning_* split below) |
 | `mvp/demand/api/routers/inv_planning.py` | Thin compatibility shim — re-exports `router` from domain routers for backward compat |
 | `mvp/demand/api/routers/inv_planning_eoq.py` | EOQ endpoints: summary, detail, sensitivity (IPfeature4) |
 | `mvp/demand/api/routers/inv_planning_policy.py` | Policy CRUD + assignment + compliance endpoints (IPfeature5) |
@@ -235,6 +235,100 @@
 | `mvp/demand/config/rebalancing_config.yaml` | Rebalancing config: solver, thresholds, costs, constraints, scheduling |
 | `mvp/demand/scripts/compute_rebalancing.py` | Rebalancing computation: detect imbalances, build candidates, greedy/LP solvers, financial analysis |
 | `mvp/demand/api/routers/inv_planning_rebalancing.py` | Inventory rebalancing endpoints: KPIs, network, imbalances, plans, transfers, approval workflow (12 endpoints) |
+| `mvp/demand/api/routers/accuracy.py` | Accuracy analytics endpoints |
+| `mvp/demand/api/routers/analysis.py` | DFU analysis endpoints |
+| `mvp/demand/api/routers/bias_corrections.py` | Bias correction endpoints (F1.2/F3.1) |
+| `mvp/demand/api/routers/blended_forecast.py` | Blended demand forecast endpoints (F3.4) |
+| `mvp/demand/api/routers/clusters.py` | Clustering scenario endpoints |
+| `mvp/demand/api/routers/collaboration.py` | Collaboration threads + annotations endpoints (08-05) |
+| `mvp/demand/api/routers/competition.py` | Champion model competition endpoints |
+| `mvp/demand/api/routers/consensus_plan.py` | Consensus plan endpoints (F4.2) |
+| `mvp/demand/api/routers/data_quality.py` | Data quality dashboard + rule endpoints (08-01) |
+| `mvp/demand/api/routers/domains.py` | Generic domain CRUD — catch-all `{domain}` path param (mounted last) |
+| `mvp/demand/api/routers/echelon_planning.py` | Multi-echelon safety stock endpoints (F3.5) |
+| `mvp/demand/api/routers/events.py` | Event calendar endpoints (F4.3) |
+| `mvp/demand/api/routers/external_signals.py` | External demand signal endpoints (08-06) |
+| `mvp/demand/api/routers/financial_plan.py` | Financial planning endpoints (F4.1) |
+| `mvp/demand/api/routers/fva.py` | FVA tracking + ROI endpoints (08-07) |
+| `mvp/demand/api/routers/inv_planning_projection.py` | Inventory projection endpoints (F1.2) |
+| `mvp/demand/api/routers/inv_planning_replenishment.py` | Replenishment plan endpoints |
+| `mvp/demand/api/routers/lead_time_learning.py` | Lead time learning endpoints |
+| `mvp/demand/api/routers/notifications.py` | Notification channel + preference endpoints (08-04) |
+| `mvp/demand/api/routers/reports.py` | Report generation + scheduling endpoints (08-08) |
+| `mvp/demand/api/routers/service_level.py` | Service level actuals endpoints |
+| `mvp/demand/api/routers/sop.py` | S&OP cycle endpoints (F4.2) |
+| `mvp/demand/api/routers/supply.py` | Supply chain endpoints |
+| `mvp/demand/api/routers/supply_scenarios.py` | Supply chain scenario endpoints (F4.4) |
+| `mvp/demand/api/routers/auth_router.py` | RBAC authentication endpoints (08-02) |
+| `mvp/demand/api/routers/users.py` | User management endpoints (08-02) |
+| `mvp/demand/api/routers/webhooks.py` | Webhook registration + delivery endpoints (08-10) |
+| `mvp/demand/common/cache.py` | Caching utilities (08-03) |
+| `mvp/demand/common/dq_engine.py` | Data quality engine: rule evaluation, scoring (08-01) |
+| `mvp/demand/common/forecast_ci.py` | Forecast confidence interval computation |
+| `mvp/demand/common/notification_engine.py` | Notification dispatch engine (08-04) |
+| `mvp/demand/common/query_tracker.py` | API query tracking + usage metrics |
+| `mvp/demand/common/rate_limiter.py` | Token bucket rate limiter (08-09) |
+| `mvp/demand/common/webhook_dispatcher.py` | Webhook event dispatcher (08-10) |
+| `mvp/demand/scripts/compute_bias_corrections.py` | Bias correction computation (F1.2/F3.1) |
+| `mvp/demand/scripts/compute_blended_forecast.py` | Alpha-weighted blended demand forecast (F3.4) |
+| `mvp/demand/scripts/compute_echelon_targets.py` | Multi-echelon safety stock computation (F3.5) |
+| `mvp/demand/scripts/compute_financial_plan.py` | Financial plan computation (F4.1) |
+| `mvp/demand/scripts/compute_inventory_projection.py` | Forward inventory projection (F1.2) |
+| `mvp/demand/scripts/compute_replenishment_plan.py` | Replenishment plan computation |
+| `mvp/demand/scripts/compute_service_level_actuals.py` | Service level actuals computation |
+| `mvp/demand/scripts/generate_consensus_plan.py` | Consensus plan generation (F4.2) |
+| `mvp/demand/scripts/generate_planned_orders.py` | Planned order generation |
+| `mvp/demand/scripts/generate_quantile_forecasts.py` | Quantile forecast generation |
+| `mvp/demand/scripts/load_open_pos.py` | Open PO data loading |
+| `mvp/demand/scripts/apply_event_adjustments.py` | Event-driven forecast adjustments (F4.3) |
+| `mvp/demand/scripts/release_planned_orders.py` | Planned order release to procurement |
+| `mvp/demand/scripts/run_sop_cycle.py` | S&OP cycle execution (F4.2) |
+| `mvp/demand/scripts/run_supply_chain_scenario.py` | Supply chain scenario simulation (F4.4) |
+| `mvp/demand/scripts/update_lead_time_actuals.py` | Lead time actuals update |
+| `mvp/demand/config/bias_correction_config.yaml` | Bias correction thresholds and parameters (F1.2/F3.1) |
+| `mvp/demand/config/consensus_config.yaml` | Consensus plan config (F4.2) |
+| `mvp/demand/config/data_quality_config.yaml` | Data quality rules and thresholds (08-01) |
+| `mvp/demand/config/echelon_config.yaml` | Multi-echelon SS config (F3.5) |
+| `mvp/demand/config/event_planning_config.yaml` | Event calendar config (F4.3) |
+| `mvp/demand/config/financial_plan_config.yaml` | Financial planning config (F4.1) |
+| `mvp/demand/config/fva_config.yaml` | FVA tracking config (08-07) |
+| `mvp/demand/config/notification_config.yaml` | Notification channel config (08-04) |
+| `mvp/demand/config/projection_config.yaml` | Inventory projection config (F1.2) |
+| `mvp/demand/config/reporting_config.yaml` | Reporting config (08-08) |
+| `mvp/demand/config/sop_config.yaml` | S&OP cycle config (F4.2) |
+| `mvp/demand/config/supply_scenario_config.yaml` | Supply chain scenario config (F4.4) |
+| `mvp/demand/config/auth_config.yaml` | RBAC authentication config (08-02) |
+| `mvp/demand/config/cache_config.yaml` | Caching config (08-03) |
+| `mvp/demand/config/api_governance_config.yaml` | API governance config: rate limits, versioning (08-09) |
+| `mvp/demand/frontend/src/tabs/DataQualityTab.tsx` | Data quality dashboard tab (08-01) |
+| `mvp/demand/frontend/src/tabs/FVATab.tsx` | FVA & ROI tracking tab (08-07) |
+| `mvp/demand/frontend/src/tabs/SopTab.tsx` | S&OP cycle stage machine tab (F4.2) |
+| `mvp/demand/frontend/src/tabs/inv-planning/BlendedDemandPanel.tsx` | Blended demand panel (F3.4) |
+| `mvp/demand/frontend/src/tabs/inv-planning/EchelonPanel.tsx` | Multi-echelon SS panel (F3.5) |
+| `mvp/demand/frontend/src/tabs/inv-planning/FinancialPlanPanel.tsx` | Financial plan panel (F4.1) |
+| `mvp/demand/frontend/src/tabs/inv-planning/EventCalendarPanel.tsx` | Event calendar panel (F4.3) |
+| `mvp/demand/frontend/src/tabs/inv-planning/ScenarioPlanningPanel.tsx` | Scenario planning panel (F4.4) |
+| `mvp/demand/frontend/src/tabs/inv-planning/RebalancingPanel.tsx` | Inventory rebalancing panel |
+| `mvp/demand/frontend/src/tabs/inv-planning/ReplenishmentPlanPanel.tsx` | Replenishment plan panel |
+| `mvp/demand/frontend/src/tabs/inv-planning/DemandPlanPanel.tsx` | Demand plan panel |
+| `mvp/demand/frontend/src/tabs/inv-planning/OverrideQueuePanel.tsx` | Override queue panel |
+| `mvp/demand/frontend/src/tabs/inv-planning/ProcurementPanel.tsx` | Procurement panel |
+| `mvp/demand/frontend/src/tabs/inv-planning/OpenPOPanel.tsx` | Open PO panel |
+| `mvp/demand/frontend/src/tabs/inv-planning/ProjectionPanel.tsx` | Inventory projection panel (F1.2) |
+| `mvp/demand/frontend/src/tabs/inv-planning/PlannedOrdersPanel.tsx` | Planned orders panel |
+| `mvp/demand/frontend/src/tabs/accuracy/BiasCorrectionsPanel.tsx` | Bias corrections panel (F3.1) |
+| `mvp/demand/frontend/src/tabs/inv-planning/` | All 28 inventory planning panel components |
+| `mvp/demand/frontend/src/api/queries/platform.ts` | Platform query keys + fetch functions (data quality, notifications, collaboration, FVA, reports, webhooks) |
+| `mvp/demand/frontend/src/api/queries/evolution.ts` | Evolution-to-operations query keys + fetch functions (F3.1–F4.4) |
+| `mvp/demand/frontend/src/api/queries/supply.ts` | Supply chain query keys + fetch functions |
+| `mvp/demand/frontend/src/api/queries/filter-meta.ts` | Filter metadata query keys + fetch functions |
+| `mvp/demand/frontend/src/api/queries/inv-planning-projection.ts` | Inventory projection query keys + fetch functions (F1.2) |
+| `mvp/demand/frontend/src/api/queries/inv-planning-rebalancing.ts` | Inventory rebalancing query keys + fetch functions |
+| `mvp/demand/frontend/src/api/queries/inv-planning-replenishment.ts` | Replenishment plan query keys + fetch functions |
+| `mvp/demand/frontend/src/hooks/useFilteredQuery.ts` | Filtered query hook with global filter integration |
+| `mvp/demand/frontend/src/components/EmptyState.tsx` | Empty state placeholder component |
+| `mvp/demand/frontend/src/components/LoadingElement.tsx` | Chemistry-themed loading element |
+| `mvp/demand/frontend/src/components/VrantisLogo.tsx` | Vrantis logo component with wordmark option |
 
 ---
 
@@ -524,7 +618,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - Champion Selection panel: model competition config, run, and FVA model-wins visualization
 - Market Intelligence tab: item/location selector with Google web search + GPT-4o narrative briefing
 - DFU Analysis tab: unified sales vs multi-model forecast overlay chart, 3 scope modes, per-model KPI cards, toggleable measures; **clickable forecast lines** (selected=thicker+full opacity, others=30% fade) + **per-DFU SHAP Panel** (`DfuShapPanel`) showing signed SHAP feature contributions per month as stacked bar chart (historical bars at 90% opacity, future at 45%); fallback to cluster-level summary SHAP on 404
-- Collapsible sidebar navigation (14 items, 5 sections, mobile drawer, `[` toggle)
+- Collapsible sidebar navigation (17 items, 5 sections, mobile drawer, `[` toggle)
 - Dashboard overview landing page: KPI sparkline cards, alert panel, heatmap, top movers, forecast trend chart
 - Global filter bar: brand, category, item (searchable), location (searchable), market, channel multi-select dropdowns — applied to dashboard, accuracy, and auto-populated into tab-local inputs
 - Single professional theme (Demand Studio) with light/dark modes via CSS variable palettes
@@ -541,7 +635,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - Feature Importance (SHAP) panel in Accuracy tab: collapsible card with model selector (populated from `/forecast/shap/models`), timeframe selector (cross-timeframe summary or individual timeframes A–J), horizontal bar chart with indigo=selected / gray=dropped feature coloring, `selected_count`/`n_timeframes` consistency indicator (Feature 42)
 - Inventory Planning tab (IPfeature4-14): professional two-column layout with fixed 220px grouped sidebar navigation (7 groups with colored dividers, group labels, and icon-labeled buttons — Daily Operations/red: Exceptions, Health; Optimize/blue: EOQ, Policy, Rebalancing; Analytics/emerald: Fill Rate, ABC-XYZ, Supplier, Intramonth; Planning/violet: Safety Stock, Variability, Lead Time, Signals, Simulation, Investment, Repl. Plan, Demand Fcst; Sensing/teal: Blended Demand, Echelon SS; Strategic/amber: Financial Plan, Events, Scenarios; Supply/slate: Demand Plan, Override Queue, Procurement, Open POs, Projection, Planned Orders) + scrollable main content area with per-panel header bar showing title + description. All 27 panels; sidebar nav item "Inv. Planning"
 - Control Tower tab (IPfeature15): unified operational command center with cross-dimensional KPI cards, active alert list, top-critical items list, and trend chart aggregating key supply chain health metrics
-- AI Planner tab (IPAIfeature1): NOT a chatbot — a proactive exception work-queue. Portfolio health bar (4 KPI chips: Open Insights, Critical, High Priority, Total Financial Risk), insight cards (severity badge, DFU identity, ABC/cluster chips, 1-sentence summary, specific recommendation, metrics row, financial impact chip, collapsible AI reasoning chain), Acknowledge/Resolve action buttons, planning memo panel (latest portfolio narrative in markdown + model_version badge), "Generate Now" button triggers async portfolio scan; sidebar nav item "AI Planner" with `Sparkles` icon (14 items total)
+- AI Planner tab (IPAIfeature1): NOT a chatbot — a proactive exception work-queue. Portfolio health bar (4 KPI chips: Open Insights, Critical, High Priority, Total Financial Risk), insight cards (severity badge, DFU identity, ABC/cluster chips, 1-sentence summary, specific recommendation, metrics row, financial impact chip, collapsible AI reasoning chain), Acknowledge/Resolve action buttons, planning memo panel (latest portfolio narrative in markdown + model_version badge), "Generate Now" button triggers async portfolio scan; sidebar nav item "AI Planner" with `Sparkles` icon (17 items total)
 - Vitest testing infrastructure
 - Playwright E2E smoke tests: 8 test files covering navigation, dashboard, accuracy, global filters, inv planning, AI planner, control tower, theme toggle. Config in `frontend/e2e/playwright.config.ts`. Auto-starts Vite dev server; requires API on :8000.
 
@@ -617,7 +711,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Inventory snapshots:** 14 monthly CSV files (`datafiles/Inventory_Snapshot_YYYY_MM.csv`, ~190M rows total) merged by `scripts/normalize_inventory_csv.py` into a single clean CSV. Loaded into `fact_inventory_snapshot` via generic loader. `qty_on_order` derived as `qty_on_hand_on_order - qty_on_hand` during normalization. Dedicated API endpoints (`/inventory/*`) and frontend InventoryTab. `agg_inventory_monthly` materialized view with daily sales derivation (LAG CTE), EOM snapshots, and proper monthly sales (MAX not SUM). `/inventory/kpis` uses two-query pattern: point-in-time totals from latest snapshot + trailing-month aggregates for supply chain KPIs (DOS, WOC, Inventory Turns, LT Coverage). KPI cards use severity color-coding (green/yellow/red thresholds). Trend chart renders 5 lines: On Hand, On Order, Monthly Sales, Lead Time, Days of Supply.
 - **DFU seasonality detection:** Pipeline in `scripts/detect_seasonality.py` + `update_seasonality_profiles.py` computes seasonality metrics (strength, profile label, peak/trough month, peak-to-trough ratio, is_yearly_seasonal flag) from sales history and writes them to `dim_dfu`. Config in `config/seasonality_config.yaml`. DDL in `sql/015_add_seasonality_columns.sql`. Make targets: `seasonality-detect`, `seasonality-update`, `seasonality-all`. These 6 columns (`seasonality_profile`, `seasonality_strength`, `is_yearly_seasonal`, `peak_month`, `trough_month`, `peak_trough_ratio`) are now part of `DFU_SPEC` and are exposed by the generic Data Explorer.
 - **What-If clustering scenarios:** `POST /clustering/scenario` runs a trial KMeans pipeline with custom `feature_params`, `model_params`, and `label_params` without overwriting production clustering. Returns HTTP 202 immediately and runs in background thread; `GET /clustering/scenario/{id}/status` polls for running/completed/failed. `GET /clustering/scenario/estimate` returns runtime estimate based on DFU count, K range, and gap flag. `POST /clustering/scenario/{id}/promote` applies the winning scenario to `dim_dfu.ml_cluster`. `ScenarioNotificationContext` tracks running/completed state across tabs; Dashboard injects completion alert. Enhanced charts: elbow with optimal K ReferenceLine, silhouette bar chart with quality zone thresholds (Strong/Reasonable/Weak/No structure), feature importance horizontal bars, cluster size pie chart, conditional gap statistic line chart. Requires `API_KEY` env var to be set for auth (disabled when unset). **Scenario queueing:** When a clustering job is already running, new scenarios are queued (`status="queued"`) instead of rejected with 409; queued jobs auto-dispatch via `_dispatch_next()` when the active job completes. **View Results:** "View Results" button in JobsTab navigates to ClustersTab with `?scenario_job=<id>` URL param; ClustersTab auto-loads result and renders ScenarioCharts. **Past Scenarios:** ClustersTab What-If panel shows last 10 completed scenario runs in an accordion with inline charts and promote buttons.
-- **Modular API router architecture:** `api/routers/` contains 31 FastAPI `APIRouter` modules (see api/routers/ for full list). `main.py` is a ~65-line shell that only creates the app, adds middleware, and mounts all 31 routers via `app.include_router()`. All route handlers live in router modules — no inline routes in main.py. `domains.py` is mounted last because it has catch-all `{domain}` path parameters. All mutation endpoints require `require_api_key` auth when `API_KEY` env var is set.
+- **Modular API router architecture:** `api/routers/` contains 53 FastAPI `APIRouter` modules (see api/routers/ for full list). `main.py` is a ~149-line shell that only creates the app, adds middleware, and mounts all 53 routers via `app.include_router()`. All route handlers live in router modules — no inline routes in main.py. `domains.py` is mounted last because it has catch-all `{domain}` path parameters. All mutation endpoints require `require_api_key` auth when `API_KEY` env var is set.
 - **Job scheduler (APScheduler):** `common/job_registry.py` provides `JobManager` singleton powered by APScheduler 3.11 (`BackgroundScheduler` + `ThreadPoolExecutor(max_workers=4)`). Thread-safe: `_state_lock` guards `_active_jobs`, `_pending_queues`, `_cancel_flags`; `_init_lock` with double-checked locking protects `_ensure_init()`. `JOB_TYPE_REGISTRY` maps 7 job types across 4 groups. Per-group concurrency control with FIFO queueing (one active job per group: clustering, backtest, seasonality, champion; busy groups queue jobs instead of rejecting). Job callables wrap existing scripts via `subprocess.run()`. Progress updates written to `job_history` table. `recover_stale_jobs()` re-enqueues queued jobs from DB on restart and marks running jobs as failed. Supports cron/interval scheduling (`POST /jobs/schedule`, `GET /jobs/schedules`), job pipelines (`POST /jobs/pipeline` — sequential chaining), retry logic with exponential backoff (`max_retries`), and dashboard stats (`GET /jobs/stats`). 12 REST API endpoints total. Route ordering in `jobs.py`: literal paths (`/jobs/schedules`, `/jobs/pipeline`) must come before parameterized `{job_id}` paths. Frontend polls `GET /jobs/active` every 2s, stats every 5s, history every 10s. `JobNotificationContext` provides cross-tab completion alerts. Sidebar shows active job count badge. ClustersTab uses "Schedule Scenario Job" button. Dependencies: `apscheduler>=3.10`, `tzlocal>=5.0`.
 - **API key authentication:** `api/auth.py` provides `require_api_key` FastAPI dependency. Auth is disabled when the `API_KEY` env var is unset (development default). When set, mutation endpoints (`POST /clustering/scenario`, `PUT /competition/config`, `POST /competition/run`, `POST /chat`, `POST /market-intelligence`) require `X-API-Key` header.
 - **Vite dev server proxy:** `frontend/vite.config.ts` proxies all API path prefixes (`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`) to the FastAPI backend at `http://127.0.0.1:8000`. **CRITICAL:** When adding a new API path prefix, you MUST add a corresponding proxy entry in `vite.config.ts` or the frontend will receive HTML instead of JSON. Restart the Vite dev server (`make ui`) after changes.
@@ -653,7 +747,8 @@ Located in `docs/specs/` — 6 domains, 40 files, `DD-SS-descriptive-name.md` co
 - `02-06-advanced-backtest.md` — Hyperparameter tuning (Optuna) + SHAP feature selection + recursive multi-step forecasting
 - `02-07-algorithm-config.md` — algorithm_config.yaml, cluster_strategy (per_cluster/global), config keys reference
 - `02-08-production-forecast.md` — Production inference pipeline, fact_production_forecast, versioning, CI bands
-- `02-09-bias-correction.md` — Bias correction in champion selection (F1.2) + bias correction engine (F3.1)
+- `02-09-bias-correction.md` — Forward inventory projection (F1.2) + bias correction engine (F3.1)
+- `02-09-forecast-ci-bands.md` — Forecast confidence interval bands
 - `02-10-dfu-clustering.md` — KMeans engine + what-if scenario UI + enhancements (background exec, charts, queuing, past scenarios)
 - `02-11-seasonality.md` — Seasonality detection pipeline + profile filtering in Accuracy/DFU analysis tabs
 - `02-12-blended-demand.md` — Alpha-weighted sensing + statistical blend
@@ -669,6 +764,7 @@ Located in `docs/specs/` — 6 domains, 40 files, `DD-SS-descriptive-name.md` co
 - `03-08-investment-optimization.md` — Efficient frontier, budget allocation, fact_inventory_investment_plan
 - `03-09-inventory-planning-reference.md` — Original world-class design vision (reference; see 03-01 through 03-08 for implementation)
 - `03-10-multi-echelon-ss.md` — Multi-echelon safety stock with cascade risk severity badges
+- `03-11-replenishment-plan.md` — Replenishment plan computation and management
 - `03-12-inventory-rebalancing.md` — Inventory rebalancing: network topology, imbalance detection, greedy/LP solvers, transfer plans, approval workflow
 
 ### 04-operations/
@@ -694,6 +790,16 @@ Located in `docs/specs/` — 6 domains, 40 files, `DD-SS-descriptive-name.md` co
 
 ### 07-platform-integration/
 - `07-01-integration-architecture.md` — Four bidirectional integration vectors: notifications (Slack/Teams/Email/PagerDuty), REST API consumers (CORS, rate limiting, webhooks), cloud data pipelines (Snowflake/BigQuery/S3/Databricks), ERP/WMS adapters (SAP/Oracle/NetSuite/Manhattan)
+- `07-02-data-quality.md` — Data quality engine, rule evaluation, scoring dashboard (08-01)
+- `07-03-rbac.md` — Role-based access control, user management (08-02)
+- `07-04-caching.md` — Caching strategy, cache invalidation (08-03)
+- `07-05-notifications.md` — Notification channels, preferences, dispatch engine (08-04)
+- `07-06-collaboration.md` — Collaboration threads, annotations, shared views (08-05)
+- `07-07-external-signals.md` — External demand signal ingestion, decomposition (08-06)
+- `07-08-fva.md` — Forecast Value Add tracking, ROI measurement (08-07)
+- `07-09-reporting.md` — Report templates, scheduling, delivery (08-08)
+- `07-10-api-governance.md` — API rate limiting, versioning, usage metrics (08-09)
+- `07-11-webhooks.md` — Webhook registration, event dispatch, delivery tracking (08-10)
 
 ### Archived specs (deleted code / superseded designs)
 Located in `docs/archive/` — feature14 (transfer learning), feature19-21/24-25 (archived ML models), feature35 (deleted motif themes), theme-testing-strategy (orphaned), feature27 (Figma MCP, not started)

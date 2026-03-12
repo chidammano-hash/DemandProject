@@ -68,7 +68,9 @@ export const SIDEBAR_LABELS = [
   "S&OP",
   "Clusters",
   "Inv. Backtest",
+  "FVA & ROI",
   "Jobs",
+  "Data Quality",
   "Explorer",
   "Market Intel",
   "Chat",
@@ -85,6 +87,8 @@ export const FILTER_BAR_TABS = [
   "intel",
   "sop",
   "controlTower",
+  "fva",
+  "dataQuality",
 ] as const;
 
 /** Tabs that hide the global filter bar */

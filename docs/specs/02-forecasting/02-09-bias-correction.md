@@ -3,7 +3,7 @@
 
 **Phase:** Evolution to Operations — Phase 1
 **Feature Number:** F1.2
-**Status:** Not Started
+**Status:** Implemented
 **Priority:** Critical (blocker for F2.1)
 **Depends On:** F1.1 (Production Forecast Generation), F1.3 (Open PO Integration)
 
@@ -661,7 +661,7 @@ Triggers a synchronous projection recompute for one DFU (for on-demand UI use).
 
 **Phase:** Evolution to Operations — Phase 3 (Closed-Loop Learning)
 **Feature Number:** F3.1
-**Status:** Design — Not Implemented
+**Status:** Implemented
 **Depends On:** Feature 15 (Champion Model Selection), Feature 44 (Algorithm Config), IPfeature3 (Safety Stock), F2.2 (Quantile Forecasts)
 
 ---

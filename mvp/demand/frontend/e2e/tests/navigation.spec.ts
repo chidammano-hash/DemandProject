@@ -44,6 +44,16 @@ test.describe("Sidebar Navigation", () => {
     await expect(page).toHaveURL(/tab=aiPlanner/);
   });
 
+  test("clicking FVA & ROI navigates to fva tab", async ({ page }) => {
+    await clickNavItem(page, "FVA & ROI");
+    await expect(page).toHaveURL(/tab=fva/);
+  });
+
+  test("clicking Data Quality navigates to dataQuality tab", async ({ page }) => {
+    await clickNavItem(page, "Data Quality");
+    await expect(page).toHaveURL(/tab=dataQuality/);
+  });
+
   test("no error boundary shown on key tabs", async ({ page }) => {
     const tabs = [
       "overview",
@@ -54,6 +64,8 @@ test.describe("Sidebar Navigation", () => {
       "controlTower",
       "jobs",
       "exceptions",
+      "fva",
+      "dataQuality",
     ];
     for (const tab of tabs) {
       await navigateToTab(page, tab);
