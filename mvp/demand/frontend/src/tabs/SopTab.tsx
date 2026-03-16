@@ -135,9 +135,20 @@ export default function SopTab() {
 
   return (
     <div className="p-4 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold">S&OP Cycle Management</h1>
-        <span className="text-sm text-muted-foreground">{cycles.length} active cycle{cycles.length !== 1 ? "s" : ""}</span>
+      <div className="space-y-1">
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold">S&OP Cycle Management</h1>
+          <span className="text-sm text-muted-foreground">{cycles.length} active cycle{cycles.length !== 1 ? "s" : ""}</span>
+        </div>
+        <p className="text-sm text-muted-foreground max-w-3xl leading-relaxed">
+          Manage the monthly <strong>Sales &amp; Operations Planning</strong> process. Each cycle progresses
+          through 6 stages: <em>Demand Review</em> (validate statistical and judgmental forecasts),{" "}
+          <em>Supply Review</em> (check capacity and material constraints),{" "}
+          <em>Pre-S&amp;OP</em> (identify demand/supply gaps and propose mitigations),{" "}
+          <em>Executive S&amp;OP</em> (leadership decision meeting), <em>Approved</em> (finalized
+          consensus plan), and <em>Closed</em>. Select a cycle below to view its current stage, review
+          gaps between demand and supply, advance it through stages, or approve the final plan.
+        </p>
       </div>
 
       {/* Cycle list + detail */}

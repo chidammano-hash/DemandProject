@@ -237,6 +237,18 @@ export function InvPlanningTab() {
   return (
     <div className="flex flex-col overflow-hidden" style={{ height: "calc(100vh - 108px)" }}>
       {/* ------------------------------------------------------------------ */}
+      {/* Header description                                                  */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="flex-shrink-0 px-5 pt-3 pb-2">
+        <p className="text-xs text-muted-foreground max-w-3xl leading-relaxed">
+          Comprehensive inventory planning toolkit. <strong>Daily Ops</strong>: triage exceptions and monitor health scores.{" "}
+          <strong>Optimize</strong>: configure EOQ order sizes, replenishment policies, and cross-location rebalancing.{" "}
+          <strong>Analytics</strong>: fill rate, ABC-XYZ classification, supplier performance.{" "}
+          <strong>Planning</strong>: safety stock, variability analysis, demand signals, Monte Carlo simulation.{" "}
+          Select a group above, then a sub-tab to drill in.
+        </p>
+      </div>
+      {/* ------------------------------------------------------------------ */}
       {/* Row 1: Group pills                                                  */}
       {/* ------------------------------------------------------------------ */}
       <div className="flex-shrink-0 flex items-center gap-1.5 border-b bg-muted/30 px-5 py-2 overflow-x-auto" role="tablist" aria-label="Inventory Planning groups">

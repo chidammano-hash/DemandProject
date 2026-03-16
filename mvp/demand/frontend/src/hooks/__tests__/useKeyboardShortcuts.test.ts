@@ -36,18 +36,15 @@ describe("useKeyboardShortcuts", () => {
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("accuracy");
 
     act(() => fireKey("5"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("dfuAnalysis");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("itemAnalysis");
 
     act(() => fireKey("6"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("inventory");
-
-    act(() => fireKey("7"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("exceptions");
 
-    act(() => fireKey("8"));
+    act(() => fireKey("7"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("invPlanning");
 
-    act(() => fireKey("9"));
+    act(() => fireKey("8"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("jobs");
   });
 

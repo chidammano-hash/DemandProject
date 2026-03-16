@@ -181,6 +181,17 @@ export default function ClustersTab({ domain, onDomainChange }: ClustersTabProps
 
   return (
     <>
+      <div className="mb-4">
+        <h2 className="text-lg font-semibold">DFU Clustering</h2>
+        <p className="text-sm text-muted-foreground max-w-3xl mt-0.5 leading-relaxed">
+          Group item-location pairs (DFUs) into clusters based on demand patterns using machine learning
+          (KMeans). Clusters are labeled by dominant traits: volume level, trend direction, seasonality,
+          intermittency, and variability. Use the <strong>Overview</strong> to see current cluster assignments.
+          Run scenario experiments to test different parameters (K range, feature window, thresholds)
+          and <strong>Promote</strong> the best result to update production assignments. Clusters drive per-cluster
+          model training in backtests and are used as segmentation dimensions across all analytics.
+        </p>
+      </div>
       <ClusterOverviewPanel onDomainChange={onDomainChange} />
 
       <WhatIfPanel

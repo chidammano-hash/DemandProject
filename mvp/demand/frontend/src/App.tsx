@@ -34,10 +34,9 @@ import ChatPanel from "./tabs/ChatPanel";
 const DashboardTab = lazy(() => import("./tabs/DashboardTab"));
 const ExplorerTab = lazy(() => import("./tabs/ExplorerTab").then((m) => ({ default: m.ExplorerTab })));
 const ClustersTab = lazy(() => import("./tabs/ClustersTab"));
-const DfuAnalysisTab = lazy(() => import("./tabs/DfuAnalysisTab").then((m) => ({ default: m.DfuAnalysisTab })));
+const ItemAnalysisTab = lazy(() => import("./tabs/ItemAnalysisTab").then((m) => ({ default: m.ItemAnalysisTab })));
 const AccuracyTab = lazy(() => import("./tabs/AccuracyTab").then((m) => ({ default: m.AccuracyTab })));
 const MarketIntelTab = lazy(() => import("./tabs/MarketIntelTab"));
-const InventoryTab = lazy(() => import("./tabs/InventoryTab").then((m) => ({ default: m.InventoryTab })));
 const InvBacktestTab = lazy(() => import("./tabs/InvBacktestTab"));
 const InvPlanningTab = lazy(() => import("./tabs/InvPlanningTab").then((m) => ({ default: m.InvPlanningTab })));
 const ControlTowerTab = lazy(() => import("./tabs/ControlTowerTab"));
@@ -177,10 +176,10 @@ export default function App() {
                     </Suspense>
                   </ErrorBoundary>
                 )}
-                {activeTab === "dfuAnalysis" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="dfuAnalysis" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="dfuAnalysis" />}>
-                      <DfuAnalysisTab />
+                {(activeTab === "itemAnalysis" || activeTab === "dfuAnalysis" || activeTab === "inventory") && (
+                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="itemAnalysis" />} resetKeys={[activeTab]}>
+                    <Suspense fallback={<TabSuspenseFallback tabKey="itemAnalysis" />}>
+                      <ItemAnalysisTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}
@@ -195,13 +194,6 @@ export default function App() {
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="intel" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="intel" />}>
                       <MarketIntelTab />
-                    </Suspense>
-                  </ErrorBoundary>
-                )}
-                {activeTab === "inventory" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="inventory" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="inventory" />}>
-                      <InventoryTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}

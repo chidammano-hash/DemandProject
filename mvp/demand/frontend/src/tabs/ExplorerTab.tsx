@@ -480,7 +480,12 @@ export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <CardTitle className="text-base">Data Explorer</CardTitle>
-              <CardDescription>Browse, search, filter, and sort.</CardDescription>
+              <CardDescription className="max-w-2xl">
+                Browse raw data across all domains. Select a <strong>Domain</strong> (item, location, DFU, sales,
+                forecast, inventory) to explore its records. Use column filters to narrow results — prefix
+                with <code className="text-[10px] bg-muted px-1 rounded">=</code> for exact match, or type
+                plain text for fuzzy substring search.
+              </CardDescription>
             </div>
             <div className="flex items-center gap-3">
               <select
@@ -738,7 +743,7 @@ export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
                         colSpan={Math.max(visibleCols.length, 1)}
                         className="h-24 text-center text-muted-foreground"
                       >
-                        No records
+                        No records found. Try adjusting your filters or selecting a different domain.
                       </TableCell>
                     </TableRow>
                   ) : (

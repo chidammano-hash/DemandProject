@@ -135,7 +135,7 @@ Data flows: raw CSVs → normalize scripts → PostgreSQL → FastAPI → React 
 - **Jobs tab**: live progress bars, elapsed timers, schedule dialog, expandable history, cross-tab completion alerts
 
 ### 17. UI Platform
-- **16-tab sidebar** navigation: Dashboard, Data Explorer, Accuracy, DFU Analysis, Clusters, Market Intel, Inventory, Inv. Backtest, Inv. Planning, Control Tower, AI Planner, Storyboard, S&OP, FVA, Data Quality, Jobs
+- **16-tab sidebar** navigation: Dashboard, Data Explorer, Accuracy, Item Analysis, Clusters, Market Intel, Inv. Backtest, Inv. Planning, Control Tower, AI Planner, Storyboard, S&OP, FVA, Data Quality, Jobs, Exceptions (Item Analysis merges former DFU Analysis + Inventory tabs with a checkbox toggle toolbar for 7 panels)
 - **Inventory Planning tab**: two-column layout — fixed 220px grouped sidebar navigation (7 color-coded groups: Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) on the left, scrollable panel body with a fixed header bar on the right; 27 panel components total
 - **Global filter bar**: brand, category, item, location, market, channel — synced across tabs via URL state
 - Light/dark mode, keyboard shortcuts (1–9 tab switch, `[` sidebar, `d` dark mode, `?` help), virtualized data grid with CSV export

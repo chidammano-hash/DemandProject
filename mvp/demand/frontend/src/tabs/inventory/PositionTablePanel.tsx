@@ -20,9 +20,7 @@ import { LoadingElement } from "@/components/LoadingElement";
 import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/formatters";
 import type { InventoryPosition } from "@/types";
-import { TrendChartPanel } from "./TrendChartPanel";
 import { ItemDetailPanel } from "./ItemDetailPanel";
-import type { InventoryTrendPoint, InventoryTrendParams } from "@/types";
 
 const PAGE_SIZE = 50;
 
@@ -46,18 +44,14 @@ interface DetailSnapshot {
 }
 
 interface PositionTablePanelProps {
-  // Filter state
-  itemFilter: string;
-  locationFilter: string;
-  months: number;
-  onItemChange: (value: string) => void;
-  onLocationChange: (value: string) => void;
-  onMonthsChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
-
   // Table data
   positions: InventoryPosition[];
   totalPositions: number;
   isLoadingPosition: boolean;
+
+  // Months window
+  months: number;
+  onMonthsChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
 
   // Pagination state
   offset: number;
@@ -73,11 +67,6 @@ interface PositionTablePanelProps {
   selectedRow: { item: string; location: string } | null;
   onRowClick: (row: InventoryPosition) => void;
 
-  // Trend chart
-  trendData: InventoryTrendPoint[];
-  trendParams?: InventoryTrendParams;
-  isLoadingTrend: boolean;
-
   // Item detail
   detailSnapshots: DetailSnapshot[] | undefined;
   isLoadingDetail: boolean;
@@ -87,15 +76,11 @@ interface PositionTablePanelProps {
 const DEFAULT_VISIBLE = new Set<SortCol>(["item_no", "loc", "qty_on_hand", "lead_time_days", "mtd_sales"]);
 
 export function PositionTablePanel({
-  itemFilter,
-  locationFilter,
-  months,
-  onItemChange,
-  onLocationChange,
-  onMonthsChange,
   positions,
   totalPositions,
   isLoadingPosition,
+  months,
+  onMonthsChange,
   offset,
   onPrevPage,
   onNextPage,
@@ -104,9 +89,6 @@ export function PositionTablePanel({
   onSort,
   selectedRow,
   onRowClick,
-  trendData,
-  trendParams,
-  isLoadingTrend,
   detailSnapshots,
   isLoadingDetail,
 }: PositionTablePanelProps) {
@@ -152,7 +134,17 @@ export function PositionTablePanel({
         <div className="flex items-center gap-2">
           <Package className="h-5 w-5" />
           <CardTitle className="text-base">Inventory Position</CardTitle>
-          <div className="relative ml-auto">
+          <select
+            className="ml-auto h-7 rounded border border-input bg-background px-2 text-xs"
+            value={months}
+            onChange={onMonthsChange}
+          >
+            <option value={3}>3 mo</option>
+            <option value={6}>6 mo</option>
+            <option value={12}>12 mo</option>
+            <option value={14}>14 mo</option>
+          </select>
+          <div className="relative">
             <button
               onClick={() => setColPickerOpen((v) => !v)}
               className="flex items-center gap-1 rounded border border-input bg-background px-2 py-1 text-xs hover:bg-muted"
@@ -193,88 +185,7 @@ export function PositionTablePanel({
           Rows are color-coded by urgency: red = critical stockout risk (&lt;7d), amber = at risk (7–14d), blue = excess (&gt;180d).
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5">
-        {/* How-to-use tip — shown only when no filters are active and data is loaded */}
-        {!itemFilter && !locationFilter && positions.length > 0 && (
-          <div className="rounded border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800 px-3 py-2 text-xs text-blue-800 dark:text-blue-200">
-            <strong>Tip:</strong> Filter by item or location to drill into specific inventory positions.
-            Click any row to see the full daily snapshot history for that item-location pair.
-          </div>
-        )}
-        {/* Filter controls */}
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Item
-            <div className="relative flex items-center">
-              <input
-                className="h-9 w-44 rounded-md border border-input bg-background px-3 pr-7 text-sm"
-                placeholder="e.g. 100320 — filter by item number or name"
-                value={itemFilter}
-                onChange={(e) => onItemChange(e.target.value)}
-              />
-              {itemFilter && (
-                <button
-                  onClick={() => onItemChange("")}
-                  className="absolute right-2 text-muted-foreground hover:text-foreground text-sm leading-none"
-                  title="Clear filter"
-                  type="button"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          </label>
-          <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Location
-            <div className="relative flex items-center">
-              <input
-                className="h-9 w-44 rounded-md border border-input bg-background px-3 pr-7 text-sm"
-                placeholder="e.g. 1401-BULK — filter by location code"
-                value={locationFilter}
-                onChange={(e) => onLocationChange(e.target.value)}
-              />
-              {locationFilter && (
-                <button
-                  onClick={() => onLocationChange("")}
-                  className="absolute right-2 text-muted-foreground hover:text-foreground text-sm leading-none"
-                  title="Clear filter"
-                  type="button"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          </label>
-          <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Months
-            <select
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              value={months}
-              onChange={onMonthsChange}
-            >
-              <option value={3}>3 months</option>
-              <option value={6}>6 months</option>
-              <option value={12}>12 months</option>
-              <option value={14}>14 months</option>
-            </select>
-          </label>
-          {(itemFilter || locationFilter) && (
-            <button
-              onClick={() => {
-                onItemChange("");
-                onLocationChange("");
-              }}
-              className="text-xs text-primary underline hover:no-underline self-end mb-1"
-              type="button"
-            >
-              Reset filters
-            </button>
-          )}
-        </div>
-
-        {/* Trend chart */}
-        <TrendChartPanel trendData={trendData} isLoading={isLoadingTrend} params={trendParams} />
-
+      <CardContent className="space-y-4">
         {/* Position table */}
         {isLoadingPosition ? (
           <LoadingElement

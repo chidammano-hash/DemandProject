@@ -44,6 +44,8 @@ export interface ShapTimeframeDetailPayload {
   label: string;
   cutoff_date: string;
   total_features: number;
+  cluster?: string;
+  available_clusters?: string[];
   features: ShapFeatureDetail[];
 }
 

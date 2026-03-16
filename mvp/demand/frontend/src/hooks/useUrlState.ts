@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-const VALID_TABS = ["overview", "explorer", "clusters", "dfuAnalysis", "accuracy", "inventory", "invBacktest", "intel", "jobs", "chat", "settings", "aiPlanner", "controlTower", "invPlanning", "storyboard", "exceptions", "sop"];
+const VALID_TABS = ["overview", "explorer", "clusters", "itemAnalysis", "dfuAnalysis", "accuracy", "inventory", "invBacktest", "intel", "jobs", "chat", "settings", "aiPlanner", "controlTower", "invPlanning", "storyboard", "exceptions", "sop"];
 const ANALYTICS_TAB_DOMAINS = new Set(["sales", "forecast"]);
 const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales", "forecast"];
 
@@ -9,9 +9,15 @@ export function getInitialDomain(): string {
   return (queryDomain || "item").toLowerCase();
 }
 
+const TAB_REDIRECTS: Record<string, string> = {
+  dfuAnalysis: "itemAnalysis",
+  inventory: "itemAnalysis",
+};
+
 export function getInitialTab(): string {
   const params = new URLSearchParams(window.location.search);
   const urlTab = params.get("tab");
+  if (urlTab && TAB_REDIRECTS[urlTab]) return TAB_REDIRECTS[urlTab];
   if (urlTab && VALID_TABS.includes(urlTab)) return urlTab;
   const d = getInitialDomain();
   if (ANALYTICS_TAB_DOMAINS.has(d)) return d;

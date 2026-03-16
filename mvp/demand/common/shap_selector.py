@@ -28,7 +28,7 @@ import pandas as pd
 # Returned shape: (n_samples, n_features), values are absolute SHAP values.
 ShapExtractorFn = Callable[[Any, pd.DataFrame, list[str], list[str]], np.ndarray]
 
-SHAP_REPORT_COLS = ["feature", "mean_abs_shap", "rank", "selected", "timeframe", "cutoff_date"]
+SHAP_REPORT_COLS = ["feature", "mean_abs_shap", "rank", "selected", "timeframe", "cutoff_date", "cluster"]
 SHAP_SUMMARY_COLS = [
     "feature",
     "mean_abs_shap_across_timeframes",
@@ -49,10 +49,34 @@ def compute_shap_global(
     feature_cols: list[str],
     cat_cols: list[str],
 ) -> np.ndarray:
-    """Extract |SHAP| values via shap.TreeExplainer (LGBM, XGBoost).
+    """Extract |SHAP| values via native pred_contribs (XGBoost, LGBM) or shap.TreeExplainer.
+
+    Uses native XGBoost pred_contribs when available (avoids shap library issues
+    with categorical dtypes). Falls back to shap.TreeExplainer for LGBM.
 
     Returns absolute SHAP values, shape (n_samples, n_features).
     """
+    # XGBoost: use native pred_contribs (more reliable than shap library with categoricals)
+    module_name = type(model).__module__.split(".")[0].lower()
+    if module_name == "xgboost" or hasattr(model, "get_booster"):
+        try:
+            import xgboost as xgb
+            booster = model.get_booster() if hasattr(model, "get_booster") else model
+            dmatrix = xgb.DMatrix(X_sample, enable_categorical=True)
+            full = booster.predict(dmatrix, pred_contribs=True)
+            return np.abs(full[:, :-1])  # strip baseline column
+        except Exception:
+            pass  # fall through to shap.TreeExplainer
+
+    # LGBM: use native pred_contrib (avoids shap library dtype issues)
+    if module_name == "lightgbm" or hasattr(model, "booster_"):
+        try:
+            full = model.predict(X_sample.to_numpy(), pred_contrib=True)
+            return np.abs(full[:, :-1])  # strip baseline column
+        except Exception:
+            pass  # fall through to shap.TreeExplainer
+
+    # Fallback: shap.TreeExplainer
     import shap  # lazy import — not required for module-level usage
 
     explainer = shap.TreeExplainer(model)
@@ -97,15 +121,18 @@ def _weighted_pool_cluster_shap(
     effective_cat_cols: list[str],
     shap_extractor_fn: ShapExtractorFn,
     sample_size: int,
-) -> np.ndarray:
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     """Compute SHAP for each cluster model and pool by cluster size.
 
     Skips the "__base__" key present in transfer-learning model dicts.
 
-    Returns mean absolute SHAP values per feature, shape (n_features,).
+    Returns:
+        pooled: mean absolute SHAP values per feature, shape (n_features,).
+        per_cluster: dict mapping cluster_label → mean |SHAP| array, shape (n_features,).
     """
     weighted_shap = np.zeros(len(effective_feature_cols))
     total_rows = 0
+    per_cluster: dict[str, np.ndarray] = {}
 
     for cluster_label, model in models.items():
         if cluster_label == "__base__":
@@ -117,14 +144,16 @@ def _weighted_pool_cluster_shap(
         X_sample = cluster_data[effective_feature_cols].sample(n=n, random_state=42)
         try:
             abs_shap = shap_extractor_fn(model, X_sample, effective_feature_cols, effective_cat_cols)
-            weighted_shap += abs_shap.mean(axis=0) * n
+            cluster_mean = abs_shap.mean(axis=0)
+            per_cluster[str(cluster_label)] = cluster_mean
+            weighted_shap += cluster_mean * n
             total_rows += n
         except Exception as exc:
             print(f"    [shap] Warning: SHAP extraction failed for cluster '{cluster_label}': {exc}")
 
     if total_rows > 0:
         weighted_shap /= total_rows
-    return weighted_shap
+    return weighted_shap, per_cluster
 
 
 def _select_features_from_shap(
@@ -220,6 +249,8 @@ def compute_timeframe_shap(
 
     Returns:
         (selected_features, shap_df) where shap_df has SHAP_REPORT_COLS columns.
+        When per-cluster SHAP data is available, shap_df also includes a
+        'cluster' column (value "all" for pooled rows, cluster label for per-cluster rows).
     """
     t0 = time.time()
 
@@ -232,9 +263,10 @@ def compute_timeframe_shap(
         effective_cat_cols = cat_cols
 
     # Compute mean absolute SHAP across the training sample
+    per_cluster_shap: dict[str, np.ndarray] = {}
     try:
         if isinstance(model_or_dict, dict):
-            mean_abs_shap = _weighted_pool_cluster_shap(
+            mean_abs_shap, per_cluster_shap = _weighted_pool_cluster_shap(
                 model_or_dict,
                 train_data,
                 effective_feature_cols,
@@ -258,12 +290,13 @@ def compute_timeframe_shap(
             "selected": [True] * len(effective_feature_cols),
             "timeframe": [timeframe_idx] * len(effective_feature_cols),
             "cutoff_date": [str(cutoff_date.date())] * len(effective_feature_cols),
+            "cluster": ["all"] * len(effective_feature_cols),
         })
         return effective_feature_cols, shap_df
 
     print(f"    [shap] SHAP computed ({time.time() - t0:.1f}s)")
 
-    return _select_features_from_shap(
+    selected, pooled_df = _select_features_from_shap(
         mean_abs_shap,
         effective_feature_cols,
         timeframe_idx,
@@ -272,6 +305,28 @@ def compute_timeframe_shap(
         min_features=min_features,
         top_n=top_n,
     )
+    pooled_df["cluster"] = "all"
+
+    # Append per-cluster breakdowns
+    if per_cluster_shap:
+        cluster_dfs = []
+        for cluster_label, cluster_shap in per_cluster_shap.items():
+            _, cluster_df = _select_features_from_shap(
+                cluster_shap,
+                effective_feature_cols,
+                timeframe_idx,
+                cutoff_date,
+                cumulative_threshold=cumulative_threshold,
+                min_features=min_features,
+                top_n=top_n,
+            )
+            cluster_df["cluster"] = cluster_label
+            cluster_dfs.append(cluster_df)
+        combined_df = pd.concat([pooled_df] + cluster_dfs, ignore_index=True)
+    else:
+        combined_df = pooled_df
+
+    return selected, combined_df
 
 
 def build_shap_summary(
@@ -309,8 +364,11 @@ def save_shap_outputs(
     """Save per-timeframe SHAP CSVs and a cross-timeframe summary.
 
     Files written to output_dir/shap/:
-      shap_timeframe_00.csv … shap_timeframe_09.csv   (one per timeframe)
-      shap_summary.csv                                  (aggregated)
+      shap_timeframe_00.csv … shap_timeframe_09.csv   (one per timeframe, includes per-cluster rows)
+      shap_summary.csv                                  (aggregated, pooled only)
+
+    Per-cluster rows in the timeframe CSVs have cluster != "all".
+    The summary CSV aggregates only the pooled ("all") rows.
 
     Returns (list_of_timeframe_paths, summary_path) — summary_path is None
     if timeframe_reports is empty.
@@ -321,16 +379,28 @@ def save_shap_outputs(
     shap_dir = output_dir / "shap"
     shap_dir.mkdir(parents=True, exist_ok=True)
 
+    # Ensure 'cluster' column exists for backward compat with old reports
+    for df in timeframe_reports:
+        if "cluster" not in df.columns:
+            df["cluster"] = "all"
+
     timeframe_paths: list[Path] = []
     for df in timeframe_reports:
         if df.empty:
             continue
         idx = int(df["timeframe"].iloc[0])
         path = shap_dir / f"shap_timeframe_{idx:02d}.csv"
-        df[SHAP_REPORT_COLS].to_csv(path, index=False)
+        cols = [c for c in SHAP_REPORT_COLS if c in df.columns]
+        df[cols].to_csv(path, index=False)
         timeframe_paths.append(path)
 
-    summary_df = build_shap_summary(timeframe_reports, n_timeframes)
+    # Summary uses only pooled rows
+    pooled_reports = []
+    for df in timeframe_reports:
+        pooled = df[df["cluster"] == "all"] if "cluster" in df.columns else df
+        if not pooled.empty:
+            pooled_reports.append(pooled)
+    summary_df = build_shap_summary(pooled_reports, n_timeframes)
     summary_path = shap_dir / "shap_summary.csv"
     summary_df.to_csv(summary_path, index=False)
 

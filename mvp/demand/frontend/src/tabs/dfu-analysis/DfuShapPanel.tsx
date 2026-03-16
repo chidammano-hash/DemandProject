@@ -212,9 +212,16 @@ export function DfuShapPanel({
           </div>
         )}
         {error && !loading && (
-          <p className="py-4 text-center text-sm text-destructive">
-            SHAP computation failed: {error}
-          </p>
+          <div className="py-4 text-center space-y-1">
+            <p className="text-sm text-destructive">
+              SHAP computation failed: {error}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Ensure model artifacts exist at <code className="bg-muted px-1 rounded">data/models/{selectedModel}/</code>.{" "}
+              Run <code className="bg-muted px-1 rounded">make forecast-generate</code> to persist model weights.{" "}
+              For CatBoost/XGBoost models, verify the <code className="bg-muted px-1 rounded">shap</code> library is installed.
+            </p>
+          </div>
         )}
         {isFallback && !loading && (
           <FallbackShapChart modelId={selectedModel} chartColors={chartColors} />

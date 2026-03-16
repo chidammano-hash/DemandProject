@@ -16,11 +16,10 @@ const TAB_MAP: Record<string, string> = {
   "2": "controlTower",
   "3": "overview",
   "4": "accuracy",
-  "5": "dfuAnalysis",
-  "6": "inventory",
-  "7": "exceptions",
-  "8": "invPlanning",
-  "9": "jobs",
+  "5": "itemAnalysis",
+  "6": "exceptions",
+  "7": "invPlanning",
+  "8": "jobs",
 };
 
 export function useKeyboardShortcuts(config: ShortcutConfig) {

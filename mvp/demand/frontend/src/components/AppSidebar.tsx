@@ -5,7 +5,6 @@ import {
   Database,
   TrendingUp,
   Target,
-  Package,
   Activity,
   Network,
   Globe,
@@ -40,18 +39,17 @@ const NAV_ITEMS: NavItem[] = [
   { key: "overview",     label: "Overview",      icon: LayoutDashboard, section: "overview",     shortcut: "3" },
   // Analyze section
   { key: "accuracy",     label: "Accuracy",      icon: Target,          section: "demand",       shortcut: "4" },
-  { key: "dfuAnalysis",  label: "DFU Analysis",  icon: TrendingUp,      section: "demand",       shortcut: "5" },
-  { key: "inventory",    label: "Inventory",     icon: Package,         section: "demand",       shortcut: "6" },
-  { key: "exceptions",   label: "Exceptions",    icon: BookOpen,        section: "demand",       shortcut: "7" },
+  { key: "itemAnalysis", label: "Item Analysis", icon: TrendingUp,      section: "demand",       shortcut: "5" },
+  { key: "exceptions",   label: "Exceptions",    icon: BookOpen,        section: "demand",       shortcut: "6" },
   // Configure section
-  { key: "invPlanning",  label: "Inv. Planning", icon: Brain,           section: "supply",       shortcut: "8" },
+  { key: "invPlanning",  label: "Inv. Planning", icon: Brain,           section: "supply",       shortcut: "7" },
   { key: "sop",          label: "S&OP",          icon: CalendarDays,    section: "supply" },
   { key: "clusters",     label: "Clusters",      icon: Network,         section: "supply" },
   { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,        section: "supply" },
   // Analyze — continued
   { key: "fva",           label: "FVA & ROI",     icon: BarChart3,       section: "demand" },
   // System section
-  { key: "jobs",         label: "Jobs",          icon: PlayCircle,      section: "system",       shortcut: "9" },
+  { key: "jobs",         label: "Jobs",          icon: PlayCircle,      section: "system",       shortcut: "8" },
   { key: "dataQuality",  label: "Data Quality",  icon: Shield,          section: "system" },
   { key: "explorer",     label: "Explorer",      icon: Database,        section: "system" },
   { key: "intel",        label: "Market Intel",  icon: Globe,           section: "system" },

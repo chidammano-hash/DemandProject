@@ -14,6 +14,7 @@ import {
   fetchShapSummary,
   fetchShapTimeframes,
   fetchShapTimeframeDetail,
+  fetchShapClusters,
   fetchSeasonalityProfileNames,
   saveCompetitionConfig,
   runCompetition,
@@ -53,6 +54,7 @@ export function AccuracyTab() {
   const [shapOpen, setShapOpen] = useState(false);
   const [shapModelId, setShapModelId] = useState<string>("");
   const [shapTimeframeIdx, setShapTimeframeIdx] = useState<number | null>(null);
+  const [shapCluster, setShapCluster] = useState<string>("all");
 
   // ── Seasonality profile names (Feature 32) ──────────────────────────────
   useEffect(() => {
@@ -122,9 +124,14 @@ export function AccuracyTab() {
     staleTime: STALE.TEN_MIN, enabled: shapOpen && !!activeShapModel && shapTimeframeIdx === null,
   });
   const { data: shapDetailData, isLoading: loadingShapDetail } = useQuery({
-    queryKey: queryKeys.shapTimeframeDetail(activeShapModel, shapTimeframeIdx ?? 0, 15),
-    queryFn: () => fetchShapTimeframeDetail(activeShapModel, shapTimeframeIdx!, 15),
+    queryKey: queryKeys.shapTimeframeDetail(activeShapModel, shapTimeframeIdx ?? 0, 15, shapCluster),
+    queryFn: () => fetchShapTimeframeDetail(activeShapModel, shapTimeframeIdx!, 15, shapCluster),
     staleTime: STALE.TEN_MIN, enabled: shapOpen && !!activeShapModel && shapTimeframeIdx !== null,
+  });
+  const { data: shapClustersData } = useQuery({
+    queryKey: queryKeys.shapClusters(activeShapModel),
+    queryFn: () => fetchShapClusters(activeShapModel),
+    staleTime: STALE.TEN_MIN, enabled: shapOpen && !!activeShapModel,
   });
 
   // ── Mutations ───────────────────────────────────────────────────────────
@@ -165,8 +172,9 @@ export function AccuracyTab() {
   const handleLagChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setCompetitionConfig((prev) => (prev ? { ...prev, lag: e.target.value } : prev)), []);
   const handleSaveConfig = useCallback(() => { if (!competitionConfig) return; saveConfigMutation.mutate(competitionConfig); }, [competitionConfig, saveConfigMutation]);
   const handleRunCompetition = useCallback(() => { if (!competitionConfig || competitionConfig.models.length < 2) return; runCompetitionMutation.mutate(competitionConfig); }, [competitionConfig, runCompetitionMutation]);
-  const handleShapModelChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => { setShapModelId(e.target.value); setShapTimeframeIdx(null); }, []);
+  const handleShapModelChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => { setShapModelId(e.target.value); setShapTimeframeIdx(null); setShapCluster("all"); }, []);
   const handleShapTimeframeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setShapTimeframeIdx(e.target.value === "summary" ? null : Number(e.target.value)), []);
+  const handleShapClusterChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setShapCluster(e.target.value), []);
 
   // ── Render ──────────────────────────────────────────────────────────────
   return (
@@ -177,8 +185,12 @@ export function AccuracyTab() {
             <ChartColumn className="h-5 w-5" />
             <CardTitle className="text-base">Accuracy Comparison</CardTitle>
           </div>
-          <CardDescription>
-            Compare forecast accuracy across models by DFU attribute. Uses pre-aggregated views for fast results.
+          <CardDescription className="max-w-3xl">
+            Compare forecast accuracy across models sliced by DFU attribute (cluster, item, location, brand, etc.).
+            Use the <strong>Group By</strong> dropdown to change the slice dimension, <strong>Lag</strong> to select
+            the forecast horizon (0 = same month, 4 = 4 months ahead), and <strong>Window</strong> to set the
+            trailing months of data. The table shows WAPE, accuracy %, and bias for each model per group.
+            Below, the <strong>Lag Curve</strong> chart visualizes how accuracy degrades across horizons.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -223,9 +235,12 @@ export function AccuracyTab() {
         shapTimeframes={shapTimeframesData?.timeframes ?? []}
         shapTimeframeIdx={shapTimeframeIdx} shapFeatures={shapFeatures}
         loadingShap={shapTimeframeIdx === null ? loadingShapSummary : loadingShapDetail}
+        shapClusters={shapClustersData?.clusters ?? []}
+        shapCluster={shapCluster}
         onToggleOpen={() => setShapOpen((v) => !v)}
         onModelChange={handleShapModelChange}
         onTimeframeChange={handleShapTimeframeChange}
+        onClusterChange={handleShapClusterChange}
       />
 
       <BiasCorrectionsPanel />

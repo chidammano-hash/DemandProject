@@ -103,6 +103,14 @@ const INSIGHT_TYPE_LABELS: Record<InsightType, string> = {
   champion_degradation: "Model Degradation",
 };
 
+const INSIGHT_TYPE_EXPLAINERS: Record<InsightType, string> = {
+  stockout_risk: "Inventory is projected to run out before the next replenishment arrives. Days of Supply (DOS) is below the safety threshold relative to lead time. This can result in lost sales, backorders, and damaged customer relationships. Immediate reorder or expediting may be needed.",
+  excess_inventory: "On-hand inventory significantly exceeds projected demand, tying up working capital and warehouse space. This often results from demand over-forecasting, order policy misalignment, or stale cluster assignments. Consider reducing order quantities, delaying planned orders, or redistributing stock.",
+  forecast_bias: "The forecasting model has been systematically over- or under-predicting demand for this item-location over multiple months. Persistent bias compounds over time — over-forecasting leads to excess stock, under-forecasting leads to stockouts. The root cause may be a trend shift, seasonality change, or model staleness.",
+  policy_gap: "The assigned replenishment policy does not match the demand characteristics of this item. For example, a high-variability item may be using a continuous ROP policy that doesn't account for demand spikes, or a low-volume item may have an unnecessarily aggressive reorder policy. Realigning the policy to the actual demand profile can reduce both stockouts and excess.",
+  champion_degradation: "The champion forecasting model's accuracy has declined significantly compared to its historical performance or alternative models. This may indicate a structural shift in demand patterns that the model hasn't adapted to. Consider retraining, switching to an alternative model, or investigating the underlying demand change.",
+};
+
 // ---------------------------------------------------------------------------
 // AI confidence tier — derived from insight metrics
 // ---------------------------------------------------------------------------
@@ -546,7 +554,7 @@ function InsightCard({
   onResolve: (insight: AiInsight) => void;
   onSnooze: (insight: AiInsight, days: number) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [showSnoozePicker, setShowSnoozePicker] = useState(false);
   const [snoozeReason, setSnoozeReason] = useState("");
   const [snoozeDays, setSnoozeDays] = useState<number | null>(null);
@@ -615,6 +623,11 @@ function InsightCard({
           {/* Summary — the 1-sentence signal */}
           <p className="mb-2 text-sm font-medium text-foreground">{insight.summary}</p>
 
+          {/* Type explainer — contextual background */}
+          <p className="mb-3 rounded bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+            <strong>Why this matters:</strong> {INSIGHT_TYPE_EXPLAINERS[insight.insight_type]}
+          </p>
+
           {/* Visual causal chain — replaces text block */}
           <CausalChainCard insight={insight} />
 
@@ -624,44 +637,77 @@ function InsightCard({
             {insight.recommendation}
           </p>
 
-          {/* Metrics row */}
+          {/* Metrics row — contextual labels */}
           <div className="mb-3 flex flex-wrap gap-3 text-xs">
             {insight.dos != null && (
-              <span className="rounded bg-muted px-2 py-1">
-                DOS: <strong>{insight.dos.toFixed(0)}d</strong>
+              <span
+                className={cn(
+                  "rounded px-2 py-1",
+                  insight.dos < 14 ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300" : "bg-muted",
+                )}
+                title="Days of Supply — how many days current inventory will last at the current sales rate"
+              >
+                Days of Supply: <strong>{insight.dos.toFixed(0)}d</strong>
+                {insight.total_lt_days != null && (
+                  <span className="ml-1 text-muted-foreground">(lead time: {insight.total_lt_days}d)</span>
+                )}
               </span>
             )}
             {insight.champion_wape != null && (
-              <span className="rounded bg-muted px-2 py-1">
-                WAPE: <strong>{(insight.champion_wape * 100).toFixed(1)}%</strong>
+              <span
+                className={cn(
+                  "rounded px-2 py-1",
+                  insight.champion_wape > 0.35 ? "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300" : "bg-muted",
+                )}
+                title="Weighted Absolute Percentage Error — lower is better. >35% is high, >50% is critical."
+              >
+                Forecast Error (WAPE): <strong>{(insight.champion_wape * 100).toFixed(1)}%</strong>
+              </span>
+            )}
+            {insight.forecast_bias_pct != null && (
+              <span
+                className={cn(
+                  "rounded px-2 py-1",
+                  Math.abs(insight.forecast_bias_pct) > 0.2 ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300" : "bg-muted",
+                )}
+                title="Forecast bias: positive means over-forecasting, negative means under-forecasting"
+              >
+                Bias: <strong>{insight.forecast_bias_pct > 0 ? "+" : ""}{(insight.forecast_bias_pct * 100).toFixed(1)}%</strong>
+                <span className="ml-1 text-muted-foreground">({insight.forecast_bias_pct > 0 ? "over-forecast" : "under-forecast"})</span>
               </span>
             )}
             {insight.current_policy_id && (
-              <span className="rounded bg-muted px-2 py-1">
+              <span className="rounded bg-muted px-2 py-1" title="Current replenishment policy assigned to this item-location">
                 Policy: <strong>{insight.current_policy_id}</strong>
               </span>
             )}
             {insight.financial_impact_estimate != null && (
-              <span className="rounded bg-amber-100 px-2 py-1 font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+              <span
+                className="rounded bg-amber-100 px-2 py-1 font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                title="Estimated financial exposure if no action is taken — includes lost revenue, carrying cost, or obsolescence risk"
+              >
                 {fmtCurrency(insight.financial_impact_estimate)} at risk
               </span>
             )}
           </div>
 
-          {/* Detailed reasoning toggle (secondary — behind disclosure) */}
+          {/* Detailed AI reasoning — expanded by default for full transparency */}
           {insight.reasoning && (
             <div className="mb-3">
               <button
                 onClick={() => setExpanded(!expanded)}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
               >
                 {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                Full AI Reasoning
+                AI Reasoning Chain
               </button>
               {expanded && (
-                <p className="mt-2 rounded bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
-                  {insight.reasoning}
-                </p>
+                <div className="mt-2 rounded border border-muted bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
+                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+                    Step-by-step analysis from data signals to recommendation
+                  </p>
+                  <p className="whitespace-pre-line">{insight.reasoning}</p>
+                </div>
               )}
             </div>
           )}
@@ -1071,8 +1117,10 @@ export default function AIPlannerTab() {
             <Brain className="h-6 w-6 text-teal-600 dark:text-teal-400" />
             <div>
               <h2 className="text-xl font-semibold">AI Planner</h2>
-              <p className="text-sm text-muted-foreground">
-                Proactive exception work-queue — AI-diagnosed planning issues ranked by financial impact
+              <p className="text-sm text-muted-foreground max-w-2xl">
+                Proactive exception work-queue powered by AI. The agent scans your entire portfolio,
+                traces causal chains across forecast accuracy, inventory levels, replenishment policies,
+                and financial exposure — then generates prioritized, actionable insights ranked by risk.
                 {lastScanLabel && (
                   <span className="ml-2 text-xs text-muted-foreground/70">
                     · Last scan: {lastScanLabel}
@@ -1114,8 +1162,9 @@ export default function AIPlannerTab() {
         {/* ---------------------------------------------------------------- */}
         {/* Distinction banner (PL-004)                                     */}
         {/* ---------------------------------------------------------------- */}
-        <div className="rounded-md border border-sky-200 bg-sky-50 px-4 py-2 text-xs text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-300">
-          <strong>AI Planner</strong> shows ML-generated insights ranked by financial impact. For rule-based threshold alerts from replenishment policies, see the <strong>Exceptions</strong> tab.
+        <div className="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-300 space-y-1">
+          <p><strong>How it works:</strong> The AI agent reads across all data layers — sales history, forecast models, inventory snapshots, EOQ targets, and replenishment policies — to identify exceptions that require planner attention. Each insight traces a causal chain: <em>forecast inaccuracy → inventory consequence → policy mismatch → financial exposure</em>.</p>
+          <p><strong>AI Planner vs Exceptions:</strong> This tab shows ML-generated insights that consider cross-dimensional relationships. The <strong>Exceptions</strong> tab shows rule-based threshold alerts from replenishment policies. Both are important — use AI Planner for complex, multi-factor issues and Exceptions for straightforward policy violations.</p>
         </div>
 
         {/* ---------------------------------------------------------------- */}
@@ -1244,10 +1293,12 @@ export default function AIPlannerTab() {
                   <p className="text-sm font-medium text-green-700 dark:text-green-400">
                     Portfolio looks healthy!
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    No open exceptions found.
+                  <p className="mt-1 max-w-md mx-auto text-xs text-muted-foreground">
+                    No open exceptions found. The AI agent scanned your portfolio across forecast accuracy,
+                    inventory levels, policy assignments, and financial exposure — and found no items requiring
+                    immediate planner attention.
                     {lastScanLabel && ` Last scan: ${lastScanLabel}.`}
-                    {" "}Click "Generate Now" to run a fresh scan.
+                    {" "}Click "Generate Now" to run a fresh scan against the latest data.
                   </p>
                 </>
               ) : (

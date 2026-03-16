@@ -158,15 +158,16 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - Column-level typeahead suggestions: `/domains/{domain}/suggest` reused per column header with native HTML `<datalist>`
    - Chemistry-themed loading overlay: periodic table element tile with `pulse-glow` animation, frosted glass backdrop
    - Debounce stability: `useDebounce` uses `JSON.stringify` deep comparison for object values to prevent re-render loops
-19. DFU Analysis tab (feature17):
-   - Unified sales vs multi-model forecast overlay on a single chart
-   - Three analysis modes: Item @ Location (single DFU), All Items @ Location, Item @ All Locations
-   - `GET /dfu/analysis` endpoint: server-side join of `agg_sales_monthly` + `agg_forecast_monthly`, returns pre-pivoted series + per-model KPIs
-   - Per-model KPI cards: Accuracy %, WAPE, Bias, Total Forecast, Total Actual
-   - Toggleable measure visibility (sales line + per-model forecast lines)
-   - Typeahead item/location filters with cross-filtering, auto-sample on first visit
-   - **Clickable forecast lines**: clicking any backtest model line sets `selectedModel` state in `DfuAnalysisTab`; selected line renders thicker + unselected lines fade to 30% opacity; hint text "↑ click a forecast line to explore SHAP" near toggles
+19. Item Analysis tab (feature17 + feature34 merge):
+   - Merged DFU Analysis + Inventory into a single **Item Analysis** tab with a checkbox toggle toolbar
+   - 7 toggleable panels grouped as Demand (Forecast Chart, SHAP, Model KPIs) and Supply (Inv KPIs, Position Table, Variability, Lead Time); toggle state persisted in localStorage via `usePanelToggles` hook
+   - `ItemAnalysisTab.tsx` replaces separate `DfuAnalysisTab.tsx` and `InventoryTab.tsx` (old files kept in repo but no longer imported from `App.tsx`)
+   - `useUrlState.ts` includes `itemAnalysis` in VALID_TABS with backward compat redirects from `dfuAnalysis`/`inventory`
+   - Sidebar: single "Item Analysis" nav item replaces two separate items (now **16 nav items** total)
+   - **Demand side:** Unified sales vs multi-model forecast overlay on a single chart; three analysis modes (Item @ Location, All Items @ Location, Item @ All Locations); `GET /dfu/analysis` endpoint; per-model KPI cards; toggleable measure visibility; typeahead item/location filters
+   - **Clickable forecast lines**: clicking any backtest model line sets `selectedModel` state; selected line renders thicker + unselected lines fade to 30% opacity; hint text "↑ click a forecast line to explore SHAP" near toggles
    - **Per-DFU SHAP Panel** (`DfuShapPanel.tsx`): on model selection renders a stacked Recharts BarChart below the overlay chart showing signed SHAP feature contributions per month; future months rendered at 45% fill opacity; 15-color palette per feature; scrollable container (min 800px); dual-stack with `ReferenceLine y={0}` baseline; falls back to cluster-level summary SHAP (existing `/forecast/shap/{model}/summary` endpoint) with warning banner when per-DFU pkl artifacts are not available (404); placeholder card when no model selected
+   - **Supply side:** Inventory KPI cards, trend chart (dual Y-axis), paginated position table, item detail drill-down — all from sub-panels in `tabs/inventory/`
 20. Market intelligence (feature18):
    - `POST /market-intelligence` endpoint combining Google Custom Search + GPT-4o narrative
    - Item metadata lookup from `dim_item` (item_desc, brand_name, category, producer_name)
@@ -330,7 +331,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Feature selection: cumulative importance threshold (default 95%) or exact top-N; minimum 5 features guaranteed
    - Output: `data/backtest/<model_id>/shap/shap_timeframe_XX.csv` (per-timeframe) + `shap_summary.csv` (cross-timeframe aggregated)
    - API: 4 read-only endpoints (models list, summary, timeframes, per-timeframe detail) under `/forecast/shap/` served from CSVs (no DB queries), plus **1 on-demand compute endpoint** `GET /forecast/shap/{model_id}/dfu?item_no=&loc=&top_n=` that loads persisted pkl from `data/models/{model_id}/cluster_{ml_cluster}.pkl`, rebuilds the exact feature matrix (lags 1–12, rolling mean/std with ddof=1, calendar, categoricals, item numerics), runs SHAP, and returns per-month signed contributions for both historical and future production-forecast months — all via `api/routers/shap.py`
-   - Frontend: collapsible "Feature Importance (SHAP)" panel in Accuracy tab; indigo=selected / gray=dropped bar chart; **per-DFU interactive SHAP panel** (`DfuShapPanel.tsx`) in DFU Analysis tab
+   - Frontend: collapsible "Feature Importance (SHAP)" panel in Accuracy tab; indigo=selected / gray=dropped bar chart; **per-DFU interactive SHAP panel** (`DfuShapPanel.tsx`) in Item Analysis tab
    - Config keys in `config/algorithm_config.yaml`: `shap_select`, `shap_top_n`, `shap_threshold`, `shap_sample_size`; composable with `tune_inline` and `params_file` (Feature 44)
    - Activated by setting `shap_select: true` in the algorithm section; run via `make backtest-lgbm`, `make backtest-catboost`, or `make backtest-xgboost`
    - Graceful degradation: SHAP failures log warning and keep all features; backtest continues uninterrupted
@@ -465,7 +466,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - DDL: `fact_inventory_snapshot` with B-tree + GIN trigram indexes, `agg_inventory_monthly` materialized view
    - Custom normalize script (`normalize_inventory_csv.py`) merges multi-file CSVs with streaming (no pandas)
    - 4 API endpoints: `GET /inventory/position` (latest per item-loc via DISTINCT ON), `GET /inventory/kpis` (aggregate metrics), `GET /inventory/trend` (monthly from agg view), `GET /inventory/item-detail` (full history for item-loc pair)
-   - Frontend: InventoryTab with KPI cards, filter controls (item/location debounce, months selector), trend chart (dual Y-axis), paginated position table, item detail panel
+   - Frontend: Inventory panels (now part of ItemAnalysisTab) with KPI cards, filter controls (item/location debounce, months selector), trend chart (dual Y-axis), paginated position table, item detail panel
    - Makefile: `normalize-inventory`, `load-inventory`, `refresh-agg-inventory`, `db-apply-inventory`, `inventory-pipeline`
 22. Backtest model cleanup (feature23):
    - CLI utility (`scripts/clean_backtest_models.py`) for selective removal of model predictions
@@ -715,12 +716,12 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `EChartContainer.test.tsx` | ECharts wrapper | 4 |
 | `ExplorerTab.test.tsx` | Data Explorer tab | 2 |
 | `AccuracyTab.test.tsx` | Accuracy tab | 1 |
-| `DfuAnalysisTab.test.tsx` | DFU Analysis tab | 1 |
+| `ItemAnalysisTab.test.tsx` | Item Analysis tab (merged DFU Analysis + Inventory) | varies |
 | `DfuShapPanel.test.tsx` | Per-DFU SHAP stacked bar chart panel (placeholder, non-item_location note, skeleton, success chart, 404 fallback) | 5 |
+| `usePanelToggles.test.ts` | Panel toggle hook (localStorage persistence) | varies |
 | `ClustersTab.test.tsx` | Clusters tab | 1 |
 | `MarketIntelTab.test.tsx` | Market Intelligence tab | 1 |
 | `ChatPanel.test.tsx` | Chat panel | 1 |
-| `InventoryTab.test.tsx` | Inventory tab | 5 |
 | `WhatIfScenarios.test.tsx` | Clustering What-If scenarios | 8 |
 | `AppSidebar.test.tsx` | Sidebar navigation | 11 |
 | `ThemeSelector.test.tsx` | Theme + color mode picker | 9 |
@@ -768,8 +769,7 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | Tab Shell | Subfolder | Extracted Panels |
 |-----------|-----------|-----------------|
 | `tabs/AccuracyTab.tsx` (224L) | `tabs/accuracy/` | KpiSection, TrendChartPanel, SliceTablePanel, ChampionPanel, ShapPanel |
-| `tabs/DfuAnalysisTab.tsx` | `tabs/dfu-analysis/` | SelectorPanel, OverlayChartPanel, ModelKpiSection, DfuShapPanel |
-| `tabs/InventoryTab.tsx` (222L) | `tabs/inventory/` | KpiSection, TrendChartPanel, PositionTablePanel, ItemDetailPanel, DemandVariabilityPanel, LeadTimeProfilePanel |
+| `tabs/ItemAnalysisTab.tsx` | `tabs/dfu-analysis/` + `tabs/inventory/` | Merged: SelectorPanel, OverlayChartPanel, ModelKpiSection, DfuShapPanel (demand) + KpiSection, TrendChartPanel, PositionTablePanel, ItemDetailPanel, DemandVariabilityPanel, LeadTimeProfilePanel (supply); checkbox toggle toolbar via `usePanelToggles` |
 | `tabs/JobsTab.tsx` (202L) | `tabs/jobs/` | KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel, jobsShared.ts |
 | `tabs/ClustersTab.tsx` (224L) | `tabs/clusters/` | ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel |
 | `tabs/InvPlanningTab.tsx` | `tabs/inv-planning/` | Two-column layout: fixed 220px grouped sidebar navigation (7 groups with colored dividers, icons, and labels — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) + scrollable main content area with per-panel header bar (title + description). 27 panels: ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, RebalancingPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel, ReplenishmentPlanPanel, DemandForecastPanel, BlendedDemandPanel, EchelonPanel, FinancialPlanPanel, EventCalendarPanel, ScenarioPlanningPanel, and Supply group panels |

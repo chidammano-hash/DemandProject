@@ -160,7 +160,7 @@ describe("InventoryTab", () => {
     });
   });
 
-  it("renders trend chart", async () => {
+  it("renders months selector in position table header", async () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
@@ -169,21 +169,9 @@ describe("InventoryTab", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByText("Monthly Inventory Trend")).toBeDefined();
-    });
-  });
-
-  it("renders filter controls", async () => {
-    render(
-      <TestQueryWrapper>
-        <GlobalFilterProvider value={makeFilterContext()}>
-          <InventoryTab />
-        </GlobalFilterProvider>
-      </TestQueryWrapper>
-    );
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("e.g. 100320 — filter by item number or name")).toBeDefined();
-      expect(screen.getByPlaceholderText("e.g. 1401-BULK — filter by location code")).toBeDefined();
+      expect(screen.getByText("Inventory Position")).toBeDefined();
+      // Months selector is in the card header
+      expect(screen.getByText("12 mo")).toBeDefined();
     });
   });
 });

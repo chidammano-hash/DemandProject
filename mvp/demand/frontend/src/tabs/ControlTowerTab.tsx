@@ -116,9 +116,16 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
     <div className="flex flex-col gap-4 p-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Inventory Control Tower</h2>
+        <div className="space-y-0.5">
+          <h2 className="text-lg font-semibold">Inventory Control Tower</h2>
+          <p className="text-sm text-muted-foreground max-w-3xl">
+            Real-time operational dashboard aggregating cross-dimensional supply chain health metrics.
+            Monitor portfolio health scores, open exceptions, fill rates, and demand signals at a glance.
+            Use this as a daily check to spot critical items before they become stockouts or excess.
+          </p>
+        </div>
         <button
-          className="text-xs rounded border px-3 py-1 hover:bg-muted"
+          className="text-xs rounded-md border px-3 py-1.5 hover:bg-muted transition-colors"
           onClick={handleRefresh}
         >
           Refresh Now

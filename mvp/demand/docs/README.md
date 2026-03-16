@@ -233,11 +233,13 @@ Champion Model Selection (feature15):
 - CLI: `make champion-select`, `make champion-simulate`, `make champion-train-meta`, `make champion-all`
 - API: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
 
-DFU Analysis (feature17):
-- **DFU Analysis tab** overlays sales history and multi-model forecast predictions on a single chart
+Item Analysis (feature17 + feature34 merge):
+- **Item Analysis tab** merges DFU Analysis + Inventory into a single unified tab with a checkbox toggle toolbar
+- 7 toggleable panels grouped as Demand (Forecast Chart, SHAP, Model KPIs) and Supply (Inv KPIs, Position Table, Variability, Lead Time); toggle state persisted in localStorage
 - Three scope modes: Item @ Location (single DFU), All Items @ Location, Item @ All Locations
 - Per-model KPI cards with Accuracy %, WAPE, Bias, Total Forecast, Total Actual
-- Toggleable measure visibility — select/deselect sales and individual forecast models
+- Inventory KPI cards, trend chart, position table, and item detail drill-down
+- Sidebar shortcut: key 5 = Item Analysis; backward compat redirects from `dfuAnalysis`/`inventory` URLs
 - API: `GET /dfu/analysis?mode=&item=&location=&points=&kpi_months=&sales_metric=`
 
 Market Intelligence (feature18):
@@ -250,7 +252,7 @@ Market Intelligence (feature18):
 - UI: "Mi" tab in the navigation bar
 
 UI Overhaul (feature36):
-- Collapsible sidebar navigation (9 items, 5 sections) replacing horizontal tabs
+- Collapsible sidebar navigation (16 items, 5 sections) replacing horizontal tabs
 - Dashboard overview landing page with KPI cards (sparklines), alerts, heatmap, top movers, forecast trend chart
 - Global filter bar: brand, category, market, channel multi-select dropdowns
 - Three product themes: Wine & Spirits (burgundy+gold), General (blue SaaS), Obsidian (green+black dark-only)
@@ -259,7 +261,7 @@ UI Overhaul (feature36):
 - API: `GET /domains/{domain}/distinct`, `GET /dashboard/kpis`, `GET /dashboard/alerts`, `GET /dashboard/top-movers`, `GET /dashboard/heatmap`
 
 Inventory Planning (feature34):
-- Inventory tab with KPI cards (Total On-Hand, Total On-Order, Avg Lead Time), trend charts, and position table
+- Inventory panels (now part of Item Analysis tab) with KPI cards (Total On-Hand, Total On-Order, Avg Lead Time), trend charts, and position table
 - Item/location filters with debounce, months selector for date range
 - Paginated, sortable position table with clickable rows for item detail drill-down
 - Dual Y-axis trend chart showing on-hand, on-order, lead time, and MTD sales over time

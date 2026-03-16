@@ -50,8 +50,14 @@ export function ChampionPanel({
           <Trophy className="h-5 w-5" />
           <CardTitle className="text-base">Champion Selection</CardTitle>
         </div>
-        <CardDescription>
-          Pick the best model per DFU based on forecast accuracy. Configure which models compete, then run the selection.
+        <CardDescription className="max-w-3xl">
+          <strong>Forecast Value Added (FVA)</strong> analysis. For each item-location (DFU) and month,
+          this panel identifies which forecasting model performs best. Configure which models compete,
+          then run the selection. Results show: <strong>Champion</strong> = best model chosen using only
+          data available at forecast time (no future leakage). <strong>Ceiling (Oracle)</strong> = hypothetical
+          best model with perfect hindsight. <strong>Gap to Ceiling</strong> = improvement opportunity if
+          model selection were perfect. The <strong>Model Wins</strong> bars show how often each model
+          was selected — use this to assess whether adding a model to the competition improves overall accuracy.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">

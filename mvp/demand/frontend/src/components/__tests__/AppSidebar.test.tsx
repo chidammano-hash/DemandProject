@@ -26,7 +26,7 @@ describe("AppSidebar", () => {
     for (const item of NAV_ITEMS) {
       expect(screen.getByText(item.label)).toBeInTheDocument();
     }
-    expect(NAV_ITEMS.length).toBe(17);
+    expect(NAV_ITEMS.length).toBe(16);
   });
 
   it("active item has aria-current='page'", () => {

@@ -141,10 +141,12 @@ async def shap_timeframe_detail(
     model_id: str,
     idx: int,
     top_n: int = Query(default=15, ge=1, le=200),
+    cluster: str = Query(default="all", max_length=60),
 ) -> dict:
     """Per-timeframe SHAP feature importance detail.
 
     Returns features sorted by mean_abs_shap descending (rank 1 = most important).
+    Use cluster="all" for pooled (default), or a specific cluster label for per-cluster SHAP.
     """
     csv_path = _timeframe_csv(model_id, idx)
     if not csv_path.exists():
@@ -153,18 +155,62 @@ async def shap_timeframe_detail(
             detail=f"No SHAP data for model '{model_id}' timeframe {idx}.",
         )
     df = pd.read_csv(csv_path)
+
+    # Filter by cluster if the column exists
+    if "cluster" in df.columns:
+        filtered = df[df["cluster"] == cluster]
+        if filtered.empty and cluster != "all":
+            raise HTTPException(
+                status_code=404,
+                detail=f"No SHAP data for cluster '{cluster}' in model '{model_id}' timeframe {idx}.",
+            )
+        if not filtered.empty:
+            df = filtered
+
     df = df.sort_values("rank").reset_index(drop=True)
     label = chr(ord("A") + idx) if 0 <= idx <= 25 else str(idx)
     cutoff_date = str(df["cutoff_date"].iloc[0]) if not df.empty else ""
     features = df.head(top_n).to_dict(orient="records")
+
+    # List available clusters from the full CSV
+    full_df = pd.read_csv(csv_path)
+    available_clusters = sorted(full_df["cluster"].unique().tolist()) if "cluster" in full_df.columns else ["all"]
+
     return {
         "model_id": model_id,
         "timeframe_idx": idx,
         "label": label,
         "cutoff_date": cutoff_date,
         "total_features": len(df),
+        "cluster": cluster,
+        "available_clusters": available_clusters,
         "features": features,
     }
+
+
+@router.get("/forecast/shap/{model_id}/clusters")
+async def shap_clusters(model_id: str) -> dict:
+    """List available cluster labels for SHAP data of a model.
+
+    Scans all timeframe CSVs for cluster column values.
+    Returns ["all"] if no per-cluster data exists.
+    """
+    shap_d = _shap_dir(model_id)
+    if not shap_d.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No SHAP outputs found for model '{model_id}'.",
+        )
+    clusters_set: set[str] = set()
+    for f in shap_d.glob("shap_timeframe_*.csv"):
+        try:
+            df = pd.read_csv(f, usecols=["cluster"])
+            clusters_set.update(df["cluster"].unique().tolist())
+        except (ValueError, KeyError):
+            clusters_set.add("all")
+    if not clusters_set:
+        clusters_set.add("all")
+    return {"model_id": model_id, "clusters": sorted(clusters_set)}
 
 
 # ---------------------------------------------------------------------------

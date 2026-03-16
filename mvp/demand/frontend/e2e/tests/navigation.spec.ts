@@ -58,7 +58,7 @@ test.describe("Sidebar Navigation", () => {
     const tabs = [
       "overview",
       "accuracy",
-      "inventory",
+      "itemAnalysis",
       "invPlanning",
       "aiPlanner",
       "controlTower",

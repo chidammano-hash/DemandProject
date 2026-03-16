@@ -104,7 +104,8 @@ export const queryKeys = {
   shapModels: () => ["shap-models"] as const,
   shapSummary: (modelId: string, topN: number) => ["shap-summary", modelId, topN] as const,
   shapTimeframes: (modelId: string) => ["shap-timeframes", modelId] as const,
-  shapTimeframeDetail: (modelId: string, idx: number, topN: number) => ["shap-timeframe-detail", modelId, idx, topN] as const,
+  shapTimeframeDetail: (modelId: string, idx: number, topN: number, cluster?: string) => ["shap-timeframe-detail", modelId, idx, topN, cluster ?? "all"] as const,
+  shapClusters: (modelId: string) => ["shap-clusters", modelId] as const,
   dfuShap: (modelId: string, itemNo: string, loc: string, topN: number) => ["dfu-shap", modelId, itemNo, loc, topN] as const,
   // AI Planner keys (IPAIfeature1)
   aiInsights: (params: Record<string, unknown>) => ["ai-insights", params] as const,
@@ -850,8 +851,19 @@ export async function fetchShapTimeframeDetail(
   modelId: string,
   idx: number,
   topN = 15,
+  cluster = "all",
 ): Promise<ShapTimeframeDetailPayload> {
-  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/timeframe/${idx}?top_n=${topN}`);
+  const qs = new URLSearchParams({ top_n: String(topN), cluster });
+  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/timeframe/${idx}?${qs}`);
+}
+
+export interface ShapClustersPayload {
+  model_id: string;
+  clusters: string[];
+}
+
+export async function fetchShapClusters(modelId: string): Promise<ShapClustersPayload> {
+  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/clusters`);
 }
 
 export async function fetchDfuShap(

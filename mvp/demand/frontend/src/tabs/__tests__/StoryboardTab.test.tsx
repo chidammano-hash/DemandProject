@@ -10,8 +10,8 @@ const mockSummary = {
   total_investigating: 5,
   avg_severity: 0.62,
   by_type: [
-    { exception_type: "stockout_risk", open_count: 6, avg_severity: 0.8 },
-    { exception_type: "forecast_bias", open_count: 4, avg_severity: 0.5 },
+    { exception_type: "stockout_risk", count: 6, open_count: 6, avg_severity: 0.8 },
+    { exception_type: "forecast_bias", count: 4, open_count: 4, avg_severity: 0.5 },
   ],
   top_items: [
     { item_no: "ITEM001", loc: "LOC1", exception_count: 3 },
@@ -110,10 +110,10 @@ describe("StoryboardTab", () => {
       </TestQueryWrapper>
     );
     await waitFor(() => {
-      expect(screen.getByText(/Total Open/i)).toBeDefined();
+      expect(screen.getByText(/Open Exceptions/i)).toBeDefined();
     });
     await waitFor(() => {
-      expect(screen.getAllByText(/Investigating/i).length).toBeGreaterThan(0);
+      expect(screen.getByText(/Under Investigation/i)).toBeDefined();
     });
   });
 
@@ -136,7 +136,7 @@ describe("StoryboardTab", () => {
     );
     await waitFor(() => {
       expect(
-        screen.getByText(/Select an exception from the queue to investigate/i)
+        screen.getByText(/No exception selected/i)
       ).toBeDefined();
     });
   });

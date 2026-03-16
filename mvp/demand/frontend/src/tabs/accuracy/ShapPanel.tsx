@@ -40,9 +40,12 @@ export interface ShapPanelProps {
   shapTimeframeIdx: number | null;
   shapFeatures: ShapFeatureRow[];
   loadingShap: boolean;
+  shapClusters?: string[];
+  shapCluster?: string;
   onToggleOpen: () => void;
   onModelChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   onTimeframeChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  onClusterChange?: (e: React.ChangeEvent<HTMLSelectElement>) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,10 +60,14 @@ export function ShapPanel({
   shapTimeframeIdx,
   shapFeatures,
   loadingShap,
+  shapClusters = [],
+  shapCluster = "all",
   onToggleOpen,
   onModelChange,
   onTimeframeChange,
+  onClusterChange,
 }: ShapPanelProps) {
+  const hasMultipleClusters = shapClusters.length > 1 && shapClusters.some((c) => c !== "all");
   return (
     <Card className="mt-4 animate-fade-in">
       <CardHeader
@@ -76,16 +83,27 @@ export function ShapPanel({
           <CardTitle className="text-base">Feature Importance (SHAP)</CardTitle>
         </div>
         <CardDescription>
-          Per-timeframe SHAP feature importance from SHAP-selected backtests. Run with{" "}
-          <code className="text-xs">--shap-select</code> to populate.
+          Per-timeframe SHAP feature importance from backtests. Shows which features drive forecast accuracy
+          for each model. Requires <code className="text-xs">shap_select: true</code> in{" "}
+          <code className="text-xs">config/algorithm_config.yaml</code> for each model (LGBM, CatBoost, XGBoost),
+          then re-run the backtest.
         </CardDescription>
       </CardHeader>
       {shapOpen && (
         <CardContent className="space-y-4">
           {shapModels.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No SHAP outputs found. Run a backtest with <code>--shap-select</code> to generate feature importance data.
-            </p>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p className="font-medium">No SHAP outputs found for any model.</p>
+              <p>To generate SHAP feature importance data:</p>
+              <ol className="list-decimal list-inside space-y-1 ml-2">
+                <li>Set <code className="text-xs bg-muted px-1 rounded">shap_select: true</code> under each algorithm in <code className="text-xs bg-muted px-1 rounded">config/algorithm_config.yaml</code></li>
+                <li>Re-run backtests: <code className="text-xs bg-muted px-1 rounded">make backtest-lgbm</code>, <code className="text-xs bg-muted px-1 rounded">make backtest-catboost</code>, <code className="text-xs bg-muted px-1 rounded">make backtest-xgboost</code></li>
+                <li>SHAP outputs will appear at <code className="text-xs bg-muted px-1 rounded">data/backtest/&lt;model&gt;/shap/</code></li>
+              </ol>
+              <p className="text-xs">
+                Note: CatBoost uses native SHAP (no <code>shap</code> library needed). LGBM and XGBoost require <code>shap&gt;=0.43.0</code>.
+              </p>
+            </div>
           ) : (
             <>
               {/* ── Selectors ────────────────────────────────────────── */}
@@ -118,6 +136,23 @@ export function ShapPanel({
                     ))}
                   </select>
                 </label>
+
+                {hasMultipleClusters && shapTimeframeIdx !== null && (
+                  <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Cluster
+                    <select
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm block"
+                      value={shapCluster}
+                      onChange={onClusterChange}
+                    >
+                      {shapClusters.map((c) => (
+                        <option key={c} value={c}>
+                          {c === "all" ? "All clusters (pooled)" : `Cluster ${c}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
               </div>
 
               {/* ── Chart ────────────────────────────────────────────── */}

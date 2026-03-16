@@ -24,7 +24,7 @@ from common.shap_selector import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
-def _make_shap_df(features, timeframe_idx=0, cutoff="2024-01-01", selected=True):
+def _make_shap_df(features, timeframe_idx=0, cutoff="2024-01-01", selected=True, cluster="all"):
     """Build a minimal SHAP report DataFrame."""
     n = len(features)
     return pd.DataFrame({
@@ -34,6 +34,7 @@ def _make_shap_df(features, timeframe_idx=0, cutoff="2024-01-01", selected=True)
         "selected": [selected] * n,
         "timeframe": [timeframe_idx] * n,
         "cutoff_date": [cutoff] * n,
+        "cluster": [cluster] * n,
     })
 
 
@@ -55,7 +56,9 @@ class TestSelectFeaturesFromShap:
         assert isinstance(selected, list)
         assert len(selected) >= 1
         assert df.shape[0] == 5
-        assert set(df.columns) == set(SHAP_REPORT_COLS)
+        # _select_features_from_shap doesn't add "cluster" — that's added by compute_timeframe_shap
+        base_cols = [c for c in SHAP_REPORT_COLS if c != "cluster"]
+        assert set(df.columns) == set(base_cols)
 
     def test_min_features_floor(self):
         # Very skewed: one feature dominates at any threshold
@@ -98,7 +101,9 @@ class TestSelectFeaturesFromShap:
         shap = np.array([3.0, 2.0, 1.0])
         features = ["a", "b", "c"]
         _, df = _select_features_from_shap(shap, features, 2, self._cutoff())
-        assert list(df.columns) == SHAP_REPORT_COLS
+        # _select_features_from_shap doesn't add "cluster" — that's added by compute_timeframe_shap
+        base_cols = [c for c in SHAP_REPORT_COLS if c != "cluster"]
+        assert list(df.columns) == base_cols
         assert all(df["timeframe"] == 2)
         assert all(df["cutoff_date"] == "2024-06-01")
 
@@ -222,18 +227,22 @@ class TestWeightedPoolClusterShap:
         }
         train_data = self._make_train_data(["A"])
         extractor = self._make_shap_extractor(value=3.0)
-        result = _weighted_pool_cluster_shap(models, train_data, ["f1", "f2"], [], extractor, 10)
+        pooled, per_cluster = _weighted_pool_cluster_shap(models, train_data, ["f1", "f2"], [], extractor, 10)
         # __base__ skipped, only cluster A used
-        assert result.shape == (2,)
-        np.testing.assert_allclose(result, [3.0, 3.0])
+        assert pooled.shape == (2,)
+        np.testing.assert_allclose(pooled, [3.0, 3.0])
+        assert "A" in per_cluster
+        assert "__base__" not in per_cluster
 
     def test_empty_cluster_skipped(self):
         models = {"A": MagicMock(), "B": MagicMock()}
         # Only cluster A has training data; B has none
         train_data = self._make_train_data(["A"])
         extractor = self._make_shap_extractor(value=2.0)
-        result = _weighted_pool_cluster_shap(models, train_data, ["f1", "f2"], [], extractor, 10)
-        np.testing.assert_allclose(result, [2.0, 2.0])
+        pooled, per_cluster = _weighted_pool_cluster_shap(models, train_data, ["f1", "f2"], [], extractor, 10)
+        np.testing.assert_allclose(pooled, [2.0, 2.0])
+        assert "A" in per_cluster
+        assert "B" not in per_cluster
 
     def test_weighted_average_by_cluster_size(self):
         models = {"big": MagicMock(), "small": MagicMock()}
@@ -242,18 +251,17 @@ class TestWeightedPoolClusterShap:
         train_data = pd.DataFrame(big_rows + small_rows)
 
         def extractor(model, X_sample, feature_cols, cat_cols):
-            # big cluster returns shap=4, small cluster returns shap=0
-            cluster = X_sample["ml_cluster"].iloc[0] if "ml_cluster" in X_sample.columns else "big"
-            val = 4.0 if cluster == "big" else 0.0
-            # We can't inspect cluster from X_sample since it has only f1
-            # Use model identity instead
             is_big = (model is models["big"])
             return np.full((len(X_sample), len(feature_cols)), 4.0 if is_big else 0.0)
 
-        result = _weighted_pool_cluster_shap(models, train_data, ["f1"], [], extractor, 50)
+        pooled, per_cluster = _weighted_pool_cluster_shap(models, train_data, ["f1"], [], extractor, 50)
         # Weighted: (4 * min(50,40) + 0 * min(50,10)) / (40 + 10) = 160/50 = 3.2
-        assert result.shape == (1,)
-        assert abs(result[0] - 3.2) < 0.01
+        assert pooled.shape == (1,)
+        assert abs(pooled[0] - 3.2) < 0.01
+        assert "big" in per_cluster
+        assert "small" in per_cluster
+        np.testing.assert_allclose(per_cluster["big"], [4.0])
+        np.testing.assert_allclose(per_cluster["small"], [0.0])
 
     def test_extractor_exception_skips_cluster(self):
         models = {"A": MagicMock()}
@@ -262,5 +270,6 @@ class TestWeightedPoolClusterShap:
         def bad_extractor(model, X_sample, feature_cols, cat_cols):
             raise RuntimeError("Simulated SHAP failure")
 
-        result = _weighted_pool_cluster_shap(models, train_data, ["f1", "f2"], [], bad_extractor, 10)
-        np.testing.assert_allclose(result, [0.0, 0.0])
+        pooled, per_cluster = _weighted_pool_cluster_shap(models, train_data, ["f1", "f2"], [], bad_extractor, 10)
+        np.testing.assert_allclose(pooled, [0.0, 0.0])
+        assert len(per_cluster) == 0

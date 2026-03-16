@@ -315,8 +315,13 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
 
       {/* ── Header: greeting + last scan ─────────────────────────────────── */}
       <div className="flex items-center justify-between">
-        <div>
+        <div className="space-y-0.5">
           <h2 className="text-lg font-semibold">Command Center</h2>
+          <p className="text-sm text-muted-foreground max-w-2xl">
+            Your daily priority work queue. Review AI-generated insights ranked by financial impact,
+            monitor portfolio health KPIs, and triage active alerts. Start here each morning to
+            identify the highest-impact items that need your attention.
+          </p>
           {lastScanText && (
             <p className="flex items-center gap-1 text-xs text-muted-foreground">
               <Clock className="h-3 w-3" />

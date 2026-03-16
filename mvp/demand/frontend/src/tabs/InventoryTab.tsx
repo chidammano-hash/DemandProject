@@ -192,15 +192,11 @@ export function InventoryTab() {
       />
 
       <PositionTablePanel
-        itemFilter={itemFilter}
-        locationFilter={locationFilter}
-        months={months}
-        onItemChange={handleItemChange}
-        onLocationChange={handleLocationChange}
-        onMonthsChange={handleMonthsChange}
         positions={positions}
         totalPositions={totalPositions}
         isLoadingPosition={loadingPosition}
+        months={months}
+        onMonthsChange={handleMonthsChange}
         offset={offset}
         onPrevPage={handlePrevPage}
         onNextPage={handleNextPage}
@@ -209,9 +205,6 @@ export function InventoryTab() {
         onSort={handleSort}
         selectedRow={selectedRow}
         onRowClick={handleRowClick}
-        trendData={trendData}
-        trendParams={trendParams2}
-        isLoadingTrend={loadingTrend}
         detailSnapshots={detailPayload?.snapshots}
         isLoadingDetail={loadingDetail}
       />

@@ -83,6 +83,18 @@ export function TrendChartPanel({
           : Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
   }, [lagMetricOpt]);
 
+  // Detect flat lines (all lags have same value per model)
+  const isFlatLine = useMemo(() => {
+    if (chartData.length < 2) return false;
+    return lagModels.every((m) => {
+      const vals = chartData.map((d) => d[m]).filter((v) => v !== undefined) as number[];
+      if (vals.length < 2) return true;
+      const range = Math.max(...vals) - Math.min(...vals);
+      const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+      return avg === 0 ? range === 0 : range / Math.abs(avg) < 0.005; // <0.5% variation
+    });
+  }, [chartData, lagModels]);
+
   if (lagCurveData.length === 0) return null;
 
   return (
@@ -103,6 +115,27 @@ export function TrendChartPanel({
           ))}
         </select>
       </div>
+      <p className="text-xs text-muted-foreground leading-relaxed max-w-3xl">
+        <strong>What this chart shows:</strong> Forecast accuracy at each prediction horizon.{" "}
+        <strong>Lag 0</strong> = forecast issued the same month as actuals (most recent information).{" "}
+        <strong>Lag 1</strong> = forecast issued 1 month before actuals.{" "}
+        <strong>Lag 4</strong> = forecast issued 4 months ahead (longest horizon).{" "}
+        Accuracy typically degrades as lag increases because the model has less recent data.{" "}
+        This chart uses the <strong>backtest lag archive</strong> which stores all 5 lag horizons
+        for each backtest model, enabling true forecast-value-added (FVA) analysis.
+      </p>
+      {isFlatLine && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 px-3 py-2">
+          <p className="text-xs text-amber-800 dark:text-amber-300">
+            <strong>Why are the lines flat?</strong> When the same forecast value is stored
+            at all lag horizons (common for the <em>external</em> model which doesn&apos;t re-forecast
+            each month), accuracy will be identical across lags. To see meaningful lag degradation,
+            filter to backtest models (e.g. lgbm_cluster, catboost_cluster, xgboost_cluster) which
+            generate distinct predictions at each horizon. Use the <strong>Models</strong> filter above
+            to select specific models.
+          </p>
+        </div>
+      )}
       <ResponsiveContainer width="100%" height={220}>
         <LineChart data={chartData} margin={CHART_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
