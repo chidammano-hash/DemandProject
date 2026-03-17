@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
+from api.auth import require_api_key
 from api.core import get_conn
 from common.auth import CurrentUser, get_current_user, require_role
 
@@ -117,6 +118,7 @@ async def dq_history(
 async def dq_run(
     domain: str = Query("", description="Run checks for specific domain only"),
     admin: CurrentUser = Depends(require_role("manager")),
+    api_key: str = Depends(require_api_key),
 ):
     """Trigger an ad-hoc data quality check run (manager+ only)."""
     from common.dq_engine import DQEngine

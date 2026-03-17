@@ -4,6 +4,7 @@ Logs slow API responses to fact_query_performance for monitoring.
 """
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
@@ -65,12 +66,15 @@ class QueryTracker:
         return list(reversed(self._slow_queries[-limit:]))
 
 
-# Singleton
+# Singleton (thread-safe via double-checked locking)
 _tracker: QueryTracker | None = None
+_tracker_lock = threading.Lock()
 
 
 def get_tracker() -> QueryTracker:
     global _tracker
     if _tracker is None:
-        _tracker = QueryTracker()
+        with _tracker_lock:
+            if _tracker is None:
+                _tracker = QueryTracker()
     return _tracker

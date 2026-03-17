@@ -17,6 +17,7 @@ from common.constants import (
     NUMERIC_ITEM_FEATURES,
     ROLLING_WINDOWS,
 )
+from common.utils import _ts
 
 
 def _recompute_derived_features(df: pd.DataFrame) -> None:
@@ -30,10 +31,6 @@ def _recompute_derived_features(df: pd.DataFrame) -> None:
     df["mom_growth"] = df["mom_growth"].clip(-2.0, 2.0)
     df["demand_accel"] = df["rolling_mean_3m"] - df["rolling_mean_6m"]
     df["volatility_ratio"] = df["rolling_std_3m"] / (df["rolling_mean_3m"].abs() + 1.0)
-
-
-def _ts() -> str:
-    return time.strftime("%H:%M:%S")
 
 
 def build_feature_matrix(

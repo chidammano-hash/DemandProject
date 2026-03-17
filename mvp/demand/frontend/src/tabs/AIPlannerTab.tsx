@@ -4,6 +4,10 @@
  * Exception work-queue: structured, ranked, actionable insights generated
  * by an AI agent that reads across all data layers and traces causal chains.
  * NOT a chatbot — a proactive scan-and-triage system for planners.
+ *
+ * Sub-components live in ./ai-planner/:
+ *   InsightCard, CausalChainCard, ConfirmModal, AutoAcceptModal,
+ *   BulkActionBar, CopyButton, aiPlannerShared (constants + helpers)
  */
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
@@ -32,843 +36,15 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { formatCurrency as fmtCurrency } from "@/lib/formatters";
-import {
-  AlertTriangle,
-  AlertCircle,
-  Info,
-  CheckCircle2,
-  RefreshCw,
-  ChevronDown,
-  ChevronUp,
-  ChevronRight,
-  Loader2,
-  Brain,
-  TrendingDown,
-  Package,
-  BarChart3,
-  Zap,
-  Target,
-  DollarSign,
-  X,
-  Copy,
-  Check,
-} from "lucide-react";
+import { RefreshCw, Loader2, Brain, Zap } from "lucide-react";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-const SEVERITY_ORDER: Record<InsightSeverity, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-};
-
-const SEVERITY_STYLES: Record<InsightSeverity, { badge: string; border: string; dot: string }> = {
-  critical: {
-    badge: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-    border: "border-l-red-500",
-    dot: "bg-red-500",
-  },
-  high: {
-    badge: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
-    border: "border-l-orange-500",
-    dot: "bg-orange-500",
-  },
-  medium: {
-    badge: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
-    border: "border-l-yellow-500",
-    dot: "bg-yellow-500",
-  },
-  low: {
-    badge: "bg-gray-100 text-gray-700 dark:bg-gray-700/40 dark:text-gray-300",
-    border: "border-l-gray-400",
-    dot: "bg-gray-400",
-  },
-};
-
-const INSIGHT_TYPE_ICONS: Record<InsightType, React.FC<{ className?: string }>> = {
-  stockout_risk: ({ className }) => <Package className={className} />,
-  excess_inventory: ({ className }) => <TrendingDown className={className} />,
-  forecast_bias: ({ className }) => <BarChart3 className={className} />,
-  policy_gap: ({ className }) => <Target className={className} />,
-  champion_degradation: ({ className }) => <Zap className={className} />,
-};
-
-const INSIGHT_TYPE_LABELS: Record<InsightType, string> = {
-  stockout_risk: "Stockout Risk",
-  excess_inventory: "Excess Inventory",
-  forecast_bias: "Forecast Bias",
-  policy_gap: "Policy Gap",
-  champion_degradation: "Model Degradation",
-};
-
-const INSIGHT_TYPE_EXPLAINERS: Record<InsightType, string> = {
-  stockout_risk: "Inventory is projected to run out before the next replenishment arrives. Days of Supply (DOS) is below the safety threshold relative to lead time. This can result in lost sales, backorders, and damaged customer relationships. Immediate reorder or expediting may be needed.",
-  excess_inventory: "On-hand inventory significantly exceeds projected demand, tying up working capital and warehouse space. This often results from demand over-forecasting, order policy misalignment, or stale cluster assignments. Consider reducing order quantities, delaying planned orders, or redistributing stock.",
-  forecast_bias: "The forecasting model has been systematically over- or under-predicting demand for this item-location over multiple months. Persistent bias compounds over time — over-forecasting leads to excess stock, under-forecasting leads to stockouts. The root cause may be a trend shift, seasonality change, or model staleness.",
-  policy_gap: "The assigned replenishment policy does not match the demand characteristics of this item. For example, a high-variability item may be using a continuous ROP policy that doesn't account for demand spikes, or a low-volume item may have an unnecessarily aggressive reorder policy. Realigning the policy to the actual demand profile can reduce both stockouts and excess.",
-  champion_degradation: "The champion forecasting model's accuracy has declined significantly compared to its historical performance or alternative models. This may indicate a structural shift in demand patterns that the model hasn't adapted to. Consider retraining, switching to an alternative model, or investigating the underlying demand change.",
-};
-
-// ---------------------------------------------------------------------------
-// AI confidence tier — derived from insight metrics
-// ---------------------------------------------------------------------------
-type ConfidenceTier = "high" | "medium" | "low";
-
-function deriveConfidence(insight: AiInsight): ConfidenceTier {
-  const wape = insight.champion_wape ? insight.champion_wape * 100 : null;
-  const bias = insight.forecast_bias_pct ? Math.abs(insight.forecast_bias_pct) : null;
-  const hasFinancial = insight.financial_impact_estimate != null && insight.financial_impact_estimate > 0;
-
-  const strongSignal = (wape != null && wape > 50) || (bias != null && bias > 50);
-  const moderateSignal = (wape != null && wape > 35) || (bias != null && bias > 20);
-
-  if (strongSignal && hasFinancial) return "high";
-  if (moderateSignal || strongSignal) return "medium";
-  return "low";
-}
-
-const CONFIDENCE_STYLES: Record<ConfidenceTier, { label: string; className: string; tooltip: string }> = {
-  high:   {
-    label: "HIGH",
-    className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-400",
-    tooltip: "High confidence — forecast WAPE < 35% with financial impact confirmed. Act on this insight with high certainty.",
-  },
-  medium: {
-    label: "MED",
-    className: "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-400",
-    tooltip: "Medium confidence — moderate forecast bias or variability detected. Review the AI reasoning before acting.",
-  },
-  low:    {
-    label: "LOW",
-    className: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400",
-    tooltip: "Low confidence — limited signal strength or no financial impact data. Treat as an early warning, not a directive.",
-  },
-};
-
-function ConfidenceBadge({ insight }: { insight: AiInsight }) {
-  const tier = deriveConfidence(insight);
-  const style = CONFIDENCE_STYLES[tier];
-  return (
-    <span
-      title={style.tooltip}
-      className={cn("rounded-full px-2 py-0.5 text-xs font-medium cursor-help", style.className)}
-    >
-      {style.label} confidence
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// CausalChainCard — visual [Forecast]→[Inventory]→[Policy]→[Financial] chain
-// ---------------------------------------------------------------------------
-interface CausalLink {
-  layer: "forecast" | "inventory" | "policy" | "financial";
-  signal: string;
-  impact: string;
-  isAlert: boolean;
-}
-
-const CAUSAL_LAYER_LABELS: Record<CausalLink["layer"], string> = {
-  forecast: "Forecast",
-  inventory: "Inventory",
-  policy: "Policy",
-  financial: "Impact",
-};
-
-const CAUSAL_LAYER_ICONS: Record<CausalLink["layer"], React.FC<{ className?: string }>> = {
-  forecast:  ({ className }) => <BarChart3 className={className} />,
-  inventory: ({ className }) => <Package className={className} />,
-  policy:    ({ className }) => <Target className={className} />,
-  financial: ({ className }) => <DollarSign className={className} />,
-};
-
-function buildCausalChain(insight: AiInsight): CausalLink[] {
-  const chain: CausalLink[] = [];
-
-  // Forecast layer
-  if (insight.champion_wape != null || insight.forecast_bias_pct != null) {
-    const wapePct = insight.champion_wape != null
-      ? `WAPE ${(insight.champion_wape * 100).toFixed(1)}%` : null;
-    const biasPct = insight.forecast_bias_pct != null
-      ? `Bias ${insight.forecast_bias_pct > 0 ? "+" : ""}${(insight.forecast_bias_pct * 100).toFixed(1)}%`
-      : null;
-    const signal = [wapePct, biasPct].filter(Boolean).join(" · ") || "–";
-    const isAlert =
-      (insight.champion_wape ?? 0) > 0.35 || Math.abs(insight.forecast_bias_pct ?? 0) > 0.20;
-    chain.push({
-      layer: "forecast",
-      signal,
-      impact: insight.insight_type === "champion_degradation" ? "Model degrading"
-            : insight.insight_type === "forecast_bias" ? "Systematic deviation"
-            : "Inaccurate signal",
-      isAlert,
-    });
-  }
-
-  // Inventory layer
-  if (insight.dos != null) {
-    const lt = insight.total_lt_days;
-    const signal = `DOS ${insight.dos.toFixed(0)}d${lt ? ` (LT ${lt}d)` : ""}`;
-    const isBelow = lt != null && insight.dos < lt;
-    const isExcess = insight.dos > 180;
-    chain.push({
-      layer: "inventory",
-      signal,
-      impact: isBelow ? "Below lead time" : isExcess ? "Excess stock" : "Tight coverage",
-      isAlert: isBelow || isExcess,
-    });
-  }
-
-  // Policy layer
-  if (insight.current_policy_id || insight.insight_type === "policy_gap") {
-    chain.push({
-      layer: "policy",
-      signal: insight.current_policy_id ?? "No policy",
-      impact: insight.insight_type === "policy_gap" ? "Mismatch detected"
-            : !insight.current_policy_id ? "Unassigned"
-            : "Active policy",
-      isAlert: insight.insight_type === "policy_gap" || !insight.current_policy_id,
-    });
-  }
-
-  // Financial layer — always shown
-  chain.push({
-    layer: "financial",
-    signal: insight.financial_impact_estimate != null
-      ? fmtCurrency(insight.financial_impact_estimate)
-      : "Est. pending",
-    impact: insight.insight_type === "stockout_risk" ? "Lost sales"
-          : insight.insight_type === "excess_inventory" ? "Capital locked"
-          : "At risk",
-    isAlert: (insight.financial_impact_estimate ?? 0) > 1000,
-  });
-
-  return chain;
-}
-
-function CausalChainCard({ insight }: { insight: AiInsight }) {
-  const chain = buildCausalChain(insight);
-  if (chain.length < 2) return null;
-
-  return (
-    <div className="mt-3 rounded-lg border bg-muted/20 p-3">
-      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Causal Chain
-      </p>
-      <div className="flex items-stretch gap-0 overflow-x-auto">
-        {chain.map((link, idx) => {
-          const LayerIcon = CAUSAL_LAYER_ICONS[link.layer];
-          return (
-            <div key={link.layer} className="flex items-center">
-              <div
-                className={cn(
-                  "flex min-w-[90px] flex-col items-center gap-0.5 rounded-md px-2 py-2 text-center",
-                  link.isAlert
-                    ? "bg-red-50 dark:bg-red-950/30"
-                    : "bg-muted/40",
-                )}
-              >
-                <LayerIcon
-                  className={cn(
-                    "h-3.5 w-3.5",
-                    link.isAlert ? "text-red-500" : "text-muted-foreground",
-                  )}
-                />
-                <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {CAUSAL_LAYER_LABELS[link.layer]}
-                </span>
-                <span
-                  className={cn(
-                    "text-[11px] font-bold leading-tight",
-                    link.isAlert ? "text-red-700 dark:text-red-400" : "text-foreground",
-                  )}
-                >
-                  {link.signal}
-                </span>
-                <span className="text-[9px] leading-tight text-muted-foreground">
-                  {link.impact}
-                </span>
-              </div>
-              {idx < chain.length - 1 && (
-                <ChevronRight className="mx-0.5 h-3.5 w-3.5 flex-shrink-0 text-muted-foreground/40" />
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// SeverityIcon
-// ---------------------------------------------------------------------------
-function SeverityIcon({ severity }: { severity: InsightSeverity }) {
-  if (severity === "critical") return <AlertCircle className="h-4 w-4 text-red-500" />;
-  if (severity === "high") return <AlertTriangle className="h-4 w-4 text-orange-500" />;
-  if (severity === "medium") return <Info className="h-4 w-4 text-yellow-500" />;
-  return <CheckCircle2 className="h-4 w-4 text-gray-400" />;
-}
-
-// ---------------------------------------------------------------------------
-// Confirm Modal
-// ---------------------------------------------------------------------------
-interface ConfirmActionState {
-  insight: AiInsight;
-  status: InsightStatus;
-  label: string;
-  verb: string;
-}
-
-function ConfirmModal({
-  action,
-  onConfirm,
-  onCancel,
-  isPending,
-}: {
-  action: ConfirmActionState;
-  onConfirm: () => void;
-  onCancel: () => void;
-  isPending: boolean;
-}) {
-  const { insight, label, verb } = action;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-xl border bg-card shadow-xl">
-        {/* Modal header */}
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <div>
-            <p className="text-sm font-semibold text-foreground">{label}</p>
-            <p className="text-xs text-muted-foreground">
-              {insight.item_no} @ {insight.loc}
-            </p>
-          </div>
-          <button
-            onClick={onCancel}
-            className="rounded-md p-1 text-muted-foreground hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Modal body */}
-        <div className="space-y-4 px-5 py-4">
-          {/* What this will do */}
-          <div>
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              AI Recommendation
-            </p>
-            <p className="rounded-md bg-muted/50 p-3 text-sm leading-relaxed text-foreground">
-              {insight.recommendation}
-            </p>
-          </div>
-
-          {/* Key metrics */}
-          <div className="flex flex-wrap gap-2">
-            {insight.dos != null && (
-              <div className="rounded-md bg-muted px-3 py-1.5 text-xs">
-                <span className="text-muted-foreground">Current DOS: </span>
-                <strong>{insight.dos.toFixed(0)}d</strong>
-                {insight.total_lt_days && (
-                  <span className="text-muted-foreground"> (LT {insight.total_lt_days}d)</span>
-                )}
-              </div>
-            )}
-            {insight.financial_impact_estimate != null && (
-              <div className="rounded-md bg-amber-50 px-3 py-1.5 text-xs dark:bg-amber-950/30">
-                <span className="text-muted-foreground">At risk: </span>
-                <strong className="text-amber-700 dark:text-amber-400">
-                  {fmtCurrency(insight.financial_impact_estimate)}
-                </strong>
-              </div>
-            )}
-          </div>
-
-          {/* Causal chain */}
-          <CausalChainCard insight={insight} />
-        </div>
-
-        {/* Actions */}
-        <div className="flex justify-end gap-2 border-t px-5 py-3">
-          <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={onConfirm} disabled={isPending} className="gap-1.5">
-            {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {verb}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// AutoAcceptModal
-// ---------------------------------------------------------------------------
-const SEVERITY_THRESHOLD_LABELS: Record<InsightSeverity, string> = {
-  critical: "Critical only",
-  high: "High and above",
-  medium: "Medium and above",
-  low: "All severities",
-};
-
-function AutoAcceptModal({
-  onConfirm,
-  onCancel,
-  isPending,
-  result,
-}: {
-  onConfirm: (minSeverity: InsightSeverity, dryRun: boolean) => void;
-  onCancel: () => void;
-  isPending: boolean;
-  result: AutoAcceptResponse | null;
-}) {
-  const [minSeverity, setMinSeverity] = useState<InsightSeverity>("high");
-  // PL-008: track preview result before final confirm
-  const [previewResult, setPreviewResult] = useState<AutoAcceptResponse | null>(null);
-
-  // After dry-run succeeds, parent sets result; split into preview vs execute result
-  const isDryRunResult = result?.dry_run === true;
-  const isExecuteResult = result?.dry_run === false;
-
-  function handlePreview() {
-    setPreviewResult(null);
-    onConfirm(minSeverity, true);
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-xl border bg-card shadow-xl">
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <div>
-            <p className="text-sm font-semibold">Auto-Accept Rules</p>
-            <p className="text-xs text-muted-foreground">
-              Bulk-accept open insights by severity threshold
-            </p>
-          </div>
-          <button onClick={onCancel} className="rounded-md p-1 text-muted-foreground hover:text-foreground">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="space-y-4 px-5 py-4">
-          {isExecuteResult ? (
-            /* Final result state */
-            <div className="rounded-lg bg-green-50 p-4 text-center dark:bg-green-950/30">
-              <p className="text-2xl font-bold text-green-700 dark:text-green-400">{result!.accepted}</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                insights auto-accepted and logged to outcome tracker
-              </p>
-            </div>
-          ) : isDryRunResult && result!.accepted > 0 ? (
-            /* Confirmation step — PL-008 */
-            <div className="space-y-3">
-              <div className="rounded-lg bg-amber-50 p-4 text-center dark:bg-amber-950/30">
-                <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{result!.accepted}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  open {SEVERITY_THRESHOLD_LABELS[minSeverity].toLowerCase()} insights found
-                </p>
-              </div>
-              <div className="rounded-md border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/20 dark:text-amber-300">
-                ⚠️ This will permanently accept {result!.accepted} insight{result!.accepted !== 1 ? "s" : ""} and write outcome records. <strong>This cannot be undone.</strong>
-              </div>
-            </div>
-          ) : isDryRunResult && result!.accepted === 0 ? (
-            <div className="rounded-lg bg-muted/50 p-4 text-center">
-              <p className="text-2xl font-bold text-foreground">0</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                no matching open insights found for this threshold
-              </p>
-            </div>
-          ) : (
-            /* Config state */
-            <>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">
-                  Accept insights at severity
-                </label>
-                <select
-                  value={minSeverity}
-                  onChange={(e) => setMinSeverity(e.target.value as InsightSeverity)}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none"
-                >
-                  {(["critical", "high", "medium", "low"] as InsightSeverity[]).map((s) => (
-                    <option key={s} value={s}>{SEVERITY_THRESHOLD_LABELS[s]}</option>
-                  ))}
-                </select>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                All open insights at or above this severity will be marked <strong>Accepted</strong> and written
-                to the outcome tracker for 30-day follow-up measurement.
-              </p>
-            </>
-          )}
-        </div>
-
-        <div className="flex justify-end gap-2 border-t px-5 py-3">
-          <Button variant="ghost" size="sm" onClick={onCancel}>
-            {isExecuteResult ? "Close" : "Cancel"}
-          </Button>
-          {/* Config → Preview */}
-          {!result && (
-            <Button variant="outline" size="sm" onClick={handlePreview} disabled={isPending}>
-              {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Preview"}
-            </Button>
-          )}
-          {/* Preview with matches → Confirm execute */}
-          {isDryRunResult && result!.accepted > 0 && (
-            <Button
-              size="sm"
-              onClick={() => onConfirm(minSeverity, false)}
-              disabled={isPending}
-              className="gap-1.5 bg-amber-600 hover:bg-amber-700"
-            >
-              {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Confirm — Accept {result!.accepted}
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// InsightCard
-// ---------------------------------------------------------------------------
-function InsightCard({
-  insight,
-  selected,
-  onSelect,
-  onAcknowledge,
-  onResolve,
-  onSnooze,
-}: {
-  insight: AiInsight;
-  selected?: boolean;
-  onSelect?: (id: number) => void;
-  onAcknowledge: (insight: AiInsight) => void;
-  onResolve: (insight: AiInsight) => void;
-  onSnooze: (insight: AiInsight, days: number) => void;
-}) {
-  const [expanded, setExpanded] = useState(true);
-  const [showSnoozePicker, setShowSnoozePicker] = useState(false);
-  const [snoozeReason, setSnoozeReason] = useState("");
-  const [snoozeDays, setSnoozeDays] = useState<number | null>(null);
-  const s = SEVERITY_STYLES[insight.severity];
-  const TypeIcon = INSIGHT_TYPE_ICONS[insight.insight_type];
-
-  return (
-    <div
-      className={cn(
-        "rounded-lg border border-l-4 bg-card p-4 shadow-sm transition-all",
-        s.border,
-        insight.status === "resolved" && "opacity-60",
-        selected && "ring-2 ring-primary/30",
-      )}
-    >
-      {/* Header row */}
-      <div className="flex items-start gap-3">
-        {/* Bulk select checkbox */}
-        {onSelect && insight.status === "open" && (
-          <input
-            type="checkbox"
-            checked={selected ?? false}
-            onChange={() => onSelect(insight.insight_id)}
-            className="mt-1 h-3.5 w-3.5 flex-shrink-0 cursor-pointer accent-primary"
-            onClick={(e) => e.stopPropagation()}
-            aria-label={`Select insight for ${insight.item_no}`}
-          />
-        )}
-        <div className="mt-0.5 flex-shrink-0">
-          <SeverityIcon severity={insight.severity} />
-        </div>
-
-        <div className="min-w-0 flex-1">
-          {/* Badges row */}
-          <div className="mb-1 flex flex-wrap items-center gap-2">
-            <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold uppercase", s.badge)}>
-              {insight.severity}
-            </span>
-            <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-              <TypeIcon className="h-3 w-3" />
-              {INSIGHT_TYPE_LABELS[insight.insight_type]}
-            </span>
-            {insight.status !== "open" && (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs capitalize text-muted-foreground">
-                {insight.status}
-              </span>
-            )}
-            <ConfidenceBadge insight={insight} />
-          </div>
-
-          {/* DFU identity */}
-          <div className="mb-1 text-sm font-semibold text-foreground">
-            {insight.item_no} @ {insight.loc}
-            {insight.abc_vol && (
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
-                ABC: {insight.abc_vol}
-              </span>
-            )}
-            {insight.cluster_assignment && (
-              <span className="ml-1 text-xs font-normal text-muted-foreground">
-                • {insight.cluster_assignment}
-              </span>
-            )}
-          </div>
-
-          {/* Summary — the 1-sentence signal */}
-          <p className="mb-2 text-sm font-medium text-foreground">{insight.summary}</p>
-
-          {/* Type explainer — contextual background */}
-          <p className="mb-3 rounded bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-            <strong>Why this matters:</strong> {INSIGHT_TYPE_EXPLAINERS[insight.insight_type]}
-          </p>
-
-          {/* Visual causal chain — replaces text block */}
-          <CausalChainCard insight={insight} />
-
-          {/* Recommendation */}
-          <p className="mt-3 mb-3 border-l-2 border-muted pl-3 text-sm text-muted-foreground">
-            <span className="font-semibold text-foreground">Action: </span>
-            {insight.recommendation}
-          </p>
-
-          {/* Metrics row — contextual labels */}
-          <div className="mb-3 flex flex-wrap gap-3 text-xs">
-            {insight.dos != null && (
-              <span
-                className={cn(
-                  "rounded px-2 py-1",
-                  insight.dos < 14 ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300" : "bg-muted",
-                )}
-                title="Days of Supply — how many days current inventory will last at the current sales rate"
-              >
-                Days of Supply: <strong>{insight.dos.toFixed(0)}d</strong>
-                {insight.total_lt_days != null && (
-                  <span className="ml-1 text-muted-foreground">(lead time: {insight.total_lt_days}d)</span>
-                )}
-              </span>
-            )}
-            {insight.champion_wape != null && (
-              <span
-                className={cn(
-                  "rounded px-2 py-1",
-                  insight.champion_wape > 0.35 ? "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300" : "bg-muted",
-                )}
-                title="Weighted Absolute Percentage Error — lower is better. >35% is high, >50% is critical."
-              >
-                Forecast Error (WAPE): <strong>{(insight.champion_wape * 100).toFixed(1)}%</strong>
-              </span>
-            )}
-            {insight.forecast_bias_pct != null && (
-              <span
-                className={cn(
-                  "rounded px-2 py-1",
-                  Math.abs(insight.forecast_bias_pct) > 0.2 ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300" : "bg-muted",
-                )}
-                title="Forecast bias: positive means over-forecasting, negative means under-forecasting"
-              >
-                Bias: <strong>{insight.forecast_bias_pct > 0 ? "+" : ""}{(insight.forecast_bias_pct * 100).toFixed(1)}%</strong>
-                <span className="ml-1 text-muted-foreground">({insight.forecast_bias_pct > 0 ? "over-forecast" : "under-forecast"})</span>
-              </span>
-            )}
-            {insight.current_policy_id && (
-              <span className="rounded bg-muted px-2 py-1" title="Current replenishment policy assigned to this item-location">
-                Policy: <strong>{insight.current_policy_id}</strong>
-              </span>
-            )}
-            {insight.financial_impact_estimate != null && (
-              <span
-                className="rounded bg-amber-100 px-2 py-1 font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-                title="Estimated financial exposure if no action is taken — includes lost revenue, carrying cost, or obsolescence risk"
-              >
-                {fmtCurrency(insight.financial_impact_estimate)} at risk
-              </span>
-            )}
-          </div>
-
-          {/* Detailed AI reasoning — expanded by default for full transparency */}
-          {insight.reasoning && (
-            <div className="mb-3">
-              <button
-                onClick={() => setExpanded(!expanded)}
-                className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
-              >
-                {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                AI Reasoning Chain
-              </button>
-              {expanded && (
-                <div className="mt-2 rounded border border-muted bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
-                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                    Step-by-step analysis from data signals to recommendation
-                  </p>
-                  <p className="whitespace-pre-line">{insight.reasoning}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Action buttons — open modal, not direct mutations */}
-          {insight.status === "open" && (
-            <div className="flex gap-2 flex-wrap">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onAcknowledge(insight)}
-              >
-                Accept
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-muted-foreground"
-                onClick={() => onResolve(insight)}
-              >
-                Resolve
-              </Button>
-              {/* Snooze dialog (PL-012 enhanced with reason + date) */}
-              {showSnoozePicker ? (
-                <div className="w-full rounded-md border bg-muted/30 p-2 space-y-2">
-                  <div className="flex items-center gap-1">
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Snooze until</span>
-                    <button onClick={() => { setShowSnoozePicker(false); setSnoozeReason(""); setSnoozeDays(null); }} className="ml-auto text-muted-foreground hover:text-foreground px-1 text-xs">✕</button>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {[1, 3, 7, 14].map((d) => (
-                      <button
-                        key={d}
-                        onClick={() => setSnoozeDays(snoozeDays === d ? null : d)}
-                        className={cn(
-                          "rounded border px-2 py-0.5 text-xs font-medium transition-colors",
-                          snoozeDays === d
-                            ? "border-primary bg-primary/10 text-primary"
-                            : "border-input bg-background hover:bg-muted text-muted-foreground",
-                        )}
-                      >
-                        {d}d
-                      </button>
-                    ))}
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Reason (optional) — e.g. confirmed with supplier"
-                    value={snoozeReason}
-                    onChange={(e) => setSnoozeReason(e.target.value)}
-                    className="w-full rounded border border-input bg-background px-2 py-1 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                  />
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 text-xs"
-                      onClick={() => { setShowSnoozePicker(false); setSnoozeReason(""); setSnoozeDays(null); }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="h-6 text-xs"
-                      disabled={snoozeDays == null}
-                      onClick={() => {
-                        if (snoozeDays != null) {
-                          onSnooze(insight, snoozeDays);
-                          setShowSnoozePicker(false);
-                          setSnoozeReason("");
-                          setSnoozeDays(null);
-                        }
-                      }}
-                    >
-                      Confirm snooze
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-muted-foreground"
-                  title="Snooze this insight"
-                  onClick={() => setShowSnoozePicker(true)}
-                >
-                  Snooze
-                </Button>
-              )}
-            </div>
-          )}
-          {insight.status === "acknowledged" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="text-muted-foreground"
-              onClick={() => onResolve(insight)}
-            >
-              Mark Resolved
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main tab component
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// BulkActionBar — sticky bar shown when ≥1 insight selected
-// ---------------------------------------------------------------------------
-function BulkActionBar({
-  count,
-  onAcknowledgeAll,
-  onClear,
-  isPending,
-}: {
-  count: number;
-  onAcknowledgeAll: () => void;
-  onClear: () => void;
-  isPending: boolean;
-}) {
-  return (
-    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 flex items-center gap-3 rounded-full border bg-card px-5 py-2.5 shadow-lg">
-      <span className="text-sm font-medium">{count} selected</span>
-      <div className="h-4 w-px bg-border" />
-      <Button size="sm" onClick={onAcknowledgeAll} disabled={isPending} className="rounded-full gap-1.5">
-        {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-        Accept all
-      </Button>
-      <Button size="sm" variant="ghost" onClick={onClear} className="rounded-full text-muted-foreground">
-        <X className="h-3.5 w-3.5" />
-      </Button>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// CopyButton — copies text to clipboard with transient "Copied!" state
-// ---------------------------------------------------------------------------
-function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
-  function handleCopy() {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }
-  return (
-    <button
-      onClick={handleCopy}
-      className="flex items-center gap-1 rounded border border-input bg-background px-2 py-1 text-xs hover:bg-muted"
-      title="Copy memo to clipboard"
-    >
-      {copied ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
-      {copied ? "Copied!" : label}
-    </button>
-  );
-}
+import { SEVERITY_ORDER } from "./ai-planner/aiPlannerShared";
+import { InsightCard } from "./ai-planner/InsightCard";
+import { ConfirmModal } from "./ai-planner/ConfirmModal";
+import { AutoAcceptModal } from "./ai-planner/AutoAcceptModal";
+import { BulkActionBar } from "./ai-planner/BulkActionBar";
+import { CopyButton } from "./ai-planner/CopyButton";
+import type { ConfirmActionState } from "./ai-planner/aiPlannerShared";
 
 // ---------------------------------------------------------------------------
 // Main tab component
@@ -887,7 +63,6 @@ export default function AIPlannerTab() {
   };
 
   // ── Persistent URL filter state ──────────────────────────────────────────
-  // Read initial values from URL params so filters survive page refresh
   const getUrlParam = (key: string, fallback: string) => {
     try { return new URLSearchParams(window.location.search).get(key) ?? fallback; } catch { return fallback; }
   };
@@ -895,7 +70,7 @@ export default function AIPlannerTab() {
   const [statusFilter, setStatusFilter] = useState(() => getUrlParam("ai_status", "open"));
   const [typeFilter, setTypeFilter] = useState(() => getUrlParam("ai_type", "all"));
 
-  // Sync filter changes to URL (pushState, doesn't reload page)
+  // Sync filter changes to URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (severityFilter === "all") params.delete("ai_severity"); else params.set("ai_severity", severityFilter);
@@ -959,7 +134,7 @@ export default function AIPlannerTab() {
     queryFn: () => fetchAiMemos({ scope: "portfolio", limit: 5 }),
     staleTime: STALE.FIVE_MIN,
   });
-  const [memoIndex, setMemoIndex] = useState(0); // PL-017: 0 = latest
+  const [memoIndex, setMemoIndex] = useState(0);
 
   const [showScanSuccess, setShowScanSuccess] = useState(false);
   const [scanQueuedAt, setScanQueuedAt] = useState<Date | null>(null);
@@ -968,8 +143,8 @@ export default function AIPlannerTab() {
   // PL-007: Poll for new insights for up to 5 minutes after a scan is queued
   useEffect(() => {
     if (!scanQueuedAt) return;
-    const POLL_INTERVAL = 30_000; // 30 s
-    const TIMEOUT = 5 * 60_000;  // 5 min
+    const POLL_INTERVAL = 30_000;
+    const TIMEOUT = 5 * 60_000;
     pollRef.current = setInterval(() => {
       qc.invalidateQueries({ queryKey: queryKeys.aiInsights({}) });
       qc.invalidateQueries({ queryKey: queryKeys.aiMemos({}) });
@@ -999,7 +174,6 @@ export default function AIPlannerTab() {
     },
   });
 
-  // Open confirm modal for acknowledge (Accept) action
   function handleAcknowledge(insight: AiInsight) {
     setConfirmAction({
       insight,
@@ -1009,7 +183,6 @@ export default function AIPlannerTab() {
     });
   }
 
-  // Open confirm modal for resolve action
   function handleResolve(insight: AiInsight) {
     setConfirmAction({
       insight,
@@ -1030,7 +203,7 @@ export default function AIPlannerTab() {
     snoozeMutation.mutate({ id: insight.insight_id, days });
   }
 
-  // Bulk acknowledge — fires one mutation per selected insight sequentially
+  // Bulk acknowledge
   const [bulkPending, setBulkPending] = useState(false);
   async function handleBulkAcknowledge() {
     if (selectedIds.size === 0) return;
@@ -1054,7 +227,7 @@ export default function AIPlannerTab() {
   const insights = insightsQ.data?.insights ?? [];
   const total = insightsQ.data?.total ?? 0;
   const allMemos = memosQ.data?.memos ?? [];
-  const latestMemo = allMemos[memoIndex]; // PL-017: navigate history
+  const latestMemo = allMemos[memoIndex];
 
   // Last-scan timestamp
   const lastScanAt = latestMemo?.created_at ?? (insights.length > 0 ? insights[0].created_at : null);
@@ -1109,9 +282,7 @@ export default function AIPlannerTab() {
       )}
 
       <div className="space-y-6">
-        {/* ---------------------------------------------------------------- */}
-        {/* Header                                                           */}
-        {/* ---------------------------------------------------------------- */}
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Brain className="h-6 w-6 text-teal-600 dark:text-teal-400" />
@@ -1159,17 +330,13 @@ export default function AIPlannerTab() {
           </div>
         </div>
 
-        {/* ---------------------------------------------------------------- */}
-        {/* Distinction banner (PL-004)                                     */}
-        {/* ---------------------------------------------------------------- */}
+        {/* Distinction banner (PL-004) */}
         <div className="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-700 dark:border-sky-800 dark:bg-sky-950/30 dark:text-sky-300 space-y-1">
           <p><strong>How it works:</strong> The AI agent reads across all data layers — sales history, forecast models, inventory snapshots, EOQ targets, and replenishment policies — to identify exceptions that require planner attention. Each insight traces a causal chain: <em>forecast inaccuracy → inventory consequence → policy mismatch → financial exposure</em>.</p>
           <p><strong>AI Planner vs Exceptions:</strong> This tab shows ML-generated insights that consider cross-dimensional relationships. The <strong>Exceptions</strong> tab shows rule-based threshold alerts from replenishment policies. Both are important — use AI Planner for complex, multi-factor issues and Exceptions for straightforward policy violations.</p>
         </div>
 
-        {/* ---------------------------------------------------------------- */}
-        {/* Portfolio Health Bar                                             */}
-        {/* ---------------------------------------------------------------- */}
+        {/* Portfolio Health Bar */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
             {
@@ -1204,7 +371,7 @@ export default function AIPlannerTab() {
           ))}
         </div>
 
-        {/* Scan success/error banner (PL-007) */}
+        {/* Scan success/error banners */}
         {showScanSuccess && (
           <div className="rounded-md bg-green-50 px-4 py-2 text-sm text-green-800 dark:bg-green-900/20 dark:text-green-300 flex items-center gap-2">
             <Loader2 className="h-3.5 w-3.5 animate-spin flex-shrink-0" />
@@ -1224,9 +391,7 @@ export default function AIPlannerTab() {
           </div>
         )}
 
-        {/* ---------------------------------------------------------------- */}
-        {/* Filter bar                                                       */}
-        {/* ---------------------------------------------------------------- */}
+        {/* Filter bar */}
         <div className="flex flex-wrap gap-3">
           <Select value={severityFilter} onValueChange={setSeverityFilter}>
             <SelectTrigger className="w-36">
@@ -1272,9 +437,7 @@ export default function AIPlannerTab() {
           )}
         </div>
 
-        {/* ---------------------------------------------------------------- */}
-        {/* Insight card list                                                */}
-        {/* ---------------------------------------------------------------- */}
+        {/* Insight card list */}
         {insightsQ.isLoading ? (
           <div className="flex items-center justify-center py-16 text-muted-foreground">
             <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -1332,9 +495,7 @@ export default function AIPlannerTab() {
           </div>
         )}
 
-        {/* ---------------------------------------------------------------- */}
-        {/* Bulk action bar                                                  */}
-        {/* ---------------------------------------------------------------- */}
+        {/* Bulk action bar */}
         {selectedIds.size > 0 && (
           <BulkActionBar
             count={selectedIds.size}
@@ -1344,9 +505,7 @@ export default function AIPlannerTab() {
           />
         )}
 
-        {/* ---------------------------------------------------------------- */}
-        {/* Planning Memo panel                                              */}
-        {/* ---------------------------------------------------------------- */}
+        {/* Planning Memo panel */}
         {latestMemo && (
           <Card>
             <CardHeader className="pb-2">

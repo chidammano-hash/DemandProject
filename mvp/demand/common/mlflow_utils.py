@@ -4,9 +4,7 @@ import os
 import time
 from typing import Any
 
-
-def _ts() -> str:
-    return time.strftime("%H:%M:%S")
+from common.utils import _ts
 
 
 def log_backtest_run(

@@ -23,10 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
-
-
-def _ts() -> str:
-    return time.strftime("%H:%M:%S")
+from common.utils import _ts
 
 
 def list_models(conn: psycopg.Connection) -> None:

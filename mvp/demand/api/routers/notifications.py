@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from api.auth import require_api_key
 from api.core import get_conn
 from common.auth import CurrentUser, get_current_user, require_role
 
@@ -82,6 +83,7 @@ async def list_channels(user: CurrentUser = Depends(get_current_user)):
 async def test_notification(
     body: TestNotificationRequest,
     admin: CurrentUser = Depends(require_role("manager")),
+    api_key: str = Depends(require_api_key),
 ):
     """Send a test notification (manager+ only)."""
     from common.notification_engine import NotificationEngine

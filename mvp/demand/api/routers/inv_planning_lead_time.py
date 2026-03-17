@@ -6,7 +6,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _f, _s, get_conn, set_cache
+from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -35,15 +35,8 @@ def lt_summary(
     if abc_vol.strip():
         where_parts.append("d.abc_vol = %s")
         params.append(abc_vol.strip().upper())
-    if brand:
-        params.append(brand.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = p.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = p.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = p.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market,
+                          item_col="p.item_no", loc_col="p.loc")
 
     if needs_dfu_join:
         from_clause = (
@@ -149,15 +142,7 @@ def lt_profile(
     if lt_variability_class.strip():
         where_parts.append("lt_variability_class = %s")
         params.append(lt_variability_class.strip().lower())
-    if brand:
-        params.append(brand.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market)
 
     where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 

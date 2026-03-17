@@ -1,4 +1,5 @@
 // Barrel export — all existing imports from "@/api/queries" continue to work
+export * from "./helpers";
 export * from "./core";
 export * from "./inv-planning";
 export * from "./ai-planner";

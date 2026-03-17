@@ -126,7 +126,7 @@ def get_control_tower_alerts(
     sev_params: list = []
     if severity:
         sev_params.append(severity)
-        sev_filter = f"AND severity = ${len(sev_params)}"
+        sev_filter = "AND severity = %s"
 
     exc_sql = f"""
         SELECT
@@ -145,9 +145,13 @@ def get_control_tower_alerts(
             CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2
                           WHEN 'medium' THEN 3 ELSE 4 END,
             exception_date DESC
-        LIMIT ${ len(sev_params) + 1}
+        LIMIT %s
     """
 
+    ds_sev_filter = ""
+    if severity:
+        ds_sev_filter = ("AND CASE alert_priority WHEN 'urgent' THEN 'critical' "
+                         "WHEN 'watch' THEN 'high' ELSE 'medium' END = %s")
     ds_params = sev_params + [limit]
     ds_sql = f"""
         SELECT
@@ -160,18 +164,18 @@ def get_control_tower_alerts(
             item_no, loc,
             signal_type                    AS alert_type,
             'Demand ' || signal_type || ' vs forecast by ' ||
-                ROUND(ABS(demand_vs_forecast_pct)::NUMERIC, 1) || '%' AS description,
+                ROUND(ABS(demand_vs_forecast_pct)::NUMERIC, 1) || '%%' AS description,
             CASE projected_stockout WHEN TRUE THEN 'Place emergency order'
                                     ELSE 'Monitor demand pace' END     AS action,
             load_ts                        AS alert_ts
         FROM fact_demand_signals
         WHERE signal_date = (SELECT MAX(signal_date) FROM fact_demand_signals)
           AND alert_priority IN ('urgent', 'watch')
-          { ("AND CASE alert_priority WHEN 'urgent' THEN 'critical' WHEN 'watch' THEN 'high' ELSE 'medium' END = " + f"${len(sev_params)}") if severity else "" }
+          {ds_sev_filter}
         ORDER BY
             CASE alert_priority WHEN 'urgent' THEN 1 ELSE 2 END,
             load_ts DESC
-        LIMIT ${len(ds_params)}
+        LIMIT %s
     """
 
     with get_conn() as conn:
@@ -236,32 +240,61 @@ def get_top_critical_items(
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
     sql = f"""
+        WITH ranked_health AS (
+            SELECT
+                h.item_no, h.loc,
+                d.abc_vol, d.abc_xyz_segment,
+                h.health_score, h.health_tier,
+                h.ss_coverage, h.is_below_ss,
+                h.current_dos, h.dos_min_target, h.dos_max_target
+            FROM mv_inventory_health_score h
+            LEFT JOIN dim_dfu d ON h.item_no = d.dmdunit AND h.loc = d.loc
+            {where_sql}
+            ORDER BY h.health_score ASC NULLS LAST
+            LIMIT %s
+        ),
+        exc_agg AS (
+            SELECT
+                e.item_no, e.loc,
+                COUNT(*) AS open_exception_count,
+                MAX(CASE WHEN e.severity = 'critical'
+                         THEN e.recommended_order_qty END) AS recommended_order_qty
+            FROM fact_replenishment_exceptions e
+            INNER JOIN ranked_health rh
+                ON e.item_no = rh.item_no AND e.loc = rh.loc
+            WHERE e.status = 'open'
+            GROUP BY e.item_no, e.loc
+        ),
+        latest_fr AS (
+            SELECT DISTINCT ON (fr.item_no, fr.loc)
+                fr.item_no, fr.loc, fr.fill_rate
+            FROM mv_fill_rate_monthly fr
+            INNER JOIN ranked_health rh
+                ON fr.item_no = rh.item_no AND fr.loc = rh.loc
+            ORDER BY fr.item_no, fr.loc, fr.month_start DESC
+        ),
+        cur_stockout AS (
+            SELECT ms.item_no, ms.loc, ms.stockout_days
+            FROM mv_intramonth_stockout ms
+            INNER JOIN ranked_health rh
+                ON ms.item_no = rh.item_no AND ms.loc = rh.loc
+            WHERE ms.month_start = DATE_TRUNC('month', CURRENT_DATE)::DATE
+        )
         SELECT
-            h.item_no, h.loc,
-            d.abc_vol, d.abc_xyz_segment,
-            h.health_score, h.health_tier,
-            h.ss_coverage, h.is_below_ss,
-            h.current_dos, h.dos_min_target, h.dos_max_target,
-            -- Exceptions
-            (SELECT COUNT(*) FROM fact_replenishment_exceptions e
-             WHERE e.item_no = h.item_no AND e.loc = h.loc AND e.status = 'open') AS open_exception_count,
-            (SELECT MAX(e.recommended_order_qty) FROM fact_replenishment_exceptions e
-             WHERE e.item_no = h.item_no AND e.loc = h.loc AND e.status = 'open'
-               AND e.severity = 'critical') AS recommended_order_qty,
-            -- Fill rate (latest available month)
-            (SELECT fr.fill_rate FROM mv_fill_rate_monthly fr
-             WHERE fr.item_no = h.item_no AND fr.loc = h.loc
-             ORDER BY fr.month_start DESC LIMIT 1) AS fill_rate_last_3m,
-            -- Intra-month stockout days this month
-            (SELECT ms.stockout_days FROM mv_intramonth_stockout ms
-             WHERE ms.item_no = h.item_no AND ms.loc = h.loc
-               AND ms.month_start = DATE_TRUNC('month', CURRENT_DATE)::DATE
-             LIMIT 1) AS stockout_days_this_month
-        FROM mv_inventory_health_score h
-        LEFT JOIN dim_dfu d ON h.item_no = d.dmdunit AND h.loc = d.loc
-        {where_sql}
-        ORDER BY h.health_score ASC NULLS LAST
-        LIMIT %s
+            rh.item_no, rh.loc,
+            rh.abc_vol, rh.abc_xyz_segment,
+            rh.health_score, rh.health_tier,
+            rh.ss_coverage, rh.is_below_ss,
+            rh.current_dos, rh.dos_min_target, rh.dos_max_target,
+            COALESCE(ea.open_exception_count, 0)  AS open_exception_count,
+            ea.recommended_order_qty,
+            lfr.fill_rate                          AS fill_rate_last_3m,
+            cs.stockout_days                       AS stockout_days_this_month
+        FROM ranked_health rh
+        LEFT JOIN exc_agg ea      ON rh.item_no = ea.item_no AND rh.loc = ea.loc
+        LEFT JOIN latest_fr lfr   ON rh.item_no = lfr.item_no AND rh.loc = lfr.loc
+        LEFT JOIN cur_stockout cs ON rh.item_no = cs.item_no AND rh.loc = cs.loc
+        ORDER BY rh.health_score ASC NULLS LAST
     """
     params.append(limit)
 

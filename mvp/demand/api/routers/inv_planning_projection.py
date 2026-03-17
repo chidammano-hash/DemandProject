@@ -10,9 +10,10 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from api.auth import require_api_key
 from api.core import get_conn
 
 router = APIRouter(tags=["inv-planning-projection"])
@@ -238,7 +239,7 @@ class ProjectionRefreshRequest(BaseModel):
 
 
 @router.post("/inv-planning/projection/refresh")
-async def refresh_projection(body: ProjectionRefreshRequest):
+async def refresh_projection(body: ProjectionRefreshRequest, api_key: str = Depends(require_api_key)):
     """Trigger a synchronous projection recompute for one DFU."""
     import yaml
     from pathlib import Path

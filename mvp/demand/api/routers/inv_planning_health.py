@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
-from api.core import get_conn
+from api.core import add_cross_dim_filters, get_conn
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -36,15 +36,7 @@ def get_health_summary(
     if variability_class:
         where_clauses.append("variability_class = %s")
         params.append(variability_class)
-    if brand:
-        params.append(brand.split(","))
-        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_clauses, params, brand=brand, category=category, market=market)
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -171,15 +163,7 @@ def get_health_detail(
     if variability_class:
         where_clauses.append("variability_class = %s")
         params.append(variability_class)
-    if brand:
-        params.append(brand.split(","))
-        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_clauses, params, brand=brand, category=category, market=market)
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 

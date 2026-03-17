@@ -6,6 +6,7 @@
  */
 
 import { fetchJson } from "./core";
+import { buildSearchParams, buildQuerySuffix } from "./helpers";
 
 export const STALE_EVO = { FIVE_MIN: 5 * 60 * 1000, ONE_MIN: 60 * 1000 };
 
@@ -60,20 +61,18 @@ export const biasKeys = {
 };
 
 export async function fetchBiasCorrectionSummary(plan_month?: string): Promise<BiasCorrectionSummary> {
-  const q = plan_month ? `?plan_month=${plan_month}` : "";
-  return fetchJson(`/forecast/bias-corrections/summary${q}`);
+  return fetchJson(`/forecast/bias-corrections/summary${buildQuerySuffix({ plan_month })}`);
 }
 
 export async function fetchBiasCorrections(params: {
   plan_month?: string; item_no?: string; loc?: string; page?: number; page_size?: number;
 }): Promise<{ total: number; page: number; corrections: BiasCorrectionRow[] }> {
-  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]));
-  return fetchJson(`/forecast/bias-corrections?${q}`);
+  const qs = buildSearchParams(params as Record<string, string | number | undefined>);
+  return fetchJson(`/forecast/bias-corrections?${qs}`);
 }
 
 export async function fetchFlaggedBiasCorrections(plan_month?: string): Promise<{ total: number; page: number; flagged: FlaggedBiasRow[] }> {
-  const q = plan_month ? `?plan_month=${plan_month}` : "";
-  return fetchJson(`/forecast/bias-corrections/flagged${q}`);
+  return fetchJson(`/forecast/bias-corrections/flagged${buildQuerySuffix({ plan_month })}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -118,18 +117,16 @@ export const serviceLevelKeys = {
 };
 
 export async function fetchServiceLevelSummary(params?: { item_no?: string; loc?: string }): Promise<ServiceLevelSummary> {
-  const q = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) : "";
-  return fetchJson(`/analytics/service-level/summary${q ? `?${q}` : ""}`);
+  return fetchJson(`/analytics/service-level/summary${buildQuerySuffix(params ?? {})}`);
 }
 
 export async function fetchServiceLevelDetail(params: { item_no?: string; loc?: string; abc_class?: string; flagged_only?: boolean; page?: number; page_size?: number }): Promise<{ total: number; page: number; items: ServiceLevelRow[] }> {
-  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]));
-  return fetchJson(`/analytics/service-level/detail?${q}`);
+  const qs = buildSearchParams(params as Record<string, string | number | boolean | undefined>);
+  return fetchJson(`/analytics/service-level/detail?${qs}`);
 }
 
 export async function fetchChronicMisses(params?: { abc_class?: string; min_misses?: number }): Promise<{ total: number; items: ChronicMissRow[] }> {
-  const q = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) : "";
-  return fetchJson(`/analytics/service-level/chronic-misses${q ? `?${q}` : ""}`);
+  return fetchJson(`/analytics/service-level/chronic-misses${buildQuerySuffix(params ?? {})}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -175,18 +172,16 @@ export const leadTimeKeys = {
 };
 
 export async function fetchLeadTimeLearning(params: { item_no?: string; loc?: string; supplier_id?: string; page?: number; page_size?: number }): Promise<{ total: number; page: number; items: LeadTimeRow[] }> {
-  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]));
-  return fetchJson(`/supply/supplier-lead-times?${q}`);
+  const qs = buildSearchParams(params as Record<string, string | number | undefined>);
+  return fetchJson(`/supply/supplier-lead-times?${qs}`);
 }
 
 export async function fetchLeadTimeSummary(params?: { supplier_id?: string }): Promise<LeadTimeSummary> {
-  const q = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) : "";
-  return fetchJson(`/supply/supplier-lead-times/summary${q ? `?${q}` : ""}`);
+  return fetchJson(`/supply/supplier-lead-times/summary${buildQuerySuffix(params ?? {})}`);
 }
 
 export async function fetchLeadTimeAlerts(params?: { severity?: string; page?: number }): Promise<{ total: number; items: LeadTimeAlert[] }> {
-  const q = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) : "";
-  return fetchJson(`/supply/lead-time-alerts${q ? `?${q}` : ""}`);
+  return fetchJson(`/supply/lead-time-alerts${buildQuerySuffix(params ?? {})}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -230,13 +225,12 @@ export const blendedKeys = {
 };
 
 export async function fetchBlendedForecast(params: { item_no?: string; loc?: string; weeks_ahead?: number; plan_version?: string; page?: number; page_size?: number }): Promise<{ total: number; page: number; rows: BlendedForecastRow[] }> {
-  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]));
-  return fetchJson(`/forecast/blended?${q}`);
+  const qs = buildSearchParams(params as Record<string, string | number | undefined>);
+  return fetchJson(`/forecast/blended?${qs}`);
 }
 
 export async function fetchBlendedSummary(params?: { plan_version?: string }): Promise<BlendedSummary> {
-  const q = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) : "";
-  return fetchJson(`/forecast/blended/summary${q ? `?${q}` : ""}`);
+  return fetchJson(`/forecast/blended/summary${buildQuerySuffix(params ?? {})}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -282,13 +276,12 @@ export async function fetchEchelonNetwork(): Promise<{ nodes: EchelonNetworkNode
 }
 
 export async function fetchEchelonTargets(params: { item_no?: string; node_type?: string; severity?: string; page?: number; page_size?: number }): Promise<{ total: number; page: number; rows: EchelonTargetRow[] }> {
-  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]));
-  return fetchJson(`/supply/echelon/targets?${q}`);
+  const qs = buildSearchParams(params as Record<string, string | number | undefined>);
+  return fetchJson(`/supply/echelon/targets?${qs}`);
 }
 
 export async function fetchEchelonSummary(params?: { item_no?: string }): Promise<EchelonSummary> {
-  const q = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) : "";
-  return fetchJson(`/supply/echelon/summary${q ? `?${q}` : ""}`);
+  return fetchJson(`/supply/echelon/summary${buildQuerySuffix(params ?? {})}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,18 +326,16 @@ export const financialPlanKeys = {
 };
 
 export async function fetchInventoryPlan(params: { plan_month?: string; abc_class?: string; page?: number; page_size?: number }): Promise<{ total: number; page: number; rows: InventoryPlanRow[] }> {
-  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]));
-  return fetchJson(`/finance/inventory-plan?${q}`);
+  const qs = buildSearchParams(params as Record<string, string | number | undefined>);
+  return fetchJson(`/finance/inventory-plan?${qs}`);
 }
 
 export async function fetchBudgetStatus(params?: { category?: string }): Promise<{ budgets: BudgetStatus[]; total: number }> {
-  const q = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) : "";
-  return fetchJson(`/finance/budget-status${q ? `?${q}` : ""}`);
+  return fetchJson(`/finance/budget-status${buildQuerySuffix(params ?? {})}`);
 }
 
 export async function fetchWorkingCapitalTrend(params?: { months_ahead?: number }): Promise<{ months: WorkingCapitalPoint[] }> {
-  const q = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) : "";
-  return fetchJson(`/finance/working-capital-trend${q ? `?${q}` : ""}`);
+  return fetchJson(`/finance/working-capital-trend${buildQuerySuffix(params ?? {})}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -391,8 +382,7 @@ export const sopKeys = {
 };
 
 export async function fetchSopCycles(params?: { stage?: string; limit?: number }): Promise<{ cycles: SopCycle[]; total: number }> {
-  const q = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) : "";
-  return fetchJson(`/sop/cycles${q ? `?${q}` : ""}`);
+  return fetchJson(`/sop/cycles${buildQuerySuffix(params ?? {})}`);
 }
 
 export async function fetchSopCycle(cycle_id: string): Promise<SopCycle & { supply_constraints: unknown[]; demand_review_data: unknown[] }> {
@@ -404,8 +394,7 @@ export async function fetchSopGaps(cycle_id: string): Promise<{ gaps: SopGap[]; 
 }
 
 export async function fetchApprovedPlan(params?: { plan_month?: string; item_no?: string; loc?: string; page?: number }): Promise<{ total: number; page: number; rows: ApprovedPlanRow[] }> {
-  const q = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) : "";
-  return fetchJson(`/sop/approved-plan${q ? `?${q}` : ""}`);
+  return fetchJson(`/sop/approved-plan${buildQuerySuffix(params ?? {})}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -449,13 +438,13 @@ export const eventKeys = {
 };
 
 export async function fetchEventCalendar(params: { year?: number; month?: number; event_type?: string; status?: string }): Promise<{ events: CalendarEvent[]; total: number }> {
-  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]));
-  return fetchJson(`/events/calendar?${q}`);
+  const qs = buildSearchParams(params as Record<string, string | number | undefined>);
+  return fetchJson(`/events/calendar?${qs}`);
 }
 
 export async function fetchEventImpactPreview(params: { item_no: string; loc: string; uplift_multiplier?: number; additive_qty?: number }): Promise<{ rows: EventImpactPreview[]; total_impact_value: number }> {
-  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]));
-  return fetchJson(`/events/impact-preview?${q}`);
+  const qs = buildSearchParams(params as Record<string, string | number | undefined>);
+  return fetchJson(`/events/impact-preview?${qs}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -495,8 +484,7 @@ export const scenarioKeys = {
 };
 
 export async function fetchSupplyScenarios(params?: { disruption_type?: string; status?: string; page?: number }): Promise<{ scenarios: SupplyScenario[]; total: number }> {
-  const q = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])) : "";
-  return fetchJson(`/scenarios/supply${q ? `?${q}` : ""}`);
+  return fetchJson(`/scenarios/supply${buildQuerySuffix(params ?? {})}`);
 }
 
 export async function fetchScenarioResults(scenario_id: string): Promise<{ scenario_id: string; items: ScenarioResult[]; total_impact: number; total_stockout_days: number }> {

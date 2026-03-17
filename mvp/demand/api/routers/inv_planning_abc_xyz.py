@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import get_conn, set_cache
+from api.core import add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -112,15 +112,8 @@ def get_abc_xyz_detail(
     if location:
         params.append(f"%{location}%")
         where_clauses.append("loc ILIKE %s")
-    if brand:
-        params.append(brand.split(","))
-        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.dmdunit AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.dmdunit AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_clauses, params, brand=brand, category=category, market=market,
+                          item_col="t.dmdunit")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 

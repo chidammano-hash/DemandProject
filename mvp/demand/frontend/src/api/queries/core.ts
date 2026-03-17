@@ -1,3 +1,4 @@
+import { buildSearchParams } from "./helpers";
 import type {
   DomainMeta,
   DomainPage,
@@ -357,18 +358,21 @@ export interface SliceParams {
 }
 
 export async function fetchAccuracySlice(params: SliceParams): Promise<AccuracySlicePayload> {
-  const qs = new URLSearchParams({ group_by: params.group_by, lag: String(params.lag) });
-  if (params.models.trim()) qs.set("models", params.models.trim());
-  if (params.month_from) qs.set("month_from", params.month_from);
-  if (params.common_dfus) qs.set("common_dfus", "true");
-  if (params.include_dfu_count) qs.set("include_dfu_count", "true");
-  if (params.item) qs.set("item", params.item);
-  if (params.location) qs.set("location", params.location);
-  if (params.seasonality_profile) qs.set("seasonality_profile", params.seasonality_profile);
-  if (params.time_grain) qs.set("time_grain", params.time_grain);
-  if (params.brand) qs.set("brand", params.brand);
-  if (params.category) qs.set("category", params.category);
-  if (params.market) qs.set("market", params.market);
+  const qs = buildSearchParams({
+    group_by: params.group_by,
+    lag: params.lag,
+    models: params.models.trim() || undefined,
+    month_from: params.month_from,
+    common_dfus: params.common_dfus ? "true" : undefined,
+    include_dfu_count: params.include_dfu_count ? "true" : undefined,
+    item: params.item,
+    location: params.location,
+    seasonality_profile: params.seasonality_profile,
+    time_grain: params.time_grain,
+    brand: params.brand,
+    category: params.category,
+    market: params.market,
+  });
   return fetchJson(`/forecast/accuracy/slice?${qs}`);
 }
 
@@ -387,18 +391,19 @@ export interface LagCurveParams {
 }
 
 export async function fetchLagCurve(params: LagCurveParams): Promise<LagCurvePayload> {
-  const qs = new URLSearchParams();
-  if (params.models.trim()) qs.set("models", params.models.trim());
-  if (params.month_from) qs.set("month_from", params.month_from);
-  if (params.common_dfus) qs.set("common_dfus", "true");
-  if (params.include_dfu_count) qs.set("include_dfu_count", "true");
-  if (params.item) qs.set("item", params.item);
-  if (params.location) qs.set("location", params.location);
-  if (params.seasonality_profile) qs.set("seasonality_profile", params.seasonality_profile);
-  if (params.time_grain) qs.set("time_grain", params.time_grain);
-  if (params.brand) qs.set("brand", params.brand);
-  if (params.category) qs.set("category", params.category);
-  if (params.market) qs.set("market", params.market);
+  const qs = buildSearchParams({
+    models: params.models.trim() || undefined,
+    month_from: params.month_from,
+    common_dfus: params.common_dfus ? "true" : undefined,
+    include_dfu_count: params.include_dfu_count ? "true" : undefined,
+    item: params.item,
+    location: params.location,
+    seasonality_profile: params.seasonality_profile,
+    time_grain: params.time_grain,
+    brand: params.brand,
+    category: params.category,
+    market: params.market,
+  });
   return fetchJson(`/forecast/accuracy/lag-curve?${qs}`);
 }
 
@@ -529,18 +534,20 @@ export async function fetchInventoryPosition(params: InventoryPositionParams): P
 }
 
 export async function fetchInventoryKpis(params: { item?: string; location?: string; months?: number }): Promise<InventoryKpis> {
-  const qs = new URLSearchParams();
-  if (params.item?.trim()) qs.set("item", params.item.trim());
-  if (params.location?.trim()) qs.set("location", params.location.trim());
-  if (params.months) qs.set("months", String(params.months));
+  const qs = buildSearchParams({
+    item: params.item?.trim() || undefined,
+    location: params.location?.trim() || undefined,
+    months: params.months,
+  });
   return fetchJson(`/inventory/kpis?${qs}`);
 }
 
 export async function fetchInventoryTrend(params: { item?: string; location?: string; months?: number }): Promise<InventoryTrendPayload> {
-  const qs = new URLSearchParams();
-  if (params.item?.trim()) qs.set("item", params.item.trim());
-  if (params.location?.trim()) qs.set("location", params.location.trim());
-  if (params.months) qs.set("months", String(params.months));
+  const qs = buildSearchParams({
+    item: params.item?.trim() || undefined,
+    location: params.location?.trim() || undefined,
+    months: params.months,
+  });
   return fetchJson(`/inventory/trend?${qs}`);
 }
 
@@ -707,35 +714,34 @@ export interface InvBacktestFilterParams {
   excess_dos_threshold?: number;
 }
 
-function appendInvBacktestParams(qs: URLSearchParams, params: InvBacktestFilterParams) {
-  if (params.models?.trim()) qs.set("models", params.models.trim());
-  if (params.month_from?.trim()) qs.set("month_from", params.month_from.trim());
-  if (params.month_to?.trim()) qs.set("month_to", params.month_to.trim());
-  if (params.item?.trim()) qs.set("item", params.item.trim());
-  if (params.location?.trim()) qs.set("location", params.location.trim());
-  if (params.cluster_assignment?.trim()) qs.set("cluster_assignment", params.cluster_assignment.trim());
-  if (params.abc_vol?.trim()) qs.set("abc_vol", params.abc_vol.trim());
-  if (params.region?.trim()) qs.set("region", params.region.trim());
-  if (params.excess_dos_threshold != null) qs.set("excess_dos_threshold", String(params.excess_dos_threshold));
+function invBacktestParams(params: InvBacktestFilterParams): Record<string, string | number | undefined> {
+  return {
+    models: params.models?.trim() || undefined,
+    month_from: params.month_from?.trim() || undefined,
+    month_to: params.month_to?.trim() || undefined,
+    item: params.item?.trim() || undefined,
+    location: params.location?.trim() || undefined,
+    cluster_assignment: params.cluster_assignment?.trim() || undefined,
+    abc_vol: params.abc_vol?.trim() || undefined,
+    region: params.region?.trim() || undefined,
+    excess_dos_threshold: params.excess_dos_threshold ?? undefined,
+  };
 }
 
 export async function fetchInvBacktestSummary(params: InvBacktestFilterParams): Promise<InvBacktestSummaryPayload> {
-  const qs = new URLSearchParams();
-  appendInvBacktestParams(qs, params);
+  const qs = buildSearchParams(invBacktestParams(params));
   return fetchJson(`/inventory-backtest/summary?${qs}`);
 }
 
 export async function fetchInvBacktestTrend(params: InvBacktestFilterParams): Promise<InvBacktestTrendPayload> {
-  const qs = new URLSearchParams();
-  appendInvBacktestParams(qs, params);
+  const qs = buildSearchParams(invBacktestParams(params));
   return fetchJson(`/inventory-backtest/trend?${qs}`);
 }
 
 export async function fetchInvBacktestRootCause(
   params: InvBacktestFilterParams & { model_id: string },
 ): Promise<InvBacktestRootCausePayload> {
-  const qs = new URLSearchParams({ model_id: params.model_id });
-  appendInvBacktestParams(qs, params);
+  const qs = buildSearchParams({ model_id: params.model_id, ...invBacktestParams(params) });
   return fetchJson(`/inventory-backtest/root-cause?${qs}`);
 }
 
@@ -748,14 +754,14 @@ export interface InvBacktestDetailParams extends InvBacktestFilterParams {
 }
 
 export async function fetchInvBacktestDetail(params: InvBacktestDetailParams): Promise<InvBacktestDetailPayload> {
-  const qs = new URLSearchParams({
-    limit: String(params.limit),
-    offset: String(params.offset),
+  const qs = buildSearchParams({
+    limit: params.limit,
+    offset: params.offset,
     sort_by: params.sort_by,
     sort_dir: params.sort_dir,
+    event_type: params.event_type && params.event_type !== "all" ? params.event_type : undefined,
+    ...invBacktestParams(params),
   });
-  if (params.event_type && params.event_type !== "all") qs.set("event_type", params.event_type);
-  appendInvBacktestParams(qs, params);
   return fetchJson(`/inventory-backtest/detail?${qs}`);
 }
 
@@ -783,11 +789,12 @@ export async function fetchJobs(params: {
   limit?: number;
   offset?: number;
 }): Promise<JobListPayload> {
-  const qs = new URLSearchParams();
-  if (params.status) qs.set("status", params.status);
-  if (params.job_type) qs.set("job_type", params.job_type);
-  if (params.limit != null) qs.set("limit", String(params.limit));
-  if (params.offset != null) qs.set("offset", String(params.offset));
+  const qs = buildSearchParams({
+    status: params.status,
+    job_type: params.job_type,
+    limit: params.limit,
+    offset: params.offset,
+  });
   return fetchJson(`/jobs?${qs}`);
 }
 

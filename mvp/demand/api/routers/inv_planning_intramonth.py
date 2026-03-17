@@ -6,7 +6,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _f, _s, get_conn, set_cache
+from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -38,15 +38,7 @@ def get_intramonth_stockout_summary(
     if abc_vol:
         params.append(abc_vol.upper())
         where_clauses.append("abc_vol = %s")
-    if brand:
-        params.append(brand.split(","))
-        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_clauses, params, brand=brand, category=category, market=market)
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -122,15 +114,7 @@ def get_intramonth_stockout_detail(
     if had_extended is not None:
         params.append(had_extended)
         where_clauses.append("had_extended_stockout = %s")
-    if brand:
-        params.append(brand.split(","))
-        where_clauses.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_clauses.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_clauses.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_clauses, params, brand=brand, category=category, market=market)
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
     count_sql = f"SELECT COUNT(*) FROM mv_intramonth_stockout t {where_sql}"

@@ -47,10 +47,7 @@ from common.tuning import (
     save_best_params,
     suggest_params,
 )
-
-
-def _ts() -> str:
-    return time.strftime("%H:%M:%S")
+from common.utils import _ts
 
 
 # ── Objective factory ─────────────────────────────────────────────────────────

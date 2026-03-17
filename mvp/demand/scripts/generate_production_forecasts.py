@@ -51,16 +51,13 @@ from common.db import get_db_params
 from common.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
 from common.forecast_ci import build_sigma_lookup, compute_ci_bounds
 from common.planning_date import get_planning_date
+from common.utils import _ts
 
 import psycopg
 
 CONFIG_PATH = ROOT / "config" / "production_forecast_config.yaml"
 
 logger = logging.getLogger(__name__)
-
-
-def _ts() -> str:
-    return time.strftime("%H:%M:%S")
 
 
 def _detect_framework(model) -> str:

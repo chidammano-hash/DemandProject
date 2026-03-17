@@ -10,7 +10,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _f, _s, get_conn, set_cache
+from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["fill-rate"])
 
@@ -68,15 +68,7 @@ def get_fill_rate_summary(
     if region:
         params.append(region)
         where_parts.append("region = %s")
-    if brand:
-        params.append(brand.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market)
 
     where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
@@ -233,15 +225,7 @@ def get_fill_rate_trend(
     if abc_vol:
         params.append(abc_vol.upper())
         where_parts.append("abc_vol = %s")
-    if brand:
-        params.append(brand.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market)
 
     where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
@@ -330,15 +314,7 @@ def get_fill_rate_detail(
     if had_partial_fulfillment is not None:
         params.append(had_partial_fulfillment)
         where_parts.append("had_partial_fulfillment = %s")
-    if brand:
-        params.append(brand.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market)
 
     where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 

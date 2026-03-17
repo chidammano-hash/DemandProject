@@ -7,6 +7,7 @@ import type {
   InsightType,
 } from "@/types/ai-planner";
 import { fetchJson, submitJob } from "./core";
+import { buildSearchParams } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // AI Planner queries (IPAIfeature1)
@@ -26,25 +27,27 @@ export interface AiInsightParams {
 }
 
 export async function fetchAiInsights(params: AiInsightParams = {}): Promise<InsightListResponse> {
-  const qs = new URLSearchParams();
-  if (params.severity) qs.set("severity", params.severity);
-  if (params.status) qs.set("status", params.status);
-  if (params.insight_type) qs.set("insight_type", params.insight_type);
-  if (params.item_no) qs.set("item_no", params.item_no);
-  if (params.loc) qs.set("loc", params.loc);
-  if (params.brand) qs.set("brand", params.brand);
-  if (params.category) qs.set("category", params.category);
-  if (params.market) qs.set("market", params.market);
-  if (params.channel) qs.set("channel", params.channel);
-  if (params.page) qs.set("page", String(params.page));
-  if (params.page_size) qs.set("page_size", String(params.page_size));
+  const qs = buildSearchParams({
+    severity: params.severity,
+    status: params.status,
+    insight_type: params.insight_type,
+    item_no: params.item_no,
+    loc: params.loc,
+    brand: params.brand,
+    category: params.category,
+    market: params.market,
+    channel: params.channel,
+    page: params.page,
+    page_size: params.page_size,
+  });
   return fetchJson(`/ai-planner/insights?${qs}`);
 }
 
 export async function fetchAiMemos(params: { scope?: string; limit?: number } = {}): Promise<MemoListResponse> {
-  const qs = new URLSearchParams();
-  if (params.scope) qs.set("scope", params.scope);
-  if (params.limit) qs.set("limit", String(params.limit));
+  const qs = buildSearchParams({
+    scope: params.scope,
+    limit: params.limit,
+  });
   return fetchJson(`/ai-planner/memos?${qs}`);
 }
 

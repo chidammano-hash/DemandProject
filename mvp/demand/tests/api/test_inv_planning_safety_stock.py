@@ -22,17 +22,13 @@ from tests.api.conftest import make_pool as _make_pool
 async def test_safety_stock_summary_200():
     """GET /inv-planning/safety-stock/summary returns 200 with expected keys."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = (
-        500,    # total_dfus
-        85,     # below_ss_count
-        1.12,   # avg_ss_coverage
-        14.0,   # avg_ss_days
-        -4200.0, # total_ss_gap_units
-    )
-    # Router makes 2 fetchall calls: class_rows (5 cols) then gap_rows (6 cols)
-    cursor.fetchall.side_effect = [
-        [("A", 80, 12, 420.0, 1.05), ("B", 220, 45, 180.0, 0.98), ("C", 200, 28, 90.0, 1.25)],
-        [("I001", "L1", 200.0, 100.0, -100.0, 0.5)],
+    # Single combined query returns tagged rows: S=summary, C=class, G=gaps
+    cursor.fetchall.return_value = [
+        ("S", "500", "85", "1.12", "14.0", "-4200.0", None, None, None),
+        ("C", "A", "80", "12", "420.0", "1.05", None, None, None),
+        ("C", "B", "220", "45", "180.0", "0.98", None, None, None),
+        ("C", "C", "200", "28", "90.0", "1.25", None, None, None),
+        ("G", "I001", "L1", "200.0", "100.0", "-100.0", "0.5", None, None),
     ]
 
     with patch("api.core._get_pool", return_value=pool):
@@ -55,10 +51,11 @@ async def test_safety_stock_summary_200():
 async def test_safety_stock_summary_by_class_keys():
     """by_class has A, B, C keys with expected sub-keys."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = (100, 20, 0.95, 10.0, -1000.0)
-    cursor.fetchall.side_effect = [
-        [("A", 30, 5, 350.0, 0.90), ("B", 45, 10, 200.0, 0.95), ("C", 25, 5, 80.0, 1.05)],
-        [],  # gap_rows empty
+    cursor.fetchall.return_value = [
+        ("S", "100", "20", "0.95", "10.0", "-1000.0", None, None, None),
+        ("C", "A", "30", "5", "350.0", "0.90", None, None, None),
+        ("C", "B", "45", "10", "200.0", "0.95", None, None, None),
+        ("C", "C", "25", "5", "80.0", "1.05", None, None, None),
     ]
 
     with patch("api.core._get_pool", return_value=pool):
@@ -84,8 +81,10 @@ async def test_safety_stock_summary_by_class_keys():
 async def test_safety_stock_summary_abc_vol_filter():
     """abc_vol query param filters the summary to a specific class."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = (30, 5, 0.92, 12.0, -500.0)
-    cursor.fetchall.side_effect = [[("A", 30, 5, 350.0, 0.92)], []]
+    cursor.fetchall.return_value = [
+        ("S", "30", "5", "0.92", "12.0", "-500.0", None, None, None),
+        ("C", "A", "30", "5", "350.0", "0.92", None, None, None),
+    ]
 
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -100,8 +99,10 @@ async def test_safety_stock_summary_abc_vol_filter():
 async def test_safety_stock_summary_top_gaps_present():
     """Summary response includes top_gaps list."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = (200, 40, 0.88, 15.0, -8000.0)
-    cursor.fetchall.side_effect = [[("A", 60, 15, 400.0, 0.85)], []]
+    cursor.fetchall.return_value = [
+        ("S", "200", "40", "0.88", "15.0", "-8000.0", None, None, None),
+        ("C", "A", "60", "15", "400.0", "0.85", None, None, None),
+    ]
 
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -119,8 +120,10 @@ async def test_safety_stock_summary_top_gaps_present():
 async def test_safety_stock_summary_empty_db():
     """Empty DB returns zero counts without 500."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = (0, 0, 0.0, 0.0, None)
-    cursor.fetchall.return_value = []
+    # Only a summary row with zeros, no class or gap rows
+    cursor.fetchall.return_value = [
+        ("S", "0", "0", "0.0", "0.0", None, None, None, None),
+    ]
 
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app

@@ -16,9 +16,7 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
-
-def _ts() -> str:
-    return time.strftime("%H:%M:%S")
+from common.utils import _ts
 
 
 # ── CV splits ─────────────────────────────────────────────────────────────────

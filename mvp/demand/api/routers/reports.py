@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from api.auth import require_api_key
 from api.core import get_conn
 from common.auth import CurrentUser, get_current_user, require_role
 
@@ -42,6 +43,7 @@ async def generate_report(
     template_id: int = Query(...),
     format: str = Query("pdf", pattern="^(pdf|csv|html)$"),
     user: CurrentUser = Depends(require_role("planner")),
+    api_key: str = Depends(require_api_key),
 ):
     """Generate a report ad-hoc (planner+ only). Returns report metadata."""
     with get_conn() as conn, conn.cursor() as cur:
@@ -95,6 +97,7 @@ async def list_schedules(user: CurrentUser = Depends(get_current_user)):
 async def create_schedule(
     body: CreateScheduleRequest,
     user: CurrentUser = Depends(require_role("manager")),
+    api_key: str = Depends(require_api_key),
 ):
     """Create a report schedule (manager+ only)."""
     import json
@@ -114,6 +117,7 @@ async def create_schedule(
 async def delete_schedule(
     schedule_id: int,
     user: CurrentUser = Depends(require_role("manager")),
+    api_key: str = Depends(require_api_key),
 ):
     """Delete a report schedule."""
     with get_conn() as conn, conn.cursor() as cur:

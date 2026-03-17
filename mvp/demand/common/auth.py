@@ -9,34 +9,28 @@ import hmac
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 import bcrypt
 import jwt
-import yaml
 from fastapi import Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-_config_cache: dict | None = None
+from common.utils import load_config, reset_config
+
+_CONFIG_NAME = "auth_config.yaml"
 
 
+# ---------------------------------------------------------------------------
+# Config (thread-safe via common.utils.load_config)
+# ---------------------------------------------------------------------------
 def _load_config() -> dict:
-    global _config_cache
-    if _config_cache is None:
-        cfg_path = Path(__file__).resolve().parent.parent / "config" / "auth_config.yaml"
-        with open(cfg_path) as f:
-            _config_cache = yaml.safe_load(f)
-    return _config_cache
+    return load_config(_CONFIG_NAME)
 
 
 def _reset_config_cache():
     """Reset cached config — used in tests."""
-    global _config_cache
-    _config_cache = None
+    reset_config(_CONFIG_NAME)
 
 
 # ---------------------------------------------------------------------------

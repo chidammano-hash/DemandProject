@@ -34,10 +34,7 @@ from common.db import get_db_params
 from common.metrics import compute_accuracy_metrics
 from common.mlflow_utils import log_backtest_run
 from common.planning_date import get_planning_date
-
-
-def _ts() -> str:
-    return time.strftime("%H:%M:%S")
+from common.utils import _ts
 
 
 # ── Timeframe generation ─────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
 
 from api.auth import require_api_key
-from api.core import _f, _s, get_conn, set_cache
+from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -78,15 +78,7 @@ def get_exceptions(
     if location:
         wheres.append("loc ILIKE %s")
         params.append(f"%{location}%")
-    if brand:
-        params.append(brand.split(","))
-        wheres.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        wheres.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        wheres.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(wheres, params, brand=brand, category=category, market=market)
 
     where_clause = ("WHERE " + " AND ".join(wheres)) if wheres else ""
 
@@ -168,15 +160,7 @@ def get_exception_summary(
     if status in _VALID_STATUSES:
         wheres.append("status = %s")
         params.append(status)
-    if brand:
-        params.append(brand.split(","))
-        wheres.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        wheres.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        wheres.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(wheres, params, brand=brand, category=category, market=market)
 
     where = ("WHERE " + " AND ".join(wheres)) if wheres else ""
 

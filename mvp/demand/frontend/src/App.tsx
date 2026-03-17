@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 
 import { Button } from "@/components/ui/button";
@@ -69,6 +69,30 @@ function TabErrorFallback({ error, resetErrorBoundary, tabKey }: { error: unknow
 // ---------------------------------------------------------------------------
 function TabSuspenseFallback({ tabKey }: { tabKey: string }) {
   return <LoadingElement tabKey={tabKey} message="Loading tab..." />;
+}
+
+// ---------------------------------------------------------------------------
+// Reusable tab wrapper — eliminates 15 repeated ErrorBoundary+Suspense blocks
+// ---------------------------------------------------------------------------
+function TabPanel({
+  tabKey,
+  resetKeys,
+  children,
+}: {
+  tabKey: string;
+  resetKeys: unknown[];
+  children: ReactNode;
+}) {
+  return (
+    <ErrorBoundary
+      FallbackComponent={(props) => <TabErrorFallback {...props} tabKey={tabKey} />}
+      resetKeys={resetKeys}
+    >
+      <Suspense fallback={<TabSuspenseFallback tabKey={tabKey} />}>
+        {children}
+      </Suspense>
+    </ErrorBoundary>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -151,109 +175,79 @@ export default function App() {
             <div id="tab-content" role="tabpanel" aria-label={`${activeTab} tab content`} className="flex-1 overflow-y-auto p-4 md:p-6">
               <div className="mx-auto max-w-[1600px]">
                 {(activeTab === "aggregateAnalysis" || activeTab === "overview" || activeTab === "accuracy") && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="aggregateAnalysis" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="aggregateAnalysis" />}>
-                      <AggregateAnalysisTab onNavigate={handleTabSwitch} />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="aggregateAnalysis" resetKeys={[activeTab]}>
+                    <AggregateAnalysisTab onNavigate={handleTabSwitch} />
+                  </TabPanel>
                 )}
                 {activeTab === "explorer" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="explorer" />} resetKeys={[activeTab, domain]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="explorer" />}>
-                      <ExplorerTab domain={domain} onDomainChange={setDomain} />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="explorer" resetKeys={[activeTab, domain]}>
+                    <ExplorerTab domain={domain} onDomainChange={setDomain} />
+                  </TabPanel>
                 )}
                 {activeTab === "clusters" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="clusters" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="clusters" />}>
-                      <ClustersTab domain={domain} onDomainChange={setDomain} />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="clusters" resetKeys={[activeTab]}>
+                    <ClustersTab domain={domain} onDomainChange={setDomain} />
+                  </TabPanel>
                 )}
                 {(activeTab === "itemAnalysis" || activeTab === "dfuAnalysis" || activeTab === "inventory") && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="itemAnalysis" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="itemAnalysis" />}>
-                      <ItemAnalysisTab />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="itemAnalysis" resetKeys={[activeTab]}>
+                    <ItemAnalysisTab />
+                  </TabPanel>
                 )}
                 {activeTab === "intel" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="intel" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="intel" />}>
-                      <MarketIntelTab />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="intel" resetKeys={[activeTab]}>
+                    <MarketIntelTab />
+                  </TabPanel>
                 )}
                 {activeTab === "invBacktest" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="invBacktest" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="invBacktest" />}>
-                      <InvBacktestTab />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="invBacktest" resetKeys={[activeTab]}>
+                    <InvBacktestTab />
+                  </TabPanel>
                 )}
                 {activeTab === "invPlanning" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="invPlanning" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="invPlanning" />}>
-                      <InvPlanningTab />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="invPlanning" resetKeys={[activeTab]}>
+                    <InvPlanningTab />
+                  </TabPanel>
                 )}
                 {activeTab === "controlTower" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="controlTower" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="controlTower" />}>
-                      <ControlTowerTab onNavigate={handleTabSwitch} />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="controlTower" resetKeys={[activeTab]}>
+                    <ControlTowerTab onNavigate={handleTabSwitch} />
+                  </TabPanel>
                 )}
                 {activeTab === "jobs" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="jobs" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="jobs" />}>
-                      <JobsTab onNavigateToScenario={handleNavigateToScenario} />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="jobs" resetKeys={[activeTab]}>
+                    <JobsTab onNavigateToScenario={handleNavigateToScenario} />
+                  </TabPanel>
                 )}
                 {activeTab === "aiPlanner" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="aiPlanner" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="aiPlanner" />}>
-                      <AIPlannerTab />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="aiPlanner" resetKeys={[activeTab]}>
+                    <AIPlannerTab />
+                  </TabPanel>
                 )}
                 {(activeTab === "exceptions" || activeTab === "storyboard") && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="exceptions" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="exceptions" />}>
-                      <ExceptionsTab />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="exceptions" resetKeys={[activeTab]}>
+                    <ExceptionsTab />
+                  </TabPanel>
                 )}
                 {activeTab === "sop" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="sop" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="sop" />}>
-                      <SopTab />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="sop" resetKeys={[activeTab]}>
+                    <SopTab />
+                  </TabPanel>
                 )}
                 {activeTab === "fva" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="fva" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="fva" />}>
-                      <FVATab />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="fva" resetKeys={[activeTab]}>
+                    <FVATab />
+                  </TabPanel>
                 )}
                 {activeTab === "dataQuality" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="dataQuality" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="dataQuality" />}>
-                      <DataQualityTab />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="dataQuality" resetKeys={[activeTab]}>
+                    <DataQualityTab />
+                  </TabPanel>
                 )}
                 {activeTab === "customerMap" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="customerMap" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="customerMap" />}>
-                      <CustomerMapTab />
-                    </Suspense>
-                  </ErrorBoundary>
+                  <TabPanel tabKey="customerMap" resetKeys={[activeTab]}>
+                    <CustomerMapTab />
+                  </TabPanel>
                 )}
               </div>
             </div>

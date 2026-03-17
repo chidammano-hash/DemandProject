@@ -6,34 +6,23 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-import yaml
-
 from common.db import get_db_params
+from common.utils import load_config, reset_config
+
+_CONFIG_NAME = "data_quality_config.yaml"
+
 
 # ---------------------------------------------------------------------------
-# Config
+# Config (thread-safe via common.utils.load_config)
 # ---------------------------------------------------------------------------
-_config_cache: dict | None = None
-
-
 def _load_config() -> dict:
-    global _config_cache
-    if _config_cache is None:
-        cfg_path = Path(__file__).resolve().parent.parent / "config" / "data_quality_config.yaml"
-        if cfg_path.exists():
-            with open(cfg_path) as f:
-                _config_cache = yaml.safe_load(f) or {}
-        else:
-            _config_cache = {}
-    return _config_cache
+    return load_config(_CONFIG_NAME)
 
 
 def _reset_config():
-    global _config_cache
-    _config_cache = None
+    reset_config(_CONFIG_NAME)
 
 
 # ---------------------------------------------------------------------------

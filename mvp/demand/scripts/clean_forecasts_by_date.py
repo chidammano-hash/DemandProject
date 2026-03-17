@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
+from common.utils import _ts
 
 VALID_DATE_COLUMNS = ("startdate", "fcstdate")
 
@@ -44,10 +45,6 @@ REFRESH_VIEWS = [
     "agg_accuracy_lag_archive",
     "agg_dfu_coverage_lag_archive",
 ]
-
-
-def _ts() -> str:
-    return time.strftime("%H:%M:%S")
 
 
 def parse_date(value: str) -> date:

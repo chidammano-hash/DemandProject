@@ -5,12 +5,14 @@
  * Zone 1: Summary KPI header + page description
  * Zone 2: Exception Queue (left, 40% width) — filterable, sortable exception list
  * Zone 3: Investigation Panel (right, 60% width) — detail view + actions
+ *
+ * Sub-components live in ./storyboard/:
+ *   ExceptionCard, SbKpiCard, storyboardShared (constants + helpers)
  */
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   StoryboardException,
-  StoryboardSummary,
   PlannerDecision,
 } from "@/types/storyboard";
 import {
@@ -23,119 +25,25 @@ import {
 } from "@/api/queries";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
-// ---------------------------------------------------------------------------
-// Color maps
-// ---------------------------------------------------------------------------
-const EXCEPTION_TYPE_COLORS: Record<string, string> = {
-  forecast_bias: "bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/40 dark:text-blue-300 dark:border-blue-700",
-  stockout_risk: "bg-red-100 text-red-800 border-red-200 dark:bg-red-900/40 dark:text-red-300 dark:border-red-700",
-  accuracy_drop: "bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-900/40 dark:text-orange-300 dark:border-orange-700",
-  excess_risk: "bg-cyan-100 text-cyan-800 border-cyan-200 dark:bg-cyan-900/40 dark:text-cyan-300 dark:border-cyan-700",
-  model_drift: "bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/40 dark:text-yellow-300 dark:border-yellow-700",
-  new_item: "bg-green-100 text-green-800 border-green-200 dark:bg-green-900/40 dark:text-green-300 dark:border-green-700",
-};
-
-const EXCEPTION_TYPE_ICONS: Record<string, string> = {
-  forecast_bias: "~",
-  stockout_risk: "!",
-  accuracy_drop: "v",
-  excess_risk: "+",
-  model_drift: "*",
-  new_item: "N",
-};
-
-const DECISION_TYPE_COLORS: Record<string, string> = {
-  override_forecast: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
-  accept_exception: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
-  escalate: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-  dismiss: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  request_info: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  open: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-  investigating: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
-  resolved: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
-  dismissed: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-};
-
-const STATUS_DOT: Record<string, string> = {
-  open: "bg-red-500",
-  investigating: "bg-yellow-500",
-  resolved: "bg-green-500",
-  dismissed: "bg-gray-400",
-};
-
-function severityLabel(score: number): string {
-  if (score >= 0.75) return "Critical";
-  if (score >= 0.50) return "High";
-  if (score >= 0.25) return "Medium";
-  return "Low";
-}
-
-function severityColorClass(severity: number): string {
-  if (severity >= 0.75) return "text-red-600 dark:text-red-400";
-  if (severity >= 0.50) return "text-orange-600 dark:text-orange-400";
-  if (severity >= 0.25) return "text-yellow-600 dark:text-yellow-400";
-  return "text-green-600 dark:text-green-400";
-}
-
-function severityBg(severity: number): string {
-  if (severity >= 0.75) return "bg-red-500";
-  if (severity >= 0.50) return "bg-orange-500";
-  if (severity >= 0.25) return "bg-yellow-500";
-  return "bg-green-500";
-}
-
-function fmt(n: number | null | undefined, dec = 2): string {
-  if (n == null) return "\u2014";
-  return Number(n).toFixed(dec);
-}
-
-function fmtCurrency(n: number | null | undefined): string {
-  if (n == null) return "\u2014";
-  return `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
-
-function daysAgo(dateStr: string): string {
-  const ms = Date.now() - new Date(dateStr).getTime();
-  const days = Math.floor(ms / (1000 * 60 * 60 * 24));
-  if (days === 0) return "today";
-  if (days === 1) return "1d ago";
-  return `${days}d ago`;
-}
-
-const EXCEPTION_TYPES = [
-  "all",
-  "forecast_bias",
-  "stockout_risk",
-  "accuracy_drop",
-  "excess_risk",
-  "model_drift",
-  "new_item",
-];
-
-const STATUS_FILTERS = ["all", "open", "investigating", "resolved", "dismissed"];
-
-const EXCEPTION_TYPE_LABELS: Record<string, string> = {
-  all: "All",
-  forecast_bias: "Forecast Bias",
-  stockout_risk: "Stockout Risk",
-  accuracy_drop: "Accuracy Drop",
-  excess_risk: "Excess Risk",
-  model_drift: "Model Drift",
-  new_item: "New Item",
-};
-
-const DECISION_TYPES = [
-  { value: "override_forecast", label: "Override Forecast", desc: "Replace the forecast with your own estimate" },
-  { value: "accept_exception", label: "Accept & Monitor", desc: "Acknowledge the exception and continue tracking" },
-  { value: "escalate", label: "Escalate", desc: "Flag for senior review or cross-functional discussion" },
-  { value: "dismiss", label: "Dismiss", desc: "No action needed \u2014 false positive or resolved naturally" },
-  { value: "request_info", label: "Request Information", desc: "Need more data before making a decision" },
-];
-
-const PAGE_SIZE = 20;
+import { ExceptionCard } from "./storyboard/ExceptionCard";
+import { SbKpiCard } from "./storyboard/SbKpiCard";
+import {
+  severityLabel,
+  severityColorClass,
+  severityBg,
+  fmt,
+  fmtCurrency,
+  daysAgo,
+  EXCEPTION_TYPES,
+  STATUS_FILTERS,
+  EXCEPTION_TYPE_LABELS,
+  EXCEPTION_TYPE_COLORS,
+  DECISION_TYPES,
+  DECISION_TYPE_COLORS,
+  STATUS_COLORS,
+  STATUS_DOT,
+  PAGE_SIZE,
+} from "./storyboard/storyboardShared";
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -243,7 +151,7 @@ export default function StoryboardTab() {
 
   return (
     <div className="flex flex-col gap-4 p-4">
-      {/* ── Header ──────────────────────────────────────────────── */}
+      {/* Header */}
       <div className="space-y-1">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -280,7 +188,7 @@ export default function StoryboardTab() {
         </div>
       )}
 
-      {/* ── ZONE 1: Summary KPI Strip ─────────────────────────── */}
+      {/* ZONE 1: Summary KPI Strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="summary-kpis">
         <SbKpiCard
           label="Open Exceptions"
@@ -320,7 +228,7 @@ export default function StoryboardTab() {
         />
       </div>
 
-      {/* ── ZONE 2 + ZONE 3: Split layout ────────────────────── */}
+      {/* ZONE 2 + ZONE 3: Split layout */}
       <div className="flex flex-col lg:flex-row gap-4 min-h-0">
         {/* ZONE 2: Exception Queue */}
         <div className="lg:w-[40%] flex flex-col gap-3">
@@ -334,7 +242,7 @@ export default function StoryboardTab() {
                 </span>
               </div>
 
-              {/* Status tabs (not pills — cleaner horizontal tabs) */}
+              {/* Status tabs */}
               <div className="flex border-b -mb-3">
                 {STATUS_FILTERS.map((s) => (
                   <button
@@ -367,7 +275,6 @@ export default function StoryboardTab() {
 
             {/* Filters */}
             <div className="px-4 py-3 space-y-2 border-b">
-              {/* Type filter — compact dropdown instead of many pills */}
               <div className="flex gap-2">
                 <select
                   value={typeFilter}
@@ -384,7 +291,6 @@ export default function StoryboardTab() {
                   ))}
                 </select>
               </div>
-              {/* Item/Loc search */}
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -486,7 +392,7 @@ export default function StoryboardTab() {
                     </div>
                   )}
 
-                  {/* Detail header — type badge + identity + severity bar */}
+                  {/* Detail header */}
                   <div className="px-4 pt-4 pb-3 border-b">
                     <div className="flex items-start justify-between">
                       <div className="space-y-1.5">
@@ -517,7 +423,7 @@ export default function StoryboardTab() {
                           </p>
                         )}
                       </div>
-                      {/* Severity badge (larger, right-aligned) */}
+                      {/* Severity badge */}
                       <div className="flex flex-col items-center gap-1 ml-4">
                         <div className={`text-2xl font-bold ${severityColorClass(detailData.exception.severity)}`}>
                           {Math.round(detailData.exception.severity * 100)}
@@ -525,7 +431,6 @@ export default function StoryboardTab() {
                         <span className={`text-[10px] font-semibold uppercase tracking-wider ${severityColorClass(detailData.exception.severity)}`}>
                           {severityLabel(detailData.exception.severity)}
                         </span>
-                        {/* Mini severity bar */}
                         <div className="w-12 h-1.5 rounded-full bg-muted overflow-hidden">
                           <div
                             className={`h-full rounded-full ${severityBg(detailData.exception.severity)}`}
@@ -596,7 +501,6 @@ export default function StoryboardTab() {
                             key={d.decision_id}
                             className="flex items-start gap-3 text-xs"
                           >
-                            {/* Timeline dot */}
                             <div className="flex flex-col items-center mt-1">
                               <div className="h-2 w-2 rounded-full bg-border" />
                               {idx < detailData.decisions.length - 1 && (
@@ -626,13 +530,12 @@ export default function StoryboardTab() {
                     </div>
                   )}
 
-                  {/* Action Panel — combined status update + decision */}
+                  {/* Action Panel */}
                   <div className="px-4 py-4 bg-muted/30 space-y-4">
                     <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Take Action
                     </p>
 
-                    {/* Quick-action buttons for common workflows */}
                     <div className="flex flex-wrap gap-2">
                       <button
                         className="inline-flex items-center gap-1.5 text-xs font-medium rounded-md border px-3 py-1.5 hover:bg-yellow-50 hover:border-yellow-300 hover:text-yellow-800 dark:hover:bg-yellow-900/30 dark:hover:border-yellow-700 dark:hover:text-yellow-300 transition-colors disabled:opacity-50"
@@ -657,7 +560,6 @@ export default function StoryboardTab() {
                       </button>
                     </div>
 
-                    {/* Full decision form */}
                     <div className="space-y-2">
                       <p className="text-xs text-muted-foreground">
                         Or record a formal decision with rationale:
@@ -669,7 +571,7 @@ export default function StoryboardTab() {
                       >
                         {DECISION_TYPES.map((dt) => (
                           <option key={dt.value} value={dt.value}>
-                            {dt.label} \u2014 {dt.desc}
+                            {dt.label} {"\u2014"} {dt.desc}
                           </option>
                         ))}
                       </select>
@@ -701,113 +603,6 @@ export default function StoryboardTab() {
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ExceptionCard — compact row-style card (replaces boxy card)
-// ---------------------------------------------------------------------------
-function ExceptionCard({
-  exception,
-  isSelected,
-  onSelect,
-}: {
-  exception: StoryboardException;
-  isSelected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      onClick={onSelect}
-      className={`w-full text-left px-4 py-3 transition-colors ${
-        isSelected
-          ? "bg-primary/5 border-l-2 border-l-primary"
-          : "hover:bg-muted/50 border-l-2 border-l-transparent"
-      }`}
-    >
-      {/* Row 1: severity + type + status + age */}
-      <div className="flex items-center gap-2 mb-1">
-        <span
-          className={`inline-block h-2 w-2 rounded-full flex-shrink-0 ${severityBg(exception.severity)}`}
-          title={`Severity: ${severityLabel(exception.severity)} (${fmt(exception.severity, 2)})`}
-        />
-        <span
-          className={`text-[10px] px-1.5 py-0.5 rounded font-medium border ${
-            EXCEPTION_TYPE_COLORS[exception.exception_type] ?? ""
-          }`}
-        >
-          {EXCEPTION_TYPE_LABELS[exception.exception_type] ?? exception.exception_type}
-        </span>
-        <span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
-          <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[exception.status] ?? "bg-gray-400"}`} />
-          {exception.status}
-        </span>
-        <span className="text-[10px] text-muted-foreground">{daysAgo(exception.generated_at)}</span>
-      </div>
-
-      {/* Row 2: Item @ Loc */}
-      <p className="text-xs font-medium truncate">
-        {exception.item_no} @ {exception.loc}
-      </p>
-
-      {/* Row 3: Headline (truncated) */}
-      {exception.headline && (
-        <p className="text-[11px] text-muted-foreground truncate mt-0.5 leading-snug">
-          {exception.headline}
-        </p>
-      )}
-
-      {/* Row 4: Financial impact */}
-      {exception.financial_impact != null && (
-        <p className="text-[10px] text-muted-foreground mt-1">
-          Impact: <span className="font-medium text-foreground">{fmtCurrency(exception.financial_impact)}</span>
-        </p>
-      )}
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// KPI Card — enhanced with subtitle and optional severity bar
-// ---------------------------------------------------------------------------
-function SbKpiCard({
-  label,
-  value,
-  subtitle,
-  color,
-  severityBar,
-}: {
-  label: string;
-  value: string | number;
-  subtitle?: string;
-  color?: "green" | "amber" | "red";
-  severityBar?: number;
-}) {
-  const textColor =
-    color === "green"
-      ? "text-green-600 dark:text-green-400"
-      : color === "amber"
-      ? "text-amber-600 dark:text-amber-400"
-      : color === "red"
-      ? "text-red-600 dark:text-red-400"
-      : "";
-
-  return (
-    <div className="rounded-lg border bg-card shadow-sm p-3.5">
-      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">{label}</p>
-      <p className={`text-xl font-bold truncate mt-0.5 ${textColor}`}>{value}</p>
-      {subtitle && (
-        <p className="text-[10px] text-muted-foreground mt-0.5">{subtitle}</p>
-      )}
-      {severityBar != null && (
-        <div className="w-full h-1 rounded-full bg-muted mt-2 overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${severityBg(severityBar)}`}
-            style={{ width: `${severityBar * 100}%` }}
-          />
-        </div>
-      )}
     </div>
   );
 }

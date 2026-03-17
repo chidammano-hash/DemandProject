@@ -430,6 +430,57 @@ def rows_to_dicts(cols: list[str], rows: list[tuple]) -> list[dict[str, Any]]:
     return [dict(zip(cols, r)) for r in rows]
 
 
+def add_cross_dim_filters(
+    where: list[str],
+    params: list[Any],
+    *,
+    brand: str | None = None,
+    category: str | None = None,
+    market: str | None = None,
+    item_col: str = "t.item_no",
+    loc_col: str = "t.loc",
+) -> None:
+    """Append brand/category/market EXISTS subquery filters to WHERE parts.
+
+    This is the shared implementation for the global filter bar's cross-dimension
+    filters (brand → dim_item.brand_name, category → dim_item.class_,
+    market → dim_location.state_id).  Each value may be comma-separated for
+    multi-select.
+
+    Args:
+        where: Mutable list of WHERE clause fragments.
+        params: Mutable list of query parameters, appended in tandem with *where*.
+        brand: Comma-separated brand_name values (dim_item).
+        category: Comma-separated class_ values (dim_item).
+        market: Comma-separated state_id values (dim_location).
+        item_col: Qualified column expression for the item identifier in the outer
+            query (e.g. ``"t.item_no"``, ``"s.item_no"``, ``"f.dmdunit"``).
+        loc_col: Qualified column expression for the location identifier in the
+            outer query (e.g. ``"t.loc"``, ``"f.loc"``).
+    """
+    if brand:
+        values = [v.strip() for v in brand.split(",") if v.strip()]
+        if values:
+            params.append(values)
+            where.append(
+                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = {item_col} AND di.brand_name = ANY(%s))"
+            )
+    if category:
+        values = [v.strip() for v in category.split(",") if v.strip()]
+        if values:
+            params.append(values)
+            where.append(
+                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = {item_col} AND di.class_ = ANY(%s))"
+            )
+    if market:
+        values = [v.strip() for v in market.split(",") if v.strip()]
+        if values:
+            params.append(values)
+            where.append(
+                f"EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = {loc_col} AND dl.state_id = ANY(%s))"
+            )
+
+
 def add_item_loc_filters(
     where: list[str],
     params: list[Any],

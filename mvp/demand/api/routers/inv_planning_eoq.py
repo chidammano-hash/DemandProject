@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Query
 
-from api.core import get_conn
+from api.core import add_cross_dim_filters, get_conn
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -31,15 +31,7 @@ async def eoq_summary(
     if abc_vol:
         wheres.append("abc_vol = %s")
         params.append(abc_vol)
-    if brand:
-        params.append(brand.split(","))
-        wheres.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        wheres.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        wheres.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(wheres, params, brand=brand, category=category, market=market)
     where_clause = ("WHERE " + " AND ".join(wheres)) if wheres else ""
 
     summary_sql = f"""
@@ -133,15 +125,7 @@ async def eoq_detail(
     if abc_vol:
         wheres.append("abc_vol = %s")
         params.append(abc_vol)
-    if brand:
-        params.append(brand.split(","))
-        wheres.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        wheres.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = t.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        wheres.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = t.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(wheres, params, brand=brand, category=category, market=market)
     where_clause = ("WHERE " + " AND ".join(wheres)) if wheres else ""
 
     count_sql = f"SELECT COUNT(*) FROM fact_eoq_targets t {where_clause}"

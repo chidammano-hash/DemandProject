@@ -24,7 +24,7 @@ from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
 
 from api.auth import require_api_key
-from api.core import _f, _s, get_conn, set_cache
+from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["storyboard"])
 
@@ -105,32 +105,8 @@ def list_exceptions(
         where_parts.append("loc ILIKE %s")
         params.append(f"%{loc.strip()}%")
 
-    if brand:
-        values = [v.strip() for v in brand.split(",") if v.strip()]
-        if values:
-            ph = ",".join(["%s"] * len(values))
-            where_parts.append(
-                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = item_no AND di.brand_name = ANY(ARRAY[{ph}]))"
-            )
-            params.extend(values)
-
-    if category:
-        values = [v.strip() for v in category.split(",") if v.strip()]
-        if values:
-            ph = ",".join(["%s"] * len(values))
-            where_parts.append(
-                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = item_no AND di.class_ = ANY(ARRAY[{ph}]))"
-            )
-            params.extend(values)
-
-    if market:
-        values = [v.strip() for v in market.split(",") if v.strip()]
-        if values:
-            ph = ",".join(["%s"] * len(values))
-            where_parts.append(
-                f"EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = loc AND dl.state_id = ANY(ARRAY[{ph}]))"
-            )
-            params.extend(values)
+    add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market,
+                          item_col="item_no", loc_col="loc")
 
     where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 

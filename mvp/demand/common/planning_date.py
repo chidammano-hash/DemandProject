@@ -19,6 +19,7 @@ Call _reset_cache() in tests to clear between test cases.
 from __future__ import annotations
 
 import os
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -27,9 +28,10 @@ import yaml
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "planning_config.yaml"
 
-# Module-level cache
+# Module-level cache — guarded by _cache_lock for thread safety
 _cached_date: Optional[date] = None
 _cache_loaded: bool = False
+_cache_lock = threading.Lock()
 
 
 def _load_config() -> dict:
@@ -47,16 +49,26 @@ def get_planning_date() -> date:
 
     Respects the priority order documented in the module docstring.
     Result is cached for the process lifetime; use _reset_cache() in tests.
+    Thread-safe via double-checked locking.
     """
-    global _cached_date, _cache_loaded
-
     if _cache_loaded:
         return _cached_date  # type: ignore[return-value]
 
-    resolved = _resolve_date()
+    with _cache_lock:
+        # Double-checked locking
+        if _cache_loaded:
+            return _cached_date  # type: ignore[return-value]
+
+        resolved = _resolve_date()
+        _set_cache(resolved)
+        return resolved
+
+
+def _set_cache(resolved: date) -> None:
+    """Set the cache values. Must be called under _cache_lock."""
+    global _cached_date, _cache_loaded
     _cached_date = resolved
     _cache_loaded = True
-    return resolved
 
 
 def _resolve_date() -> date:
@@ -101,5 +113,6 @@ def _resolve_date() -> date:
 def _reset_cache() -> None:
     """Reset the module-level cache. For use in tests only."""
     global _cached_date, _cache_loaded
-    _cached_date = None
-    _cache_loaded = False
+    with _cache_lock:
+        _cached_date = None
+        _cache_loaded = False

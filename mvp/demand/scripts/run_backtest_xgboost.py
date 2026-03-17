@@ -31,10 +31,7 @@ if str(ROOT) not in sys.path:
 from common.backtest_framework import run_tree_backtest
 from common.constants import MIN_CLUSTER_ROWS
 from common.tuning import TRAIN_FOLD_FNS, load_best_params, tune_for_timeframe
-
-
-def _ts() -> str:
-    return time.strftime("%H:%M:%S")
+from common.utils import _ts
 
 
 # ── XGBoost per-cluster training function ────────────────────────────────────

@@ -5,6 +5,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from api.auth import require_api_key
 from api.core import get_conn
 from common.auth import CurrentUser, get_current_user, log_audit
 
@@ -37,6 +38,7 @@ class CreateSharedViewRequest(BaseModel):
 async def create_annotation(
     req: CreateAnnotationRequest,
     user: CurrentUser = Depends(get_current_user),
+    api_key: str = Depends(require_api_key),
 ):
     """Create a comment/annotation on a resource."""
     uid = user.user_id if user.user_id not in ("anonymous", "api-key-user") else None
@@ -112,6 +114,7 @@ async def update_annotation(
     annotation_id: int,
     body: str = Query(...),
     user: CurrentUser = Depends(get_current_user),
+    api_key: str = Depends(require_api_key),
 ):
     """Edit an annotation (own only, or admin)."""
     with get_conn() as conn, conn.cursor() as cur:
@@ -132,6 +135,7 @@ async def update_annotation(
 async def resolve_annotation(
     annotation_id: int,
     user: CurrentUser = Depends(get_current_user),
+    api_key: str = Depends(require_api_key),
 ):
     """Mark an annotation thread as resolved."""
     with get_conn() as conn, conn.cursor() as cur:
@@ -152,6 +156,7 @@ async def resolve_annotation(
 async def delete_annotation(
     annotation_id: int,
     user: CurrentUser = Depends(get_current_user),
+    api_key: str = Depends(require_api_key),
 ):
     """Delete an annotation (own or admin)."""
     with get_conn() as conn, conn.cursor() as cur:
@@ -205,6 +210,7 @@ async def my_mentions(
 async def create_shared_view(
     req: CreateSharedViewRequest,
     user: CurrentUser = Depends(get_current_user),
+    api_key: str = Depends(require_api_key),
 ):
     """Save current filter state + tab as a shareable view."""
     uid = user.user_id if user.user_id not in ("anonymous", "api-key-user") else None

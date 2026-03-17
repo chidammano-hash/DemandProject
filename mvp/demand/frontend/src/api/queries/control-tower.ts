@@ -1,4 +1,5 @@
 import { fetchJson } from "./core";
+import { buildSearchParams } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // IPfeature15: Control Tower
@@ -64,14 +65,15 @@ export const fetchControlTowerKpis = (): Promise<ControlTowerKpis> =>
 export async function fetchControlTowerAlerts(
   params: { limit?: number; severity?: string } & ControlTowerFilterParams = {},
 ): Promise<{ total: number; alerts: ControlTowerAlert[] }> {
-  const qs = new URLSearchParams();
-  if (params.limit) qs.set("limit", String(params.limit));
-  if (params.severity) qs.set("severity", params.severity);
-  if (params.location?.length === 1) qs.set("location", params.location[0]);
-  if (params.brand?.length === 1) qs.set("brand", params.brand[0]);
-  if (params.category?.length === 1) qs.set("category", params.category[0]);
-  if (params.market?.length === 1) qs.set("market", params.market[0]);
-  if (params.item?.length === 1) qs.set("item", params.item[0]);
+  const qs = buildSearchParams({
+    limit: params.limit,
+    severity: params.severity,
+    location: params.location?.length === 1 ? params.location[0] : undefined,
+    brand: params.brand?.length === 1 ? params.brand[0] : undefined,
+    category: params.category?.length === 1 ? params.category[0] : undefined,
+    market: params.market?.length === 1 ? params.market[0] : undefined,
+    item: params.item?.length === 1 ? params.item[0] : undefined,
+  });
   const q = qs.toString();
   return fetchJson(`/control-tower/alerts${q ? `?${q}` : ""}`);
 }
@@ -79,13 +81,14 @@ export async function fetchControlTowerAlerts(
 export async function fetchControlTowerTopCritical(
   params: { limit?: number } & ControlTowerFilterParams = {},
 ): Promise<{ items: ControlTowerCriticalItem[] }> {
-  const qs = new URLSearchParams();
-  qs.set("limit", String(params.limit ?? 10));
-  if (params.location?.length === 1) qs.set("location", params.location[0]);
-  if (params.brand?.length === 1) qs.set("brand", params.brand[0]);
-  if (params.category?.length === 1) qs.set("category", params.category[0]);
-  if (params.market?.length === 1) qs.set("market", params.market[0]);
-  if (params.item?.length === 1) qs.set("item", params.item[0]);
+  const qs = buildSearchParams({
+    limit: params.limit ?? 10,
+    location: params.location?.length === 1 ? params.location[0] : undefined,
+    brand: params.brand?.length === 1 ? params.brand[0] : undefined,
+    category: params.category?.length === 1 ? params.category[0] : undefined,
+    market: params.market?.length === 1 ? params.market[0] : undefined,
+    item: params.item?.length === 1 ? params.item[0] : undefined,
+  });
   return fetchJson(`/control-tower/top-critical?${qs.toString()}`);
 }
 

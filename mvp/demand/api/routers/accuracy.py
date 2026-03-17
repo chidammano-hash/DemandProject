@@ -41,6 +41,30 @@ def _add_dim_filters(
         params.append(seasonality_profile.strip())
 
 
+def _add_item_location_filters(
+    where_parts: list[str],
+    params: list[Any],
+    *,
+    dmdunit_col: str,
+    loc_col: str,
+    item: Optional[str] = None,
+    location: Optional[str] = None,
+) -> None:
+    """Append direct item/location IN-list filters."""
+    if item:
+        values = [v.strip() for v in item.split(",") if v.strip()]
+        if values:
+            ph = ",".join(["%s"] * len(values))
+            where_parts.append(f"{dmdunit_col} IN ({ph})")
+            params.extend(values)
+    if location:
+        values = [v.strip() for v in location.split(",") if v.strip()]
+        if values:
+            ph = ",".join(["%s"] * len(values))
+            where_parts.append(f"{loc_col} IN ({ph})")
+            params.extend(values)
+
+
 def _add_cross_dim_filters(
     where_parts: list[str],
     params: list[Any],
@@ -125,6 +149,8 @@ def forecast_accuracy_slice(
     brand: Optional[str] = Query(default=None, max_length=500),
     category: Optional[str] = Query(default=None, max_length=500),
     market: Optional[str] = Query(default=None, max_length=500),
+    item: Optional[str] = Query(default=None, max_length=500),
+    location: Optional[str] = Query(default=None, max_length=500),
 ):
     set_cache(response, max_age=120, stale_while_revalidate=300)
     """Return accuracy KPIs grouped by a chosen DFU-attribute dimension."""
@@ -140,9 +166,9 @@ def forecast_accuracy_slice(
 
     # ── Common-DFUs path: raw fact table with intersection CTE ──────────
     use_common = common_dfus and len(model_list) >= 2
-    # Use raw fact table when cross-dim filters (brand/category/market) are set,
-    # because the pre-aggregated view does not expose dmdunit/loc for EXISTS subqueries.
-    use_raw = bool(brand or category or market)
+    # Use raw fact table when cross-dim filters (brand/category/market/item/location) are set,
+    # because the pre-aggregated view does not expose dmdunit/loc for direct filtering.
+    use_raw = bool(brand or category or market or item or location)
 
     if use_common:
         bucket_expr = _RAW_BUCKET_EXPR.get(group_by)
@@ -180,6 +206,9 @@ def forecast_accuracy_slice(
         if seasonality_profile.strip():
             where_parts.append("COALESCE(d.seasonality_profile, '(unknown)') = %s")
             main_params.append(seasonality_profile.strip())
+        _add_item_location_filters(where_parts, main_params,
+                                   dmdunit_col="f.dmdunit", loc_col="f.loc",
+                                   item=item, location=location)
         _add_cross_dim_filters(where_parts, main_params,
                                dmdunit_col="f.dmdunit", loc_col="f.loc",
                                brand=brand, category=category, market=market)
@@ -297,6 +326,9 @@ def forecast_accuracy_slice(
         if seasonality_profile.strip():
             where_parts_raw.append("COALESCE(d.seasonality_profile, '(unknown)') = %s")
             raw_params.append(seasonality_profile.strip())
+        _add_item_location_filters(where_parts_raw, raw_params,
+                                   dmdunit_col="f.dmdunit", loc_col="f.loc",
+                                   item=item, location=location)
         _add_cross_dim_filters(where_parts_raw, raw_params,
                                dmdunit_col="f.dmdunit", loc_col="f.loc",
                                brand=brand, category=category, market=market)
@@ -450,6 +482,8 @@ def forecast_accuracy_lag_curve(
     brand: Optional[str] = Query(default=None, max_length=500),
     category: Optional[str] = Query(default=None, max_length=500),
     market: Optional[str] = Query(default=None, max_length=500),
+    item: Optional[str] = Query(default=None, max_length=500),
+    location: Optional[str] = Query(default=None, max_length=500),
 ):
     set_cache(response, max_age=120, stale_while_revalidate=300)
     """Return accuracy by lag (0-4) for each model."""
@@ -458,7 +492,7 @@ def forecast_accuracy_lag_curve(
         raise HTTPException(status_code=422, detail="models: max 20 values allowed")
 
     use_common = common_dfus and len(model_list) >= 2
-    use_raw = bool(brand or category or market)
+    use_raw = bool(brand or category or market or item or location)
 
     if use_common:
         cte_ph = ",".join(["%s"] * len(model_list))
@@ -487,6 +521,9 @@ def forecast_accuracy_lag_curve(
         if month_to.strip():
             where_parts.append("date_trunc('month', a.startdate)::date <= %s::date")
             main_params.append(month_to.strip())
+        _add_item_location_filters(where_parts, main_params,
+                                   dmdunit_col="a.dmdunit", loc_col="a.loc",
+                                   item=item, location=location)
         _add_cross_dim_filters(where_parts, main_params,
                                dmdunit_col="a.dmdunit", loc_col="a.loc",
                                brand=brand, category=category, market=market)
@@ -571,6 +608,9 @@ def forecast_accuracy_lag_curve(
         if month_to.strip():
             where_parts_raw.append("date_trunc('month', a.startdate)::date <= %s::date")
             raw_params.append(month_to.strip())
+        _add_item_location_filters(where_parts_raw, raw_params,
+                                   dmdunit_col="a.dmdunit", loc_col="a.loc",
+                                   item=item, location=location)
         _add_cross_dim_filters(where_parts_raw, raw_params,
                                dmdunit_col="a.dmdunit", loc_col="a.loc",
                                brand=brand, category=category, market=market)

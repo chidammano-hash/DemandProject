@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from api.auth import require_api_key
 from api.core import get_conn
 from common.auth import CurrentUser, get_current_user, require_role
 
@@ -85,6 +86,7 @@ async def list_signal_sources():
 async def refresh_source(
     source_id: int,
     user: CurrentUser = Depends(require_role("manager")),
+    api_key: str = Depends(require_api_key),
 ):
     """Trigger a manual refresh of an external signal source."""
     with get_conn() as conn, conn.cursor() as cur:

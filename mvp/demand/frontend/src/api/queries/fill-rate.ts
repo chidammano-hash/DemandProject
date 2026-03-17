@@ -1,4 +1,5 @@
 import { fetchJson } from "./core";
+import { buildQuerySuffix } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // IPfeature8: Fill Rate Analytics
@@ -46,32 +47,17 @@ export const fillRateKeys = {
 export async function fetchFillRateSummary(
   params: Record<string, unknown> = {},
 ): Promise<FillRateSummaryPayload> {
-  const qs = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
-  });
-  const q = qs.toString();
-  return fetchJson(`/fill-rate/summary${q ? `?${q}` : ""}`);
+  return fetchJson(`/fill-rate/summary${buildQuerySuffix(params as Record<string, string>)}`);
 }
 
 export async function fetchFillRateTrend(
   params: Record<string, unknown> = {},
 ): Promise<{ months: FillRateTrendRow[] }> {
-  const qs = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
-  });
-  const q = qs.toString();
-  return fetchJson(`/fill-rate/trend${q ? `?${q}` : ""}`);
+  return fetchJson(`/fill-rate/trend${buildQuerySuffix(params as Record<string, string>)}`);
 }
 
 export async function fetchFillRateDetail(
   params: Record<string, unknown> = {},
 ): Promise<{ total: number; rows: FillRateDetailRow[] }> {
-  const qs = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
-  });
-  const q = qs.toString();
-  return fetchJson(`/fill-rate/detail${q ? `?${q}` : ""}`);
+  return fetchJson(`/fill-rate/detail${buildQuerySuffix(params as Record<string, string>)}`);
 }

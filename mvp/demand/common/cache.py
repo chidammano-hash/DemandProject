@@ -10,32 +10,23 @@ import json
 import os
 import time
 from functools import wraps
-from pathlib import Path
+import threading
 from typing import Any, Callable
 
-import yaml
+from common.utils import load_config, reset_config as _reset_utils_config
+
+_CONFIG_NAME = "cache_config.yaml"
+
 
 # ---------------------------------------------------------------------------
-# Config
+# Config (thread-safe via common.utils.load_config)
 # ---------------------------------------------------------------------------
-_config_cache: dict | None = None
-
-
 def _load_config() -> dict:
-    global _config_cache
-    if _config_cache is None:
-        cfg_path = Path(__file__).resolve().parent.parent / "config" / "cache_config.yaml"
-        if cfg_path.exists():
-            with open(cfg_path) as f:
-                _config_cache = yaml.safe_load(f) or {}
-        else:
-            _config_cache = {}
-    return _config_cache
+    return load_config(_CONFIG_NAME)
 
 
 def _reset_cache_config():
-    global _config_cache
-    _config_cache = None
+    _reset_utils_config(_CONFIG_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -162,30 +153,34 @@ class RedisBackend(CacheBackend):
 
 
 # ---------------------------------------------------------------------------
-# Singleton cache layer
+# Singleton cache layer (thread-safe via double-checked locking)
 # ---------------------------------------------------------------------------
 _backend: CacheBackend | None = None
+_backend_lock = threading.Lock()
 
 
 def get_cache() -> CacheBackend:
     global _backend
     if _backend is None:
-        redis_url = os.getenv("REDIS_URL", "")
-        if redis_url:
-            try:
-                _backend = RedisBackend(redis_url)
-                _backend.stats()  # Test connection
-            except Exception:
-                _backend = InMemoryBackend()
-        else:
-            _backend = InMemoryBackend()
+        with _backend_lock:
+            if _backend is None:
+                redis_url = os.getenv("REDIS_URL", "")
+                if redis_url:
+                    try:
+                        _backend = RedisBackend(redis_url)
+                        _backend.stats()  # Test connection
+                    except Exception:
+                        _backend = InMemoryBackend()
+                else:
+                    _backend = InMemoryBackend()
     return _backend
 
 
 def reset_cache():
     """Reset the singleton — for tests."""
     global _backend
-    _backend = None
+    with _backend_lock:
+        _backend = None
 
 
 # ---------------------------------------------------------------------------

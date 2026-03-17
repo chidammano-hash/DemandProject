@@ -3,6 +3,8 @@ import type {
   StoryboardSummary,
   PlannerDecision,
 } from "@/types/storyboard";
+import { fetchJson } from "./core";
+import { buildSearchParams } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Storyboard query key factory
@@ -18,9 +20,7 @@ export const storyboardKeys = {
 // ---------------------------------------------------------------------------
 
 export async function fetchSbSummary(): Promise<StoryboardSummary> {
-  const res = await fetch("/storyboard/exceptions/summary");
-  if (!res.ok) throw new Error("Failed to fetch storyboard summary");
-  return res.json();
+  return fetchJson("/storyboard/exceptions/summary");
 }
 
 export async function fetchSbExceptions(params: {
@@ -31,29 +31,25 @@ export async function fetchSbExceptions(params: {
   limit?: number;
   offset?: number;
 }): Promise<{ total: number; rows: StoryboardException[] }> {
-  const p = new URLSearchParams();
-  if (params.status && params.status !== "all") p.set("status", params.status);
-  if (params.exception_type && params.exception_type !== "all")
-    p.set("exception_type", params.exception_type);
-  if (params.item) p.set("item", params.item);
-  if (params.loc) p.set("loc", params.loc);
-  p.set("limit", String(params.limit ?? 20));
-  p.set("offset", String(params.offset ?? 0));
-  const res = await fetch(`/storyboard/exceptions?${p}`);
-  if (!res.ok) throw new Error("Failed to fetch exceptions");
-  return res.json();
+  const qs = buildSearchParams({
+    status: params.status && params.status !== "all" ? params.status : undefined,
+    exception_type: params.exception_type && params.exception_type !== "all" ? params.exception_type : undefined,
+    item: params.item,
+    loc: params.loc,
+    limit: params.limit ?? 20,
+    offset: params.offset ?? 0,
+  });
+  return fetchJson(`/storyboard/exceptions?${qs}`);
 }
 
 export async function fetchSbException(
   id: string
 ): Promise<{ exception: StoryboardException; decisions: PlannerDecision[] }> {
-  const res = await fetch(`/storyboard/exceptions/${id}`);
-  if (!res.ok) throw new Error("Failed to fetch exception detail");
-  return res.json();
+  return fetchJson(`/storyboard/exceptions/${id}`);
 }
 
 export async function updateSbStatus(id: string, status: string): Promise<void> {
-  await fetch(`/storyboard/exceptions/${id}/status`, {
+  await fetchJson(`/storyboard/exceptions/${id}/status`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status }),
@@ -65,7 +61,7 @@ export async function submitSbDecision(
   decisionType: string,
   rationale: string
 ): Promise<void> {
-  await fetch(`/storyboard/exceptions/${id}/decide`, {
+  await fetchJson(`/storyboard/exceptions/${id}/decide`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision_type: decisionType, rationale }),

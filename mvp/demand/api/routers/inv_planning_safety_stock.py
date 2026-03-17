@@ -8,7 +8,7 @@ from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
 
 from api.auth import require_api_key
-from api.core import _f, _s, get_conn, set_cache
+from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -55,79 +55,110 @@ def get_ss_summary(
     if cluster_assignment:
         where_parts.append("d.cluster_assignment ILIKE %s")
         params.append(f"%{cluster_assignment.strip()}%")
-    if brand:
-        params.append(brand.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = s.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = s.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = s.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market,
+                          item_col="s.item_no", loc_col="s.loc")
 
     where_sql = "WHERE " + " AND ".join(where_parts)
 
-    summary_sql = f"""
-        SELECT
-            COUNT(*)                                                AS total_dfus,
-            SUM(CASE WHEN s.is_below_ss THEN 1 ELSE 0 END)        AS below_ss_count,
-            AVG(s.ss_coverage)                                     AS avg_ss_coverage,
-            AVG(s.target_dos_min)                                  AS avg_ss_days,
-            SUM(CASE WHEN s.ss_gap < 0 THEN s.ss_gap ELSE 0 END)  AS total_ss_gap_units
-        FROM fact_safety_stock_targets s
-        LEFT JOIN dim_dfu d
-               ON s.item_no = d.dmdunit AND s.loc = d.loc
-        {where_sql}
-    """
-
-    by_class_sql = f"""
-        SELECT
-            s.abc_vol,
-            COUNT(*)                                             AS total,
-            SUM(CASE WHEN s.is_below_ss THEN 1 ELSE 0 END)     AS below_ss_count,
-            AVG(s.ss_combined)                                   AS avg_ss_combined,
-            AVG(s.ss_coverage)                                   AS avg_coverage
-        FROM fact_safety_stock_targets s
-        LEFT JOIN dim_dfu d
-               ON s.item_no = d.dmdunit AND s.loc = d.loc
-        {where_sql}
-        GROUP BY s.abc_vol
-        ORDER BY s.abc_vol NULLS LAST
-    """
-
-    top_gaps_sql = f"""
-        SELECT
-            s.item_no,
-            s.loc,
-            s.ss_combined,
-            s.current_qty_on_hand,
-            s.ss_gap,
-            s.ss_coverage
-        FROM fact_safety_stock_targets s
-        LEFT JOIN dim_dfu d
-               ON s.item_no = d.dmdunit AND s.loc = d.loc
-        {where_sql}
-          AND s.ss_gap < 0
-        ORDER BY s.ss_gap ASC NULLS LAST
-        LIMIT 10
+    # Single CTE-based query: one scan of fact_safety_stock_targets produces
+    # summary aggregates, per-class breakdown, and top gaps in one round-trip.
+    combined_sql = f"""
+        WITH filtered AS (
+            SELECT
+                s.item_no, s.loc, s.abc_vol,
+                s.ss_combined, s.ss_coverage, s.ss_gap,
+                s.is_below_ss, s.target_dos_min, s.current_qty_on_hand
+            FROM fact_safety_stock_targets s
+            LEFT JOIN dim_dfu d
+                   ON s.item_no = d.dmdunit AND s.loc = d.loc
+            {where_sql}
+        ),
+        summary AS (
+            SELECT
+                COUNT(*)                                                AS total_dfus,
+                SUM(CASE WHEN is_below_ss THEN 1 ELSE 0 END)          AS below_ss_count,
+                AVG(ss_coverage)                                       AS avg_ss_coverage,
+                AVG(target_dos_min)                                    AS avg_ss_days,
+                SUM(CASE WHEN ss_gap < 0 THEN ss_gap ELSE 0 END)      AS total_ss_gap_units
+            FROM filtered
+        ),
+        by_class AS (
+            SELECT
+                abc_vol,
+                COUNT(*)                                             AS total,
+                SUM(CASE WHEN is_below_ss THEN 1 ELSE 0 END)        AS below_ss_count,
+                AVG(ss_combined)                                     AS avg_ss_combined,
+                AVG(ss_coverage)                                     AS avg_coverage
+            FROM filtered
+            GROUP BY abc_vol
+            ORDER BY abc_vol NULLS LAST
+        ),
+        top_gaps AS (
+            SELECT
+                item_no, loc, ss_combined, current_qty_on_hand,
+                ss_gap, ss_coverage
+            FROM filtered
+            WHERE ss_gap < 0
+            ORDER BY ss_gap ASC NULLS LAST
+            LIMIT 10
+        )
+        -- Return all three result sets as tagged rows
+        SELECT 'S' AS _tag,
+               total_dfus::TEXT, below_ss_count::TEXT,
+               avg_ss_coverage::TEXT, avg_ss_days::TEXT,
+               total_ss_gap_units::TEXT, NULL, NULL, NULL
+        FROM summary
+        UNION ALL
+        SELECT 'C' AS _tag,
+               abc_vol, total::TEXT, below_ss_count::TEXT,
+               avg_ss_combined::TEXT, avg_coverage::TEXT,
+               NULL, NULL, NULL
+        FROM by_class
+        UNION ALL
+        SELECT 'G' AS _tag,
+               item_no, loc, ss_combined::TEXT,
+               current_qty_on_hand::TEXT, ss_gap::TEXT,
+               ss_coverage::TEXT, NULL, NULL
+        FROM top_gaps
     """
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(summary_sql, params)
-            row = cur.fetchone()
-            # Positional access — column order matches SELECT list:
-            # 0: total_dfus, 1: below_ss_count, 2: avg_ss_coverage,
-            # 3: avg_ss_days, 4: total_ss_gap_units
-            summary_row = row if row else (0, 0, None, None, None)
+            cur.execute(combined_sql, params)
+            all_rows = cur.fetchall()
 
-            cur.execute(by_class_sql, params)
-            class_rows = cur.fetchall()
-            # Column order: 0: abc_vol, 1: total, 2: below_ss_count,
-            #               3: avg_ss_combined, 4: avg_coverage
+    # Parse tagged rows into summary, class, and gap result sets
+    summary_row = (0, 0, None, None, None)
+    class_rows: list[tuple] = []
+    gap_rows: list[tuple] = []
 
-            cur.execute(top_gaps_sql, params)
-            gap_rows = cur.fetchall()
+    for row in all_rows:
+        tag = row[0]
+        if tag == "S":
+            summary_row = (
+                int(row[1] or 0),
+                int(row[2] or 0),
+                float(row[3]) if row[3] else None,
+                float(row[4]) if row[4] else None,
+                float(row[5]) if row[5] else None,
+            )
+        elif tag == "C":
+            class_rows.append((
+                row[1],                                    # abc_vol
+                int(row[2] or 0),                          # total
+                int(row[3] or 0),                          # below_ss_count
+                float(row[4]) if row[4] else None,         # avg_ss_combined
+                float(row[5]) if row[5] else None,         # avg_coverage
+            ))
+        elif tag == "G":
+            gap_rows.append((
+                row[1],                                    # item_no
+                row[2],                                    # loc
+                float(row[3]) if row[3] else None,         # ss_combined
+                float(row[4]) if row[4] else None,         # current_qty_on_hand
+                float(row[5]) if row[5] else None,         # ss_gap
+                float(row[6]) if row[6] else None,         # ss_coverage
+            ))
 
     total_dfus = int(summary_row[0] or 0)
     below_ss = int(summary_row[1] or 0)
@@ -215,15 +246,8 @@ def get_ss_detail(
     if cluster_assignment:
         where_parts.append("d.cluster_assignment ILIKE %s")
         params.append(f"%{cluster_assignment.strip()}%")
-    if brand:
-        params.append(brand.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = s.item_no AND di.brand_name = ANY(%s))")
-    if category:
-        params.append(category.split(","))
-        where_parts.append('EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = s.item_no AND di.class_ = ANY(%s))')
-    if market:
-        params.append(market.split(","))
-        where_parts.append("EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = s.loc AND dl.state_id = ANY(%s))")
+    add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market,
+                          item_col="s.item_no", loc_col="s.loc")
 
     where_sql = "WHERE " + " AND ".join(where_parts)
 

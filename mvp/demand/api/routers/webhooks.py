@@ -7,6 +7,7 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from api.auth import require_api_key
 from api.core import get_conn
 from common.auth import CurrentUser, get_current_user, require_role
 
@@ -22,6 +23,7 @@ class RegisterWebhookRequest(BaseModel):
 async def register_webhook(
     body: RegisterWebhookRequest,
     user: CurrentUser = Depends(require_role("manager")),
+    api_key: str = Depends(require_api_key),
 ):
     """Register a new webhook endpoint."""
     secret = secrets.token_hex(32)
@@ -61,6 +63,7 @@ async def list_webhooks(user: CurrentUser = Depends(require_role("manager"))):
 async def test_webhook(
     webhook_id: int,
     user: CurrentUser = Depends(require_role("manager")),
+    api_key: str = Depends(require_api_key),
 ):
     """Send a test event to a webhook."""
     with get_conn() as conn, conn.cursor() as cur:
@@ -86,6 +89,7 @@ async def test_webhook(
 async def delete_webhook(
     webhook_id: int,
     user: CurrentUser = Depends(require_role("manager")),
+    api_key: str = Depends(require_api_key),
 ):
     """Deactivate a webhook."""
     with get_conn() as conn, conn.cursor() as cur:

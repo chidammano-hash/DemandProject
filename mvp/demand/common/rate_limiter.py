@@ -4,29 +4,21 @@ Sliding-window rate limiter with configurable tiers.
 """
 from __future__ import annotations
 
+import threading
 import time
 from collections import defaultdict
-from pathlib import Path
 from typing import Any
 
-import yaml
+from common.utils import load_config
+
+_CONFIG_NAME = "api_governance_config.yaml"
+
 
 # ---------------------------------------------------------------------------
-# Config
+# Config (thread-safe via common.utils.load_config)
 # ---------------------------------------------------------------------------
-_config_cache: dict | None = None
-
-
 def _load_config() -> dict:
-    global _config_cache
-    if _config_cache is None:
-        cfg_path = Path(__file__).resolve().parent.parent / "config" / "api_governance_config.yaml"
-        if cfg_path.exists():
-            with open(cfg_path) as f:
-                _config_cache = yaml.safe_load(f) or {}
-        else:
-            _config_cache = {}
-    return _config_cache
+    return load_config(_CONFIG_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -62,12 +54,15 @@ class RateLimiter:
         return tier_cfg.get("requests_per_minute", 300)
 
 
-# Singleton
+# Singleton (thread-safe via double-checked locking)
 _limiter: RateLimiter | None = None
+_limiter_lock = threading.Lock()
 
 
 def get_rate_limiter() -> RateLimiter:
     global _limiter
     if _limiter is None:
-        _limiter = RateLimiter()
+        with _limiter_lock:
+            if _limiter is None:
+                _limiter = RateLimiter()
     return _limiter

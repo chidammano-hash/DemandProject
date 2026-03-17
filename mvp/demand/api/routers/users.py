@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from api.auth import require_api_key
 from api.core import get_conn
 from common.auth import (
     CurrentUser,
@@ -74,6 +75,7 @@ async def list_users(
 async def create_user(
     body: CreateUserRequest,
     admin: CurrentUser = Depends(require_role("admin")),
+    api_key: str = Depends(require_api_key),
 ):
     """Create a new user (admin only)."""
     valid_roles = {"viewer", "planner", "manager", "admin"}
@@ -113,6 +115,7 @@ async def update_user(
     user_id: str,
     body: UpdateUserRequest,
     admin: CurrentUser = Depends(require_role("admin")),
+    api_key: str = Depends(require_api_key),
 ):
     """Update a user's profile (admin only)."""
     updates = []
