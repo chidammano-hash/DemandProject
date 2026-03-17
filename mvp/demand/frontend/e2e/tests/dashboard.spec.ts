@@ -1,9 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { navigateToTab, getContentArea } from "../fixtures/base";
 
-test.describe("Dashboard Tab", () => {
+test.describe("Aggregate Analysis Tab", () => {
   test.beforeEach(async ({ page }) => {
-    await navigateToTab(page, "overview");
+    await navigateToTab(page, "aggregateAnalysis");
   });
 
   test("content area renders", async ({ page }) => {

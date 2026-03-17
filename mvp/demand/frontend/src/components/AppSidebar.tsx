@@ -11,7 +11,7 @@ import {
   MessageSquare,
   PlayCircle,
   Brain, Monitor, Sparkles, BookOpen, CalendarDays,
-  Shield, BarChart3,
+  Shield, BarChart3, MapPin,
   PanelLeftClose,
   PanelLeft,
   Menu,
@@ -36,20 +36,19 @@ const NAV_ITEMS: NavItem[] = [
   // Command Center — AI-first primary items (no section header)
   { key: "aiPlanner",    label: "AI Planner",    icon: Sparkles,        section: "overview",     shortcut: "1" },
   { key: "controlTower", label: "Control Tower", icon: Monitor,         section: "overview",     shortcut: "2" },
-  { key: "overview",     label: "Overview",      icon: LayoutDashboard, section: "overview",     shortcut: "3" },
   // Analyze section
-  { key: "accuracy",     label: "Accuracy",      icon: Target,          section: "demand",       shortcut: "4" },
-  { key: "itemAnalysis", label: "Item Analysis", icon: TrendingUp,      section: "demand",       shortcut: "5" },
-  { key: "exceptions",   label: "Exceptions",    icon: BookOpen,        section: "demand",       shortcut: "6" },
+  { key: "aggregateAnalysis", label: "Portfolio",  icon: LayoutDashboard, section: "demand",  shortcut: "3" },
+  { key: "itemAnalysis", label: "Item Analysis", icon: TrendingUp,      section: "demand",       shortcut: "4" },
+  { key: "fva",           label: "FVA & ROI",     icon: BarChart3,       section: "demand" },
+  { key: "customerMap",  label: "Customer Map",  icon: MapPin,          section: "demand" },
+  { key: "exceptions",   label: "Exceptions",    icon: BookOpen,        section: "demand",       shortcut: "5" },
   // Configure section
-  { key: "invPlanning",  label: "Inv. Planning", icon: Brain,           section: "supply",       shortcut: "7" },
+  { key: "invPlanning",  label: "Inv. Planning", icon: Brain,           section: "supply",       shortcut: "6" },
   { key: "sop",          label: "S&OP",          icon: CalendarDays,    section: "supply" },
   { key: "clusters",     label: "Clusters",      icon: Network,         section: "supply" },
   { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,        section: "supply" },
-  // Analyze — continued
-  { key: "fva",           label: "FVA & ROI",     icon: BarChart3,       section: "demand" },
   // System section
-  { key: "jobs",         label: "Jobs",          icon: PlayCircle,      section: "system",       shortcut: "8" },
+  { key: "jobs",         label: "Jobs",          icon: PlayCircle,      section: "system",       shortcut: "7" },
   { key: "dataQuality",  label: "Data Quality",  icon: Shield,          section: "system" },
   { key: "explorer",     label: "Explorer",      icon: Database,        section: "system" },
   { key: "intel",        label: "Market Intel",  icon: Globe,           section: "system" },

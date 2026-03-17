@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
 import { LoadingElement } from "@/components/LoadingElement";
 
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
@@ -14,19 +15,16 @@ import {
   fetchInventoryPosition,
   fetchInventoryKpis,
   fetchInventoryTrend,
-  fetchInventoryItemDetail,
-  fetchSeasonalityProfileNames,
+  fetchLtProfile,
 } from "@/api/queries";
 import { fetchProductionForecast } from "@/api/queries/production-forecast";
 import type { ProductionForecastPayload } from "@/api/queries/production-forecast";
 import { ELEMENT_CONFIG } from "@/constants/elements";
 import type {
-  DfuAnalysisMode,
   DfuAnalysisKpis,
   DfuAnalysisPayload,
   SamplePairPayload,
   SuggestPayload,
-  InventoryPosition,
   InventoryKpis,
   InventoryTrendPoint,
 } from "@/types";
@@ -39,63 +37,30 @@ import { DfuShapPanel } from "./dfu-analysis/DfuShapPanel";
 // Unified chart (demand + supply in one view)
 import { UnifiedChartPanel } from "./item-analysis/UnifiedChartPanel";
 
-// Inventory panels
-import { KpiSection } from "./inventory/KpiSection";
-import { PositionTablePanel } from "./inventory/PositionTablePanel";
-import { DemandVariabilityPanel } from "./inventory/DemandVariabilityPanel";
-import { LeadTimeProfilePanel } from "./inventory/LeadTimeProfilePanel";
-
 // ---------------------------------------------------------------------------
 // Panel toggle defaults
 // ---------------------------------------------------------------------------
 const PANEL_DEFAULTS: Record<string, boolean> = {
   overlay: true,
   shap: true,
-  modelKpis: true,
-  invKpis: true,
-  invPosition: true,
-  variability: false,
-  leadTime: false,
+  forecastKpis: true,
 };
 
 const DEMAND_PANELS = [
   { key: "overlay", label: "Chart" },
   { key: "shap", label: "SHAP" },
-  { key: "modelKpis", label: "Model KPIs" },
+  { key: "forecastKpis", label: "Forecast KPIs" },
 ] as const;
-
-const SUPPLY_PANELS = [
-  { key: "invKpis", label: "Inv KPIs" },
-  { key: "invPosition", label: "Position Table" },
-  { key: "variability", label: "Variability" },
-  { key: "leadTime", label: "Lead Time" },
-] as const;
-
-// ---------------------------------------------------------------------------
-// Inventory constants
-// ---------------------------------------------------------------------------
-const PAGE_SIZE = 50;
-
-type SortCol =
-  | "item_no"
-  | "loc"
-  | "snapshot_date"
-  | "qty_on_hand"
-  | "qty_on_hand_on_order"
-  | "qty_on_order"
-  | "lead_time_days"
-  | "mtd_sales";
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 export function ItemAnalysisTab() {
-  const { panels, toggle } = usePanelToggles("ds:itemAnalysis:panels", PANEL_DEFAULTS);
+  const { panels, toggle, setAll, allOn } = usePanelToggles("ds:itemAnalysis:panels", PANEL_DEFAULTS);
 
   // ========================================================================
-  // DFU Analysis state
+  // DFU Analysis state — single DFU mode only
   // ========================================================================
-  const [dfuMode, setDfuMode] = useState<DfuAnalysisMode>("item_location");
   const [dfuItem, setDfuItem] = useState("");
   const [dfuLocation, setDfuLocation] = useState("");
   const [dfuPoints, setDfuPoints] = useState(36);
@@ -111,22 +76,12 @@ export function ItemAnalysisTab() {
   const [dfuAutoSampled, setDfuAutoSampled] = useState(false);
   const [dfuItemSuggestions, setDfuItemSuggestions] = useState<string[]>([]);
   const [dfuLocationSuggestions, setDfuLocationSuggestions] = useState<string[]>([]);
-  const [seasonalityProfile, setSeasonalityProfile] = useState("");
-  const [seasonalityProfiles, setSeasonalityProfiles] = useState<string[]>([]);
   const [prodForecastData, setProdForecastData] = useState<ProductionForecastPayload | null>(null);
+  // SHAP model selection via dropdown (null = none)
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
 
   const debouncedDfuItem = useDebounce(dfuItem, 500);
   const debouncedDfuLocation = useDebounce(dfuLocation, 500);
-
-  // ========================================================================
-  // Inventory state
-  // ========================================================================
-  const [invMonths, setInvMonths] = useState(12);
-  const [invOffset, setInvOffset] = useState(0);
-  const [invSortBy, setInvSortBy] = useState<SortCol>("snapshot_date");
-  const [invSortDir, setInvSortDir] = useState<"asc" | "desc">("desc");
-  const [invSelectedRow, setInvSelectedRow] = useState<{ item: string; location: string } | null>(null);
 
   // ========================================================================
   // Global filter sync (shared)
@@ -142,17 +97,8 @@ export function ItemAnalysisTab() {
   }, [globalFilters.item, globalFilters.location]);
 
   // ========================================================================
-  // DFU effects (identical to DfuAnalysisTab)
+  // DFU effects
   // ========================================================================
-
-  // Fetch seasonality profiles once
-  useEffect(() => {
-    let cancelled = false;
-    fetchSeasonalityProfileNames()
-      .then((profiles) => { if (!cancelled) setSeasonalityProfiles(profiles); })
-      .catch(() => { /* non-blocking */ });
-    return () => { cancelled = true; };
-  }, []);
 
   // Auto-sample on first visit
   useEffect(() => {
@@ -176,21 +122,17 @@ export function ItemAnalysisTab() {
     return () => { cancelled = true; };
   }, [dfuAutoSampled, dfuItem, dfuLocation]);
 
-  // Fetch DFU analysis data
-  const anyDemandPanelOn = panels.overlay || panels.shap || panels.modelKpis;
+  // Fetch DFU analysis data (always item_location mode)
+  const anyDemandPanelOn = panels.overlay || panels.shap || panels.forecastKpis;
   useEffect(() => {
     if (!anyDemandPanelOn) return;
-    const needsItem = dfuMode !== "all_items_at_location";
-    const needsLoc = dfuMode !== "item_at_all_locations";
-    if (needsItem && !debouncedDfuItem.trim()) return;
-    if (needsLoc && !debouncedDfuLocation.trim()) return;
+    if (!debouncedDfuItem.trim() || !debouncedDfuLocation.trim()) return;
     setDfuData(null);
     let cancelled = false;
     async function loadAnalysis() {
       setDfuLoading(true);
       try {
-        const params = new URLSearchParams({ mode: dfuMode, item: debouncedDfuItem.trim(), location: debouncedDfuLocation.trim(), points: String(dfuPoints) });
-        if (seasonalityProfile) params.set("seasonality_profile", seasonalityProfile);
+        const params = new URLSearchParams({ mode: "item_location", item: debouncedDfuItem.trim(), location: debouncedDfuLocation.trim(), points: String(dfuPoints) });
         const res = await fetch(`/dfu/analysis?${params}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const payload = (await res.json()) as DfuAnalysisPayload;
@@ -215,18 +157,17 @@ export function ItemAnalysisTab() {
     }
     loadAnalysis();
     return () => { cancelled = true; };
-  }, [dfuMode, debouncedDfuItem, debouncedDfuLocation, dfuPoints, seasonalityProfile, anyDemandPanelOn]);
+  }, [debouncedDfuItem, debouncedDfuLocation, dfuPoints, anyDemandPanelOn]);
 
   // Fetch production forecast (future months)
   useEffect(() => {
-    if (dfuMode !== "item_location") { setProdForecastData(null); return; }
     if (!debouncedDfuItem.trim() || !debouncedDfuLocation.trim()) { setProdForecastData(null); return; }
     let cancelled = false;
     fetchProductionForecast({ item_no: debouncedDfuItem.trim(), loc: debouncedDfuLocation.trim() })
       .then((payload) => { if (!cancelled) setProdForecastData(payload); })
       .catch(() => { if (!cancelled) setProdForecastData(null); });
     return () => { cancelled = true; };
-  }, [dfuMode, debouncedDfuItem, debouncedDfuLocation]);
+  }, [debouncedDfuItem, debouncedDfuLocation]);
 
   // Item typeahead
   useEffect(() => {
@@ -308,130 +249,84 @@ export function ItemAnalysisTab() {
     return [...enhanced, ...futurePts] as Record<string, unknown>[];
   }, [dfuFilteredSeries, dfuMonths, prodForecastData]);
 
+  // Available models for the SHAP dropdown
+  const shapModelOptions = useMemo(() => {
+    if (!dfuData?.models.length) return [];
+    return dfuData.models;
+  }, [dfuData]);
+
   function handleReset() {
     setDfuData(null);
     setDfuAutoSampled(false);
     setDfuItem("");
     setDfuLocation("");
+    setSelectedModel(null);
   }
 
   const emptyMessage =
-    dfuMode === "item_location" && (!dfuItem.trim() || !dfuLocation.trim())
+    !dfuItem.trim() || !dfuLocation.trim()
       ? "Enter both item and location to view analysis."
-      : dfuMode === "all_items_at_location" && !dfuLocation.trim()
-        ? "Enter a location to view aggregated analysis."
-        : dfuMode === "item_at_all_locations" && !dfuItem.trim()
-          ? "Enter an item to view aggregated analysis."
-          : "No data available for the selected filters.";
+      : "No data available for the selected filters.";
 
   // ========================================================================
-  // Inventory queries (conditional on panel visibility)
+  // Inventory queries — DFU-level data for attributes
   // ========================================================================
-  const anyInvPanelOn = panels.invKpis || panels.invPosition;
-
+  const invMonths = 12;
   const invKpiParams = useMemo(
     () => ({ item: debouncedDfuItem, location: debouncedDfuLocation, months: invMonths }),
-    [debouncedDfuItem, debouncedDfuLocation, invMonths],
+    [debouncedDfuItem, debouncedDfuLocation],
   );
   const invTrendParams = useMemo(
     () => ({ item: debouncedDfuItem, location: debouncedDfuLocation, months: invMonths }),
-    [debouncedDfuItem, debouncedDfuLocation, invMonths],
+    [debouncedDfuItem, debouncedDfuLocation],
   );
   const invPositionParams = useMemo(
-    () => ({
-      item: debouncedDfuItem,
-      location: debouncedDfuLocation,
-      limit: PAGE_SIZE,
-      offset: invOffset,
-      sort_by: invSortBy,
-      sort_dir: invSortDir,
-    }),
-    [debouncedDfuItem, debouncedDfuLocation, invOffset, invSortBy, invSortDir],
+    () => ({ item: debouncedDfuItem, location: debouncedDfuLocation, limit: 1, offset: 0, sort_by: "snapshot_date" as const, sort_dir: "desc" as const }),
+    [debouncedDfuItem, debouncedDfuLocation],
   );
 
-  const { data: kpiData, isLoading: loadingKpis } = useQuery({
+  const hasDfu = !!(debouncedDfuItem.trim() && debouncedDfuLocation.trim());
+
+  // Always fetch KPIs for the DFU attributes section
+  const { data: kpiData } = useQuery({
     queryKey: queryKeys.inventoryKpis(invKpiParams),
     queryFn: () => fetchInventoryKpis(invKpiParams),
     staleTime: STALE.FIVE_MIN,
-    enabled: panels.invKpis && anyInvPanelOn,
+    enabled: hasDfu,
   });
 
-  const { data: trendPayload, isLoading: loadingTrend } = useQuery({
+  const { data: trendPayload } = useQuery({
     queryKey: queryKeys.inventoryTrend(invTrendParams),
     queryFn: () => fetchInventoryTrend(invTrendParams),
     staleTime: STALE.FIVE_MIN,
-    enabled: panels.invPosition,
+    enabled: hasDfu,
   });
 
   const trendData: InventoryTrendPoint[] = trendPayload?.trend ?? [];
   const trendParams2 = trendPayload?.params;
 
-  const { data: positionPayload, isLoading: loadingPosition } = useQuery({
+  // Latest position snapshot for inline attributes
+  const { data: positionPayload } = useQuery({
     queryKey: queryKeys.inventoryPosition(invPositionParams),
     queryFn: () => fetchInventoryPosition(invPositionParams),
     staleTime: STALE.TWO_MIN,
-    enabled: panels.invPosition,
+    enabled: hasDfu,
   });
 
-  const positions: InventoryPosition[] = positionPayload?.positions ?? [];
-  const totalPositions = positionPayload?.total ?? 0;
+  const positionRow = positionPayload?.positions?.[0] ?? null;
 
-  const { data: detailPayload, isLoading: loadingDetail } = useQuery({
-    queryKey: queryKeys.inventoryItemDetail({
-      item: invSelectedRow?.item ?? "",
-      location: invSelectedRow?.location ?? "",
-    }),
-    queryFn: () =>
-      fetchInventoryItemDetail({
-        item: invSelectedRow!.item,
-        location: invSelectedRow!.location,
-        months: invMonths,
-      }),
-    staleTime: STALE.TWO_MIN,
-    enabled: invSelectedRow !== null && panels.invPosition,
+  // Single-DFU lead time profile for inline attributes
+  const ltProfileParams = useMemo(
+    () => ({ item: debouncedDfuItem, location: debouncedDfuLocation, limit: 1 }),
+    [debouncedDfuItem, debouncedDfuLocation],
+  );
+  const { data: ltProfilePayload } = useQuery({
+    queryKey: queryKeys.ltProfile(ltProfileParams),
+    queryFn: () => fetchLtProfile(ltProfileParams),
+    staleTime: STALE.FIVE_MIN,
+    enabled: hasDfu,
   });
-
-  // ========================================================================
-  // Inventory handlers
-  // ========================================================================
-  const handleInvPrevPage = useCallback(() => {
-    setInvOffset((prev) => Math.max(0, prev - PAGE_SIZE));
-  }, []);
-
-  const handleInvNextPage = useCallback(() => {
-    setInvOffset((prev) =>
-      prev + PAGE_SIZE < totalPositions ? prev + PAGE_SIZE : prev,
-    );
-  }, [totalPositions]);
-
-  const handleInvSort = useCallback(
-    (col: SortCol) => {
-      if (invSortBy === col) {
-        setInvSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
-      } else {
-        setInvSortBy(col);
-        setInvSortDir("desc");
-      }
-      setInvOffset(0);
-    },
-    [invSortBy],
-  );
-
-  const handleInvMonthsChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    setInvMonths(Number(e.target.value));
-    setInvOffset(0);
-  }, []);
-
-  const handleInvRowClick = useCallback(
-    (row: InventoryPosition) => {
-      if (invSelectedRow?.item === row.item_no && invSelectedRow?.location === row.loc) {
-        setInvSelectedRow(null);
-      } else {
-        setInvSelectedRow({ item: row.item_no, location: row.loc });
-      }
-    },
-    [invSelectedRow],
-  );
+  const ltProfileRow = ltProfilePayload?.rows?.[0] ?? null;
 
   // ========================================================================
   // Render
@@ -441,22 +336,32 @@ export function ItemAnalysisTab() {
       {/* ---- Selector (always visible) ---- */}
       <Card className="animate-fade-in">
         <SelectorPanel
-          dfuMode={dfuMode} setDfuMode={setDfuMode}
           dfuItem={dfuItem} setDfuItem={setDfuItem}
           dfuLocation={dfuLocation} setDfuLocation={setDfuLocation}
           dfuPoints={dfuPoints} setDfuPoints={setDfuPoints}
-          dfuKpiMonths={dfuKpiMonths} setDfuKpiMonths={setDfuKpiMonths}
           dfuItemSuggestions={dfuItemSuggestions}
           dfuLocationSuggestions={dfuLocationSuggestions}
-          seasonalityProfile={seasonalityProfile} setSeasonalityProfile={setSeasonalityProfile}
-          seasonalityProfiles={seasonalityProfiles}
           dfuData={dfuData}
           onReset={handleReset}
+          kpiData={kpiData as InventoryKpis | undefined}
+          trendParams={trendParams2}
+          positionRow={positionRow}
+          ltProfile={ltProfileRow}
         />
 
         {/* ---- Toggle toolbar ---- */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t px-6 py-2 text-xs">
-          <span className="font-semibold uppercase tracking-wider text-muted-foreground">Demand</span>
+          {/* Select All / Deselect All toggle */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-[10px] uppercase tracking-wider font-semibold"
+            onClick={() => setAll(!allOn)}
+          >
+            {allOn ? "Deselect All" : "Select All"}
+          </Button>
+          <span className="hidden h-4 w-px bg-border sm:block" />
+
           {DEMAND_PANELS.map((p) => (
             <label key={p.key} className="flex cursor-pointer items-center gap-1.5 select-none">
               <Checkbox
@@ -467,18 +372,26 @@ export function ItemAnalysisTab() {
               <span className={panels[p.key] ? "text-foreground" : "text-muted-foreground"}>{p.label}</span>
             </label>
           ))}
-          <span className="mx-1 hidden h-4 w-px bg-border sm:block" />
-          <span className="font-semibold uppercase tracking-wider text-muted-foreground">Supply</span>
-          {SUPPLY_PANELS.map((p) => (
-            <label key={p.key} className="flex cursor-pointer items-center gap-1.5 select-none">
-              <Checkbox
-                checked={panels[p.key]}
-                onCheckedChange={() => toggle(p.key)}
-                aria-label={`Toggle ${p.label}`}
-              />
-              <span className={panels[p.key] ? "text-foreground" : "text-muted-foreground"}>{p.label}</span>
-            </label>
-          ))}
+
+          {/* SHAP model dropdown */}
+          {panels.shap && shapModelOptions.length > 0 && (
+            <>
+              <span className="mx-1 hidden h-4 w-px bg-border sm:block" />
+              <label className="flex items-center gap-1.5 select-none">
+                <span className="font-semibold uppercase tracking-wider text-muted-foreground">SHAP</span>
+                <select
+                  className="h-7 rounded border border-input bg-background px-2 text-xs"
+                  value={selectedModel ?? ""}
+                  onChange={(e) => setSelectedModel(e.target.value || null)}
+                >
+                  <option value="">None</option>
+                  {shapModelOptions.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
         </div>
       </Card>
 
@@ -505,20 +418,21 @@ export function ItemAnalysisTab() {
                     trendParams={trendParams2}
                   />
                 )}
-                {panels.shap && dfuMode === "item_location" && (
+                {panels.shap && selectedModel && (
                   <DfuShapPanel
                     selectedModel={selectedModel}
                     itemNo={debouncedDfuItem}
                     loc={debouncedDfuLocation}
-                    dfuMode={dfuMode}
+                    dfuMode="item_location"
                     visibleMonths={mergedFilteredSeries.map((p) => String(p.month))}
                   />
                 )}
-                {panels.modelKpis && (
+                {panels.forecastKpis && (
                   <ModelKpiSection
                     dfuData={dfuData}
                     dfuKpis={dfuKpis}
                     dfuKpiMonths={dfuKpiMonths}
+                    setDfuKpiMonths={setDfuKpiMonths}
                     dfuVisibleSeries={dfuVisibleSeries}
                   />
                 )}
@@ -535,37 +449,6 @@ export function ItemAnalysisTab() {
           </CardContent>
         </Card>
       )}
-
-      {/* ---- Inventory panels ---- */}
-      {panels.invKpis && (
-        <KpiSection
-          kpiData={kpiData as InventoryKpis | undefined}
-          isLoading={loadingKpis}
-        />
-      )}
-
-      {panels.invPosition && (
-        <PositionTablePanel
-          positions={positions}
-          totalPositions={totalPositions}
-          isLoadingPosition={loadingPosition}
-          months={invMonths}
-          onMonthsChange={handleInvMonthsChange}
-          offset={invOffset}
-          onPrevPage={handleInvPrevPage}
-          onNextPage={handleInvNextPage}
-          sortBy={invSortBy}
-          sortDir={invSortDir}
-          onSort={handleInvSort}
-          selectedRow={invSelectedRow}
-          onRowClick={handleInvRowClick}
-          detailSnapshots={detailPayload?.snapshots}
-          isLoadingDetail={loadingDetail}
-        />
-      )}
-
-      {panels.variability && <DemandVariabilityPanel />}
-      {panels.leadTime && <LeadTimeProfilePanel />}
     </section>
   );
 }

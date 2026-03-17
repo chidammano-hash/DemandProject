@@ -1,9 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { navigateToTab } from "../fixtures/base";
 
-test.describe("Global Filter Bar", () => {
-  test("visible on Overview tab", async ({ page }) => {
-    await navigateToTab(page, "overview");
+test.describe("Aggregate Analysis — Local Filter Bar", () => {
+  test("visible on Aggregate Analysis tab", async ({ page }) => {
+    await navigateToTab(page, "aggregateAnalysis");
 
     // Filter bar contains Brand, Category, Item, Location buttons
     for (const label of ["Brand", "Category", "Item", "Location"]) {
@@ -12,15 +12,14 @@ test.describe("Global Filter Bar", () => {
     }
   });
 
-  test("hidden on AI Planner tab", async ({ page }) => {
+  test("not visible on AI Planner tab", async ({ page }) => {
     await navigateToTab(page, "aiPlanner");
 
-    // Brand filter should NOT be visible (filter bar hidden)
     const brandBtn = page.getByRole("button", { name: "Brand", exact: true });
     await expect(brandBtn).not.toBeVisible();
   });
 
-  test("hidden on Jobs tab", async ({ page }) => {
+  test("not visible on Jobs tab", async ({ page }) => {
     await navigateToTab(page, "jobs");
 
     const brandBtn = page.getByRole("button", { name: "Brand", exact: true });
@@ -28,7 +27,7 @@ test.describe("Global Filter Bar", () => {
   });
 
   test("Brand dropdown opens on click", async ({ page }) => {
-    await navigateToTab(page, "overview");
+    await navigateToTab(page, "aggregateAnalysis");
 
     const brandBtn = page.getByRole("button", { name: "Brand", exact: true });
     await brandBtn.click();
@@ -36,12 +35,5 @@ test.describe("Global Filter Bar", () => {
     // Dropdown renders as a div with shadow-lg class containing brand value buttons
     const dropdown = page.locator(".shadow-lg");
     await expect(dropdown.first()).toBeVisible({ timeout: 5_000 });
-  });
-
-  test("filter bar visible on Accuracy tab", async ({ page }) => {
-    await navigateToTab(page, "accuracy");
-
-    const brandBtn = page.getByRole("button", { name: "Brand", exact: true });
-    await expect(brandBtn).toBeVisible();
   });
 });

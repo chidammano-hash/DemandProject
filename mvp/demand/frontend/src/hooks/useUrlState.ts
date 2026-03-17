@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-const VALID_TABS = ["overview", "explorer", "clusters", "itemAnalysis", "dfuAnalysis", "accuracy", "inventory", "invBacktest", "intel", "jobs", "chat", "settings", "aiPlanner", "controlTower", "invPlanning", "storyboard", "exceptions", "sop"];
+const VALID_TABS = ["aggregateAnalysis", "overview", "explorer", "clusters", "itemAnalysis", "dfuAnalysis", "accuracy", "inventory", "invBacktest", "intel", "jobs", "chat", "settings", "aiPlanner", "controlTower", "invPlanning", "storyboard", "exceptions", "sop", "customerMap"];
 const ANALYTICS_TAB_DOMAINS = new Set(["sales", "forecast"]);
 const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales", "forecast"];
 
@@ -12,6 +12,8 @@ export function getInitialDomain(): string {
 const TAB_REDIRECTS: Record<string, string> = {
   dfuAnalysis: "itemAnalysis",
   inventory: "itemAnalysis",
+  overview: "aggregateAnalysis",
+  accuracy: "aggregateAnalysis",
 };
 
 export function getInitialTab(): string {
@@ -21,7 +23,7 @@ export function getInitialTab(): string {
   if (urlTab && VALID_TABS.includes(urlTab)) return urlTab;
   const d = getInitialDomain();
   if (ANALYTICS_TAB_DOMAINS.has(d)) return d;
-  return DIMENSION_DOMAINS.includes(d) ? "overview" : d;
+  return DIMENSION_DOMAINS.includes(d) ? "aggregateAnalysis" : d;
 }
 
 export function updateUrlState(domain: string, tab: string) {

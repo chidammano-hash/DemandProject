@@ -30,21 +30,18 @@ describe("useKeyboardShortcuts", () => {
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("controlTower");
 
     act(() => fireKey("3"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("overview");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("aggregateAnalysis");
 
     act(() => fireKey("4"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("accuracy");
-
-    act(() => fireKey("5"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("itemAnalysis");
 
-    act(() => fireKey("6"));
+    act(() => fireKey("5"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("exceptions");
 
-    act(() => fireKey("7"));
+    act(() => fireKey("6"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("invPlanning");
 
-    act(() => fireKey("8"));
+    act(() => fireKey("7"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("jobs");
   });
 

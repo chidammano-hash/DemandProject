@@ -1,5 +1,5 @@
 """Tests for dashboard endpoints — /dashboard/kpis, /dashboard/alerts,
-/dashboard/top-movers, /dashboard/heatmap, /dashboard/planning-date."""
+/dashboard/top-movers, /dashboard/heatmap, /dashboard/trend, /dashboard/planning-date."""
 
 import pytest
 from datetime import date
@@ -510,3 +510,246 @@ async def test_dashboard_heatmap_respects_periods_parameter(mock_pool):
             assert resp.status_code == 200
             data = resp.json()
             assert data["rows"] == []
+
+
+# ===========================================================================
+# /dashboard/trend
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_dashboard_trend_returns_monthly_data(mock_pool):
+    """GET /dashboard/trend returns monthly forecast vs actual totals."""
+    pool, _, cursor = mock_pool
+    from decimal import Decimal
+    cursor.fetchall.return_value = [
+        ("2025-10", Decimal("120000.5"), Decimal("115000.3")),
+        ("2025-11", Decimal("125000.0"), Decimal("120000.0")),
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/trend")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "months" in data
+    months = data["months"]
+    assert len(months) == 2
+    assert months[0]["month"] == "2025-10"
+    assert months[0]["forecast"] == 120000.0  # rounded to 0 decimals
+    assert months[0]["actual"] == 115000.0
+    assert months[1]["month"] == "2025-11"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_trend_empty_data(mock_pool):
+    """GET /dashboard/trend returns empty months when no data."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = []
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/trend")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["months"] == []
+
+
+@pytest.mark.asyncio
+async def test_dashboard_trend_respects_window_parameter(mock_pool):
+    """GET /dashboard/trend?window=6 returns 200."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = []
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/trend?window=6")
+    assert resp.status_code == 200
+    assert resp.json()["months"] == []
+
+
+@pytest.mark.asyncio
+async def test_dashboard_trend_with_filters(mock_pool):
+    """GET /dashboard/trend with brand filter returns 200."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [
+        ("2025-12", 50000.0, 48000.0),
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/trend?brand=ACME&window=12")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["months"]) == 1
+    assert data["months"][0]["forecast"] == 50000.0
+
+
+@pytest.mark.asyncio
+async def test_dashboard_trend_null_values(mock_pool):
+    """GET /dashboard/trend handles null forecast/actual gracefully."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [
+        ("2025-10", None, None),
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/trend")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["months"][0]["forecast"] == 0
+    assert data["months"][0]["actual"] == 0
+
+
+# ===========================================================================
+# /dashboard/customer-map
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_customer_map_by_state(mock_pool):
+    """GET /dashboard/customer-map returns state-level locations with coordinates."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [
+        ("CA", 500),
+        ("TX", 350),
+        ("NY", 200),
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/customer-map?group_by=state")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["group_by"] == "state"
+    assert data["total"] == 1050
+    assert len(data["locations"]) == 3
+    ca = data["locations"][0]
+    assert ca["label"] == "CA"
+    assert ca["customer_count"] == 500
+    assert "lat" in ca
+    assert "lon" in ca
+
+
+def _mock_pgeocode(lats, lons):
+    """Create a mock pgeocode.Nominatim that returns given lat/lon arrays."""
+    import pandas as pd
+    import numpy as np
+    mock_nomi = MagicMock()
+    df = pd.DataFrame({"latitude": lats, "longitude": lons})
+    mock_nomi.query_postal_code.return_value = df
+    return mock_nomi
+
+
+@pytest.mark.asyncio
+async def test_customer_map_by_zip(mock_pool):
+    """GET /dashboard/customer-map?group_by=zip returns zip-level locations with pgeocode coords."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [
+        ("90210", "CA", 50),
+        ("10001", "NY", 30),
+    ]
+    mock_nomi = _mock_pgeocode([34.0901, 40.7484], [-118.4065, -73.9967])
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("api.routers.dashboard._get_nomi", return_value=mock_nomi):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/customer-map?group_by=zip")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["group_by"] == "zip"
+    assert data["total"] == 80
+    bh = data["locations"][0]
+    assert bh["label"] == "90210"
+    assert bh["state"] == "CA"
+    assert abs(bh["lat"] - 34.09) < 0.01
+    assert abs(bh["lon"] - (-118.41)) < 0.01
+
+
+@pytest.mark.asyncio
+async def test_customer_map_by_city(mock_pool):
+    """GET /dashboard/customer-map?group_by=city returns city groupings with pgeocode coords."""
+    pool, _, cursor = mock_pool
+    # City query returns 4 columns: city, state, count, common_zip
+    cursor.fetchall.return_value = [
+        ("Los Angeles", "CA", 120, "90001"),
+        ("Houston", "TX", 80, "77001"),
+    ]
+    mock_nomi = _mock_pgeocode([33.9425, 29.7633], [-118.2551, -95.3633])
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("api.routers.dashboard._get_nomi", return_value=mock_nomi):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/customer-map?group_by=city")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["group_by"] == "city"
+    assert len(data["locations"]) == 2
+    la = data["locations"][0]
+    assert la["label"] == "Los Angeles"
+    assert la["state"] == "CA"
+    assert abs(la["lat"] - 33.94) < 0.1
+    assert abs(la["lon"] - (-118.26)) < 0.1
+
+
+@pytest.mark.asyncio
+async def test_customer_map_empty(mock_pool):
+    """GET /dashboard/customer-map returns empty list when no customers."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = []
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/customer-map")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["locations"] == []
+    assert data["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_customer_map_unknown_state(mock_pool):
+    """States not in centroid lookup get no lat/lon."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [
+        ("XX", 10),
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/customer-map?group_by=state")
+    assert resp.status_code == 200
+    loc = resp.json()["locations"][0]
+    assert loc["label"] == "XX"
+    assert "lat" not in loc
+
+
+@pytest.mark.asyncio
+async def test_customer_map_zip_fallback_to_state_centroid(mock_pool):
+    """Zip codes not found by pgeocode fall back to state centroid."""
+    import numpy as np
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [
+        ("00000", "CA", 5),
+    ]
+    mock_nomi = _mock_pgeocode([np.nan], [np.nan])
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("api.routers.dashboard._get_nomi", return_value=mock_nomi):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/customer-map?group_by=zip")
+    assert resp.status_code == 200
+    loc = resp.json()["locations"][0]
+    # Falls back to CA state centroid
+    assert abs(loc["lat"] - 36.12) < 0.1
+    assert "lon" in loc

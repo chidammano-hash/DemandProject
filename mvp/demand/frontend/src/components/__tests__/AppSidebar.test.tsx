@@ -5,7 +5,7 @@ import { JobNotificationProvider } from "@/context/JobNotificationContext";
 
 function renderSidebar(props = {}) {
   const defaultProps = {
-    activeTab: "overview",
+    activeTab: "aggregateAnalysis",
     onNavigate: vi.fn(),
     collapsed: false,
     onToggle: vi.fn(),
@@ -35,15 +35,15 @@ describe("AppSidebar", () => {
     expect(activeButton).toHaveAttribute("aria-current", "page");
 
     // Non-active items should not have aria-current
-    const overviewButton = screen.getByText("Overview").closest("button");
-    expect(overviewButton).not.toHaveAttribute("aria-current");
+    const aggButton = screen.getByText("Portfolio").closest("button");
+    expect(aggButton).not.toHaveAttribute("aria-current");
   });
 
   it("collapsed state hides labels", () => {
     renderSidebar({ collapsed: true });
     expect(screen.queryByText("Vrantis")).not.toBeInTheDocument();
     // The nav item labels should not be rendered as visible text
-    expect(screen.queryByText("Overview")).not.toBeInTheDocument();
+    expect(screen.queryByText("Portfolio")).not.toBeInTheDocument();
     expect(screen.queryByText("Explorer")).not.toBeInTheDocument();
   });
 
@@ -70,8 +70,8 @@ describe("AppSidebar", () => {
   it("navigation calls onNavigate for each item", () => {
     const onNavigate = vi.fn();
     renderSidebar({ onNavigate, collapsed: false });
-    fireEvent.click(screen.getByText("Accuracy"));
-    expect(onNavigate).toHaveBeenCalledWith("accuracy");
+    fireEvent.click(screen.getByText("Portfolio"));
+    expect(onNavigate).toHaveBeenCalledWith("aggregateAnalysis");
     fireEvent.click(screen.getByText("Chat"));
     expect(onNavigate).toHaveBeenCalledWith("chat");
   });

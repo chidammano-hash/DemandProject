@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TestQueryWrapper } from "./test-utils";
@@ -155,56 +155,66 @@ describe("ItemAnalysisTab", () => {
     });
   });
 
-  it("renders toggle toolbar with Demand and Supply sections", async () => {
-    renderTab();
-    await waitFor(() => {
-      expect(screen.getByText("Demand")).toBeDefined();
-      expect(screen.getByText("Supply")).toBeDefined();
-    });
-  });
-
-  it("renders toggle checkboxes for all panels", async () => {
+  it("renders toggle toolbar with panel checkboxes", async () => {
     renderTab();
     await waitFor(() => {
       expect(screen.getByLabelText("Toggle Chart")).toBeDefined();
       expect(screen.getByLabelText("Toggle SHAP")).toBeDefined();
-      expect(screen.getByLabelText("Toggle Model KPIs")).toBeDefined();
-      expect(screen.getByLabelText("Toggle Inv KPIs")).toBeDefined();
-      expect(screen.getByLabelText("Toggle Position Table")).toBeDefined();
-      expect(screen.getByLabelText("Toggle Variability")).toBeDefined();
-      expect(screen.getByLabelText("Toggle Lead Time")).toBeDefined();
+      expect(screen.getByLabelText("Toggle Forecast KPIs")).toBeDefined();
     });
   });
 
-  it("renders inventory KPI cards when panel is enabled", async () => {
+  it("renders Select All / Deselect All toggle button", async () => {
     renderTab();
     await waitFor(() => {
-      expect(screen.getAllByText("Total On-Hand").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("Days of Supply").length).toBeGreaterThan(0);
+      // Default state: some panels off, so "Select All" shows
+      const btn = screen.getByRole("button", { name: /select all|deselect all/i });
+      expect(btn).toBeDefined();
     });
   });
 
-  it("hides inventory KPIs when toggled off", async () => {
+  it("Select All turns on all panels, Deselect All turns them off", async () => {
     renderTab();
     const user = userEvent.setup();
 
+    // All panels default ON, so button starts as "Deselect All"
     await waitFor(() => {
-      expect(screen.getAllByText("Total On-Hand").length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: /deselect all/i })).toBeDefined();
     });
 
-    const checkbox = screen.getByLabelText("Toggle Inv KPIs");
-    await user.click(checkbox);
+    // Click "Deselect All" to turn all off
+    await user.click(screen.getByRole("button", { name: /deselect all/i }));
 
     await waitFor(() => {
-      expect(screen.queryByText("Total On-Hand")).toBeNull();
+      expect(screen.getByRole("button", { name: /select all/i })).toBeDefined();
     });
   });
 
-  it("renders scope mode selector from DFU analysis", async () => {
+  it("renders Item Analysis title (single DFU mode)", async () => {
     renderTab();
     await waitFor(() => {
-      // SelectorPanel renders the scope mode dropdown
-      expect(document.body.textContent).toContain("Scope");
+      expect(screen.getByText("Item Analysis")).toBeDefined();
+    });
+  });
+
+  it("does not render scope mode selector (aggregate modes removed)", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.queryByText("Analysis Scope")).toBeNull();
+    });
+  });
+
+  it("does not render seasonality profile filter", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.queryByText("Seasonality Profile")).toBeNull();
+    });
+  });
+
+  it("renders Points selector", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("Points");
     });
   });
 });

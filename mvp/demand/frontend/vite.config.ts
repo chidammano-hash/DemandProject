@@ -155,6 +155,7 @@ export default defineConfig({
           query: ["@tanstack/react-query"],
           "table-grid": ["@tanstack/react-table", "@tanstack/react-virtual"],
           echarts: ["echarts", "echarts-for-react"],
+          leaflet: ["leaflet", "react-leaflet"],
         },
       },
     },

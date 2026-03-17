@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { navigateToTab, getContentArea } from "../fixtures/base";
 
-test.describe("Accuracy Tab", () => {
+test.describe("Aggregate Analysis — Accuracy Section", () => {
   test.beforeEach(async ({ page }) => {
-    await navigateToTab(page, "accuracy");
+    // accuracy redirects to aggregateAnalysis
+    await navigateToTab(page, "aggregateAnalysis");
   });
 
   test("renders without error boundary", async ({ page }) => {
@@ -27,7 +28,7 @@ test.describe("Accuracy Tab", () => {
       text?.includes("WAPE") ||
       text?.includes("Accuracy") ||
       text?.includes("Bias") ||
-      text?.includes("Model Comparison") ||
+      text?.includes("Portfolio Analysis") ||
       text?.includes("Cluster");
     expect(hasAccuracyContent).toBeTruthy();
   });

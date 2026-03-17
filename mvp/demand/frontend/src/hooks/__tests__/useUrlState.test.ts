@@ -31,18 +31,23 @@ describe("useUrlState", () => {
   });
 
   describe("getInitialTab", () => {
-    it("defaults to overview when no params", () => {
-      expect(getInitialTab()).toBe("overview");
+    it("defaults to aggregateAnalysis when no params", () => {
+      expect(getInitialTab()).toBe("aggregateAnalysis");
     });
 
-    it("reads tab from URL if valid", () => {
+    it("redirects overview to aggregateAnalysis", () => {
+      window.history.replaceState(null, "", "/?tab=overview");
+      expect(getInitialTab()).toBe("aggregateAnalysis");
+    });
+
+    it("redirects accuracy to aggregateAnalysis", () => {
       window.history.replaceState(null, "", "/?tab=accuracy");
-      expect(getInitialTab()).toBe("accuracy");
+      expect(getInitialTab()).toBe("aggregateAnalysis");
     });
 
     it("ignores invalid tab", () => {
       window.history.replaceState(null, "", "/?tab=bogus");
-      expect(getInitialTab()).toBe("overview");
+      expect(getInitialTab()).toBe("aggregateAnalysis");
     });
 
     it("returns domain for analytics domains", () => {
@@ -50,9 +55,9 @@ describe("useUrlState", () => {
       expect(getInitialTab()).toBe("sales");
     });
 
-    it("accepts overview tab from URL", () => {
-      window.history.replaceState(null, "", "/?tab=overview");
-      expect(getInitialTab()).toBe("overview");
+    it("accepts aggregateAnalysis tab from URL", () => {
+      window.history.replaceState(null, "", "/?tab=aggregateAnalysis");
+      expect(getInitialTab()).toBe("aggregateAnalysis");
     });
   });
 
@@ -98,10 +103,10 @@ describe("useUrlState", () => {
   });
 
   describe("exported constants", () => {
-    it("VALID_TABS has 18 entries including overview, itemAnalysis, invBacktest, jobs, aiPlanner, and sop", () => {
-      expect(VALID_TABS).toHaveLength(18);
+    it("VALID_TABS has 20 entries including aggregateAnalysis, itemAnalysis, invBacktest, jobs, aiPlanner, sop, and customerMap", () => {
+      expect(VALID_TABS).toHaveLength(20);
+      expect(VALID_TABS).toContain("aggregateAnalysis");
       expect(VALID_TABS).toContain("overview");
-      expect(VALID_TABS).toContain("explorer");
       expect(VALID_TABS).toContain("accuracy");
       expect(VALID_TABS).toContain("itemAnalysis");
       expect(VALID_TABS).toContain("inventory");

@@ -22,14 +22,9 @@ test.describe("Sidebar Navigation", () => {
     }
   });
 
-  test("clicking Overview navigates to overview tab", async ({ page }) => {
-    await clickNavItem(page, "Overview");
-    await expect(page).toHaveURL(/tab=overview/);
-  });
-
-  test("clicking Accuracy navigates to accuracy tab", async ({ page }) => {
-    await clickNavItem(page, "Accuracy");
-    await expect(page).toHaveURL(/tab=accuracy/);
+  test("clicking Portfolio navigates to aggregateAnalysis tab", async ({ page }) => {
+    await clickNavItem(page, "Portfolio");
+    await expect(page).toHaveURL(/tab=aggregateAnalysis/);
   });
 
   test("clicking Inv. Planning navigates to invPlanning tab", async ({
@@ -56,8 +51,7 @@ test.describe("Sidebar Navigation", () => {
 
   test("no error boundary shown on key tabs", async ({ page }) => {
     const tabs = [
-      "overview",
-      "accuracy",
+      "aggregateAnalysis",
       "itemAnalysis",
       "invPlanning",
       "aiPlanner",
@@ -83,14 +77,14 @@ test.describe("Keyboard Shortcuts", () => {
     await page.locator("#tab-content").click();
   });
 
-  test("pressing 3 navigates to Overview", async ({ page }) => {
+  test("pressing 3 navigates to Portfolio Analysis", async ({ page }) => {
     await page.keyboard.press("3");
-    await expect(page).toHaveURL(/tab=overview/);
+    await expect(page).toHaveURL(/tab=aggregateAnalysis/);
   });
 
-  test("pressing 4 navigates to Accuracy", async ({ page }) => {
+  test("pressing 4 navigates to Item Analysis", async ({ page }) => {
     await page.keyboard.press("4");
-    await expect(page).toHaveURL(/tab=accuracy/);
+    await expect(page).toHaveURL(/tab=itemAnalysis/);
   });
 
   test("pressing 1 navigates to AI Planner", async ({ page }) => {
@@ -101,17 +95,29 @@ test.describe("Keyboard Shortcuts", () => {
 
 test.describe("URL State", () => {
   test("direct URL navigation loads correct tab", async ({ page }) => {
-    await navigateToTab(page, "accuracy");
-    // The Accuracy tab button should be highlighted as active (aria-current="page")
+    await navigateToTab(page, "aggregateAnalysis");
+    // The Aggregate tab button should be highlighted as active (aria-current="page")
     const activeBtn = page.locator(
       'aside[role="navigation"] button[aria-current="page"]'
     );
     await expect(activeBtn).toBeVisible();
   });
 
-  test("invalid tab falls back to overview", async ({ page }) => {
+  test("overview redirects to aggregateAnalysis", async ({ page }) => {
+    await page.goto("/?tab=overview");
+    await waitForAppReady(page);
+    await expect(page).toHaveURL(/tab=aggregateAnalysis/);
+  });
+
+  test("accuracy redirects to aggregateAnalysis", async ({ page }) => {
+    await page.goto("/?tab=accuracy");
+    await waitForAppReady(page);
+    await expect(page).toHaveURL(/tab=aggregateAnalysis/);
+  });
+
+  test("invalid tab falls back to aggregateAnalysis", async ({ page }) => {
     await page.goto("/?tab=nonexistent");
     await waitForAppReady(page);
-    await expect(page).toHaveURL(/tab=overview/);
+    await expect(page).toHaveURL(/tab=aggregateAnalysis/);
   });
 });

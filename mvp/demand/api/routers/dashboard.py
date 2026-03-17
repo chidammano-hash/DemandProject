@@ -4,14 +4,31 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Any
 import logging
+import math
+import threading
 
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from datetime import date
 
+import pgeocode
+
 from api.core import get_conn, set_cache
 from common.planning_date import get_planning_date
+
+# Lazy-initialized US zip code geocoder (pgeocode downloads ~2MB file on first use)
+_nomi: pgeocode.Nominatim | None = None
+_nomi_lock = threading.Lock()
+
+
+def _get_nomi() -> pgeocode.Nominatim:
+    global _nomi
+    if _nomi is None:
+        with _nomi_lock:
+            if _nomi is None:
+                _nomi = pgeocode.Nominatim("US")
+    return _nomi
 
 logger = logging.getLogger(__name__)
 
@@ -496,3 +513,207 @@ def dashboard_heatmap(
         result_rows.append({"label": label, "values": values})
 
     return {"rows": result_rows, "period_labels": period_set, "metric": "accuracy_pct"}
+
+
+@router.get("/dashboard/trend")
+def dashboard_trend(
+    response: FastAPIResponse,
+    window: int = Query(default=12, ge=1, le=36),
+    brand: str = Query(default=""),
+    category: str = Query(default=""),
+    market: str = Query(default=""),
+    channel: str = Query(default=""),
+    item: str = Query(default=""),
+    location: str = Query(default=""),
+):
+    """Monthly aggregate forecast vs actual totals for trend chart."""
+    set_cache(response, max_age=120)
+
+    filter_frag, filter_params = _dashboard_filter_clause(brand, category, market, channel, item, location)
+
+    join_clause = ""
+    if brand.strip() or category.strip():
+        join_clause += " JOIN dim_item i ON f.dmdunit = i.item_no"
+    if market.strip():
+        join_clause += " JOIN dim_location lo ON f.loc = lo.location_id"
+
+    where_extra = f" AND {filter_frag}" if filter_frag else ""
+
+    sql = f"""
+        SELECT
+            TO_CHAR(f.startdate, 'YYYY-MM') AS month,
+            SUM(f.basefcst_pref) AS forecast,
+            SUM(f.tothist_dmd) AS actual
+        FROM fact_external_forecast_monthly f
+        {join_clause}
+        WHERE f.lag = 0
+          AND f.tothist_dmd IS NOT NULL
+          AND f.startdate >= (CURRENT_DATE - (%s || ' months')::interval)
+          {where_extra}
+        GROUP BY f.startdate, TO_CHAR(f.startdate, 'YYYY-MM')
+        ORDER BY f.startdate
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, [window] + filter_params)
+        rows = cur.fetchall()
+
+    months = []
+    for r in rows:
+        months.append({
+            "month": r[0],
+            "forecast": round(float(r[1]), 0) if r[1] is not None else 0,
+            "actual": round(float(r[2]), 0) if r[2] is not None else 0,
+        })
+
+    return {"months": months}
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard/customer-map  —  aggregate customer locations by state
+# ---------------------------------------------------------------------------
+
+# US state centroids (approximate) for map plotting
+_STATE_CENTROIDS: dict[str, tuple[float, float]] = {
+    "AL": (32.806671, -86.791130), "AK": (61.370716, -152.404419),
+    "AZ": (33.729759, -111.431221), "AR": (34.969704, -92.373123),
+    "CA": (36.116203, -119.681564), "CO": (39.059811, -105.311104),
+    "CT": (41.597782, -72.755371), "DE": (39.318523, -75.507141),
+    "FL": (27.766279, -81.686783), "GA": (33.040619, -83.643074),
+    "HI": (21.094318, -157.498337), "ID": (44.240459, -114.478773),
+    "IL": (40.349457, -88.986137), "IN": (39.849426, -86.258278),
+    "IA": (42.011539, -93.210526), "KS": (38.526600, -96.726486),
+    "KY": (37.668140, -84.670067), "LA": (31.169546, -91.867805),
+    "ME": (44.693947, -69.381927), "MD": (39.063946, -76.802101),
+    "MA": (42.230171, -71.530106), "MI": (43.326618, -84.536095),
+    "MN": (45.694454, -93.900192), "MS": (32.741646, -89.678696),
+    "MO": (38.456085, -92.288368), "MT": (46.921925, -110.454353),
+    "NE": (41.125370, -98.268082), "NV": (38.313515, -117.055374),
+    "NH": (43.452492, -71.563896), "NJ": (40.298904, -74.521011),
+    "NM": (34.840515, -106.248482), "NY": (42.165726, -74.948051),
+    "NC": (35.630066, -79.806419), "ND": (47.528912, -99.784012),
+    "OH": (40.388783, -82.764915), "OK": (35.565342, -96.928917),
+    "OR": (44.572021, -122.070938), "PA": (40.590752, -77.209755),
+    "RI": (41.680893, -71.511780), "SC": (33.856892, -80.945007),
+    "SD": (44.299782, -99.438828), "TN": (35.747845, -86.692345),
+    "TX": (31.054487, -97.563461), "UT": (40.150032, -111.862434),
+    "VT": (44.045876, -72.710686), "VA": (37.769337, -78.169968),
+    "WA": (47.400902, -121.490494), "WV": (38.491226, -80.954456),
+    "WI": (44.268543, -89.616508), "WY": (42.755966, -107.302490),
+    "DC": (38.897438, -77.026817),
+}
+
+
+@router.get("/dashboard/customer-map")
+def dashboard_customer_map(
+    response: FastAPIResponse,
+    group_by: str = Query(default="state", pattern="^(state|zip|city)$"),
+):
+    """Aggregate customer locations for map display.
+
+    Returns a list of locations with customer counts and coordinates.
+    ``group_by`` controls the grouping granularity (state/zip/city).
+    - state: coordinates from state centroids.
+    - zip: coordinates from pgeocode (offline USPS centroid data).
+    - city: coordinates averaged from zip centroids within each city+state.
+    """
+    set_cache(response, max_age=600)
+
+    _MARKER_LIMIT = 1000  # cap rows to avoid huge payloads / slow geocoding
+
+    if group_by == "state":
+        sql = """
+            SELECT state, COUNT(*) AS customer_count
+            FROM dim_customer
+            WHERE state IS NOT NULL AND TRIM(state) != ''
+            GROUP BY state
+            ORDER BY COUNT(*) DESC
+        """
+    elif group_by == "zip":
+        sql = f"""
+            SELECT zip, state, COUNT(*) AS customer_count
+            FROM dim_customer
+            WHERE zip IS NOT NULL AND TRIM(zip) != ''
+            GROUP BY zip, state
+            ORDER BY COUNT(*) DESC
+            LIMIT {_MARKER_LIMIT}
+        """
+    else:
+        # city: get count + a representative zip for geocoding
+        sql = f"""
+            SELECT city, state, COUNT(*) AS customer_count,
+                   MODE() WITHIN GROUP (ORDER BY zip) AS common_zip
+            FROM dim_customer
+            WHERE city IS NOT NULL AND TRIM(city) != ''
+            GROUP BY city, state
+            ORDER BY COUNT(*) DESC
+            LIMIT {_MARKER_LIMIT}
+        """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
+
+    locations: list[dict[str, Any]] = []
+
+    if group_by == "state":
+        for r in rows:
+            label = str(r[0]).strip()
+            count = int(r[1])
+            entry: dict[str, Any] = {"label": label, "customer_count": count, "state": label}
+            coords = _STATE_CENTROIDS.get(label.upper())
+            if coords:
+                entry["lat"] = coords[0]
+                entry["lon"] = coords[1]
+            locations.append(entry)
+    elif group_by == "zip":
+        # Batch-resolve all zip codes via pgeocode
+        nomi = _get_nomi()
+        zip_codes = [str(r[0]).strip() for r in rows]
+        # pgeocode accepts list of postal codes for batch lookup
+        geo_df = nomi.query_postal_code(zip_codes)
+        for i, r in enumerate(rows):
+            label = str(r[0]).strip()
+            state = str(r[1]).strip() if r[1] else ""
+            count = int(r[2])
+            entry = {"label": label, "customer_count": count}
+            if state:
+                entry["state"] = state
+            lat = geo_df.iloc[i]["latitude"]
+            lon = geo_df.iloc[i]["longitude"]
+            if not (math.isnan(lat) or math.isnan(lon)):
+                entry["lat"] = round(float(lat), 4)
+                entry["lon"] = round(float(lon), 4)
+            else:
+                # Fallback to state centroid
+                coords = _STATE_CENTROIDS.get(state.upper()) if state else None
+                if coords:
+                    entry["lat"] = coords[0]
+                    entry["lon"] = coords[1]
+            locations.append(entry)
+    else:
+        # city: resolve via the representative zip per city+state
+        nomi = _get_nomi()
+        rep_zips = [str(r[3]).strip() if r[3] else "" for r in rows]
+        geo_df = nomi.query_postal_code(rep_zips)
+        for i, r in enumerate(rows):
+            label = str(r[0]).strip()
+            state = str(r[1]).strip() if r[1] else ""
+            count = int(r[2])
+            entry = {"label": label, "customer_count": count}
+            if state:
+                entry["state"] = state
+            lat = geo_df.iloc[i]["latitude"]
+            lon = geo_df.iloc[i]["longitude"]
+            if not (math.isnan(lat) or math.isnan(lon)):
+                entry["lat"] = round(float(lat), 4)
+                entry["lon"] = round(float(lon), 4)
+            else:
+                coords = _STATE_CENTROIDS.get(state.upper()) if state else None
+                if coords:
+                    entry["lat"] = coords[0]
+                    entry["lon"] = coords[1]
+            locations.append(entry)
+
+    total = sum(loc["customer_count"] for loc in locations)
+    return {"locations": locations, "group_by": group_by, "total": total}

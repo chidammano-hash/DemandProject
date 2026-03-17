@@ -1,0 +1,783 @@
+/**
+ * Portfolio Analysis — aggregate-level forecast performance analytics.
+ * The analytical equivalent of Item Analysis, but at portfolio levels:
+ * forecast vs actuals charts, accuracy KPIs, performance heatmaps,
+ * and model comparisons — all sliceable by brand/category/location/cluster.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  ChevronDown, X, RotateCcw, Search, CalendarClock, ChartColumn,
+} from "lucide-react";
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
+import { KpiCard } from "@/components/KpiCard";
+import { Skeleton } from "@/components/Skeleton";
+import { LoadingElement } from "@/components/LoadingElement";
+import { ForecastTrendChart } from "@/components/ForecastTrendChart";
+import { HeatmapGrid, makeHeatmapScale } from "@/components/HeatmapGrid";
+
+import { useDebounce } from "@/hooks/useDebounce";
+import { usePanelToggles } from "@/hooks/usePanelToggles";
+import { useChartColors } from "@/hooks/useChartColors";
+import { cn } from "@/lib/utils";
+
+import {
+  queryKeys,
+  STALE,
+  fetchDashboardKpis,
+  fetchDashboardTrend,
+  fetchDashboardHeatmap,
+  fetchAccuracySlice,
+  fetchLagCurve,
+  fetchCompetitionConfig,
+  fetchCompetitionSummary,
+  fetchShapModels,
+  fetchShapSummary,
+  fetchShapTimeframes,
+  fetchShapTimeframeDetail,
+  fetchShapClusters,
+  fetchSeasonalityProfileNames,
+  saveCompetitionConfig,
+  runCompetition,
+  fetchDistinctValues,
+  fetchPlanningDate,
+  fetchDfuCount,
+  filterMetaKeys,
+  type CompetitionConfig,
+  type SliceParams,
+  type LagCurveParams,
+  type DashboardFilterParams,
+  type CascadeFilterParams,
+} from "@/api/queries";
+
+import type { AccuracySliceRow, LagPoint } from "@/types";
+
+// Accuracy sub-panels
+import { SliceTablePanel } from "./accuracy/SliceTablePanel";
+import { TrendChartPanel } from "./accuracy/TrendChartPanel";
+import { ChampionPanel } from "./accuracy/ChampionPanel";
+import { ShapPanel } from "./accuracy/ShapPanel";
+import { BiasCorrectionsPanel } from "./accuracy/BiasCorrectionsPanel";
+
+// ---------------------------------------------------------------------------
+// Panel toggle defaults
+// ---------------------------------------------------------------------------
+const PANEL_DEFAULTS: Record<string, boolean> = {
+  kpis: true,
+  forecastChart: true,
+  heatmap: true,
+  accuracy: true,
+  lagCurve: true,
+  champion: false,
+  shap: false,
+  bias: false,
+};
+
+const PANELS = [
+  { key: "kpis", label: "KPIs" },
+  { key: "forecastChart", label: "Forecast vs Actual" },
+  { key: "heatmap", label: "Heatmap" },
+  { key: "accuracy", label: "Accuracy" },
+  { key: "lagCurve", label: "Lag Curve" },
+  { key: "champion", label: "Champion" },
+  { key: "shap", label: "SHAP" },
+  { key: "bias", label: "Bias" },
+] as const;
+
+// ---------------------------------------------------------------------------
+// Filter types & config (from GlobalFilterBar)
+// ---------------------------------------------------------------------------
+interface FilterConfig {
+  key: "brand" | "category" | "market" | "channel" | "item" | "location";
+  label: string;
+  domain: string;
+  column: string;
+  searchable?: boolean;
+}
+
+const FILTERS: FilterConfig[] = [
+  { key: "brand", label: "Brand", domain: "item", column: "brand_name" },
+  { key: "category", label: "Category", domain: "item", column: "class_" },
+  { key: "item", label: "Item", domain: "item", column: "item_no", searchable: true },
+  { key: "location", label: "Location", domain: "location", column: "location_id", searchable: true },
+  { key: "market", label: "Market", domain: "location", column: "state_id" },
+  { key: "channel", label: "Channel", domain: "customer", column: "rpt_channel_desc" },
+];
+
+interface LocalFilters {
+  brand: string[];
+  category: string[];
+  market: string[];
+  channel: string[];
+  item: string[];
+  location: string[];
+  timeGrain: "month" | "quarter";
+}
+
+const EMPTY_FILTERS: LocalFilters = {
+  brand: [], category: [], market: [], channel: [], item: [], location: [],
+  timeGrain: "month",
+};
+
+function buildCascade(filters: LocalFilters, excludeKey: FilterConfig["key"]): CascadeFilterParams | undefined {
+  const c: CascadeFilterParams = {};
+  if (excludeKey !== "brand" && filters.brand.length > 0) c.brand = filters.brand.join(",");
+  if (excludeKey !== "category" && filters.category.length > 0) c.category = filters.category.join(",");
+  if (excludeKey !== "item" && filters.item.length > 0) c.item = filters.item.join(",");
+  if (excludeKey !== "location" && filters.location.length > 0) c.location = filters.location.join(",");
+  if (excludeKey !== "market" && filters.market.length > 0) c.market = filters.market.join(",");
+  if (excludeKey !== "channel" && filters.channel.length > 0) c.channel = filters.channel.join(",");
+  return Object.keys(c).length > 0 ? c : undefined;
+}
+
+function hasActiveFilters(f: LocalFilters): boolean {
+  return f.brand.length > 0 || f.category.length > 0 || f.item.length > 0 || f.location.length > 0 || f.market.length > 0 || f.channel.length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Filter dropdown components (inlined from GlobalFilterBar)
+// ---------------------------------------------------------------------------
+function FilterDropdown({ config, selected, onSelect, cascade }: { config: FilterConfig; selected: string[]; onSelect: (vals: string[]) => void; cascade?: CascadeFilterParams }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const { data } = useQuery({
+    queryKey: [...queryKeys.distinctValues(config.domain, config.column), cascade ?? null],
+    queryFn: () => fetchDistinctValues(config.domain, config.column, undefined, 100, cascade),
+    staleTime: STALE.THIRTY_SEC,
+  });
+  const values = data?.values ?? [];
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+  const toggle = useCallback((val: string) => {
+    onSelect(selected.includes(val) ? selected.filter((v) => v !== val) : [...selected, val]);
+  }, [selected, onSelect]);
+  const label = selected.length === 0 ? config.label : selected.length === 1 ? selected[0] : `${config.label} (${selected.length})`;
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen(!open)} className={cn("flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors", selected.length > 0 ? "border-primary/30 bg-primary/8 text-primary font-medium" : "border-border bg-card text-muted-foreground hover:bg-muted/50")}>
+        <span className="max-w-[120px] truncate">{label}</span>
+        <ChevronDown className="h-3 w-3 flex-shrink-0 opacity-60" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 max-h-60 min-w-[180px] overflow-y-auto rounded-md border border-border bg-card p-1 shadow-lg">
+          {selected.length > 0 && (
+            <button onClick={() => { onSelect([]); setOpen(false); }} className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted/50">
+              <X className="h-3 w-3" /> Clear
+            </button>
+          )}
+          {values.map((val) => (
+            <button key={val} onClick={() => toggle(val)} className={cn("flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors", selected.includes(val) ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted/50")}>
+              <span className={cn("flex h-3.5 w-3.5 items-center justify-center rounded-sm border", selected.includes(val) ? "border-primary bg-primary text-primary-foreground" : "border-border")}>
+                {selected.includes(val) && <span className="text-[10px]">&#10003;</span>}
+              </span>
+              <span className="truncate">{val}</span>
+            </button>
+          ))}
+          {values.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">No values</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SearchableFilterDropdown({ config, selected, onSelect, cascade }: { config: FilterConfig; selected: string[]; onSelect: (vals: string[]) => void; cascade?: CascadeFilterParams }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const debouncedSearch = useDebounce(search, 250);
+  const { data, isFetching } = useQuery({
+    queryKey: [...queryKeys.distinctValues(config.domain, config.column + ":" + debouncedSearch), cascade ?? null],
+    queryFn: () => fetchDistinctValues(config.domain, config.column, debouncedSearch || undefined, 20, cascade),
+    enabled: open, staleTime: STALE.THIRTY_SEC,
+  });
+  const suggestions = (data?.values ?? []).filter((v) => !selected.includes(v));
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+  useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 0); else setSearch(""); }, [open]);
+  const addItem = useCallback((val: string) => { if (!selected.includes(val)) onSelect([...selected, val]); setSearch(""); }, [selected, onSelect]);
+  const removeItem = useCallback((val: string) => { onSelect(selected.filter((v) => v !== val)); }, [selected, onSelect]);
+  const label = selected.length === 0 ? config.label : selected.length === 1 ? selected[0] : `${config.label} (${selected.length})`;
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen(!open)} className={cn("flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors", selected.length > 0 ? "border-primary/30 bg-primary/8 text-primary font-medium" : "border-border bg-card text-muted-foreground hover:bg-muted/50")}>
+        <span className="max-w-[120px] truncate">{label}</span>
+        <ChevronDown className="h-3 w-3 flex-shrink-0 opacity-60" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 min-w-[220px] rounded-md border border-border bg-card shadow-lg">
+          <div className="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
+            <Search className="h-3 w-3 text-muted-foreground" />
+            <input ref={inputRef} type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.label.toLowerCase()}...`} className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none" />
+            {isFetching && <span className="h-3 w-3 animate-spin rounded-full border border-primary/30 border-t-primary" />}
+          </div>
+          {selected.length > 0 && (
+            <div className="flex flex-wrap gap-1 border-b border-border px-2 py-1.5">
+              {selected.map((val) => (
+                <span key={val} className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                  {val}
+                  <button onClick={() => removeItem(val)} className="hover:text-primary/70"><X className="h-2.5 w-2.5" /></button>
+                </span>
+              ))}
+              <button onClick={() => onSelect([])} className="text-[10px] text-muted-foreground hover:text-foreground">Clear all</button>
+            </div>
+          )}
+          <div className="max-h-48 overflow-y-auto p-1">
+            {suggestions.map((val) => (
+              <button key={val} onClick={() => addItem(val)} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted/50">
+                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-sm border border-border" />
+                <span className="truncate">{val}</span>
+              </button>
+            ))}
+            {suggestions.length === 0 && !isFetching && <p className="px-2 py-1.5 text-xs text-muted-foreground">No matches</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimeGrainToggle({ value, onChange }: { value: "month" | "quarter"; onChange: (v: "month" | "quarter") => void }) {
+  return (
+    <div className="flex rounded-md border border-border">
+      <button onClick={() => onChange("month")} className={cn("px-2.5 py-1.5 text-xs transition-colors", value === "month" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/50")}>Mo</button>
+      <button onClick={() => onChange("quarter")} className={cn("border-l border-border px-2.5 py-1.5 text-xs transition-colors", value === "quarter" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/50")}>Qtr</button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard helpers
+// ---------------------------------------------------------------------------
+function formatNumber(n: number | null): string {
+  if (n == null) return "N/A";
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toFixed(0);
+}
+
+function trendDirection(delta: number | null): "up" | "down" | "flat" {
+  if (delta == null || delta === 0) return "flat";
+  return delta > 0 ? "up" : "down";
+}
+
+// Heatmap color scale
+const HEATMAP_SCALE = ["#16a34a", "#65a30d", "#eab308", "#f97316", "#dc2626"];
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+interface AggregateAnalysisTabProps {
+  onNavigate?: (tab: string) => void;
+}
+
+export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
+  const queryClient = useQueryClient();
+
+  // --------------- local filter state ---------------
+  const [filters, setFilters] = useState<LocalFilters>(EMPTY_FILTERS);
+  const debouncedFilters = useDebounce(filters, 300);
+
+  const updateFilter = useCallback((key: FilterConfig["key"], vals: string[]) => {
+    setFilters((prev) => ({ ...prev, [key]: vals }));
+  }, []);
+
+  const dashFilters = useMemo<DashboardFilterParams>(() => ({
+    brand: debouncedFilters.brand,
+    category: debouncedFilters.category,
+    item: debouncedFilters.item,
+    location: debouncedFilters.location,
+    market: debouncedFilters.market,
+    channel: debouncedFilters.channel,
+    time_grain: debouncedFilters.timeGrain,
+  }), [debouncedFilters]);
+
+  // --------------- panel toggles ---------------
+  const { panels: visible, toggle } = usePanelToggles("ds:aggregateAnalysis:panels", PANEL_DEFAULTS);
+
+  // --------------- KPI window ---------------
+  const [kpiWindow, setKpiWindow] = useState(3);
+  const KPI_OPTIONS = [1, 3, 6, 12];
+
+  // --------------- Forecast chart state ---------------
+  const [trendWindow, setTrendWindow] = useState(12);
+  const TREND_OPTIONS = [6, 12, 18, 24];
+
+  // --------------- Heatmap state ---------------
+  const [heatmapGrain, setHeatmapGrain] = useState<"category" | "brand" | "location">("category");
+
+  // --------------- theme ---------------
+  const { theme, chartColors, trendColors } = useChartColors();
+
+  // --------------- Accuracy slice / filter state ---------------
+  const [sliceGroupBy, setSliceGroupBy] = useState("cluster_assignment");
+  const [sliceLag, setSliceLag] = useState(-1);
+  const [sliceModels, setSliceModels] = useState("");
+  const [sliceKpis, setSliceKpis] = useState<string[]>(["accuracy_pct", "wape", "bias"]);
+  const [lagCurveMetric, setLagCurveMetric] = useState("accuracy_pct");
+  const [sliceMonths, setSliceMonths] = useState(12);
+  const [commonDfus, setCommonDfus] = useState(false);
+  const [seasonalityProfile, setSeasonalityProfile] = useState("");
+  const [seasonalityProfiles, setSeasonalityProfiles] = useState<string[]>([]);
+
+  // --------------- Competition config state ---------------
+  const [competitionConfig, setCompetitionConfig] = useState<CompetitionConfig | null>(null);
+
+  // --------------- SHAP panel state ---------------
+  const [shapOpen, setShapOpen] = useState(false);
+  const [shapModelId, setShapModelId] = useState<string>("");
+  const [shapTimeframeIdx, setShapTimeframeIdx] = useState<number | null>(null);
+  const [shapCluster, setShapCluster] = useState<string>("all");
+
+  // --------------- Seasonality profile names (Feature 32) ---------------
+  useEffect(() => {
+    let cancelled = false;
+    fetchSeasonalityProfileNames()
+      .then((profiles) => { if (!cancelled) setSeasonalityProfiles(profiles); })
+      .catch(() => { /* non-blocking */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // --------------- Dashboard queries ---------------
+  const { data: planDate } = useQuery({
+    queryKey: queryKeys.planningDate(),
+    queryFn: fetchPlanningDate,
+    staleTime: STALE.TEN_MIN,
+  });
+
+  const dashFilterRecord = useMemo(() => dashFilters as unknown as Record<string, unknown>, [dashFilters]);
+
+  const kpiQ = useQuery({
+    queryKey: queryKeys.dashboardKpis({ window: kpiWindow, ...dashFilterRecord }),
+    queryFn: () => fetchDashboardKpis(kpiWindow, dashFilters),
+    staleTime: STALE.THIRTY_SEC,
+  });
+
+  const trendQ = useQuery({
+    queryKey: queryKeys.dashboardTrend({ window: trendWindow, ...dashFilterRecord }),
+    queryFn: () => fetchDashboardTrend(trendWindow, dashFilters),
+    staleTime: STALE.THIRTY_SEC,
+    enabled: visible.forecastChart,
+  });
+
+  const heatmapQ = useQuery({
+    queryKey: queryKeys.dashboardHeatmap({ grain: heatmapGrain, ...dashFilterRecord }),
+    queryFn: () => fetchDashboardHeatmap(heatmapGrain, 6, dashFilters),
+    staleTime: STALE.THIRTY_SEC,
+    enabled: visible.heatmap,
+  });
+
+  const dfuCountQ = useQuery({
+    queryKey: filterMetaKeys.dfuCount(debouncedFilters),
+    queryFn: () => fetchDfuCount(debouncedFilters),
+    staleTime: STALE.THIRTY_SEC,
+    enabled: hasActiveFilters(filters),
+  });
+
+  // --------------- Derived filter params for accuracy queries ---------------
+  const globalItem = debouncedFilters.item.length > 0 ? debouncedFilters.item.join(",") : undefined;
+  const globalLocation = debouncedFilters.location.length > 0 ? debouncedFilters.location.join(",") : undefined;
+  const brandParam = debouncedFilters.brand.length > 0 ? debouncedFilters.brand.join(",") : undefined;
+  const categoryParam = debouncedFilters.category.length > 0 ? debouncedFilters.category.join(",") : undefined;
+  const marketParam = debouncedFilters.market.length > 0 ? debouncedFilters.market.join(",") : undefined;
+  const needDfuCount = sliceKpis.includes("dfu_count");
+
+  const monthFrom = useMemo(() => {
+    if (sliceGroupBy === "month_start") return "";
+    const anchor = planDate?.planning_date ? new Date(planDate.planning_date + "T00:00:00") : new Date();
+    const from = new Date(anchor.getFullYear(), anchor.getMonth() - sliceMonths, 1);
+    return from.toISOString().slice(0, 10);
+  }, [sliceGroupBy, sliceMonths, planDate]);
+
+  const sliceParams: SliceParams = useMemo(() => ({
+    group_by: sliceGroupBy, lag: sliceLag, models: sliceModels, month_from: monthFrom,
+    common_dfus: commonDfus, include_dfu_count: needDfuCount,
+    item: globalItem, location: globalLocation, seasonality_profile: seasonalityProfile || undefined,
+    time_grain: debouncedFilters.timeGrain,
+    brand: brandParam, category: categoryParam, market: marketParam,
+  }), [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, debouncedFilters.timeGrain, brandParam, categoryParam, marketParam]);
+
+  const lagCurveParams: LagCurveParams = useMemo(() => ({
+    models: sliceModels, month_from: monthFrom, common_dfus: commonDfus,
+    include_dfu_count: needDfuCount, item: globalItem, location: globalLocation,
+    seasonality_profile: seasonalityProfile || undefined,
+    time_grain: debouncedFilters.timeGrain,
+    brand: brandParam, category: categoryParam, market: marketParam,
+  }), [sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, debouncedFilters.timeGrain, brandParam, categoryParam, marketParam]);
+
+  // --------------- Accuracy queries ---------------
+  const { data: slicePayload, isLoading: loadingSlice } = useQuery({
+    queryKey: queryKeys.accuracySlice(sliceParams as unknown as Record<string, unknown>),
+    queryFn: () => fetchAccuracySlice(sliceParams),
+    staleTime: STALE.TWO_MIN,
+    enabled: visible.accuracy,
+  });
+  const { data: lagPayload } = useQuery({
+    queryKey: queryKeys.lagCurve(lagCurveParams as unknown as Record<string, unknown>),
+    queryFn: () => fetchLagCurve(lagCurveParams),
+    staleTime: STALE.TWO_MIN,
+    enabled: visible.lagCurve,
+  });
+  const { data: configPayload } = useQuery({
+    queryKey: queryKeys.competitionConfig(),
+    queryFn: fetchCompetitionConfig,
+    staleTime: STALE.FIVE_MIN,
+    enabled: visible.champion,
+    select: (data) => { if (data?.config && competitionConfig === null) setCompetitionConfig(data.config); return data; },
+  });
+  const { data: summaryPayload } = useQuery({
+    queryKey: queryKeys.competitionSummary(),
+    queryFn: fetchCompetitionSummary,
+    staleTime: STALE.FIVE_MIN,
+    enabled: visible.champion,
+  });
+  const { data: shapModelsData } = useQuery({
+    queryKey: queryKeys.shapModels(),
+    queryFn: fetchShapModels,
+    staleTime: STALE.TEN_MIN,
+    enabled: shapOpen && visible.shap,
+  });
+  const shapModels = shapModelsData?.models ?? [];
+  const activeShapModel = shapModelId || shapModels[0] || "";
+  const { data: shapTimeframesData } = useQuery({
+    queryKey: queryKeys.shapTimeframes(activeShapModel),
+    queryFn: () => fetchShapTimeframes(activeShapModel),
+    staleTime: STALE.TEN_MIN,
+    enabled: shapOpen && !!activeShapModel && visible.shap,
+  });
+  const { data: shapSummaryData, isLoading: loadingShapSummary } = useQuery({
+    queryKey: queryKeys.shapSummary(activeShapModel, 15),
+    queryFn: () => fetchShapSummary(activeShapModel, 15),
+    staleTime: STALE.TEN_MIN,
+    enabled: shapOpen && !!activeShapModel && shapTimeframeIdx === null && visible.shap,
+  });
+  const { data: shapDetailData, isLoading: loadingShapDetail } = useQuery({
+    queryKey: queryKeys.shapTimeframeDetail(activeShapModel, shapTimeframeIdx ?? 0, 15, shapCluster),
+    queryFn: () => fetchShapTimeframeDetail(activeShapModel, shapTimeframeIdx!, 15, shapCluster),
+    staleTime: STALE.TEN_MIN,
+    enabled: shapOpen && !!activeShapModel && shapTimeframeIdx !== null && visible.shap,
+  });
+  const { data: shapClustersData } = useQuery({
+    queryKey: queryKeys.shapClusters(activeShapModel),
+    queryFn: () => fetchShapClusters(activeShapModel),
+    staleTime: STALE.TEN_MIN,
+    enabled: shapOpen && !!activeShapModel && visible.shap,
+  });
+
+  // --------------- Mutations ---------------
+  const saveConfigMutation = useMutation({ mutationFn: saveCompetitionConfig });
+  const runCompetitionMutation = useMutation({
+    mutationFn: async (config: CompetitionConfig) => { await saveCompetitionConfig(config); return runCompetition(); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.competitionSummary() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.accuracySlice(sliceParams as unknown as Record<string, unknown>) });
+    },
+  });
+
+  // --------------- Derived accuracy data ---------------
+  const sliceData: AccuracySliceRow[] = slicePayload?.rows ?? [];
+  const lagCurveData: LagPoint[] = lagPayload?.by_lag ?? [];
+  const allModels = useMemo(() => Array.from(new Set(sliceData.flatMap((r) => Object.keys(r.by_model)))).sort(), [sliceData]);
+  const lagModels = useMemo(() => Array.from(new Set(lagCurveData.flatMap((p) => Object.keys(p.by_model)))).sort(), [lagCurveData]);
+  const activeLagMetric = useMemo(() => (sliceKpis.includes(lagCurveMetric) ? lagCurveMetric : sliceKpis[0]), [sliceKpis, lagCurveMetric]);
+  const shapFeatures = useMemo(() => {
+    if (shapTimeframeIdx === null)
+      return (shapSummaryData?.features ?? []).map((f) => ({ feature: f.feature, value: f.mean_abs_shap_across_timeframes, selected: f.selected_count === f.n_timeframes }));
+    return (shapDetailData?.features ?? []).map((f) => ({ feature: f.feature, value: f.mean_abs_shap, selected: f.selected }));
+  }, [shapTimeframeIdx, shapSummaryData, shapDetailData]);
+
+  // --------------- Derived dashboard data ---------------
+  const kpi = kpiQ.data;
+  const colorScale = useMemo(() => makeHeatmapScale(HEATMAP_SCALE), []);
+  const heatmapRows = heatmapQ.data?.rows ?? [];
+  const heatmapLabels = heatmapQ.data?.period_labels ?? [];
+
+  // --------------- Accuracy callbacks ---------------
+  const handleSliceGroupByChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setSliceGroupBy(e.target.value), []);
+  const handleSliceLagChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setSliceLag(Number(e.target.value)), []);
+  const handleSliceModelsChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => setSliceModels(e.target.value), []);
+  const handleSliceMonthsChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setSliceMonths(Number(e.target.value)), []);
+  const handleCommonDfusToggle = useCallback(() => setCommonDfus((v) => !v), []);
+  const handleLagCurveMetricChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setLagCurveMetric(e.target.value), []);
+  const handleKpiToggle = useCallback((key: string) => setSliceKpis((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]), []);
+  const handleSeasonalityProfileChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setSeasonalityProfile(e.target.value), []);
+  const handleCompetingModelToggle = useCallback((model: string) => {
+    setCompetitionConfig((prev) => { if (!prev) return prev; const checked = prev.models.includes(model); return { ...prev, models: checked ? prev.models.filter((x) => x !== model) : [...prev.models, model] }; });
+  }, []);
+  const handleMetricChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setCompetitionConfig((prev) => (prev ? { ...prev, metric: e.target.value } : prev)), []);
+  const handleLagChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setCompetitionConfig((prev) => (prev ? { ...prev, lag: e.target.value } : prev)), []);
+  const handleSaveConfig = useCallback(() => { if (!competitionConfig) return; saveConfigMutation.mutate(competitionConfig); }, [competitionConfig, saveConfigMutation]);
+  const handleRunCompetition = useCallback(() => { if (!competitionConfig || competitionConfig.models.length < 2) return; runCompetitionMutation.mutate(competitionConfig); }, [competitionConfig, runCompetitionMutation]);
+  const handleShapModelChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => { setShapModelId(e.target.value); setShapTimeframeIdx(null); setShapCluster("all"); }, []);
+  const handleShapTimeframeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setShapTimeframeIdx(e.target.value === "summary" ? null : Number(e.target.value)), []);
+  const handleShapClusterChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setShapCluster(e.target.value), []);
+
+  return (
+    <div className="flex flex-col gap-4 p-4">
+      {/* -------- Header -------- */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Portfolio Analysis</h2>
+          <p className="text-xs text-muted-foreground">
+            Forecast performance and accuracy analytics across your portfolio.
+            Filter by brand, category, item, location.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {planDate?.planning_date && (
+            <span className="flex items-center gap-1 rounded bg-muted/50 px-2 py-1 text-[10px] text-muted-foreground">
+              <CalendarClock className="h-3 w-3" />
+              {planDate.planning_date}
+            </span>
+          )}
+          {hasActiveFilters(filters) && dfuCountQ.data && (
+            <span className="rounded bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">
+              {dfuCountQ.data.count?.toLocaleString() ?? "?"} DFUs
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* -------- Filter bar -------- */}
+      <div className="flex flex-wrap items-center gap-2">
+        {FILTERS.map((fc) =>
+          fc.searchable ? (
+            <SearchableFilterDropdown key={fc.key} config={fc} selected={filters[fc.key]} onSelect={(v) => updateFilter(fc.key, v)} cascade={buildCascade(filters, fc.key)} />
+          ) : (
+            <FilterDropdown key={fc.key} config={fc} selected={filters[fc.key]} onSelect={(v) => updateFilter(fc.key, v)} cascade={buildCascade(filters, fc.key)} />
+          ),
+        )}
+        <TimeGrainToggle value={filters.timeGrain} onChange={(v) => setFilters((prev) => ({ ...prev, timeGrain: v }))} />
+        {hasActiveFilters(filters) && (
+          <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={() => setFilters(EMPTY_FILTERS)}>
+            <RotateCcw className="h-3 w-3" /> Reset
+          </Button>
+        )}
+      </div>
+
+      {/* -------- Panel toggle toolbar -------- */}
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/30 px-3 py-2">
+        {PANELS.map((p) => (
+          <label key={p.key} className="flex items-center gap-1.5 text-xs">
+            <Checkbox checked={visible[p.key]} onCheckedChange={() => toggle(p.key)} className="h-3.5 w-3.5" />
+            <span className={cn(visible[p.key] ? "text-foreground" : "text-muted-foreground")}>{p.label}</span>
+          </label>
+        ))}
+      </div>
+
+      {/* ================================================================ */}
+      {/* KPI Cards                                                        */}
+      {/* ================================================================ */}
+      {visible.kpis && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-foreground">Performance KPIs</h3>
+            <div className="flex items-center gap-1">
+              {KPI_OPTIONS.map((w) => (
+                <button key={w} onClick={() => setKpiWindow(w)} className={cn("rounded px-2 py-0.5 text-[10px] transition-colors", kpiWindow === w ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
+                  {w}mo
+                </button>
+              ))}
+            </div>
+          </div>
+          {kpiQ.isLoading ? (
+            <div className="grid grid-cols-5 gap-3">
+              {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
+            </div>
+          ) : kpi ? (
+            <div className="grid grid-cols-5 gap-3">
+              <KpiCard
+                label="Accuracy %"
+                value={kpi.accuracy_pct != null ? `${kpi.accuracy_pct.toFixed(1)}%` : "N/A"}
+                trend={kpi.deltas?.accuracy_pct != null ? { delta: kpi.deltas.accuracy_pct, direction: trendDirection(kpi.deltas.accuracy_pct), unit: "pp" } : undefined}
+                severity={kpi.accuracy_pct != null ? (kpi.accuracy_pct >= 90 ? "best" : kpi.accuracy_pct >= 80 ? "neutral" : "warning") : "neutral"}
+              />
+              <KpiCard
+                label="WAPE %"
+                value={kpi.wape_pct != null ? `${kpi.wape_pct.toFixed(1)}%` : "N/A"}
+                trend={kpi.deltas?.wape_pct != null ? { delta: -kpi.deltas.wape_pct, direction: trendDirection(-kpi.deltas.wape_pct), unit: "pp" } : undefined}
+                severity={kpi.wape_pct != null ? (kpi.wape_pct <= 10 ? "best" : kpi.wape_pct <= 20 ? "neutral" : "warning") : "neutral"}
+              />
+              <KpiCard
+                label="Bias %"
+                value={kpi.bias_pct != null ? `${kpi.bias_pct.toFixed(1)}%` : "N/A"}
+                trend={kpi.deltas?.bias_pct != null ? { delta: -Math.abs(kpi.deltas.bias_pct), direction: trendDirection(-Math.abs(kpi.deltas.bias_pct)), unit: "pp" } : undefined}
+                severity={kpi.bias_pct != null ? (Math.abs(kpi.bias_pct) <= 5 ? "best" : Math.abs(kpi.bias_pct) <= 15 ? "neutral" : "warning") : "neutral"}
+              />
+              <KpiCard
+                label="Forecast Vol"
+                value={formatNumber(kpi.total_forecast)}
+                severity="neutral"
+              />
+              <KpiCard
+                label="Actual Vol"
+                value={formatNumber(kpi.total_actual)}
+                severity="neutral"
+              />
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* Forecast vs Actual Chart                                         */}
+      {/* ================================================================ */}
+      {visible.forecastChart && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Forecast vs Actual</CardTitle>
+            <div className="flex items-center gap-1">
+              {TREND_OPTIONS.map((w) => (
+                <button key={w} onClick={() => setTrendWindow(w)} className={cn("rounded px-2 py-0.5 text-[10px] transition-colors", trendWindow === w ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
+                  {w}mo
+                </button>
+              ))}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {trendQ.isLoading ? (
+              <Skeleton className="h-[260px]" />
+            ) : (
+              <ForecastTrendChart
+                data={trendQ.data?.months ?? []}
+                theme={theme === "soft" ? "light" : theme}
+                chartColors={{ grid: chartColors.grid, axis: chartColors.axis, tooltip: chartColors.tooltip_bg }}
+                seriesColors={trendColors}
+              />
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ================================================================ */}
+      {/* Accuracy Heatmap                                                 */}
+      {/* ================================================================ */}
+      {visible.heatmap && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Accuracy Heatmap</CardTitle>
+            <div className="flex items-center gap-1">
+              {(["category", "brand", "location"] as const).map((g) => (
+                <button key={g} onClick={() => setHeatmapGrain(g)} className={cn("rounded px-2 py-0.5 text-[10px] capitalize transition-colors", heatmapGrain === g ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
+                  {g}
+                </button>
+              ))}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {heatmapQ.isLoading ? (
+              <Skeleton className="h-[200px]" />
+            ) : (
+              <HeatmapGrid
+                rows={heatmapRows}
+                columnLabels={heatmapLabels}
+                colorScale={colorScale}
+              />
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ================================================================ */}
+      {/* Accuracy Comparison (slice table) + Lag Curve                   */}
+      {/* ================================================================ */}
+      {(visible.accuracy || visible.lagCurve) && (
+        <Card className="animate-fade-in">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <ChartColumn className="h-5 w-5" />
+              <CardTitle className="text-base">Accuracy Comparison</CardTitle>
+            </div>
+            <CardDescription className="max-w-3xl">
+              Compare forecast accuracy across models sliced by DFU attribute (cluster, item, location, brand, etc.).
+              Use the <strong>Group By</strong> dropdown to change the slice dimension, <strong>Lag</strong> to select
+              the forecast horizon (0 = same month, 4 = 4 months ahead), and <strong>Window</strong> to set the
+              trailing months of data. The table shows WAPE, accuracy %, and bias for each model per group.
+              Below, the <strong>Lag Curve</strong> chart visualizes how accuracy degrades across horizons.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {visible.accuracy && (
+              <SliceTablePanel
+                sliceGroupBy={sliceGroupBy} sliceLag={sliceLag} sliceModels={sliceModels}
+                sliceKpis={sliceKpis} sliceMonths={sliceMonths} commonDfus={commonDfus}
+                seasonalityProfile={seasonalityProfile} seasonalityProfiles={seasonalityProfiles}
+                loadingSlice={loadingSlice} sliceData={sliceData} allModels={allModels}
+                commonDfuCount={slicePayload?.common_dfu_count ?? null}
+                dfuCounts={slicePayload?.dfu_counts ?? null}
+                onSliceGroupByChange={handleSliceGroupByChange}
+                onSliceLagChange={handleSliceLagChange}
+                onSliceModelsChange={handleSliceModelsChange}
+                onSliceMonthsChange={handleSliceMonthsChange}
+                onCommonDfusToggle={handleCommonDfusToggle}
+                onKpiToggle={handleKpiToggle}
+                onSeasonalityProfileChange={handleSeasonalityProfileChange}
+              />
+            )}
+            {visible.lagCurve && (
+              <TrendChartPanel
+                lagCurveData={lagCurveData} lagModels={lagModels}
+                sliceKpis={sliceKpis} activeLagMetric={activeLagMetric}
+                onLagCurveMetricChange={handleLagCurveMetricChange}
+              />
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ================================================================ */}
+      {/* Champion Panel                                                   */}
+      {/* ================================================================ */}
+      {visible.champion && (
+        <ChampionPanel
+          competitionConfig={competitionConfig}
+          availableModels={configPayload?.available_models ?? []}
+          championSummary={summaryPayload?.summary ?? null}
+          savingConfig={saveConfigMutation.isPending}
+          runningCompetition={runCompetitionMutation.isPending}
+          onCompetingModelToggle={handleCompetingModelToggle}
+          onMetricChange={handleMetricChange}
+          onLagChange={handleLagChange}
+          onSaveConfig={handleSaveConfig}
+          onRunCompetition={handleRunCompetition}
+        />
+      )}
+
+      {/* ================================================================ */}
+      {/* SHAP Panel                                                       */}
+      {/* ================================================================ */}
+      {visible.shap && (
+        <ShapPanel
+          shapOpen={shapOpen} shapModels={shapModels} activeShapModel={activeShapModel}
+          shapTimeframes={shapTimeframesData?.timeframes ?? []}
+          shapTimeframeIdx={shapTimeframeIdx} shapFeatures={shapFeatures}
+          loadingShap={shapTimeframeIdx === null ? loadingShapSummary : loadingShapDetail}
+          shapClusters={shapClustersData?.clusters ?? []}
+          shapCluster={shapCluster}
+          onToggleOpen={() => setShapOpen((v) => !v)}
+          onModelChange={handleShapModelChange}
+          onTimeframeChange={handleShapTimeframeChange}
+          onClusterChange={handleShapClusterChange}
+        />
+      )}
+
+      {/* ================================================================ */}
+      {/* Bias Corrections Panel                                           */}
+      {/* ================================================================ */}
+      {visible.bias && (
+        <BiasCorrectionsPanel />
+      )}
+    </div>
+  );
+}

@@ -80,6 +80,8 @@ export const queryKeys = {
   dashboardAlerts: (params: Record<string, unknown>) => ["dashboard-alerts", params] as const,
   dashboardTopMovers: (params: Record<string, unknown>) => ["dashboard-top-movers", params] as const,
   dashboardHeatmap: (params: Record<string, unknown>) => ["dashboard-heatmap", params] as const,
+  dashboardTrend: (params: Record<string, unknown>) => ["dashboard-trend", params] as const,
+  customerMap: (groupBy: string) => ["customer-map", groupBy] as const,
   // Job scheduler keys (Feature 39)
   jobTypes: () => ["job-types"] as const,
   jobs: (params: Record<string, unknown>) => ["jobs", params] as const,
@@ -655,6 +657,39 @@ export async function fetchDashboardHeatmap(
   const qs = new URLSearchParams({ grain, periods: String(periods) });
   appendFilterParams(qs, filters);
   return fetchJson(`/dashboard/heatmap?${qs}`);
+}
+
+export interface TrendPoint {
+  month: string;
+  forecast: number;
+  actual: number;
+}
+
+export async function fetchDashboardTrend(
+  window = 12,
+  filters?: DashboardFilterParams,
+): Promise<{ months: TrendPoint[] }> {
+  const qs = new URLSearchParams({ window: String(window) });
+  appendFilterParams(qs, filters);
+  return fetchJson(`/dashboard/trend?${qs}`);
+}
+
+// ---------------------------------------------------------------------------
+// Customer Map queries
+// ---------------------------------------------------------------------------
+
+export interface CustomerMapLocation {
+  label: string;
+  customer_count: number;
+  state?: string;
+  lat?: number;
+  lon?: number;
+}
+
+export async function fetchCustomerMap(
+  groupBy: "state" | "zip" | "city" = "state",
+): Promise<{ locations: CustomerMapLocation[]; group_by: string; total: number }> {
+  return fetchJson(`/dashboard/customer-map?group_by=${groupBy}`);
 }
 
 // ---------------------------------------------------------------------------

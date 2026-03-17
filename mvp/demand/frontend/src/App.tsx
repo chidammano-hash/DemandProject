@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AppSidebar } from "@/components/AppSidebar";
 import { ThemeSelector } from "@/components/ThemeSelector";
-import { GlobalFilterBar } from "@/components/GlobalFilterBar";
+// GlobalFilterBar removed — filters are now local to AggregateAnalysisTab
 import { LoadingElement } from "@/components/LoadingElement";
 import { KeyboardShortcutHelp } from "@/components/KeyboardShortcutHelp";
 import { useTheme } from "@/hooks/useTheme";
@@ -31,11 +31,10 @@ import ChatPanel from "./tabs/ChatPanel";
 // ---------------------------------------------------------------------------
 // Lazy-loaded tab components
 // ---------------------------------------------------------------------------
-const DashboardTab = lazy(() => import("./tabs/DashboardTab"));
+const AggregateAnalysisTab = lazy(() => import("./tabs/AggregateAnalysisTab").then((m) => ({ default: m.AggregateAnalysisTab })));
 const ExplorerTab = lazy(() => import("./tabs/ExplorerTab").then((m) => ({ default: m.ExplorerTab })));
 const ClustersTab = lazy(() => import("./tabs/ClustersTab"));
 const ItemAnalysisTab = lazy(() => import("./tabs/ItemAnalysisTab").then((m) => ({ default: m.ItemAnalysisTab })));
-const AccuracyTab = lazy(() => import("./tabs/AccuracyTab").then((m) => ({ default: m.AccuracyTab })));
 const MarketIntelTab = lazy(() => import("./tabs/MarketIntelTab"));
 const InvBacktestTab = lazy(() => import("./tabs/InvBacktestTab"));
 const InvPlanningTab = lazy(() => import("./tabs/InvPlanningTab").then((m) => ({ default: m.InvPlanningTab })));
@@ -47,6 +46,7 @@ const ExceptionsTab = StoryboardTab; // alias — PL-003 rename
 const SopTab = lazy(() => import("./tabs/SopTab"));
 const FVATab = lazy(() => import("./tabs/FVATab"));
 const DataQualityTab = lazy(() => import("./tabs/DataQualityTab"));
+const CustomerMapTab = lazy(() => import("./tabs/CustomerMapTab").then((m) => ({ default: m.CustomerMapTab })));
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -147,18 +147,13 @@ export default function App() {
 
           {/* Main content area */}
           <div className="flex flex-1 flex-col overflow-hidden">
-            {/* Global filter bar — hidden on tabs that don't consume it (PL-005) */}
-            {!["aiPlanner", "jobs", "chat", "clusters", "invBacktest", "exceptions", "storyboard"].includes(activeTab) && (
-              <GlobalFilterBar />
-            )}
-
             {/* Tab content */}
             <div id="tab-content" role="tabpanel" aria-label={`${activeTab} tab content`} className="flex-1 overflow-y-auto p-4 md:p-6">
               <div className="mx-auto max-w-[1600px]">
-                {activeTab === "overview" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="overview" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="overview" />}>
-                      <DashboardTab onNavigate={handleTabSwitch} />
+                {(activeTab === "aggregateAnalysis" || activeTab === "overview" || activeTab === "accuracy") && (
+                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="aggregateAnalysis" />} resetKeys={[activeTab]}>
+                    <Suspense fallback={<TabSuspenseFallback tabKey="aggregateAnalysis" />}>
+                      <AggregateAnalysisTab onNavigate={handleTabSwitch} />
                     </Suspense>
                   </ErrorBoundary>
                 )}
@@ -180,13 +175,6 @@ export default function App() {
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="itemAnalysis" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="itemAnalysis" />}>
                       <ItemAnalysisTab />
-                    </Suspense>
-                  </ErrorBoundary>
-                )}
-                {activeTab === "accuracy" && (
-                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="accuracy" />} resetKeys={[activeTab]}>
-                    <Suspense fallback={<TabSuspenseFallback tabKey="accuracy" />}>
-                      <AccuracyTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}
@@ -257,6 +245,13 @@ export default function App() {
                   <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="dataQuality" />} resetKeys={[activeTab]}>
                     <Suspense fallback={<TabSuspenseFallback tabKey="dataQuality" />}>
                       <DataQualityTab />
+                    </Suspense>
+                  </ErrorBoundary>
+                )}
+                {activeTab === "customerMap" && (
+                  <ErrorBoundary FallbackComponent={(props) => <TabErrorFallback {...props} tabKey="customerMap" />} resetKeys={[activeTab]}>
+                    <Suspense fallback={<TabSuspenseFallback tabKey="customerMap" />}>
+                      <CustomerMapTab />
                     </Suspense>
                   </ErrorBoundary>
                 )}

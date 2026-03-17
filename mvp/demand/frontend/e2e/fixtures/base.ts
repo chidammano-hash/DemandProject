@@ -59,15 +59,14 @@ export async function clickNavItem(
 export const SIDEBAR_LABELS = [
   "AI Planner",
   "Control Tower",
-  "Overview",
-  "Accuracy",
+  "Portfolio",
   "Item Analysis",
+  "FVA & ROI",
   "Exceptions",
   "Inv. Planning",
   "S&OP",
   "Clusters",
   "Inv. Backtest",
-  "FVA & ROI",
   "Jobs",
   "Data Quality",
   "Explorer",
@@ -76,9 +75,9 @@ export const SIDEBAR_LABELS = [
 ] as const;
 
 /** Tabs that show the global filter bar */
+/** Tabs that previously showed the global filter bar — now filters are local to aggregateAnalysis */
 export const FILTER_BAR_TABS = [
-  "overview",
-  "accuracy",
+  "aggregateAnalysis",
   "itemAnalysis",
   "invPlanning",
   "explorer",
@@ -90,6 +89,7 @@ export const FILTER_BAR_TABS = [
 ] as const;
 
 /** Tabs that hide the global filter bar */
+/** All tabs that do NOT have a filter bar */
 export const NO_FILTER_BAR_TABS = [
   "aiPlanner",
   "jobs",
@@ -98,4 +98,12 @@ export const NO_FILTER_BAR_TABS = [
   "invBacktest",
   "exceptions",
   "storyboard",
+  "itemAnalysis",
+  "invPlanning",
+  "explorer",
+  "intel",
+  "sop",
+  "controlTower",
+  "fva",
+  "dataQuality",
 ] as const;

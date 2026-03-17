@@ -517,55 +517,6 @@ export function UnifiedChartPanel({
         </div>
       </div>
 
-      {/* ---- Inventory parameters summary ---- */}
-      {trendParams &&
-        (trendParams.safety_stock != null ||
-          trendParams.eoq != null ||
-          trendParams.order_policy != null) && (
-          <div className="rounded border border-muted bg-muted/30 px-3 py-2 text-xs">
-            <p className="mb-1 font-semibold text-foreground">Inventory Parameters</p>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-muted-foreground sm:grid-cols-4">
-              {trendParams.order_policy != null && (
-                <span>
-                  <strong>Policy:</strong> {trendParams.order_policy} (
-                  {trendParams.policy_type?.replace(/_/g, " ")})
-                </span>
-              )}
-              {trendParams.service_level_target != null && (
-                <span>
-                  <strong>SL:</strong> {(trendParams.service_level_target * 100).toFixed(0)}% (Z=
-                  {trendParams.z_score?.toFixed(2)})
-                </span>
-              )}
-              {trendParams.safety_stock != null && (
-                <span>
-                  <strong>SS:</strong> {trendParams.safety_stock.toLocaleString()}u
-                </span>
-              )}
-              {trendParams.reorder_point_units != null && (
-                <span>
-                  <strong>ROP:</strong> {trendParams.reorder_point_units.toLocaleString()}u
-                </span>
-              )}
-              {trendParams.eoq != null && (
-                <span>
-                  <strong>EOQ:</strong> {trendParams.eoq.toLocaleString()}u
-                </span>
-              )}
-              {trendParams.demand_cv != null && (
-                <span>
-                  <strong>CV:</strong> {trendParams.demand_cv.toFixed(3)} (
-                  {trendParams.demand_cv < 0.3
-                    ? "stable"
-                    : trendParams.demand_cv < 0.8
-                      ? "moderate"
-                      : "volatile"}
-                  )
-                </span>
-              )}
-            </div>
-          </div>
-        )}
     </div>
   );
 }
