@@ -100,7 +100,6 @@ export default defineConfig({
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
-      // --- Spec 08-xx: Next-gen platform proxies ---
       "/auth": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,

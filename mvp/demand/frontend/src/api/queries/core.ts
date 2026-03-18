@@ -25,6 +25,7 @@ import type {
   ShapSummaryPayload,
   ShapTimeframesPayload,
   ShapTimeframeDetailPayload,
+  ShapFilterParams,
   DfuShapPayload,
 } from "@/types/shap";
 import type {
@@ -105,9 +106,9 @@ export const queryKeys = {
   policyCompliance: (f?: Record<string, unknown>) => ["policy-compliance", f ?? {}] as const,
   // SHAP feature importance keys (Feature 42)
   shapModels: () => ["shap-models"] as const,
-  shapSummary: (modelId: string, topN: number) => ["shap-summary", modelId, topN] as const,
+  shapSummary: (modelId: string, topN: number, filters?: ShapFilterParams) => ["shap-summary", modelId, topN, filters ?? {}] as const,
   shapTimeframes: (modelId: string) => ["shap-timeframes", modelId] as const,
-  shapTimeframeDetail: (modelId: string, idx: number, topN: number, cluster?: string) => ["shap-timeframe-detail", modelId, idx, topN, cluster ?? "all"] as const,
+  shapTimeframeDetail: (modelId: string, idx: number, topN: number, cluster?: string, filters?: ShapFilterParams) => ["shap-timeframe-detail", modelId, idx, topN, cluster ?? "all", filters ?? {}] as const,
   shapClusters: (modelId: string) => ["shap-clusters", modelId] as const,
   dfuShap: (modelId: string, itemNo: string, loc: string, topN: number) => ["dfu-shap", modelId, itemNo, loc, topN] as const,
   // AI Planner keys (IPAIfeature1)
@@ -355,6 +356,7 @@ export interface SliceParams {
   brand?: string;
   category?: string;
   market?: string;
+  cluster_assignment?: string;
 }
 
 export async function fetchAccuracySlice(params: SliceParams): Promise<AccuracySlicePayload> {
@@ -372,6 +374,7 @@ export async function fetchAccuracySlice(params: SliceParams): Promise<AccuracyS
     brand: params.brand,
     category: params.category,
     market: params.market,
+    cluster_assignment: params.cluster_assignment,
   });
   return fetchJson(`/forecast/accuracy/slice?${qs}`);
 }
@@ -388,6 +391,7 @@ export interface LagCurveParams {
   brand?: string;
   category?: string;
   market?: string;
+  cluster_assignment?: string;
 }
 
 export async function fetchLagCurve(params: LagCurveParams): Promise<LagCurvePayload> {
@@ -403,6 +407,7 @@ export async function fetchLagCurve(params: LagCurveParams): Promise<LagCurvePay
     brand: params.brand,
     category: params.category,
     market: params.market,
+    cluster_assignment: params.cluster_assignment,
   });
   return fetchJson(`/forecast/accuracy/lag-curve?${qs}`);
 }
@@ -567,6 +572,7 @@ export interface CascadeFilterParams {
   location?: string;
   market?: string;
   channel?: string;
+  cluster?: string;
 }
 
 export async function fetchDistinctValues(
@@ -585,6 +591,7 @@ export async function fetchDistinctValues(
     if (cascade.location) qs.set("location", cascade.location);
     if (cascade.market) qs.set("market", cascade.market);
     if (cascade.channel) qs.set("channel", cascade.channel);
+    if (cascade.cluster) qs.set("cluster", cascade.cluster);
   }
   return fetchJson(`/domains/${encodeURIComponent(domain)}/distinct?${qs}`);
 }
@@ -599,6 +606,7 @@ export interface DashboardFilterParams {
   channel?: string[];
   item?: string[];
   location?: string[];
+  cluster?: string[];
   time_grain?: "month" | "quarter";
 }
 
@@ -610,6 +618,7 @@ function appendFilterParams(qs: URLSearchParams, params?: DashboardFilterParams)
   if (params.channel?.length) qs.set("channel", params.channel.join(","));
   if (params.item?.length) qs.set("item", params.item.join(","));
   if (params.location?.length) qs.set("location", params.location.join(","));
+  if (params.cluster?.length) qs.set("cluster_assignment", params.cluster.join(","));
   if (params.time_grain) qs.set("time_grain", params.time_grain);
 }
 
@@ -656,12 +665,15 @@ export async function fetchDashboardTopMovers(
   return fetchJson(`/dashboard/top-movers?${qs}`);
 }
 
+export type HeatmapGrain = "category" | "brand" | "location" | "class" | "sub_class" | "date";
+
 export async function fetchDashboardHeatmap(
-  grain: "category" | "brand" | "location" = "category",
+  grain: HeatmapGrain = "category",
   periods = 4,
   filters?: DashboardFilterParams,
+  colGrain: HeatmapGrain = "date",
 ): Promise<{ rows: HeatmapRow[]; period_labels: string[]; metric: string }> {
-  const qs = new URLSearchParams({ grain, periods: String(periods) });
+  const qs = new URLSearchParams({ grain, col_grain: colGrain, periods: String(periods) });
   appendFilterParams(qs, filters);
   return fetchJson(`/dashboard/heatmap?${qs}`);
 }
@@ -881,8 +893,14 @@ export async function fetchShapModels(): Promise<ShapModelsPayload> {
   return fetchJson("/forecast/shap/models");
 }
 
-export async function fetchShapSummary(modelId: string, topN = 15): Promise<ShapSummaryPayload> {
-  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/summary?top_n=${topN}`);
+export async function fetchShapSummary(modelId: string, topN = 15, filters?: ShapFilterParams): Promise<ShapSummaryPayload> {
+  const qs = new URLSearchParams({ top_n: String(topN) });
+  if (filters?.item) qs.set("item", filters.item);
+  if (filters?.location) qs.set("location", filters.location);
+  if (filters?.brand) qs.set("brand", filters.brand);
+  if (filters?.category) qs.set("category", filters.category);
+  if (filters?.market) qs.set("market", filters.market);
+  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/summary?${qs}`);
 }
 
 export async function fetchShapTimeframes(modelId: string): Promise<ShapTimeframesPayload> {
@@ -894,8 +912,14 @@ export async function fetchShapTimeframeDetail(
   idx: number,
   topN = 15,
   cluster = "all",
+  filters?: ShapFilterParams,
 ): Promise<ShapTimeframeDetailPayload> {
   const qs = new URLSearchParams({ top_n: String(topN), cluster });
+  if (filters?.item) qs.set("item", filters.item);
+  if (filters?.location) qs.set("location", filters.location);
+  if (filters?.brand) qs.set("brand", filters.brand);
+  if (filters?.category) qs.set("category", filters.category);
+  if (filters?.market) qs.set("market", filters.market);
   return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/timeframe/${idx}?${qs}`);
 }
 

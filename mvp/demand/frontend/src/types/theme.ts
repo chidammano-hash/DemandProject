@@ -99,7 +99,7 @@ export interface ProductTheme {
 }
 
 // Sidebar navigation types
-export type SidebarSection = "overview" | "demand" | "supply" | "intelligence" | "system";
+export type SidebarSection = "command" | "demand" | "supply" | "plan" | "system" | "overview" | "intelligence";
 
 export interface SidebarItem {
   key: string;
@@ -117,6 +117,7 @@ export interface GlobalFilters {
   channel: string[];
   item: string[];
   location: string[];
+  cluster: string[];
   timeGrain: "month" | "quarter";
 }
 
@@ -160,6 +161,7 @@ export interface Mover {
 export interface HeatmapRow {
   label: string;
   values: number[];
+  counts?: number[];
 }
 
 export interface DistinctValuesPayload {

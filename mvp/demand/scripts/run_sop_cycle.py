@@ -98,9 +98,8 @@ def compute_cycle_dates(cycle_month: date, cfg: dict) -> dict:
 def create_sop_cycle(
     conn: psycopg.Connection,
     cycle_month: date,
-    cycle_name: str,
     cfg: dict,
-    created_by: str = "system",
+    run_by: str = "system",
 ) -> int:
     """
     Create a new S&OP cycle record.
@@ -108,32 +107,21 @@ def create_sop_cycle(
     Args:
         conn: DB connection
         cycle_month: First day of the planning month
-        cycle_name: Descriptive name (e.g., "April 2026 S&OP")
         cfg: sop config
-        created_by: User creating the cycle
+        run_by: User creating the cycle
 
     Returns:
         cycle_id of the created record
     """
-    dates = compute_cycle_dates(cycle_month, cfg)
-    horizon_months = cfg.get("planning_horizon_months", 12)
-
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO fact_sop_cycles (
-                cycle_month, cycle_name, planning_horizon_months,
-                current_stage, created_by,
-                scheduled_demand_review_date, scheduled_supply_review_date,
-                scheduled_pre_sop_date, scheduled_executive_sop_date
-            ) VALUES (%s, %s, %s, 'demand_review', %s, %s, %s, %s, %s)
+                cycle_month, status, run_by
+            ) VALUES (%s, 'demand_review', %s)
             RETURNING cycle_id
             """,
-            (
-                cycle_month, cycle_name, horizon_months, created_by,
-                dates["demand_review_date"], dates["supply_review_date"],
-                dates["pre_sop_date"], dates["executive_sop_date"],
-            ),
+            (cycle_month, run_by),
         )
         row = cur.fetchone()
     return row[0]
@@ -143,7 +131,6 @@ def advance_sop_cycle(
     conn: psycopg.Connection,
     cycle_id: int,
     performed_by: str,
-    notes: Optional[str] = None,
 ) -> str:
     """
     Advance an S&OP cycle to the next stage.
@@ -152,7 +139,6 @@ def advance_sop_cycle(
         conn: DB connection
         cycle_id: ID of the cycle to advance
         performed_by: User advancing the stage
-        notes: Optional stage notes
 
     Returns:
         The new stage name
@@ -162,7 +148,7 @@ def advance_sop_cycle(
     """
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT current_stage FROM fact_sop_cycles WHERE cycle_id = %s",
+            "SELECT status FROM fact_sop_cycles WHERE cycle_id = %s",
             (cycle_id,),
         )
         row = cur.fetchone()
@@ -173,33 +159,24 @@ def advance_sop_cycle(
     current = row[0]
     new_stage = next_stage(current)
 
-    # Set the completion timestamp for the current stage
-    stage_completed_col = f"{current}_completed_at"
-    stage_approved_col = f"{current}_approved_by"
-
-    # Build dynamic update — only set columns that exist
+    # Build update — set the stage-specific timestamp for the completed stage
     update_fields = [
-        f"current_stage = %s",
-        f"last_updated_at = NOW()",
+        "status = %s",
+        "facilitated_by = %s",
+        "updated_at = NOW()",
     ]
-    params: list = [new_stage]
+    params: list = [new_stage, performed_by]
 
-    # Stage-specific timestamp columns
+    # Stage-specific timestamp columns (schema: demand_review_at, supply_review_at, etc.)
     _stage_ts_map = {
-        "demand_review": ("demand_review_completed_at", "demand_review_approved_by"),
-        "supply_review": ("supply_review_completed_at", "supply_review_approved_by"),
-        "pre_sop": ("pre_sop_completed_at", "pre_sop_approved_by"),
-        "executive_sop": ("executive_sop_completed_at", "executive_sop_approved_by"),
+        "demand_review": "demand_review_at",
+        "supply_review": "supply_review_at",
+        "pre_sop": "pre_sop_at",
+        "executive_sop": "executive_sop_at",
     }
     if current in _stage_ts_map:
-        ts_col, by_col = _stage_ts_map[current]
+        ts_col = _stage_ts_map[current]
         update_fields.append(f"{ts_col} = NOW()")
-        update_fields.append(f"{by_col} = %s")
-        params.append(performed_by)
-
-    if notes:
-        update_fields.append("stage_notes = %s")
-        params.append(notes)
 
     params.append(cycle_id)
 
@@ -222,7 +199,7 @@ def populate_demand_review(
     Populate fact_sop_demand_review from the current champion forecast.
 
     Reads fact_external_forecast_monthly (model_id='champion') for the
-    planning horizon and inserts one row per DFU per month.
+    planning horizon and aggregates by item category (via dim_item join).
 
     Returns:
         Number of rows inserted
@@ -230,24 +207,24 @@ def populate_demand_review(
     horizon_end = cycle_month + relativedelta(months=horizon_months)
     sql = """
         INSERT INTO fact_sop_demand_review (
-            cycle_id, item_no, loc, plan_month,
-            statistical_forecast_qty, consensus_qty
+            cycle_id, item_category,
+            statistical_demand_qty, consensus_demand_qty
         )
         SELECT
             %s,
-            f.dmdunit,
-            f.loc,
-            f.startdate,
-            f.basefcst_pref,
-            f.basefcst_pref   -- start with statistical as consensus
+            COALESCE(i.category, 'Unknown'),
+            SUM(f.basefcst_pref),
+            SUM(f.basefcst_pref)   -- start with statistical as consensus
         FROM fact_external_forecast_monthly f
+        LEFT JOIN dim_item i ON i.item_no = f.dmdunit
         WHERE f.model_id = 'champion'
           AND f.startdate >= %s
           AND f.startdate < %s
-        ON CONFLICT (cycle_id, item_no, loc, plan_month)
+        GROUP BY COALESCE(i.category, 'Unknown')
+        ON CONFLICT (cycle_id, item_category)
         DO UPDATE SET
-            statistical_forecast_qty = EXCLUDED.statistical_forecast_qty,
-            updated_at = NOW()
+            statistical_demand_qty = EXCLUDED.statistical_demand_qty,
+            consensus_demand_qty = EXCLUDED.consensus_demand_qty
     """
     with conn.cursor() as cur:
         cur.execute(sql, (cycle_id, cycle_month, horizon_end))
@@ -259,30 +236,26 @@ def populate_supply_constraints(
     cycle_id: int,
 ) -> int:
     """
-    Populate supply constraints from current inventory + planned orders.
+    Populate supply constraints from current replenishment exceptions.
 
     Returns:
         Number of constraint rows inserted
     """
     sql = """
         INSERT INTO fact_sop_supply_constraints (
-            cycle_id, item_no, loc, constraint_type,
-            constrained_qty, unconstrained_demand_qty, gap_qty
+            cycle_id, constraint_type, supplier_id,
+            impact_qty, impact_period, mitigation_status
         )
         SELECT
             %s,
-            e.item_no,
-            e.loc,
             e.exception_type,
+            NULL,
             e.recommended_order_qty,
-            e.recommended_order_qty * 1.10,   -- assume 10% unconstrained demand above recommendation
-            e.recommended_order_qty * 0.10
+            e.created_at::DATE,
+            'open'
         FROM fact_replenishment_exceptions e
         WHERE e.status NOT IN ('rejected', 'closed')
-        ON CONFLICT (cycle_id, item_no, loc, constraint_type)
-        DO UPDATE SET
-            constrained_qty = EXCLUDED.constrained_qty,
-            updated_at = NOW()
+        ON CONFLICT DO NOTHING
     """
     with conn.cursor() as cur:
         cur.execute(sql, (cycle_id,))
@@ -299,36 +272,56 @@ def generate_approved_plan_snapshot(
     Generate the approved plan snapshot from consensus demand.
 
     Called when a cycle is advanced to 'approved' stage.
-    Copies fact_sop_demand_review rows into fact_sop_approved_plan.
+    Creates fact_sop_approved_plan rows from the champion forecast
+    for the planning horizon, using consensus demand quantities.
 
     Returns:
         Number of rows in the approved plan
     """
-    plan_version = f"sop_{cycle_month.isoformat()}_approved"
+    cfg = load_config()
+    horizon_months = cfg.get("planning_horizon_months", 12)
+    horizon_end = cycle_month + relativedelta(months=horizon_months)
+
+    # Update cycle with approved info
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE fact_sop_cycles
+            SET approved_by = %s,
+                approved_plan_version = %s,
+                approved_at = NOW(),
+                updated_at = NOW()
+            WHERE cycle_id = %s
+            """,
+            (approved_by, f"sop_{cycle_month.isoformat()}_approved", cycle_id),
+        )
+
+    # Insert approved plan rows from champion forecast
     sql = """
         INSERT INTO fact_sop_approved_plan (
             cycle_id, item_no, loc, plan_month,
-            approved_qty, plan_version, approved_by
+            approved_qty, statistical_qty, source, locked
         )
         SELECT
-            dr.cycle_id,
-            dr.item_no,
-            dr.loc,
-            dr.plan_month,
-            COALESCE(dr.consensus_qty, dr.statistical_forecast_qty),
             %s,
-            %s
-        FROM fact_sop_demand_review dr
-        WHERE dr.cycle_id = %s
+            f.dmdunit,
+            f.loc,
+            f.startdate,
+            f.basefcst_pref,
+            f.basefcst_pref,
+            'consensus',
+            TRUE
+        FROM fact_external_forecast_monthly f
+        WHERE f.model_id = 'champion'
+          AND f.startdate >= %s
+          AND f.startdate < %s
         ON CONFLICT (cycle_id, item_no, loc, plan_month)
         DO UPDATE SET
             approved_qty = EXCLUDED.approved_qty,
-            plan_version = EXCLUDED.plan_version,
-            approved_by  = EXCLUDED.approved_by,
-            approved_at  = NOW()
+            statistical_qty = EXCLUDED.statistical_qty
     """
     with conn.cursor() as cur:
-        cur.execute(sql, (plan_version, approved_by, cycle_id))
+        cur.execute(sql, (cycle_id, cycle_month, horizon_end))
         return cur.rowcount
 
 
@@ -354,15 +347,14 @@ def run(
             if not cycle_month_str:
                 raise ValueError("--cycle-month required for 'create' action")
             cycle_month = date.fromisoformat(cycle_month_str)
-            cycle_name = f"{cycle_month.strftime('%B %Y')} S&OP"
 
             if dry_run:
                 dates = compute_cycle_dates(cycle_month, cfg)
                 return {"action": "create", "cycle_month": str(cycle_month),
-                        "cycle_name": cycle_name, "scheduled_dates": {k: str(v) for k, v in dates.items()},
+                        "scheduled_dates": {k: str(v) for k, v in dates.items()},
                         "dry_run": True}
 
-            new_cycle_id = create_sop_cycle(conn, cycle_month, cycle_name, cfg, performed_by)
+            new_cycle_id = create_sop_cycle(conn, cycle_month, cfg, performed_by)
             conn.commit()
             return {"action": "create", "cycle_id": new_cycle_id, "cycle_month": str(cycle_month),
                     "stage": "demand_review"}
@@ -373,7 +365,7 @@ def run(
 
             if dry_run:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT current_stage FROM fact_sop_cycles WHERE cycle_id = %s", (cycle_id,))
+                    cur.execute("SELECT status FROM fact_sop_cycles WHERE cycle_id = %s", (cycle_id,))
                     row = cur.fetchone()
                 if not row:
                     return {"error": f"Cycle {cycle_id} not found"}
@@ -398,7 +390,7 @@ def run(
                 raise ValueError("--cycle-id required for 'populate-demand' action")
 
             with conn.cursor() as cur:
-                cur.execute("SELECT cycle_month, planning_horizon_months FROM fact_sop_cycles WHERE cycle_id = %s",
+                cur.execute("SELECT cycle_month FROM fact_sop_cycles WHERE cycle_id = %s",
                             (cycle_id,))
                 row = cur.fetchone()
 
@@ -406,7 +398,7 @@ def run(
                 return {"error": f"Cycle {cycle_id} not found"}
 
             cycle_month = row[0]
-            horizon = row[1] or 12
+            horizon = cfg.get("planning_horizon_months", 12)
 
             if dry_run:
                 return {"action": "populate-demand", "cycle_id": cycle_id,

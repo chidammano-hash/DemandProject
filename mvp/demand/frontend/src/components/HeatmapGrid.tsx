@@ -1,26 +1,67 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface HeatmapGridProps {
-  rows: { label: string; values: number[] }[];
+  rows: { label: string; values: number[]; counts?: number[] }[];
   columnLabels: string[];
   colorScale: (value: number) => string;
   valueFormat?: (value: number) => string;
   onCellClick?: (row: string, col: string) => void;
   className?: string;
+  /** Show a gradient legend bar below the heatmap */
+  showLegend?: boolean;
+  /** Label for the low end of the legend (default: "0%") */
+  minLabel?: string;
+  /** Label for the high end of the legend (default: "100%") */
+  maxLabel?: string;
 }
 
 const defaultFormat = (v: number) => `${v.toFixed(1)}%`;
 
+/** Sample the colorScale function at even intervals to build a CSS gradient */
+function buildLegendGradient(colorScale: (value: number) => string): string {
+  const stops = [0, 25, 50, 75, 100].map((v) => colorScale(v));
+  return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
 export function HeatmapGrid({
-  rows,
-  columnLabels,
+  rows: rawRows,
+  columnLabels: rawColumnLabels,
   colorScale,
   valueFormat = defaultFormat,
   onCellClick,
   className,
+  showLegend = false,
+  minLabel = "0%",
+  maxLabel = "100%",
 }: HeatmapGridProps) {
   const [hoveredCell, setHoveredCell] = useState<{ row: number; col: number } | null>(null);
+
+  // ── Prune empty rows/columns (all DFU counts = 0) ─────────────────
+  const { rows, columnLabels } = useMemo(() => {
+    const hasCounts = rawRows.some((r) => r.counts && r.counts.length > 0);
+    if (!hasCounts) return { rows: rawRows, columnLabels: rawColumnLabels };
+
+    // Find columns that have at least one non-zero count across all rows
+    const keepCol = rawColumnLabels.map((_, ci) =>
+      rawRows.some((r) => (r.counts?.[ci] ?? 0) > 0),
+    );
+    // Find rows that have at least one non-zero count in a kept column
+    const keepRow = rawRows.map((r) =>
+      r.counts ? r.counts.some((c, ci) => keepCol[ci] && c > 0) : true,
+    );
+
+    const filteredCols = rawColumnLabels.filter((_, ci) => keepCol[ci]);
+    const filteredRows = rawRows
+      .filter((_, ri) => keepRow[ri])
+      .map((r) => ({
+        label: r.label,
+        values: r.values.filter((_, ci) => keepCol[ci]),
+        counts: r.counts?.filter((_, ci) => keepCol[ci]),
+      }));
+
+    return { rows: filteredRows, columnLabels: filteredCols };
+  }, [rawRows, rawColumnLabels]);
 
   if (rows.length === 0) {
     return (
@@ -55,30 +96,53 @@ export function HeatmapGrid({
               {row.label}
             </div>
             {row.values.map((value, colIdx) => {
-              const bg = colorScale(value);
               const isHovered = hoveredCell?.row === rowIdx && hoveredCell?.col === colIdx;
+              const dfuCount = row.counts?.[colIdx];
+              const hasCounts = row.counts != null && row.counts.length > 0;
+              const isEmpty = hasCounts && (dfuCount ?? 0) === 0;
+              const bg = isEmpty ? "var(--color-muted, #e5e7eb)" : colorScale(value);
               return (
                 <div
                   key={`${row.label}-${colIdx}`}
                   className={cn(
                     "relative flex items-center justify-center rounded-sm px-1 py-2 text-[11px] font-medium tabular-nums transition-all duration-150 hover:opacity-90",
-                    isHovered && "scale-110 z-10 shadow-md",
-                    onCellClick && "cursor-pointer",
+                    isHovered && !isEmpty && "scale-110 z-10 shadow-md",
+                    onCellClick && !isEmpty && "cursor-pointer",
                   )}
-                  style={{ backgroundColor: bg, color: value > 80 ? "#fff" : value < 60 ? "#fff" : "#1a1a1a" }}
-                  onMouseEnter={() => setHoveredCell({ row: rowIdx, col: colIdx })}
+                  style={{
+                    backgroundColor: bg,
+                    color: isEmpty ? "transparent" : value > 80 ? "#fff" : value < 60 ? "#fff" : "#1a1a1a",
+                  }}
+                  onMouseEnter={() => !isEmpty && setHoveredCell({ row: rowIdx, col: colIdx })}
                   onMouseLeave={() => setHoveredCell(null)}
-                  onClick={() => onCellClick?.(row.label, columnLabels[colIdx])}
+                  onClick={() => !isEmpty && onCellClick?.(row.label, columnLabels[colIdx])}
                   role="gridcell"
-                  aria-label={`${row.label}, ${columnLabels[colIdx]}: ${valueFormat(value)}`}
+                  aria-label={isEmpty
+                    ? `${row.label}, ${columnLabels[colIdx]}: no data`
+                    : `${row.label}, ${columnLabels[colIdx]}: ${valueFormat(value)}${dfuCount != null ? `, ${dfuCount} DFUs` : ""}`}
                 >
-                  {valueFormat(value)}
+                  {isEmpty
+                    ? "\u00A0"
+                    : isHovered && dfuCount != null
+                      ? <>{valueFormat(value)} <span className="opacity-80">({dfuCount.toLocaleString()})</span></>
+                      : valueFormat(value)}
                 </div>
               );
             })}
           </React.Fragment>
         ))}
       </div>
+
+      {showLegend && (
+        <div className="mt-3 flex items-center gap-2 px-1" aria-label="Heatmap legend">
+          <span className="text-xs text-muted-foreground tabular-nums">{minLabel}</span>
+          <div
+            className="h-2 flex-1 rounded-full"
+            style={{ background: buildLegendGradient(colorScale) }}
+          />
+          <span className="text-xs text-muted-foreground tabular-nums">{maxLabel}</span>
+        </div>
+      )}
     </div>
   );
 }

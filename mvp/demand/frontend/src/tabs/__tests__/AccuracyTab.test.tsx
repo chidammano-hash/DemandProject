@@ -71,6 +71,7 @@ function makeFilterContext(): GlobalFilterContextValue {
     channel: [],
     item: [],
     location: [],
+      cluster: [],
     timeGrain: "month",
   };
   return {
@@ -184,6 +185,7 @@ describe("AccuracyTab", () => {
       channel: [],
       item: [],
       location: [],
+      cluster: [],
       timeGrain: "month",
     };
     const ctx: GlobalFilterContextValue = {

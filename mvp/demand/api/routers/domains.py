@@ -604,6 +604,7 @@ def dfu_count(
     location: str = Query(default="", max_length=500),
     market: str = Query(default="", max_length=500),
     channel: str = Query(default="", max_length=500),
+    cluster: str = Query(default="", max_length=500),
 ) -> dict:
     """Count distinct DFUs matching the active global filter combination."""
     set_cache(response, max_age=60)
@@ -633,6 +634,9 @@ def dfu_count(
             "JOIN fact_sales_monthly fsm ON fsm.cust_grp = dc.customer_group "
             "WHERE fsm.dmdunit = d.dmdunit AND fsm.loc = d.loc AND dc.rpt_channel_desc = ANY(%s))"
         )
+    if cluster:
+        params.append(cluster.split(","))
+        conditions.append("d.cluster_assignment = ANY(%s)")
 
     where_sql = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -698,6 +702,7 @@ def _build_cascade_conditions(
     location: str = "",
     market: str = "",
     channel: str = "",
+    cluster: str = "",
 ) -> list[str]:
     """Build WHERE conditions for cascading filter narrowing via dim_dfu d."""
     conds: list[str] = []
@@ -723,6 +728,9 @@ def _build_cascade_conditions(
             "JOIN fact_sales_monthly _fsm ON _fsm.cust_grp = _dc.customer_group "
             "WHERE _fsm.dmdunit = d.dmdunit AND _fsm.loc = d.loc AND _dc.rpt_channel_desc = ANY(%s))"
         )
+    if cluster:
+        params.append(cluster.split(","))
+        conds.append("d.cluster_assignment = ANY(%s)")
     return conds
 
 
@@ -740,6 +748,7 @@ def domain_distinct(
     location: str = Query(default="", max_length=500),
     market: str = Query(default="", max_length=500),
     channel: str = Query(default="", max_length=500),
+    cluster: str = Query(default="", max_length=500),
 ):
     """Distinct values for a column -- used by global filter dropdowns.
 
@@ -753,18 +762,18 @@ def domain_distinct(
     if sql_col not in allowed:
         raise HTTPException(400, f"Column '{column}' not allowed for distinct on domain '{domain}'")
 
-    has_cascade = bool(brand or category or item or location or market or channel)
+    has_cascade = bool(brand or category or item or location or market or channel or cluster)
     cascade_key = (spec.name, sql_col)
 
-    # If cascading filters are active AND we have a mapping for this column,
-    # query through dim_dfu to narrow results.
-    if has_cascade and cascade_key in _CASCADING_EXPR:
+    # Always query through dim_dfu for mapped columns so that items/locations
+    # with zero DFUs never appear in the filter dropdowns.
+    if cascade_key in _CASCADING_EXPR:
         join_clause, select_expr = _CASCADING_EXPR[cascade_key]
         params: list[Any] = []
         conds = [f"{select_expr} IS NOT NULL"]
         conds.extend(_build_cascade_conditions(
             params, brand=brand, category=category, item=item,
-            location=location, market=market, channel=channel,
+            location=location, market=market, channel=channel, cluster=cluster,
         ))
         if search.strip():
             conds.append(f"{select_expr}::text ILIKE %s")

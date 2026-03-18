@@ -61,9 +61,10 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
    - `AIPlannerAgent` in `common/ai_planner.py`: 10 tools, agentic loop, insight creation
    - Not a chatbot — proactive exception work-queue scanner writing structured insights to DB
 6c. Data Quality & Pipeline Observability:
-   - `DQEngine` in `common/dq_engine.py`: rule-based data quality checks (completeness, freshness, schema drift, outliers, referential integrity)
+   - `DQEngine` in `common/dq_engine.py`: rule-based data quality checks with 7 check types (freshness, completeness, row_count, uniqueness, range, volume_delta, referential_integrity)
+   - Scheduled checks via job scheduler integration; dashboard with pass/fail/warn KPI cards and trend chart
    - 5 API endpoints under `/data-quality/` (dashboard, rules, history, run, acknowledge)
-   - Config: `config/dq_config.yaml` (rules, thresholds, schedules)
+   - Config: `config/data_quality_config.yaml` (rules per dataset, thresholds, severity mapping, schedule)
 6d. User Management & RBAC:
    - JWT authentication via `common/auth.py` with bcrypt password hashing
    - 4 roles: viewer, planner, manager, admin — role-based endpoint access control
@@ -227,6 +228,11 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 46. `fact_rebalancing_plan` — rebalancing plan header (IPfeature-rebalancing); grain: `(plan_id)` PK; columns: plan_date, status (draft/approved/executed/cancelled), solver (greedy/lp), total_transfers, total_qty, total_cost, total_benefit, net_benefit, created_by, approved_by, approved_at, executed_at
 47. `fact_rebalancing_transfer` — individual transfer recommendations within a plan (IPfeature-rebalancing); grain: `(transfer_id)` PK; columns: plan_id (FK), item_no, source_loc, dest_loc, transfer_qty, transfer_cost, transit_days, source_dos_before, source_dos_after, dest_dos_before, dest_dos_after, benefit_estimate
 48. `mv_network_balance` — materialized view computing per-item DOS coefficient of variation across locations to detect network imbalances (IPfeature-rebalancing); grain: `(item_no)`; columns: loc_count, avg_dos, min_dos, max_dos, dos_cv, imbalance_flag
+49. `fact_sop_cycles` — S&OP cycle header (F4.2); grain: `(cycle_id)` PK; columns: cycle_month, current_stage (demand_review/supply_review/pre_sop/executive_sop/approved/closed), approved_by, approved_plan_version, created_at, updated_at; DDL: `sql/056_create_sop_module.sql`
+50. `fact_sop_demand_review` — S&OP demand review data (F4.2); grain: `(review_id)` PK; columns: cycle_id (FK), item_no, loc, forecast_qty, adjusted_qty, notes
+51. `fact_sop_supply_constraints` — S&OP supply-side constraints (F4.2); grain: `(constraint_id)` PK; columns: cycle_id (FK), item_no, loc, constraint_type, capacity, lead_time_impact, notes
+52. `fact_sop_gaps` — S&OP demand-supply gap analysis (F4.2); grain: `(gap_id)` PK; columns: cycle_id (FK), item_no, loc, demand_qty, supply_qty, gap_qty, gap_pct, severity, resolution
+53. `fact_sop_approved_plan` — S&OP locked approved demand plan (F4.2); grain: `(plan_id)` PK; columns: cycle_id (FK), item_no, loc, approved_qty, plan_version
 
 ## Accuracy Slice Materialized Views (feature10)
 Pre-aggregated views enabling O(1) multi-dimensional KPI slicing without raw-table joins:
@@ -523,12 +529,13 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Tests: 18 backend unit, 10 API, 7 frontend
 
 38. Data Quality & Pipeline Observability (08-01):
-   - `DQEngine` in `common/dq_engine.py`: rule-based data quality validation engine with pluggable rule types
-   - 5 rule types: completeness (null/missing checks), freshness (data staleness detection), schema_drift (column type/count changes), outlier (statistical outlier detection), referential_integrity (FK consistency)
+   - `DQEngine` in `common/dq_engine.py`: rule-based data quality validation engine with 7 pluggable check types
+   - 7 check types: freshness (data staleness by `load_ts`), completeness (null percentage per column), row_count (minimum row threshold), uniqueness (duplicate key detection), range (min/max value bounds), volume_delta (period-over-period volume change), referential_integrity (FK consistency)
+   - Scheduled checks: integrates with APScheduler job engine for periodic automated scans; manual trigger via `POST /data-quality/run`
    - DDL: `sql/062_create_dq_tables.sql` — `dq_rule_results` + `dq_run_history` tables
-   - Config: `config/dq_config.yaml` (rules per dataset, thresholds, severity mapping, schedule)
+   - Config: `config/data_quality_config.yaml` (rules per dataset, thresholds, severity mapping, schedule)
    - 5 API endpoints in `api/routers/data_quality.py`: `GET /data-quality/dashboard` (aggregate pass/fail/warn counts), `GET /data-quality/rules` (rule definitions), `GET /data-quality/history` (run history with trends), `POST /data-quality/run` (trigger DQ scan), `PUT /data-quality/rules/{id}/acknowledge`
-   - Frontend: Data Quality dashboard panel with pass/fail/warn KPI cards, rule results table, trend chart
+   - Frontend: `DataQualityTab.tsx` — dashboard with pass/fail/warn KPI cards, rule results table with status badges, historical trend chart
    - Makefile: `dq-schema`, `dq-run`, `dq-all`
 
 39. User Management & RBAC (08-02):
@@ -575,13 +582,13 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Makefile: `ext-signals-schema`, `ext-signals-fetch`, `ext-signals-decompose`
 
 44. FVA Tracking (08-07):
-   - Forecast Value Added (FVA) waterfall: measure incremental accuracy at each forecast stage (statistical → planner → consensus)
-   - Intervention tracking: log every planner adjustment with reason, original vs. adjusted values, user
-   - ROI computation: quantify financial impact of forecast interventions vs. statistical baseline
-   - DDL: `sql/068_create_fva_tables.sql` — `fva_waterfall` + `fva_interventions` tables
+   - Forecast Value Added (FVA) waterfall: measure incremental accuracy at each forecast stage (statistical → planner → consensus) with per-stage WAPE and bias comparison
+   - Intervention tracking: log every planner adjustment with reason, original vs. adjusted forecast values, intervention type, and user attribution
+   - ROI measurement: quantify financial impact of forecast interventions vs. statistical baseline; computes value-added percentage per stage
+   - DDL: `sql/068_create_fva_tables.sql` — `fva_waterfall` (stage-by-stage accuracy snapshots) + `fva_interventions` (individual planner adjustments) tables
    - Config: `config/fva_config.yaml` (stages, metrics, ROI computation parameters)
    - Router: `api/routers/fva.py` — `GET /fva/waterfall` (stage-by-stage accuracy), `GET /fva/interventions` (intervention log), `GET /fva/roi` (intervention ROI metrics), `POST /fva/interventions` (log new intervention)
-   - Frontend: FVA waterfall chart showing value added/destroyed at each stage
+   - Frontend: `FVATab.tsx` — FVA waterfall chart showing value added/destroyed at each stage, intervention history table, ROI summary KPIs
 
 45. Reporting & Distribution (08-08):
    - Report template system: define reusable report layouts with configurable sections (KPIs, charts, tables)
@@ -610,7 +617,22 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Router: `api/routers/webhooks.py` — `GET /webhooks` (list registrations), `POST /webhooks` (register endpoint), `DELETE /webhooks/{id}`, `POST /webhooks/{id}/test` (send test payload), `GET /webhooks/{id}/deliveries` (delivery log)
    - Makefile: `webhook-schema`
 
-48. Inventory Rebalancing (IPfeature-rebalancing):
+48. Sales & Operations Planning — S&OP (F4.2):
+   - Stage-machine cycle management with 6 stages: `demand_review` → `supply_review` → `pre_sop` → `executive_sop` → `approved` → `closed`
+   - Each cycle is a monthly period; stages advance sequentially with approval gates
+   - DDL: `sql/056_create_sop_module.sql` — 5 tables:
+     - `fact_sop_cycles` — cycle header with current stage, approval status, plan version
+     - `fact_sop_demand_review` — demand review data per item-location
+     - `fact_sop_supply_constraints` — supply-side constraint records
+     - `fact_sop_gaps` — demand-supply gap analysis with severity and resolution
+     - `fact_sop_approved_plan` — locked approved demand plan per cycle
+   - Config: `config/sop_config.yaml` (stage definitions, approval rules, gap thresholds)
+   - Script: `scripts/run_sop_cycle.py` — CLI actions: `--action create` (new cycle), `--action advance` (next stage), `--action populate-demand` (fill demand review from forecast)
+   - Router: `api/routers/sop.py` — `GET /sop/cycles` (list cycles), `GET /sop/cycles/{id}` (cycle detail with stage), `POST /sop/cycles` (create cycle), `PUT /sop/cycles/{id}/advance` (advance stage), `GET /sop/gaps` (gap analysis), `GET /sop/approved-plan` (locked approved demand)
+   - Frontend: `SopTab.tsx` — S&OP cycle stage machine with visual stage progress bar, gap cards with severity badges, advance/approve action buttons, approved plan table
+   - Makefile: `sop-schema`, `sop-create`, `sop-advance`, `sop-populate`, `sop-all`
+
+49. Inventory Rebalancing (IPfeature-rebalancing):
    - Cross-location transfer optimization to reduce network-wide DOS imbalance
    - Computation engine: `scripts/compute_rebalancing.py` — greedy solver (fast heuristic: iterates items by DOS CV, transfers from highest-DOS to lowest-DOS locations) + LP solver (scipy.optimize.linprog for globally optimal transfer plan minimizing total cost subject to DOS constraints)
    - Network topology: `dim_transfer_lane` table defines location-to-location transfer lanes with cost, lead time, and min/max quantity constraints

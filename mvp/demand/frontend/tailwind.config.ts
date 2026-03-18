@@ -56,14 +56,13 @@ const config: Config = {
           from: { opacity: "0", transform: "translateY(6px)" },
           to: { opacity: "1", transform: "translateY(0)" },
         },
-        "pulse-glow": {
-          "0%, 100%": { boxShadow: "0 0 0 0 rgba(37, 99, 235, 0.35)" },
-          "50%": { boxShadow: "0 0 16px 4px rgba(37, 99, 235, 0.2)" },
+        shimmer: {
+          "100%": { transform: "translateX(100%)" },
         },
       },
       animation: {
         "fade-in": "fade-in 250ms ease-out",
-        "pulse-glow": "pulse-glow 1.5s ease-in-out infinite",
+        shimmer: "shimmer 2s infinite",
       },
     },
   },

@@ -43,7 +43,6 @@ import type {
   DomainMeta,
   ClusterInfo,
 } from "@/types";
-import { ELEMENT_CONFIG } from "@/constants/elements";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useDebounce } from "@/hooks/useDebounce";
 import { titleCase, formatCell, formatNumber, formatCompactNumber } from "@/lib/formatters";
@@ -494,10 +493,9 @@ export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
                 onChange={(e) => handleDomainChange(e.target.value)}
               >
                 {DIMENSION_DOMAINS.map((d) => {
-                  const el = ELEMENT_CONFIG[d];
                   return (
                     <option key={d} value={d}>
-                      {el?.name || titleCase(d)}
+                      {titleCase(d)}
                     </option>
                   );
                 })}
@@ -676,10 +674,9 @@ export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
           ) : null}
 
           <div className="relative">
-            {/* Chemistry-themed loading overlay */}
+            {/* Loading overlay */}
             {loadingTable && (
               <LoadingElement
-                config={ELEMENT_CONFIG[domain] ?? ELEMENT_CONFIG.explorer}
                 message={`Querying ${titleCase(domain)}...`}
                 overlay
                 size="md"

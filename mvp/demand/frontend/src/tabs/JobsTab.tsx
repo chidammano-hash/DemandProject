@@ -24,6 +24,8 @@ import { ActiveJobsPanel } from "./jobs/ActiveJobsPanel";
 import { SchedulesPanel } from "./jobs/SchedulesPanel";
 import { JobHistoryPanel } from "./jobs/JobHistoryPanel";
 import { PipelineBuilderPanel } from "./jobs/PipelineBuilderPanel";
+import { ChampionConfigPanel } from "./jobs/ChampionConfigPanel";
+import { ClusterScenarioConfigPanel } from "./jobs/ClusterScenarioConfigPanel";
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -190,6 +192,10 @@ export default function JobsTab({ onNavigateToScenario }: JobsTabProps) {
           }
           onSchedule={setScheduleDialogType}
           submitting={submitMutation.isPending}
+          customCards={{
+            champion_select: <ChampionConfigPanel onJobSubmitted={invalidateAll} />,
+            cluster_scenario: <ClusterScenarioConfigPanel onJobSubmitted={invalidateAll} />,
+          }}
         />
       </section>
 

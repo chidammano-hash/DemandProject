@@ -419,10 +419,10 @@ async def test_dashboard_heatmap_returns_rows_with_period_labels(mock_pool):
     """GET /dashboard/heatmap returns rows with period labels and accuracy values."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [
-        ("Electronics", "Jan 25", 85.3),
-        ("Electronics", "Feb 25", 88.1),
-        ("Furniture",   "Jan 25", 72.0),
-        ("Furniture",   "Feb 25", 75.5),
+        ("Electronics", "Jan 25", 85.3, 15),
+        ("Electronics", "Feb 25", 88.1, 12),
+        ("Furniture",   "Jan 25", 72.0, 8),
+        ("Furniture",   "Feb 25", 75.5, 10),
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -442,8 +442,14 @@ async def test_dashboard_heatmap_returns_rows_with_period_labels(mock_pool):
             for row in data["rows"]:
                 assert "label" in row
                 assert "values" in row
+                assert "counts" in row
                 assert isinstance(row["values"], list)
+                assert isinstance(row["counts"], list)
                 assert len(row["values"]) == 2
+                assert len(row["counts"]) == 2
+            # Verify counts from mock
+            assert data["rows"][0]["counts"] == [15, 12]
+            assert data["rows"][1]["counts"] == [8, 10]
 
 
 @pytest.mark.asyncio
@@ -467,7 +473,7 @@ async def test_dashboard_heatmap_respects_grain_parameter(mock_pool):
     """GET /dashboard/heatmap?grain=brand groups by brand instead of category."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [
-        ("BrandX", "Mar 25", 90.0),
+        ("BrandX", "Mar 25", 90.0, 20),
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -478,6 +484,7 @@ async def test_dashboard_heatmap_respects_grain_parameter(mock_pool):
             data = resp.json()
             assert len(data["rows"]) == 1
             assert data["rows"][0]["label"] == "BrandX"
+            assert data["rows"][0]["counts"] == [20]
 
 
 @pytest.mark.asyncio
@@ -485,7 +492,7 @@ async def test_dashboard_heatmap_null_accuracy_replaced_with_zero(mock_pool):
     """Null accuracy values in heatmap should be replaced with 0."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [
-        ("Electronics", "Jan 25", None),
+        ("Electronics", "Jan 25", None, 5),
     ]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -495,6 +502,7 @@ async def test_dashboard_heatmap_null_accuracy_replaced_with_zero(mock_pool):
             assert resp.status_code == 200
             data = resp.json()
             assert data["rows"][0]["values"] == [0]
+            assert data["rows"][0]["counts"] == [5]
 
 
 @pytest.mark.asyncio
@@ -510,6 +518,133 @@ async def test_dashboard_heatmap_respects_periods_parameter(mock_pool):
             assert resp.status_code == 200
             data = resp.json()
             assert data["rows"] == []
+
+
+@pytest.mark.asyncio
+async def test_dashboard_heatmap_applies_brand_category_market_filters(mock_pool):
+    """GET /dashboard/heatmap with brand/category/market filters includes them in SQL."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = [
+        ("BrandX", "Jan 25", 92.0, 7),
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/dashboard/heatmap?grain=brand&brand=BrandX&category=Electronics&market=CA"
+            )
+    assert resp.status_code == 200
+    # Verify that the SQL included filter params — brand, category, and market
+    sql_arg = cursor.execute.call_args[0][0]
+    assert "i.brand_name = ANY" in sql_arg
+    assert "i.class = ANY" in sql_arg
+    assert "lo.state_id = ANY" in sql_arg
+    assert "dim_location" in sql_arg
+    # Verify filter values were passed in params
+    params = cursor.execute.call_args[0][1]
+    assert ["BrandX"] in params
+    assert ["Electronics"] in params
+    assert ["CA"] in params
+
+
+@pytest.mark.asyncio
+async def test_dashboard_heatmap_uses_model_id_not_lag(mock_pool):
+    """GET /dashboard/heatmap filters by model_id='external', not lag=0."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = []
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/heatmap")
+    assert resp.status_code == 200
+    sql_arg = cursor.execute.call_args[0][0]
+    assert "model_id = 'external'" in sql_arg
+    assert "lag = 0" not in sql_arg
+
+
+@pytest.mark.asyncio
+async def test_dashboard_kpis_uses_model_id_not_lag(mock_pool):
+    """GET /dashboard/kpis filters by model_id='external', not lag=0."""
+    pool, _, cursor = mock_pool
+    cursor.fetchone.side_effect = [
+        (85.0, 15.0, 2.0, 50000.0, 48000.0),
+        (80.0, 20.0, 4.0, None, None),
+    ]
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/kpis")
+    assert resp.status_code == 200
+    sql_current = cursor.execute.call_args_list[0][0][0]
+    assert "model_id = 'external'" in sql_current
+    assert "lag = 0" not in sql_current
+
+
+@pytest.mark.asyncio
+async def test_dashboard_trend_uses_model_id_not_lag(mock_pool):
+    """GET /dashboard/trend filters by model_id param (default 'champion'), not lag=0."""
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = []
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/trend")
+    assert resp.status_code == 200
+    sql_arg = cursor.execute.call_args[0][0]
+    assert "model_id = %s" in sql_arg
+    assert "lag = 0" not in sql_arg
+    # Default model param is 'champion'
+    params = cursor.execute.call_args[0][1]
+    assert params[0] == "champion"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_trend_uses_planning_date(mock_pool):
+    """GET /dashboard/trend uses planning date, not CURRENT_DATE."""
+    _reset_cache()
+    pool, _, cursor = mock_pool
+    cursor.fetchall.return_value = []
+    frozen = date(2026, 2, 24)
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("common.planning_date._resolve_date", return_value=frozen):
+        _reset_cache()
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/trend")
+    _reset_cache()
+    assert resp.status_code == 200
+    sql_arg = cursor.execute.call_args[0][0]
+    assert "2026-02-24" in sql_arg
+    assert "CURRENT_DATE" not in sql_arg
+
+
+@pytest.mark.asyncio
+async def test_dashboard_kpis_uses_planning_date(mock_pool):
+    """GET /dashboard/kpis uses planning date, not CURRENT_DATE."""
+    _reset_cache()
+    pool, _, cursor = mock_pool
+    cursor.fetchone.side_effect = [
+        (85.0, 15.0, 2.0, 50000.0, 48000.0),
+        (80.0, 20.0, 4.0, None, None),
+    ]
+    frozen = date(2026, 2, 24)
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("common.planning_date._resolve_date", return_value=frozen):
+        _reset_cache()
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/dashboard/kpis")
+    _reset_cache()
+    assert resp.status_code == 200
+    sql_arg = cursor.execute.call_args_list[0][0][0]
+    assert "2026-02-24" in sql_arg
+    assert "CURRENT_DATE" not in sql_arg
 
 
 # ===========================================================================

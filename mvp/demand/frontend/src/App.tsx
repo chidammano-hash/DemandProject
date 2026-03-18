@@ -25,6 +25,8 @@ import {
   DIMENSION_DOMAINS,
 } from "@/hooks/useUrlState";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useCommandPalette } from "@/hooks/useCommandPalette";
+import { CommandPalette } from "@/components/CommandPalette";
 
 import ChatPanel from "./tabs/ChatPanel";
 
@@ -47,6 +49,7 @@ const SopTab = lazy(() => import("./tabs/SopTab"));
 const FVATab = lazy(() => import("./tabs/FVATab"));
 const DataQualityTab = lazy(() => import("./tabs/DataQualityTab"));
 const CustomerMapTab = lazy(() => import("./tabs/CustomerMapTab").then((m) => ({ default: m.CustomerMapTab })));
+const CommandCenterTab = lazy(() => import("./tabs/CommandCenterTab"));
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -128,6 +131,9 @@ export default function App() {
     handleTabSwitch("clusters");
   }, [handleTabSwitch]);
 
+  // Command palette
+  const cmdPalette = useCommandPalette();
+
   // Keyboard shortcuts
   const { showHelp, closeHelp } = useKeyboardShortcuts({
     onTabSwitch: handleTabSwitch,
@@ -159,6 +165,17 @@ export default function App() {
           {/* Keyboard shortcut help modal */}
           {showHelp && <KeyboardShortcutHelp onClose={closeHelp} />}
 
+          {/* Command palette (Cmd+K) */}
+          <CommandPalette
+            open={cmdPalette.open}
+            onClose={cmdPalette.close}
+            onNavigate={handleTabSwitch}
+            onToggleDarkMode={toggleColorMode}
+            onToggleSidebar={sidebar.toggle}
+            onShowKeyboardHelp={() => { cmdPalette.close(); }}
+            activeTab={activeTab}
+          />
+
           {/* Sidebar */}
           <AppSidebar
             activeTab={activeTab}
@@ -171,9 +188,18 @@ export default function App() {
 
           {/* Main content area */}
           <div className="flex flex-1 flex-col overflow-hidden">
+            {/* Mobile notice */}
+            <div className="block px-4 py-2 text-center text-xs text-muted-foreground bg-muted/50 border-b border-border/30 md:hidden">
+              Best experienced on desktop for full analytics
+            </div>
             {/* Tab content */}
             <div id="tab-content" role="tabpanel" aria-label={`${activeTab} tab content`} className="flex-1 overflow-y-auto p-4 md:p-6">
               <div className="mx-auto max-w-[1600px]">
+                {activeTab === "commandCenter" && (
+                  <TabPanel tabKey="commandCenter" resetKeys={[activeTab]}>
+                    <CommandCenterTab onNavigate={handleTabSwitch} />
+                  </TabPanel>
+                )}
                 {(activeTab === "aggregateAnalysis" || activeTab === "overview" || activeTab === "accuracy") && (
                   <TabPanel tabKey="aggregateAnalysis" resetKeys={[activeTab]}>
                     <AggregateAnalysisTab onNavigate={handleTabSwitch} />

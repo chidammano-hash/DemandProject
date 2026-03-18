@@ -51,6 +51,7 @@ describe("useGlobalFilters", () => {
       channel: [],
       item: [],
       location: [],
+      cluster: [],
       timeGrain: "month",
     });
     expect(result.current.hasActiveFilters).toBe(false);
@@ -114,6 +115,7 @@ describe("useGlobalFilters", () => {
       channel: [],
       item: [],
       location: [],
+      cluster: [],
       timeGrain: "month",
     });
     expect(result.current.hasActiveFilters).toBe(false);

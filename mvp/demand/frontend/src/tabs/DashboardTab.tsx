@@ -58,10 +58,10 @@ function trendDirection(delta: number | null): "up" | "down" | "flat" {
 
 // PL-013: Map alert types to destination tabs
 const ALERT_TYPE_TAB: Partial<Record<string, string>> = {
-  oos_risk:             "controlTower",
+  oos_risk:             "commandCenter",
   bias_drift:           "accuracy",
   low_accuracy:         "accuracy",
-  demand_spike:         "aiPlanner",
+  demand_spike:         "commandCenter",
   allocation_shortage:  "invPlanning",
   scenario_complete:    "clusters",
   job_complete:         "jobs",
@@ -194,13 +194,13 @@ function WorkQueueItem({
           )}
           <div className="ml-auto flex items-center gap-1">
             <button
-              onClick={() => onNavigate?.("aiPlanner")}
+              onClick={() => onNavigate?.("commandCenter")}
               className="rounded border border-input bg-background px-2 py-0.5 text-[10px] font-medium hover:bg-muted"
             >
               Review & Accept
             </button>
             <button
-              onClick={() => onNavigate?.("aiPlanner")}
+              onClick={() => onNavigate?.("commandCenter")}
               className="rounded px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted"
             >
               Snooze
@@ -330,7 +330,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
           )}
         </div>
         <button
-          onClick={() => onNavigate?.("aiPlanner")}
+          onClick={() => onNavigate?.("commandCenter")}
           className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
         >
           <Sparkles className="h-3.5 w-3.5 text-teal-500" />
@@ -361,7 +361,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
               value={dos != null ? `${dos.toFixed(1)}d` : "N/A"}
               severity={dos != null && dos < 14 ? "warning" : dos != null && dos > 60 ? "best" : "neutral"}
               trend={kpis?.deltas?.weeks_of_supply != null
-                ? { delta: kpis.deltas.weeks_of_supply * 7, direction: trendDirection(kpis.deltas.weeks_of_supply), unit: "d" }
+                ? { delta: kpis.deltas.weeks_of_supply * 7, direction: trendDirection(kpis.deltas.weeks_of_supply), unit: "d", period: "prev 3mo" }
                 : undefined}
             />
             <KpiCard
@@ -384,7 +384,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
             </p>
             {openCount > 3 && (
               <button
-                onClick={() => onNavigate?.("aiPlanner")}
+                onClick={() => onNavigate?.("commandCenter")}
                 className="flex items-center gap-1 text-xs text-primary hover:underline"
               >
                 +{openCount - 3} more <ArrowRight className="h-3 w-3" />
@@ -482,7 +482,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
               </p>
             )}
             <button
-              onClick={() => onNavigate?.("aiPlanner")}
+              onClick={() => onNavigate?.("commandCenter")}
               className="mt-2 flex items-center gap-1 text-xs text-primary hover:underline"
             >
               Read full memo in AI Planner <ArrowRight className="h-3 w-3" />

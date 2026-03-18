@@ -39,8 +39,11 @@ export const fetchAuditLog = async (limit = 50, offset = 0) =>
 // ---------------------------------------------------------------------------
 export interface DQDomainScore { domain: string; score: number; passed: number; failed: number; warnings: number; total: number; }
 export interface DQCheck { check_id: number; check_name: string; check_type: string; domain: string; table_name: string; severity: string; enabled: boolean; last_status: string | null; last_value: number | null; last_run: string | null; }
+export interface DQHistoryEntry { check_id: number; check_name: string; check_type?: string; domain: string; table_name: string; severity: string; status: string; metric_value: number | null; details: Record<string, unknown> | string | null; run_ts: string | null; }
+export interface DQFixItem { id: number; fix_type: string; description: string; affected_rows: number; recommendation: string | null; status: string; }
+export interface DQFixApplyResult { applied: DQFixItem[]; skipped: DQFixItem[]; total_applied: number; total_skipped: number; total_rows_fixed: number; }
 
-export const dqKeys = { dashboard: ["dq", "dashboard"], checks: ["dq", "checks"], freshness: ["dq", "freshness"] } as const;
+export const dqKeys = { dashboard: ["dq", "dashboard"], checks: ["dq", "checks"], freshness: ["dq", "freshness"], history: (domain?: string) => ["dq", "history", domain ?? ""], fixPreview: ["dq", "fix", "preview"] } as const;
 
 export const fetchDQDashboard = async (): Promise<{ domains: DQDomainScore[] }> =>
   fetchJson("/data-quality/dashboard");
@@ -50,6 +53,25 @@ export const fetchDQChecks = async (): Promise<{ checks: DQCheck[] }> =>
 
 export const fetchDQFreshness = async () =>
   fetchJson("/data-quality/freshness");
+
+export const fetchDQHistory = async (domain?: string, days = 7, limit = 200): Promise<{ entries: DQHistoryEntry[] }> => {
+  const params = new URLSearchParams();
+  if (domain) params.set("domain", domain);
+  params.set("days", String(days));
+  params.set("limit", String(limit));
+  return fetchJson(`/data-quality/history?${params.toString()}`);
+};
+
+export const runDQChecks = async (domain?: string): Promise<{ triggered: number; message: string }> => {
+  const params = domain ? `?domain=${domain}` : "";
+  return fetchJson(`/data-quality/run${params}`, { method: "POST" });
+};
+
+export const fetchDQFixPreview = async (): Promise<{ items: DQFixItem[]; total: number }> =>
+  fetchJson("/data-quality/fix/preview");
+
+export const applyDQFixes = async (fixIds: number[]): Promise<DQFixApplyResult> =>
+  fetchJson("/data-quality/fix/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fix_ids: fixIds }) });
 
 // ---------------------------------------------------------------------------
 // Notifications (08-04)

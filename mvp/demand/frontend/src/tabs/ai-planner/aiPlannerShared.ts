@@ -16,36 +16,17 @@ import {
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
-// Severity
+// Severity — re-exported from unified severity module
 // ---------------------------------------------------------------------------
-export const SEVERITY_ORDER: Record<InsightSeverity, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-};
+import { SEVERITY_ORDER as _SEV_ORDER, SEVERITY_CONFIG } from "@/constants/severity";
+export const SEVERITY_ORDER = _SEV_ORDER as Record<InsightSeverity, number>;
 
+/** Derived subset for backward compatibility — consumers should prefer SEVERITY_CONFIG directly */
 export const SEVERITY_STYLES: Record<InsightSeverity, { badge: string; border: string; dot: string }> = {
-  critical: {
-    badge: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-    border: "border-l-red-500",
-    dot: "bg-red-500",
-  },
-  high: {
-    badge: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
-    border: "border-l-orange-500",
-    dot: "bg-orange-500",
-  },
-  medium: {
-    badge: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
-    border: "border-l-yellow-500",
-    dot: "bg-yellow-500",
-  },
-  low: {
-    badge: "bg-gray-100 text-gray-700 dark:bg-gray-700/40 dark:text-gray-300",
-    border: "border-l-gray-400",
-    dot: "bg-gray-400",
-  },
+  critical: { badge: SEVERITY_CONFIG.critical.badge, border: SEVERITY_CONFIG.critical.border, dot: SEVERITY_CONFIG.critical.dot },
+  high:     { badge: SEVERITY_CONFIG.high.badge,     border: SEVERITY_CONFIG.high.border,     dot: SEVERITY_CONFIG.high.dot },
+  medium:   { badge: SEVERITY_CONFIG.medium.badge,   border: SEVERITY_CONFIG.medium.border,   dot: SEVERITY_CONFIG.medium.dot },
+  low:      { badge: SEVERITY_CONFIG.low.badge,      border: SEVERITY_CONFIG.low.border,      dot: SEVERITY_CONFIG.low.dot },
 };
 
 // ---------------------------------------------------------------------------

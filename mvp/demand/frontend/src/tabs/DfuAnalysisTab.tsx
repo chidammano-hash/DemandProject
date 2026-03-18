@@ -8,7 +8,6 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { fetchSeasonalityProfileNames } from "@/api/queries";
 import { fetchProductionForecast } from "@/api/queries/production-forecast";
 import type { ProductionForecastPayload } from "@/api/queries/production-forecast";
-import { ELEMENT_CONFIG } from "@/constants/elements";
 import type {
   DfuAnalysisMode,
   DfuAnalysisKpis,
@@ -287,7 +286,7 @@ export function DfuAnalysisTab() {
             </>
           ) : dfuLoading ? (
             <div className="flex h-[320px] items-center justify-center">
-              <LoadingElement config={ELEMENT_CONFIG.dfuAnalysis} message="Fetching DFU analysis..." />
+              <LoadingElement message="Fetching DFU analysis..." />
             </div>
           ) : (
             <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">

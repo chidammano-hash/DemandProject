@@ -12,7 +12,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 // Filter dropdown config
 // ---------------------------------------------------------------------------
 interface FilterConfig {
-  key: "brand" | "category" | "market" | "channel" | "item" | "location";
+  key: "brand" | "category" | "market" | "channel" | "item" | "location" | "cluster";
   label: string;
   domain: string;
   column: string;
@@ -26,6 +26,7 @@ const FILTERS: FilterConfig[] = [
   { key: "location", label: "Location", domain: "location", column: "location_id", searchable: true },
   { key: "market", label: "Market", domain: "location", column: "state_id" },
   { key: "channel", label: "Channel", domain: "customer", column: "rpt_channel_desc" },
+  { key: "cluster", label: "Cluster", domain: "dfu", column: "cluster_assignment" },
 ];
 
 /** Build cascade params from all filters EXCEPT the one being queried. */
@@ -40,6 +41,7 @@ function buildCascade(
   if (excludeKey !== "location" && filters.location.length > 0) c.location = filters.location.join(",");
   if (excludeKey !== "market" && filters.market.length > 0) c.market = filters.market.join(",");
   if (excludeKey !== "channel" && filters.channel.length > 0) c.channel = filters.channel.join(",");
+  if (excludeKey !== "cluster" && filters.cluster.length > 0) c.cluster = filters.cluster.join(",");
   return Object.keys(c).length > 0 ? c : undefined;
 }
 

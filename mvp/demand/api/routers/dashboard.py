@@ -67,13 +67,14 @@ def _split(raw: str) -> list[str]:
 
 def _dashboard_filter_clause(
     brand: str, category: str, market: str, channel: str,
-    item: str = "", location: str = "",
+    item: str = "", location: str = "", cluster_assignment: str = "",
 ) -> tuple[str, list[Any]]:
     """Build WHERE fragment from global filter params for dashboard queries.
 
     Note: channel filter is skipped for forecast-based queries because
     fact_external_forecast_monthly has no customer dimension join key.
     Item/location filter on f.dmdunit/f.loc directly (no extra JOINs needed).
+    Cluster filter uses EXISTS subquery against dim_dfu.
     """
     clauses: list[str] = []
     params: list[Any] = []
@@ -102,6 +103,13 @@ def _dashboard_filter_clause(
         if locs:
             clauses.append("f.loc = ANY(%s)")
             params.append(locs)
+    if cluster_assignment.strip():
+        clusters = _split(cluster_assignment)
+        if clusters:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM dim_dfu _d WHERE _d.dmdunit = f.dmdunit AND _d.loc = f.loc AND _d.cluster_assignment = ANY(%s))"
+            )
+            params.append(clusters)
     frag = " AND ".join(clauses) if clauses else ""
     return frag, params
 
@@ -120,12 +128,14 @@ def dashboard_kpis(
     channel: str = Query(default=""),
     item: str = Query(default=""),
     location: str = Query(default=""),
+    cluster_assignment: str = Query(default=""),
     time_grain: str = Query(default="month"),
 ):
     """Aggregated KPI metrics for the overview dashboard."""
     set_cache(response, max_age=120)
+    pd = get_planning_date().isoformat()
 
-    filter_frag, filter_params = _dashboard_filter_clause(brand, category, market, channel, item, location)
+    filter_frag, filter_params = _dashboard_filter_clause(brand, category, market, channel, item, location, cluster_assignment)
 
     join_clause = ""
     if brand.strip() or category.strip():
@@ -133,10 +143,18 @@ def dashboard_kpis(
     if market.strip():
         join_clause += " JOIN dim_location lo ON f.loc = lo.location_id"
 
-    where_base = "f.startdate >= (CURRENT_DATE - (%s || ' months')::interval) AND f.lag = 0"
+    where_base = (
+        f"f.model_id = 'external'"
+        f" AND f.tothist_dmd IS NOT NULL AND f.tothist_dmd != 0"
+        f" AND f.basefcst_pref IS NOT NULL"
+        f" AND f.startdate >= ('{pd}'::date - (%s || ' months')::interval)"
+    )
     where_prior = (
-        "f.startdate >= (CURRENT_DATE - (%s || ' months')::interval) "
-        "AND f.startdate < (CURRENT_DATE - (%s || ' months')::interval) AND f.lag = 0"
+        f"f.model_id = 'external'"
+        f" AND f.tothist_dmd IS NOT NULL AND f.tothist_dmd != 0"
+        f" AND f.basefcst_pref IS NOT NULL"
+        f" AND f.startdate >= ('{pd}'::date - (%s || ' months')::interval)"
+        f" AND f.startdate < ('{pd}'::date - (%s || ' months')::interval)"
     )
 
     where_extra = f" AND {filter_frag}" if filter_frag else ""
@@ -218,13 +236,15 @@ def dashboard_alerts(
     channel: str = Query(default=""),
     item: str = Query(default=""),
     location: str = Query(default=""),
+    cluster_assignment: str = Query(default=""),
     time_grain: str = Query(default="month"),
 ):
     """Active alerts based on threshold-breaching metrics."""
     set_cache(response, max_age=120)
+    pd = get_planning_date().isoformat()
     alerts: list[dict[str, Any]] = []
 
-    # Build item/location WHERE fragments for alert sub-queries
+    # Build item/location/cluster WHERE fragments for alert sub-queries
     _alert_where_parts: list[str] = []
     _alert_params: list[Any] = []
     if item.strip():
@@ -237,6 +257,13 @@ def dashboard_alerts(
         if locs:
             _alert_where_parts.append("loc = ANY(%s)")
             _alert_params.append(locs)
+    if cluster_assignment.strip():
+        clusters = [c.strip() for c in cluster_assignment.split(",") if c.strip()]
+        if clusters:
+            _alert_where_parts.append(
+                "EXISTS (SELECT 1 FROM dim_dfu _d WHERE _d.dmdunit = dmdunit AND _d.loc = loc AND _d.cluster_assignment = ANY(%s))"
+            )
+            _alert_params.append(clusters)
     _alert_extra = (" AND " + " AND ".join(_alert_where_parts)) if _alert_where_parts else ""
 
     # Low accuracy DFUs (< 70%)
@@ -244,9 +271,10 @@ def dashboard_alerts(
         sql = f"""
             SELECT COUNT(DISTINCT forecast_ck)
             FROM fact_external_forecast_monthly
-            WHERE lag = 0
+            WHERE model_id = 'external'
               AND tothist_dmd IS NOT NULL AND tothist_dmd != 0
-              AND startdate >= (CURRENT_DATE - INTERVAL '3 months')
+              AND basefcst_pref IS NOT NULL
+              AND startdate >= ('{pd}'::date - INTERVAL '3 months')
               {_alert_extra}
             GROUP BY forecast_ck
             HAVING (100.0 - 100.0 * SUM(ABS(basefcst_pref - tothist_dmd)) / NULLIF(ABS(SUM(tothist_dmd)), 0)) < 70
@@ -279,15 +307,23 @@ def dashboard_alerts(
         if locs:
             _bias_extra_parts.append("f.loc = ANY(%s)")
             _bias_params.append(locs)
+    if cluster_assignment.strip():
+        clusters = [c.strip() for c in cluster_assignment.split(",") if c.strip()]
+        if clusters:
+            _bias_extra_parts.append(
+                "EXISTS (SELECT 1 FROM dim_dfu _d WHERE _d.dmdunit = f.dmdunit AND _d.loc = f.loc AND _d.cluster_assignment = ANY(%s))"
+            )
+            _bias_params.append(clusters)
     _bias_extra = (" AND " + " AND ".join(_bias_extra_parts)) if _bias_extra_parts else ""
     try:
         sql = f"""
             SELECT i.class, 100.0 * (SUM(f.basefcst_pref) / NULLIF(ABS(SUM(f.tothist_dmd)), 0) - 1) AS bias
             FROM fact_external_forecast_monthly f
             JOIN dim_item i ON f.dmdunit = i.item_no
-            WHERE f.lag = 0
+            WHERE f.model_id = 'external'
               AND f.tothist_dmd IS NOT NULL AND f.tothist_dmd != 0
-              AND f.startdate >= (CURRENT_DATE - INTERVAL '3 months')
+              AND f.basefcst_pref IS NOT NULL
+              AND f.startdate >= ('{pd}'::date - INTERVAL '3 months')
               {_bias_extra}
             GROUP BY i.class
             HAVING ABS(100.0 * (SUM(f.basefcst_pref) / NULLIF(ABS(SUM(f.tothist_dmd)), 0) - 1)) > 20
@@ -325,20 +361,20 @@ def dashboard_alerts(
         sql = f"""
             SELECT COUNT(*) FROM (
                 SELECT dmdunit,
-                    SUM(CASE WHEN startdate >= (CURRENT_DATE - INTERVAL '1 month') THEN qty END) AS curr,
-                    SUM(CASE WHEN startdate >= (CURRENT_DATE - INTERVAL '2 months')
-                              AND startdate < (CURRENT_DATE - INTERVAL '1 month') THEN qty END) AS prev
+                    SUM(CASE WHEN startdate >= ('{pd}'::date - INTERVAL '1 month') THEN qty END) AS curr,
+                    SUM(CASE WHEN startdate >= ('{pd}'::date - INTERVAL '2 months')
+                              AND startdate < ('{pd}'::date - INTERVAL '1 month') THEN qty END) AS prev
                 FROM fact_sales_monthly
                 {_spike_where}
                 GROUP BY dmdunit
-                HAVING SUM(CASE WHEN startdate >= (CURRENT_DATE - INTERVAL '2 months')
-                                  AND startdate < (CURRENT_DATE - INTERVAL '1 month') THEN qty END) > 0
+                HAVING SUM(CASE WHEN startdate >= ('{pd}'::date - INTERVAL '2 months')
+                                  AND startdate < ('{pd}'::date - INTERVAL '1 month') THEN qty END) > 0
                    AND ABS(
-                       (COALESCE(SUM(CASE WHEN startdate >= (CURRENT_DATE - INTERVAL '1 month') THEN qty END), 0)
-                        - SUM(CASE WHEN startdate >= (CURRENT_DATE - INTERVAL '2 months')
-                                    AND startdate < (CURRENT_DATE - INTERVAL '1 month') THEN qty END))
-                       / SUM(CASE WHEN startdate >= (CURRENT_DATE - INTERVAL '2 months')
-                                    AND startdate < (CURRENT_DATE - INTERVAL '1 month') THEN qty END)::float
+                       (COALESCE(SUM(CASE WHEN startdate >= ('{pd}'::date - INTERVAL '1 month') THEN qty END), 0)
+                        - SUM(CASE WHEN startdate >= ('{pd}'::date - INTERVAL '2 months')
+                                    AND startdate < ('{pd}'::date - INTERVAL '1 month') THEN qty END))
+                       / SUM(CASE WHEN startdate >= ('{pd}'::date - INTERVAL '2 months')
+                                    AND startdate < ('{pd}'::date - INTERVAL '1 month') THEN qty END)::float
                    ) > 0.3
             ) sub
         """
@@ -375,9 +411,11 @@ def dashboard_top_movers(
     channel: str = Query(default=""),
     item: str = Query(default=""),
     location: str = Query(default=""),
+    cluster_assignment: str = Query(default=""),
 ):
     """Items with the largest period-over-period volume change."""
     set_cache(response, max_age=120)
+    pd = get_planning_date().isoformat()
 
     _tm_where_parts: list[str] = []
     _tm_params: list[Any] = []
@@ -391,25 +429,32 @@ def dashboard_top_movers(
         if locs:
             _tm_where_parts.append("s.loc = ANY(%s)")
             _tm_params.append(locs)
+    if cluster_assignment.strip():
+        clusters = [c.strip() for c in cluster_assignment.split(",") if c.strip()]
+        if clusters:
+            _tm_where_parts.append(
+                "EXISTS (SELECT 1 FROM dim_dfu _d WHERE _d.dmdunit = s.dmdunit AND _d.loc = s.loc AND _d.cluster_assignment = ANY(%s))"
+            )
+            _tm_params.append(clusters)
     _tm_where = ("WHERE " + " AND ".join(_tm_where_parts)) if _tm_where_parts else ""
 
     sql = f"""
         SELECT
             s.dmdunit,
             i.item_desc,
-            COALESCE(SUM(CASE WHEN s.startdate >= (CURRENT_DATE - INTERVAL '1 month') THEN s.qty END), 0) AS curr,
-            COALESCE(SUM(CASE WHEN s.startdate >= (CURRENT_DATE - INTERVAL '2 months')
-                              AND s.startdate < (CURRENT_DATE - INTERVAL '1 month') THEN s.qty END), 0) AS prev
+            COALESCE(SUM(CASE WHEN s.startdate >= ('{pd}'::date - INTERVAL '1 month') THEN s.qty END), 0) AS curr,
+            COALESCE(SUM(CASE WHEN s.startdate >= ('{pd}'::date - INTERVAL '2 months')
+                              AND s.startdate < ('{pd}'::date - INTERVAL '1 month') THEN s.qty END), 0) AS prev
         FROM fact_sales_monthly s
         JOIN dim_item i ON s.dmdunit = i.item_no
         {_tm_where}
         GROUP BY s.dmdunit, i.item_desc
-        HAVING COALESCE(SUM(CASE WHEN s.startdate >= (CURRENT_DATE - INTERVAL '2 months')
-                                  AND s.startdate < (CURRENT_DATE - INTERVAL '1 month') THEN s.qty END), 0) > 0
+        HAVING COALESCE(SUM(CASE WHEN s.startdate >= ('{pd}'::date - INTERVAL '2 months')
+                                  AND s.startdate < ('{pd}'::date - INTERVAL '1 month') THEN s.qty END), 0) > 0
         ORDER BY ABS(
-            COALESCE(SUM(CASE WHEN s.startdate >= (CURRENT_DATE - INTERVAL '1 month') THEN s.qty END), 0)
-            - COALESCE(SUM(CASE WHEN s.startdate >= (CURRENT_DATE - INTERVAL '2 months')
-                                AND s.startdate < (CURRENT_DATE - INTERVAL '1 month') THEN s.qty END), 0)
+            COALESCE(SUM(CASE WHEN s.startdate >= ('{pd}'::date - INTERVAL '1 month') THEN s.qty END), 0)
+            - COALESCE(SUM(CASE WHEN s.startdate >= ('{pd}'::date - INTERVAL '2 months')
+                                AND s.startdate < ('{pd}'::date - INTERVAL '1 month') THEN s.qty END), 0)
         ) DESC
         LIMIT %s
     """
@@ -441,6 +486,7 @@ def dashboard_top_movers(
 def dashboard_heatmap(
     response: FastAPIResponse,
     grain: str = Query(default="category"),
+    col_grain: str = Query(default="date"),
     periods: int = Query(default=4, ge=1, le=12),
     brand: str = Query(default=""),
     category: str = Query(default=""),
@@ -448,71 +494,111 @@ def dashboard_heatmap(
     channel: str = Query(default=""),
     item: str = Query(default=""),
     location: str = Query(default=""),
+    cluster_assignment: str = Query(default=""),
 ):
-    """Performance matrix by category/brand and time period."""
+    """Performance matrix — both row and column axes are selectable.
+
+    ``grain`` controls rows, ``col_grain`` controls columns.
+    Either axis (but not both) may be ``date``.
+    """
     set_cache(response, max_age=300)
+    pd = get_planning_date().isoformat()
 
-    if grain == "brand":
-        group_col = "i.brand_name"
-    elif grain == "location":
-        group_col = "f.loc"
-    else:
-        group_col = "i.class"
+    _GRAIN_MAP = {
+        "category": "i.category",
+        "brand": "i.brand_name",
+        "location": "f.loc",
+        "class": "i.class",
+        "sub_class": "i.sub_class",
+        "date": "TO_CHAR(f.startdate, 'Mon YY')",
+    }
+    _ORDER_MAP = {
+        "category": "i.category",
+        "brand": "i.brand_name",
+        "location": "f.loc",
+        "class": "i.class",
+        "sub_class": "i.sub_class",
+        "date": "f.startdate",
+    }
 
-    _hm_extra_parts: list[str] = []
-    _hm_params: list[Any] = []
-    if item.strip():
-        items = [it.strip() for it in item.split(",") if it.strip()]
-        if items:
-            _hm_extra_parts.append("f.dmdunit = ANY(%s)")
-            _hm_params.append(items)
-    if location.strip():
-        locs = [lc.strip() for lc in location.split(",") if lc.strip()]
-        if locs:
-            _hm_extra_parts.append("f.loc = ANY(%s)")
-            _hm_params.append(locs)
-    _hm_extra = (" AND " + " AND ".join(_hm_extra_parts)) if _hm_extra_parts else ""
+    row_grain = grain
+    if row_grain == col_grain:
+        col_grain = "date" if row_grain != "date" else "category"
+
+    row_col = _GRAIN_MAP.get(row_grain, "i.category")
+    col_col = _GRAIN_MAP.get(col_grain, "TO_CHAR(f.startdate, 'Mon YY')")
+    row_order = _ORDER_MAP.get(row_grain, "i.category")
+    col_order = _ORDER_MAP.get(col_grain, "f.startdate")
+
+    filter_frag, filter_params = _dashboard_filter_clause(
+        brand=brand, category=category, market=market, channel=channel,
+        item=item, location=location, cluster_assignment=cluster_assignment,
+    )
+    filter_where = f" AND {filter_frag}" if filter_frag else ""
+    join_clause = "JOIN dim_item i ON f.dmdunit = i.item_no"
+    if market.strip() or row_grain == "location" or col_grain == "location":
+        join_clause += " LEFT JOIN dim_location lo ON f.loc = lo.location_id"
 
     sql = f"""
         SELECT
-            {group_col} AS label,
-            TO_CHAR(f.startdate, 'Mon YY') AS period,
+            {row_col} AS row_label,
+            {col_col} AS col_label,
             CASE WHEN ABS(SUM(f.tothist_dmd)) > 0
                  THEN 100.0 - 100.0 * SUM(ABS(f.basefcst_pref - f.tothist_dmd)) / ABS(SUM(f.tothist_dmd))
-                 ELSE NULL END AS accuracy_pct
+                 ELSE NULL END AS accuracy_pct,
+            COUNT(DISTINCT (f.dmdunit, f.loc)) AS dfu_count
         FROM fact_external_forecast_monthly f
-        JOIN dim_item i ON f.dmdunit = i.item_no
-        WHERE f.lag = 0
+        {join_clause}
+        WHERE f.model_id = 'external'
           AND f.tothist_dmd IS NOT NULL AND f.tothist_dmd != 0
-          AND f.startdate >= (CURRENT_DATE - (%s || ' months')::interval)
-          {_hm_extra}
-        GROUP BY {group_col}, f.startdate, TO_CHAR(f.startdate, 'Mon YY')
-        ORDER BY {group_col}, f.startdate
+          AND f.basefcst_pref IS NOT NULL
+          AND f.startdate >= ('{pd}'::date - (%s || ' months')::interval)
+          {filter_where}
+        GROUP BY {row_col}, {col_col}, {row_order}, {col_order}
+        ORDER BY {row_order}, {col_order}
     """
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, [periods] + _hm_params)
+        cur.execute(sql, [periods] + filter_params)
         rows = cur.fetchall()
 
-    label_map: dict[str, dict[str, float | None]] = OrderedDict()
-    period_set: list[str] = []
+    label_map: dict[str, dict[str, tuple[float, int]]] = OrderedDict()
+    col_labels: list[str] = []
 
     for r in rows:
-        label = str(r[0]) if r[0] else "Unknown"
-        period = str(r[1])
-        acc = round(float(r[2]), 1) if r[2] is not None else None
-        if label not in label_map:
-            label_map[label] = {}
-        label_map[label][period] = acc
-        if period not in period_set:
-            period_set.append(period)
+        rl = str(r[0]) if r[0] else "Unknown"
+        cl = str(r[1]) if r[1] else "Unknown"
+        acc = round(float(r[2]), 1) if r[2] is not None else 0.0
+        count = int(r[3]) if r[3] is not None else 0
+        if rl not in label_map:
+            label_map[rl] = {}
+        label_map[rl][cl] = (acc, count)
+        if cl not in col_labels:
+            col_labels.append(cl)
+
+    # Prune columns with zero DFUs across all rows
+    col_labels = [
+        cl for cl in col_labels
+        if any(label_map[rl].get(cl, (0, 0))[1] > 0 for rl in label_map)
+    ]
+    # Prune rows with zero DFUs across all remaining columns
+    pruned_rows = [
+        rl for rl in label_map
+        if any(label_map[rl].get(cl, (0, 0))[1] > 0 for cl in col_labels)
+    ]
 
     result_rows = []
-    for label, period_vals in label_map.items():
-        values = [period_vals.get(p, 0) or 0 for p in period_set]
-        result_rows.append({"label": label, "values": values})
+    for rl in pruned_rows:
+        col_vals = label_map[rl]
+        values = []
+        counts = []
+        for cl in col_labels:
+            cell = col_vals.get(cl)
+            values.append(cell[0] if cell else 0.0)
+            counts.append(cell[1] if cell else 0)
+        result_rows.append({"label": rl, "values": values, "counts": counts})
 
-    return {"rows": result_rows, "period_labels": period_set, "metric": "accuracy_pct"}
+    return {"rows": result_rows, "period_labels": col_labels, "metric": "accuracy_pct"}
 
 
 @router.get("/dashboard/trend")
@@ -525,11 +611,14 @@ def dashboard_trend(
     channel: str = Query(default=""),
     item: str = Query(default=""),
     location: str = Query(default=""),
+    cluster_assignment: str = Query(default=""),
+    model: str = Query(default="champion"),
 ):
     """Monthly aggregate forecast vs actual totals for trend chart."""
     set_cache(response, max_age=120)
+    pd = get_planning_date().isoformat()
 
-    filter_frag, filter_params = _dashboard_filter_clause(brand, category, market, channel, item, location)
+    filter_frag, filter_params = _dashboard_filter_clause(brand, category, market, channel, item, location, cluster_assignment)
 
     join_clause = ""
     if brand.strip() or category.strip():
@@ -546,16 +635,16 @@ def dashboard_trend(
             SUM(f.tothist_dmd) AS actual
         FROM fact_external_forecast_monthly f
         {join_clause}
-        WHERE f.lag = 0
+        WHERE f.model_id = %s
           AND f.tothist_dmd IS NOT NULL
-          AND f.startdate >= (CURRENT_DATE - (%s || ' months')::interval)
+          AND f.startdate >= ('{pd}'::date - (%s || ' months')::interval)
           {where_extra}
         GROUP BY f.startdate, TO_CHAR(f.startdate, 'YYYY-MM')
         ORDER BY f.startdate
     """
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, [window] + filter_params)
+        cur.execute(sql, [model, window] + filter_params)
         rows = cur.fetchall()
 
     months = []

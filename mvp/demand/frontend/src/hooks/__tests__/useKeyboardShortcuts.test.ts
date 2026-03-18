@@ -24,24 +24,21 @@ describe("useKeyboardShortcuts", () => {
     renderHook(() => useKeyboardShortcuts(defaultConfig));
 
     act(() => fireKey("1"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("aiPlanner");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("commandCenter");
 
     act(() => fireKey("2"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("controlTower");
-
-    act(() => fireKey("3"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("aggregateAnalysis");
 
-    act(() => fireKey("4"));
+    act(() => fireKey("3"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("itemAnalysis");
 
-    act(() => fireKey("5"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("exceptions");
-
-    act(() => fireKey("6"));
+    act(() => fireKey("4"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("invPlanning");
 
-    act(() => fireKey("7"));
+    act(() => fireKey("5"));
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("sop");
+
+    act(() => fireKey("6"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("jobs");
   });
 

@@ -47,6 +47,7 @@ from common.job_state import (
     _run_compute_replenishment_plan,
     _run_compute_safety_stock,
     _run_compute_variability,
+    _run_data_quality,
     _run_generate_ai_insights,
     _run_generate_exceptions,
     _run_generate_production_forecast,
@@ -243,6 +244,15 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="inventory",
         callable=_run_ss_simulation,
         params_schema={},
+    ),
+    # ── Platform (platform group) ─────────────────────────────────────────────
+    "data_quality": JobTypeDef(
+        type_id="data_quality",
+        label="Data Quality Checks",
+        description="Run all configured data quality checks and record results",
+        group="platform",
+        callable=_run_data_quality,
+        params_schema={"domain": None},
     ),
 }
 

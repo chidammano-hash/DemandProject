@@ -18,12 +18,14 @@ export interface JobGroupsPanelProps {
   onSubmit: (typeId: string, params: Record<string, unknown>, label: string) => void;
   onSchedule: (typeId: string) => void;
   submitting: boolean;
+  /** Render a custom inline panel for a specific job type (replaces the default Run button row) */
+  customCards?: Record<string, React.ReactNode>;
 }
 
 // ---------------------------------------------------------------------------
 // JobGroupsPanel
 // ---------------------------------------------------------------------------
-export function JobGroupsPanel({ jobTypes, onSubmit, onSchedule, submitting }: JobGroupsPanelProps) {
+export function JobGroupsPanel({ jobTypes, onSubmit, onSchedule, submitting, customCards }: JobGroupsPanelProps) {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
 
   const groups = useMemo(() => {
@@ -78,43 +80,57 @@ export function JobGroupsPanel({ jobTypes, onSubmit, onSchedule, submitting }: J
             {/* Job type rows */}
             {isExpanded && (
               <div className="divide-y border-t bg-muted/20">
-                {types.map((t) => (
-                  <div
-                    key={t.type_id}
-                    className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/30 transition-colors"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{t.label}</p>
-                      <p className="text-xs text-muted-foreground truncate">{t.description}</p>
+                {types.map((t) => {
+                  const custom = customCards?.[t.type_id];
+                  if (custom) {
+                    return (
+                      <div key={t.type_id} className="px-4 py-3 space-y-3">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{t.label}</p>
+                          <p className="text-xs text-muted-foreground">{t.description}</p>
+                        </div>
+                        {custom}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div
+                      key={t.type_id}
+                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/30 transition-colors"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{t.label}</p>
+                        <p className="text-xs text-muted-foreground truncate">{t.description}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <button
+                          disabled={submitting}
+                          onClick={() => onSubmit(t.type_id, t.params_schema || {}, t.label)}
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                            submitting
+                              ? "bg-muted text-muted-foreground cursor-not-allowed"
+                              : "bg-primary text-primary-foreground hover:bg-primary/90",
+                          )}
+                        >
+                          {submitting ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Zap className="h-3 w-3" />
+                          )}
+                          Run
+                        </button>
+                        <button
+                          onClick={() => onSchedule(t.type_id)}
+                          className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
+                          title="Schedule recurring"
+                        >
+                          <Calendar className="h-3 w-3" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      <button
-                        disabled={submitting}
-                        onClick={() => onSubmit(t.type_id, t.params_schema || {}, t.label)}
-                        className={cn(
-                          "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                          submitting
-                            ? "bg-muted text-muted-foreground cursor-not-allowed"
-                            : "bg-primary text-primary-foreground hover:bg-primary/90",
-                        )}
-                      >
-                        {submitting ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Zap className="h-3 w-3" />
-                        )}
-                        Run
-                      </button>
-                      <button
-                        onClick={() => onSchedule(t.type_id)}
-                        className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
-                        title="Schedule recurring"
-                      >
-                        <Calendar className="h-3 w-3" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

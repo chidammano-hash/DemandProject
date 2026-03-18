@@ -1,11 +1,10 @@
 """Data Quality & Pipeline Observability endpoints (Spec 08-01)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
+from pydantic import BaseModel
 
-from api.auth import require_api_key
 from api.core import get_conn
-from common.auth import CurrentUser, get_current_user, require_role
 
 router = APIRouter(prefix="/data-quality", tags=["data-quality"])
 
@@ -117,25 +116,26 @@ async def dq_history(
 @router.post("/run")
 async def dq_run(
     domain: str = Query("", description="Run checks for specific domain only"),
-    admin: CurrentUser = Depends(require_role("manager")),
-    api_key: str = Depends(require_api_key),
 ):
-    """Trigger an ad-hoc data quality check run (manager+ only)."""
+    """Trigger an ad-hoc data quality check run."""
     from common.dq_engine import DQEngine
     engine = DQEngine()
     results = engine.run_all_checks(domain=domain or None)
-    return {"results": results, "total": len(results)}
+    return {"triggered": len(results), "message": "ok", "results": results, "total": len(results)}
 
 
 @router.get("/freshness")
 async def dq_freshness():
     """Per-table last-load timestamps."""
+    from common.db import get_db_params
+    import psycopg
+
     tables = [
         "dim_item", "dim_location", "dim_customer", "dim_dfu",
         "fact_sales_monthly", "fact_external_forecast_monthly",
     ]
     results = []
-    with get_conn() as conn, conn.cursor() as cur:
+    with psycopg.connect(**get_db_params(), autocommit=True) as conn, conn.cursor() as cur:
         for table in tables:
             try:
                 cur.execute(f"SELECT max(load_ts) FROM {table}")
@@ -149,3 +149,58 @@ async def dq_freshness():
                 results.append({"table": table, "last_load": None})
 
     return {"tables": results}
+
+
+@router.get("/fix/preview")
+async def dq_fix_preview(
+    fix_type: str = Query("", description="Filter by fix type (range, lead_time, completeness, orphans, outliers)"),
+):
+    """Preview all available auto-fixes as an indexed list (dry-run only).
+
+    Each item has an `id` that can be used to selectively apply fixes via POST /fix/apply.
+    """
+    from scripts.fix_dq_issues import preview_all_fixes, FIX_REGISTRY
+
+    if fix_type and fix_type not in FIX_REGISTRY:
+        return {"error": f"Unknown fix type: {fix_type}. Valid: {list(FIX_REGISTRY.keys())}"}
+
+    items = preview_all_fixes(fix_type=fix_type or None)
+    return {"items": items, "total": len(items)}
+
+
+class FixApplyRequest(BaseModel):
+    fix_ids: list[int]
+
+
+@router.post("/fix/apply")
+async def dq_fix_apply(body: FixApplyRequest):
+    """Apply selected fixes by their preview IDs.
+
+    Pass `fix_ids` array from the preview response. Only those fixes are applied;
+    all others are skipped.
+    """
+    from scripts.fix_dq_issues import apply_selected_fixes
+
+    if not body.fix_ids:
+        return {"error": "No fix IDs provided", "applied": [], "total_applied": 0}
+
+    result = apply_selected_fixes(body.fix_ids)
+    return result
+
+
+@router.post("/fix")
+async def dq_fix(
+    fix_type: str = Query("", description="Specific fix type (range, lead_time, completeness, orphans, outliers)"),
+    apply: bool = Query(False, description="Set true to apply fixes; false for dry-run preview"),
+):
+    """Run statistical auto-fix for DQ issues.
+
+    Dry-run (default) previews fixes without writing. Set apply=true to execute.
+    """
+    from scripts.fix_dq_issues import run_all_fixes, FIX_REGISTRY
+
+    if fix_type and fix_type not in FIX_REGISTRY:
+        return {"error": f"Unknown fix type: {fix_type}. Valid: {list(FIX_REGISTRY.keys())}"}
+
+    result = run_all_fixes(fix_type=fix_type or None, dry_run=not apply)
+    return result

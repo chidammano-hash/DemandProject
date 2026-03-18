@@ -21,6 +21,7 @@ function makeWrapper() {
 const BASE_FILTERS: GlobalFilters = {
   item: [],
   location: [],
+      cluster: [],
   brand: [],
   category: [],
   market: [],

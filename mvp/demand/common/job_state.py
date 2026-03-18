@@ -330,6 +330,28 @@ def _run_ss_simulation(params: dict[str, Any], progress_cb: Callable | None = No
     return {"output_log": output if output else "SS simulation completed"}
 
 
+def _run_data_quality(params: dict[str, Any], progress_cb: Callable | None = None) -> dict[str, Any]:
+    """Run all data quality checks via DQEngine."""
+    from common.dq_engine import DQEngine
+
+    if progress_cb:
+        progress_cb(pct=10, msg="Running data quality checks")
+    domain = params.get("domain")
+    engine = DQEngine()
+    results = engine.run_all_checks(domain=domain)
+    total = len(results)
+    passed = sum(1 for r in results if r.get("status") == "pass")
+    failed = sum(1 for r in results if r.get("status") == "fail")
+    if progress_cb:
+        progress_cb(pct=100, msg="Data quality checks complete")
+    return {
+        "total_checks": total,
+        "passed": passed,
+        "failed": failed,
+        "output_log": f"Data quality checks completed: {passed}/{total} passed, {failed} failed",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------

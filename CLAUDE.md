@@ -246,7 +246,7 @@
 | `mvp/demand/api/routers/collaboration.py` | Collaboration threads + annotations endpoints (08-05) |
 | `mvp/demand/api/routers/competition.py` | Champion model competition endpoints |
 | `mvp/demand/api/routers/consensus_plan.py` | Consensus plan endpoints (F4.2) |
-| `mvp/demand/api/routers/data_quality.py` | Data quality dashboard + rule endpoints (08-01) |
+| `mvp/demand/api/routers/data_quality.py` | Data quality dashboard + rule + Self-Heal preview/apply endpoints (08-01) |
 | `mvp/demand/api/routers/domains.py` | Generic domain CRUD — catch-all `{domain}` path param (mounted last) |
 | `mvp/demand/api/routers/echelon_planning.py` | Multi-echelon safety stock endpoints (F3.5) |
 | `mvp/demand/api/routers/events.py` | Event calendar endpoints (F4.3) |
@@ -266,7 +266,8 @@
 | `mvp/demand/api/routers/users.py` | User management endpoints (08-02) |
 | `mvp/demand/api/routers/webhooks.py` | Webhook registration + delivery endpoints (08-10) |
 | `mvp/demand/common/cache.py` | Caching utilities (08-03) |
-| `mvp/demand/common/dq_engine.py` | Data quality engine: rule evaluation, scoring (08-01) |
+| `mvp/demand/common/dq_engine.py` | Data quality engine: 12 check types (freshness, completeness, uniqueness, row_count, range, volume_delta, referential_integrity, statistical_outlier, distribution_drift, temporal_gaps, cross_column, cardinality_anomaly), domain scoring, pipeline health; freshness uses `get_planning_date()` (08-01) |
+| `mvp/demand/scripts/fix_dq_issues.py` | Statistical DQ auto-fix: 5 strategies (range clamping, lead time median, NULL imputation, orphan reporting, statistical Winsorisation), dry-run/apply modes, CLI + API (08-01) |
 | `mvp/demand/common/forecast_ci.py` | Forecast confidence interval computation |
 | `mvp/demand/common/notification_engine.py` | Notification dispatch engine (08-04) |
 | `mvp/demand/common/query_tracker.py` | API query tracking + usage metrics |
@@ -290,7 +291,11 @@
 | `mvp/demand/scripts/update_lead_time_actuals.py` | Lead time actuals update |
 | `mvp/demand/config/bias_correction_config.yaml` | Bias correction thresholds and parameters (F1.2/F3.1) |
 | `mvp/demand/config/consensus_config.yaml` | Consensus plan config (F4.2) |
-| `mvp/demand/config/data_quality_config.yaml` | Data quality rules and thresholds (08-01) |
+| `mvp/demand/sql/063_create_data_quality.sql` | DDL for `dim_dq_check_catalog` + `fact_dq_check_results` + `mv_dq_dashboard` (08-01) |
+| `mvp/demand/sql/068_create_fva_tracking.sql` | DDL for `fact_intervention_metrics` table (08-07) |
+| `mvp/demand/sql/056_create_sop_module.sql` | DDL for 5 S&OP tables: `fact_sop_cycles`, `demand_review`, `supply_constraints`, `gaps`, `approved_plan` (F4.2) |
+| `mvp/demand/scripts/populate_dq_checks.py` | Populate `dim_dq_check_catalog` from `data_quality_config.yaml` (08-01) |
+| `mvp/demand/config/data_quality_config.yaml` | Data quality rules and thresholds: 12 check types across 8 domains including statistical outlier, distribution drift, temporal gaps, cross-column, cardinality anomaly (08-01) |
 | `mvp/demand/config/echelon_config.yaml` | Multi-echelon SS config (F3.5) |
 | `mvp/demand/config/event_planning_config.yaml` | Event calendar config (F4.3) |
 | `mvp/demand/config/financial_plan_config.yaml` | Financial planning config (F4.1) |
@@ -303,7 +308,7 @@
 | `mvp/demand/config/auth_config.yaml` | RBAC authentication config (08-02) |
 | `mvp/demand/config/cache_config.yaml` | Caching config (08-03) |
 | `mvp/demand/config/api_governance_config.yaml` | API governance config: rate limits, versioning (08-09) |
-| `mvp/demand/frontend/src/tabs/DataQualityTab.tsx` | Data quality dashboard tab (08-01) |
+| `mvp/demand/frontend/src/tabs/DataQualityTab.tsx` | Data quality dashboard tab with Self-Heal panel (bulk/single accept/reject fixes) (08-01) |
 | `mvp/demand/frontend/src/tabs/FVATab.tsx` | FVA & ROI tracking tab (08-07) |
 | `mvp/demand/frontend/src/tabs/SopTab.tsx` | S&OP cycle stage machine tab (F4.2) |
 | `mvp/demand/frontend/src/tabs/inv-planning/BlendedDemandPanel.tsx` | Blended demand panel (F3.4) |
@@ -321,7 +326,7 @@
 | `mvp/demand/frontend/src/tabs/inv-planning/PlannedOrdersPanel.tsx` | Planned orders panel |
 | `mvp/demand/frontend/src/tabs/accuracy/BiasCorrectionsPanel.tsx` | Bias corrections panel (F3.1) |
 | `mvp/demand/frontend/src/tabs/inv-planning/` | All 28 inventory planning panel components |
-| `mvp/demand/frontend/src/api/queries/platform.ts` | Platform query keys + fetch functions (data quality, notifications, collaboration, FVA, reports, webhooks) |
+| `mvp/demand/frontend/src/api/queries/platform.ts` | Platform query keys + fetch functions (data quality incl. Self-Heal fix preview/apply, notifications, collaboration, FVA, reports, webhooks) |
 | `mvp/demand/frontend/src/api/queries/evolution.ts` | Evolution-to-operations query keys + fetch functions (F3.1–F4.4) |
 | `mvp/demand/frontend/src/api/queries/supply.ts` | Supply chain query keys + fetch functions |
 | `mvp/demand/frontend/src/api/queries/filter-meta.ts` | Filter metadata query keys + fetch functions |
@@ -508,6 +513,20 @@ make forecast-generate      # Run full production forecast inference pipeline
 make forecast-generate-dfu  # Generate forecast for single DFU: make forecast-generate-dfu ITEM=100320 LOC=1401-BULK
 make forecast-generate-dry  # Preview forecast generation without writing (--dry-run)
 make forecast-prod-all      # forecast-prod-schema + forecast-generate (full pipeline)
+
+# Data Quality (08-01)
+make dq-schema              # Apply DDL for DQ tables (one-time)
+make dq-populate            # Populate check catalog from config
+make dq-run                 # Run all data quality checks
+make dq-all                 # dq-schema + dq-populate + dq-run (full pipeline)
+
+# FVA (08-07)
+make fva-schema             # Apply DDL for fact_intervention_metrics (one-time)
+
+# S&OP (F4.2)
+make sop-schema             # Apply DDL for 5 S&OP tables (one-time)
+make sop-seed               # Seed initial S&OP cycle
+make sop-all                # sop-schema + sop-seed
 
 # Backtest cleanup
 make backtest-list          # List model_id row counts in forecast + archive tables
@@ -728,6 +747,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV
 - **Algorithm configuration (Feature 44):** All backtest algorithm options are controlled by `config/algorithm_config.yaml`, not CLI flags. Backtest scripts for LGBM, CatBoost, and XGBoost accept only `--config`, `--model-id`, and `--n-timeframes`. Features (cluster_strategy, recursive, shap_select, tune_inline, params_file, default hyperparameters) are set per-algorithm in the YAML file. Each algorithm has a `cluster_strategy` key (`per_cluster` or `global`): `per_cluster` trains one model per ml_cluster partition, `global` trains one model on all data. **`ml_cluster` is always a hard feature** — it is included in `feature_cols` for both strategies and is never stripped. In `per_cluster` mode it provides a constant identity signal; in `global` mode it provides inter-cluster discrimination. Each backtest script implements both `train_and_predict_per_cluster()` and `train_and_predict_global()` and selects which to pass to `run_tree_backtest()` based on the config. Prophet, StatsForecast, NeuralProphet, PatchTST, and DeepAR scripts were deleted.
 - **Inventory Rebalancing:** `scripts/compute_rebalancing.py` detects cross-location inventory imbalances using DOS CV from `mv_network_balance`, builds transfer candidates between excess and shortage locations, and solves via greedy or LP solver (configurable in `config/rebalancing_config.yaml`). Output written to `fact_rebalancing_plan` (plan header) + `fact_rebalancing_transfer` (individual transfers). `dim_transfer_lane` defines the network topology (valid source→destination pairs with transit days and cost per unit). 12 REST endpoints in `inv_planning_rebalancing.py` cover KPIs, network view, imbalance list, plan CRUD, transfer detail, and approval workflow (draft→approved→in_transit→completed). Uses `get_conn()` directly (same as all `inv_planning_*.py` routers). Frontend panel "Rebalancing" in the Optimize group of InvPlanningTab.
 - **AI Planning Agent (IPAIfeature1):** NOT a chatbot — a proactive exception work-queue. `AIPlannerAgent` in `common/ai_planner.py` uses `anthropic.Anthropic()` client with `tool_use` API (model: `claude-opus-4-6`). 10 tools: `get_dfu_full_context`, `get_forecast_performance`, `get_portfolio_exceptions`, `compute_bias_trend`, `get_inventory_trend`, `get_eoq_context`, `get_similar_dfus`, `check_stockout_history`, `get_portfolio_health_summary` (all read-only SQL), and `create_insight` (INSERT into `ai_insights`). Agentic loop is circuit-breaker guarded: MAX_TURNS=40, TOKEN_BUDGET=100_000 per run; both OpenAI and Anthropic loops terminate when either limit is hit. `create_insight` calls are validated by `CreateInsightInput` Pydantic model before any DB write — invalid `insight_type`, summary without a digit, or `financial_impact_estimate > $10M` are rejected and logged (return -1). `log_ai_call` writes per-turn token usage + tool call latency to `ai_call_log` table (best-effort, non-fatal). System prompt includes 2 worked few-shot examples anchoring summary/recommendation quality. `INTERVAL '%s months'` bug fixed → `INTERVAL '1 month' * %s`. Three async methods: `run_dfu_analysis(item_no, loc, scan_run_id)`, `run_portfolio_scan(scan_run_id)`, `generate_portfolio_memo(period, scan_run_id)`. POST /ai-planner/portfolio-scan returns 202 immediately; scan runs in background thread via `_executor.submit(...)`. GET /ai-planner/insights returns `{"insights": [...], "total": N}` (key is `insights` not `rows`). New endpoint: GET /ai-planner/metrics?days=7 — per-model token/latency/error aggregates from `ai_call_log`. Config in `config/ai_planner_config.yaml` — model, thresholds, schedule. Dependency: `anthropic>=0.40.0`. Frontend AIPlannerTab.tsx: confidence badge (HIGH/MED/LOW derived from WAPE + bias + financial impact), last-scan timestamp in header, auto-dismiss scan success banner (5s), context-aware empty state ("Portfolio looks healthy!" when no open exceptions). `frontend/src/constants/design-tokens.ts` defines semantic color palette and UX limits.
+- **Data quality engine (08-01):** `common/dq_engine.py` provides `DQEngine` class with 7 check types (freshness, completeness, uniqueness, row_count, range, volume_delta, referential_integrity). Each check is defined in `config/data_quality_config.yaml` and cataloged in `dim_dq_check_catalog`. Results stored in `fact_dq_check_results`; `mv_dq_dashboard` aggregates domain-level scores. `scripts/populate_dq_checks.py` syncs the check catalog from config. REST endpoints in `api/routers/data_quality.py`; frontend in `DataQualityTab.tsx`. Make targets: `dq-schema`, `dq-populate`, `dq-run`, `dq-all`.
 
 ---
 
@@ -793,7 +813,7 @@ Located in `docs/specs/` — 6 domains, 40 files, `DD-SS-descriptive-name.md` co
 
 ### 07-platform-integration/
 - `07-01-integration-architecture.md` — Four bidirectional integration vectors: notifications (Slack/Teams/Email/PagerDuty), REST API consumers (CORS, rate limiting, webhooks), cloud data pipelines (Snowflake/BigQuery/S3/Databricks), ERP/WMS adapters (SAP/Oracle/NetSuite/Manhattan)
-- `07-02-data-quality.md` — Data quality engine, rule evaluation, scoring dashboard (08-01)
+- `07-02-data-quality.md` — Data quality engine (12 check types), statistical auto-fix, Self-Heal preview/apply workflow, scoring dashboard (08-01)
 - `07-03-rbac.md` — Role-based access control, user management (08-02)
 - `07-04-caching.md` — Caching strategy, cache invalidation (08-03)
 - `07-05-notifications.md` — Notification channels, preferences, dispatch engine (08-04)

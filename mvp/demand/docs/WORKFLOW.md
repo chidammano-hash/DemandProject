@@ -195,6 +195,8 @@ make policy-assign           # Upsert 4 default policies + auto-assign DFUs by A
 make health-refresh          # Refresh mv_inventory_health_score
 
 # Exception queue (IPfeature7 — requires EOQ + safety stock)
+# IMPORTANT: Must run AFTER ss-compute completes (fact_safety_stock_targets must have rows)
+#   Dependency chain: make ss-compute → make exceptions-generate
 make exceptions-generate     # Detect stockout/excess/below-ROP exceptions → DB
 
 # Fill rate (IPfeature8 — requires inventory loaded)
@@ -352,7 +354,83 @@ make storyboard-generate     # Detect planning exceptions → fact_storyboard_ex
 
 ---
 
-## Phase 9b: Notification & Webhook Configuration
+## Phase 9b: Data Quality Pipeline (Automated)
+
+Beyond the one-off Phase 2b checks, Data Quality runs as a recurring automated pipeline.
+
+```bash
+# One-time schema (already done in Phase 1):
+make dq-schema               # dim_dq_check_catalog + fact_dq_check_results + mv_dq_dashboard
+
+# Populate check catalog from config/data_quality_config.yaml:
+make dq-run                  # Run all enabled DQ checks → fact_dq_check_results
+```
+
+**Automated schedule:** Every 4 hours via APScheduler (`dq_check` job type in job_registry).
+The scheduler triggers `common/dq_engine.py` which evaluates SQL-based rules (freshness,
+completeness, uniqueness, range, volume delta, referential integrity), writes results to
+`fact_dq_check_results`, and refreshes `mv_dq_dashboard` domain health scores.
+
+Dashboard: `GET /data-quality/dashboard` shows pass/warn/fail trends per domain.
+
+---
+
+## Phase 9c: FVA Tracking
+
+FVA (Forecast Value Add) tracks whether human forecast interventions improve or degrade accuracy.
+
+```bash
+# One-time schema (already done in Phase 1):
+make fva-schema              # fact_fva_tracking (sql/068)
+```
+
+**How it works:** Interventions (overrides, manual adjustments, consensus changes) are
+recorded automatically through user actions in the UI (Override Queue, Consensus Plan,
+Demand Plan panels). Each intervention captures before/after forecast values plus the
+user who made the change. The FVA engine computes accuracy deltas once actuals arrive.
+
+API endpoints (`/fva/*`):
+- `GET /fva/waterfall` — step-by-step accuracy waterfall (statistical → override → consensus → final)
+- `GET /fva/roi` — ROI dashboard: intervention count, accuracy lift, cost of touch
+- `GET /fva/detail` — per-DFU intervention history with before/after metrics
+
+Dashboard: FVA tab shows waterfall chart + ROI summary. Config in `config/fva_config.yaml`.
+
+---
+
+## Phase 9d: S&OP Cycle
+
+S&OP (Sales & Operations Planning) runs as a multi-stage approval workflow.
+
+```bash
+# One-time schema (already done in Phase 1 via make db-apply-sql):
+# S&OP uses fact_external_forecast_monthly + ai_insights + existing planning tables
+
+# Seed a new S&OP cycle:
+# POST /sop/cycles  (via API — creates cycle with status "demand_review")
+```
+
+**Cycle stages** (sequential, each requires approval to advance):
+
+1. **Demand Review** — Review statistical + ML forecasts, apply overrides
+2. **Supply Review** — Validate inventory positions, capacity, lead times
+3. **Pre-S&OP** — Cross-functional alignment, gap identification
+4. **Executive S&OP** — Final executive review and trade-off decisions
+5. **Approved** — Plan locked, execution begins
+6. **Closed** — Cycle archived after month-end actuals reconciliation
+
+API endpoints (`/sop/*`):
+- `POST /sop/cycles` — seed a new cycle
+- `PUT /sop/cycles/{id}/advance` — advance to next stage (requires planner/admin role)
+- `GET /sop/cycles` — list cycles with current stage + gap metrics
+- `GET /sop/cycles/{id}/plan` — approved plan detail
+
+Dashboard: S&OP tab (sidebar "S&OP") shows stage machine, gap cards, advance/approve buttons.
+Config in `config/sop_config.yaml`.
+
+---
+
+## Phase 9e: Notification & Webhook Configuration
 
 Configure notification channels and webhook subscriptions. These fire automatically
 when pipeline events occur (DQ failures, AI insights, exception alerts, report delivery).
@@ -381,7 +459,7 @@ API endpoints (`/webhooks/*`):
 
 ---
 
-## Phase 9c: Report Generation Pipeline
+## Phase 9f: Report Generation Pipeline
 
 Configure and schedule automated report generation and distribution.
 
@@ -478,6 +556,9 @@ make ai-insights-scan
 # 9. Storyboard
 make storyboard-generate
 
+# 9b. Data Quality (also runs automatically every 4h)
+make dq-run
+
 # 10. Start services
 make api   # terminal 1
 make ui    # terminal 2
@@ -546,8 +627,11 @@ Phase 2  (Ingest)
                                                              └─► Phase 7 (Prod Forecast)
     └─► Phase 8  (AI Insights)  [needs 3 + 6 + 7]
     └─► Phase 9  (Storyboard)   [needs 3]
-    └─► Phase 9b (Notifications + Webhooks)  [config-only, no data deps]
-    └─► Phase 9c (Report Generation)  [needs loaded data for report queries]
+    └─► Phase 9b (DQ Pipeline — auto)  [needs 2, runs every 4h via APScheduler]
+    └─► Phase 9c (FVA Tracking)       [needs user interventions + actuals]
+    └─► Phase 9d (S&OP Cycle)         [needs 3 + 7, multi-stage approval]
+    └─► Phase 9e (Notifications + Webhooks)  [config-only, no data deps]
+    └─► Phase 9f (Report Generation)  [needs loaded data for report queries]
 Phase 10 (Start Services)
     └─► Cache layer active (Redis or in-memory fallback)
     └─► Query performance tracking active (fact_query_performance)

@@ -145,4 +145,11 @@ export const GROUP_CONFIG: Record<string, GroupConfig> = {
     borderColor: "border-cyan-200 dark:border-cyan-800",
     iconBg: "bg-cyan-100 dark:bg-cyan-900/50",
   },
+  platform: {
+    label: "Platform",
+    color: "text-slate-600 dark:text-slate-400",
+    bgColor: "bg-slate-50 dark:bg-slate-950/30",
+    borderColor: "border-slate-200 dark:border-slate-800",
+    iconBg: "bg-slate-100 dark:bg-slate-900/50",
+  },
 };

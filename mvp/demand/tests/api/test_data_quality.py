@@ -159,7 +159,16 @@ async def test_dq_history_invalid_days():
 @pytest.mark.asyncio
 async def test_dq_freshness_200():
     pool, conn, cursor = _make_pool(fetchone_return=(_NOW,))
-    with patch("api.core._get_pool", return_value=pool):
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_cur.fetchone.return_value = (_NOW,)
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("psycopg.connect", return_value=mock_conn):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -175,7 +184,16 @@ async def test_dq_freshness_200():
 async def test_dq_freshness_no_data():
     """Tables with no rows return last_load=None."""
     pool, conn, cursor = _make_pool(fetchone_return=(None,))
-    with patch("api.core._get_pool", return_value=pool):
+    mock_conn = MagicMock()
+    mock_cur = MagicMock()
+    mock_cur.fetchone.return_value = (None,)
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("psycopg.connect", return_value=mock_conn):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -208,6 +226,8 @@ async def test_dq_run_200():
     data = resp.json()
     assert "results" in data
     assert data["total"] == 1
+    assert data["triggered"] == 1
+    assert data["message"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -224,3 +244,137 @@ async def test_dq_run_with_domain():
             resp = await client.post("/data-quality/run?domain=sales")
     assert resp.status_code == 200
     mock_engine.run_all_checks.assert_called_once_with(domain="sales")
+
+
+# ---------------------------------------------------------------------------
+# GET /data-quality/fix/preview
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dq_fix_preview_200():
+    """Preview returns indexed fix items."""
+    pool, conn, cursor = _make_pool()
+    mock_items = [
+        {"id": 0, "fix_type": "range", "description": "Clamp t.col to [0, 100]",
+         "affected_rows": 500, "recommendation": None, "status": "pending"},
+        {"id": 1, "fix_type": "completeness", "description": "Impute t.col NULLs",
+         "affected_rows": 100, "recommendation": None, "status": "pending"},
+    ]
+    with patch("api.core._get_pool", return_value=pool), \
+         patch.dict("sys.modules", {"scripts.fix_dq_issues": MagicMock(
+             preview_all_fixes=MagicMock(return_value=mock_items),
+             FIX_REGISTRY={"range": None, "lead_time": None, "completeness": None,
+                           "orphans": None, "outliers": None},
+         )}):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/data-quality/fix/preview")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 2
+    assert len(data["items"]) == 2
+    assert data["items"][0]["id"] == 0
+    assert data["items"][0]["fix_type"] == "range"
+    assert data["items"][0]["affected_rows"] == 500
+
+
+@pytest.mark.asyncio
+async def test_dq_fix_preview_invalid_type():
+    """Preview with unknown fix_type returns error."""
+    pool, conn, cursor = _make_pool()
+    with patch("api.core._get_pool", return_value=pool), \
+         patch.dict("sys.modules", {"scripts.fix_dq_issues": MagicMock(
+             FIX_REGISTRY={"range": None, "lead_time": None, "completeness": None,
+                           "orphans": None, "outliers": None},
+         )}):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/data-quality/fix/preview?fix_type=bogus")
+    assert resp.status_code == 200
+    assert "error" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_dq_fix_preview_empty():
+    """Preview with no fixable issues returns empty list."""
+    pool, conn, cursor = _make_pool()
+    with patch("api.core._get_pool", return_value=pool), \
+         patch.dict("sys.modules", {"scripts.fix_dq_issues": MagicMock(
+             preview_all_fixes=MagicMock(return_value=[]),
+             FIX_REGISTRY={"range": None},
+         )}):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/data-quality/fix/preview")
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+    assert resp.json()["items"] == []
+
+
+# ---------------------------------------------------------------------------
+# POST /data-quality/fix/apply
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dq_fix_apply_200():
+    """Apply selected fixes returns applied results."""
+    pool, conn, cursor = _make_pool()
+    mock_result = {
+        "applied": [
+            {"id": 0, "fix_type": "range", "description": "Clamp t.col",
+             "affected_rows": 500, "recommendation": None, "status": "applied",
+             "rows_fixed": 500},
+        ],
+        "skipped": [
+            {"id": 1, "fix_type": "completeness", "description": "Impute",
+             "affected_rows": 100, "recommendation": None, "status": "skipped"},
+        ],
+        "total_applied": 1,
+        "total_skipped": 1,
+        "total_rows_fixed": 500,
+    }
+    with patch("api.core._get_pool", return_value=pool), \
+         patch.dict("sys.modules", {"scripts.fix_dq_issues": MagicMock(
+             apply_selected_fixes=MagicMock(return_value=mock_result),
+         )}):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/data-quality/fix/apply",
+                                     json={"fix_ids": [0]})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_applied"] == 1
+    assert data["total_rows_fixed"] == 500
+    assert len(data["applied"]) == 1
+    assert data["applied"][0]["status"] == "applied"
+
+
+@pytest.mark.asyncio
+async def test_dq_fix_apply_empty_ids():
+    """Apply with empty fix_ids returns error."""
+    pool, conn, cursor = _make_pool()
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/data-quality/fix/apply",
+                                     json={"fix_ids": []})
+    assert resp.status_code == 200
+    assert resp.json()["total_applied"] == 0
+    assert "error" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_dq_fix_apply_missing_body():
+    """Apply without body returns 422."""
+    pool, conn, cursor = _make_pool()
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/data-quality/fix/apply")
+    assert resp.status_code == 422

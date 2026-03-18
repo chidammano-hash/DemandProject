@@ -411,6 +411,18 @@ AI Planning Agent (IPAIfeature1):
 - Dependency: `anthropic>=0.40.0`
 - Pipeline: `make ai-insights-schema`, `make ai-insights-scan`, `make ai-insights-dfu ITEM=<item> LOC=<loc>`, `make ai-insights-all`
 
+S&OP Cycle Automation (F4.2):
+- **6-stage S&OP cycle machine:** demand_review → supply_review → pre_sop → executive_sop → approved → closed
+- Each cycle is tied to a calendar month and tracks stage progression with timestamps, gap analysis, and approval status
+- Demand/supply gap detection: compares demand plan vs. supply capacity at each stage, surfacing mismatches as gap cards with severity indicators
+- Advance and approve actions move the cycle through stages; approved plans are locked and visible in a read-only approved plan table
+- DDL: `sql/056_create_sop_module.sql` — S&OP cycle, stage, and plan tables
+- Config: `config/sop_config.yaml` — stage definitions, approval rules, gap thresholds
+- Script: `scripts/run_sop_cycle.py` — create cycles, advance stages, populate demand data (`--action create|advance|populate-demand`)
+- Router: `api/routers/sop.py` — `GET /sop/cycles`, `/gaps`, `/approved-plan`, `POST /sop/cycles/{id}/advance`, `POST /sop/cycles/{id}/approve`
+- Frontend: `frontend/src/tabs/SopTab.tsx` — dedicated S&OP tab with stage timeline, gap cards, advance/approve actions, approved plan table
+- Pipeline: `make sop-schema`, `make sop-create CYCLE_MONTH=2026-03`, `make sop-advance CYCLE_ID=1`, `make sop-populate CYCLE_ID=1`, `make sop-all`
+
 User Management & Role-Based Access Control (08-01):
 - JWT-based authentication with bcrypt password hashing and refresh token rotation
 - 4 roles: admin, planner, analyst, viewer — each with granular permission scopes
@@ -425,8 +437,11 @@ User Management & Role-Based Access Control (08-01):
 
 Data Quality Monitoring (08-02):
 - Automated data quality checks on ingestion: completeness, consistency, timeliness, and accuracy scoring
+- **7 check types:** freshness, completeness, row_count, uniqueness, range, volume_delta, referential_integrity — evaluated by the `DQEngine` class in `common/dq_engine.py`
 - Quality dimensions: missing value rate, duplicate detection, outlier detection (IQR method), schema drift detection, freshness monitoring
 - Per-domain quality scores (0–100) with configurable thresholds for pass/warn/fail
+- Automated scheduling: checks can be scheduled via the job engine (APScheduler) for continuous pipeline observability
+- **Dashboard tab:** dedicated Data Quality tab in the UI showing domain health score cards (green/amber/red), check catalog, and freshness status
 - DDL: `sql/043_create_data_quality.sql` — `fact_data_quality_checks`, `fact_data_quality_scores` tables
 - Config: `config/data_quality_config.yaml` — thresholds per domain, check schedules, alert rules
 - Script: `scripts/run_data_quality_checks.py` — scans all domains, writes quality scores
@@ -474,8 +489,10 @@ External Demand Signals Integration (08-06):
 
 FVA Tracking & ROI Measurement (08-07):
 - Forecast Value Added (FVA) tracking: measures incremental accuracy improvement at each step of the forecasting process
-- FVA waterfall: statistical baseline → ML model → champion selection → planner override → consensus → final
-- ROI measurement: translates accuracy improvements into financial impact (inventory carrying cost reduction, stockout cost avoidance)
+- **Model accuracy waterfall:** statistical baseline → ML model → champion selection → planner override → consensus → final — each stage shows delta WAPE vs. prior step
+- **Intervention tracking:** planner overrides and manual adjustments are logged with before/after accuracy metrics, enabling accountability and continuous improvement
+- **ROI measurement:** translates accuracy improvements into financial impact (inventory carrying cost reduction, stockout cost avoidance, dollar savings per WAPE point improvement)
+- **Dashboard tab:** dedicated FVA & ROI tab in the UI with waterfall bar chart, intervention timeline, and ROI KPI cards (total savings, cost per WAPE point, ROI %)
 - DDL: `sql/047_create_fva_tracking.sql` — `fact_fva_waterfall`, `fact_forecast_roi` tables
 - Config: `config/fva_config.yaml` — waterfall stages, cost parameters (holding_cost_per_unit, stockout_cost_per_unit), ROI calculation method
 - Script: `scripts/compute_fva_waterfall.py` — computes per-DFU FVA at each pipeline stage
@@ -561,6 +578,10 @@ make fva-schema            # Create FVA tracking tables (08-07)
 make reports-schema        # Create reporting tables (08-08)
 make webhooks-schema       # Create webhook tables (08-10)
 make rebalancing-schema    # Create rebalancing tables: dim_transfer_lane, fact_rebalancing_plan, fact_rebalancing_transfer, mv_network_balance
+make sop-schema            # Create S&OP cycle tables (F4.2)
+make sop-all               # S&OP schema setup (full pipeline)
+make dq-all                # Data quality schema + initial check run (08-02)
+make fva-all               # FVA schema + waterfall + ROI computation (08-07)
 ```
 
 Job Scheduler/Monitor with APScheduler (feature39):

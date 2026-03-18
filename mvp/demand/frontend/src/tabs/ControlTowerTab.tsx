@@ -29,12 +29,14 @@ function pct(n: number | null | undefined, scale = 1): string {
   return `${(Number(n) * scale).toFixed(1)}%`;
 }
 
-// Severity color mapping
+import { getSeverityConfig } from "@/constants/severity";
+
+// Severity color mapping — derived from unified severity system
 const SEV_COLORS: Record<string, string> = {
-  critical: "bg-red-100 text-red-800 border-red-200",
-  high:     "bg-orange-100 text-orange-800 border-orange-200",
-  medium:   "bg-amber-100 text-amber-800 border-amber-200",
-  low:      "bg-gray-100 text-gray-700 border-gray-200",
+  critical: getSeverityConfig("critical").badge,
+  high:     getSeverityConfig("high").badge,
+  medium:   getSeverityConfig("medium").badge,
+  low:      getSeverityConfig("low").badge,
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -55,7 +57,6 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
   const queryClient = useQueryClient();
   const { filters } = useGlobalFilterContext();
   const [trendMonths, setTrendMonths] = useState(6); // PL-014
-  const [showMoreKpis, setShowMoreKpis] = useState(false);
 
   const filterParams = {
     item: filters.item,
@@ -134,8 +135,9 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
 
       {kpisLoading && <p className="text-sm text-muted-foreground">Loading control tower data...</p>}
 
-      {/* ZONE 1: KPI Strip — 4 primary KPIs (MAX_PRIMARY_KPIS = 4) */}
+      {/* ZONE 1: KPI Strip — 2-row layout: primary + secondary */}
       <div className="space-y-2">
+        {/* Row 1: Primary KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KpiCard
             label="Portfolio Health"
@@ -161,38 +163,33 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
           />
         </div>
 
-        {/* Secondary KPIs — shown on demand */}
-        {showMoreKpis && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <KpiCard
-              label="Stockout Items (MTD)"
-              value={`${im?.items_with_stockout_this_month ?? 0}`}
-              color={im?.extended_stockouts_this_month ? "red" : undefined}
-            />
-            <KpiCard
-              label="Below SS %"
-              value={h?.below_ss_pct != null ? pct(h.below_ss_pct, 100) : "—"}
-              color={h?.below_ss_pct == null ? undefined : h.below_ss_pct < 0.05 ? "green" : h.below_ss_pct < 0.20 ? "amber" : "red"}
-            />
-            <KpiCard
-              label="Urgent Signals"
-              value={`${ds?.urgent_demand_signals ?? 0}`}
-              color={ds?.urgent_demand_signals ? "red" : "green"}
-            />
-            <KpiCard
-              label="Extended Stockouts"
-              value={`${im?.extended_stockouts_this_month ?? 0}`}
-              color={im?.extended_stockouts_this_month ? "red" : undefined}
-            />
-          </div>
-        )}
-
-        <button
-          onClick={() => setShowMoreKpis((v) => !v)}
-          className="text-[11px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
-        >
-          {showMoreKpis ? "▲ Fewer metrics" : "▼ More metrics"}
-        </button>
+        {/* Row 2: Secondary KPIs — always visible, lighter styling */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <KpiCard
+            label="Stockout Items (MTD)"
+            value={`${im?.items_with_stockout_this_month ?? 0}`}
+            color={im?.extended_stockouts_this_month ? "red" : undefined}
+            secondary
+          />
+          <KpiCard
+            label="Below SS %"
+            value={h?.below_ss_pct != null ? pct(h.below_ss_pct, 100) : "—"}
+            color={h?.below_ss_pct == null ? undefined : h.below_ss_pct < 0.05 ? "green" : h.below_ss_pct < 0.20 ? "amber" : "red"}
+            secondary
+          />
+          <KpiCard
+            label="Urgent Signals"
+            value={`${ds?.urgent_demand_signals ?? 0}`}
+            color={ds?.urgent_demand_signals ? "red" : "green"}
+            secondary
+          />
+          <KpiCard
+            label="Extended Stockouts"
+            value={`${im?.extended_stockouts_this_month ?? 0}`}
+            color={im?.extended_stockouts_this_month ? "red" : undefined}
+            secondary
+          />
+        </div>
       </div>
 
       {/* ZONE 2 + ZONE 3: Health Overview & Exception Queue */}
@@ -394,12 +391,14 @@ function KpiCard({
   badge,
   badgeColor = "gray",
   color,
+  secondary = false,
 }: {
   label: string;
   value: string;
   badge?: string;
   badgeColor?: string;
   color?: "green" | "amber" | "red";
+  secondary?: boolean;
 }) {
   const textColor =
     color === "green" ? "text-green-600"
@@ -408,9 +407,9 @@ function KpiCard({
     : "";
 
   return (
-    <div className="rounded-lg border bg-card p-3">
+    <div className={`rounded-lg border bg-card ${secondary ? "p-2 opacity-85" : "p-3"}`}>
       <p className="text-xs text-muted-foreground truncate">{label}</p>
-      <p className={`text-xl font-bold ${textColor}`}>{value}</p>
+      <p className={`${secondary ? "text-base" : "text-xl"} font-bold ${textColor}`}>{value}</p>
       {badge && (
         <span className={`text-[10px] font-medium ${badgeColor === "red" ? "text-red-600" : "text-muted-foreground"}`}>
           {badge}

@@ -4,7 +4,8 @@
 // AI-generated content — teal distinguishes AI annotations from human data
 export const AI_COLOR = '#0D9488';
 
-// Severity palette — strict semantic meaning
+// Severity palette — strict semantic meaning (hex values for non-Tailwind contexts like charts).
+// For Tailwind class-based severity styling, use @/constants/severity.ts instead.
 export const CRITICAL_COLOR = '#ef4444';  // Red   — action required NOW
 export const HIGH_COLOR = '#f59e0b';      // Amber — high risk / watch
 export const MEDIUM_COLOR = '#eab308';    // Yellow — medium risk / monitor

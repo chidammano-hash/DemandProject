@@ -102,6 +102,35 @@ describe("HeatmapGrid", () => {
     expect(onCellClick).toHaveBeenCalledWith("Category A", "Feb");
   });
 
+  it("shows DFU count inline on hover when counts provided", () => {
+    const rowsWithCounts = [
+      { label: "Category A", values: [92.5], counts: [42] },
+    ];
+    render(
+      <HeatmapGrid
+        rows={rowsWithCounts}
+        columnLabels={["Jan"]}
+        colorScale={colorScale}
+      />
+    );
+    const cell = screen.getByLabelText("Category A, Jan: 92.5%, 42 DFUs");
+    fireEvent.mouseEnter(cell);
+    expect(screen.getByText("(42)")).toBeInTheDocument();
+  });
+
+  it("does not show count when counts not provided", () => {
+    render(
+      <HeatmapGrid
+        rows={sampleRows}
+        columnLabels={sampleColumns}
+        colorScale={colorScale}
+      />
+    );
+    const cell = screen.getByLabelText("Category A, Jan: 92.5%");
+    fireEvent.mouseEnter(cell);
+    expect(screen.queryByText(/\(\d+\)/)).not.toBeInTheDocument();
+  });
+
   it("uses custom valueFormat when provided", () => {
     const customFormat = (v: number) => `$${v.toFixed(0)}`;
     render(
@@ -114,6 +143,67 @@ describe("HeatmapGrid", () => {
     );
     expect(screen.getByText("$43")).toBeInTheDocument();
     expect(screen.getByLabelText("Row1, Col1: $43")).toBeInTheDocument();
+  });
+});
+
+describe("HeatmapGrid legend", () => {
+  it("does not render legend by default", () => {
+    const { container } = render(
+      <HeatmapGrid
+        rows={sampleRows}
+        columnLabels={sampleColumns}
+        colorScale={colorScale}
+      />
+    );
+    expect(container.querySelector("[aria-label='Heatmap legend']")).not.toBeInTheDocument();
+  });
+
+  it("renders legend when showLegend is true", () => {
+    const { container } = render(
+      <HeatmapGrid
+        rows={sampleRows}
+        columnLabels={sampleColumns}
+        colorScale={colorScale}
+        showLegend
+      />
+    );
+    const legend = container.querySelector("[aria-label='Heatmap legend']");
+    expect(legend).toBeInTheDocument();
+    expect(screen.getByText("0%")).toBeInTheDocument();
+    expect(screen.getByText("100%")).toBeInTheDocument();
+  });
+
+  it("uses custom min/max labels", () => {
+    render(
+      <HeatmapGrid
+        rows={sampleRows}
+        columnLabels={sampleColumns}
+        colorScale={colorScale}
+        showLegend
+        minLabel="Low"
+        maxLabel="High"
+      />
+    );
+    expect(screen.getByText("Low")).toBeInTheDocument();
+    expect(screen.getByText("High")).toBeInTheDocument();
+  });
+});
+
+describe("HeatmapGrid zero-DFU cells", () => {
+  it("renders zero-DFU cells as empty with no-data aria label", () => {
+    const rows = [
+      { label: "CatA", values: [90, 0], counts: [5, 0] },
+      { label: "CatB", values: [0, 85], counts: [0, 3] },
+    ];
+    render(
+      <HeatmapGrid rows={rows} columnLabels={["Jan", "Feb"]} colorScale={colorScale} />
+    );
+    // Cells with DFUs render value
+    expect(screen.getByLabelText("CatA, Jan: 90.0%, 5 DFUs")).toBeInTheDocument();
+    expect(screen.getByLabelText("CatB, Feb: 85.0%, 3 DFUs")).toBeInTheDocument();
+    // Cells without DFUs render as no data
+    expect(screen.getByLabelText("CatA, Feb: no data")).toBeInTheDocument();
+    expect(screen.getByLabelText("CatB, Jan: no data")).toBeInTheDocument();
   });
 });
 

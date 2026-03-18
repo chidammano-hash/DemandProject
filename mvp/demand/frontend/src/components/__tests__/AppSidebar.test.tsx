@@ -26,7 +26,7 @@ describe("AppSidebar", () => {
     for (const item of NAV_ITEMS) {
       expect(screen.getByText(item.label)).toBeInTheDocument();
     }
-    expect(NAV_ITEMS.length).toBe(16);
+    expect(NAV_ITEMS.length).toBe(12);
   });
 
   it("active item has aria-current='page'", () => {
@@ -72,8 +72,8 @@ describe("AppSidebar", () => {
     renderSidebar({ onNavigate, collapsed: false });
     fireEvent.click(screen.getByText("Portfolio"));
     expect(onNavigate).toHaveBeenCalledWith("aggregateAnalysis");
-    fireEvent.click(screen.getByText("Chat"));
-    expect(onNavigate).toHaveBeenCalledWith("chat");
+    fireEvent.click(screen.getByText("Command Center"));
+    expect(onNavigate).toHaveBeenCalledWith("commandCenter");
   });
 
   it("renders Vrantis wordmark when not collapsed", () => {

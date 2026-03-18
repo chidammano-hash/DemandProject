@@ -136,14 +136,14 @@ def run(dry_run: bool = False) -> dict:
                     SELECT
                         item_no,
                         loc,
-                        eom_on_hand          AS current_qty,
-                        daily_sales          AS avg_daily_sls
+                        eom_qty_on_hand      AS current_qty,
+                        avg_daily_sls        AS avg_daily_sls
                     FROM (
                         SELECT
                             item_no,
                             loc,
-                            eom_on_hand,
-                            daily_sales,
+                            eom_qty_on_hand,
+                            avg_daily_sls,
                             ROW_NUMBER() OVER (
                                 PARTITION BY item_no, loc
                                 ORDER BY month_start DESC
@@ -154,6 +154,7 @@ def run(dry_run: bool = False) -> dict:
                 """)
                 inv_rows = cur.fetchall()
             except Exception:
+                conn.rollback()
                 inv_rows = []
 
             inv_map: dict[tuple, dict] = {}
@@ -171,12 +172,14 @@ def run(dry_run: bool = False) -> dict:
                 cur.execute("""
                     SELECT
                         item_no, loc,
-                        ss_combined, reorder_point, effective_eoq,
-                        target_dos_max, unit_cost, demand_mean_monthly
+                        ss_combined, reorder_point,
+                        target_max_qty,
+                        target_dos_max, demand_mean_monthly
                     FROM fact_safety_stock_targets
                 """)
                 ss_rows = cur.fetchall()
             except Exception:
+                conn.rollback()
                 ss_rows = []
 
             ss_map: dict[tuple, dict] = {}
@@ -187,8 +190,8 @@ def run(dry_run: bool = False) -> dict:
                     "reorder_point": float(r[3]) if r[3] is not None else None,
                     "effective_eoq": float(r[4]) if r[4] is not None else None,
                     "target_dos_max": float(r[5]) if r[5] is not None else None,
-                    "unit_cost": float(r[6]) if r[6] is not None else None,
-                    "demand_mean_monthly": float(r[7]) if r[7] is not None else None,
+                    "unit_cost": None,
+                    "demand_mean_monthly": float(r[6]) if r[6] is not None else None,
                 }
 
             # ----------------------------------------------------------------
@@ -202,6 +205,7 @@ def run(dry_run: bool = False) -> dict:
                 """)
                 policy_rows = cur.fetchall()
             except Exception:
+                conn.rollback()
                 policy_rows = []
 
             policy_map: dict[tuple, dict] = {}
@@ -223,6 +227,7 @@ def run(dry_run: bool = False) -> dict:
                 lt_rows = cur.fetchall()
                 lt_map = {(r[0], r[1]): float(r[2] or 0) for r in lt_rows}
             except Exception:
+                conn.rollback()
                 lt_map = {}
 
             # ----------------------------------------------------------------
@@ -238,6 +243,7 @@ def run(dry_run: bool = False) -> dict:
                 """, [dedup_cutoff])
                 existing = {(r[0], r[1], r[2]) for r in cur.fetchall()}
             except Exception:
+                conn.rollback()
                 existing = set()
 
         # ----------------------------------------------------------------

@@ -148,12 +148,25 @@ html[data-transitioning] * {
   animation: shimmer 1.5s ease-in-out infinite;
 }
 
+/* Micro-animations for state changes */
+@keyframes fade-slide-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-8px); }
+}
+@keyframes fade-slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-slide-out { animation: fade-slide-out 0.3s ease-out forwards; }
+.animate-fade-slide-in { animation: fade-slide-in 0.3s ease-out forwards; }
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in,
-  .animate-pulse-glow,
   .animate-pour-shimmer,
-  .animate-shimmer {
+  .animate-shimmer,
+  .animate-fade-slide-out,
+  .animate-fade-slide-in {
     animation: none !important;
   }
   html[data-transitioning] * {

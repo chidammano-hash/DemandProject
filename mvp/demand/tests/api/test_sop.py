@@ -210,6 +210,65 @@ async def test_get_approved_plan_empty():
 
 
 @pytest.mark.asyncio
+async def test_get_sop_gaps_200():
+    gap_row = (1, "demand_shortfall", 500.0, 25000.0, "critical", None, "open")
+    pool, conn, cursor = _make_pool()
+    cursor.fetchall.return_value = [gap_row]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/sop/cycles/1/gaps")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cycle_id"] == 1
+    assert len(data["gaps"]) == 1
+    gap = data["gaps"][0]
+    assert gap["gap_id"] == 1
+    assert gap["gap_type"] == "demand_shortfall"
+    assert gap["gap_qty"] == 500.0
+    assert gap["severity"] == "critical"
+    assert gap["resolution_status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_get_sop_gaps_empty():
+    pool, conn, cursor = _make_pool()
+    cursor.fetchall.return_value = []
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/sop/cycles/1/gaps", params={"severity": "high"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cycle_id"] == 1
+    assert data["gaps"] == []
+
+
+@pytest.mark.asyncio
+async def test_approve_sop_cycle_404():
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = None
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/sop/cycles/9999/approve",
+                json={"approved_by": "cfo@co.com", "plan_version": "v2025-03"},
+                headers={"x-api-key": ""},
+            )
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_approve_sop_cycle_200():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = ("executive_sop",)

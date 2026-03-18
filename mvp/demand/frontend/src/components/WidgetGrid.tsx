@@ -9,7 +9,7 @@ interface WidgetGridProps {
 
 const GAP_MAP = { sm: "gap-2", md: "gap-4", lg: "gap-6" };
 
-export function WidgetGrid({ cols = 12, gap = "md", children, className }: WidgetGridProps) {
+export function WidgetGrid({ cols = 12, gap = "lg", children, className }: WidgetGridProps) {
   return (
     <div
       className={cn(

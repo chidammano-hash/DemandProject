@@ -19,7 +19,6 @@ import {
 } from "@/api/queries";
 import { fetchProductionForecast } from "@/api/queries/production-forecast";
 import type { ProductionForecastPayload } from "@/api/queries/production-forecast";
-import { ELEMENT_CONFIG } from "@/constants/elements";
 import type {
   DfuAnalysisKpis,
   DfuAnalysisPayload,
@@ -82,6 +81,25 @@ export function ItemAnalysisTab() {
 
   const debouncedDfuItem = useDebounce(dfuItem, 500);
   const debouncedDfuLocation = useDebounce(dfuLocation, 500);
+
+  // Deep-link: consume ?item=…&loc=… URL params on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlItem = params.get("item");
+    const urlLoc = params.get("loc");
+    if (urlItem) {
+      setDfuItem(urlItem);
+      if (urlLoc) setDfuLocation(urlLoc);
+      setDfuAutoSampled(true);
+      // Clean up URL params so they don't persist on refresh
+      params.delete("item");
+      params.delete("loc");
+      const newUrl = params.toString()
+        ? `${window.location.pathname}?${params}`
+        : window.location.pathname;
+      window.history.replaceState({}, "", newUrl);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ========================================================================
   // Global filter sync (shared)
@@ -439,7 +457,7 @@ export function ItemAnalysisTab() {
               </>
             ) : dfuLoading ? (
               <div className="flex h-[320px] items-center justify-center">
-                <LoadingElement config={ELEMENT_CONFIG.dfuAnalysis} message="Fetching analysis..." />
+                <LoadingElement message="Fetching analysis..." />
               </div>
             ) : (
               <div className="flex h-[320px] items-center justify-center text-sm text-muted-foreground">

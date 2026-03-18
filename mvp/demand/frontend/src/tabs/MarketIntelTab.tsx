@@ -7,7 +7,6 @@ import {
 } from "@/api/queries";
 import type { MarketIntelPayload } from "@/types";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
-import { ELEMENT_CONFIG } from "@/constants/elements";
 import { LoadingElement } from "@/components/LoadingElement";
 
 import { Badge } from "@/components/ui/badge";
@@ -152,7 +151,6 @@ export default function MarketIntelTab() {
 
         {miLoading ? (
           <LoadingElement
-            config={ELEMENT_CONFIG.intel}
             message="Searching the web and generating market briefing..."
           />
         ) : null}

@@ -39,6 +39,100 @@ _BACKTEST_DATA_DIR = Path(os.environ.get("BACKTEST_DATA_DIR", "data/backtest"))
 _MODELS_DIR = Path(os.environ.get("MODEL_REGISTRY_DIR", "data/models"))
 
 
+# ---------------------------------------------------------------------------
+# Filter → cluster resolution helper
+# ---------------------------------------------------------------------------
+
+
+def _resolve_filter_clusters(
+    item: str | None = None,
+    location: str | None = None,
+    brand: str | None = None,
+    category: str | None = None,
+    market: str | None = None,
+) -> list[str] | None:
+    """Resolve global filter params to a list of matching cluster labels.
+
+    Returns None if no filters are active (meaning use all data).
+    Returns an empty list if filters are active but no clusters match.
+    """
+    if not any([item, location, brand, category, market]):
+        return None
+
+    conditions: list[str] = []
+    params: list[str] = []
+    need_item_join = False
+    need_loc_join = False
+
+    if item:
+        items = [i.strip() for i in item.split(",")]
+        conditions.append(f"d.dmdunit IN ({','.join(['%s'] * len(items))})")
+        params.extend(items)
+    if location:
+        locs = [loc.strip() for loc in location.split(",")]
+        conditions.append(f"d.loc IN ({','.join(['%s'] * len(locs))})")
+        params.extend(locs)
+    if brand:
+        brands = [b.strip() for b in brand.split(",")]
+        conditions.append(f"d.brand IN ({','.join(['%s'] * len(brands))})")
+        params.extend(brands)
+    if category:
+        cats = [c.strip() for c in category.split(",")]
+        conditions.append(f"i.category IN ({','.join(['%s'] * len(cats))})")
+        params.extend(cats)
+        need_item_join = True
+    if market:
+        markets = [m.strip() for m in market.split(",")]
+        conditions.append(f"l.market IN ({','.join(['%s'] * len(markets))})")
+        params.extend(markets)
+        need_loc_join = True
+
+    sql = "SELECT DISTINCT d.ml_cluster::TEXT FROM dim_dfu d"
+    if need_item_join:
+        sql += " LEFT JOIN dim_item i ON i.item_no = d.dmdunit"
+    if need_loc_join:
+        sql += " LEFT JOIN dim_location l ON l.loc = d.loc"
+    sql += f" WHERE {' AND '.join(conditions)} AND d.ml_cluster IS NOT NULL"
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    return [str(r[0]) for r in rows] if rows else []
+
+
+def _aggregate_cluster_shap(df: pd.DataFrame, clusters: list[str]) -> pd.DataFrame:
+    """Filter a per-timeframe SHAP DataFrame to specific clusters and re-aggregate.
+
+    If no cluster column or no matching rows, returns the pooled ("all") rows unchanged.
+    """
+    if "cluster" not in df.columns:
+        return df
+
+    filtered = df[df["cluster"].isin(clusters)]
+    if filtered.empty:
+        # Fall back to pooled "all" rows
+        pooled = df[df["cluster"] == "all"]
+        return pooled if not pooled.empty else df
+
+    # Average mean_abs_shap across matching clusters per feature
+    agg = (
+        filtered.groupby("feature", sort=False)
+        .agg(mean_abs_shap=("mean_abs_shap", "mean"))
+        .reset_index()
+    )
+    agg = agg.sort_values("mean_abs_shap", ascending=False).reset_index(drop=True)
+    agg["rank"] = range(1, len(agg) + 1)
+    agg["selected"] = True  # re-derive: mark top features as selected
+
+    # Preserve timeframe / cutoff_date from the original data
+    for col in ("timeframe", "cutoff_date"):
+        if col in filtered.columns:
+            agg[col] = filtered[col].iloc[0]
+    agg["cluster"] = "filtered"
+    return agg
+
+
 def _shap_dir(model_id: str) -> Path:
     return _BACKTEST_DATA_DIR / model_id / "shap"
 
@@ -78,11 +172,67 @@ async def shap_models() -> dict:
 async def shap_summary(
     model_id: str,
     top_n: int = Query(default=15, ge=1, le=200),
+    item: str | None = Query(default=None),
+    location: str | None = Query(default=None),
+    brand: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    market: str | None = Query(default=None),
 ) -> dict:
     """Cross-timeframe SHAP importance summary for a model.
 
     Returns features sorted by mean_abs_shap_across_timeframes descending.
+    When global filter params are provided, resolves matching DFU clusters
+    and re-aggregates SHAP from per-cluster data in timeframe CSVs.
     """
+    filter_clusters = _resolve_filter_clusters(item, location, brand, category, market)
+
+    # When filters are active and clusters resolved, re-compute summary from
+    # per-timeframe CSVs filtered to matching clusters.
+    if filter_clusters is not None:
+        shap_d = _shap_dir(model_id)
+        if not shap_d.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"No SHAP outputs found for model '{model_id}'.",
+            )
+        timeframe_files = sorted(shap_d.glob("shap_timeframe_*.csv"))
+        if not timeframe_files:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No SHAP timeframe data found for model '{model_id}'.",
+            )
+        # Re-aggregate per-timeframe data filtered by matching clusters
+        filtered_dfs: list[pd.DataFrame] = []
+        for f in timeframe_files:
+            tf_df = pd.read_csv(f)
+            agg_df = _aggregate_cluster_shap(tf_df, filter_clusters)
+            if not agg_df.empty:
+                filtered_dfs.append(agg_df)
+
+        if not filtered_dfs:
+            return {"model_id": model_id, "total_features": 0, "features": []}
+
+        # Build cross-timeframe summary from filtered data
+        combined = pd.concat(filtered_dfs, ignore_index=True)
+        summary = (
+            combined.groupby("feature", sort=False)
+            .agg(
+                mean_abs_shap_across_timeframes=("mean_abs_shap", "mean"),
+                mean_rank=("rank", "mean"),
+                selected_count=("selected", "sum"),
+            )
+            .reset_index()
+        )
+        summary["n_timeframes"] = len(filtered_dfs)
+        summary = summary.sort_values("mean_abs_shap_across_timeframes", ascending=False).reset_index(drop=True)
+        features = summary.head(top_n).to_dict(orient="records")
+        return {
+            "model_id": model_id,
+            "total_features": len(summary),
+            "features": features,
+        }
+
+    # No filters — use pre-computed summary CSV
     csv_path = _summary_csv(model_id)
     if not csv_path.exists():
         raise HTTPException(
@@ -142,11 +292,18 @@ async def shap_timeframe_detail(
     idx: int,
     top_n: int = Query(default=15, ge=1, le=200),
     cluster: str = Query(default="all", max_length=60),
+    item: str | None = Query(default=None),
+    location: str | None = Query(default=None),
+    brand: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    market: str | None = Query(default=None),
 ) -> dict:
     """Per-timeframe SHAP feature importance detail.
 
     Returns features sorted by mean_abs_shap descending (rank 1 = most important).
     Use cluster="all" for pooled (default), or a specific cluster label for per-cluster SHAP.
+    When global filter params are provided, resolves matching DFU clusters
+    and re-aggregates SHAP from per-cluster data.
     """
     csv_path = _timeframe_csv(model_id, idx)
     if not csv_path.exists():
@@ -156,8 +313,12 @@ async def shap_timeframe_detail(
         )
     df = pd.read_csv(csv_path)
 
-    # Filter by cluster if the column exists
-    if "cluster" in df.columns:
+    # Resolve global filters to clusters (takes precedence over cluster param)
+    filter_clusters = _resolve_filter_clusters(item, location, brand, category, market)
+    if filter_clusters is not None and "cluster" in df.columns:
+        df = _aggregate_cluster_shap(df, filter_clusters)
+    elif "cluster" in df.columns:
+        # Manual cluster selection (existing behavior)
         filtered = df[df["cluster"] == cluster]
         if filtered.empty and cluster != "all":
             raise HTTPException(

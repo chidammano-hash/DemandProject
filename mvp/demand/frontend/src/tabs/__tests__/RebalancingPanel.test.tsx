@@ -46,6 +46,7 @@ vi.mock("@/context/GlobalFilterContext", async () => {
         channel: [],
         item: [],
         location: [],
+      cluster: [],
         timeGrain: "month" as const,
       },
       setFilters: vi.fn(),

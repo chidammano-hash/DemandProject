@@ -19,18 +19,20 @@ import { AlertTriangle } from "lucide-react";
 
 const PAGE = 50;
 
+import { getSeverityConfig } from "@/constants/severity";
+
 const SEVERITY_BADGE: Record<string, string> = {
-  critical: "bg-red-100 text-red-800",
-  high:     "bg-amber-100 text-amber-800",
-  medium:   "bg-yellow-100 text-yellow-800",
-  low:      "bg-neutral-100 text-neutral-600",
+  critical: getSeverityConfig("critical").badge,
+  high:     getSeverityConfig("high").badge,
+  medium:   getSeverityConfig("medium").badge,
+  low:      getSeverityConfig("low").badge,
 };
 
 const SEVERITY_ROW_BG: Record<string, string> = {
-  critical: "bg-red-50",
-  high:     "bg-amber-50",
-  medium:   "bg-yellow-50",
-  low:      "",
+  critical: getSeverityConfig("critical").rowBg,
+  high:     getSeverityConfig("high").rowBg,
+  medium:   getSeverityConfig("medium").rowBg,
+  low:      getSeverityConfig("low").rowBg,
 };
 
 const EXC_TYPE_LABELS: Record<string, string> = {

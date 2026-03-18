@@ -29,6 +29,7 @@ function makeContextValue(overrides: Partial<GlobalFilterContextValue> = {}): Gl
     channel: [],
     item: [],
     location: [],
+    cluster: [],
     timeGrain: "month",
   };
   return {
@@ -53,13 +54,14 @@ function renderWithContext(contextValue: GlobalFilterContextValue) {
 describe("GlobalFilterBar", () => {
   it("renders filter dropdowns and time grain toggle", () => {
     renderWithContext(makeContextValue());
-    // 6 filter dropdown buttons (Brand, Category, Item, Location, Market, Channel) + 2 time grain buttons (Mo, Qtr)
+    // 7 filter dropdown buttons (Brand, Category, Item, Location, Market, Channel, Cluster) + 2 time grain buttons (Mo, Qtr)
     expect(screen.getByText("Brand")).toBeInTheDocument();
     expect(screen.getByText("Category")).toBeInTheDocument();
     expect(screen.getByText("Item")).toBeInTheDocument();
     expect(screen.getByText("Location")).toBeInTheDocument();
     expect(screen.getByText("Market")).toBeInTheDocument();
     expect(screen.getByText("Channel")).toBeInTheDocument();
+    expect(screen.getByText("Cluster")).toBeInTheDocument();
     expect(screen.getByText("Mo")).toBeInTheDocument();
     expect(screen.getByText("Qtr")).toBeInTheDocument();
   });
@@ -98,6 +100,7 @@ describe("GlobalFilterBar", () => {
         channel: [],
         item: [],
         location: [],
+        cluster: [],
         timeGrain: "month",
       },
     });

@@ -15,6 +15,7 @@ import { KpiCard } from "@/components/KpiCard";
 import { Skeleton } from "@/components/Skeleton";
 import { ForecastTrendChart } from "@/components/ForecastTrendChart";
 import { HeatmapGrid, makeHeatmapScale } from "@/components/HeatmapGrid";
+import { CollapsibleSection } from "@/components/CollapsibleSection";
 
 import { useDebounce } from "@/hooks/useDebounce";
 import { usePanelToggles } from "@/hooks/usePanelToggles";
@@ -99,6 +100,7 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
     location: debouncedFilters.location,
     market: debouncedFilters.market,
     channel: debouncedFilters.channel,
+    cluster: debouncedFilters.cluster,
     time_grain: debouncedFilters.timeGrain,
   }), [debouncedFilters]);
 
@@ -114,7 +116,9 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   const TREND_OPTIONS = [6, 12, 18, 24];
 
   // --------------- Heatmap state ---------------
-  const [heatmapGrain, setHeatmapGrain] = useState<"category" | "brand" | "location">("category");
+  type HmGrain = "category" | "brand" | "location" | "class" | "sub_class" | "date";
+  const [heatmapRowGrain, setHeatmapRowGrain] = useState<HmGrain>("category");
+  const [heatmapColGrain, setHeatmapColGrain] = useState<HmGrain>("date");
 
   // --------------- theme ---------------
   const { theme, chartColors, trendColors } = useChartColors();
@@ -171,8 +175,8 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   });
 
   const heatmapQ = useQuery({
-    queryKey: queryKeys.dashboardHeatmap({ grain: heatmapGrain, ...dashFilterRecord }),
-    queryFn: () => fetchDashboardHeatmap(heatmapGrain, 6, dashFilters),
+    queryKey: queryKeys.dashboardHeatmap({ grain: heatmapRowGrain, col_grain: heatmapColGrain, ...dashFilterRecord }),
+    queryFn: () => fetchDashboardHeatmap(heatmapRowGrain, 6, dashFilters, heatmapColGrain),
     staleTime: STALE.THIRTY_SEC,
     enabled: visible.heatmap,
   });
@@ -190,6 +194,7 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   const brandParam = debouncedFilters.brand.length > 0 ? debouncedFilters.brand.join(",") : undefined;
   const categoryParam = debouncedFilters.category.length > 0 ? debouncedFilters.category.join(",") : undefined;
   const marketParam = debouncedFilters.market.length > 0 ? debouncedFilters.market.join(",") : undefined;
+  const clusterParam = debouncedFilters.cluster.length > 0 ? debouncedFilters.cluster.join(",") : undefined;
   const needDfuCount = sliceKpis.includes("dfu_count");
 
   const monthFrom = useMemo(() => {
@@ -204,16 +209,16 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
     common_dfus: commonDfus, include_dfu_count: needDfuCount,
     item: globalItem, location: globalLocation, seasonality_profile: seasonalityProfile || undefined,
     time_grain: debouncedFilters.timeGrain,
-    brand: brandParam, category: categoryParam, market: marketParam,
-  }), [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, debouncedFilters.timeGrain, brandParam, categoryParam, marketParam]);
+    brand: brandParam, category: categoryParam, market: marketParam, cluster_assignment: clusterParam,
+  }), [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, debouncedFilters.timeGrain, brandParam, categoryParam, marketParam, clusterParam]);
 
   const lagCurveParams: LagCurveParams = useMemo(() => ({
     models: sliceModels, month_from: monthFrom, common_dfus: commonDfus,
     include_dfu_count: needDfuCount, item: globalItem, location: globalLocation,
     seasonality_profile: seasonalityProfile || undefined,
     time_grain: debouncedFilters.timeGrain,
-    brand: brandParam, category: categoryParam, market: marketParam,
-  }), [sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, debouncedFilters.timeGrain, brandParam, categoryParam, marketParam]);
+    brand: brandParam, category: categoryParam, market: marketParam, cluster_assignment: clusterParam,
+  }), [sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, debouncedFilters.timeGrain, brandParam, categoryParam, marketParam, clusterParam]);
 
   // --------------- Accuracy queries ---------------
   const { data: slicePayload, isLoading: loadingSlice } = useQuery({
@@ -379,9 +384,9 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
       {/* KPI Cards                                                        */}
       {/* ================================================================ */}
       {visible.kpis && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-foreground">Performance KPIs</h3>
+        <CollapsibleSection
+          title="Performance KPIs"
+          headerRight={
             <div className="flex items-center gap-1">
               {KPI_OPTIONS.map((w) => (
                 <button key={w} onClick={() => setKpiWindow(w)} className={cn("rounded px-2 py-0.5 text-[10px] transition-colors", kpiWindow === w ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
@@ -389,7 +394,8 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
                 </button>
               ))}
             </div>
-          </div>
+          }
+        >
           {kpiQ.isLoading ? (
             <div className="grid grid-cols-5 gap-3">
               {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
@@ -399,19 +405,19 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
               <KpiCard
                 label="Accuracy %"
                 value={kpi.accuracy_pct != null ? `${kpi.accuracy_pct.toFixed(1)}%` : "N/A"}
-                trend={kpi.deltas?.accuracy_pct != null ? { delta: kpi.deltas.accuracy_pct, direction: trendDirection(kpi.deltas.accuracy_pct), unit: "pp" } : undefined}
+                trend={kpi.deltas?.accuracy_pct != null ? { delta: kpi.deltas.accuracy_pct, direction: trendDirection(kpi.deltas.accuracy_pct), unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
                 severity={kpi.accuracy_pct != null ? (kpi.accuracy_pct >= 90 ? "best" : kpi.accuracy_pct >= 80 ? "neutral" : "warning") : "neutral"}
               />
               <KpiCard
                 label="WAPE %"
                 value={kpi.wape_pct != null ? `${kpi.wape_pct.toFixed(1)}%` : "N/A"}
-                trend={kpi.deltas?.wape_pct != null ? { delta: -kpi.deltas.wape_pct, direction: trendDirection(-kpi.deltas.wape_pct), unit: "pp" } : undefined}
+                trend={kpi.deltas?.wape_pct != null ? { delta: -kpi.deltas.wape_pct, direction: trendDirection(-kpi.deltas.wape_pct), unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
                 severity={kpi.wape_pct != null ? (kpi.wape_pct <= 10 ? "best" : kpi.wape_pct <= 20 ? "neutral" : "warning") : "neutral"}
               />
               <KpiCard
                 label="Bias %"
                 value={kpi.bias_pct != null ? `${kpi.bias_pct.toFixed(1)}%` : "N/A"}
-                trend={kpi.deltas?.bias_pct != null ? { delta: -Math.abs(kpi.deltas.bias_pct), direction: trendDirection(-Math.abs(kpi.deltas.bias_pct)), unit: "pp" } : undefined}
+                trend={kpi.deltas?.bias_pct != null ? { delta: -Math.abs(kpi.deltas.bias_pct), direction: trendDirection(-Math.abs(kpi.deltas.bias_pct)), unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
                 severity={kpi.bias_pct != null ? (Math.abs(kpi.bias_pct) <= 5 ? "best" : Math.abs(kpi.bias_pct) <= 15 ? "neutral" : "warning") : "neutral"}
               />
               <KpiCard
@@ -426,16 +432,16 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
               />
             </div>
           ) : null}
-        </div>
+        </CollapsibleSection>
       )}
 
       {/* ================================================================ */}
       {/* Forecast vs Actual Chart                                         */}
       {/* ================================================================ */}
       {visible.forecastChart && (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Forecast vs Actual</CardTitle>
+        <CollapsibleSection
+          title="Forecast vs Actual"
+          headerRight={
             <div className="flex items-center gap-1">
               {TREND_OPTIONS.map((w) => (
                 <button key={w} onClick={() => setTrendWindow(w)} className={cn("rounded px-2 py-0.5 text-[10px] transition-colors", trendWindow === w ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
@@ -443,70 +449,84 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
                 </button>
               ))}
             </div>
-          </CardHeader>
-          <CardContent>
-            {trendQ.isLoading ? (
-              <Skeleton className="h-[260px]" />
-            ) : (
-              <ForecastTrendChart
-                data={trendQ.data?.months ?? []}
-                theme={theme === "soft" ? "light" : theme}
-                chartColors={{ grid: chartColors.grid, axis: chartColors.axis, tooltip: chartColors.tooltip_bg }}
-                seriesColors={trendColors}
-              />
-            )}
-          </CardContent>
-        </Card>
+          }
+        >
+          {trendQ.isLoading ? (
+            <Skeleton className="h-[260px]" />
+          ) : (
+            <ForecastTrendChart
+              data={trendQ.data?.months ?? []}
+              theme={theme === "soft" ? "light" : theme}
+              chartColors={{ grid: chartColors.grid, axis: chartColors.axis, tooltip: chartColors.tooltip_bg }}
+              seriesColors={trendColors}
+            />
+          )}
+        </CollapsibleSection>
       )}
 
       {/* ================================================================ */}
       {/* Accuracy Heatmap                                                 */}
       {/* ================================================================ */}
       {visible.heatmap && (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Accuracy Heatmap</CardTitle>
-            <div className="flex items-center gap-1">
-              {(["category", "brand", "location"] as const).map((g) => (
-                <button key={g} onClick={() => setHeatmapGrain(g)} className={cn("rounded px-2 py-0.5 text-[10px] capitalize transition-colors", heatmapGrain === g ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
-                  {g}
-                </button>
-              ))}
+        <CollapsibleSection
+          title="Accuracy Heatmap"
+          headerRight={
+            <div className="flex items-center gap-2 text-[10px]">
+              <span className="text-muted-foreground font-medium">Rows</span>
+              <select
+                className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
+                value={heatmapRowGrain}
+                onChange={(e) => {
+                  const v = e.target.value as HmGrain;
+                  setHeatmapRowGrain(v);
+                  if (v === heatmapColGrain) setHeatmapColGrain(v === "date" ? "category" : "date");
+                }}
+              >
+                <option value="category">Category</option>
+                <option value="brand">Brand</option>
+                <option value="class">Class</option>
+                <option value="sub_class">Sub-class</option>
+                <option value="location">Location</option>
+                <option value="date">Date</option>
+              </select>
+              <span className="text-muted-foreground font-medium">Columns</span>
+              <select
+                className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
+                value={heatmapColGrain}
+                onChange={(e) => {
+                  const v = e.target.value as HmGrain;
+                  setHeatmapColGrain(v);
+                  if (v === heatmapRowGrain) setHeatmapRowGrain(v === "date" ? "category" : "date");
+                }}
+              >
+                <option value="category">Category</option>
+                <option value="brand">Brand</option>
+                <option value="class">Class</option>
+                <option value="sub_class">Sub-class</option>
+                <option value="location">Location</option>
+                <option value="date">Date</option>
+              </select>
             </div>
-          </CardHeader>
-          <CardContent>
-            {heatmapQ.isLoading ? (
-              <Skeleton className="h-[200px]" />
-            ) : (
-              <HeatmapGrid
-                rows={heatmapRows}
-                columnLabels={heatmapLabels}
-                colorScale={colorScale}
-              />
-            )}
-          </CardContent>
-        </Card>
+          }
+        >
+          {heatmapQ.isLoading ? (
+            <Skeleton className="h-[200px]" />
+          ) : (
+            <HeatmapGrid
+              rows={heatmapRows}
+              columnLabels={heatmapLabels}
+              colorScale={colorScale}
+            />
+          )}
+        </CollapsibleSection>
       )}
 
       {/* ================================================================ */}
       {/* Accuracy Comparison (slice table) + Lag Curve                   */}
       {/* ================================================================ */}
       {(visible.accuracy || visible.lagCurve) && (
-        <Card className="animate-fade-in">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <ChartColumn className="h-5 w-5" />
-              <CardTitle className="text-base">Accuracy Comparison</CardTitle>
-            </div>
-            <CardDescription className="max-w-3xl">
-              Compare forecast accuracy across models sliced by DFU attribute (cluster, item, location, brand, etc.).
-              Use the <strong>Group By</strong> dropdown to change the slice dimension, <strong>Lag</strong> to select
-              the forecast horizon (0 = same month, 4 = 4 months ahead), and <strong>Window</strong> to set the
-              trailing months of data. The table shows WAPE, accuracy %, and bias for each model per group.
-              Below, the <strong>Lag Curve</strong> chart visualizes how accuracy degrades across horizons.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
+        <CollapsibleSection title="Accuracy Comparison">
+          <div className="space-y-5">
             {visible.accuracy && (
               <SliceTablePanel
                 sliceGroupBy={sliceGroupBy} sliceLag={sliceLag} sliceModels={sliceModels}
@@ -531,8 +551,8 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
                 onLagCurveMetricChange={handleLagCurveMetricChange}
               />
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </CollapsibleSection>
       )}
 
       {/* ================================================================ */}
@@ -575,7 +595,9 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
       {/* Bias Corrections Panel                                           */}
       {/* ================================================================ */}
       {visible.bias && (
-        <BiasCorrectionsPanel />
+        <CollapsibleSection title="Bias Corrections" defaultOpen={false}>
+          <BiasCorrectionsPanel />
+        </CollapsibleSection>
       )}
     </div>
   );

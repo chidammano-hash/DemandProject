@@ -18,7 +18,33 @@ type KpiCardProps = {
   tooltip?: { title: string; description: string; threshold?: string };
   /** Shows a target sub-line below the main value */
   target?: { value: string; label?: string };
+  /** Visual weight hierarchy: lg = hero KPI, md = default, sm = compact */
+  size?: "lg" | "md" | "sm";
 };
+
+const SIZE_CONFIG = {
+  lg: {
+    wrapper: "px-5 py-4",
+    value: "text-2xl font-bold",
+    icon: "h-4 w-4",
+  },
+  md: {
+    wrapper: "px-4 py-3",
+    value: "text-xl font-bold",
+    icon: "h-3.5 w-3.5",
+  },
+  sm: {
+    wrapper: "px-3 py-2",
+    value: "text-base font-semibold",
+    icon: "h-3 w-3",
+  },
+} as const;
+
+const SEVERITY_BORDER = {
+  best: "border-l-4 border-l-[var(--kpi-best)]",
+  warning: "border-l-4 border-l-[var(--kpi-warning)]",
+  neutral: "",
+} as const;
 
 function Sparkline({ data }: { data: number[] }) {
   if (data.length < 2) return null;
@@ -49,7 +75,9 @@ function Sparkline({ data }: { data: number[] }) {
   );
 }
 
-export function KpiCard({ label, value, sublabel, colorClass, borderClass, className, trend, sparkline, severity, icon: Icon, tooltip, target }: KpiCardProps) {
+export function KpiCard({ label, value, sublabel, colorClass, borderClass, className, trend, sparkline, severity, icon: Icon, tooltip, target, size = "md" }: KpiCardProps) {
+  const cfg = SIZE_CONFIG[size];
+
   const trendColor = trend
     ? trend.direction === "up"
       ? "text-[var(--kpi-best)]"
@@ -62,10 +90,12 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
     ? trend.direction === "up" ? TrendingUp : trend.direction === "down" ? TrendingDown : Minus
     : null;
 
+  const severityBorder = size === "lg" && severity ? SEVERITY_BORDER[severity] : "";
+
   return (
-    <div className={cn("rounded-lg border border-border/60 bg-card px-4 py-3 shadow-sm hover:shadow-md transition-shadow duration-200", borderClass, className)}>
+    <div className={cn("rounded-lg border border-border/60 bg-card shadow-sm hover:shadow-md transition-shadow duration-200", cfg.wrapper, severityBorder, borderClass, className)}>
       <div className="flex items-center gap-1.5">
-        {Icon && <Icon className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={1.5} />}
+        {Icon && <Icon className={cn(cfg.icon, "text-muted-foreground")} strokeWidth={1.5} />}
         <p className="text-xs text-muted-foreground">
           {label}
           {sublabel && <span className="ml-1">{sublabel}</span>}
@@ -80,7 +110,8 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
         )}
       </div>
       <p className={cn(
-        "text-xl font-bold tabular-nums font-mono tracking-tight",
+        "tabular-nums font-mono tracking-tight transition-all duration-300",
+        cfg.value,
         severity === "best" ? "text-[var(--kpi-best)]" : severity === "warning" ? "text-[var(--kpi-warning)]" : "",
         colorClass,
       )}>
@@ -97,7 +128,7 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
           </span>
         </div>
       )}
-      {sparkline && sparkline.length > 1 && <Sparkline data={sparkline} />}
+      {size !== "sm" && sparkline && sparkline.length > 1 && <Sparkline data={sparkline} />}
     </div>
   );
 }

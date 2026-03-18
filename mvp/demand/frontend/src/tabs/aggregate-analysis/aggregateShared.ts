@@ -32,7 +32,7 @@ export const PANELS = [
 // Filter types
 // ---------------------------------------------------------------------------
 export interface FilterConfig {
-  key: "brand" | "category" | "market" | "channel" | "item" | "location";
+  key: "brand" | "category" | "market" | "channel" | "item" | "location" | "cluster";
   label: string;
   domain: string;
   column: string;
@@ -46,6 +46,7 @@ export const FILTERS: FilterConfig[] = [
   { key: "location", label: "Location", domain: "location", column: "location_id", searchable: true },
   { key: "market", label: "Market", domain: "location", column: "state_id" },
   { key: "channel", label: "Channel", domain: "customer", column: "rpt_channel_desc" },
+  { key: "cluster", label: "Cluster", domain: "dfu", column: "cluster_assignment" },
 ];
 
 export interface LocalFilters {
@@ -55,11 +56,12 @@ export interface LocalFilters {
   channel: string[];
   item: string[];
   location: string[];
+  cluster: string[];
   timeGrain: "month" | "quarter";
 }
 
 export const EMPTY_FILTERS: LocalFilters = {
-  brand: [], category: [], market: [], channel: [], item: [], location: [],
+  brand: [], category: [], market: [], channel: [], item: [], location: [], cluster: [],
   timeGrain: "month",
 };
 
@@ -74,11 +76,12 @@ export function buildCascade(filters: LocalFilters, excludeKey: FilterConfig["ke
   if (excludeKey !== "location" && filters.location.length > 0) c.location = filters.location.join(",");
   if (excludeKey !== "market" && filters.market.length > 0) c.market = filters.market.join(",");
   if (excludeKey !== "channel" && filters.channel.length > 0) c.channel = filters.channel.join(",");
+  if (excludeKey !== "cluster" && filters.cluster.length > 0) c.cluster = filters.cluster.join(",");
   return Object.keys(c).length > 0 ? c : undefined;
 }
 
 export function hasActiveFilters(f: LocalFilters): boolean {
-  return f.brand.length > 0 || f.category.length > 0 || f.item.length > 0 || f.location.length > 0 || f.market.length > 0 || f.channel.length > 0;
+  return f.brand.length > 0 || f.category.length > 0 || f.item.length > 0 || f.location.length > 0 || f.market.length > 0 || f.channel.length > 0 || f.cluster.length > 0;
 }
 
 export function formatNumberCompact(n: number | null): string {

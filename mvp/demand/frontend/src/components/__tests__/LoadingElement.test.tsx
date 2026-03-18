@@ -4,60 +4,45 @@ import { render, screen } from "@testing-library/react";
 import { LoadingElement } from "@/components/LoadingElement";
 
 describe("LoadingElement", () => {
-  it("renders with default values when no config provided", () => {
-    render(<LoadingElement />);
-
-    expect(screen.getByText("?")).toBeInTheDocument();
-    expect(screen.getByText("Loading")).toBeInTheDocument();
+  it("renders spinner without crashing", () => {
+    const { container } = render(<LoadingElement />);
+    const spinner = container.querySelector(".animate-spin");
+    expect(spinner).toBeInTheDocument();
   });
 
-  it("renders with legacy config prop", () => {
-    const legacyConfig = {
-      symbol: "Lg",
-      number: 99,
-      name: "Legacy",
-      color: "bg-gray-100 text-gray-800 border-gray-200",
-      activeColor: "bg-gray-200 text-gray-900 border-gray-300",
-      glow: "shadow-md",
-    };
-
+  it("accepts legacy config prop without error", () => {
+    const legacyConfig = { symbol: "Lg", number: 99, name: "Legacy", color: "", activeColor: "", glow: "" };
+    // Should not throw — config is accepted but ignored
     render(<LoadingElement config={legacyConfig} />);
-
-    expect(screen.getByText("Lg")).toBeInTheDocument();
-    expect(screen.getByText("99")).toBeInTheDocument();
-    expect(screen.getByText("Loading")).toBeInTheDocument();
+    const { container } = render(<LoadingElement config={legacyConfig} />);
+    expect(container.querySelector(".animate-spin")).toBeInTheDocument();
   });
 
   it("shows overlay when overlay prop is true", () => {
     const { container } = render(<LoadingElement overlay />);
-
     const overlayDiv = container.querySelector(".absolute.inset-0");
     expect(overlayDiv).toBeInTheDocument();
   });
 
   it("does not show overlay wrapper when overlay is false/undefined", () => {
     const { container } = render(<LoadingElement />);
-
     const overlayDiv = container.querySelector(".absolute.inset-0");
     expect(overlayDiv).not.toBeInTheDocument();
   });
 
   it("shows message when provided", () => {
     render(<LoadingElement message="Fetching data..." />);
-
     expect(screen.getByText("Fetching data...")).toBeInTheDocument();
   });
 
   it("does not show message when not provided", () => {
     render(<LoadingElement />);
-
     expect(screen.queryByText("Fetching data...")).not.toBeInTheDocument();
   });
 
-  it("applies pulse-glow animation class", () => {
-    const { container } = render(<LoadingElement />);
-
-    const animatedEl = container.querySelector(".animate-pulse-glow");
-    expect(animatedEl).toBeInTheDocument();
+  it("renders larger spinner for md size", () => {
+    const { container } = render(<LoadingElement size="md" />);
+    const spinner = container.querySelector(".h-8.w-8");
+    expect(spinner).toBeInTheDocument();
   });
 });

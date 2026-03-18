@@ -10,7 +10,7 @@
 
 | Layer | Technology |
 |---|---|
-| Backend API | Python + FastAPI (~40 modular routers) |
+| Backend API | Python + FastAPI (~53 modular routers) |
 | Frontend | React + Vite + TypeScript + Tailwind + shadcn/ui |
 | Database | PostgreSQL 16 (~190M+ rows inventory snapshots) |
 | ML Pipeline | scikit-learn, LightGBM, CatBoost, XGBoost, pandas |
@@ -63,22 +63,25 @@ Data flows: raw CSVs → normalize scripts → PostgreSQL → FastAPI → React 
 - Observability: per-turn token usage and latency logged to `ai_call_log` table
 
 ### 5. Operations & Planning Tabs
-- **S&OP Cycle**: stage machine with approval workflow (Sensing → Consensus → Executive → Approved Plan)
+- **S&OP Cycle**: 6-stage cycle machine (`demand_review` → `supply_review` → `pre_sop` → `executive_sop` → `approved` → `closed`) with supply-demand gap analysis, advance/approve actions, and approved plan management. Each stage has ownership, deadline, and approval gates. Gap cards highlight volume and revenue mismatches between demand and supply plans. Approved plans are versioned and immutable. Config in `sop_config.yaml`. Dedicated **S&OP tab** in the UI with stage timeline, gap cards, and approved plan table.
 - **Control Tower**: cross-dimensional KPI command center — active alerts, top-critical items, trend aggregates
 - **Storyboard**: exception-driven planner workflow with causal chain cards and decision logging
 - **Market Intelligence**: Google Search + GPT-4o narrative briefing per item/location pair
 - **NL→SQL Chatbot**: pgvector-powered schema retrieval + GPT-4o SQL generation (read-only, 5s timeout)
 
-### 6. RBAC & Access Control (08-01)
+### 6. RBAC & Access Control (08-02)
 - **Role-based access control**: Users, Roles, Permissions model with JWT authentication
 - Role hierarchy: Admin, Planner, Analyst, Viewer — each with scoped permissions on endpoints and data domains
 - Session management with token refresh and audit logging of access events
 - SQL tables: `dim_user`, `dim_role`, `fact_user_role`, `fact_permission`, `fact_audit_log`
 
-### 7. Data Quality & Monitoring (08-02)
-- **Automated data quality checks**: completeness, freshness, outlier detection, schema drift monitoring
-- Quality scores computed per table/column with configurable thresholds
-- **Data Quality tab** in the UI: quality scorecards, issue drill-down, trend charts, remediation queue
+### 7. Data Quality & Monitoring (08-01)
+- **DQEngine** with **12 check types**: `freshness`, `completeness`, `uniqueness`, `row_count`, `range`, `volume_delta`, `referential_integrity`, `statistical_outlier` (IQR/Z-score), `distribution_drift` (KL divergence), `temporal_gaps` (missing time periods), `cross_column_consistency` (logical constraints), `cardinality_anomaly` (unexpected distinct value counts)
+- **Statistical auto-fix** via `scripts/fix_dq_issues.py`: 5 strategies (range Winsorization, lead time median, NULL imputation, orphan reporting, statistical Winsorization)
+- **Self-Heal UI panel**: interactive fix preview with bulk/single accept/reject workflow (`GET /fix/preview` → select → `POST /fix/apply`)
+- Automated scheduling on a **4-hour cadence**; rules defined in `config/data_quality_config.yaml` with per-domain thresholds
+- Quality scores computed per domain with severity classification (critical/warning/info)
+- **Data Quality tab** in the UI: domain health score cards, recent issues panel (severity filter), Self-Heal panel, pipeline freshness indicators, check catalog with pass/fail history
 - SQL tables: `fact_data_quality_check`, `fact_data_quality_issue`, `mv_data_quality_summary`
 
 ### 8. Caching & Performance (08-03)
@@ -104,11 +107,13 @@ Data flows: raw CSVs → normalize scripts → PostgreSQL → FastAPI → React 
 - Correlation scoring: automatic assessment of signal relevance to demand patterns per DFU
 - SQL tables: `fact_external_signal`, `dim_signal_source`, `fact_signal_correlation`
 
-### 12. Forecast Value Add (FVA) Analysis (08-07)
+### 12. Forecast Value Add (FVA) & ROI Analysis (08-07)
 - **FVA decomposition**: quantifies the value added (or destroyed) at each stage of the forecasting process (statistical baseline, planner override, consensus adjustment)
-- Stage-over-stage accuracy comparison with waterfall visualization
-- **FVA tab** in the UI: waterfall charts, stage-level KPIs, top value-add/value-destroy items
-- SQL tables: `fact_fva_stage`, `mv_fva_summary`
+- **Model accuracy waterfall**: stage-by-stage comparison across `external` → `champion` → `ceiling` models, showing incremental WAPE improvement at each step
+- **Intervention tracking**: logs planner overrides with before/after accuracy snapshots, enabling ROI measurement of human-in-the-loop adjustments
+- **ROI measurement**: estimated vs actual financial impact of forecast improvements, computed from WAPE delta × revenue at risk
+- **FVA tab** in the UI: waterfall charts, stage-level KPIs, top value-add/value-destroy items, ROI summary cards
+- Config in `config/fva_config.yaml`. SQL tables: `fact_fva_stage`, `mv_fva_summary`
 
 ### 13. Reporting & Export (08-08)
 - **Scheduled report generation**: PDF/Excel export of dashboards, KPI summaries, and exception reports
@@ -155,7 +160,7 @@ Data flows: raw CSVs → normalize scripts → PostgreSQL → FastAPI → React 
 
 ## Testing
 
-- **1,801 backend tests** (pytest, fully mocked DB — no infrastructure needed, ~0.7s)
-- **485 frontend tests** (Vitest + React Testing Library)
+- **1,636+ backend tests** (pytest, fully mocked DB — no infrastructure needed, ~0.7s)
+- **457+ frontend tests** (Vitest + React Testing Library)
 - **8 E2E test suites** (Playwright — navigation, dashboard, accuracy, global filters, inv-planning, AI planner, control tower, theme)
 - Every feature ships with tests; every removed feature removes its tests

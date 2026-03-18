@@ -31,8 +31,8 @@ describe("useUrlState", () => {
   });
 
   describe("getInitialTab", () => {
-    it("defaults to aggregateAnalysis when no params", () => {
-      expect(getInitialTab()).toBe("aggregateAnalysis");
+    it("defaults to commandCenter when no params", () => {
+      expect(getInitialTab()).toBe("commandCenter");
     });
 
     it("redirects overview to aggregateAnalysis", () => {
@@ -47,7 +47,7 @@ describe("useUrlState", () => {
 
     it("ignores invalid tab", () => {
       window.history.replaceState(null, "", "/?tab=bogus");
-      expect(getInitialTab()).toBe("aggregateAnalysis");
+      expect(getInitialTab()).toBe("commandCenter");
     });
 
     it("returns domain for analytics domains", () => {
@@ -103,8 +103,9 @@ describe("useUrlState", () => {
   });
 
   describe("exported constants", () => {
-    it("VALID_TABS has 20 entries including aggregateAnalysis, itemAnalysis, invBacktest, jobs, aiPlanner, sop, and customerMap", () => {
-      expect(VALID_TABS).toHaveLength(20);
+    it("VALID_TABS has 23 entries including commandCenter, aggregateAnalysis, itemAnalysis, invBacktest, jobs, aiPlanner, sop, and customerMap", () => {
+      expect(VALID_TABS).toHaveLength(23);
+      expect(VALID_TABS).toContain("commandCenter");
       expect(VALID_TABS).toContain("aggregateAnalysis");
       expect(VALID_TABS).toContain("overview");
       expect(VALID_TABS).toContain("accuracy");

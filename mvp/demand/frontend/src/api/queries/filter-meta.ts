@@ -17,6 +17,7 @@ export async function fetchDfuCount(filters: Partial<GlobalFilters>): Promise<Df
   if (filters.location?.length) qs.set("location", filters.location.join(","));
   if (filters.market?.length) qs.set("market", filters.market.join(","));
   if (filters.channel?.length) qs.set("channel", filters.channel.join(","));
+  if (filters.cluster?.length) qs.set("cluster", filters.cluster.join(","));
   const q = qs.toString();
   return fetchJson(`/domains/dfu/count${q ? `?${q}` : ""}`);
 }

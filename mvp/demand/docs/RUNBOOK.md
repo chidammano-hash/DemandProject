@@ -166,6 +166,28 @@ make ai-insights-dfu ITEM=<item_no> LOC=<loc>   # Analyze a single DFU
 make ai-insights-all        # ai-insights-schema + ai-insights-scan (full pipeline)
 ```
 
+**Data Quality** (08-01):
+```bash
+make dq-schema      # Apply DDL (one-time)
+make dq-populate    # Populate check catalog from config/data_quality_config.yaml
+make dq-run         # Run all configured data quality checks
+make dq-all         # Full pipeline: schema + populate + run
+```
+> Checks auto-run every 4 hours via the job scheduler when the API is running.
+
+**Forecast Value Add (FVA)** (08-07):
+```bash
+make fva-schema     # Apply DDL (one-time)
+```
+> FVA interventions are populated through user actions in the UI (override queue, manual adjustments). No batch seed step needed.
+
+**S&OP Cycle** (F4.2):
+```bash
+make sop-schema     # Apply DDL (one-time)
+make sop-seed       # Seed initial S&OP cycle
+make sop-all        # Full setup: schema + seed
+```
+
 **Forward-Looking Replenishment Plan** (CI Bands + Repl. Plan — requires production forecast):
 ```bash
 make replplan-schema         # Apply DDL for fact_replenishment_plan (one-time)
@@ -724,6 +746,13 @@ After any cleanup that affects champion/ceiling rows, re-run `make champion-sele
 | Champion selection finds no DFUs | Load backtest predictions: `make backtest-load`; lower `min_dfu_rows` in `config/model_competition.yaml`; verify models exist: `SELECT DISTINCT model_id FROM fact_external_forecast_monthly` |
 | Chat endpoint errors | Set `OPENAI_API_KEY` in `.env`; run `make generate-embeddings`; check API logs for rate limit errors |
 | AI Planner errors | Set `ANTHROPIC_API_KEY` in `.env`; verify insight schema exists: `make ai-insights-schema`; check API logs for rate limit or tool dispatch errors |
+
+### Exception Queue
+
+| Problem | Fix |
+|---|---|
+| Exception queue is empty | Safety stock targets must exist first. Run `make ss-all` to compute safety stock targets, then `make exceptions-generate` to detect exceptions. Dependency chain: safety stock targets → exception generation |
+| `make exceptions-generate` finds no exceptions | Verify `fact_safety_stock_targets` has rows: `SELECT COUNT(*) FROM fact_safety_stock_targets`; check thresholds in `config/exception_config.yaml` |
 
 ### Inventory Rebalancing
 

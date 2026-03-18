@@ -102,6 +102,7 @@ function makeFilterContext(): GlobalFilterContextValue {
     channel: [],
     item: [],
     location: [],
+      cluster: [],
     timeGrain: "month",
   };
   return {

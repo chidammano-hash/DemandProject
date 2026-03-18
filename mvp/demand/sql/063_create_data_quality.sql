@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS dim_dq_check_catalog (
     check_name  TEXT NOT NULL UNIQUE,
     check_type  TEXT NOT NULL,          -- freshness, completeness, uniqueness, range, volume_delta, referential_integrity
     domain      TEXT NOT NULL,          -- item, location, customer, time, dfu, sales, forecast, inventory
+    table_name  TEXT,                   -- target table being checked
     sql_template TEXT,                  -- parameterized SQL for the check
     threshold   NUMERIC,               -- numeric threshold for pass/fail evaluation
     severity    TEXT NOT NULL DEFAULT 'warning',  -- info, warning, critical

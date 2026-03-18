@@ -230,4 +230,65 @@ describe("KpiCard", () => {
     // Neither "Target:" nor any muted sub-line should appear
     expect(screen.queryByText(/Target:/)).toBeNull();
   });
+
+  it("renders text-2xl class for size='lg'", () => {
+    const { container } = render(
+      <KpiCard label="Hero KPI" value="99%" size="lg" />
+    );
+    const valueEl = container.querySelector("p.tabular-nums");
+    expect(valueEl?.className).toContain("text-2xl");
+    expect(valueEl?.className).toContain("font-bold");
+  });
+
+  it("renders text-base class for size='sm'", () => {
+    const { container } = render(
+      <KpiCard label="Compact KPI" value="42" size="sm" />
+    );
+    const valueEl = container.querySelector("p.tabular-nums");
+    expect(valueEl?.className).toContain("text-base");
+    expect(valueEl?.className).toContain("font-semibold");
+  });
+
+  it("renders text-xl class for default size (backward compat)", () => {
+    const { container } = render(
+      <KpiCard label="Default KPI" value="88%" />
+    );
+    const valueEl = container.querySelector("p.tabular-nums");
+    expect(valueEl?.className).toContain("text-xl");
+    expect(valueEl?.className).toContain("font-bold");
+  });
+
+  it("applies severity border-l for size='lg'", () => {
+    const { container } = render(
+      <KpiCard label="Hero" value="99%" size="lg" severity="best" />
+    );
+    const root = container.firstChild as HTMLElement;
+    expect(root.className).toContain("border-l-4");
+    expect(root.className).toContain("border-l-[var(--kpi-best)]");
+  });
+
+  it("does not apply severity border-l for size='md'", () => {
+    const { container } = render(
+      <KpiCard label="Normal" value="99%" size="md" severity="best" />
+    );
+    const root = container.firstChild as HTMLElement;
+    expect(root.className).not.toContain("border-l-4");
+  });
+
+  it("does not render sparkline for size='sm' even with data", () => {
+    const { container } = render(
+      <KpiCard label="Compact" value="5,000" size="sm" sparkline={[100, 200, 150, 300, 250]} />
+    );
+    const svg = container.querySelector("svg");
+    expect(svg).toBeNull();
+  });
+
+  it("renders transition-all class on value for animated value changes", () => {
+    const { container } = render(
+      <KpiCard label="Test" value="42" />
+    );
+    const valueEl = container.querySelector("p.tabular-nums");
+    expect(valueEl?.className).toContain("transition-all");
+    expect(valueEl?.className).toContain("duration-300");
+  });
 });

@@ -102,6 +102,7 @@ class TestJobTypeRegistry:
             "compute_variability", "compute_demand_signals",
             "compute_investment", "refresh_health_scores",
             "refresh_intramonth", "run_ss_simulation",
+            "data_quality",
         }
         assert expected.issubset(set(JOB_TYPE_REGISTRY.keys()))
 
@@ -587,3 +588,52 @@ class TestIsGroupBusy:
         mgr._active_jobs["job_1"] = "backtest"
         assert mgr._is_group_busy("backtest") is True
         assert mgr._is_group_busy("clustering") is False
+
+
+# ---------------------------------------------------------------------------
+# Tests: _run_data_quality callable
+# ---------------------------------------------------------------------------
+
+class TestRunDataQuality:
+    """Tests for the _run_data_quality job callable."""
+
+    def test_run_data_quality_calls_engine(self):
+        from common.job_state import _run_data_quality
+        mock_results = [
+            {"check_name": "c1", "status": "pass"},
+            {"check_name": "c2", "status": "fail"},
+            {"check_name": "c3", "status": "pass"},
+        ]
+        with patch("common.dq_engine.DQEngine") as MockEngine:
+            instance = MockEngine.return_value
+            instance.run_all_checks.return_value = mock_results
+            progress = MagicMock()
+
+            result = _run_data_quality({}, progress)
+
+        instance.run_all_checks.assert_called_once_with(domain=None)
+        assert result["total_checks"] == 3
+        assert result["passed"] == 2
+        assert result["failed"] == 1
+        progress.assert_any_call(pct=10, msg="Running data quality checks")
+        progress.assert_any_call(pct=100, msg="Data quality checks complete")
+
+    def test_run_data_quality_with_domain_filter(self):
+        from common.job_state import _run_data_quality
+        with patch("common.dq_engine.DQEngine") as MockEngine:
+            instance = MockEngine.return_value
+            instance.run_all_checks.return_value = []
+            progress = MagicMock()
+
+            result = _run_data_quality({"domain": "sales"}, progress)
+
+        instance.run_all_checks.assert_called_once_with(domain="sales")
+        assert result["total_checks"] == 0
+        assert result["passed"] == 0
+        assert result["failed"] == 0
+
+    def test_data_quality_in_platform_group(self):
+        from common.job_registry import JOB_TYPE_REGISTRY
+        entry = JOB_TYPE_REGISTRY["data_quality"]
+        assert entry.group == "platform"
+        assert entry.type_id == "data_quality"

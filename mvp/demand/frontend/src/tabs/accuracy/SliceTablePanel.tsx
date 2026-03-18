@@ -9,7 +9,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { ELEMENT_CONFIG } from "@/constants/elements";
+import { Loader2 } from "lucide-react";
 import { LoadingElement } from "@/components/LoadingElement";
 import { titleCase, formatPercent } from "@/lib/formatters";
 
@@ -186,17 +186,7 @@ export function SliceTablePanel({
         ) : null}
         {loadingSlice ? (
           <div className="flex items-center gap-2">
-            <div
-              className={cn(
-                "flex flex-col items-center justify-center rounded-md border px-1.5 py-0.5 animate-pulse-glow",
-                ELEMENT_CONFIG.accuracy.activeColor,
-                ELEMENT_CONFIG.accuracy.glow,
-              )}
-            >
-              <span className="text-[9px] font-bold font-mono leading-tight">
-                {ELEMENT_CONFIG.accuracy.symbol}
-              </span>
-            </div>
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             <span className="text-xs text-muted-foreground">Loading...</span>
           </div>
         ) : null}
@@ -317,7 +307,7 @@ export function SliceTablePanel({
           </p>
         </div>
       ) : loadingSlice ? (
-        <LoadingElement config={ELEMENT_CONFIG.accuracy} message="Loading accuracy data..." />
+        <LoadingElement message="Loading accuracy data..." />
       ) : (
         <p className="text-sm text-muted-foreground">
           No data. Run <code className="rounded bg-muted px-1">make backtest-load</code> to populate the accuracy views.

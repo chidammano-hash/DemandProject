@@ -12,6 +12,7 @@ const DEFAULT_FILTER_VALUE = {
     channel: [] as string[],
     item: [] as string[],
     location: [] as string[],
+    cluster: [] as string[],
     timeGrain: "month" as const,
   },
   setFilters: vi.fn(),

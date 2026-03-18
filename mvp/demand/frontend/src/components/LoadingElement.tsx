@@ -1,10 +1,11 @@
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type LoadingElementProps = {
-  /** Tab key (unused after motif removal, kept for API compat) */
+  /** Tab key (kept for API compat) */
   tabKey?: string;
-  /** Legacy config prop */
-  config?: { symbol: string; number: number; name: string; color: string; activeColor: string; glow: string };
+  /** Legacy config prop (ignored — kept for API compat) */
+  config?: unknown;
   message?: string;
   /** Render as an absolute overlay with backdrop blur (for table loading) */
   overlay?: boolean;
@@ -12,30 +13,12 @@ type LoadingElementProps = {
   size?: "sm" | "md";
 };
 
-export function LoadingElement({ config, message, overlay, size = "sm" }: LoadingElementProps) {
-  const primary = config?.symbol ?? "?";
-  const superscript = config?.number ?? 0;
-  const activeCls = config?.activeColor ?? "";
-  const glowCls = config?.glow ?? "";
+export function LoadingElement({ message, overlay, size = "sm" }: LoadingElementProps) {
+  const iconSize = size === "md" ? "h-8 w-8" : "h-5 w-5";
 
-  const tileEl = (
+  const spinnerEl = (
     <div className="flex flex-col items-center gap-2">
-      <div
-        className={cn(
-          "flex flex-col items-center justify-center border-2 shadow-md rounded-lg animate-pulse-glow",
-          activeCls,
-          glowCls,
-          size === "md" ? "px-5 py-2.5" : "px-4 py-2"
-        )}
-      >
-        <span className={cn("leading-none self-start font-mono opacity-50", size === "md" ? "text-xs" : "text-[11px]")}>
-          {superscript}
-        </span>
-        <span className={cn("font-bold leading-tight font-mono", size === "md" ? "text-2xl" : "text-lg")}>
-          {primary}
-        </span>
-        <span className={cn("leading-none opacity-70", size === "md" ? "text-xs" : "text-[11px]")}>Loading</span>
-      </div>
+      <Loader2 className={cn("animate-spin text-muted-foreground", iconSize)} />
       {message && <span className="text-xs text-muted-foreground">{message}</span>}
     </div>
   );
@@ -43,14 +26,14 @@ export function LoadingElement({ config, message, overlay, size = "sm" }: Loadin
   if (overlay) {
     return (
       <div className="absolute inset-0 z-30 flex items-center justify-center rounded-md bg-background/70 backdrop-blur-[1px]">
-        {tileEl}
+        {spinnerEl}
       </div>
     );
   }
 
   return (
     <div className="flex flex-col items-center justify-center py-12 gap-3">
-      {tileEl}
+      {spinnerEl}
     </div>
   );
 }

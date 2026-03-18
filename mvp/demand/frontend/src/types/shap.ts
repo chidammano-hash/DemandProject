@@ -1,5 +1,14 @@
 // TypeScript types for SHAP feature importance API (Feature 42)
 
+/** Global filter params for SHAP endpoints — resolves to clusters server-side */
+export interface ShapFilterParams {
+  item?: string;
+  location?: string;
+  brand?: string;
+  category?: string;
+  market?: string;
+}
+
 export interface ShapFeatureSummary {
   feature: string;
   mean_abs_shap_across_timeframes: number;

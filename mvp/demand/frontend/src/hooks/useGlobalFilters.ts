@@ -10,6 +10,7 @@ const DEFAULT_FILTERS: GlobalFilters = {
   channel: [],
   item: [],
   location: [],
+  cluster: [],
   timeGrain: "month",
 };
 
@@ -28,6 +29,8 @@ function readFiltersFromUrl(): Partial<GlobalFilters> {
   if (item) result.item = item.split(",").filter(Boolean);
   const location = params.get("location");
   if (location) result.location = location.split(",").filter(Boolean);
+  const cluster = params.get("cluster");
+  if (cluster) result.cluster = cluster.split(",").filter(Boolean);
   const grain = params.get("grain");
   if (grain === "quarter") result.timeGrain = "quarter";
   return result;
@@ -35,7 +38,7 @@ function readFiltersFromUrl(): Partial<GlobalFilters> {
 
 function syncFiltersToUrl(filters: GlobalFilters) {
   const url = new URL(window.location.href);
-  const keysToSync: (keyof Omit<GlobalFilters, "timeGrain">)[] = ["brand", "category", "market", "channel", "item", "location"];
+  const keysToSync: (keyof Omit<GlobalFilters, "timeGrain">)[] = ["brand", "category", "market", "channel", "item", "location", "cluster"];
   for (const key of keysToSync) {
     if (filters[key].length > 0) {
       url.searchParams.set(key, filters[key].join(","));
@@ -80,7 +83,8 @@ export function useGlobalFilters() {
 
   const hasActiveFilters = filters.brand.length > 0 || filters.category.length > 0 ||
     filters.market.length > 0 || filters.channel.length > 0 ||
-    filters.item.length > 0 || filters.location.length > 0;
+    filters.item.length > 0 || filters.location.length > 0 ||
+    filters.cluster.length > 0;
 
   return {
     filters,

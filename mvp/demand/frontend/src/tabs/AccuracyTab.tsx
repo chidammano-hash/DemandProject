@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { ChartColumn } from "lucide-react";
 
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
@@ -8,7 +8,6 @@ import {
   STALE,
   fetchAccuracySlice,
   fetchLagCurve,
-  fetchCompetitionConfig,
   fetchCompetitionSummary,
   fetchShapModels,
   fetchShapSummary,
@@ -16,13 +15,11 @@ import {
   fetchShapTimeframeDetail,
   fetchShapClusters,
   fetchSeasonalityProfileNames,
-  saveCompetitionConfig,
-  runCompetition,
-  type CompetitionConfig,
   type SliceParams,
   type LagCurveParams,
 } from "@/api/queries";
 import type { AccuracySliceRow, LagPoint } from "@/types";
+import type { ShapFilterParams } from "@/types/shap";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -33,7 +30,6 @@ import { ShapPanel } from "./accuracy/ShapPanel";
 import { BiasCorrectionsPanel } from "./accuracy/BiasCorrectionsPanel";
 
 export function AccuracyTab() {
-  const queryClient = useQueryClient();
   const { filters, planningDate } = useGlobalFilterContext();
 
   // ── Slice / filter state ────────────────────────────────────────────────
@@ -46,9 +42,6 @@ export function AccuracyTab() {
   const [commonDfus, setCommonDfus] = useState(false);
   const [seasonalityProfile, setSeasonalityProfile] = useState("");
   const [seasonalityProfiles, setSeasonalityProfiles] = useState<string[]>([]);
-
-  // ── Competition config state ────────────────────────────────────────────
-  const [competitionConfig, setCompetitionConfig] = useState<CompetitionConfig | null>(null);
 
   // ── SHAP panel state ────────────────────────────────────────────────────
   const [shapOpen, setShapOpen] = useState(false);
@@ -71,6 +64,7 @@ export function AccuracyTab() {
   const brandParam = filters.brand.length > 0 ? filters.brand.join(",") : undefined;
   const categoryParam = filters.category.length > 0 ? filters.category.join(",") : undefined;
   const marketParam = filters.market.length > 0 ? filters.market.join(",") : undefined;
+  const clusterParam = filters.cluster.length > 0 ? filters.cluster.join(",") : undefined;
   const needDfuCount = sliceKpis.includes("dfu_count");
 
   const monthFrom = useMemo(() => {
@@ -85,16 +79,27 @@ export function AccuracyTab() {
     common_dfus: commonDfus, include_dfu_count: needDfuCount,
     item: globalItem, location: globalLocation, seasonality_profile: seasonalityProfile || undefined,
     time_grain: filters.timeGrain,
-    brand: brandParam, category: categoryParam, market: marketParam,
-  }), [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, filters.timeGrain, brandParam, categoryParam, marketParam]);
+    brand: brandParam, category: categoryParam, market: marketParam, cluster_assignment: clusterParam,
+  }), [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, filters.timeGrain, brandParam, categoryParam, marketParam, clusterParam]);
+
+  const shapFilters: ShapFilterParams | undefined = useMemo(() => {
+    const f: ShapFilterParams = {};
+    if (globalItem) f.item = globalItem;
+    if (globalLocation) f.location = globalLocation;
+    if (brandParam) f.brand = brandParam;
+    if (categoryParam) f.category = categoryParam;
+    if (marketParam) f.market = marketParam;
+    if (clusterParam) f.cluster = clusterParam;
+    return Object.keys(f).length > 0 ? f : undefined;
+  }, [globalItem, globalLocation, brandParam, categoryParam, marketParam, clusterParam]);
 
   const lagCurveParams: LagCurveParams = useMemo(() => ({
     models: sliceModels, month_from: monthFrom, common_dfus: commonDfus,
     include_dfu_count: needDfuCount, item: globalItem, location: globalLocation,
     seasonality_profile: seasonalityProfile || undefined,
     time_grain: filters.timeGrain,
-    brand: brandParam, category: categoryParam, market: marketParam,
-  }), [sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, filters.timeGrain, brandParam, categoryParam, marketParam]);
+    brand: brandParam, category: categoryParam, market: marketParam, cluster_assignment: clusterParam,
+  }), [sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, filters.timeGrain, brandParam, categoryParam, marketParam, clusterParam]);
 
   // ── Queries ─────────────────────────────────────────────────────────────
   const { data: slicePayload, isLoading: loadingSlice } = useQuery({
@@ -102,10 +107,6 @@ export function AccuracyTab() {
   });
   const { data: lagPayload } = useQuery({
     queryKey: queryKeys.lagCurve(lagCurveParams as unknown as Record<string, unknown>), queryFn: () => fetchLagCurve(lagCurveParams), staleTime: STALE.TWO_MIN,
-  });
-  const { data: configPayload } = useQuery({
-    queryKey: queryKeys.competitionConfig(), queryFn: fetchCompetitionConfig, staleTime: STALE.FIVE_MIN,
-    select: (data) => { if (data?.config && competitionConfig === null) setCompetitionConfig(data.config); return data; },
   });
   const { data: summaryPayload } = useQuery({
     queryKey: queryKeys.competitionSummary(), queryFn: fetchCompetitionSummary, staleTime: STALE.FIVE_MIN,
@@ -120,28 +121,18 @@ export function AccuracyTab() {
     staleTime: STALE.TEN_MIN, enabled: shapOpen && !!activeShapModel,
   });
   const { data: shapSummaryData, isLoading: loadingShapSummary } = useQuery({
-    queryKey: queryKeys.shapSummary(activeShapModel, 15), queryFn: () => fetchShapSummary(activeShapModel, 15),
+    queryKey: queryKeys.shapSummary(activeShapModel, 15, shapFilters), queryFn: () => fetchShapSummary(activeShapModel, 15, shapFilters),
     staleTime: STALE.TEN_MIN, enabled: shapOpen && !!activeShapModel && shapTimeframeIdx === null,
   });
   const { data: shapDetailData, isLoading: loadingShapDetail } = useQuery({
-    queryKey: queryKeys.shapTimeframeDetail(activeShapModel, shapTimeframeIdx ?? 0, 15, shapCluster),
-    queryFn: () => fetchShapTimeframeDetail(activeShapModel, shapTimeframeIdx!, 15, shapCluster),
+    queryKey: queryKeys.shapTimeframeDetail(activeShapModel, shapTimeframeIdx ?? 0, 15, shapCluster, shapFilters),
+    queryFn: () => fetchShapTimeframeDetail(activeShapModel, shapTimeframeIdx!, 15, shapCluster, shapFilters),
     staleTime: STALE.TEN_MIN, enabled: shapOpen && !!activeShapModel && shapTimeframeIdx !== null,
   });
   const { data: shapClustersData } = useQuery({
     queryKey: queryKeys.shapClusters(activeShapModel),
     queryFn: () => fetchShapClusters(activeShapModel),
     staleTime: STALE.TEN_MIN, enabled: shapOpen && !!activeShapModel,
-  });
-
-  // ── Mutations ───────────────────────────────────────────────────────────
-  const saveConfigMutation = useMutation({ mutationFn: saveCompetitionConfig });
-  const runCompetitionMutation = useMutation({
-    mutationFn: async (config: CompetitionConfig) => { await saveCompetitionConfig(config); return runCompetition(); },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.competitionSummary() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.accuracySlice(sliceParams as unknown as Record<string, unknown>) });
-    },
   });
 
   // ── Derived data ────────────────────────────────────────────────────────
@@ -165,13 +156,6 @@ export function AccuracyTab() {
   const handleLagCurveMetricChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setLagCurveMetric(e.target.value), []);
   const handleKpiToggle = useCallback((key: string) => setSliceKpis((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]), []);
   const handleSeasonalityProfileChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setSeasonalityProfile(e.target.value), []);
-  const handleCompetingModelToggle = useCallback((model: string) => {
-    setCompetitionConfig((prev) => { if (!prev) return prev; const checked = prev.models.includes(model); return { ...prev, models: checked ? prev.models.filter((x) => x !== model) : [...prev.models, model] }; });
-  }, []);
-  const handleMetricChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setCompetitionConfig((prev) => (prev ? { ...prev, metric: e.target.value } : prev)), []);
-  const handleLagChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setCompetitionConfig((prev) => (prev ? { ...prev, lag: e.target.value } : prev)), []);
-  const handleSaveConfig = useCallback(() => { if (!competitionConfig) return; saveConfigMutation.mutate(competitionConfig); }, [competitionConfig, saveConfigMutation]);
-  const handleRunCompetition = useCallback(() => { if (!competitionConfig || competitionConfig.models.length < 2) return; runCompetitionMutation.mutate(competitionConfig); }, [competitionConfig, runCompetitionMutation]);
   const handleShapModelChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => { setShapModelId(e.target.value); setShapTimeframeIdx(null); setShapCluster("all"); }, []);
   const handleShapTimeframeChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setShapTimeframeIdx(e.target.value === "summary" ? null : Number(e.target.value)), []);
   const handleShapClusterChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => setShapCluster(e.target.value), []);
@@ -217,18 +201,7 @@ export function AccuracyTab() {
         </CardContent>
       </Card>
 
-      <ChampionPanel
-        competitionConfig={competitionConfig}
-        availableModels={configPayload?.available_models ?? []}
-        championSummary={summaryPayload?.summary ?? null}
-        savingConfig={saveConfigMutation.isPending}
-        runningCompetition={runCompetitionMutation.isPending}
-        onCompetingModelToggle={handleCompetingModelToggle}
-        onMetricChange={handleMetricChange}
-        onLagChange={handleLagChange}
-        onSaveConfig={handleSaveConfig}
-        onRunCompetition={handleRunCompetition}
-      />
+      <ChampionPanel championSummary={summaryPayload?.summary ?? null} />
 
       <ShapPanel
         shapOpen={shapOpen} shapModels={shapModels} activeShapModel={activeShapModel}

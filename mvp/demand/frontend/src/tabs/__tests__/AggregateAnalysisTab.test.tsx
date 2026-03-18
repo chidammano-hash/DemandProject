@@ -133,8 +133,8 @@ describe("AggregateAnalysisTab", () => {
   it("renders local filter bar with Brand, Category, Item, Location buttons", async () => {
     renderTab();
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Brand" })).toBeDefined();
-      expect(screen.getByRole("button", { name: "Category" })).toBeDefined();
+      expect(screen.getAllByRole("button", { name: "Brand" }).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByRole("button", { name: "Category" }).length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -175,9 +175,14 @@ describe("AggregateAnalysisTab", () => {
     await waitFor(() => {
       expect(screen.getByText("Accuracy Heatmap")).toBeDefined();
     });
-    expect(screen.getByText("category")).toBeDefined();
-    expect(screen.getByText("brand")).toBeDefined();
-    expect(screen.getByText("location")).toBeDefined();
+    expect(screen.getAllByText("Category").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Brand").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Location").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Class").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Sub-class").length).toBeGreaterThanOrEqual(1);
+    // Verify both axis selectors exist (Rows + Columns labels)
+    expect(screen.getByText("Rows")).toBeDefined();
+    expect(screen.getByText("Columns")).toBeDefined();
   });
 
   it("renders Accuracy Comparison card when panel is on", async () => {

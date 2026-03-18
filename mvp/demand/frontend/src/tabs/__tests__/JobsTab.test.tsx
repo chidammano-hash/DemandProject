@@ -11,6 +11,9 @@ vi.mock("@/api/queries", () => ({
     activeJobs: () => ["active-jobs"],
     jobStats: () => ["job-stats"],
     jobSchedules: () => ["job-schedules"],
+    competitionConfig: () => ["competition-config"],
+    competitionSummary: () => ["competition-summary"],
+    clusteringDefaults: () => ["clustering-defaults"],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchJobTypes: vi.fn().mockResolvedValue({
@@ -34,6 +37,17 @@ vi.mock("@/api/queries", () => ({
   createSchedule: vi.fn(),
   deleteSchedule: vi.fn(),
   submitPipeline: vi.fn(),
+  fetchCompetitionConfig: vi.fn().mockResolvedValue({
+    config: { models: ["lgbm_cluster", "catboost_cluster"], metric: "wape", lag: "execution", min_dfu_rows: 3, champion_model_id: "champion", strategy: "expanding", strategy_params: {} },
+    available_models: ["lgbm_cluster", "catboost_cluster", "xgboost_cluster", "external"],
+  }),
+  saveCompetitionConfig: vi.fn().mockResolvedValue(undefined),
+  CompetitionConfig: {},
+  fetchClusteringDefaults: vi.fn().mockResolvedValue({
+    feature_params: { time_window_months: 36, min_months_history: 6 },
+    model_params: { k_range: [5, 18], min_cluster_size_pct: 5.0, use_pca: false, pca_components: null, all_features: false },
+    label_params: { volume_high: 0.75, volume_low: 0.25, cv_steady: 0.3, cv_volatile: 0.8, seasonality_threshold: 0.5, zero_demand_threshold: 0.2 },
+  }),
 }));
 
 // Mock lucide-react to avoid rendering issues

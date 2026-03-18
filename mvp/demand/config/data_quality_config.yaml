@@ -53,10 +53,10 @@ checks:
         - column: item_no
           null_pct_threshold: 0.0
           severity: critical
-        - column: description
+        - column: item_desc
           null_pct_threshold: 5.0
           severity: warning
-        - column: brand
+        - column: brand_name
           null_pct_threshold: 10.0
           severity: warning
         - column: category
@@ -65,16 +65,16 @@ checks:
     location:
       table: dim_location
       columns:
-        - column: loc
+        - column: location_id
           null_pct_threshold: 0.0
           severity: critical
-        - column: state
+        - column: state_id
           null_pct_threshold: 5.0
           severity: warning
     customer:
       table: dim_customer
       columns:
-        - column: customer_group
+        - column: customer_no
           null_pct_threshold: 0.0
           severity: critical
     dfu:
@@ -137,11 +137,11 @@ checks:
       severity: critical
     location:
       table: dim_location
-      key_columns: ["loc"]
+      key_columns: ["location_id"]
       severity: critical
     customer:
       table: dim_customer
-      key_columns: ["customer_group"]
+      key_columns: ["site", "customer_no"]
       severity: critical
     dfu:
       table: dim_dfu
@@ -149,7 +149,7 @@ checks:
       severity: critical
     sales:
       table: fact_sales_monthly
-      key_columns: ["dmdunit", "customer_group", "loc", "startdate", "type"]
+      key_columns: ["dmdunit", "dmdgroup", "loc", "startdate", "type"]
       severity: warning
     forecast:
       table: fact_external_forecast_monthly
@@ -247,7 +247,7 @@ checks:
       source_table: fact_inventory_snapshot
       source_columns: ["loc"]
       target_table: dim_location
-      target_columns: ["loc"]
+      target_columns: ["location_id"]
       severity: warning
     dfu_to_item:
       source_table: dim_dfu
@@ -259,17 +259,133 @@ checks:
       source_table: dim_dfu
       source_columns: ["loc"]
       target_table: dim_location
-      target_columns: ["loc"]
-      severity: info
-    sales_to_customer:
-      source_table: fact_sales_monthly
-      source_columns: ["customer_group"]
-      target_table: dim_customer
-      target_columns: ["customer_group"]
+      target_columns: ["location_id"]
       severity: info
     sales_to_time:
       source_table: fact_sales_monthly
       source_columns: ["startdate"]
       target_table: dim_time
-      target_columns: ["startdate"]
+      target_columns: ["date_key"]
       severity: info
+
+  # ── Statistical outlier detection (Z-score / IQR) ────────────
+  statistical_outlier:
+    sales:
+      table: fact_sales_monthly
+      columns:
+        - column: qty
+          method: iqr
+          threshold: 1.5
+          severity: warning
+        - column: qty_shipped
+          method: iqr
+          threshold: 1.5
+          severity: warning
+    forecast:
+      table: fact_external_forecast_monthly
+      columns:
+        - column: basefcst_pref
+          method: iqr
+          threshold: 1.5
+          severity: warning
+    inventory:
+      table: fact_inventory_snapshot
+      columns:
+        - column: qty_on_hand
+          method: iqr
+          threshold: 1.5
+          severity: warning
+        - column: lead_time_days
+          method: zscore
+          threshold: 3.0
+          severity: critical
+
+  # ── Distribution drift between load batches ──────────────────
+  distribution_drift:
+    sales:
+      table: fact_sales_monthly
+      columns:
+        - column: qty
+          max_drift: 0.15
+          severity: warning
+    forecast:
+      table: fact_external_forecast_monthly
+      columns:
+        - column: basefcst_pref
+          max_drift: 0.20
+          severity: warning
+    inventory:
+      table: fact_inventory_snapshot
+      columns:
+        - column: qty_on_hand
+          max_drift: 0.15
+          severity: warning
+        - column: lead_time_days
+          max_drift: 0.20
+          severity: warning
+
+  # ── Temporal gap detection (missing months) ──────────────────
+  temporal_gaps:
+    sales:
+      table: fact_sales_monthly
+      date_column: startdate
+      grain: month
+      severity: warning
+    forecast:
+      table: fact_external_forecast_monthly
+      date_column: startdate
+      grain: month
+      severity: warning
+
+  # ── Cross-column logical consistency ─────────────────────────
+  cross_column:
+    sales:
+      table: fact_sales_monthly
+      rules:
+        - name: qty_non_negative
+          expression: "qty >= 0"
+          description: "Sales quantity must be non-negative"
+          severity: warning
+        - name: shipped_lte_ordered
+          expression: "qty_shipped <= qty_ordered OR qty_ordered IS NULL OR qty_shipped IS NULL"
+          description: "Shipped qty should not exceed ordered qty"
+          severity: info
+    inventory:
+      table: fact_inventory_snapshot
+      rules:
+        - name: on_order_non_negative
+          expression: "qty_on_order >= 0 OR qty_on_order IS NULL"
+          description: "On-order quantity must be non-negative"
+          severity: warning
+        - name: lead_time_positive
+          expression: "lead_time_days >= 0 OR lead_time_days IS NULL"
+          description: "Lead time must be non-negative"
+          severity: critical
+        - name: snapshot_date_not_future
+          expression: "snapshot_date <= '2026-02-24'"
+          description: "Snapshot date should not be after planning date"
+          severity: warning
+
+  # ── Cardinality anomaly (unexpected distinct value changes) ──
+  cardinality_anomaly:
+    item:
+      table: dim_item
+      columns:
+        - column: category
+          max_change_pct: 15.0
+          severity: warning
+        - column: brand_name
+          max_change_pct: 10.0
+          severity: warning
+    dfu:
+      table: dim_dfu
+      columns:
+        - column: cluster_assignment
+          max_change_pct: 20.0
+          severity: info
+    inventory:
+      table: fact_inventory_snapshot
+      columns:
+        - column: loc
+          max_change_pct: 10.0
+          severity: warning

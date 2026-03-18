@@ -351,8 +351,8 @@ async def test_distinct_cascade_market_filtered_by_brand(mock_pool):
 
 
 @pytest.mark.asyncio
-async def test_distinct_no_cascade_without_filter_params(mock_pool):
-    """Without cascade params, uses original simple query path."""
+async def test_distinct_no_cascade_still_uses_dfu_for_mapped_columns(mock_pool):
+    """Even without cascade params, mapped columns query through dim_dfu to exclude zero-DFU items."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("A",), ("B",)]
     with patch("api.core._get_pool", return_value=pool):
@@ -362,7 +362,7 @@ async def test_distinct_no_cascade_without_filter_params(mock_pool):
             resp = await client.get("/domains/item/distinct?column=brand_name")
             assert resp.status_code == 200
             executed_sql = cursor.execute.call_args[0][0]
-            assert "dim_dfu" not in executed_sql
+            assert "dim_dfu" in executed_sql
             assert "dim_item" in executed_sql
 
 
