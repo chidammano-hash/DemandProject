@@ -9,9 +9,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from scripts.load_dataset_postgres import (
     _resolve_forecast_execution_lag,
     _load_forecast_archive,
+)
+from common.sql_helpers import (
     qident,
     business_key_expr,
-    typed_expr,
+    typed_expr_sets as typed_expr,
 )
 
 
@@ -208,11 +210,12 @@ class TestLoadForecastArchive:
 
         _load_forecast_archive(cur, "stg_test", "d")
 
-        # First execute should be DELETE
+        # First execute should be DELETE with parameterized model_id
         delete_sql = cur.execute.call_args_list[0][0][0]
+        delete_params = cur.execute.call_args_list[0][0][1]
         assert "DELETE" in delete_sql
         assert "backtest_lag_archive" in delete_sql
-        assert "external" in delete_sql
+        assert "external" in delete_params
 
     def test_inserts_all_lags_into_archive(self):
         """Should INSERT all staging rows (all lags) into backtest_lag_archive."""

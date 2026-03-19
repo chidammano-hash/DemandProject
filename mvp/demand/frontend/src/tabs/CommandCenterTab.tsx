@@ -1,5 +1,5 @@
 /**
- * Command Center — Unified morning-triage screen for demand planners.
+ * Command Center — Unified morning-triage screen for supply chain teams.
  *
  * Merges data from three sources into a single view:
  * - Control Tower KPIs (portfolio health, fill rate, open exceptions)

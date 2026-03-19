@@ -80,7 +80,7 @@ async def test_webhook(
     result = dispatch_webhook(
         url=row[0], secret=row[1],
         event_type="test",
-        payload={"message": "Test webhook from Demand Studio"},
+        payload={"message": "Test webhook from Supply Chain Command Center"},
     )
     return result
 

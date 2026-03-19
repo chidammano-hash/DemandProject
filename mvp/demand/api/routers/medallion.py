@@ -1,7 +1,7 @@
 """Medallion pipeline observability endpoints — lineage, corrections, quarantine."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from api.core import get_conn
 
@@ -69,7 +69,7 @@ async def batch_detail(batch_id: int):
         )
         r = cur.fetchone()
         if not r:
-            return {"error": "batch not found"}, 404
+            raise HTTPException(status_code=404, detail="batch not found")
 
         # Layer counts from lineage
         cur.execute(
@@ -199,10 +199,10 @@ async def list_quarantine(
         cur.execute(
             f"SELECT quarantine_id, domain, _bronze_id, _load_batch_id, "
             f"rejection_reason, rejection_details, raw_row, "
-            f"resolved, resolved_by, created_at "
+            f"resolved, resolved_by, quarantined_at "
             f"FROM silver_quarantine "
             f"WHERE {' AND '.join(where)} "
-            f"ORDER BY created_at DESC LIMIT %s",
+            f"ORDER BY quarantined_at DESC LIMIT %s",
             params,
         )
         rows = cur.fetchall()
@@ -216,7 +216,7 @@ async def list_quarantine(
                 "rejection_details": r[5],
                 "raw_row": r[6],
                 "resolved": r[7], "resolved_by": r[8],
-                "created_at": r[9].isoformat() if r[9] else None,
+                "quarantined_at": r[9].isoformat() if r[9] else None,
             }
             for r in rows
         ],
@@ -236,5 +236,5 @@ async def resolve_quarantine(quarantine_id: int):
         row = cur.fetchone()
         conn.commit()
     if not row:
-        return {"error": "not found"}, 404
+        raise HTTPException(status_code=404, detail="quarantine entry not found")
     return {"quarantine_id": row[0], "resolved": True}

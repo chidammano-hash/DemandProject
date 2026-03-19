@@ -709,7 +709,7 @@ async def list_purchase_orders(
     page: int = 1,
     page_size: int = 50,
 ):
-    """List Demand Studio–generated purchase orders from fact_purchase_orders."""
+    """List Supply Chain Command Center-generated purchase orders from fact_purchase_orders."""
     page_size = max(1, min(page_size, 200))
     offset = (max(1, page) - 1) * page_size
 

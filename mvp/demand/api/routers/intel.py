@@ -142,7 +142,7 @@ Generate a concise market intelligence briefing (3-5 paragraphs) covering:
 4. Competitive landscape and potential demand drivers
 5. Forward-looking demand signals and risks
 
-Be specific and actionable. Focus on factors that would help a demand planner make better forecasts."""
+Be specific and actionable. Focus on factors that would help a planner or analyst make better decisions."""
 
     use_web_search = not search_results and not google_api_key
     if use_web_search:

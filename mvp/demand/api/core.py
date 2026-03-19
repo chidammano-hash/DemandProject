@@ -1,4 +1,4 @@
-"""Shared utilities for the Demand Studio API.
+"""Shared utilities for the Supply Chain Command Center API.
 
 Provides connection pool management, SQL helpers, domain spec wrappers,
 pagination (fetch_page / list_domain), and metric expression builders.

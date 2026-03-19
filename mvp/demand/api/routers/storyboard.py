@@ -1,4 +1,4 @@
-"""Demand Planner Storyboard endpoints — Feature 40: Exception-Based Value Workflow.
+"""Planner Storyboard endpoints — Feature 40: Exception-Based Value Workflow.
 
 Router mounted at /storyboard in api/main.py.
 

@@ -672,8 +672,9 @@ export async function fetchDashboardHeatmap(
   periods = 4,
   filters?: DashboardFilterParams,
   colGrain: HeatmapGrain = "date",
+  model = "external",
 ): Promise<{ rows: HeatmapRow[]; period_labels: string[]; metric: string }> {
-  const qs = new URLSearchParams({ grain, col_grain: colGrain, periods: String(periods) });
+  const qs = new URLSearchParams({ grain, col_grain: colGrain, periods: String(periods), model });
   appendFilterParams(qs, filters);
   return fetchJson(`/dashboard/heatmap?${qs}`);
 }

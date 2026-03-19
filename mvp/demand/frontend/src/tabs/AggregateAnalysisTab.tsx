@@ -28,6 +28,7 @@ import {
   fetchDashboardKpis,
   fetchDashboardTrend,
   fetchDashboardHeatmap,
+  fetchForecastModels,
   fetchAccuracySlice,
   fetchLagCurve,
   fetchCompetitionConfig,
@@ -119,6 +120,7 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   type HmGrain = "category" | "brand" | "location" | "class" | "sub_class" | "date";
   const [heatmapRowGrain, setHeatmapRowGrain] = useState<HmGrain>("category");
   const [heatmapColGrain, setHeatmapColGrain] = useState<HmGrain>("date");
+  const [heatmapModel, setHeatmapModel] = useState("external");
 
   // --------------- theme ---------------
   const { theme, chartColors, trendColors } = useChartColors();
@@ -174,9 +176,16 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
     enabled: visible.forecastChart,
   });
 
+  const { data: heatmapModels } = useQuery({
+    queryKey: queryKeys.forecastModels(),
+    queryFn: fetchForecastModels,
+    staleTime: STALE.TEN_MIN,
+    enabled: visible.heatmap,
+  });
+
   const heatmapQ = useQuery({
-    queryKey: queryKeys.dashboardHeatmap({ grain: heatmapRowGrain, col_grain: heatmapColGrain, ...dashFilterRecord }),
-    queryFn: () => fetchDashboardHeatmap(heatmapRowGrain, 6, dashFilters, heatmapColGrain),
+    queryKey: queryKeys.dashboardHeatmap({ grain: heatmapRowGrain, col_grain: heatmapColGrain, model: heatmapModel, ...dashFilterRecord }),
+    queryFn: () => fetchDashboardHeatmap(heatmapRowGrain, 6, dashFilters, heatmapColGrain, heatmapModel),
     staleTime: STALE.THIRTY_SEC,
     enabled: visible.heatmap,
   });
@@ -472,6 +481,16 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
           title="Accuracy Heatmap"
           headerRight={
             <div className="flex items-center gap-2 text-[10px]">
+              <span className="text-muted-foreground font-medium">Model</span>
+              <select
+                className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
+                value={heatmapModel}
+                onChange={(e) => setHeatmapModel(e.target.value)}
+              >
+                {(heatmapModels ?? ["external"]).map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
               <span className="text-muted-foreground font-medium">Rows</span>
               <select
                 className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"

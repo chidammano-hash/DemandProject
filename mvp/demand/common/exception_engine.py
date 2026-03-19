@@ -1,4 +1,4 @@
-"""Exception detection and scoring engine — Feature 40: Demand Planner Storyboard.
+"""Exception detection and scoring engine — Feature 40: Planner Storyboard.
 
 Pure functions for detecting each exception type, scoring severity, and generating
 human-readable headlines. The `run_exception_detection` function orchestrates the

@@ -1,5 +1,10 @@
 -- Silver Layer: typed, validated tables with DQ status tracking.
 -- Same typed columns as gold tables + lineage/DQ metadata columns.
+--
+-- DDL1: UNIQUE constraints on *_ck fields enforce dedup at DB level
+-- (Python-side DISTINCT ON still runs, but this is a safety net).
+-- DDL2 NOTE: quarantine uses `quarantined_at`, lineage uses `created_at` —
+-- naming inconsistency documented here for awareness.
 
 -- ── item ──
 CREATE TABLE IF NOT EXISTS silver_item (
@@ -19,6 +24,7 @@ CREATE TABLE IF NOT EXISTS silver_item (
 CREATE INDEX IF NOT EXISTS idx_silver_item_batch ON silver_item (_load_batch_id);
 CREATE INDEX IF NOT EXISTS idx_silver_item_dq ON silver_item (_dq_status);
 CREATE INDEX IF NOT EXISTS idx_silver_item_ck ON silver_item (item_ck);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_silver_item_ck_batch ON silver_item (item_ck, _load_batch_id);
 
 -- ── location ──
 CREATE TABLE IF NOT EXISTS silver_location (
@@ -33,6 +39,7 @@ CREATE TABLE IF NOT EXISTS silver_location (
 );
 CREATE INDEX IF NOT EXISTS idx_silver_location_batch ON silver_location (_load_batch_id);
 CREATE INDEX IF NOT EXISTS idx_silver_location_dq ON silver_location (_dq_status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_silver_location_ck_batch ON silver_location (location_ck, _load_batch_id);
 
 -- ── customer ──
 CREATE TABLE IF NOT EXISTS silver_customer (
@@ -51,6 +58,7 @@ CREATE TABLE IF NOT EXISTS silver_customer (
 );
 CREATE INDEX IF NOT EXISTS idx_silver_customer_batch ON silver_customer (_load_batch_id);
 CREATE INDEX IF NOT EXISTS idx_silver_customer_dq ON silver_customer (_dq_status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_silver_customer_ck_batch ON silver_customer (customer_ck, _load_batch_id);
 
 -- ── time ──
 CREATE TABLE IF NOT EXISTS silver_time (
@@ -71,6 +79,7 @@ CREATE TABLE IF NOT EXISTS silver_time (
 );
 CREATE INDEX IF NOT EXISTS idx_silver_time_batch ON silver_time (_load_batch_id);
 CREATE INDEX IF NOT EXISTS idx_silver_time_dq ON silver_time (_dq_status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_silver_time_ck_batch ON silver_time (time_ck, _load_batch_id);
 
 -- ── dfu ──
 CREATE TABLE IF NOT EXISTS silver_dfu (
@@ -103,6 +112,7 @@ CREATE TABLE IF NOT EXISTS silver_dfu (
 CREATE INDEX IF NOT EXISTS idx_silver_dfu_batch ON silver_dfu (_load_batch_id);
 CREATE INDEX IF NOT EXISTS idx_silver_dfu_dq ON silver_dfu (_dq_status);
 CREATE INDEX IF NOT EXISTS idx_silver_dfu_ck ON silver_dfu (dfu_ck);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_silver_dfu_ck_batch ON silver_dfu (dfu_ck, _load_batch_id);
 
 -- ── sales ──
 CREATE TABLE IF NOT EXISTS silver_sales (
@@ -125,6 +135,7 @@ CREATE TABLE IF NOT EXISTS silver_sales (
 CREATE INDEX IF NOT EXISTS idx_silver_sales_batch ON silver_sales (_load_batch_id);
 CREATE INDEX IF NOT EXISTS idx_silver_sales_dq ON silver_sales (_dq_status);
 CREATE INDEX IF NOT EXISTS idx_silver_sales_ck ON silver_sales (sales_ck);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_silver_sales_ck_batch ON silver_sales (sales_ck, _load_batch_id);
 
 -- ── forecast ──
 CREATE TABLE IF NOT EXISTS silver_forecast (
@@ -143,6 +154,7 @@ CREATE TABLE IF NOT EXISTS silver_forecast (
 CREATE INDEX IF NOT EXISTS idx_silver_forecast_batch ON silver_forecast (_load_batch_id);
 CREATE INDEX IF NOT EXISTS idx_silver_forecast_dq ON silver_forecast (_dq_status);
 CREATE INDEX IF NOT EXISTS idx_silver_forecast_ck ON silver_forecast (forecast_ck);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_silver_forecast_ck_batch ON silver_forecast (forecast_ck, _load_batch_id);
 
 -- ── inventory ──
 CREATE TABLE IF NOT EXISTS silver_inventory (
@@ -159,3 +171,4 @@ CREATE TABLE IF NOT EXISTS silver_inventory (
 CREATE INDEX IF NOT EXISTS idx_silver_inventory_batch ON silver_inventory (_load_batch_id);
 CREATE INDEX IF NOT EXISTS idx_silver_inventory_dq ON silver_inventory (_dq_status);
 CREATE INDEX IF NOT EXISTS idx_silver_inventory_ck ON silver_inventory (inventory_ck);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_silver_inventory_ck_batch ON silver_inventory (inventory_ck, _load_batch_id);

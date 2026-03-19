@@ -1,4 +1,4 @@
-"""User authentication and RBAC for Demand Studio.
+"""User authentication and RBAC for Supply Chain Command Center.
 
 Replaces the simple API key auth in api/auth.py with JWT-based user identity,
 role-based access control, and audit logging.

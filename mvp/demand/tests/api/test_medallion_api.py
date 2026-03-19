@@ -65,6 +65,21 @@ async def test_batch_detail():
 
 
 @pytest.mark.asyncio
+async def test_batch_detail_not_found():
+    """B2: returns 404 HTTPException instead of tuple."""
+    pool, conn, cur = _make_pool()
+    cur.fetchone.return_value = None
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.get("/data-quality/lineage/batches/999")
+    assert resp.status_code == 404
+    assert "batch not found" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_row_lineage():
     now = datetime.datetime(2026, 3, 17, 12, 0, 0)
     rows = [
@@ -132,6 +147,9 @@ async def test_list_quarantine():
     data = resp.json()
     assert data["total"] == 1
     assert data["quarantine"][0]["rejection_reason"] == "null_pk"
+    # B1: should use quarantined_at, not created_at
+    assert "quarantined_at" in data["quarantine"][0]
+    assert "created_at" not in data["quarantine"][0]
 
 
 @pytest.mark.asyncio
@@ -158,3 +176,34 @@ async def test_resolve_quarantine():
     assert resp.status_code == 200
     data = resp.json()
     assert data["resolved"] is True
+
+
+@pytest.mark.asyncio
+async def test_resolve_quarantine_not_found():
+    """B2: returns 404 HTTPException instead of tuple."""
+    pool, conn, cur = _make_pool()
+    cur.fetchone.return_value = None
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post("/data-quality/quarantine/999/resolve")
+    assert resp.status_code == 404
+    assert "quarantine entry not found" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_quarantine_query_uses_quarantined_at():
+    """B1: Verify the SQL uses quarantined_at column, not created_at."""
+    pool, conn, cur = _make_pool(fetchall_return=[])
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.get("/data-quality/quarantine")
+    assert resp.status_code == 200
+    # Verify the SQL sent to cursor uses quarantined_at
+    sql = cur.execute.call_args[0][0]
+    assert "quarantined_at" in sql
+    assert "created_at" not in sql

@@ -14,7 +14,7 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 class TestNotificationRequest(BaseModel):
     channel: str = "email"
     recipient: str = ""
-    message: str = "Test notification from Demand Studio"
+    message: str = "Test notification from Supply Chain Command Center"
 
 
 @router.get("/history")

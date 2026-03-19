@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * Playwright E2E configuration for Demand Studio.
+ * Playwright E2E configuration for Supply Chain Command Center.
  *
  * Prerequisites:
  *   - API server running on :8000  (make api)

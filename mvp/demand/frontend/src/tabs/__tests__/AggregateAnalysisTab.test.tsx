@@ -47,6 +47,7 @@ vi.mock("@/api/queries", () => ({
     shapClusters: (m: string) => ["shap-clusters", m],
     distinctValues: (d: string, c: string) => ["distinct-values", d, c],
     planningDate: () => ["planning-date"],
+    forecastModels: () => ["forecast-models"],
   },
   filterMetaKeys: {
     dfuCount: (f: unknown) => ["dfu-count", f],
@@ -83,6 +84,7 @@ vi.mock("@/api/queries", () => ({
   fetchDistinctValues: vi.fn().mockResolvedValue({ values: [] }),
   fetchPlanningDate: vi.fn().mockResolvedValue({ planning_date: "2026-03-16", is_frozen: false, system_date: "2026-03-16", days_behind: 0 }),
   fetchDfuCount: vi.fn().mockResolvedValue({ count: 0 }),
+  fetchForecastModels: vi.fn().mockResolvedValue(["external", "lgbm_cluster", "champion"]),
 }));
 
 vi.mock("@/api/queries/core", () => ({

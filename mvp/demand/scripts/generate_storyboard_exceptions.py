@@ -1,4 +1,4 @@
-"""Generate Demand Planner Storyboard exceptions — Feature 40.
+"""Generate Planner Storyboard exceptions — Feature 40.
 
 Scans forecast, inventory health, and accuracy data to detect exceptions:
   - forecast_bias: sustained over/under-forecast over trailing N months
@@ -94,7 +94,7 @@ def run(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate Demand Planner Storyboard exceptions (Feature 40)."
+        description="Generate Planner Storyboard exceptions (Feature 40)."
     )
     parser.add_argument(
         "--month",

@@ -27,19 +27,22 @@ describe("useKeyboardShortcuts", () => {
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("commandCenter");
 
     act(() => fireKey("2"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("aggregateAnalysis");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("sop");
 
     act(() => fireKey("3"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("itemAnalysis");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("jobs");
 
     act(() => fireKey("4"));
     expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("invPlanning");
 
     act(() => fireKey("5"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("sop");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("clusters");
 
     act(() => fireKey("6"));
-    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("jobs");
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("aggregateAnalysis");
+
+    act(() => fireKey("7"));
+    expect(defaultConfig.onTabSwitch).toHaveBeenCalledWith("itemAnalysis");
   });
 
   it("focuses search on /", () => {

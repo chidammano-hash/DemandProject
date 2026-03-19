@@ -1,727 +1,259 @@
-# Demand Unified MVP (Item + Location + Customer + Time + DFU + Sales + Forecast)
+# Supply Chain Command Center
 
-Unified codebase for demand datasets.
+A full-stack supply chain analytics platform for demand planning and inventory optimization. Ingests historical sales and forecast data, stores it in PostgreSQL, runs ML-based forecasting pipelines, and serves an interactive React dashboard for planners and analysts.
+
+---
+
+## Core Architecture
+
+| Layer | Technology |
+|---|---|
+| Backend API | Python + FastAPI + Uvicorn (54 mounted routers) |
+| Frontend | React + Vite + TypeScript + Tailwind CSS + shadcn/ui |
+| Charts | Recharts + ECharts |
+| Database | PostgreSQL 16 (pgvector for embeddings) |
+| ML Pipeline | scikit-learn, LightGBM, CatBoost, XGBoost, pandas |
+| ML Tracking | MLflow |
+| Job Scheduler | APScheduler 3.11 (BackgroundScheduler + ThreadPoolExecutor) |
+| AI Agent | Claude (Anthropic) via tool_use API |
+| AI / Chatbot | OpenAI GPT-4o (NL-to-SQL, market intelligence) |
+| E2E Testing | Playwright |
+| Build | Make, uv, Docker Compose (2 services: Postgres + MLflow) |
+
+Data flow: raw CSVs -> normalize scripts -> PostgreSQL -> FastAPI (:8000) -> React UI (:5173)
+
+---
+
+## Directory Structure
+
+```
+DemandProject/
+├── mvp/demand/                  Main application (all dev work here)
+│   ├── api/                     FastAPI backend (main.py + routers/)
+│   │   └── routers/             56 router files (54 mounted)
+│   ├── common/                  27 shared Python modules
+│   ├── scripts/                 Data pipeline & ML scripts (ETL, clustering, backtesting)
+│   ├── frontend/                React + TypeScript UI
+│   │   ├── src/tabs/            21 tab components + sub-panels
+│   │   ├── src/components/      Shared UI components
+│   │   ├── src/hooks/           Custom React hooks
+│   │   ├── src/api/queries/     24 domain query modules
+│   │   └── e2e/                 Playwright E2E tests
+│   ├── tests/                   Backend test suite (pytest: unit/ + api/)
+│   ├── sql/                     79 DDL migration files
+│   ├── config/                  YAML configs (all tunable parameters externalized)
+│   ├── Makefile                 All dev commands
+│   └── docker-compose.yml       2-service infra (Postgres + MLflow)
+├── docs/specs/                  Design specs (8 domains, 52 files)
+├── CLAUDE.md                    Full project specification
+└── datafiles/                   Source CSVs (gitignored, ~15GB)
+```
+
+---
 
 ## Datasets
-Dimensions:
-- `dim_item`
-- `dim_location`
-- `dim_customer`
-- `dim_time`
-- `dim_dfu`
 
-Facts:
-- `fact_sales_monthly`
-- `fact_external_forecast_monthly`
-- `fact_inventory_snapshot`
+### Dimensions
+- `dim_item` — from `datafiles/itemdata.csv`
+- `dim_location` — from `datafiles/locationdata.csv`
+- `dim_customer` — from `datafiles/customerdata.csv`
+- `dim_time` — auto-generated 2020-2035
+- `dim_dfu` — from `datafiles/dfu.txt`
 
-Sales source details (MVP):
-- input file: `datafiles/dfu_lvl2_hist.txt`
-- load rule: only `TYPE=1`
-- monthly grain date: `STARTDATE` in `YYYYMMDD`, day must be `01`
+### Facts
+- `fact_sales_monthly` — from `datafiles/dfu_lvl2_hist.txt`, only `TYPE=1` rows
+- `fact_external_forecast_monthly` — from `datafiles/dfu_stat_fcst.txt`, dual-path loading with execution-lag filtering
+- `fact_inventory_snapshot` — from 14 monthly CSVs (`Inventory_Snapshot_YYYY_MM.csv`, ~190M rows)
 
-Forecast source details (MVP):
-- input file: `datafiles/dfu_stat_fcst.txt`
-- monthly grain dates: `fcstdate`, `startdate` (both month-start)
-- lag rule: `lag = month_diff(startdate, fcstdate)` with allowed range `0..4`
-- `model_id`: identifies forecasting algorithm (default `'external'`); uniqueness is `(forecast_ck, model_id)`
-- loading: dual-path insert with **phase ordering** — archive (`backtest_lag_archive`) loads FIRST from untouched staging (each row's original `lag` preserved as `execution_lag`), THEN staging is mutated from `dim_dfu`, THEN main table (`fact_external_forecast_monthly`) receives **execution-lag rows only** via `WHERE lag = execution_lag`
-- `--replace` flag (or `make load-forecast-replace`): replaces only `model_id='external'` rows, preserving backtest/champion/ceiling data
-- `--skip-archive` flag (or `make load-forecast-replace-no-archive`): skips the 45M-row archive load — only loads execution-lag row into main table for faster reloads
+### Forecast Loading Details
+- `lag = month_diff(startdate, fcstdate)` with allowed range 0..4
+- `model_id` identifies forecasting algorithm (default `'external'`); uniqueness: `(forecast_ck, model_id)`
+- **Phase ordering:** archive loads FIRST from untouched staging (all lags 0-4), THEN staging is mutated from `dim_dfu`, THEN main table receives execution-lag rows only
+- `--replace` flag: replaces only `model_id='external'` rows, preserving backtest/champion/ceiling data
+- `--skip-archive` flag: skips the 45M-row archive load for faster reloads
 
-Inventory source details (MVP):
-- input files: 14 monthly CSVs `datafiles/Inventory_Snapshot_YYYY_MM.csv` (~190M rows total)
-- columns: `exec_date,item,loc,lead_time,tot_oh,tot_oh_oo,mtd_sls`
-- grain: `item_no` + `loc` + `snapshot_date` (monthly)
-- `qty_on_order` derived as `qty_on_hand_on_order - qty_on_hand` during normalization
-- materialized view: `agg_inventory_monthly` for monthly trend aggregation
-
-AI/Chatbot:
-- `chat_embeddings` table (pgvector) — stores schema metadata embeddings for NL query context
-
-Clustering:
-- DFU clustering framework — groups DFUs by historical demand patterns for improved tree-model performance
-- Cluster assignments stored in `dim_dfu.cluster_assignment` column
-- 14 core features across 6 dimensions: volume (mean, CV, IQR), trend (normalized slope, R-squared, CAGR), seasonality (amplitude, OLS R-squared, YoY correlation), periodicity (FFT strength), intermittency (zero-demand pct, Croston ADI), lifecycle (months available, recency ratio)
-- 36-month time window (configurable), minimum 12 months history
-- KMeans with combined Silhouette + Calinski-Harabasz scoring (0.5*sil + 0.5*CH); gap statistic removed
-- Hard 5% minimum cluster size constraint; k_range [5, 18]; post-hoc small cluster merge
-- Priority-ordered taxonomy labeling: Intermittency -> Periodicity -> Seasonality -> Trend -> Volatility -> Volume (5 tiers)
-- Compound labels: high_volume_seasonal_growing, low_volume_intermittent, very_high_volume_growing, etc.
-- MLflow integration for experiment tracking
-
-## Why this refactor
-- One backend and one UI app for all datasets
-- Shared normalize/load/API paging/filter/sort patterns
-- Facts (`sales`, `forecast`) handled as facts in schema and docs
-
-## Stack
-- PostgreSQL 16 (pgvector/pgvector:pg16 — includes vector extension)
-- FastAPI + Uvicorn
-- React + Vite + Tailwind + shadcn/ui + Recharts + ECharts
-- MLflow (experiment tracking, model registry)
-- LightGBM (demand forecasting models)
-- CatBoost (demand forecasting models)
-- XGBoost (demand forecasting models)
-- scikit-learn (clustering algorithms)
-- OpenAI (GPT-4o + text-embedding-3-small) for NL→SQL chatbot
-- APScheduler 3.11 (job scheduling engine — BackgroundScheduler + ThreadPoolExecutor)
-- Anthropic Claude (claude-opus-4-6 tool_use agent for AI Planning Agent — IPAIfeature1)
-- bcrypt (password hashing for user management)
-- PyJWT (JSON Web Token authentication for RBAC)
-- Playwright (E2E smoke tests)
-- Docker Compose
-
-## Performance defaults
-- Fact indexes on `(dmdunit, loc, startdate/fcstdate)` are applied via `sql/008_perf_indexes_and_agg.sql`.
-- Trigram (`pg_trgm`) indexes are applied for common `ILIKE` search fields.
-- Monthly materialized views are maintained for faster trend analytics:
-  - `agg_sales_monthly`
-  - `agg_forecast_monthly`
-- Accuracy slice views for O(1) aggregate KPI queries (feature10):
-  - `agg_accuracy_by_dim` — pre-joins forecast + DFU attributes at (model, lag, month, cluster, supplier, abc_vol, region, brand) grain
-  - `agg_accuracy_lag_archive` — same from archive table; powers lag-curve analysis
-- Inventory aggregate view for O(1) trend queries:
-  - `agg_inventory_monthly` — monthly avg on-hand, avg on-order, avg lead time, total MTD sales
-- `load-sales`, `load-forecast`, `load-inventory`, and `load-all` refresh `agg_*` aggregates automatically.
-- `backtest-load` refreshes accuracy slice views automatically.
+---
 
 ## Quick Start
+
 ```bash
 cd mvp/demand
-make init
-make up
-make normalize-all
-make load-all
-make generate-embeddings   # populate chat embeddings (requires OPENAI_API_KEY in .env)
-make cluster-all            # optional: run DFU clustering (requires sales data)
-make inventory-pipeline     # optional: normalize + load inventory snapshots
-make auth-schema            # optional: create user/role tables for RBAC
-make auth-seed-admin        # optional: create initial admin user (requires bcrypt, PyJWT)
+
+make init              # Create .venv, install uv, sync dependencies
+make up                # Start Docker services (Postgres, MLflow)
+make db-apply-sql      # Apply DDL schemas
+make normalize-all     # Normalize source CSVs
+make load-all          # Load into Postgres + refresh materialized views
+
+make api               # Start FastAPI on :8000
+make ui-init           # Install npm deps
+make ui                # Start React dev server on :5173
 ```
 
-Run API:
+Open UI at `http://127.0.0.1:5173`
+
+### Optional Pipelines
+
 ```bash
-cd mvp/demand
-make api
+make inventory-pipeline       # Normalize 14 monthly inventory CSVs + load + refresh
+make cluster-all              # Full clustering pipeline (features -> train -> label -> update)
+make backtest-all             # Run LGBM + CatBoost + XGBoost backtests
+make champion-all             # Train meta-learner + simulate strategies + select champions
+make seasonality-all          # Detect seasonality patterns + write to dim_dfu
+make forecast-prod-all        # Generate production forecasts from champion models
+make ai-insights-all          # Run AI portfolio scan + write insights
+make dq-all                   # Data quality schema + checks
+make sop-all                  # S&OP cycle setup
+make rebalancing-all          # Inventory rebalancing computation
 ```
 
-Run UI:
-```bash
-cd mvp/demand
-make ui-init
-make ui
-```
+---
 
-Open UI:
-- `http://127.0.0.1:5173`
+## Feature Summary
 
-UI prerequisites:
-- Node.js + npm installed
-- Internet access to pull npm packages the first time (`make ui-init`)
+### 1. Demand Forecasting & Accuracy
 
-Analytics behavior:
-- analytics is enabled only for `sales` and `forecast` (dimensions are table-only)
-- `sales` and `forecast`: item/location analytics filters on `dmdunit` and `loc`
-- item/location filters use exact-match behavior
-- on initial load for `sales`/`forecast`, UI auto-fills a sampled item+location pair to avoid full-table trend scans
-- Item/location filters provide typeahead suggestions while typing
-- Trend chart supports multiple measures using `Trend Measures` checkboxes
-- Forecast domain includes a **Model selector** to filter analytics by `model_id`
+Three tree-based backtest models (LightGBM, CatBoost, XGBoost) with configurable `cluster_strategy` (per_cluster or global) via `config/algorithm_config.yaml`. `ml_cluster` is always a hard feature. Expanding-window backtesting across 10 timeframes (A-J), storing lag 0-4 predictions in an archive table. Champion model selection picks the best model per DFU per month using 5 strategies (expanding, rolling, decay, ensemble, meta-learner) with exec-lag-aware causal safeguards. Production forecast inference generates versioned forward-looking forecasts with P10/P90 confidence intervals. Advanced options: recursive multi-step forecasting, SHAP-based feature selection, Bayesian hyperparameter tuning (Optuna), per-timeframe inline causal tuning.
 
-Data Explorer (feature16):
-- Column-level filters with two modes: plain text for substring search (`ILIKE`), prefix `=` for exact match
-- Column-level typeahead suggestions (text columns only) — dropdown shows matching values as you type
-- Type-aware SQL filtering avoids `::text` casts to leverage B-tree and GIN trigram indexes
-- Approximate row count badge (`100,000+`) for filtered queries on large tables (66M+ rows)
-- Chemistry-themed loading overlay: periodic table element tile with pulse-glow animation over frosted glass backdrop
-- GIN trigram indexes on fact table text columns — apply once via `make db-apply-sql`
+**Hyperparameter Tuning:** Two modes -- (1) Production scoring: tune once on full history (`make tune-lgbm`), apply via `params_file` in algorithm config. (2) Honest backtesting: set `tune_inline: true` for per-timeframe causal tuning with no future leakage.
 
-Chatbot:
-- Collapsible chat panel below the analytics grid
-- Ask questions in plain English (e.g., "What's the accuracy for item 100320?")
-- Returns answer + generated SQL + result data table
-- Requires `OPENAI_API_KEY` in `.env`
+**SHAP Feature Selection:** Enable with `shap_select: true` in algorithm config. Per-timeframe SHAP computation selects features covering 95% cumulative importance. 4 read-only API endpoints under `/forecast/shap/` plus on-demand per-DFU SHAP endpoint. UI panels in Accuracy tab and Item Analysis tab.
 
-Clustering:
-- Run full pipeline: `make cluster-all`
-- Individual steps: `cluster-features`, `cluster-train`, `cluster-label`, `cluster-update`
-- Feature generation extracts 14 core features across 6 dimensions from sales history (default: 36 months, min 12 months)
-- Optimal K selection via combined Silhouette + Calinski-Harabasz scoring with 5% minimum cluster size constraint (k_range [5, 18])
-- Priority-ordered taxonomy labeling: Intermittency -> Periodicity -> Seasonality -> Trend -> Volatility -> Volume (5 tiers)
-- Compound labels: high_volume_seasonal_growing, low_volume_intermittent, etc.
-- Results logged to MLflow experiment `dfu_clustering`
-- Cluster assignments updated in `dim_dfu.cluster_assignment` column
-- API endpoint: `GET /domains/dfu/clusters` returns cluster summary statistics
-- Filter DFUs by cluster: use `cluster_assignment` filter in `/domains/dfu/page` endpoint
+**Recursive Forecasting:** Enable with `recursive: true`. Each predict month writes predictions back into the feature grid, giving `qty_lag_1` a real signal instead of zero for subsequent months.
 
-Hyperparameter Tuning (feature41):
-- Tune LGBM: `make tune-lgbm` → `data/tuning/best_params_lgbm.json` (~20–40 min, 50 Optuna trials)
-- Tune CatBoost: `make tune-catboost` → `data/tuning/best_params_catboost.json` (~30–60 min)
-- Tune XGBoost: `make tune-xgboost` → `data/tuning/best_params_xgboost.json` (~25–50 min)
-- Tune all: `make tune-all` (runs all three sequentially)
-- **Production scoring mode**: set `params_file: data/tuning/best_params_lgbm.json` in `config/algorithm_config.yaml`, then `make backtest-lgbm` (Feature 44)
-- **Honest backtesting mode** (PL-002 fix — no data leakage): set `tune_inline: true` in `config/algorithm_config.yaml` — each of the 10 timeframes tunes on only the data available up to that cutoff (Feature 44)
-- Walk-forward CV with causal masking; `n_estimators` set by early stopping (not searched)
-- Per-cluster WAPE breakdown in output JSON; MLflow experiment: `hyperparameter_tuning`
-- `TRAIN_FOLD_FNS` registry in `common/tuning.py` exposes fold training functions for both global and inline tuning
+### 2. DFU Clustering & Segmentation
 
-SHAP Feature Selection (feature42):
-- Enable by setting `shap_select: true` in the algorithm section of `config/algorithm_config.yaml` (Feature 44)
-- Set exact top-N features: `shap_top_n: 10` in the config
-- Set custom cumulative threshold: `shap_threshold: 0.80` in the config
-- Combine with inline tuning: set both `shap_select: true` and `tune_inline: true` in the config
-- Then run: `make backtest-lgbm`, `make backtest-catboost`, or `make backtest-xgboost`
-- Per-timeframe flow: train initial model on all features → compute SHAP → select features covering 95% cumulative SHAP mass → retrain final model
-- LGBM/XGBoost use `shap.TreeExplainer`; CatBoost uses native `get_feature_importance(type="ShapValues")`
-- Outputs: `data/backtest/<model_id>/shap/shap_timeframe_XX.csv` + `shap_summary.csv`
-- API: 4 read-only endpoints under `/forecast/shap/` — no DB queries, served from CSV files
-- UI: collapsible "Feature Importance (SHAP)" panel in Accuracy tab with indigo=selected / gray=dropped bar chart
+KMeans clustering groups ~112K DFUs by demand patterns using **14 core features across 6 dimensions** (volume, trend, seasonality, periodicity, intermittency, lifecycle). Feature engineering includes FFT periodicity strength, OLS seasonal R-squared, Croston ADI, scale-invariant trend slope, IQR, CAGR, recency ratio, and YoY correlation (36-month window). Optimal K via combined Silhouette + Calinski-Harabasz scoring with 5% minimum cluster size constraint (k_range [5,18]). Priority-ordered taxonomy labeling produces compound labels like `high_volume_seasonal_growing`. What-If scenario engine runs trial clusterings with custom parameters without touching production. Seasonality detection computes strength, profile, and peak/trough months per DFU. ABC-XYZ classification cross-segments DFUs by revenue volume x demand variability into a 3x3 policy matrix.
 
-Recursive Multi-Step Forecasting (feature43):
-- Enable by setting `recursive: true` in the algorithm section of `config/algorithm_config.yaml` (Feature 44)
-- Then run: `make backtest-lgbm`, `make backtest-catboost`, or `make backtest-xgboost`
-- Composable with `shap_select: true` and `tune_inline: true` in the same config
-- **What it does:** In direct mode (default), months 2+ of each predict window use `qty_lag_1 = 0` because future sales are masked. In recursive mode, the model predicts month T, writes the prediction back into the feature grid (`update_grid_with_predictions`), recomputes all lag/rolling features, then predicts month T+1 with `qty_lag_1 = prediction[T]`. This gives a richer near-horizon signal at the cost of potential error compounding across months.
-- Output format, loading, and downstream accuracy views are identical to direct mode
-- `"recursive": true` in `backtest_metadata.json` distinguishes runs at the file level
-- No API, frontend, or database changes — compute-side only
+### 3. Inventory Planning (15 Sub-features, 28 Panels)
 
-Backtesting (Feature 44 — config-driven):
-- All algorithm options are controlled by `config/algorithm_config.yaml` — no CLI flags needed
-- Training strategy: set `cluster_strategy: "per_cluster"` (default) or `"global"` per algorithm
-- `ml_cluster` is always a hard feature — never stripped from feature_cols in either strategy
-- Enable SHAP selection: set `shap_select: true` in the relevant section
-- Enable recursive inference: set `recursive: true`
-- Enable inline tuning (PL-002): set `tune_inline: true`
-- Apply pre-tuned params: set `params_file: data/tuning/best_params_lgbm.json`
-- Run LGBM backtest: `make backtest-lgbm` (model ID: `lgbm_cluster` or `lgbm_global`)
-- Run CatBoost backtest: `make backtest-catboost` (model ID: `catboost_cluster` or `catboost_global`)
-- Run XGBoost backtest: `make backtest-xgboost` (model ID: `xgboost_cluster` or `xgboost_global`)
-- Run all three sequentially: `make backtest-all`
-- Run all three in parallel (faster on servers): `make backtest-all-parallel` — logs written to `data/backtest/logs/<model>.log`
-- Load predictions: `make backtest-load MODEL=lgbm_cluster` (or `make backtest-load-all` for all models)
-- Models appear as `lgbm_cluster` / `catboost_cluster` / `xgboost_cluster` in the forecast model selector
-- Existing accuracy KPIs, trend charts, champion selection, and SHAP endpoints all work automatically
-- Each backtest writes to `data/backtest/<model_id>/` — multiple models can run without overwriting each other
-- `backtest_lag_archive` stores lag 0–4 predictions for accuracy reporting at any horizon
+Two-column layout with 7 color-coded sidebar groups (Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply):
 
-Accuracy Comparison (feature10):
-- Collapsible "Accuracy Comparison" panel in the Forecast analytics page
-- Slice by: Cluster, ML Cluster, Supplier, ABC Volume, Region, Brand, Execution Lag, Month
-- Filter by lag: execution lag (per DFU) or specific lag 0–4
-- Model comparison pivot table: side-by-side Accuracy %, WAPE, Bias per model — best model highlighted in teal
-- Lag curve chart: accuracy degradation from lag 0 → lag 4, one line per model
-- API endpoints: `GET /forecast/accuracy/slice`, `GET /forecast/accuracy/lag-curve`
-- Data source: pre-aggregated `agg_accuracy_by_dim` and `agg_accuracy_lag_archive` views
-- Refresh manually: `make accuracy-slice-refresh`
+- **Safety Stock Engine**: Z-score service level targets with Monte Carlo simulation
+- **EOQ Cycle Stock**: Economic Order Quantity with sensitivity analysis and MOQ guardrails
+- **Replenishment Policies**: 4 policy types with auto-assignment by ABC-XYZ segment
+- **Exception Queue**: 6 exception types with severity scoring and 7-day deduplication
+- **Fill Rate Analytics**: order fulfillment metrics by item-location-month
+- **Demand Signals**: short-horizon sensing from sales velocity and inventory movement
+- **Intramonth Stockout Detection**: within-month events before end-of-month snapshot
+- **Supplier Performance**: delivery reliability KPIs from receipt data
+- **Capital Investment Optimization**: efficient frontier for budget-vs-service-level trade-offs
+- **Portfolio Health Score**: 4-component 100-point composite score per DFU
+- **Inventory Rebalancing**: cross-location transfer optimization (greedy + LP solvers), 12 API endpoints
+- **Replenishment Plan**: forward 12-month plan with CI bands from champion models
+- **Blended Demand**: alpha-weighted sensing + statistical blend
+- **Multi-Echelon Safety Stock**: cascade risk severity badges across echelons
+- **Inventory Projection**: forward projection of inventory positions
 
-Champion Model Selection (feature15):
-- Automatically selects the best-performing model per DFU per month using 5 configurable strategies
-- **Strategies:** expanding (default), rolling (last N months), decay (exponential weighting), ensemble (blend top-K models), meta_learner (ML classifier)
-- All strategies enforce **exec-lag-aware strict causality** — selection for month T with execution_lag=L uses ONLY data from `startdate < T − L` (= `startdate < fcstdate`), implemented as `shift(exec_lag + 1)` per DFU-model group. Prevents using actuals not yet available at forecast issuance time. Fully backward compatible (exec_lag=0 → shift(1)).
-- **Fallback model** (`fallback_model_id: lgbm_cluster` by default): fills warm-up DFU-months that lack sufficient prior history so every DFU-month always has a champion row (idempotent NOT EXISTS insert)
-- Strategy registry in `common/champion_strategies.py` — all strategies operate on pandas DataFrames
-- Champion composite stored as `model_id='champion'` — auto-appears in all accuracy views
-- **Ceiling (oracle) model**: picks the best model per DFU **per month** — theoretical upper bound with perfect foresight
-- Ceiling stored as `model_id='ceiling'` — benchmarks how close champion gets to the theoretical best
-- Gap-to-ceiling metric in the UI shows improvement opportunity (in percentage points)
-- **Meta-learner:** train a classifier on ceiling labels as ground truth with temporal split (`make champion-train-meta`)
-- **Simulation:** compare all strategies vs ceiling in one run (`make champion-simulate`)
-- Configurable via YAML (`config/model_competition.yaml`) or UI panel in Accuracy tab
-- UI: model checkboxes, metric/lag selectors, strategy selector, Run Competition button, champion + ceiling KPI cards, gap indicator, dual model wins bar charts
-- CLI: `make champion-select`, `make champion-simulate`, `make champion-train-meta`, `make champion-all`
-- API: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
+### 4. AI Planning Agent
 
-Item Analysis (feature17 + feature34 merge):
-- **Item Analysis tab** merges DFU Analysis + Inventory into a single unified tab with a checkbox toggle toolbar
-- 7 toggleable panels grouped as Demand (Forecast Chart, SHAP, Model KPIs) and Supply (Inv KPIs, Position Table, Variability, Lead Time); toggle state persisted in localStorage
-- Three scope modes: Item @ Location (single DFU), All Items @ Location, Item @ All Locations
-- Per-model KPI cards with Accuracy %, WAPE, Bias, Total Forecast, Total Actual
-- Inventory KPI cards, trend chart, position table, and item detail drill-down
-- Sidebar shortcut: key 5 = Item Analysis; backward compat redirects from `dfuAnalysis`/`inventory` URLs
-- API: `GET /dfu/analysis?mode=&item=&location=&points=&kpi_months=&sales_metric=`
+Proactive exception work-queue (not a chatbot) powered by Claude (`claude-opus-4-6`) via `tool_use` API. 10 tools: 9 read-only SQL lookups + `create_insight`. Generates structured insight cards with severity badge, summary, recommendation, financial impact, and causal reasoning chain. Circuit-breaker guarded (MAX_TURNS=40, TOKEN_BUDGET=100K). Async portfolio scans write to `ai_insights` table; planning memos summarize the portfolio narrative. Observability via `ai_call_log` table.
 
-Market Intelligence (feature18):
-- AI-powered market briefings for any product + location pair
-- Select an item and location, click "Generate Briefing" to get:
-  - Web search results from Google Custom Search (product news, market trends)
-  - GPT-4o narrative with market context, state demographics, and demand insights
-- Requires `GOOGLE_API_KEY` and `GOOGLE_CSE_ID` in `.env`
-- API: `POST /market-intelligence`
-- UI: "Mi" tab in the navigation bar
+### 5. Operations & Planning
 
-UI Overhaul (feature36):
-- Collapsible sidebar navigation (16 items, 5 sections) replacing horizontal tabs
-- Dashboard overview landing page with KPI cards (sparklines), alerts, heatmap, top movers, forecast trend chart
-- Global filter bar: brand, category, market, channel multi-select dropdowns
-- Three product themes: Wine & Spirits (burgundy+gold), General (blue SaaS), Obsidian (green+black dark-only)
-- Light/dark color modes per theme via CSS variable palettes
-- Keyboard: `[` sidebar, `t` theme, `d` dark mode, `1-7` tabs
-- API: `GET /domains/{domain}/distinct`, `GET /dashboard/kpis`, `GET /dashboard/alerts`, `GET /dashboard/top-movers`, `GET /dashboard/heatmap`
+- **S&OP Cycle**: 6-stage machine (demand_review -> supply_review -> pre_sop -> executive_sop -> approved -> closed) with gap analysis and approval workflow
+- **Control Tower**: cross-dimensional KPI command center with alerts and top-critical items
+- **Storyboard**: exception-driven planner workflow with causal chain cards and decision logging
+- **Market Intelligence**: Google Search + GPT-4o narrative briefing per item/location
+- **NL-to-SQL Chatbot**: pgvector-powered schema retrieval + GPT-4o SQL generation (read-only)
+- **Financial Planning**: inventory value, carrying cost, budget utilization
+- **Event Calendar**: promotion and event planning with approval status
+- **Scenario Planning**: disruption what-if scenarios with financial impact results
 
-Inventory Planning (feature34):
-- Inventory panels (now part of Item Analysis tab) with KPI cards (Total On-Hand, Total On-Order, Avg Lead Time), trend charts, and position table
-- Item/location filters with debounce, months selector for date range
-- Paginated, sortable position table with clickable rows for item detail drill-down
-- Dual Y-axis trend chart showing on-hand, on-order, lead time, and MTD sales over time
-- Pipeline: `make inventory-pipeline` (normalize 14 CSVs → load → refresh aggregates)
-- Individual steps: `make normalize-inventory`, `make load-inventory`, `make refresh-agg-inventory`
-- DDL: `make db-apply-inventory` (creates table + indexes + materialized view)
-- API: `GET /inventory/position`, `GET /inventory/kpis`, `GET /inventory/trend`, `GET /inventory/item-detail`
+### 6. Platform Services
 
-EOQ & Inventory Planning (IPfeature4):
-- Inventory Planning tab uses a two-column layout: fixed 220px grouped sidebar navigation (7 groups — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply — each with a colored divider, group label, and icon-labeled buttons) + scrollable main content area with a per-panel header bar showing the panel title and description. All 27 panels remain unchanged; only the navigation/layout wrapper changed.
-- EOQ panel: KPI cards (Avg EOQ, Total Cycle Stock, Avg Annual Cost), EOQ sensitivity chart (total cost vs order quantity), and paginated detail table
-- Per-item EOQ computed via Wilson formula with MOQ floor and max-months-supply cap
-- Config: `config/eoq_config.yaml` (ordering_cost: 50, holding_cost_pct: 0.25, moq: 1, max_eoq_months_supply: 6)
-- Script: `scripts/compute_eoq.py` — reads from `agg_inventory_monthly`, writes to `fact_eoq_targets`
-- DDL: `sql/024_create_eoq_targets.sql` — `fact_eoq_targets` table
-- Pipeline: `make eoq-all` (schema + compute)
-- Individual steps: `make eoq-schema`, `make eoq-compute`
-- API: `GET /inv-planning/eoq/summary`, `GET /inv-planning/eoq/detail`, `GET /inv-planning/eoq/sensitivity`
+- **Data Quality**: DQEngine with 12 check types, statistical auto-fix, Self-Heal UI, Medallion pipeline (Bronze/Silver/Gold)
+- **RBAC**: JWT authentication, 4 roles (admin/planner/analyst/viewer), session management
+- **Notifications**: Slack, Teams, Email, PagerDuty dispatch with user preferences
+- **Collaboration**: threaded annotations on DFUs, forecasts, and exceptions
+- **External Signals**: weather, economic indicators, promotional calendars integration
+- **FVA & ROI**: forecast value-add waterfall, intervention tracking, financial impact measurement
+- **Reporting**: scheduled PDF/Excel export with configurable templates and distribution
+- **API Governance**: per-role rate limiting, API versioning, usage analytics
+- **Webhooks**: HMAC-SHA256 signed outbound event delivery with retry and dead-letter queue
+- **Caching**: multi-tier (in-memory LRU + optional Redis) with automatic invalidation
 
-Replenishment Policy Management (IPfeature5):
-- 4 configurable policies: A-Class Continuous Review (ROP/EOQ), B/C Periodic Review, Lumpy/Intermittent Manual Review, Emergency/Critical Parts
-- Config: `config/replenishment_policy_config.yaml` — policy definitions + auto-assign rules by segment
-- Script: `scripts/assign_replenishment_policies.py` — upsert policies from config + auto-assign DFUs by ABC segment (--dry-run, --force-overwrite)
-- DDL: `sql/025_create_replenishment_policy.sql` — `dim_replenishment_policy` + `fact_dfu_policy_assignment`
-- Pipeline: `make policy-all` (schema + assign)
-- Individual steps: `make policy-schema`, `make policy-assign`
-- API: `GET /inv-planning/policies`, `POST /inv-planning/policies`, `PUT /inv-planning/policies/{id}`, `GET /inv-planning/policy-assignments/compliance`, `POST /inv-planning/policy-assignments/assign`
-- UI: Policy Management panel in InvPlanningTab — policy cards with badges, ring gauge for DFU coverage, auto-assign button, compliance table, edit modal
+### 7. Job Automation
 
-Inventory Health Score Dashboard (IPfeature6):
-- Composite 0–100 health score per DFU from 4 components (each 0–25 pts)
-- Components: SS Coverage, DOS Target Adherence, Stockout Risk History (3-month), Forecast Accuracy (WAPE)
-- Tiers: Healthy (≥80), Monitor (≥60), At Risk (≥40), Critical (<40)
-- DDL: `sql/026_create_inventory_health_score.sql` — stub `fact_safety_stock_targets` + `mv_inventory_health_score` materialized view
-- Script: `scripts/refresh_health_scores.py` — `REFRESH MATERIALIZED VIEW CONCURRENTLY mv_inventory_health_score`
-- Pipeline: `make health-all` (schema + refresh)
-- Individual steps: `make health-schema`, `make health-refresh`
-- API: `GET /inv-planning/health/summary`, `GET /inv-planning/health/detail`, `GET /inv-planning/health/heatmap`
-- UI: Portfolio Health panel at top of InvPlanningTab — 4 tier KPI cards, donut chart, component score bars, ABC×variability heatmap, paginated detail table with severity badges
+APScheduler-powered engine with 7 job types across 4 groups (clustering, backtest, seasonality, champion). Per-group FIFO concurrency, cron/interval scheduling, job pipelines (sequential chaining), retry with exponential backoff. Jobs tab with live progress bars, elapsed timers, and cross-tab completion alerts.
 
-Exception Queue & Replenishment Recommendations (IPfeature7):
-- Automated exception detection: 6 types (stockout, below_ss, below_rop, below_rop_critical, excess, zero_velocity), 4 severity levels (critical/high/medium/low)
-- Detection: `detect_exception_type(qty, ss, rop, dos, target_dos_max, avg_daily_sls)` pure function
-- Recommendation: `compute_recommendation(...)` returns (order_qty, order_by_date, receipt_date); formula: `max(eoq, gap + eoq/2)` capped at `max_months × demand`
-- Deduplication: skip if same item+loc+type open within 7 days
-- DDL: `sql/027_create_replenishment_exceptions.sql` — `fact_replenishment_exceptions` with 6 indexes (incl. partial on open+critical)
-- Script: `scripts/generate_replenishment_exceptions.py` — reads agg_inventory_monthly + policy + SS (stub fallback), writes exceptions with --dry-run support
-- Pipeline: `make exceptions-generate` (run) or `make exceptions-generate-dry` (preview)
-- Schema: `make exceptions-schema`
-- API: `GET /inv-planning/exceptions`, `GET /inv-planning/exceptions/summary`, `PUT /inv-planning/exceptions/{id}/acknowledge`, `PUT /inv-planning/exceptions/{id}/status`, `POST /inv-planning/exceptions/generate`
-- UI: Exception Queue panel at top of InvPlanningTab — 4 KPI cards (Total Open, Critical, High, Rec. Order Value), type/severity filter pills, status toggle, item/loc filter inputs, exception table with inline action buttons (Acknowledge/Mark Ordered/Resolve), row background coloring by severity
+### 8. UI Platform
 
-Fill Rate Analytics (IPfeature8):
-- Order fill rate metrics aggregated from inventory snapshot data into `mv_fill_rate_monthly`
-- DDL: `sql/028_create_fill_rate_monthly.sql`
-- Router: `api/routers/fill_rate.py` — `GET /fill-rate/summary`, `/trend`, `/detail`
-- UI: FillRatePanel in InvPlanningTab
-- Pipeline: `make fill-rate-schema`, `make fill-rate-refresh`, `make fill-rate-all`
+12-tab sidebar navigation across 5 sections (Tower, Operations, Supply, Demand, System). Single "General" (Supply Chain Command Center) theme with light/dark modes. Global filter bar (brand, category, item, location, market, channel) synced across tabs via URL state. Keyboard shortcuts (1-9 tabs, `[` sidebar, `d` dark mode, `?` help). Virtualized data grid with CSV export. TanStack Query caching with lazy-loaded tab components and per-tab error boundaries. Item Analysis tab merges DFU Analysis + Inventory with 7 toggleable panels (clickable forecast lines, per-DFU SHAP panel).
 
-Demand Sensing & Short-Horizon Signal Integration (IPfeature9):
-- Short-horizon demand signals computed from recent sales velocity and inventory movement
-- DDL: `sql/029_create_demand_signals.sql` — `fact_demand_signals` table
-- Script: `scripts/compute_demand_signals.py`
-- API: `GET /inv-planning/demand-signals/summary`, `/list`, `/item`
-- Pipeline: `make demand-signals-schema`, `make demand-signals-compute`, `make demand-signals-all`
+---
 
-Safety Stock Monte Carlo Simulation (IPfeature10):
-- Probabilistic safety stock simulation with configurable iteration count and seed
-- DDL: `sql/030_create_ss_simulation_results.sql` — `fact_ss_simulation_results` table
-- Script: `scripts/run_ss_simulation.py`
-- Config: `config/simulation_config.yaml` (n_simulations, random_seed)
-- API: `POST /inv-planning/simulation/run`, `GET /inv-planning/simulation/results`, `/compare`, `/{id}/status`
-- Pipeline: `make sim-schema`, `make sim-run`
+## Data Scale
 
-ABC-XYZ Policy Matrix (IPfeature11):
-- Combined ABC (volume) + XYZ (variability) segmentation into a 3×3 policy matrix
-- DDL: `sql/031_add_xyz_classification.sql` — XYZ classification columns
-- Script: `scripts/classify_abc_xyz.py`
-- API: `GET /inv-planning/abc-xyz/matrix`, `/summary`, `/detail`
-- UI: AbcXyzPanel in InvPlanningTab
-- Pipeline: `make abc-xyz-schema`, `make abc-xyz-classify`, `make abc-xyz-all`
+- **~190M rows** in `fact_inventory_snapshot` (14 monthly snapshots)
+- **~112K DFUs** across item x location combinations
+- **45M+ rows** in the backtest lag archive
+- **8 domain tables**: 5 dimensions + 3 facts (sales, forecast, inventory)
+- **35+ materialized views and fact tables** for O(1) KPI queries
 
-Supplier Performance Analytics (IPfeature12):
-- Supplier delivery performance KPIs aggregated from inventory receipt data
-- DDL: `sql/032_create_supplier_performance.sql` — `mv_supplier_performance` materialized view
-- API: `GET /inv-planning/supplier-performance/summary`, `/detail`, `/items`
-- UI: SupplierPanel in InvPlanningTab
-- Pipeline: `make supplier-perf-schema`, `make supplier-perf-refresh`, `make supplier-perf-all`
+---
 
-Forward-Looking Replenishment Plan (CI Bands + Repl. Plan):
-- Production forecast now includes P10/P90 confidence interval (CI) bands computed from residual distributions in `backtest_lag_archive`; stored as `forecast_qty_lower`/`forecast_qty_upper` in `fact_production_forecast`
-- Forward replenishment plan combines CI-band forecast with safety stock engine: EOQ, ROP, order-up-to-level per item-location across 12 forward months
-- DDL: `sql/041_create_replenishment_plan.sql` — `fact_replenishment_plan` table
-- Script: `scripts/compute_replenishment_plan.py`
-- API: `GET /inv-planning/replenishment/summary`, `/detail`, `/comparison`, `/dfu` (4 endpoints)
-- UI: ReplenishmentPlanPanel in InvPlanningTab — KPI cards, SS comparison bar chart, paginated detail table, DFU drill-down line chart with CI bands
-- Pipeline: `make replplan-schema`, `make replplan-compute`, `make replplan-all`
+## Performance Defaults
 
-Capital Investment Optimization (IPfeature13):
-- Portfolio-level investment planning with efficient frontier computation
-- DDL: `sql/033_create_investment_plan.sql` — `fact_inventory_investment_plan` + `fact_efficient_frontier` tables
-- Script: `scripts/compute_investment_plan.py`
-- API: `GET /inv-planning/investment/efficient-frontier`, `/summary`, `/detail`, `POST /inv-planning/investment/plan`
-- Pipeline: `make investment-schema`, `make investment-plan`, `make investment-all`
+- Fact indexes on `(dmdunit, loc, startdate/fcstdate)` via `sql/008_perf_indexes_and_agg.sql`
+- Trigram (`pg_trgm`) indexes for common `ILIKE` search fields
+- Monthly materialized views: `agg_sales_monthly`, `agg_forecast_monthly`
+- Accuracy slice views: `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` for O(1) aggregate KPIs
+- Inventory aggregate: `agg_inventory_monthly` for monthly trend aggregation
+- Auto-refresh: `load-sales`, `load-forecast`, `load-inventory`, `load-all` refresh `agg_*` views; `backtest-load` refreshes accuracy slice views
 
-Intra-Month Stockout Detection (IPfeature14):
-- Daily inventory scan detects within-month stockout events before end-of-month snapshot
-- DDL: `sql/034_create_intramonth_stockout.sql` — `mv_intramonth_stockout` materialized view
-- Script: `scripts/refresh_intramonth_stockout.py`
-- API: `GET /inv-planning/intramonth-stockouts/summary`, `/detail`, `/daily`
-- UI: IntramonthPanel in InvPlanningTab
-- Pipeline: `make intramonth-schema`, `make intramonth-refresh`, `make intramonth-all`
-
-Inventory Rebalancing (IPfeature16):
-- Cross-location transfer optimization: identifies surplus/deficit locations and recommends transfers to balance network inventory
-- Solver modes: greedy heuristic (fast, default) + LP solver (optimal, requires scipy.optimize.linprog)
-- Network topology: `dim_transfer_lane` defines allowed origin-destination pairs with per-lane transfer cost, lead time, and capacity constraints
-- Financial ROI analysis: projected savings from reduced stockouts and excess vs. transfer costs
-- Approval workflow: proposed transfers go through review (proposed → approved → in_transit → completed / rejected)
-- DDL: `sql/071_create_rebalancing.sql` — `dim_transfer_lane`, `fact_rebalancing_plan`, `fact_rebalancing_transfer`, `mv_network_balance` materialized view
-- Script: `scripts/compute_rebalancing.py` — reads inventory positions + transfer lanes, solves rebalancing problem, writes plan + transfers
-- Config: `config/rebalancing_config.yaml` — solver mode, cost parameters, capacity limits, approval settings
-- API: `GET /inv-planning/rebalancing/summary`, `/plan`, `/transfers`, `/network-balance`, `POST /inv-planning/rebalancing/compute`, `PUT /inv-planning/rebalancing/transfers/{id}/status`
-- UI: RebalancingPanel in InvPlanningTab (27th sub-panel) — network balance heatmap, transfer recommendation table, ROI summary cards, approval action buttons
-- Pipeline: `make rebalancing-schema`, `make rebalancing-compute`, `make rebalancing-compute-dry`, `make rebalancing-refresh`, `make rebalancing-all`
-
-Control Tower / Command Center (IPfeature15):
-- Unified operational dashboard aggregating KPIs, alerts, critical items, and trend data
-- DDL: `sql/035_create_control_tower_kpis.sql` — `mv_control_tower_kpis` materialized view
-- Router: `api/routers/control_tower.py` — `GET /control-tower/kpis`, `/alerts`, `/top-critical`, `/trend`
-- Frontend: `frontend/src/tabs/ControlTowerTab.tsx` — dedicated Control Tower tab (keyboard shortcut available)
-- Vite proxy: `/control-tower` path prefix registered in `frontend/vite.config.ts`
-- Pipeline: `make control-tower-schema`, `make control-tower-refresh`, `make control-tower-all`
-
-AI Planning Agent (IPAIfeature1):
-- Proactive exception work-queue for planners: NOT a chatbot — ranked insight cards with diagnosis, recommendation, and financial impact
-- Claude `tool_use` agent (`common/ai_planner.py`) with `AIPlannerAgent` class and 10 tools
-- 9 read-only PostgreSQL tools (get_dfu_full_context, get_forecast_performance, get_portfolio_exceptions, compute_bias_trend, get_inventory_trend, get_eoq_context, get_similar_dfus, check_stockout_history, get_portfolio_health_summary) + 1 write tool (create_insight)
-- 5 insight types: stockout_risk, excess_inventory, forecast_bias, policy_gap, champion_degradation
-- 4 severity levels: critical / high / medium / low; status workflow: open → acknowledged → resolved
-- DDL: `sql/036_create_ai_insights.sql` — `ai_insights` + `ai_planning_memos` tables
-- Config: `config/ai_planner_config.yaml` — model, thresholds, severity rules, portfolio_scan_limit, schedule
-- Batch script: `scripts/generate_ai_insights.py` — `--portfolio` (scan all), `--item/--loc` (single DFU), `--dry-run`
-- Router: `api/routers/ai_planner.py` — `POST /ai-planner/analyze`, `POST /ai-planner/portfolio-scan` (202), `GET /ai-planner/insights`, `PUT /ai-planner/insights/{id}/status`, `GET /ai-planner/memos`
-- Frontend: `frontend/src/tabs/AIPlannerTab.tsx` — "AI Planner" nav item (14th), insight cards + portfolio health bar + planning memo panel
-- TypeScript types: `frontend/src/types/ai-planner.ts`
-- Dependency: `anthropic>=0.40.0`
-- Pipeline: `make ai-insights-schema`, `make ai-insights-scan`, `make ai-insights-dfu ITEM=<item> LOC=<loc>`, `make ai-insights-all`
-
-S&OP Cycle Automation (F4.2):
-- **6-stage S&OP cycle machine:** demand_review → supply_review → pre_sop → executive_sop → approved → closed
-- Each cycle is tied to a calendar month and tracks stage progression with timestamps, gap analysis, and approval status
-- Demand/supply gap detection: compares demand plan vs. supply capacity at each stage, surfacing mismatches as gap cards with severity indicators
-- Advance and approve actions move the cycle through stages; approved plans are locked and visible in a read-only approved plan table
-- DDL: `sql/056_create_sop_module.sql` — S&OP cycle, stage, and plan tables
-- Config: `config/sop_config.yaml` — stage definitions, approval rules, gap thresholds
-- Script: `scripts/run_sop_cycle.py` — create cycles, advance stages, populate demand data (`--action create|advance|populate-demand`)
-- Router: `api/routers/sop.py` — `GET /sop/cycles`, `/gaps`, `/approved-plan`, `POST /sop/cycles/{id}/advance`, `POST /sop/cycles/{id}/approve`
-- Frontend: `frontend/src/tabs/SopTab.tsx` — dedicated S&OP tab with stage timeline, gap cards, advance/approve actions, approved plan table
-- Pipeline: `make sop-schema`, `make sop-create CYCLE_MONTH=2026-03`, `make sop-advance CYCLE_ID=1`, `make sop-populate CYCLE_ID=1`, `make sop-all`
-
-User Management & Role-Based Access Control (08-01):
-- JWT-based authentication with bcrypt password hashing and refresh token rotation
-- 4 roles: admin, planner, analyst, viewer — each with granular permission scopes
-- Role hierarchy: admin > planner > analyst > viewer (higher roles inherit lower permissions)
-- Admin: full CRUD on users, roles, system config; planner: write insights, run jobs, modify policies; analyst: read all data, run reports; viewer: read-only dashboards
-- DDL: `sql/042_create_users_roles.sql` — `dim_user`, `dim_role`, `fact_user_sessions` tables
-- Config: `config/auth_config.yaml` — JWT secret, token expiry (access: 30min, refresh: 7d), password policy, max sessions
-- Router: `api/routers/auth.py` — `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/users` (admin), `GET /auth/users` (admin), `PUT /auth/users/{id}/role` (admin)
-- Middleware: `api/middleware/auth.py` — JWT validation, role-based route guards via `require_role(min_role)` dependency
-- Dependencies: `bcrypt>=4.0`, `PyJWT>=2.8`
-- Pipeline: `make auth-schema`, `make auth-seed-admin` (creates initial admin user)
-
-Data Quality Monitoring (08-02):
-- Automated data quality checks on ingestion: completeness, consistency, timeliness, and accuracy scoring
-- **7 check types:** freshness, completeness, row_count, uniqueness, range, volume_delta, referential_integrity — evaluated by the `DQEngine` class in `common/dq_engine.py`
-- Quality dimensions: missing value rate, duplicate detection, outlier detection (IQR method), schema drift detection, freshness monitoring
-- Per-domain quality scores (0–100) with configurable thresholds for pass/warn/fail
-- Automated scheduling: checks can be scheduled via the job engine (APScheduler) for continuous pipeline observability
-- **Dashboard tab:** dedicated Data Quality tab in the UI showing domain health score cards (green/amber/red), check catalog, and freshness status
-- DDL: `sql/043_create_data_quality.sql` — `fact_data_quality_checks`, `fact_data_quality_scores` tables
-- Config: `config/data_quality_config.yaml` — thresholds per domain, check schedules, alert rules
-- Script: `scripts/run_data_quality_checks.py` — scans all domains, writes quality scores
-- Router: `api/routers/data_quality.py` — `GET /data-quality/scores`, `/checks`, `/history`, `/domain/{domain}`
-- Pipeline: `make dq-schema`, `make dq-check`, `make dq-all`
-
-Caching Infrastructure (08-03):
-- Application-level caching layer for expensive query results and materialized view data
-- Two-tier cache: in-memory LRU (per-process, TTL-based) + optional Redis backend for shared cache across workers
-- Cache-aside pattern: endpoints check cache first, fall back to DB, populate cache on miss
-- Automatic cache invalidation on data mutations (job completion, policy updates, exception acknowledgment)
-- Cache key namespacing by domain + filter hash for granular invalidation
-- Config: `config/cache_config.yaml` — default TTL (5min), max entries (10K), Redis URL (optional), per-endpoint TTL overrides
-- Middleware: `api/middleware/cache.py` — `@cached(ttl=300)` decorator for router endpoints
-- Router: `api/routers/cache.py` — `GET /cache/stats`, `POST /cache/invalidate` (admin), `POST /cache/flush` (admin)
-
-Notifications — Slack, Teams, Email, PagerDuty (08-04):
-- Multi-channel notification dispatch for alerts, job completions, exception escalations, and AI insight delivery
-- 4 channels: Slack (webhook + Bot API), Microsoft Teams (incoming webhook), Email (SMTP), PagerDuty (Events API v2)
-- Notification types: job_completed, job_failed, exception_critical, ai_insight_generated, data_quality_failed, stockout_alert
-- User notification preferences: per-channel opt-in/out, severity thresholds, quiet hours
-- DDL: `sql/044_create_notifications.sql` — `dim_notification_channel`, `fact_notification_log`, `fact_notification_preferences` tables
-- Config: `config/notification_config.yaml` — channel credentials (env var references), routing rules, retry policy, batch window
-- Module: `common/notifications.py` — `NotificationDispatcher` class, channel adapters, template rendering (Jinja2)
-- Router: `api/routers/notifications.py` — `GET /notifications/channels`, `POST /notifications/test`, `GET /notifications/log`, `PUT /notifications/preferences`
-- Pipeline: `make notifications-schema`, `make notifications-test` (sends test to all configured channels)
-
-Collaboration — Annotations & Shared Views (08-05):
-- Threaded annotations on any data point (DFU, chart, insight, exception) with @mentions and resolution tracking
-- Shared views: save and share filter/tab/chart state as named bookmarks with role-based visibility
-- Annotation types: comment, question, action_item, decision — each with status workflow (open → in_progress → resolved)
-- DDL: `sql/045_create_collaboration.sql` — `fact_annotations`, `fact_annotation_threads`, `dim_shared_views` tables
-- Router: `api/routers/collaboration.py` — `POST /annotations`, `GET /annotations`, `PUT /annotations/{id}`, `POST /annotations/{id}/reply`, `POST /shared-views`, `GET /shared-views`, `DELETE /shared-views/{id}`
-
-External Demand Signals Integration (08-06):
-- Ingest and blend external demand signals (weather, economic indicators, social media trends, promotional calendars) with internal forecast
-- Signal types: weather_forecast, economic_index, social_sentiment, promotion_calendar, competitor_pricing
-- Automated signal scoring: each signal source gets a correlation score against historical demand for relevance ranking
-- DDL: `sql/046_create_external_signals.sql` — `dim_signal_source`, `fact_external_signal_values`, `fact_signal_correlations` tables
-- Config: `config/external_signals_config.yaml` — source definitions, refresh schedules, correlation window, blend weights
-- Script: `scripts/ingest_external_signals.py` — fetches from configured APIs, normalizes, writes to DB
-- Script: `scripts/score_signal_correlations.py` — computes lagged cross-correlation between signal and demand per DFU
-- Router: `api/routers/external_signals.py` — `GET /signals/sources`, `GET /signals/values`, `GET /signals/correlations`, `POST /signals/ingest`
-- Pipeline: `make signals-schema`, `make signals-ingest`, `make signals-correlate`, `make signals-all`
-
-FVA Tracking & ROI Measurement (08-07):
-- Forecast Value Added (FVA) tracking: measures incremental accuracy improvement at each step of the forecasting process
-- **Model accuracy waterfall:** statistical baseline → ML model → champion selection → planner override → consensus → final — each stage shows delta WAPE vs. prior step
-- **Intervention tracking:** planner overrides and manual adjustments are logged with before/after accuracy metrics, enabling accountability and continuous improvement
-- **ROI measurement:** translates accuracy improvements into financial impact (inventory carrying cost reduction, stockout cost avoidance, dollar savings per WAPE point improvement)
-- **Dashboard tab:** dedicated FVA & ROI tab in the UI with waterfall bar chart, intervention timeline, and ROI KPI cards (total savings, cost per WAPE point, ROI %)
-- DDL: `sql/047_create_fva_tracking.sql` — `fact_fva_waterfall`, `fact_forecast_roi` tables
-- Config: `config/fva_config.yaml` — waterfall stages, cost parameters (holding_cost_per_unit, stockout_cost_per_unit), ROI calculation method
-- Script: `scripts/compute_fva_waterfall.py` — computes per-DFU FVA at each pipeline stage
-- Script: `scripts/compute_forecast_roi.py` — translates WAPE improvements into dollar savings
-- Router: `api/routers/fva.py` — `GET /fva/waterfall`, `/summary`, `/roi`, `/roi/trend`
-- Pipeline: `make fva-schema`, `make fva-compute`, `make fva-roi`, `make fva-all`
-
-Reporting & Distribution (08-08):
-- Scheduled report generation and distribution: PDF/Excel/CSV export with template-based formatting
-- Report types: executive_summary, accuracy_report, inventory_health, exception_digest, planner_scorecard
-- Distribution: email attachment, Slack file upload, S3/shared drive drop, webhook POST
-- Template engine: Jinja2 HTML templates rendered to PDF via WeasyPrint, Excel via openpyxl
-- DDL: `sql/048_create_reports.sql` — `dim_report_template`, `fact_report_runs`, `fact_report_subscriptions` tables
-- Config: `config/reporting_config.yaml` — template definitions, distribution channels, schedules, retention policy
-- Script: `scripts/generate_report.py` — renders report from template + data, distributes to subscribers
-- Router: `api/routers/reports.py` — `POST /reports/generate`, `GET /reports`, `GET /reports/{id}/download`, `POST /reports/subscriptions`, `GET /reports/subscriptions`
-- Pipeline: `make reports-schema`, `make reports-generate REPORT=executive_summary`
-
-API Governance — Rate Limiting & Versioning (08-09):
-- Per-user and per-role rate limiting with configurable burst and sustained limits
-- Rate limit tiers: viewer (100 req/min), analyst (200 req/min), planner (500 req/min), admin (1000 req/min)
-- Token bucket algorithm with Redis backend for distributed rate limiting (falls back to in-memory for single-worker)
-- API versioning: `/v1/` prefix for current stable API, `/v2/` for next-generation endpoints
-- Deprecation headers: `Sunset` and `Deprecation` headers on deprecated endpoints with migration guidance
-- Config: `config/api_governance_config.yaml` — rate limits per role, burst multiplier, versioning strategy, deprecation schedule
-- Middleware: `api/middleware/rate_limit.py` — `RateLimitMiddleware` with sliding window counter, `X-RateLimit-*` response headers
-- Middleware: `api/middleware/versioning.py` — API version routing and deprecation header injection
-- Router: `api/routers/api_governance.py` — `GET /api/rate-limit/status`, `GET /api/versions`
-
-Webhooks — HMAC-SHA256 Signed Event Delivery (08-10):
-- Outbound webhook system for real-time event notifications to external consumers
-- Events: job.completed, job.failed, exception.created, insight.generated, forecast.published, data_quality.failed
-- HMAC-SHA256 signature verification: each webhook delivery is signed with a per-subscription secret; consumers verify via `X-Webhook-Signature` header
-- Retry policy: exponential backoff (1s, 2s, 4s, 8s, 16s) with 5 max retries; dead letter queue for persistent failures
-- DDL: `sql/049_create_webhooks.sql` — `dim_webhook_subscription`, `fact_webhook_deliveries`, `fact_webhook_dead_letter` tables
-- Config: `config/webhook_config.yaml` — retry policy, delivery timeout (10s), max payload size (1MB), event type registry
-- Module: `common/webhooks.py` — `WebhookDispatcher` class, HMAC signing, async delivery with `httpx.AsyncClient`, dead letter management
-- Router: `api/routers/webhooks.py` — `POST /webhooks`, `GET /webhooks`, `PUT /webhooks/{id}`, `DELETE /webhooks/{id}`, `GET /webhooks/{id}/deliveries`, `POST /webhooks/{id}/test`, `POST /webhooks/dead-letter/{id}/retry`
-- Pipeline: `make webhooks-schema`, `make webhooks-test` (sends test event to all subscriptions)
-
-Backtest Cleanup (feature23):
-- List model row counts: `make backtest-list`
-- Preview deletions: `make backtest-clean MODELS="--dry-run lgbm_cluster"`
-- Delete specific models: `make backtest-clean MODELS="lgbm_cluster catboost_cluster"`
-- Delete all non-external models: `make backtest-clean MODELS="--all-backtest"`
-- Removes from `fact_external_forecast_monthly` + `backtest_lag_archive`, refreshes all materialized views
-- `--all-backtest` protects `model_id='external'` (source-system forecasts)
-- Always `--dry-run` first to preview row counts before deleting
-
-Forecast Date-Range Cleanup:
-- List row counts by model + month: `make forecast-clean-list`
-- Delete by date: `make forecast-clean ARGS="--before 2025-04-01 --model external"`
-- Date range: `make forecast-clean ARGS="--between 2024-01-01 2024-07-01"`
-- Specific months: `make forecast-clean ARGS="--months 2024-03 2024-06 2024-09"`
-- Dry run: add `--dry-run` flag to preview without deleting
-- Scope: `--forecast-only` or `--archive-only` to limit to one table
-- Date column: `--date-column fcstdate` to filter by forecast generation date instead of target month
-
-Optional inventory pipeline:
-```bash
-make db-apply-inventory     # Create table + indexes + materialized view
-make inventory-pipeline     # Normalize 14 monthly CSVs + load into Postgres + refresh agg
-```
-
-Optional clustering path (for LGBM model support):
-```bash
-make cluster-all  # Full pipeline: features -> train -> label -> update
-```
-
-Optional job scheduler setup:
-```bash
-make db-apply-jobs         # Create job_history + job_schedule tables (one-time)
-```
-
-Optional platform services setup:
-```bash
-make auth-schema           # Create user/role tables for RBAC (08-01)
-make auth-seed-admin       # Create initial admin user
-make dq-schema             # Create data quality tables (08-02)
-make notifications-schema  # Create notification tables (08-04)
-make signals-schema        # Create external signals tables (08-06)
-make fva-schema            # Create FVA tracking tables (08-07)
-make reports-schema        # Create reporting tables (08-08)
-make webhooks-schema       # Create webhook tables (08-10)
-make rebalancing-schema    # Create rebalancing tables: dim_transfer_lane, fact_rebalancing_plan, fact_rebalancing_transfer, mv_network_balance
-make sop-schema            # Create S&OP cycle tables (F4.2)
-make sop-all               # S&OP schema setup (full pipeline)
-make dq-all                # Data quality schema + initial check run (08-02)
-make fva-all               # FVA schema + waterfall + ROI computation (08-07)
-```
-
-Job Scheduler/Monitor with APScheduler (feature39):
-- Powered by **APScheduler 3.11** (`BackgroundScheduler` + `ThreadPoolExecutor`)
-- Jobs tab (keyboard shortcut `9`) — professional automation dashboard
-- 7 job types: Clustering What-If, Full Clustering Pipeline, Seasonality Detection, LGBM/CatBoost/XGBoost Backtest, Champion Selection
-- Per-group concurrency control (one active job per group: clustering, backtest, seasonality, champion)
-- **Cron/interval scheduling**: create recurring schedules (e.g., daily 2AM backtest, weekly clustering refresh)
-- **Job pipelines**: chain multi-step workflows (cluster → backtest → champion select)
-- **Retry logic**: configurable max_retries with exponential backoff
-- KPI dashboard: Total Jobs, Active Now, Success Rate, Avg Duration
-- Grouped job type cards with category colors and "Run Now" / schedule buttons
-- Live active job monitoring with animated progress bars and elapsed timers
-- Schedule dialog with presets (hourly, 6h, daily 2AM, weekly Mon 2AM)
-- Recurring schedules section with cron expression badges
-- Expandable job history with params, results, and error detail
-- Cross-tab notifications: completed/failed jobs appear as Dashboard alerts
-- Sidebar active job count badge
-- ClustersTab: "Schedule Scenario Job" button delegates to job system
-- API: 12 endpoints — `POST /jobs` → 202, `GET /jobs`, `GET /jobs/active`, `GET /jobs/{id}`, `POST /jobs/{id}/cancel`, `DELETE /jobs/{id}`, `GET /jobs/types`, `GET /jobs/stats`, `POST /jobs/schedule`, `GET /jobs/schedules`, `DELETE /jobs/schedules/{id}`, `POST /jobs/pipeline`
-- Foundation for agentic AI automation
-- **CRITICAL:** `frontend/vite.config.ts` must include a `/jobs` proxy entry — without it, all job API calls from the UI return HTML instead of JSON. Restart `make ui` after adding proxy entries.
+---
 
 ## Testing
 
-Full-stack automated testing (1085 backend tests, 372 frontend tests):
+Full-stack automated testing (1,636+ backend / 457+ frontend):
 
-Backend (pytest):
 ```bash
 cd mvp/demand
-make test              # All backend tests
+
+make test              # All backend pytest tests (~0.7s, fully mocked DB)
 make test-unit         # Unit tests only (common/ modules)
 make test-api          # API endpoint tests only
 make test-cov          # With coverage report
-```
 
-Frontend (Vitest + React Testing Library):
-```bash
-cd mvp/demand
-make ui-test           # All frontend tests (372 tests)
-```
-
-Both:
-```bash
-cd mvp/demand
+make ui-test           # All frontend tests (Vitest + React Testing Library)
 make test-all          # Backend + frontend
-```
 
-E2E Testing (Playwright):
-```bash
-cd mvp/demand
 make e2e-install       # Install Playwright browsers (one-time)
-make e2e               # Run all E2E smoke tests (headless, requires API + UI running)
-make e2e-ui            # Playwright UI mode (interactive debugging)
-make e2e-headed        # Run in headed browser
-make e2e-report        # Open HTML test report
+make e2e               # Run E2E smoke tests (8 suites: navigation, dashboard, accuracy, etc.)
+make e2e-ui            # Playwright interactive UI mode
 ```
 
-E2E tests cover: navigation, dashboard, accuracy, global filters, inventory planning, AI planner, control tower, theme switching.
+Every feature ships with tests; every removed feature removes its tests.
 
-Backend tests cover: `common/metrics.py`, `common/constants.py`, `common/domain_specs.py`, `common/backtest_framework.py` (timeframe generation + recursive helpers), `common/feature_engineering.py` (update_grid_with_predictions), `common/mlflow_utils.py`, `common/db.py`, `common/shap_selector.py`, `scripts/compute_eoq.py` (EOQ formulas, sensitivity curve), replenishment policy assignment logic, inventory health score components, exception generation (detect_exception_type, compute_recommendation), demand signal computation, ABC-XYZ classification, investment plan computation, and all API endpoints (health, domains, accuracy, DFU analysis, competition, clusters, dashboard, distinct values, jobs, shap, inv-planning eoq/policy/health/exceptions/demand-signals/simulation/abc-xyz/supplier/investment/intramonth, fill-rate, control-tower).
+---
 
-Frontend tests cover: hooks (`useTheme`, `useUrlState`, `useKeyboardShortcuts`, `useSidebar`, `useGlobalFilters`), utilities (`formatters`, `export`, `queries`), contexts (`JobNotificationContext`, `ScenarioNotificationContext`), components (`Skeleton`, `KeyboardShortcutHelp`, `EChartContainer`, `AppSidebar`, `ThemeSelector`, `GlobalFilterBar`, `WidgetGrid`, `AlertPanel`, `TopMovers`, `HeatmapGrid`), and all tab components (including DashboardTab, JobsTab, InvPlanningTab).
+## Key Paths
 
-**Rule:** Every new feature must include tests. See `docs/design-specs/feature31.md`.
+| Purpose | Path |
+|---|---|
+| Project spec | `CLAUDE.md` |
+| API entry point | `mvp/demand/api/main.py` |
+| API routers (54) | `mvp/demand/api/routers/` |
+| Shared Python modules (28) | `mvp/demand/common/` |
+| Shared SQL helpers | `mvp/demand/common/sql_helpers.py` |
+| Domain config | `mvp/demand/common/domain_specs.py` |
+| YAML configs | `mvp/demand/config/` |
+| Pipeline scripts | `mvp/demand/scripts/` |
+| DDL migrations (79) | `mvp/demand/sql/` |
+| Frontend app | `mvp/demand/frontend/src/App.tsx` |
+| Tab components | `mvp/demand/frontend/src/tabs/` |
+| API query modules | `mvp/demand/frontend/src/api/queries/` |
+| Backend tests | `mvp/demand/tests/` |
+| Frontend tests | `mvp/demand/frontend/src/**/__tests__/` |
+| E2E tests | `mvp/demand/frontend/e2e/tests/` |
+| Design specs | `docs/specs/` (8 domains, 52 files) |
+| Makefile | `mvp/demand/Makefile` |
 
-## Key paths
-- Dataset config: `mvp/demand/common/domain_specs.py`
-- API: `mvp/demand/api/main.py`
-- Frontend app: `mvp/demand/frontend/src/App.tsx`
-- Generic normalize script: `mvp/demand/scripts/normalize_dataset_csv.py`
-- Generic load script: `mvp/demand/scripts/load_dataset_postgres.py`
-- Embeddings generator: `mvp/demand/scripts/generate_embeddings.py`
-- Clustering scripts: `mvp/demand/scripts/generate_clustering_features.py`, `train_clustering_model.py`, `label_clusters.py`, `update_cluster_assignments.py`
-- Shared backtest framework: `mvp/demand/common/backtest_framework.py`, `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`
-- Backtest scripts: `mvp/demand/scripts/run_backtest.py`, `run_backtest_catboost.py`, `run_backtest_xgboost.py`, `load_backtest_forecasts.py`
-- Algorithm config: `mvp/demand/config/algorithm_config.yaml`
-- Champion selection script: `mvp/demand/scripts/run_champion_selection.py`
-- Champion strategies module: `mvp/demand/common/champion_strategies.py`
-- Champion simulation: `mvp/demand/scripts/simulate_champion_strategies.py`
-- Meta-learner training: `mvp/demand/scripts/train_meta_learner.py`
-- Job engine: `mvp/demand/common/job_registry.py`
-- Job in-memory state: `mvp/demand/common/job_state.py`
-- Job APScheduler wrapper: `mvp/demand/common/job_scheduler.py`
-- Jobs router: `mvp/demand/api/routers/jobs.py`
-- Jobs tab: `mvp/demand/frontend/src/tabs/JobsTab.tsx`
-- Jobs tab panels: `mvp/demand/frontend/src/tabs/jobs/` (KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel)
-- Clustering config: `mvp/demand/config/clustering_config.yaml`
-- Competition config: `mvp/demand/config/model_competition.yaml`
-- Inventory normalize: `mvp/demand/scripts/normalize_inventory_csv.py`
-- Inventory DDL: `mvp/demand/sql/017_create_fact_inventory_snapshot.sql`
-- DDL: `mvp/demand/sql/` (001–008 dataset DDL, 009 chat embeddings, 010 backtest lag archive, 011 accuracy slice views, 017 inventory snapshot, 018 dashboard views)
-- Backtest cleanup: `mvp/demand/scripts/clean_backtest_models.py`
-- Theme configs: `mvp/demand/frontend/src/constants/themes/` (wineSpirits, general, obsidian)
-- Sidebar + filters: `mvp/demand/frontend/src/components/AppSidebar.tsx`, `GlobalFilterBar.tsx`
-- Dashboard: `mvp/demand/frontend/src/tabs/DashboardTab.tsx`
-- Backend tests: `mvp/demand/tests/` (unit/ + api/)
-- Frontend tests: `mvp/demand/frontend/src/**/__tests__/`
-- Test config: `mvp/demand/frontend/vitest.config.ts`
-- Tuning script: `mvp/demand/scripts/tune_hyperparams.py`
-- Tuning utilities: `mvp/demand/common/tuning.py`
-- Tuning config: `mvp/demand/config/hyperparameter_tuning.yaml`
-- Tuning output: `mvp/demand/data/tuning/best_params_<model>.json`
-- SHAP selector: `mvp/demand/common/shap_selector.py`
-- SHAP API router: `mvp/demand/api/routers/shap.py`
-- SHAP TypeScript types: `mvp/demand/frontend/src/types/shap.ts`
-- SHAP output: `mvp/demand/data/backtest/<model_id>/shap/` (shap_timeframe_XX.csv + shap_summary.csv)
-- EOQ script: `mvp/demand/scripts/compute_eoq.py`
-- EOQ config: `mvp/demand/config/eoq_config.yaml`
-- EOQ DDL: `mvp/demand/sql/024_create_eoq_targets.sql`
-- Policy config: `mvp/demand/config/replenishment_policy_config.yaml`
-- Policy DDL: `mvp/demand/sql/025_create_replenishment_policy.sql`
-- Policy script: `mvp/demand/scripts/assign_replenishment_policies.py`
-- Health score DDL: `mvp/demand/sql/026_create_inventory_health_score.sql`
-- Health refresh script: `mvp/demand/scripts/refresh_health_scores.py`
-- Inventory Planning tab: `mvp/demand/frontend/src/tabs/InvPlanningTab.tsx`
-- Inventory Planning router: `mvp/demand/api/routers/inv_planning.py`
-- Fill rate router: `mvp/demand/api/routers/fill_rate.py`
-- Control Tower router: `mvp/demand/api/routers/control_tower.py`
-- Control Tower tab: `mvp/demand/frontend/src/tabs/ControlTowerTab.tsx`
-- Demand signals script: `mvp/demand/scripts/compute_demand_signals.py`
-- SS simulation script: `mvp/demand/scripts/run_ss_simulation.py`
-- ABC-XYZ script: `mvp/demand/scripts/classify_abc_xyz.py`
-- Investment plan script: `mvp/demand/scripts/compute_investment_plan.py`
-- Intramonth stockout script: `mvp/demand/scripts/refresh_intramonth_stockout.py`
-- Rebalancing script: `mvp/demand/scripts/compute_rebalancing.py`
-- Rebalancing config: `mvp/demand/config/rebalancing_config.yaml`
-- Rebalancing DDL: `mvp/demand/sql/071_create_rebalancing.sql`
-- Simulation config: `mvp/demand/config/simulation_config.yaml`
-- AI Planner agent: `mvp/demand/common/ai_planner.py`
-- AI Planner config: `mvp/demand/config/ai_planner_config.yaml`
-- AI Planner DDL: `mvp/demand/sql/036_create_ai_insights.sql`
-- AI Planner script: `mvp/demand/scripts/generate_ai_insights.py`
-- AI Planner router: `mvp/demand/api/routers/ai_planner.py`
-- AI Planner tab: `mvp/demand/frontend/src/tabs/AIPlannerTab.tsx`
-- AI Planner types: `mvp/demand/frontend/src/types/ai-planner.ts`
-- Tab panel components: `mvp/demand/frontend/src/tabs/accuracy/` (KpiSection, TrendChartPanel, SliceTablePanel, ChampionPanel, ShapPanel)
-- Tab panel components: `mvp/demand/frontend/src/tabs/inventory/` (KpiSection, TrendChartPanel, PositionTablePanel, ItemDetailPanel, DemandVariabilityPanel, LeadTimeProfilePanel)
-- Tab panel components: `mvp/demand/frontend/src/tabs/dfu-analysis/` (SelectorPanel, OverlayChartPanel, ModelKpiSection)
-- Tab panel components: `mvp/demand/frontend/src/tabs/clusters/` (ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel)
-- Tab panel components: `mvp/demand/frontend/src/tabs/inv-planning/` (14 panel components)
-- API query sub-modules: `mvp/demand/frontend/src/api/queries/` (core.ts, inv-planning.ts barrel, 9 inv-planning sub-modules, ai-planner.ts, control-tower.ts, fill-rate.ts, storyboard.ts)
-- Design specs: `docs/design-specs/` (feature1–feature44, IPfeature4–IPfeature15, IPAIfeature1)
+## Key Documentation
+
+- [CLAUDE.md](../../CLAUDE.md) -- Complete project specification (tech stack, commands, conventions)
+- [docs/specs/](../../docs/specs/) -- Feature design specifications (8 domains, 52 files)
+- [ARCHITECTURE.md](ARCHITECTURE.md) -- Architecture, data flow, database schema, API routing
+- [OPERATIONS.md](OPERATIONS.md) -- Setup, workflow, troubleshooting guide
+- [CLAUDE_SKILLS_GUIDE.md](CLAUDE_SKILLS_GUIDE.md) -- Claude Code skills developer guide

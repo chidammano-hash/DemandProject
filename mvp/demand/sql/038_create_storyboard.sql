@@ -1,4 +1,4 @@
--- Feature 40: Demand Planner Storyboard — Exception-Based Value Workflow
+-- Feature 40: Planner Storyboard — Exception-Based Value Workflow
 -- DDL for exception_queue and planner_decisions tables.
 --
 -- exception_queue: planner's exception inbox, generated nightly.

@@ -1,7 +1,7 @@
 /**
  * Feature 40 — Exception Triage
  *
- * 3-zone command center for demand planners:
+ * 3-zone command center for supply chain teams:
  * Zone 1: Summary KPI header + page description
  * Zone 2: Exception Queue (left, 40% width) — filterable, sortable exception list
  * Zone 3: Investigation Panel (right, 60% width) — detail view + actions

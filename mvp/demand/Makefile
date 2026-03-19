@@ -617,7 +617,7 @@ control-tower-refresh:
 control-tower-all: control-tower-schema control-tower-refresh
 
 # ---------------------------------------------------------------------------
-# Feature 40: Demand Planner Storyboard (Exception-Based Value Workflow)
+# Feature 40: Planner Storyboard (Exception-Based Value Workflow)
 # ---------------------------------------------------------------------------
 storyboard-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/038_create_storyboard.sql').read()); conn.close(); print('Storyboard DDL applied')"

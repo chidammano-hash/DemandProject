@@ -34,9 +34,9 @@ test.describe("Sidebar Navigation", () => {
     await expect(page).toHaveURL(/tab=invPlanning/);
   });
 
-  test("clicking AI Planner navigates to aiPlanner tab", async ({ page }) => {
-    await clickNavItem(page, "AI Planner");
-    await expect(page).toHaveURL(/tab=aiPlanner/);
+  test("clicking S&OP navigates to sop tab", async ({ page }) => {
+    await clickNavItem(page, "S&OP");
+    await expect(page).toHaveURL(/tab=sop/);
   });
 
   test("clicking FVA & ROI navigates to fva tab", async ({ page }) => {
@@ -77,19 +77,19 @@ test.describe("Keyboard Shortcuts", () => {
     await page.locator("#tab-content").click();
   });
 
-  test("pressing 3 navigates to Portfolio Analysis", async ({ page }) => {
-    await page.keyboard.press("3");
-    await expect(page).toHaveURL(/tab=aggregateAnalysis/);
-  });
-
-  test("pressing 4 navigates to Item Analysis", async ({ page }) => {
-    await page.keyboard.press("4");
-    await expect(page).toHaveURL(/tab=itemAnalysis/);
-  });
-
-  test("pressing 1 navigates to AI Planner", async ({ page }) => {
+  test("pressing 1 navigates to Command Center", async ({ page }) => {
     await page.keyboard.press("1");
-    await expect(page).toHaveURL(/tab=aiPlanner/);
+    await expect(page).toHaveURL(/tab=commandCenter/);
+  });
+
+  test("pressing 4 navigates to Inv. Planning", async ({ page }) => {
+    await page.keyboard.press("4");
+    await expect(page).toHaveURL(/tab=invPlanning/);
+  });
+
+  test("pressing 6 navigates to Portfolio", async ({ page }) => {
+    await page.keyboard.press("6");
+    await expect(page).toHaveURL(/tab=aggregateAnalysis/);
   });
 });
 

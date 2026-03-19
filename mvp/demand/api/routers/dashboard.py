@@ -146,13 +146,13 @@ def dashboard_kpis(
     where_base = (
         f"f.model_id = 'external'"
         f" AND f.tothist_dmd IS NOT NULL AND f.tothist_dmd != 0"
-        f" AND f.basefcst_pref IS NOT NULL"
+        f" AND f.basefcst_pref IS NOT NULL AND f.basefcst_pref != 0"
         f" AND f.startdate >= ('{pd}'::date - (%s || ' months')::interval)"
     )
     where_prior = (
         f"f.model_id = 'external'"
         f" AND f.tothist_dmd IS NOT NULL AND f.tothist_dmd != 0"
-        f" AND f.basefcst_pref IS NOT NULL"
+        f" AND f.basefcst_pref IS NOT NULL AND f.basefcst_pref != 0"
         f" AND f.startdate >= ('{pd}'::date - (%s || ' months')::interval)"
         f" AND f.startdate < ('{pd}'::date - (%s || ' months')::interval)"
     )
@@ -495,11 +495,13 @@ def dashboard_heatmap(
     item: str = Query(default=""),
     location: str = Query(default=""),
     cluster_assignment: str = Query(default=""),
+    model: str = Query(default="external"),
 ):
     """Performance matrix — both row and column axes are selectable.
 
     ``grain`` controls rows, ``col_grain`` controls columns.
     Either axis (but not both) may be ``date``.
+    ``model`` selects which forecast model to compute accuracy for (default: external).
     """
     set_cache(response, max_age=300)
     pd = get_planning_date().isoformat()
@@ -539,7 +541,35 @@ def dashboard_heatmap(
     if market.strip() or row_grain == "location" or col_grain == "location":
         join_clause += " LEFT JOIN dim_location lo ON f.loc = lo.location_id"
 
+    # Use UNION of main forecast table + backtest archive so that models
+    # stored only in the archive (not yet loaded into main table) also work.
+    # Filter basefcst_pref != 0 to exclude rows where no forecast was issued.
     sql = f"""
+        WITH src AS (
+            SELECT dmdunit, dmdgroup, loc, model_id, lag, startdate,
+                   basefcst_pref, tothist_dmd
+            FROM fact_external_forecast_monthly
+            WHERE model_id = %s
+              AND tothist_dmd IS NOT NULL AND tothist_dmd != 0
+              AND basefcst_pref IS NOT NULL AND basefcst_pref != 0
+              AND startdate >= ('{pd}'::date - (%s || ' months')::interval)
+            UNION ALL
+            SELECT dmdunit, dmdgroup, loc, model_id, lag, startdate,
+                   basefcst_pref, tothist_dmd
+            FROM backtest_lag_archive
+            WHERE model_id = %s
+              AND tothist_dmd IS NOT NULL AND tothist_dmd != 0
+              AND basefcst_pref IS NOT NULL AND basefcst_pref != 0
+              AND startdate >= ('{pd}'::date - (%s || ' months')::interval)
+              AND NOT EXISTS (
+                  SELECT 1 FROM fact_external_forecast_monthly m
+                  WHERE m.model_id = %s
+                    AND m.dmdunit = backtest_lag_archive.dmdunit
+                    AND m.loc = backtest_lag_archive.loc
+                    AND m.startdate = backtest_lag_archive.startdate
+                    AND m.lag = backtest_lag_archive.lag
+              )
+        )
         SELECT
             {row_col} AS row_label,
             {col_col} AS col_label,
@@ -547,19 +577,16 @@ def dashboard_heatmap(
                  THEN 100.0 - 100.0 * SUM(ABS(f.basefcst_pref - f.tothist_dmd)) / ABS(SUM(f.tothist_dmd))
                  ELSE NULL END AS accuracy_pct,
             COUNT(DISTINCT (f.dmdunit, f.loc)) AS dfu_count
-        FROM fact_external_forecast_monthly f
+        FROM src f
         {join_clause}
-        WHERE f.model_id = 'external'
-          AND f.tothist_dmd IS NOT NULL AND f.tothist_dmd != 0
-          AND f.basefcst_pref IS NOT NULL
-          AND f.startdate >= ('{pd}'::date - (%s || ' months')::interval)
+        WHERE 1=1
           {filter_where}
         GROUP BY {row_col}, {col_col}, {row_order}, {col_order}
         ORDER BY {row_order}, {col_order}
     """
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, [periods] + filter_params)
+        cur.execute(sql, [model, periods, model, periods, model] + filter_params)
         rows = cur.fetchall()
 
     label_map: dict[str, dict[str, tuple[float, int]]] = OrderedDict()
@@ -629,22 +656,41 @@ def dashboard_trend(
     where_extra = f" AND {filter_frag}" if filter_frag else ""
 
     sql = f"""
+        WITH src AS (
+            SELECT dmdunit, loc, model_id, startdate, basefcst_pref, tothist_dmd
+            FROM fact_external_forecast_monthly
+            WHERE model_id = %s
+              AND tothist_dmd IS NOT NULL
+              AND startdate >= ('{pd}'::date - (%s || ' months')::interval)
+            UNION ALL
+            SELECT dmdunit, loc, model_id, startdate, basefcst_pref, tothist_dmd
+            FROM backtest_lag_archive
+            WHERE model_id = %s
+              AND tothist_dmd IS NOT NULL
+              AND startdate >= ('{pd}'::date - (%s || ' months')::interval)
+              AND NOT EXISTS (
+                  SELECT 1 FROM fact_external_forecast_monthly m
+                  WHERE m.model_id = %s
+                    AND m.dmdunit = backtest_lag_archive.dmdunit
+                    AND m.loc = backtest_lag_archive.loc
+                    AND m.startdate = backtest_lag_archive.startdate
+                    AND m.lag = backtest_lag_archive.lag
+              )
+        )
         SELECT
             TO_CHAR(f.startdate, 'YYYY-MM') AS month,
             SUM(f.basefcst_pref) AS forecast,
             SUM(f.tothist_dmd) AS actual
-        FROM fact_external_forecast_monthly f
+        FROM src f
         {join_clause}
-        WHERE f.model_id = %s
-          AND f.tothist_dmd IS NOT NULL
-          AND f.startdate >= ('{pd}'::date - (%s || ' months')::interval)
+        WHERE 1=1
           {where_extra}
         GROUP BY f.startdate, TO_CHAR(f.startdate, 'YYYY-MM')
         ORDER BY f.startdate
     """
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, [model, window] + filter_params)
+        cur.execute(sql, [model, window, model, window, model] + filter_params)
         rows = cur.fetchall()
 
     months = []

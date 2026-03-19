@@ -1,4 +1,4 @@
-# Algorithm configuration for Demand Studio backtesting (Feature 44)
+# Algorithm configuration for Supply Chain Command Center backtesting (Feature 44)
 #
 # All three algorithms use per-cluster strategy — one model per DFU cluster.
 # Edit this file to control recursive inference, SHAP feature selection,

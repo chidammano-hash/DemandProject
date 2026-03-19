@@ -2,8 +2,8 @@ import type { ProductTheme } from "@/types/theme";
 
 export const generalTheme: ProductTheme = {
   id: "general",
-  displayName: "Vrantis",
-  tagline: "Unified Demand Intelligence",
+  displayName: "Supply Chain Command Center",
+  tagline: "End-to-End Supply Chain Intelligence",
   description: "Clean SaaS analytics platform. Neutral grays, crisp blue accents, maximum readability.",
   supportedModes: ["light", "soft", "dark"],
   defaultMode: "light",

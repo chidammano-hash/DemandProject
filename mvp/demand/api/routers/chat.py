@@ -59,7 +59,7 @@ def _vector_search(question_embedding: list[float], top_k: int = 10) -> list[str
         return []
 
 
-CHAT_SYSTEM_PROMPT = """You are a SQL expert for a demand forecasting PostgreSQL database called Demand Studio.
+CHAT_SYSTEM_PROMPT = """You are a SQL expert for a demand forecasting PostgreSQL database called Supply Chain Command Center.
 
 ## Schema
 {schema}

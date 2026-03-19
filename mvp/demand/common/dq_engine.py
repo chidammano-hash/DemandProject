@@ -1,4 +1,4 @@
-"""Data Quality Engine for Demand Studio (Spec 08-01).
+"""Data Quality Engine for Supply Chain Command Center (Spec 08-01).
 
 Runs configurable SQL-based data quality checks and produces domain health scores.
 """

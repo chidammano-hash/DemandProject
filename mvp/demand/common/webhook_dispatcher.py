@@ -1,4 +1,4 @@
-"""Webhook dispatcher for Demand Studio (Spec 08-10).
+"""Webhook dispatcher for Supply Chain Command Center (Spec 08-10).
 
 Dispatches signed webhook payloads to registered consumers with retry logic.
 """

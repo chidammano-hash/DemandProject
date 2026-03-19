@@ -31,31 +31,33 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  // Command — AI-first triage (no section header)
-  { key: "commandCenter",     label: "Command Center", icon: Monitor,         section: "command",  shortcut: "1" },
-  // Demand — analysis & forecasting
-  { key: "aggregateAnalysis", label: "Portfolio",      icon: LayoutDashboard, section: "demand",   shortcut: "2" },
-  { key: "itemAnalysis",      label: "Item Analysis",  icon: TrendingUp,      section: "demand",   shortcut: "3" },
-  { key: "fva",               label: "FVA & ROI",      icon: BarChart3,       section: "demand" },
-  { key: "customerMap",       label: "Customer Map",   icon: MapPin,          section: "demand" },
+  // Tower — control tower triage (no section header)
+  { key: "commandCenter",     label: "Command Center", icon: Monitor,         section: "tower",       shortcut: "1" },
+  // Operations — planning processes & admin
+  { key: "sop",               label: "S&OP",           icon: CalendarDays,    section: "operations",  shortcut: "2" },
+  { key: "jobs",              label: "Jobs",           icon: PlayCircle,      section: "operations",  shortcut: "3" },
+  { key: "dataQuality",      label: "Data Quality",   icon: Shield,          section: "operations" },
   // Supply — inventory & replenishment
   { key: "invPlanning",  label: "Inv. Planning", icon: Brain,        section: "supply",  shortcut: "4" },
-  { key: "clusters",     label: "Clusters",      icon: Network,      section: "supply" },
+  { key: "clusters",     label: "Clusters",      icon: Network,      section: "supply",  shortcut: "5" },
   { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,     section: "supply" },
-  // Plan — S&OP
-  { key: "sop",          label: "S&OP",          icon: CalendarDays, section: "plan",    shortcut: "5" },
-  // System — admin
-  { key: "jobs",         label: "Jobs",          icon: PlayCircle,   section: "system",  shortcut: "6" },
-  { key: "dataQuality",  label: "Data Quality",  icon: Shield,       section: "system" },
+  // Demand — analysis & forecasting
+  { key: "aggregateAnalysis", label: "Portfolio",      icon: LayoutDashboard, section: "demand",   shortcut: "6" },
+  { key: "itemAnalysis",      label: "Item Analysis",  icon: TrendingUp,      section: "demand",   shortcut: "7" },
+  { key: "fva",               label: "FVA & ROI",      icon: BarChart3,       section: "demand" },
+  { key: "customerMap",       label: "Customer Map",   icon: MapPin,          section: "demand" },
+  // System — data tools
   { key: "explorer",     label: "Explorer",      icon: Database,     section: "system" },
 ];
 
 const SECTION_LABELS: Record<string, string> = {
-  command: "",
-  demand: "Demand",
+  tower: "",
+  operations: "Operations",
   supply: "Supply",
-  plan: "Plan",
+  demand: "Demand",
   system: "System",
+  command: "",
+  plan: "",
   overview: "",
   intelligence: "",
 };

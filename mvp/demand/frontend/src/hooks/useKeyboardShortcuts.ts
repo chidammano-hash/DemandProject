@@ -13,11 +13,12 @@ interface ShortcutConfig {
 
 const TAB_MAP: Record<string, string> = {
   "1": "commandCenter",
-  "2": "aggregateAnalysis",
-  "3": "itemAnalysis",
+  "2": "sop",
+  "3": "jobs",
   "4": "invPlanning",
-  "5": "sop",
-  "6": "jobs",
+  "5": "clusters",
+  "6": "aggregateAnalysis",
+  "7": "itemAnalysis",
 };
 
 export function useKeyboardShortcuts(config: ShortcutConfig) {

@@ -16,7 +16,7 @@ export const storyboardKeys = {
 };
 
 // ---------------------------------------------------------------------------
-// Storyboard fetch functions (Feature 40 — Demand Planner Storyboard)
+// Storyboard fetch functions (Feature 40 — Planner Storyboard)
 // ---------------------------------------------------------------------------
 
 export async function fetchSbSummary(): Promise<StoryboardSummary> {

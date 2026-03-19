@@ -8,7 +8,7 @@ smtp:
 
 pdf:
   page_size: A4
-  branding: "Demand Studio"
+  branding: "Supply Chain Command Center"
 
 system_templates:
   - name: accuracy_summary

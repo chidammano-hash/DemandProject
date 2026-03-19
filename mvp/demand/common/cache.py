@@ -1,4 +1,4 @@
-"""Caching infrastructure for Demand Studio API (Spec 08-03).
+"""Caching infrastructure for Supply Chain Command Center API (Spec 08-03).
 
 Two backends: Redis (when REDIS_URL set) and InMemory (fallback).
 @cached decorator for router handlers with TTL and invalidation support.

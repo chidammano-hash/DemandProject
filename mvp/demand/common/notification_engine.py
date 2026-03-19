@@ -1,4 +1,4 @@
-"""Notification engine for Demand Studio (Spec 08-04).
+"""Notification engine for Supply Chain Command Center (Spec 08-04).
 
 Multi-channel notification dispatch: Slack, Teams, Email, PagerDuty.
 """
@@ -80,7 +80,7 @@ def _send_email(smtp_config: dict, recipient: str, subject: str, body: str) -> t
         msg = MIMEMultipart()
         msg["From"] = smtp_config.get("from_address", "noreply@demandstudio.local")
         msg["To"] = recipient
-        msg["Subject"] = f"[Demand Studio] {subject}"
+        msg["Subject"] = f"[Supply Chain Command Center] {subject}"
         msg.attach(MIMEText(body, "plain"))
 
         host = smtp_config.get("host", "localhost")

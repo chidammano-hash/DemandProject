@@ -1,7 +1,7 @@
 import { test as base, expect } from "@playwright/test";
 
 /**
- * Shared fixtures for Demand Studio E2E tests.
+ * Shared fixtures for Supply Chain Command Center E2E tests.
  *
  * DOM structure reference:
  *  - Sidebar: <aside role="navigation"> containing <nav> with buttons
@@ -55,23 +55,20 @@ export async function clickNavItem(
   await btn.click();
 }
 
-/** Sidebar nav item labels (in order) */
+/** Sidebar nav item labels (in order — operations-first layout) */
 export const SIDEBAR_LABELS = [
-  "AI Planner",
-  "Control Tower",
+  "Command Center",
+  "S&OP",
+  "Jobs",
+  "Data Quality",
+  "Inv. Planning",
+  "Clusters",
+  "Inv. Backtest",
   "Portfolio",
   "Item Analysis",
   "FVA & ROI",
-  "Exceptions",
-  "Inv. Planning",
-  "S&OP",
-  "Clusters",
-  "Inv. Backtest",
-  "Jobs",
-  "Data Quality",
+  "Customer Map",
   "Explorer",
-  "Market Intel",
-  "Chat",
 ] as const;
 
 /** Tabs that show the global filter bar */

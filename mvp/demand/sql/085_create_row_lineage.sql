@@ -1,4 +1,6 @@
--- Row Lineage: traces each row from bronze → silver → gold.
+-- Row Lineage: traces each row from bronze -> silver -> gold.
+-- DDL2 NOTE: uses `created_at` (vs `quarantined_at` in silver_quarantine).
+-- Naming kept as-is for backward compatibility.
 
 CREATE TABLE IF NOT EXISTS audit_row_lineage (
     lineage_id          BIGSERIAL PRIMARY KEY,

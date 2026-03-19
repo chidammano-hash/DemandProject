@@ -1,4 +1,6 @@
 -- Silver Quarantine: rejected rows that failed DQ gate checks or type casting.
+-- DDL2 NOTE: uses `quarantined_at` (vs `created_at` in audit_row_lineage).
+-- Naming kept as-is for backward compatibility.
 
 CREATE TABLE IF NOT EXISTS silver_quarantine (
     quarantine_id       BIGSERIAL PRIMARY KEY,

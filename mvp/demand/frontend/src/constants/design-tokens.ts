@@ -1,4 +1,4 @@
-// Design tokens for Demand Studio
+// Design tokens for Supply Chain Command Center
 // Semantic color palette — use these constants instead of raw hex codes.
 
 // AI-generated content — teal distinguishes AI annotations from human data

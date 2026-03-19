@@ -6,7 +6,7 @@ channels:
     enabled: true
     webhook_url: ${SLACK_WEBHOOK_URL}
     default_channel: "#demand-alerts"
-    username: "Demand Studio"
+    username: "Supply Chain Command Center"
     icon_emoji: ":bar_chart:"
 
   teams:

@@ -1,4 +1,4 @@
-# Demand Planner Storyboard — Exception Engine Config (Feature 40)
+# Planner Storyboard — Exception Engine Config (Feature 40)
 #
 # Controls exception detection thresholds, scoring weights, and generation limits.
 # All configurable parameters live here; no magic numbers in Python scripts.

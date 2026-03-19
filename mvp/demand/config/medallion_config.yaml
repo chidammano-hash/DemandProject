@@ -58,6 +58,11 @@ auto_fix:
     enabled: false
     preserve_original: false
 
+# PostgreSQL session settings for fast/bulk load mode (M6)
+pg_session:
+  work_mem: "512MB"
+  maintenance_work_mem: "1GB"
+
 # Sales dual-track: which table do reads use?
 sales_dual_track:
   accuracy_source: fact_sales_monthly_original

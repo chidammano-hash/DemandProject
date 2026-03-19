@@ -560,7 +560,10 @@ async def test_dashboard_heatmap_uses_model_id_not_lag(mock_pool):
             resp = await client.get("/dashboard/heatmap")
     assert resp.status_code == 200
     sql_arg = cursor.execute.call_args[0][0]
-    assert "model_id = 'external'" in sql_arg
+    assert "model_id = %s" in sql_arg
+    # Model param appears multiple times (CTE queries both tables + dedup)
+    sql_params = cursor.execute.call_args[0][1]
+    assert sql_params[0] == "external"
     assert "lag = 0" not in sql_arg
 
 

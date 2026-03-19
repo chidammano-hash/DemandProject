@@ -1,4 +1,4 @@
-"""Medallion pipeline: Bronze → Silver → Gold with DQ gating and audit trail.
+"""Medallion pipeline: Bronze -> Silver -> Gold with DQ gating and audit trail.
 
 Provides the core functions that `load_dataset_postgres.py --medallion` calls.
 Each function is independently testable and operates within a caller-managed
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -15,10 +16,24 @@ from typing import Any
 import psycopg
 
 from common.domain_specs import DomainSpec
+from common.sql_helpers import (
+    NULL_SQL,
+    EXTERNAL_MODEL_ID,
+    HASH_CHUNK_SIZE,
+    IQR_OUTLIER_MULTIPLIER,
+    LEAD_TIME_DEFAULT_DAYS,
+    LEAD_TIME_MAX_DAYS,
+    PERCENTILE_MEDIAN,
+    PERCENTILE_Q1,
+    PERCENTILE_Q3,
+    _elapsed,
+    qident,
+    typed_expr,
+    business_key_expr,
+)
 from common.utils import _ts, load_config
 
-# Reuse existing SQL helpers from the loader
-NULL_SQL = "'', 'null', 'none', 'na', 'n/a'"
+logger = logging.getLogger(__name__)
 
 _CFG: dict | None = None
 
@@ -30,51 +45,42 @@ def _config() -> dict:
     return _CFG
 
 
-def _elapsed(t0: float) -> str:
-    dt = time.time() - t0
-    if dt < 60:
-        return f"{dt:.1f}s"
-    m, s = divmod(dt, 60)
-    return f"{int(m)}m {s:.0f}s"
-
-
-def qident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
-
-
-def typed_expr(field: str, spec: DomainSpec, src_alias: str) -> str:
-    """Generate SQL cast expression for a column based on DomainSpec types."""
-    col = f"{src_alias}.{qident(field)}"
-    if field in spec.int_fields:
-        return (
-            f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
-            f"ELSE {col}::integer END"
-        )
-    if field in spec.float_fields:
-        return (
-            f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
-            f"ELSE {col}::numeric END"
-        )
-    if field in spec.date_fields:
-        return (
-            f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
-            f"ELSE {col}::date END"
-        )
-    return col
-
-
-def business_key_expr(spec: DomainSpec, src_alias: str) -> str:
-    """Generate SQL expression for the composite business key."""
-    cols = [f"trim({src_alias}.{qident(f)})" for f in spec.key_fields]
-    if len(cols) == 1:
-        return cols[0]
-    sep = (spec.business_key_separator or "-").replace("'", "''")
-    return f" || '{sep}' || ".join(cols)
-
-
 # ---------------------------------------------------------------------------
-# Batch lifecycle
+# Batch lifecycle  (D6: consolidated _update_batch_status)
 # ---------------------------------------------------------------------------
+
+def _update_batch_status(
+    cur,
+    batch_id: int,
+    status: str,
+    error_msg: str | None = None,
+    stats: dict | None = None,
+) -> None:
+    """Unified batch status updater — replaces complete_batch/fail_batch duplication (D6)."""
+    set_parts = ["status = %s", "completed_at = now()"]
+    params: list[Any] = [status]
+
+    if error_msg is not None:
+        set_parts.append("error_message = %s")
+        params.append(error_msg)
+
+    if stats:
+        if "row_count_in" in stats:
+            set_parts.append("row_count_in = %s")
+            params.append(stats["row_count_in"])
+        if "row_count_out" in stats:
+            set_parts.append("row_count_out = %s")
+            params.append(stats["row_count_out"])
+        if "quarantined" in stats:
+            set_parts.append("row_count_quarantined = %s")
+            params.append(stats["quarantined"])
+
+    params.append(batch_id)
+    cur.execute(
+        f"UPDATE audit_load_batch SET {', '.join(set_parts)} WHERE batch_id = %s",
+        params,
+    )
+
 
 def create_batch(cur, domain: str, source_file: str | None = None,
                  source_hash: str | None = None,
@@ -94,35 +100,35 @@ def create_batch(cur, domain: str, source_file: str | None = None,
 def complete_batch(cur, batch_id: int, row_count_in: int,
                    row_count_out: int, quarantined: int = 0) -> None:
     """Mark a batch as completed."""
-    cur.execute(
-        """UPDATE audit_load_batch
-           SET status = 'completed', row_count_in = %s, row_count_out = %s,
-               row_count_quarantined = %s, completed_at = now()
-           WHERE batch_id = %s""",
-        [row_count_in, row_count_out, quarantined, batch_id],
-    )
+    _update_batch_status(cur, batch_id, "completed", stats={
+        "row_count_in": row_count_in,
+        "row_count_out": row_count_out,
+        "quarantined": quarantined,
+    })
 
 
 def fail_batch(cur, batch_id: int, error: str) -> None:
     """Mark a batch as failed."""
-    cur.execute(
-        """UPDATE audit_load_batch
-           SET status = 'failed', error_message = %s, completed_at = now()
-           WHERE batch_id = %s""",
-        [error, batch_id],
-    )
+    _update_batch_status(cur, batch_id, "failed", error_msg=error)
 
 
 def file_hash(path: Path) -> str:
-    """Compute SHA-256 of a file (first 10 MB for speed)."""
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for _ in range(10):
-            chunk = f.read(1024 * 1024)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
+    """Compute SHA-256 of a file (first 10 MB for speed).
+
+    Returns empty string on IO errors (E2).
+    """
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for _ in range(10):
+                chunk = f.read(HASH_CHUNK_SIZE)
+                if not chunk:
+                    break
+                h.update(chunk)
+        return h.hexdigest()
+    except (OSError, IOError) as exc:
+        logger.error("file_hash failed for %s: %s", path, exc)
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -134,11 +140,6 @@ def ingest_bronze(cur, spec: DomainSpec, csv_path: Path,
     """COPY clean CSV into bronze_<domain> table (all TEXT). Returns row count."""
     bronze_table = f"bronze_{spec.name}"
     col_list = ", ".join(qident(c) for c in spec.columns)
-
-    copy_sql = (
-        f"COPY {qident(bronze_table)} ({col_list}, _load_batch_id, _source_row_num) "
-        f"FROM STDIN WITH (FORMAT CSV, HEADER FALSE)"
-    )
 
     # We need to inject batch_id and row number per row.
     # Strategy: use a temp staging table then INSERT into bronze.
@@ -153,10 +154,17 @@ def ingest_bronze(cur, spec: DomainSpec, csv_path: Path,
     copy_stg_sql = (
         f"COPY {qident(stg)} ({col_list}) FROM STDIN WITH (FORMAT CSV, HEADER TRUE)"
     )
-    with cur.copy(copy_stg_sql) as copy:
-        with csv_path.open("r", encoding="utf-8", newline="") as f:
-            while chunk := f.read(1024 * 1024):
-                copy.write(chunk)
+    # E3: wrap CSV COPY in try/except with informative message
+    try:
+        with cur.copy(copy_stg_sql) as copy:
+            with csv_path.open("r", encoding="utf-8", newline="") as f:
+                while chunk := f.read(HASH_CHUNK_SIZE):
+                    copy.write(chunk)
+    except Exception as exc:
+        raise RuntimeError(
+            f"CSV COPY into staging table '{stg}' failed for file "
+            f"'{csv_path.name}': {exc}"
+        ) from exc
 
     # Count staging rows
     cur.execute(f"SELECT count(*) FROM {qident(stg)}")
@@ -177,81 +185,48 @@ def ingest_bronze(cur, spec: DomainSpec, csv_path: Path,
 # ---------------------------------------------------------------------------
 
 def promote_to_silver(cur, spec: DomainSpec, batch_id: int) -> tuple[int, int]:
-    """Type-cast and dedup from bronze → silver. Returns (inserted, quarantined)."""
+    """Type-cast and dedup from bronze -> silver. Returns (inserted, quarantined)."""
     bronze_table = f"bronze_{spec.name}"
     silver_table = f"silver_{spec.name}"
     src = "b"
 
-    # Build typed SELECT expressions
+    # Build typed column list (L3: extracted SQL building from promote_to_silver)
+    silver_cols, typed_col_list = _build_silver_column_lists(spec, src)
+    final_sql = _build_silver_insert_sql(
+        spec, silver_table, bronze_table, src, silver_cols, typed_col_list,
+    )
+
+    # SQL2: use %s parameter for batch_id instead of f-string
+    cur.execute(final_sql, [batch_id])
+    inserted = cur.rowcount
+
+    return inserted, 0  # quarantine count populated by DQ gate
+
+
+def _build_silver_column_lists(spec: DomainSpec, src: str):
+    """Build the column lists needed for the silver INSERT."""
     ck_expr = business_key_expr(spec, src)
-    typed_cols = [
-        f"{ck_expr} AS {qident(spec.ck_field)}",
-        *[f"{typed_expr(c, spec, src)} AS {qident(c)}" for c in spec.columns],
-    ]
-
-    # First: try to cast all rows, quarantine failures
-    # Use a CTE that attempts casting; rows that fail go to quarantine
-    # For simplicity, we do a two-pass approach:
-    # Pass 1: INSERT valid rows into silver
-    # Pass 2: Identify and quarantine bad rows
-
-    # Pass 1: Insert with error trapping via a function wrapper
-    # Since Postgres doesn't have TRY_CAST, we use a safe approach:
-    # attempt the full INSERT and catch rows that fail via savepoint
-
-    # Simpler approach: INSERT all, let type errors fail the whole batch
-    # then quarantine known bad patterns before retrying.
-    # For MVP: insert all, quarantine is handled by DQ gate checks (Phase 3).
-
-    select_sql = ", ".join(typed_cols)
-    dedup_inner = (
-        f"SELECT DISTINCT ON ({qident('_ck')}) *, "
-        f"{ck_expr} AS _ck, {src}._bronze_id "
-        f"FROM {qident(bronze_table)} {src} "
-        f"WHERE {src}._load_batch_id = %s "
-        f"ORDER BY _ck, {src}._bronze_id DESC"
-    )
-
-    # Build final column list for silver (including metadata)
-    silver_cols = [
-        spec.ck_field, *spec.columns,
-        "_bronze_id", "_load_batch_id", "_dq_status",
-    ]
-
-    # For sales, add original snapshot columns
-    is_sales = spec.name == "sales"
-    if is_sales:
-        silver_cols.extend(["_orig_qty_shipped", "_orig_qty_ordered", "_orig_qty"])
-
-    insert_sql = (
-        f"INSERT INTO {qident(silver_table)} ("
-        + ", ".join(qident(c) for c in silver_cols)
-        + ") SELECT "
-        + ", ".join([
-            f"r.{qident(spec.ck_field)}",
-            *[f"r.{qident(c)}" for c in spec.columns],
-            "r._bronze_id",
-            f"{batch_id}",
-            "'pending'",
-        ])
-    )
-    if is_sales:
-        insert_sql += ", r.qty_shipped, r.qty_ordered, r.qty"
-
-    insert_sql += (
-        f" FROM ({dedup_inner}) sub "
-        f"JOIN LATERAL (SELECT "
-        + ", ".join(typed_cols)
-        + f", sub._bronze_id FROM (VALUES(1)) v) r ON TRUE"
-    )
-
-    # Simplified approach: use a subquery with typed expressions directly
     typed_col_list = [
         f"{ck_expr} AS {qident(spec.ck_field)}",
         *[f"{typed_expr(c, spec, src)} AS {qident(c)}" for c in spec.columns],
     ]
+    silver_cols = [
+        spec.ck_field, *spec.columns,
+        "_bronze_id", "_load_batch_id", "_dq_status",
+    ]
+    if spec.name == "sales":
+        silver_cols.extend(["_orig_qty_shipped", "_orig_qty_ordered", "_orig_qty"])
+    return silver_cols, typed_col_list
 
-    # Use DISTINCT ON for dedup, with type casting inline
+
+def _build_silver_insert_sql(
+    spec: DomainSpec, silver_table: str, bronze_table: str, src: str,
+    silver_cols: list[str], typed_col_list: list[str],
+) -> str:
+    """Build the INSERT ... SELECT SQL for silver promotion."""
+    ck_expr = business_key_expr(spec, src)
+    is_sales = spec.name == "sales"
+
     final_sql = (
         f"INSERT INTO {qident(silver_table)} ("
         + ", ".join(qident(c) for c in silver_cols)
@@ -260,7 +235,8 @@ def promote_to_silver(cur, spec: DomainSpec, batch_id: int) -> tuple[int, int]:
             f"sub.{qident(spec.ck_field)}",
             *[f"sub.{qident(c)}" for c in spec.columns],
             "sub._bronze_id",
-            f"{batch_id}",
+            # SQL2: use %s for batch_id
+            "%s",
             "'pending'",
         ])
     )
@@ -277,16 +253,102 @@ def promote_to_silver(cur, spec: DomainSpec, batch_id: int) -> tuple[int, int]:
         + f" ORDER BY _ck, {src}._bronze_id DESC"
         + f") sub"
     )
-
-    cur.execute(final_sql, [batch_id])
-    inserted = cur.rowcount
-
-    return inserted, 0  # quarantine count populated by DQ gate
+    return final_sql
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: Silver DQ Gate
+# Phase 3: Silver DQ Gate  (L2: broken into helper functions)
 # ---------------------------------------------------------------------------
+
+def _quarantine_rows(
+    cur,
+    spec: DomainSpec,
+    silver_table: str,
+    batch_id: int,
+    where_clause: str,
+    where_params: list,
+    reason: str,
+    details: dict,
+) -> int:
+    """Shared quarantine workflow (D2): fetch bad rows, INSERT quarantine, UPDATE status.
+
+    Returns the number of quarantined rows.
+    """
+    cur.execute(
+        f"SELECT _silver_id, _bronze_id, row_to_json(t.*) "
+        f"FROM {qident(silver_table)} t "
+        f"WHERE {where_clause}",
+        where_params,
+    )
+    bad_rows = cur.fetchall()
+    for _silver_id, bronze_id, raw_json in bad_rows:
+        cur.execute(
+            """INSERT INTO silver_quarantine
+               (domain, _bronze_id, _load_batch_id, rejection_reason,
+                rejection_details, raw_row)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            [spec.name, bronze_id, batch_id, reason,
+             json.dumps(details),
+             json.dumps(raw_json) if isinstance(raw_json, dict) else raw_json],
+        )
+    if bad_rows:
+        cur.execute(
+            f"UPDATE {qident(silver_table)} SET _dq_status = 'quarantined' "
+            f"WHERE {where_clause}",
+            where_params,
+        )
+    return len(bad_rows)
+
+
+def _check_completeness(cur, spec: DomainSpec, silver_table: str,
+                         batch_id: int) -> int:
+    """Quarantine rows with NULL in PK columns."""
+    total = 0
+    pk_cols = list(spec.key_fields)
+    for col in pk_cols:
+        where = f"{qident(col)} IS NULL AND _load_batch_id = %s AND _dq_status = 'pending'"
+        total += _quarantine_rows(
+            cur, spec, silver_table, batch_id,
+            where, [batch_id], "null_pk", {"column": col},
+        )
+    return total
+
+
+def _check_range(cur, spec: DomainSpec, silver_table: str,
+                  batch_id: int) -> int:
+    """Quarantine rows with out-of-range numeric values (SQL1: parameterized)."""
+    range_cfg = load_config("data_quality").get("checks", {}).get("range", {})
+    domain_ranges = range_cfg.get(spec.name, {})
+    if not isinstance(domain_ranges, dict) or "columns" not in domain_ranges:
+        return 0
+
+    total = 0
+    for col_def in domain_ranges["columns"]:
+        col = col_def["column"]
+        col_min = col_def.get("min")
+        col_max = col_def.get("max")
+        # SQL1: parameterize col_min/col_max values
+        conditions = []
+        params: list[Any] = []
+        if col_min is not None:
+            conditions.append(f"{qident(col)} < %s")
+            params.append(col_min)
+        if col_max is not None:
+            conditions.append(f"{qident(col)} > %s")
+            params.append(col_max)
+        if conditions:
+            where = (
+                f"({' OR '.join(conditions)}) "
+                f"AND _load_batch_id = %s AND _dq_status = 'pending'"
+            )
+            params.append(batch_id)
+            total += _quarantine_rows(
+                cur, spec, silver_table, batch_id,
+                where, params,
+                "range_violation", {"column": col, "min": col_min, "max": col_max},
+            )
+    return total
+
 
 def run_silver_dq_gate(cur, spec: DomainSpec, batch_id: int) -> dict:
     """Run blocking DQ checks on silver rows. Returns gate result dict.
@@ -310,79 +372,13 @@ def run_silver_dq_gate(cur, spec: DomainSpec, batch_id: int) -> dict:
     if total_rows == 0:
         return {"passed": True, "total": 0, "quarantined": 0, "pass_rate": 100.0}
 
-    # --- Completeness check: quarantine rows with NULL in PK columns ---
+    # --- Completeness check ---
     if "completeness" in blocking:
-        pk_cols = list(spec.key_fields)
-        for col in pk_cols:
-            where = f"{qident(col)} IS NULL AND _load_batch_id = %s AND _dq_status = 'pending'"
-            # Get quarantine candidates
-            cur.execute(
-                f"SELECT _silver_id, _bronze_id, row_to_json(t.*) "
-                f"FROM {qident(silver_table)} t "
-                f"WHERE {where}",
-                [batch_id],
-            )
-            bad_rows = cur.fetchall()
-            for silver_id, bronze_id, raw_json in bad_rows:
-                cur.execute(
-                    """INSERT INTO silver_quarantine
-                       (domain, _bronze_id, _load_batch_id, rejection_reason,
-                        rejection_details, raw_row)
-                       VALUES (%s, %s, %s, 'null_pk', %s, %s)""",
-                    [spec.name, bronze_id, batch_id,
-                     json.dumps({"column": col}),
-                     json.dumps(raw_json) if isinstance(raw_json, dict) else raw_json],
-                )
-            if bad_rows:
-                cur.execute(
-                    f"UPDATE {qident(silver_table)} SET _dq_status = 'quarantined' "
-                    f"WHERE {where}",
-                    [batch_id],
-                )
-                total_quarantined += len(bad_rows)
+        total_quarantined += _check_completeness(cur, spec, silver_table, batch_id)
 
-    # --- Range check: quarantine rows with out-of-range numeric values ---
+    # --- Range check ---
     if "range" in blocking:
-        range_cfg = load_config("data_quality").get("checks", {}).get("range", {})
-        domain_ranges = range_cfg.get(spec.name, {})
-        if isinstance(domain_ranges, dict) and "columns" in domain_ranges:
-            for col_def in domain_ranges["columns"]:
-                col = col_def["column"]
-                col_min = col_def.get("min")
-                col_max = col_def.get("max")
-                conditions = []
-                if col_min is not None:
-                    conditions.append(f"{qident(col)} < {col_min}")
-                if col_max is not None:
-                    conditions.append(f"{qident(col)} > {col_max}")
-                if conditions:
-                    where = (
-                        f"({' OR '.join(conditions)}) "
-                        f"AND _load_batch_id = %s AND _dq_status = 'pending'"
-                    )
-                    cur.execute(
-                        f"SELECT _silver_id, _bronze_id, row_to_json(t.*) "
-                        f"FROM {qident(silver_table)} t WHERE {where}",
-                        [batch_id],
-                    )
-                    bad_rows = cur.fetchall()
-                    for silver_id, bronze_id, raw_json in bad_rows:
-                        cur.execute(
-                            """INSERT INTO silver_quarantine
-                               (domain, _bronze_id, _load_batch_id, rejection_reason,
-                                rejection_details, raw_row)
-                               VALUES (%s, %s, %s, 'range_violation', %s, %s)""",
-                            [spec.name, bronze_id, batch_id,
-                             json.dumps({"column": col, "min": col_min, "max": col_max}),
-                             json.dumps(raw_json) if isinstance(raw_json, dict) else raw_json],
-                        )
-                    if bad_rows:
-                        cur.execute(
-                            f"UPDATE {qident(silver_table)} SET _dq_status = 'quarantined' "
-                            f"WHERE {where}",
-                            [batch_id],
-                        )
-                        total_quarantined += len(bad_rows)
+        total_quarantined += _check_range(cur, spec, silver_table, batch_id)
 
     # --- Mark remaining pending rows as passed ---
     cur.execute(
@@ -406,7 +402,7 @@ def run_silver_dq_gate(cur, spec: DomainSpec, batch_id: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Phase 4: Silver DQ Fixes with Audit
+# Phase 4: Silver DQ Fixes with Audit  (L4: split imputation helpers)
 # ---------------------------------------------------------------------------
 
 def apply_silver_fixes(cur, spec: DomainSpec, batch_id: int) -> dict:
@@ -491,7 +487,7 @@ def _record_correction(cur, domain: str, table: str, row_key: str,
 
 def _fix_range_with_audit(cur, spec: DomainSpec, silver_table: str,
                           batch_id: int, dq_cfg: dict) -> int:
-    """Clamp out-of-range values and record corrections."""
+    """Clamp out-of-range values and record corrections (SQL1: parameterized)."""
     range_checks = dq_cfg.get("checks", {}).get("range", {})
     domain_cfg = range_checks.get(spec.name, {})
     if not isinstance(domain_cfg, dict) or "columns" not in domain_cfg:
@@ -503,12 +499,15 @@ def _fix_range_with_audit(cur, spec: DomainSpec, silver_table: str,
         col_min = col_def.get("min")
         col_max = col_def.get("max")
 
-        # Find rows needing clamping
+        # SQL1: parameterize min/max values
         conditions = []
+        params: list[Any] = []
         if col_min is not None:
-            conditions.append(f"{qident(col)} < {col_min}")
+            conditions.append(f"{qident(col)} < %s")
+            params.append(col_min)
         if col_max is not None:
-            conditions.append(f"{qident(col)} > {col_max}")
+            conditions.append(f"{qident(col)} > %s")
+            params.append(col_max)
         if not conditions:
             continue
 
@@ -517,7 +516,7 @@ def _fix_range_with_audit(cur, spec: DomainSpec, silver_table: str,
             f"FROM {qident(silver_table)} "
             f"WHERE ({' OR '.join(conditions)}) "
             f"AND _load_batch_id = %s AND _dq_status = 'passed'",
-            [batch_id],
+            [*params, batch_id],
         )
         for row_key, old_val in cur.fetchall():
             if old_val is not None:
@@ -550,9 +549,109 @@ def _fix_range_with_audit(cur, spec: DomainSpec, silver_table: str,
     return total
 
 
+# ---------------------------------------------------------------------------
+# D4: Shared percentile helper
+# ---------------------------------------------------------------------------
+
+def _get_percentiles(cur, silver_table: str, col: str,
+                     batch_id: int, percentiles: list[float]) -> list:
+    """Compute percentile_cont values for a column within a batch (D4)."""
+    select_parts = ", ".join(
+        f"percentile_cont({p}) WITHIN GROUP (ORDER BY {qident(col)})"
+        for p in percentiles
+    )
+    cur.execute(
+        f"SELECT {select_parts} "
+        f"FROM {qident(silver_table)} "
+        f"WHERE {qident(col)} IS NOT NULL "
+        f"AND _load_batch_id = %s AND _dq_status = 'passed'",
+        [batch_id],
+    )
+    return list(cur.fetchone())
+
+
+# ---------------------------------------------------------------------------
+# D3/L4: Extracted imputation helpers
+# ---------------------------------------------------------------------------
+
+def _impute_numeric(cur, spec: DomainSpec, silver_table: str,
+                    batch_id: int, col: str) -> int:
+    """Impute NULL numeric values with median (D3). Returns fix count."""
+    percentiles = _get_percentiles(cur, silver_table, col, batch_id,
+                                   [PERCENTILE_MEDIAN])
+    median_val = percentiles[0]
+    if median_val is None:
+        return 0
+
+    cur.execute(
+        f"SELECT {qident(spec.ck_field)} "
+        f"FROM {qident(silver_table)} "
+        f"WHERE {qident(col)} IS NULL "
+        f"AND _load_batch_id = %s AND _dq_status = 'passed'",
+        [batch_id],
+    )
+    null_rows = cur.fetchall()
+    for (row_key,) in null_rows:
+        _record_correction(
+            cur, spec.name, silver_table, str(row_key), col,
+            None, median_val, "median_impute", "completeness", batch_id,
+        )
+
+    if null_rows:
+        cur.execute(
+            f"UPDATE {qident(silver_table)} SET {qident(col)} = %s "
+            f"WHERE {qident(col)} IS NULL "
+            f"AND _load_batch_id = %s AND _dq_status = 'passed'",
+            [median_val, batch_id],
+        )
+
+    return len(null_rows)
+
+
+def _impute_categorical(cur, spec: DomainSpec, silver_table: str,
+                         batch_id: int, col: str) -> int:
+    """Impute NULL categorical values with mode (D3). Returns fix count."""
+    cur.execute(
+        f"SELECT {qident(col)}, count(*) "
+        f"FROM {qident(silver_table)} "
+        f"WHERE {qident(col)} IS NOT NULL "
+        f"AND _load_batch_id = %s AND _dq_status = 'passed' "
+        f"GROUP BY 1 ORDER BY 2 DESC LIMIT 1",
+        [batch_id],
+    )
+    row = cur.fetchone()
+    if not row:
+        return 0
+    mode_val = row[0]
+
+    cur.execute(
+        f"SELECT {qident(spec.ck_field)} "
+        f"FROM {qident(silver_table)} "
+        f"WHERE {qident(col)} IS NULL "
+        f"AND _load_batch_id = %s AND _dq_status = 'passed'",
+        [batch_id],
+    )
+    null_rows = cur.fetchall()
+    for (row_key,) in null_rows:
+        _record_correction(
+            cur, spec.name, silver_table, str(row_key), col,
+            None, mode_val, "mode_impute", "completeness", batch_id,
+        )
+
+    if null_rows:
+        cur.execute(
+            f"UPDATE {qident(silver_table)} SET {qident(col)} = %s "
+            f"WHERE {qident(col)} IS NULL "
+            f"AND _load_batch_id = %s AND _dq_status = 'passed'",
+            [mode_val, batch_id],
+        )
+
+    return len(null_rows)
+
+
 def _fix_completeness_with_audit(cur, spec: DomainSpec, silver_table: str,
                                  batch_id: int, dq_cfg: dict) -> int:
-    """Impute NULLs (numeric→median, categorical→mode) with audit."""
+    """Impute NULLs (numeric->median, categorical->mode) with audit (L4: simplified)."""
     comp_checks = dq_cfg.get("checks", {}).get("completeness", {})
     domain_cfg = comp_checks.get(spec.name, {})
     if not isinstance(domain_cfg, dict) or "columns" not in domain_cfg:
@@ -568,75 +667,9 @@ def _fix_completeness_with_audit(cur, spec: DomainSpec, silver_table: str,
         is_numeric = col in spec.float_fields or col in spec.int_fields
 
         if is_numeric:
-            # Compute median for imputation
-            cur.execute(
-                f"SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY {qident(col)}) "
-                f"FROM {qident(silver_table)} "
-                f"WHERE {qident(col)} IS NOT NULL "
-                f"AND _load_batch_id = %s AND _dq_status = 'passed'",
-                [batch_id],
-            )
-            median_val = cur.fetchone()[0]
-            if median_val is None:
-                continue
-
-            # Record corrections
-            cur.execute(
-                f"SELECT {qident(spec.ck_field)} "
-                f"FROM {qident(silver_table)} "
-                f"WHERE {qident(col)} IS NULL "
-                f"AND _load_batch_id = %s AND _dq_status = 'passed'",
-                [batch_id],
-            )
-            for (row_key,) in cur.fetchall():
-                _record_correction(
-                    cur, spec.name, silver_table, str(row_key), col,
-                    None, median_val, "median_impute", "completeness", batch_id,
-                )
-                total += 1
-
-            # Apply
-            cur.execute(
-                f"UPDATE {qident(silver_table)} SET {qident(col)} = %s "
-                f"WHERE {qident(col)} IS NULL "
-                f"AND _load_batch_id = %s AND _dq_status = 'passed'",
-                [median_val, batch_id],
-            )
+            total += _impute_numeric(cur, spec, silver_table, batch_id, col)
         else:
-            # Mode imputation for categoricals
-            cur.execute(
-                f"SELECT {qident(col)}, count(*) "
-                f"FROM {qident(silver_table)} "
-                f"WHERE {qident(col)} IS NOT NULL "
-                f"AND _load_batch_id = %s AND _dq_status = 'passed' "
-                f"GROUP BY 1 ORDER BY 2 DESC LIMIT 1",
-                [batch_id],
-            )
-            row = cur.fetchone()
-            if not row:
-                continue
-            mode_val = row[0]
-
-            cur.execute(
-                f"SELECT {qident(spec.ck_field)} "
-                f"FROM {qident(silver_table)} "
-                f"WHERE {qident(col)} IS NULL "
-                f"AND _load_batch_id = %s AND _dq_status = 'passed'",
-                [batch_id],
-            )
-            for (row_key,) in cur.fetchall():
-                _record_correction(
-                    cur, spec.name, silver_table, str(row_key), col,
-                    None, mode_val, "mode_impute", "completeness", batch_id,
-                )
-                total += 1
-
-            cur.execute(
-                f"UPDATE {qident(silver_table)} SET {qident(col)} = %s "
-                f"WHERE {qident(col)} IS NULL "
-                f"AND _load_batch_id = %s AND _dq_status = 'passed'",
-                [mode_val, batch_id],
-            )
+            total += _impute_categorical(cur, spec, silver_table, batch_id, col)
 
     return total
 
@@ -651,23 +684,18 @@ def _fix_outliers_with_audit(cur, spec: DomainSpec, silver_table: str,
     target_cols = [c for c in numeric_cols if c in spec.columns and c not in skip]
 
     for col in target_cols:
-        cur.execute(
-            f"SELECT percentile_cont(0.25) WITHIN GROUP (ORDER BY {qident(col)}), "
-            f"       percentile_cont(0.75) WITHIN GROUP (ORDER BY {qident(col)}) "
-            f"FROM {qident(silver_table)} "
-            f"WHERE {qident(col)} IS NOT NULL "
-            f"AND _load_batch_id = %s AND _dq_status = 'passed'",
-            [batch_id],
+        percentiles = _get_percentiles(
+            cur, silver_table, col, batch_id, [PERCENTILE_Q1, PERCENTILE_Q3]
         )
-        row = cur.fetchone()
-        if not row or row[0] is None or row[1] is None:
+        q1_val, q3_val = percentiles[0], percentiles[1]
+        if q1_val is None or q3_val is None:
             continue
-        q1, q3 = float(row[0]), float(row[1])
+        q1, q3 = float(q1_val), float(q3_val)
         iqr = q3 - q1
         if iqr <= 0:
             continue
-        lower = q1 - 1.5 * iqr
-        upper = q3 + 1.5 * iqr
+        lower = q1 - IQR_OUTLIER_MULTIPLIER * iqr
+        upper = q3 + IQR_OUTLIER_MULTIPLIER * iqr
 
         # Record corrections for rows outside bounds
         cur.execute(
@@ -713,21 +741,21 @@ def _fix_lead_time_with_audit(cur, spec: DomainSpec, silver_table: str,
     total = 0
     # Global median fallback
     cur.execute(
-        f"SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY lead_time_days) "
+        f"SELECT percentile_cont({PERCENTILE_MEDIAN}) WITHIN GROUP (ORDER BY lead_time_days) "
         f"FROM {qident(silver_table)} "
-        f"WHERE lead_time_days > 0 AND lead_time_days <= 730 "
+        f"WHERE lead_time_days > 0 AND lead_time_days <= %s "
         f"AND _load_batch_id = %s AND _dq_status = 'passed'",
-        [batch_id],
+        [LEAD_TIME_MAX_DAYS, batch_id],
     )
-    global_median = cur.fetchone()[0] or 7
+    global_median = cur.fetchone()[0] or LEAD_TIME_DEFAULT_DAYS
 
     # Find extreme values
     cur.execute(
         f"SELECT {qident(spec.ck_field)}, lead_time_days "
         f"FROM {qident(silver_table)} "
-        f"WHERE (lead_time_days < 0 OR lead_time_days > 730) "
+        f"WHERE (lead_time_days < 0 OR lead_time_days > %s) "
         f"AND _load_batch_id = %s AND _dq_status = 'passed'",
-        [batch_id],
+        [LEAD_TIME_MAX_DAYS, batch_id],
     )
     for row_key, old_val in cur.fetchall():
         _record_correction(
@@ -739,9 +767,9 @@ def _fix_lead_time_with_audit(cur, spec: DomainSpec, silver_table: str,
     # Apply
     cur.execute(
         f"UPDATE {qident(silver_table)} SET lead_time_days = %s "
-        f"WHERE (lead_time_days < 0 OR lead_time_days > 730) "
+        f"WHERE (lead_time_days < 0 OR lead_time_days > %s) "
         f"AND _load_batch_id = %s AND _dq_status = 'passed'",
-        [global_median, batch_id],
+        [global_median, LEAD_TIME_MAX_DAYS, batch_id],
     )
 
     return total
@@ -755,8 +783,8 @@ def promote_to_gold(cur, spec: DomainSpec, batch_id: int,
                     replace_mode: bool = False) -> dict:
     """Promote passed silver rows to gold (production) tables.
 
-    For sales: writes both corrected → fact_sales_monthly and
-    original → fact_sales_monthly_original.
+    For sales: writes both corrected -> fact_sales_monthly and
+    original -> fact_sales_monthly_original.
 
     Returns summary dict.
     """
@@ -771,7 +799,10 @@ def promote_to_gold(cur, spec: DomainSpec, batch_id: int,
 
     # Clear gold table
     if replace_mode and spec.name == "forecast":
-        cur.execute(f"DELETE FROM {qident(gold_table)} WHERE model_id = 'external'")
+        cur.execute(
+            f"DELETE FROM {qident(gold_table)} WHERE model_id = %s",
+            [EXTERNAL_MODEL_ID],
+        )
     else:
         cur.execute(f"TRUNCATE TABLE {qident(gold_table)}")
 

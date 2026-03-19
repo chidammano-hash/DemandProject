@@ -1,4 +1,4 @@
-"""Shared utility helpers for Demand Studio.
+"""Shared utility helpers for Supply Chain Command Center.
 
 Consolidates commonly duplicated helpers:
 - _ts(): Formatted timestamp for console logging

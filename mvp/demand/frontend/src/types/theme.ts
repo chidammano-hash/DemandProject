@@ -99,7 +99,7 @@ export interface ProductTheme {
 }
 
 // Sidebar navigation types
-export type SidebarSection = "command" | "demand" | "supply" | "plan" | "system" | "overview" | "intelligence";
+export type SidebarSection = "tower" | "operations" | "supply" | "demand" | "system" | "command" | "plan" | "overview" | "intelligence";
 
 export interface SidebarItem {
   key: string;

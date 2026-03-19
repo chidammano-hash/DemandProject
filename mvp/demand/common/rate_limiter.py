@@ -1,4 +1,4 @@
-"""API rate limiting for Demand Studio (Spec 08-09).
+"""API rate limiting for Supply Chain Command Center (Spec 08-09).
 
 Sliding-window rate limiter with configurable tiers.
 """

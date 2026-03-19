@@ -226,12 +226,17 @@ def list_domain_records_page(
 # ---------------------------------------------------------------------------
 @router.get("/domains/forecast/models")
 def forecast_models():
-    """Return distinct model_id values from the forecast table."""
+    """Return distinct model_id values from both the forecast table and archive."""
     spec = get_spec_or_404("forecast")
-    sql = f"SELECT DISTINCT model_id FROM {qident(spec.table)} ORDER BY 1"
+    sql = f"""
+        SELECT DISTINCT model_id FROM {qident(spec.table)} WHERE model_id IS NOT NULL
+        UNION
+        SELECT DISTINCT model_id FROM backtest_lag_archive WHERE model_id IS NOT NULL
+        ORDER BY 1
+    """
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql)
-        models = [r[0] for r in cur.fetchall() if r[0] is not None]
+        models = [r[0] for r in cur.fetchall()]
     return {"domain": "forecast", "models": models}
 
 
