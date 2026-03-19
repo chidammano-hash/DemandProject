@@ -20,8 +20,14 @@ import {
   runDQChecks,
   dqKeys,
   STALE_PLATFORM,
+  fetchBatches,
+  fetchCorrections,
+  fetchQuarantine,
+  resolveQuarantine,
+  lineageKeys,
+  STALE_LINEAGE,
 } from "@/api/queries";
-import type { DQDomainScore, DQCheck, DQHistoryEntry, DQFixItem } from "@/api/queries/platform";
+import type { DQDomainScore, DQCheck, DQHistoryEntry, DQFixItem, LoadBatch, DQCorrection, QuarantineEntry } from "@/api/queries/platform";
 import {
   RefreshCw,
   CheckCircle2,
@@ -1110,6 +1116,164 @@ export default function DataQualityTab() {
           ))}
         </div>
       </div>
+
+      {/* ================================================================== */}
+      {/* SECTION 6: Pipeline Lineage (Medallion)                            */}
+      {/* ================================================================== */}
+      <PipelineLineageSection />
+
+      {/* ================================================================== */}
+      {/* SECTION 7: Corrections Audit Log                                   */}
+      {/* ================================================================== */}
+      <CorrectionsSection />
+
+      {/* ================================================================== */}
+      {/* SECTION 8: Quarantine Queue                                        */}
+      {/* ================================================================== */}
+      <QuarantineSection />
+    </div>
+  );
+}
+
+/* ========================================================================== */
+/*  Section 6: Pipeline Lineage                                               */
+/* ========================================================================== */
+function PipelineLineageSection() {
+  const { data } = useQuery({
+    queryKey: lineageKeys.batches,
+    queryFn: () => fetchBatches(undefined, undefined, 20),
+    staleTime: STALE_LINEAGE,
+  });
+  const batches: LoadBatch[] = data?.batches ?? [];
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <h3 className="mb-3 text-sm font-medium text-foreground">Pipeline Lineage</h3>
+      {batches.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No medallion batches yet. Run <code className="rounded bg-muted px-1">make medallion-load-all</code> to ingest data.</p>
+      ) : (
+        <div className="space-y-2">
+          {batches.map((b) => (
+            <div key={b.batch_id} className="flex items-center justify-between rounded-md border border-border/40 px-3 py-2 text-sm">
+              <div className="flex items-center gap-2">
+                <span className={`inline-block h-2 w-2 rounded-full ${b.status === "completed" ? "bg-emerald-500" : b.status === "failed" ? "bg-red-500" : "bg-amber-500"}`} />
+                <span className="font-mono text-xs">{b.domain}</span>
+                <span className="text-xs text-muted-foreground">Batch #{b.batch_id}</span>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span>{b.row_count_in?.toLocaleString() ?? "—"} in</span>
+                <span>{b.row_count_out?.toLocaleString() ?? "—"} out</span>
+                {(b.row_count_quarantined ?? 0) > 0 && (
+                  <span className="text-amber-600">{b.row_count_quarantined} quarantined</span>
+                )}
+                <span>{b.started_at ? new Date(b.started_at).toLocaleString() : "—"}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ========================================================================== */
+/*  Section 7: Corrections Audit Log                                          */
+/* ========================================================================== */
+function CorrectionsSection() {
+  const { data } = useQuery({
+    queryKey: lineageKeys.corrections,
+    queryFn: () => fetchCorrections(undefined, undefined, undefined, 50),
+    staleTime: STALE_LINEAGE,
+  });
+  const corrections: DQCorrection[] = data?.corrections ?? [];
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <h3 className="mb-3 text-sm font-medium text-foreground">Corrections Audit Log</h3>
+      {corrections.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No DQ corrections recorded. Corrections appear after running <code className="rounded bg-muted px-1">make medallion-load-sales-fix</code>.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border text-left text-muted-foreground">
+                <th className="pb-2 pr-3">Domain</th>
+                <th className="pb-2 pr-3">Column</th>
+                <th className="pb-2 pr-3">Fix Type</th>
+                <th className="pb-2 pr-3">Old</th>
+                <th className="pb-2 pr-3">New</th>
+                <th className="pb-2 pr-3">Applied</th>
+              </tr>
+            </thead>
+            <tbody>
+              {corrections.map((c) => (
+                <tr key={c.correction_id} className="border-b border-border/30">
+                  <td className="py-1.5 pr-3 font-mono">{c.domain}</td>
+                  <td className="py-1.5 pr-3">{c.column_name}</td>
+                  <td className="py-1.5 pr-3">
+                    <span className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">{c.fix_type}</span>
+                  </td>
+                  <td className="py-1.5 pr-3 text-red-600 dark:text-red-400">{c.old_value ?? "NULL"}</td>
+                  <td className="py-1.5 pr-3 text-emerald-600 dark:text-emerald-400">{c.new_value ?? "NULL"}</td>
+                  <td className="py-1.5 pr-3 text-muted-foreground">{c.applied_at ? new Date(c.applied_at).toLocaleString() : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ========================================================================== */
+/*  Section 8: Quarantine Queue                                               */
+/* ========================================================================== */
+function QuarantineSection() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: lineageKeys.quarantine,
+    queryFn: () => fetchQuarantine(undefined, false, 50),
+    staleTime: STALE_LINEAGE,
+  });
+  const items: QuarantineEntry[] = data?.quarantine ?? [];
+
+  const resolveMut = useMutation({
+    mutationFn: (id: number) => resolveQuarantine(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: lineageKeys.quarantine }),
+  });
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <h3 className="mb-3 text-sm font-medium text-foreground">Quarantine Queue</h3>
+      {items.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No quarantined rows. Rows failing DQ gate checks appear here.</p>
+      ) : (
+        <div className="space-y-2">
+          {items.map((q) => (
+            <div key={q.quarantine_id} className="rounded-md border border-amber-200 bg-amber-50/50 px-3 py-2 dark:border-amber-800/40 dark:bg-amber-950/20">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                  <span className="font-mono text-xs">{q.domain}</span>
+                  <span className="text-xs text-muted-foreground">#{q.quarantine_id}</span>
+                </div>
+                <button
+                  onClick={() => resolveMut.mutate(q.quarantine_id)}
+                  disabled={resolveMut.isPending}
+                  className="rounded px-2 py-0.5 text-xs text-muted-foreground hover:bg-background"
+                >
+                  Dismiss
+                </button>
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">{q.rejection_reason}</span>
+                {" — Batch #{q.load_batch_id}"}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

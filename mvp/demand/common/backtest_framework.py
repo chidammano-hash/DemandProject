@@ -85,9 +85,29 @@ def load_backtest_data(
     t1 = time.time()
     planning_cutoff = get_planning_date().replace(day=1)
     with psycopg.connect(**db) as conn:
-        sales_df = pd.read_sql("""
+        # Prefer uncorrected sales for accuracy (medallion dual-track)
+        sales_table = "fact_sales_monthly"
+        try:
+            _check = pd.read_sql(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_name = 'fact_sales_monthly_original' "
+                "AND table_schema = 'public' LIMIT 1",
+                conn,
+            )
+            if not _check.empty:
+                # Verify the table has data
+                _cnt = pd.read_sql(
+                    "SELECT count(*) AS n FROM fact_sales_monthly_original LIMIT 1",
+                    conn,
+                )
+                if _cnt.iloc[0]["n"] > 0:
+                    sales_table = "fact_sales_monthly_original"
+        except Exception:
+            pass  # fallback to corrected table
+
+        sales_df = pd.read_sql(f"""
             SELECT d.dfu_ck, s.dmdunit, s.dmdgroup, s.loc, s.startdate, s.qty
-            FROM fact_sales_monthly s
+            FROM {sales_table} s
             INNER JOIN dim_dfu d
                 ON d.dmdunit = s.dmdunit AND d.dmdgroup = s.dmdgroup AND d.loc = s.loc
             WHERE s.qty IS NOT NULL

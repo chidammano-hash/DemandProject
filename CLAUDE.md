@@ -125,6 +125,7 @@
 | `mvp/demand/tests/api/conftest.py` | API test fixtures: `make_pool(fetchall_return, fetchone_return)` factory + `mock_pool` fixture |
 | `mvp/demand/frontend/src/**/__tests__/` | Frontend test suites (Vitest + RTL) |
 | `docs/architecture-diagram.md` | Full-stack architecture diagram (layers, data flow, ML pipeline) |
+| `mvp/demand/docs/DATA_FLOW.md` | Complete data flow reference: input files, pipeline scripts, DB tables, dependency graph, API→UI mapping (Mermaid diagrams) |
 | `docs/design-specs/` | Feature specs organized in 5 functional subfolders: 01-platform-infrastructure/, 02-forecasting-models/, 03-clustering-seasonality/, 04-inventory-planning/, 05-ui-automation/ |
 | `mvp/demand/api/core.py` | Shared API utilities: connection pool, OpenAI client, SQL helpers used by router modules |
 | `mvp/demand/api/auth.py` | Optional API key auth (`require_api_key` dependency; disabled when `API_KEY` env var unset) |
@@ -267,6 +268,16 @@
 | `mvp/demand/api/routers/webhooks.py` | Webhook registration + delivery endpoints (08-10) |
 | `mvp/demand/common/cache.py` | Caching utilities (08-03) |
 | `mvp/demand/common/dq_engine.py` | Data quality engine: 12 check types (freshness, completeness, uniqueness, row_count, range, volume_delta, referential_integrity, statistical_outlier, distribution_drift, temporal_gaps, cross_column, cardinality_anomaly), domain scoring, pipeline health; freshness uses `get_planning_date()` (08-01) |
+| `mvp/demand/common/medallion.py` | Medallion pipeline core: bronze ingest, silver promotion (type cast + dedup), DQ gate checks, auto-fix with audit trail, gold promotion (sales dual-track), row lineage, batch pruning |
+| `mvp/demand/config/medallion_config.yaml` | Medallion pipeline config: layer retention (bronze 90d, silver 30d), promotion gates (blocking/advisory checks, min_pass_rate 95%), auto-fix per domain, sales dual-track |
+| `mvp/demand/sql/080_create_medallion_infrastructure.sql` | Medallion infrastructure: `audit_load_batch` table |
+| `mvp/demand/sql/081_create_bronze_tables.sql` | Bronze layer: 8 immutable raw data tables (all TEXT columns) |
+| `mvp/demand/sql/082_create_silver_tables.sql` | Silver layer: 8 typed validated tables with DQ status tracking |
+| `mvp/demand/sql/083_create_silver_quarantine.sql` | Silver quarantine: rejected rows with reason + raw JSON |
+| `mvp/demand/sql/084_create_dq_corrections_audit.sql` | DQ corrections audit trail: old/new values, fix type, strategy |
+| `mvp/demand/sql/085_create_row_lineage.sql` | Row lineage: traces each row from bronze → silver → gold |
+| `mvp/demand/sql/086_create_fact_sales_original.sql` | Uncorrected sales for accuracy: identical to `fact_sales_monthly`, never receives DQ fixes |
+| `mvp/demand/api/routers/medallion.py` | Medallion lineage endpoints: batches list/detail, row lineage, corrections, quarantine list/resolve (7 endpoints) |
 | `mvp/demand/scripts/fix_dq_issues.py` | Statistical DQ auto-fix: 5 strategies (range clamping, lead time median, NULL imputation, orphan reporting, statistical Winsorisation), dry-run/apply modes, CLI + API (08-01) |
 | `mvp/demand/common/forecast_ci.py` | Forecast confidence interval computation |
 | `mvp/demand/common/notification_engine.py` | Notification dispatch engine (08-04) |

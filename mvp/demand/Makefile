@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all
+.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all medallion-schema medallion-load-sales medallion-load-sales-fix medallion-load-all medallion-load-all-fix medallion-prune medallion-all
 
 help:
 	@echo "Targets:"
@@ -941,3 +941,38 @@ dq-run:
 	$(UV) python -c "from common.dq_engine import DQEngine; e=DQEngine(); results=e.run_all_checks(); print(f'Ran {len(results)} checks')"
 
 dq-all: dq-schema dq-populate dq-run
+
+# ---------------------------------------------------------------------------
+# Medallion Pipeline (Bronze → Silver → Gold)
+# ---------------------------------------------------------------------------
+medallion-schema:
+	@echo "Applying medallion DDL (080-086) ..."
+	cat sql/080_create_medallion_infrastructure.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+	cat sql/081_create_bronze_tables.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+	cat sql/082_create_silver_tables.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+	cat sql/083_create_silver_quarantine.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+	cat sql/084_create_dq_corrections_audit.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+	cat sql/085_create_row_lineage.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+	cat sql/086_create_fact_sales_original.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+	@echo "Medallion schema applied (7 DDL files)"
+
+medallion-load-sales:
+	$(UV) python scripts/load_dataset_postgres.py --dataset sales --medallion
+
+medallion-load-sales-fix:
+	$(UV) python scripts/load_dataset_postgres.py --dataset sales --medallion --apply-fixes
+
+medallion-load-all:
+	@for ds in item location customer time dfu sales forecast inventory; do \
+		$(UV) python scripts/load_dataset_postgres.py --dataset $$ds --medallion; \
+	done
+
+medallion-load-all-fix:
+	@for ds in item location customer time dfu sales forecast inventory; do \
+		$(UV) python scripts/load_dataset_postgres.py --dataset $$ds --medallion --apply-fixes; \
+	done
+
+medallion-prune:
+	$(UV) python -c "import psycopg; from common.db import get_db_params; from common.medallion import prune_old_batches; conn=psycopg.connect(**get_db_params()); cur=conn.cursor(); r=prune_old_batches(cur); conn.commit(); conn.close(); print(f'Pruned: bronze={r[\"bronze_deleted\"]}, silver={r[\"silver_deleted\"]}')"
+
+medallion-all: medallion-schema medallion-load-all-fix refresh-agg

@@ -52,6 +52,17 @@ vi.mock("@/api/queries", () => ({
     fixPreview: ["dq", "fix", "preview"],
   },
   STALE_PLATFORM: 300000,
+  // Medallion lineage mocks
+  fetchBatches: vi.fn().mockResolvedValue({ batches: [], total: 0 }),
+  fetchCorrections: vi.fn().mockResolvedValue({ corrections: [], total: 0 }),
+  fetchQuarantine: vi.fn().mockResolvedValue({ quarantine: [], total: 0 }),
+  resolveQuarantine: vi.fn().mockResolvedValue({ quarantine_id: 1, resolved: true }),
+  lineageKeys: {
+    batches: ["lineage", "batches"],
+    corrections: ["lineage", "corrections"],
+    quarantine: ["lineage", "quarantine"],
+  },
+  STALE_LINEAGE: 30000,
 }));
 
 beforeEach(() => {
@@ -535,5 +546,86 @@ describe("DataQualityTab", () => {
       const rejectedLabels = screen.getAllByText("Rejected");
       expect(rejectedLabels.length).toBe(3);
     });
+  });
+});
+
+/* ========================================================================== */
+/*  Medallion sections — Pipeline Lineage, Corrections, Quarantine            */
+/* ========================================================================== */
+
+describe("DataQualityTab — Medallion Sections", () => {
+  it("renders empty pipeline lineage section", async () => {
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(<TestQueryWrapper><DataQualityTab /></TestQueryWrapper>);
+    await waitFor(() => {
+      expect(screen.getByText("Pipeline Lineage")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/No medallion batches yet/)).toBeInTheDocument();
+  });
+
+  it("renders batches when available", async () => {
+    const queries = await import("@/api/queries");
+    (queries.fetchBatches as ReturnType<typeof vi.fn>).mockResolvedValue({
+      batches: [
+        { batch_id: 1, domain: "sales", layer: "bronze", source_file: "sales_clean.csv", row_count_in: 1000, row_count_out: 950, row_count_quarantined: 50, status: "completed", started_at: "2026-03-17T12:00:00", completed_at: "2026-03-17T12:01:00", error_message: null },
+      ],
+      total: 1,
+    });
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(<TestQueryWrapper><DataQualityTab /></TestQueryWrapper>);
+    await waitFor(() => {
+      expect(screen.getByText("Batch #1")).toBeInTheDocument();
+    });
+    expect(screen.getByText("1,000 in")).toBeInTheDocument();
+    expect(screen.getByText("950 out")).toBeInTheDocument();
+  });
+
+  it("renders empty corrections section", async () => {
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(<TestQueryWrapper><DataQualityTab /></TestQueryWrapper>);
+    await waitFor(() => {
+      expect(screen.getByText("Corrections Audit Log")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/No DQ corrections recorded/)).toBeInTheDocument();
+  });
+
+  it("renders corrections when available", async () => {
+    const queries = await import("@/api/queries");
+    (queries.fetchCorrections as ReturnType<typeof vi.fn>).mockResolvedValue({
+      corrections: [
+        { correction_id: 1, domain: "sales", table_name: "silver_sales", row_key: "k1", column_name: "qty", old_value: "100", new_value: "50", fix_type: "clamp", fix_strategy: "range", applied_by: "system", applied_at: "2026-03-17T12:00:00", load_batch_id: 42 },
+      ],
+      total: 1,
+    });
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(<TestQueryWrapper><DataQualityTab /></TestQueryWrapper>);
+    await waitFor(() => {
+      expect(screen.getByText("clamp")).toBeInTheDocument();
+    });
+  });
+
+  it("renders empty quarantine section", async () => {
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(<TestQueryWrapper><DataQualityTab /></TestQueryWrapper>);
+    await waitFor(() => {
+      expect(screen.getByText("Quarantine Queue")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/No quarantined rows/)).toBeInTheDocument();
+  });
+
+  it("renders quarantine items with dismiss button", async () => {
+    const queries = await import("@/api/queries");
+    (queries.fetchQuarantine as ReturnType<typeof vi.fn>).mockResolvedValue({
+      quarantine: [
+        { quarantine_id: 1, domain: "sales", bronze_id: 100, load_batch_id: 42, rejection_reason: "null_pk", rejection_details: null, raw_row: null, resolved: false, resolved_by: null, created_at: "2026-03-17T12:00:00" },
+      ],
+      total: 1,
+    });
+    const { default: DataQualityTab } = await import("../DataQualityTab");
+    render(<TestQueryWrapper><DataQualityTab /></TestQueryWrapper>);
+    await waitFor(() => {
+      expect(screen.getByText("null_pk")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Dismiss")).toBeInTheDocument();
   });
 });

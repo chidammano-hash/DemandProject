@@ -1,0 +1,65 @@
+# Medallion Pipeline Configuration
+# Controls bronze → silver → gold data flow, DQ gating, and auto-fix behavior.
+
+layers:
+  bronze:
+    retention_days: 90       # Keep bronze data for 90 days; prune older batches
+  silver:
+    retention_days: 30       # Keep silver data for 30 days
+
+# Promotion gate: checks that must pass before silver → gold promotion
+promotion_gates:
+  # Blocking checks: rows that fail are quarantined (not promoted)
+  blocking_checks:
+    - completeness           # NULL primary key columns → quarantine
+    - range                  # Out-of-bound values → quarantine or fix
+    - cross_column           # Logical inconsistencies → quarantine
+    - uniqueness             # Duplicate business keys → keep latest only
+
+  # Advisory checks: warn but do not block promotion
+  advisory_checks:
+    - statistical_outlier
+    - distribution_drift
+    - temporal_gaps
+    - cardinality_anomaly
+    - volume_delta
+    - freshness
+
+  # Minimum % of silver rows that must pass blocking checks to proceed
+  min_pass_rate: 95.0
+
+# Per-domain auto-fix configuration
+auto_fix:
+  sales:
+    enabled: true
+    strategies: [range, lead_time, outliers]
+    preserve_original: true    # Keep uncorrected copy for accuracy
+  inventory:
+    enabled: true
+    strategies: [range, lead_time, completeness, outliers]
+    preserve_original: false
+  forecast:
+    enabled: false             # Never auto-fix forecast data
+    preserve_original: false
+  item:
+    enabled: true
+    strategies: [completeness]
+    preserve_original: false
+  location:
+    enabled: false
+    preserve_original: false
+  customer:
+    enabled: false
+    preserve_original: false
+  dfu:
+    enabled: false
+    preserve_original: false
+  time:
+    enabled: false
+    preserve_original: false
+
+# Sales dual-track: which table do reads use?
+sales_dual_track:
+  accuracy_source: fact_sales_monthly_original
+  backtest_source: fact_sales_monthly_original
+  operational_source: fact_sales_monthly

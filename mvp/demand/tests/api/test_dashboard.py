@@ -585,7 +585,7 @@ async def test_dashboard_kpis_uses_model_id_not_lag(mock_pool):
 
 @pytest.mark.asyncio
 async def test_dashboard_trend_uses_model_id_not_lag(mock_pool):
-    """GET /dashboard/trend filters by model_id param (default 'champion'), not lag=0."""
+    """GET /dashboard/trend filters by model_id param (default 'external'), not lag=0."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = []
     with patch("api.core._get_pool", return_value=pool):
@@ -597,9 +597,9 @@ async def test_dashboard_trend_uses_model_id_not_lag(mock_pool):
     sql_arg = cursor.execute.call_args[0][0]
     assert "model_id = %s" in sql_arg
     assert "lag = 0" not in sql_arg
-    # Default model param is 'champion'
+    # Default model param is 'external'
     params = cursor.execute.call_args[0][1]
-    assert params[0] == "champion"
+    assert params[0] == "external"
 
 
 @pytest.mark.asyncio

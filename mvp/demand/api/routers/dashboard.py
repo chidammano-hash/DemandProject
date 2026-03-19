@@ -612,7 +612,7 @@ def dashboard_trend(
     item: str = Query(default=""),
     location: str = Query(default=""),
     cluster_assignment: str = Query(default=""),
-    model: str = Query(default="champion"),
+    model: str = Query(default="external"),
 ):
     """Monthly aggregate forecast vs actual totals for trend chart."""
     set_cache(response, max_age=120)

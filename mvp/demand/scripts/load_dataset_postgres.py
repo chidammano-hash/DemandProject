@@ -221,6 +221,119 @@ def _load_forecast_archive(cur, stg_table: str, stg_alias: str) -> int:
     return cur.rowcount
 
 
+def _run_medallion_pipeline(spec: DomainSpec, csv_path: Path,
+                            apply_fixes: bool = False) -> None:
+    """Run the full medallion pipeline: Bronze → Silver → Gold."""
+    from common.medallion import (
+        create_batch, complete_batch, fail_batch, file_hash,
+        ingest_bronze, promote_to_silver, run_silver_dq_gate,
+        apply_silver_fixes, promote_to_gold, write_lineage,
+    )
+
+    t_total = time.time()
+    print(f"\n{'='*60}")
+    print(f"Medallion pipeline: {spec.name} → bronze → silver → gold")
+    print(f"CSV: {csv_path.name}")
+    if apply_fixes:
+        print("DQ auto-fixes: ENABLED")
+    print(f"{'='*60}\n")
+
+    if not csv_path.exists():
+        print(f"  SKIPPED — {csv_path.name} not found.")
+        print(f"  Run 'make normalize-all' first to generate clean CSVs.\n")
+        return
+
+    db = get_db_params()
+    src_hash = file_hash(csv_path)
+
+    with psycopg.connect(**db) as conn, conn.cursor() as cur:
+        batch_id = create_batch(
+            cur, spec.name, source_file=csv_path.name,
+            source_hash=src_hash,
+        )
+        conn.commit()
+        print(f"[1/6] Created batch {batch_id}\n")
+
+        try:
+            # Phase 1: Bronze ingest
+            print(f"[2/6] Bronze ingest: COPY → bronze_{spec.name} ...", flush=True)
+            t0 = time.time()
+            bronze_count = ingest_bronze(cur, spec, csv_path, batch_id)
+            conn.commit()
+            print(f"       {bronze_count:,} rows ingested ({_elapsed(t0)})\n", flush=True)
+
+            # Phase 2: Silver promotion (type cast + dedup)
+            print(f"[3/6] Silver promotion: bronze → silver_{spec.name} ...", flush=True)
+            t0 = time.time()
+            silver_count, quarantine_count = promote_to_silver(cur, spec, batch_id)
+            conn.commit()
+            print(f"       {silver_count:,} rows promoted ({_elapsed(t0)})\n", flush=True)
+
+            # Phase 3: DQ gate checks
+            print(f"[4/6] DQ gate checks ...", flush=True)
+            t0 = time.time()
+            gate = run_silver_dq_gate(cur, spec, batch_id)
+            conn.commit()
+            print(f"       Pass rate: {gate['pass_rate']}% "
+                  f"({gate.get('passed_count', 0):,} passed, "
+                  f"{gate['quarantined']:,} quarantined) ({_elapsed(t0)})")
+            if not gate["passed"]:
+                print(f"       ⚠ Below min pass rate {gate['min_pass_rate']}%")
+            print(flush=True)
+
+            # Phase 4: Auto-fixes (optional)
+            fix_result = {"fixes_applied": 0}
+            if apply_fixes:
+                print(f"[4b/6] Applying DQ auto-fixes ...", flush=True)
+                t0 = time.time()
+                fix_result = apply_silver_fixes(cur, spec, batch_id)
+                conn.commit()
+                print(f"       {fix_result['fixes_applied']} fixes applied ({_elapsed(t0)})\n",
+                      flush=True)
+
+            # Phase 5: Gold promotion
+            print(f"[5/6] Gold promotion: silver → {spec.table} ...", flush=True)
+            t0 = time.time()
+            gold = promote_to_gold(cur, spec, batch_id)
+            conn.commit()
+            print(f"       {gold['gold_count']:,} rows → {gold['gold_table']} ({_elapsed(t0)})")
+            if gold.get("original_count"):
+                print(f"       {gold['original_count']:,} rows → fact_sales_monthly_original")
+            print(flush=True)
+
+            # Phase 6: Lineage
+            print(f"[6/6] Writing lineage records ...", flush=True)
+            t0 = time.time()
+            lineage_count = write_lineage(cur, spec, batch_id)
+            conn.commit()
+            print(f"       {lineage_count:,} lineage rows ({_elapsed(t0)})\n", flush=True)
+
+            # Complete batch
+            complete_batch(
+                cur, batch_id,
+                row_count_in=bronze_count,
+                row_count_out=gold["gold_count"],
+                quarantined=gate["quarantined"],
+            )
+            conn.commit()
+
+        except Exception as exc:
+            fail_batch(cur, batch_id, str(exc))
+            conn.commit()
+            raise
+
+    total = _elapsed(t_total)
+    print(f"{'='*60}")
+    print(f"Medallion load complete: {spec.name}")
+    print(f"  Bronze: {bronze_count:,} rows")
+    print(f"  Silver: {silver_count:,} rows (gate: {gate['pass_rate']}%)")
+    print(f"  Gold:   {gold['gold_count']:,} rows")
+    if fix_result["fixes_applied"]:
+        print(f"  Fixes:  {fix_result['fixes_applied']}")
+    print(f"  Time:   {total}")
+    print(f"{'='*60}\n")
+
+
 def main() -> None:
     allowed = ", ".join(sorted(DOMAIN_SPECS))
     parser = argparse.ArgumentParser(description="Load normalized dataset CSV into Postgres")
@@ -236,12 +349,18 @@ def main() -> None:
     parser.add_argument("--skip-archive", action="store_true",
                         help="(forecast only) Skip loading all lags into backtest_lag_archive. "
                              "Loads only the execution-lag row into the main table.")
+    parser.add_argument("--medallion", action="store_true",
+                        help="Use medallion pipeline (Bronze → Silver → Gold) with DQ gating")
+    parser.add_argument("--apply-fixes", action="store_true",
+                        help="(medallion only) Apply auto-fix strategies during silver DQ")
     args = parser.parse_args()
 
     no_dedup = args.no_dedup or args.fast
     fast_mode = args.fast
     replace_mode = args.replace
     skip_archive = args.skip_archive
+    medallion_mode = args.medallion
+    apply_fixes = args.apply_fixes
 
     spec = get_spec(args.dataset)
 
@@ -251,6 +370,18 @@ def main() -> None:
         parser.error("--skip-archive is only supported for --dataset forecast")
     if replace_mode and fast_mode:
         parser.error("--replace and --fast are mutually exclusive")
+    if apply_fixes and not medallion_mode:
+        parser.error("--apply-fixes requires --medallion")
+    if medallion_mode and (fast_mode or replace_mode or skip_archive):
+        parser.error("--medallion cannot be combined with --fast, --replace, or --skip-archive")
+
+    # Medallion pipeline: use separate code path
+    if medallion_mode:
+        root = Path(__file__).resolve().parents[1]
+        load_dotenv(root / ".env")
+        csv_path = root / "data" / spec.clean_file
+        _run_medallion_pipeline(spec, csv_path, apply_fixes=apply_fixes)
+        return
 
     root = Path(__file__).resolve().parents[1]
     load_dotenv(root / ".env")

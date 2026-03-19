@@ -80,6 +80,7 @@ from api.routers import inv_planning_rebalancing  # noqa: E402
 from api.routers import auth_router       # noqa: E402  # 08-02 RBAC
 from api.routers import users             # noqa: E402  # 08-02 User mgmt
 from api.routers import data_quality      # noqa: E402  # 08-01 DQ
+from api.routers import medallion         # noqa: E402  # Medallion lineage
 from api.routers import notifications     # noqa: E402  # 08-04 Alerts
 from api.routers import collaboration     # noqa: E402  # 08-05 Annotations
 from api.routers import external_signals  # noqa: E402  # 08-06 Demand signals
@@ -137,6 +138,7 @@ app.include_router(shap.router)
 app.include_router(auth_router.router)
 app.include_router(users.router)
 app.include_router(data_quality.router)
+app.include_router(medallion.router)
 app.include_router(notifications.router)
 app.include_router(collaboration.router)
 app.include_router(external_signals.router)

@@ -74,6 +74,79 @@ export const applyDQFixes = async (fixIds: number[]): Promise<DQFixApplyResult> 
   fetchJson("/data-quality/fix/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fix_ids: fixIds }) });
 
 // ---------------------------------------------------------------------------
+// Medallion Pipeline Lineage
+// ---------------------------------------------------------------------------
+export interface LoadBatch {
+  batch_id: number; domain: string; layer: string;
+  source_file: string | null; source_hash: string | null;
+  row_count_in: number | null; row_count_out: number | null;
+  row_count_quarantined: number | null;
+  status: string; started_at: string | null; completed_at: string | null;
+  error_message: string | null;
+  layer_counts?: Record<string, number>;
+}
+export interface DQCorrection {
+  correction_id: number; domain: string; table_name: string;
+  row_key: string; column_name: string;
+  old_value: string | null; new_value: string | null;
+  fix_type: string; fix_strategy: string;
+  applied_by: string; applied_at: string | null;
+  load_batch_id: number;
+}
+export interface QuarantineEntry {
+  quarantine_id: number; domain: string;
+  bronze_id: number; load_batch_id: number;
+  rejection_reason: string;
+  rejection_details: unknown; raw_row: unknown;
+  resolved: boolean; resolved_by: string | null;
+  created_at: string | null;
+}
+
+export const lineageKeys = {
+  batches: ["lineage", "batches"],
+  batchDetail: (id: number) => ["lineage", "batch", id],
+  row: (domain: string, key: string) => ["lineage", "row", domain, key],
+  corrections: ["lineage", "corrections"],
+  quarantine: ["lineage", "quarantine"],
+} as const;
+
+export const STALE_LINEAGE = 30_000;
+
+export const fetchBatches = async (domain?: string, status?: string, limit = 50): Promise<{ batches: LoadBatch[]; total: number }> => {
+  const params = new URLSearchParams();
+  if (domain) params.set("domain", domain);
+  if (status) params.set("status", status);
+  params.set("limit", String(limit));
+  return fetchJson(`/data-quality/lineage/batches?${params}`);
+};
+
+export const fetchBatchDetail = async (batchId: number): Promise<LoadBatch> =>
+  fetchJson(`/data-quality/lineage/batches/${batchId}`);
+
+export const fetchRowLineage = async (domain: string, businessKey: string) =>
+  fetchJson(`/data-quality/lineage/row/${domain}/${encodeURIComponent(businessKey)}`);
+
+export const fetchCorrections = async (domain?: string, fixType?: string, batchId?: number, limit = 50): Promise<{ corrections: DQCorrection[]; total: number }> => {
+  const params = new URLSearchParams();
+  if (domain) params.set("domain", domain);
+  if (fixType) params.set("fix_type", fixType);
+  if (batchId) params.set("batch_id", String(batchId));
+  params.set("limit", String(limit));
+  return fetchJson(`/data-quality/lineage/corrections?${params}`);
+};
+
+export const fetchQuarantine = async (domain?: string, resolved?: boolean, limit = 50): Promise<{ quarantine: QuarantineEntry[]; total: number }> => {
+  const params = new URLSearchParams();
+  if (domain) params.set("domain", domain);
+  if (resolved !== undefined) params.set("resolved", String(resolved));
+  params.set("limit", String(limit));
+  return fetchJson(`/data-quality/quarantine?${params}`);
+};
+
+export const resolveQuarantine = async (quarantineId: number): Promise<{ quarantine_id: number; resolved: boolean }> =>
+  fetchJson(`/data-quality/quarantine/${quarantineId}/resolve`, { method: "POST" });
+
+// ---------------------------------------------------------------------------
 // Notifications (08-04)
 // ---------------------------------------------------------------------------
 export const notifKeys = { history: ["notifications", "history"], channels: ["notifications", "channels"] } as const;
