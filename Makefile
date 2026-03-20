@@ -506,7 +506,7 @@ tune-all: tune-lgbm tune-catboost tune-xgboost
 
 commit:
 	@if [ -z "$(MSG)" ]; then echo "Usage: make commit MSG=\"your message\""; exit 1; fi
-	git add -A && (git diff --staged --quiet || git commit -m "$(MSG)") && git push
+	git add -A && (git diff --staged --quiet || git commit -m "$(MSG)") && git push -u origin HEAD
 
 test:
 	$(UV) pytest tests/ -v --tb=short
