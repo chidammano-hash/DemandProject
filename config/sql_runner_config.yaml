@@ -1,0 +1,3 @@
+max_rows: 1000
+statement_timeout_ms: 30000
+enabled: true

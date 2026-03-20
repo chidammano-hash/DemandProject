@@ -4,7 +4,7 @@
 
 **Supply Chain Command Center** is a unified supply chain planning and execution platform. It ingests sales, forecast, and inventory data, stores it in PostgreSQL, and serves a React UI for interactive analytics.
 
-**All code lives at the project root.** Backend (`api/`, `common/`, `scripts/`), frontend (`frontend/`), config (`config/`), SQL (`sql/`), and tests (`tests/`) are top-level directories.
+**All code lives at the project root** with domain-based organization inside each top-level directory.
 
 ---
 
@@ -26,29 +26,57 @@
 | Python packaging | uv |
 | Build | Make |
 | Containers | Docker Compose |
+| Deployment | Docker (API + Nginx frontend) |
 
 ---
 
-## Key Entry Points
+## Project Structure
 
-| Layer | File | Purpose |
-|---|---|---|
-| **API** | `api/main.py` | FastAPI app — mounts 56 routers, no inline routes |
-| **API** | `api/routers/` | 58 router files (56 mounted; `domains.py` mounted last — catch-all) |
-| **API** | `api/core.py` | Shared pool, OpenAI client, SQL helpers |
-| **Frontend** | `frontend/src/App.tsx` | React shell — sidebar, lazy-loaded tabs |
-| **Frontend** | `frontend/src/api/queries/` | All API fetch functions (24 domain modules) |
-| **Frontend** | `frontend/src/tabs/` | 21 tab components + sub-panel directories |
-| **Common** | `common/domain_specs.py` | Central config: all 8 datasets with columns, types, keys |
-| **Common** | `common/backtest_framework.py` | Shared backtest orchestrator (`run_tree_backtest()`) |
-| **Common** | `common/sql_helpers.py` | Shared SQL utilities: `qident()`, `typed_expr()`, `business_key_expr()`, `_elapsed()`, constants (`IQR_OUTLIER_MULTIPLIER`, `LEAD_TIME_MAX_DAYS`, `HASH_CHUNK_SIZE`, `EXTERNAL_MODEL_ID`, `MV_REFRESH_ARCHIVE`) |
-| **Common** | `common/db.py` | Canonical DB connection params |
-| **Common** | `common/utils.py` | `_ts()`, `load_config()`, `reset_config()` |
-| **Common** | `common/planning_date.py` | `get_planning_date()` — replaces `date.today()` everywhere |
-| **Config** | `config/algorithm_config.yaml` | Per-algorithm backtest options (cluster_strategy, SHAP, recursive, etc.) |
-| **Config** | `config/` | All YAML configs — one per module/pipeline |
-| **SQL** | `sql/` | All DDL: tables, indexes, materialized views |
-| **Scripts** | `scripts/` | ETL, ML pipelines, computation scripts |
+```
+api/                         # FastAPI backend
+├── main.py                  # App entry point — mounts 56 routers
+├── core.py                  # SQL helpers, filtering, pagination
+├── pool.py                  # Connection pool management
+├── llm.py                   # OpenAI client management
+└── routers/
+    ├── inventory/           # 22 routers — inv_planning_*, inventory, supply, fill_rate
+    ├── forecasting/         # 8 routers — accuracy, shap, competition, blended, fva
+    ├── operations/          # 10 routers — sop, control_tower, storyboard, events
+    ├── platform/            # 10 routers — auth, users, config, notifications, webhooks
+    ├── intelligence/        # 4 routers — ai_planner, chat, intel, analysis
+    ├── core/                # 2 routers — dashboard, jobs
+    └── domains.py           # Catch-all generic domain endpoint (mounted LAST)
+
+common/                      # Shared Python modules (backward-compat shims at root)
+├── core/                    # db, utils, planning_date, constants, sql_helpers, domain_specs
+├── ml/                      # backtest_framework, champion_strategies, tuning, shap, features
+├── engines/                 # dq_engine, exception_engine, medallion
+├── services/                # job_registry, job_scheduler, notifications, webhooks, cache
+├── ai/                      # ai_planner
+└── auth.py                  # Authentication helpers
+
+scripts/                     # Pipeline scripts
+├── etl/                     # normalize, load (5 scripts)
+├── ml/                      # backtest, clustering, tuning, champion (16 scripts)
+├── forecasting/             # production, quantile, blended, consensus (7 scripts)
+├── inventory/               # safety stock, eoq, replenishment, rebalancing (18 scripts)
+├── ops/                     # sop, health, dq fixes (7 scripts)
+└── ai/                      # insights, embeddings (2 scripts)
+
+frontend/                    # React + Vite + TypeScript
+├── src/tabs/                # 21 tab components + sub-panels
+├── src/api/queries/         # 24 domain API modules
+├── src/components/          # Shared UI components
+├── Dockerfile               # Nginx multi-stage build
+└── nginx.conf               # SPA fallback + API reverse proxy
+
+config/                      # 41 YAML config files (one per module/pipeline)
+sql/                         # 79 DDL migration files
+tests/                       # 2213 backend tests (api/ + unit/)
+docs/                        # ARCHITECTURE, PLATFORM_GUIDE, RUNBOOK, specs/
+data/                        # Generated ML artifacts + input CSVs (gitignored)
+archive/                     # Archived reference materials
+```
 
 All paths relative to the project root. Use Glob/Grep to discover specific files.
 
@@ -163,7 +191,7 @@ These are hard constraints that cause bugs or test failures if violated.
 
 ### Frontend Patterns
 
-- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`.
+- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`.
 - **Theme context, not props**: Use `useThemeContext()` or `useChartColors()` — never pass `theme` as a prop from `App.tsx`.
 - **Test wrappers**: Wrap components with `TestQueryWrapper` from `src/tabs/__tests__/test-utils.tsx`. Mock API with `vi.mock("../api/queries")`. Mock `echarts-for-react` for chart tests. Mock `@tanstack/react-virtual` for virtualized row tests.
 
@@ -175,6 +203,41 @@ These are hard constraints that cause bugs or test failures if violated.
 - **Timestamp helper**: Import `from common.utils import _ts` — no per-file `_ts()` definitions.
 - **`ml_cluster` is always a hard feature** — never stripped from `feature_cols` in per_cluster or global backtest mode.
 - **Stub table pattern**: When a materialized view depends on a future feature's table, create it with `CREATE TABLE IF NOT EXISTS` and minimum columns. LEFT JOIN produces NULL → neutral scores until real data flows.
+- **Backward-compatible imports**: `common/` root has shim modules that re-export from subpackages (e.g., `from common.db import get_db_params` works via shim → `common/core/db.py`). New code may use either path; existing imports remain valid.
+- **Structured logging**: Scripts use `logging.getLogger(__name__)` — no raw `print()`. `basicConfig()` only in `__main__` blocks.
+- **Exception handling**: Catch specific exceptions (`psycopg.Error`, `ValueError`) — never bare `except Exception`. Always log with `logger.exception()`.
+
+### File Placement Rules
+
+**Always place new files in the correct domain subdirectory. Never add files to a flat parent directory when a domain subdirectory exists.**
+
+| New code type | Place in | Example |
+|---|---|---|
+| Inventory/supply router | `api/routers/inventory/` | `inv_planning_new_feature.py` |
+| Forecast/accuracy router | `api/routers/forecasting/` | `forecast_ensemble.py` |
+| SOP/control tower router | `api/routers/operations/` | `supply_risk.py` |
+| Auth/config/admin router | `api/routers/platform/` | `audit_log.py` |
+| AI/chat/analysis router | `api/routers/intelligence/` | `anomaly_detect.py` |
+| Dashboard/jobs router | `api/routers/core/` | `system_metrics.py` |
+| Generic domain endpoint | `api/routers/domains.py` | Add to existing catch-all |
+| DB/config/date utility | `common/core/` | `new_helper.py` |
+| ML algorithm/backtest | `common/ml/` | `ensemble_strategy.py` |
+| DQ/exception engine | `common/engines/` | `alert_engine.py` |
+| Scheduler/cache/webhook | `common/services/` | `event_bus.py` |
+| AI/LLM utility | `common/ai/` | `prompt_builder.py` |
+| ETL/data loading script | `scripts/etl/` | `load_new_source.py` |
+| ML training/tuning script | `scripts/ml/` | `train_new_model.py` |
+| Forecast generation script | `scripts/forecasting/` | `run_ensemble.py` |
+| Inventory planning script | `scripts/inventory/` | `calculate_new_metric.py` |
+| Operations/SOP script | `scripts/ops/` | `generate_report.py` |
+| AI/embeddings script | `scripts/ai/` | `retrain_embeddings.py` |
+| Backend unit test | `tests/unit/test_<module>.py` | `test_new_helper.py` |
+| API endpoint test | `tests/api/test_<feature>.py` | `test_forecast_ensemble.py` |
+
+When adding a new router, also:
+1. Add the import and `app.include_router()` call in `api/main.py`
+2. Add the API path prefix to `frontend/vite.config.ts` proxy if it's a new prefix
+3. Mount `domains.py` LAST (move its mount if needed)
 
 ### Data Loading
 

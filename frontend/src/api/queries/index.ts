@@ -13,3 +13,4 @@ export * from "./platform";
 export * from "./inv-planning-rebalancing";
 export * from "./config";
 export * from "./inv-planning-insights";
+export * from "./sql-runner";

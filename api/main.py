@@ -108,6 +108,7 @@ from api.routers import fva              # noqa: E402  # 08-07 FVA tracking
 from api.routers import reports          # noqa: E402  # 08-08 Reporting
 from api.routers import webhooks         # noqa: E402  # 08-10 Webhooks
 from api.routers import config_manager   # noqa: E402  # Config management UI
+from api.routers import sql_runner       # noqa: E402  # SQL Runner
 from api.routers import domains    # noqa: E402
 
 # Specific-path routers first
@@ -168,6 +169,7 @@ app.include_router(fva.router)
 app.include_router(reports.router)
 app.include_router(webhooks.router)
 app.include_router(config_manager.router)
+app.include_router(sql_runner.router)
 
 # domains.py has catch-all /domains/{domain}/* — mount last
 app.include_router(domains.router)

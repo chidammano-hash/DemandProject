@@ -239,7 +239,15 @@ Tables: `bronze_*` (8), `silver_*` (8), `silver_quarantine`, `audit_dq_correctio
    - Retry with exponential backoff (configurable max attempts)
    - Router: `api/routers/webhooks.py` (register, list, test, delivery history)
    - Config: `config/webhook_config.yaml` (retry policy, signing secrets, event types)
-6h. API Governance:
+6h. SQL Runner:
+   - Freeform read-only SQL execution from the UI
+   - Two-layer write protection: regex-based DML/DDL rejection + DB-level `SET TRANSACTION READ ONLY`
+   - Configurable row limits (default 1000) and query timeouts (default 30s)
+   - Schema browser (information_schema introspection) and in-memory query history
+   - Router: `api/routers/sql_runner.py` (execute, schema, history)
+   - Config: `config/sql_runner_config.yaml` (max_rows, statement_timeout_ms, enabled)
+   - Frontend: `SqlRunnerTab` under System sidebar section
+6i. API Governance:
    - Rate limiting via `common/rate_limiter.py` (token bucket algorithm)
    - API versioning support (v1/v2 path prefixes)
    - Rate limiting logic in `common/rate_limiter.py`; no dedicated router (governance endpoints planned, not yet mounted)

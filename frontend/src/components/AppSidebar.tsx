@@ -11,6 +11,7 @@ import {
   CalendarDays,
   Shield, BarChart3, MapPin,
   Settings2,
+  TerminalSquare,
   PanelLeftClose,
   PanelLeft,
   Menu,
@@ -49,6 +50,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "customerMap",       label: "Customer Map",   icon: MapPin,          section: "demand" },
   // System — data tools
   { key: "explorer",     label: "Explorer",      icon: Database,     section: "system" },
+  { key: "sqlRunner",    label: "SQL Runner",    icon: TerminalSquare, section: "system" },
   { key: "settings",     label: "Settings",      icon: Settings2,    section: "system" },
 ];
 

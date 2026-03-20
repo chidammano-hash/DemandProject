@@ -177,6 +177,7 @@ Proactive exception work-queue (not a chatbot) powered by Claude (`claude-opus-4
 - **Collaboration**: threaded annotations on DFUs, forecasts, and exceptions
 - **External Signals**: weather, economic indicators, promotional calendars integration
 - **FVA & ROI**: forecast value-add waterfall, intervention tracking, financial impact measurement
+- **SQL Runner**: ad-hoc read-only SQL execution from the UI with schema browser, query history, and CSV export
 - **Reporting**: scheduled PDF/Excel export with configurable templates and distribution
 - **API Governance**: per-role rate limiting, API versioning, usage analytics
 - **Webhooks**: HMAC-SHA256 signed outbound event delivery with retry and dead-letter queue

@@ -50,6 +50,7 @@ const FVATab = lazy(() => import("./tabs/FVATab"));
 const DataQualityTab = lazy(() => import("./tabs/DataQualityTab"));
 const CustomerMapTab = lazy(() => import("./tabs/CustomerMapTab").then((m) => ({ default: m.CustomerMapTab })));
 const CommandCenterTab = lazy(() => import("./tabs/CommandCenterTab"));
+const SqlRunnerTab = lazy(() => import("./tabs/SqlRunnerTab").then((m) => ({ default: m.SqlRunnerTab })));
 const SettingsTab = lazy(() => import("./tabs/SettingsTab"));
 
 // ---------------------------------------------------------------------------
@@ -274,6 +275,11 @@ export default function App() {
                 {activeTab === "customerMap" && (
                   <TabPanel tabKey="customerMap" resetKeys={[activeTab]}>
                     <CustomerMapTab />
+                  </TabPanel>
+                )}
+                {activeTab === "sqlRunner" && (
+                  <TabPanel tabKey="sqlRunner" resetKeys={[activeTab]}>
+                    <SqlRunnerTab />
                   </TabPanel>
                 )}
                 {activeTab === "settings" && (

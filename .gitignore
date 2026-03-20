@@ -19,32 +19,31 @@ dist/
 .DS_Store
 Thumbs.db
 
+# IDE
+.idea/
+.vscode/
+
 # ML training artifacts
 lightning_logs/
 catboost_info/
 
-# IDE
-.idea/
-
-# Playwright E2E test artifacts
-**/e2e/test-results/
-**/e2e/playwright-report/
-**/e2e/blob-report/
-
-# Project data & archives
-archive/reference/
-
-# All data — input CSVs, generated models, backtest outputs, SHAP artifacts
-data/
-
-# ML model files (safety net for any models outside data/)
+# ML model files
 *.pkl
 *.joblib
 *.h5
 *.onnx
 *.model
 
+# Playwright E2E test artifacts
+**/e2e/test-results/
+**/e2e/playwright-report/
+**/e2e/blob-report/
+
+# Data — input CSVs, generated models, backtest outputs, SHAP artifacts
+data/
+
+# Non-project materials
+archive/
+
 # Claude Code settings
 .claude/
-
-everything-claude-code-main
