@@ -1,11 +1,11 @@
 ingest:
   strategy: csv_export              # 'csv_export' | 'erp_api' (future)
   csv:
-    po_file_pattern: "datafiles/open_pos_*.csv"
-    receipt_file_pattern: "datafiles/po_receipts_*.csv"
-    supplier_file_pattern: "datafiles/suppliers_*.csv"
+    po_file_pattern: "data/input/open_pos_*.csv"
+    receipt_file_pattern: "data/input/po_receipts_*.csv"
+    supplier_file_pattern: "data/input/suppliers_*.csv"
     archive_after_load: false
-    archive_dir: "datafiles/archive/"
+    archive_dir: "data/input/archive/"
 
 validation:
   reject_pos_past_due_days: 180     # ignore POs > 180 days past due (likely data error)

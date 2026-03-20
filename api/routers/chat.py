@@ -6,6 +6,8 @@ import json
 import logging
 import re
 
+import psycopg
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -54,8 +56,8 @@ def _vector_search(question_embedding: list[float], top_k: int = 10) -> list[str
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute(sql, (str(question_embedding), top_k))
             return [r[0] for r in cur.fetchall()]
-    except Exception:
-        logger.warning("pgvector embedding search failed", exc_info=True)
+    except psycopg.Error as e:
+        logger.exception("pgvector embedding search failed: %s", e)
         return []
 
 
@@ -188,7 +190,7 @@ def chat(req: ChatRequest):
                     {col: (str(val) if val is not None else None) for col, val in zip(columns, row)}
                     for row in raw_rows
                 ]
-            except Exception as exc:
+            except (psycopg.Error, ValueError, KeyError) as exc:
                 error_msg = f"SQL execution error: {exc}"
 
     result: dict[str, Any] = {

@@ -51,7 +51,6 @@ from common.db import get_db_params
 from common.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
 from common.forecast_ci import build_sigma_lookup, compute_ci_bounds
 from common.planning_date import get_planning_date
-from common.utils import _ts
 
 import psycopg
 
@@ -129,7 +128,7 @@ def load_active_models(model_id: str, config: dict) -> dict[str, dict]:
             artifact = pickle.load(f)
         models[cluster_label] = artifact
 
-    print(f"  [{_ts()}] Loaded {len(models)} {model_id} cluster models from {model_dir}/")
+    logger.info("Loaded %d %s cluster models from %s/", len(models), model_id, model_dir)
     return models
 
 
@@ -176,8 +175,8 @@ def get_champion_assignments(conn, item_no: str | None = None, loc: str | None =
 
     df = pd.read_sql(sql, conn, params=params)
     with_src = int(df["source_model_id"].notna().sum())
-    print(f"  [{_ts()}] Champion assignments loaded: {len(df):,} DFUs "
-          f"({with_src:,} with source_model_id)")
+    logger.info("Champion assignments loaded: %s DFUs (%s with source_model_id)",
+                f"{len(df):,}", f"{with_src:,}")
     return df
 
 
@@ -225,7 +224,8 @@ def load_recent_sales(conn, item_no: str | None = None, loc: str | None = None,
     df = pd.read_sql(sql, conn, params=params)
     df["startdate"] = pd.to_datetime(df["startdate"])
     df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
-    print(f"  [{_ts()}] Recent sales loaded: {len(df):,} rows, {df.groupby(['item_no','loc']).ngroups:,} DFUs")
+    logger.info("Recent sales loaded: %s rows, %s DFUs",
+                f"{len(df):,}", f"{df.groupby(['item_no','loc']).ngroups:,}")
     return df
 
 
@@ -256,7 +256,7 @@ def load_dfu_attrs(conn, item_no: str | None = None, loc: str | None = None) -> 
     """
 
     df = pd.read_sql(sql, conn, params=params)
-    print(f"  [{_ts()}] DFU attributes loaded: {len(df):,} rows")
+    logger.info("DFU attributes loaded: %s rows", f"{len(df):,}")
     return df
 
 
@@ -273,7 +273,7 @@ def load_item_attrs(conn, item_no: str | None = None) -> pd.DataFrame:
     df["bpc"] = pd.to_numeric(df["bpc"], errors="coerce").fillna(0)
     df["item_proof"] = pd.to_numeric(df["item_proof"], errors="coerce").fillna(0)
     df["case_weight"] = pd.to_numeric(df["case_weight"], errors="coerce").fillna(0)
-    print(f"  [{_ts()}] Item attributes loaded: {len(df):,} rows")
+    logger.info("Item attributes loaded: %s rows", f"{len(df):,}")
     return df
 
 
@@ -780,7 +780,7 @@ def write_forecast(rows: list[dict], conn, dry_run: bool = False) -> int:
         return 0
 
     if dry_run:
-        print(f"  [{_ts()}] [DRY RUN] Would insert {len(rows):,} rows")
+        logger.info("[DRY RUN] Would insert %s rows", f"{len(rows):,}")
         return len(rows)
 
     sql = """
@@ -833,12 +833,12 @@ def purge_old_versions(conn, keep_n: int, dry_run: bool = False) -> None:
 
     for v in to_delete:
         if dry_run:
-            print(f"  [{_ts()}] [DRY RUN] Would delete version {v}")
+            logger.info("[DRY RUN] Would delete version %s", v)
         else:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM fact_production_forecast WHERE plan_version = %s", [v])
             conn.commit()
-            print(f"  [{_ts()}] Purged old plan version: {v}")
+            logger.info("Purged old plan version: %s", v)
 
 
 # ---------------------------------------------------------------------------
@@ -875,25 +875,25 @@ def main() -> None:
     item_filter = args.dfu[0] if args.dfu else None
     loc_filter = args.dfu[1] if args.dfu else None
 
-    print(f"[{_ts()}] Production Forecast Generation — F1.1")
-    print(f"[{_ts()}] plan_version={plan_version}, horizon={horizon}, run_id={run_id[:8]}...")
+    logger.info("Production Forecast Generation -- F1.1")
+    logger.info("plan_version=%s, horizon=%d, run_id=%s...", plan_version, horizon, run_id[:8])
     if args.dry_run:
-        print(f"[{_ts()}] DRY RUN — no data will be written")
+        logger.info("DRY RUN -- no data will be written")
 
     t_start = time.time()
     db = get_db_params()
 
     with psycopg.connect(**db) as conn:
         # Load data
-        print(f"\n[{_ts()}] Step 1: Loading data...")
+        logger.info("Step 1: Loading data...")
         champion_df = get_champion_assignments(conn, item_filter, loc_filter)
         if len(champion_df) == 0:
-            print(f"[{_ts()}] No champion assignments found. Run 'make champion-select' first.")
+            logger.info("No champion assignments found. Run 'make champion-select' first.")
             return
 
         if args.max_dfus and len(champion_df) > args.max_dfus:
             champion_df = champion_df.head(args.max_dfus)
-            print(f"  [{_ts()}] Sampling limited to {args.max_dfus:,} DFUs (--max-dfus)")
+            logger.info("Sampling limited to %s DFUs (--max-dfus)", f"{args.max_dfus:,}")
 
         sales_df = load_recent_sales(conn, item_filter, loc_filter)
         dfu_attrs = load_dfu_attrs(conn, item_filter, loc_filter)
@@ -910,45 +910,44 @@ def main() -> None:
             model_ids_needed = src_ids | {fallback_model_id}
 
         # Load model artifacts
-        print(f"\n[{_ts()}] Step 2: Loading model artifacts for: {model_ids_needed}")
+        logger.info("Step 2: Loading model artifacts for: %s", model_ids_needed)
         loaded_models: dict[str, dict] = {}
         for mid in model_ids_needed:
             try:
                 loaded_models[mid] = load_active_models(mid, config)
             except FileNotFoundError as e:
-                print(f"  [{_ts()}] Warning: {e}")
+                logger.warning("%s", e)
 
         if not loaded_models:
-            print(f"[{_ts()}] No model artifacts found for: {model_ids_needed}")
-            print(f"[{_ts()}] Run 'make backtest-lgbm' (or backtest-catboost / backtest-xgboost) "
-                  f"to train and persist model weights, then re-run this script.")
+            logger.info("No model artifacts found for: %s", model_ids_needed)
+            logger.info("Run 'make backtest-lgbm' (or backtest-catboost / backtest-xgboost) "
+                        "to train and persist model weights, then re-run this script.")
             return
 
         # Pre-index data structures for O(1) per-DFU lookups
-        print(f"\n[{_ts()}] Step 2b: Pre-indexing data structures...")
+        logger.info("Step 2b: Pre-indexing data structures...")
         sales_index = build_sales_index(sales_df)
         attrs_index = build_attrs_index(dfu_attrs)
         item_index = build_item_index(item_attrs_df)
         cat_encoders = build_cat_encoders(dfu_attrs)
-        print(f"  [{_ts()}] Indexed {len(sales_index):,} DFUs (sales), "
-              f"{len(attrs_index):,} DFUs (attrs), "
-              f"{len(item_index):,} items, "
-              f"{len(cat_encoders)} cat encoders")
+        logger.info("Indexed %s DFUs (sales), %s DFUs (attrs), %s items, %d cat encoders",
+                    f"{len(sales_index):,}", f"{len(attrs_index):,}",
+                    f"{len(item_index):,}", len(cat_encoders))
 
         # Build forecast CI sigma lookup (per-DFU uncertainty from backtest residuals)
         ci_cfg = config.get("confidence_interval", {})
         sigma_lookup: dict = {}
         if ci_cfg.get("enabled", False):
-            print(f"\n[{_ts()}] Step 2c: Building forecast uncertainty (CI bands)...")
+            logger.info("Step 2c: Building forecast uncertainty (CI bands)...")
             cluster_map: dict[tuple, str] = {
                 (r["item_no"], r["loc"]): str(r.get("ml_cluster") or "unknown")
                 for r in dfu_attrs[["item_no", "loc", "ml_cluster"]].to_dict("records")
             }
             sigma_lookup = build_sigma_lookup(conn, config, cluster_map)
-            print(f"  [{_ts()}] CI sigma lookup: {len(sigma_lookup):,} DFUs mapped")
+            logger.info("CI sigma lookup: %s DFUs mapped", f"{len(sigma_lookup):,}")
 
         # Group DFUs by (model_id, cluster_id) for batched inference
-        print(f"\n[{_ts()}] Step 3: Building cluster groups for {len(champion_df):,} DFUs...")
+        logger.info("Step 3: Building cluster groups for %s DFUs...", f"{len(champion_df):,}")
         cluster_groups: dict[tuple, list] = defaultdict(list)
         skipped = 0
 
@@ -994,13 +993,14 @@ def main() -> None:
                 ({"item_no": item_no, "loc": loc, "cluster_id": cluster_id}, grid, artifact)
             )
 
-        print(f"  [{_ts()}] {sum(len(v) for v in cluster_groups.values()):,} DFUs in "
-              f"{len(cluster_groups)} cluster groups, {skipped:,} skipped (no history/model)")
+        logger.info("%s DFUs in %d cluster groups, %s skipped (no history/model)",
+                    f"{sum(len(v) for v in cluster_groups.values()):,}",
+                    len(cluster_groups), f"{skipped:,}")
 
         # Batch-predict per cluster group — parallelise across independent groups
         n_workers = min(len(cluster_groups), min(os.cpu_count() or 4, 4))
-        print(f"\n[{_ts()}] Step 3b: Running batched inference "
-              f"({len(cluster_groups)} groups, {n_workers} workers)...")
+        logger.info("Step 3b: Running batched inference (%d groups, %d workers)...",
+                    len(cluster_groups), n_workers)
         all_rows: list[dict] = []
 
         def _run_group(key_entries):
@@ -1025,24 +1025,25 @@ def main() -> None:
             for future in as_completed(futures):
                 mid, cid, n_dfus, batch_rows = future.result()
                 all_rows.extend(batch_rows)
-                print(f"  [{_ts()}] ({mid}, cluster {cid}): "
-                      f"{n_dfus:,} DFUs → {len(batch_rows):,} rows")
+                logger.info("(%s, cluster %s): %s DFUs -> %s rows",
+                            mid, cid, f"{n_dfus:,}", f"{len(batch_rows):,}")
 
-        print(f"\n[{_ts()}] Step 3 complete: {len(all_rows):,} rows, {skipped:,} skipped")
+        logger.info("Step 3 complete: %s rows, %s skipped", f"{len(all_rows):,}", f"{skipped:,}")
 
         # Write to DB
-        print(f"\n[{_ts()}] Step 4: Writing to fact_production_forecast...")
+        logger.info("Step 4: Writing to fact_production_forecast...")
         written = write_forecast(all_rows, conn, dry_run=args.dry_run)
-        print(f"  [{_ts()}] Written: {written:,} rows")
+        logger.info("Written: %s rows", f"{written:,}")
 
         # Purge old plan versions
         if not args.dry_run:
             purge_old_versions(conn, keep_n=keep_n, dry_run=args.dry_run)
 
     elapsed = time.time() - t_start
-    print(f"\n[{_ts()}] Production forecast complete in {elapsed:.0f}s ({elapsed / 60:.1f}m)")
-    print(f"[{_ts()}] plan_version={plan_version}, rows={written:,}, skipped={skipped:,}")
+    logger.info("Production forecast complete in %.0fs (%.1fm)", elapsed, elapsed / 60)
+    logger.info("plan_version=%s, rows=%s, skipped=%s", plan_version, f"{written:,}", f"{skipped:,}")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     main()

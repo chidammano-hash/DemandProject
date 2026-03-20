@@ -13,6 +13,8 @@ import logging
 from datetime import date, timedelta
 from typing import Optional
 
+import psycopg
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
@@ -106,8 +108,8 @@ def get_action_feed(
                             "action_url": f"/inv-planning/exceptions?item={r[0]}&location={r[1]}",
                             "timestamp": str(r[7]) if r[7] else None,
                         })
-                except Exception:
-                    logger.debug("fact_replenishment_exceptions not available")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching replenishment exceptions: %s", e)
 
                 # --- Urgent demand signals ---
                 try:
@@ -131,8 +133,8 @@ def get_action_feed(
                             "action_url": f"/inv-planning/demand-signals?item={r[0]}&location={r[1]}",
                             "timestamp": str(r[5]) if r[5] else None,
                         })
-                except Exception:
-                    logger.debug("fact_demand_signals not available")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching demand signals: %s", e)
 
                 # --- At-risk POs (open orders past expected delivery) ---
                 try:
@@ -157,8 +159,8 @@ def get_action_feed(
                             "action_url": f"/inv-planning/exceptions?item={r[0]}&location={r[1]}&status=ordered",
                             "timestamp": str(r[2]) if r[2] else None,
                         })
-                except Exception:
-                    logger.debug("PO risk query not available")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching PO risk: %s", e)
 
                 # --- Projected stockouts ---
                 try:
@@ -181,11 +183,11 @@ def get_action_feed(
                             "action_url": f"/inv-planning/demand-signals?item={r[0]}&location={r[1]}",
                             "timestamp": str(r[2]) if r[2] else None,
                         })
-                except Exception:
-                    logger.debug("Stockout projection query not available")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching stockout projections: %s", e)
 
-    except Exception:
-        logger.warning("action-feed: DB connection failed, returning empty")
+    except psycopg.Error as e:
+        logger.exception("action-feed: DB connection failed: %s", e)
         return {"items": [], "total": 0}
 
     # Sort: severity rank first, then financial impact descending
@@ -238,8 +240,8 @@ def get_exception_root_cause(
                                 "signal_count": len(rows),
                             },
                         })
-                except Exception:
-                    logger.debug("demand signals not available for root cause")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching demand signals for root cause: %s", e)
 
                 # --- Forecast accuracy ---
                 try:
@@ -266,8 +268,8 @@ def get_exception_root_cause(
                                 "data": {"wape": round(wape, 4), "bias": round(bias, 4),
                                          "total_forecast": round(fcst, 2), "total_actual": round(actual, 2)},
                             })
-                except Exception:
-                    logger.debug("forecast accuracy not available for root cause")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching forecast accuracy for root cause: %s", e)
 
                 # --- Supplier lead time reliability ---
                 try:
@@ -299,8 +301,8 @@ def get_exception_root_cause(
                                 "variability_class": _s(row[4]),
                             },
                         })
-                except Exception:
-                    logger.debug("supplier performance not available for root cause")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching supplier performance for root cause: %s", e)
 
                 # --- Open exceptions (current state) ---
                 try:
@@ -328,11 +330,11 @@ def get_exception_root_cause(
                                 "reorder_point": _safe_float(rows[0][5]),
                             },
                         })
-                except Exception:
-                    logger.debug("exceptions not available for root cause")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching exceptions for root cause: %s", e)
 
-    except Exception:
-        logger.warning("root-cause: DB connection failed")
+    except psycopg.Error as e:
+        logger.exception("root-cause: DB connection failed: %s", e)
 
     return {"causes": causes}
 
@@ -370,8 +372,8 @@ def get_segment_dashboard(
                     """, [segment])
                     row = cur.fetchone()
                     result["dfu_count"] = int(row[0]) if row and row[0] else 0
-                except Exception:
-                    logger.debug("dim_dfu segment count not available")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching DFU segment count: %s", e)
 
                 # --- Health score KPIs ---
                 try:
@@ -387,8 +389,8 @@ def get_segment_dashboard(
                     if row:
                         result["kpis"]["avg_health_score"] = _safe_float(row[0])
                         result["kpis"]["avg_dos_score"] = _safe_float(row[1])
-                except Exception:
-                    logger.debug("health score not available for segment")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching health score for segment: %s", e)
 
                 # --- Fill rate ---
                 try:
@@ -402,8 +404,8 @@ def get_segment_dashboard(
                     row = cur.fetchone()
                     if row:
                         result["kpis"]["avg_fill_rate"] = _safe_float(row[0])
-                except Exception:
-                    logger.debug("fill rate not available for segment")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching fill rate for segment: %s", e)
 
                 # --- Below-SS count ---
                 try:
@@ -416,8 +418,8 @@ def get_segment_dashboard(
                     """, [segment])
                     row = cur.fetchone()
                     result["kpis"]["below_ss_count"] = int(row[0]) if row and row[0] else 0
-                except Exception:
-                    logger.debug("SS below count not available for segment")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching SS below count for segment: %s", e)
 
                 # --- Exception count ---
                 try:
@@ -428,8 +430,8 @@ def get_segment_dashboard(
                     """, [segment])
                     row = cur.fetchone()
                     result["kpis"]["open_exception_count"] = int(row[0]) if row and row[0] else 0
-                except Exception:
-                    logger.debug("exception count not available for segment")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching exception count for segment: %s", e)
 
                 # --- Policy distribution ---
                 try:
@@ -445,8 +447,8 @@ def get_segment_dashboard(
                     result["policy_distribution"] = {
                         r[0]: int(r[1]) for r in cur.fetchall()
                     }
-                except Exception:
-                    logger.debug("policy distribution not available for segment")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching policy distribution for segment: %s", e)
 
                 # --- Top exceptions ---
                 try:
@@ -469,11 +471,11 @@ def get_segment_dashboard(
                         }
                         for r in cur.fetchall()
                     ]
-                except Exception:
-                    logger.debug("top exceptions not available for segment")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching top exceptions for segment: %s", e)
 
-    except Exception:
-        logger.warning("segment-dashboard: DB connection failed")
+    except psycopg.Error as e:
+        logger.exception("segment-dashboard: DB connection failed: %s", e)
 
     return result
 
@@ -602,8 +604,8 @@ def get_ss_cost_benefit(
                     },
                 }
 
-    except Exception:
-        logger.warning("ss-cost-benefit: query failed", exc_info=True)
+    except psycopg.Error as e:
+        logger.exception("ss-cost-benefit: query failed: %s", e)
         return empty
 
 
@@ -640,8 +642,8 @@ def get_service_level_waterfall(
                     row = cur.fetchone()
                     if row and row[0] is not None:
                         base_accuracy = max(0.0, min(100.0, float(row[0])))
-                except Exception:
-                    logger.debug("forecast accuracy not available for waterfall")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching forecast accuracy for waterfall: %s", e)
 
                 # Express as a service level contribution (scaled to 0-100)
                 # Forecast accuracy contributes ~60% of achievable CSL
@@ -667,8 +669,8 @@ def get_service_level_waterfall(
                         avg_cov = float(row[0])
                         # SS coverage > 1.0 means well stocked; contributes up to ~25%
                         ss_contribution = min(25.0, avg_cov * 25.0)
-                except Exception:
-                    logger.debug("SS coverage not available for waterfall")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching SS coverage for waterfall: %s", e)
 
                 cumulative = base_contribution + ss_contribution
                 steps.append({
@@ -689,8 +691,8 @@ def get_service_level_waterfall(
                     if row and row[0] is not None:
                         # More reliable LT → more contribution, up to ~10%
                         lt_contribution = float(row[0]) * 10.0
-                except Exception:
-                    logger.debug("supplier LT not available for waterfall")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching supplier LT for waterfall: %s", e)
 
                 cumulative += lt_contribution
                 steps.append({
@@ -715,8 +717,8 @@ def get_service_level_waterfall(
                         on_plan_pct = int(row[0]) / int(row[1])
                         # On-plan signals contribute up to ~5%
                         sensing_contribution = on_plan_pct * 5.0
-                except Exception:
-                    logger.debug("demand signals not available for waterfall")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching demand signals for waterfall: %s", e)
 
                 cumulative += sensing_contribution
                 steps.append({
@@ -728,8 +730,8 @@ def get_service_level_waterfall(
 
                 achieved_csl = min(100.0, cumulative)
 
-    except Exception:
-        logger.warning("service-level-waterfall: DB connection failed")
+    except psycopg.Error as e:
+        logger.exception("service-level-waterfall: DB connection failed: %s", e)
 
     return {"steps": steps, "achieved_csl": round(achieved_csl, 2)}
 
@@ -805,8 +807,8 @@ def get_network_heatmap(
                     "cells": cells,
                 }
 
-    except Exception:
-        logger.warning("network-heatmap: query failed", exc_info=True)
+    except psycopg.Error as e:
+        logger.exception("network-heatmap: query failed: %s", e)
         return empty
 
 
@@ -851,8 +853,8 @@ def get_planning_scorecard(
                         "trend": _trend_label(current, prior),
                         "sparkline": sparkline,
                     })
-                except Exception:
-                    logger.debug("forecast accuracy trend not available")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching forecast accuracy trend: %s", e)
 
                 # --- Fill rate trend ---
                 try:
@@ -875,8 +877,8 @@ def get_planning_scorecard(
                         "trend": _trend_label(current, prior),
                         "sparkline": sparkline,
                     })
-                except Exception:
-                    logger.debug("fill rate trend not available")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching fill rate trend: %s", e)
 
                 # --- Exception resolution avg days ---
                 try:
@@ -910,8 +912,8 @@ def get_planning_scorecard(
                         "trend": trend,
                         "sparkline": [],
                     })
-                except Exception:
-                    logger.debug("exception resolution not available")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching exception resolution: %s", e)
 
                 # --- SS optimization (total SS change) ---
                 try:
@@ -928,8 +930,8 @@ def get_planning_scorecard(
                         "trend": "stable",
                         "sparkline": [],
                     })
-                except Exception:
-                    logger.debug("SS total not available")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching SS total: %s", e)
 
                 # --- On-time PO % (based on exception ordered vs resolved) ---
                 try:
@@ -952,11 +954,11 @@ def get_planning_scorecard(
                         "trend": "stable",
                         "sparkline": [],
                     })
-                except Exception:
-                    logger.debug("PO on-time not available")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching PO on-time: %s", e)
 
-    except Exception:
-        logger.warning("planning-scorecard: DB connection failed")
+    except psycopg.Error as e:
+        logger.exception("planning-scorecard: DB connection failed: %s", e)
 
     return {"metrics": metrics}
 
@@ -1009,8 +1011,8 @@ def get_cash_flow_timeline(
                         idx = month_index.get(r[0])
                         if idx is not None:
                             month_buckets[idx]["po_committed"] = round(float(r[1]), 2)
-                except Exception:
-                    logger.debug("PO committed not available for cash flow")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching PO committed for cash flow: %s", e)
 
                 # --- Planned orders (open exceptions with recommended order) ---
                 try:
@@ -1028,8 +1030,8 @@ def get_cash_flow_timeline(
                         idx = month_index.get(r[0])
                         if idx is not None:
                             month_buckets[idx]["planned_orders"] = round(float(r[1]), 2)
-                except Exception:
-                    logger.debug("Planned orders not available for cash flow")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching planned orders for cash flow: %s", e)
 
                 # --- SS investment required (gap * unit_cost proxy) ---
                 try:
@@ -1047,11 +1049,11 @@ def get_cash_flow_timeline(
                         per_month = round(ss_total / spread, 2)
                         for i in range(spread):
                             month_buckets[i]["ss_investment"] = per_month
-                except Exception:
-                    logger.debug("SS investment not available for cash flow")
+                except psycopg.Error as e:
+                    logger.exception("DB error fetching SS investment for cash flow: %s", e)
 
-    except Exception:
-        logger.warning("cash-flow-timeline: DB connection failed")
+    except psycopg.Error as e:
+        logger.exception("cash-flow-timeline: DB connection failed: %s", e)
 
     # Compute totals
     for b in month_buckets:
@@ -1153,8 +1155,8 @@ def get_constrained_optimization(
                 result["avg_csl_after"] = round(sum_csl_after / n, 4) if n > 0 else 0.0
                 result["allocations"] = allocations[:100]  # cap response size
 
-    except Exception:
-        logger.warning("constrained-optimization: query failed", exc_info=True)
+    except psycopg.Error as e:
+        logger.exception("constrained-optimization: query failed: %s", e)
 
     return result
 
@@ -1254,6 +1256,6 @@ def get_proactive_rebalancing(
                     "total_opportunities": len(opportunities),
                 }
 
-    except Exception:
-        logger.warning("proactive-rebalancing: query failed", exc_info=True)
+    except psycopg.Error as e:
+        logger.exception("proactive-rebalancing: query failed: %s", e)
         return empty

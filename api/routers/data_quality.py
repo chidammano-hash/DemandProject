@@ -1,10 +1,15 @@
 """Data Quality & Pipeline Observability endpoints (Spec 08-01)."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+import psycopg
 from api.core import get_conn
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/data-quality", tags=["data-quality"])
 
@@ -145,7 +150,8 @@ async def dq_freshness():
                     "table": table,
                     "last_load": last_load.isoformat() if last_load else None,
                 })
-            except Exception:
+            except psycopg.Error as e:
+                logger.exception("DB error fetching freshness for %s: %s", table, e)
                 results.append({"table": table, "last_load": None})
 
     return {"tables": results}

@@ -114,7 +114,7 @@ def _resolve_forecast_execution_lag(cur, stg_table: str) -> tuple[int, int]:
         )
     """)
     if not cur.fetchone()[0]:
-        print("       dim_dfu table not found -- defaulting execution_lag to 0")
+        logger.info("dim_dfu table not found -- defaulting execution_lag to 0")
         cur.execute(f'UPDATE {qident(stg_table)} SET "execution_lag" = \'0\'')
         return (0, cur.rowcount)
 
@@ -167,7 +167,7 @@ def _load_forecast_archive(cur, stg_table: str, stg_alias: str) -> int:
     )
     deleted = cur.rowcount
     if deleted:
-        print(f"       Deleted {deleted:,} existing '{EXTERNAL_MODEL_ID}' archive rows")
+        logger.info("Deleted %s existing '%s' archive rows", f"{deleted:,}", EXTERNAL_MODEL_ID)
 
     # Build forecast_ck expression (same separator as FORECAST_SPEC)
     ck_expr = (
@@ -216,16 +216,16 @@ def _run_medallion_pipeline(spec: DomainSpec, csv_path: Path,
     )
 
     t_total = time.time()
-    print(f"\n{'='*60}")
-    print(f"Medallion pipeline: {spec.name} -> bronze -> silver -> gold")
-    print(f"CSV: {csv_path.name}")
+    logger.info("=" * 60)
+    logger.info("Medallion pipeline: %s -> bronze -> silver -> gold", spec.name)
+    logger.info("CSV: %s", csv_path.name)
     if apply_fixes:
-        print("DQ auto-fixes: ENABLED")
-    print(f"{'='*60}\n")
+        logger.info("DQ auto-fixes: ENABLED")
+    logger.info("=" * 60)
 
     if not csv_path.exists():
-        print(f"  SKIPPED -- {csv_path.name} not found.")
-        print(f"  Run 'make normalize-all' first to generate clean CSVs.\n")
+        logger.info("SKIPPED -- %s not found.", csv_path.name)
+        logger.info("Run 'make normalize-all' first to generate clean CSVs.")
         return
 
     db = get_db_params()
@@ -237,61 +237,58 @@ def _run_medallion_pipeline(spec: DomainSpec, csv_path: Path,
             source_hash=src_hash,
         )
         conn.commit()
-        print(f"[1/6] Created batch {batch_id}\n")
+        logger.info("[1/6] Created batch %s", batch_id)
 
         try:
             # Phase 1: Bronze ingest
-            print(f"[2/6] Bronze ingest: COPY -> bronze_{spec.name} ...", flush=True)
+            logger.info("[2/6] Bronze ingest: COPY -> bronze_%s ...", spec.name)
             t0 = time.time()
             bronze_count = ingest_bronze(cur, spec, csv_path, batch_id)
             conn.commit()
-            print(f"       {bronze_count:,} rows ingested ({_elapsed(t0)})\n", flush=True)
+            logger.info("       %s rows ingested (%s)", f"{bronze_count:,}", _elapsed(t0))
 
             # Phase 2: Silver promotion (type cast + dedup)
-            print(f"[3/6] Silver promotion: bronze -> silver_{spec.name} ...", flush=True)
+            logger.info("[3/6] Silver promotion: bronze -> silver_%s ...", spec.name)
             t0 = time.time()
             silver_count, quarantine_count = promote_to_silver(cur, spec, batch_id)
             conn.commit()
-            print(f"       {silver_count:,} rows promoted ({_elapsed(t0)})\n", flush=True)
+            logger.info("       %s rows promoted (%s)", f"{silver_count:,}", _elapsed(t0))
 
             # Phase 3: DQ gate checks
-            print(f"[4/6] DQ gate checks ...", flush=True)
+            logger.info("[4/6] DQ gate checks ...")
             t0 = time.time()
             gate = run_silver_dq_gate(cur, spec, batch_id)
             conn.commit()
-            print(f"       Pass rate: {gate['pass_rate']}% "
-                  f"({gate.get('passed_count', 0):,} passed, "
-                  f"{gate['quarantined']:,} quarantined) ({_elapsed(t0)})")
+            logger.info("       Pass rate: %s%% (%s passed, %s quarantined) (%s)",
+                        gate['pass_rate'], f"{gate.get('passed_count', 0):,}",
+                        f"{gate['quarantined']:,}", _elapsed(t0))
             if not gate["passed"]:
-                print(f"       WARNING: Below min pass rate {gate['min_pass_rate']}%")
-            print(flush=True)
+                logger.warning("Below min pass rate %s%%", gate['min_pass_rate'])
 
             # Phase 4: Auto-fixes (optional)
             fix_result = {"fixes_applied": 0}
             if apply_fixes:
-                print(f"[4b/6] Applying DQ auto-fixes ...", flush=True)
+                logger.info("[4b/6] Applying DQ auto-fixes ...")
                 t0 = time.time()
                 fix_result = apply_silver_fixes(cur, spec, batch_id)
                 conn.commit()
-                print(f"       {fix_result['fixes_applied']} fixes applied ({_elapsed(t0)})\n",
-                      flush=True)
+                logger.info("       %d fixes applied (%s)", fix_result['fixes_applied'], _elapsed(t0))
 
             # Phase 5: Gold promotion
-            print(f"[5/6] Gold promotion: silver -> {spec.table} ...", flush=True)
+            logger.info("[5/6] Gold promotion: silver -> %s ...", spec.table)
             t0 = time.time()
             gold = promote_to_gold(cur, spec, batch_id)
             conn.commit()
-            print(f"       {gold['gold_count']:,} rows -> {gold['gold_table']} ({_elapsed(t0)})")
+            logger.info("       %s rows -> %s (%s)", f"{gold['gold_count']:,}", gold['gold_table'], _elapsed(t0))
             if gold.get("original_count"):
-                print(f"       {gold['original_count']:,} rows -> fact_sales_monthly_original")
-            print(flush=True)
+                logger.info("       %s rows -> fact_sales_monthly_original", f"{gold['original_count']:,}")
 
             # Phase 6: Lineage
-            print(f"[6/6] Writing lineage records ...", flush=True)
+            logger.info("[6/6] Writing lineage records ...")
             t0 = time.time()
             lineage_count = write_lineage(cur, spec, batch_id)
             conn.commit()
-            print(f"       {lineage_count:,} lineage rows ({_elapsed(t0)})\n", flush=True)
+            logger.info("       %s lineage rows (%s)", f"{lineage_count:,}", _elapsed(t0))
 
             # Complete batch
             complete_batch(
@@ -308,15 +305,15 @@ def _run_medallion_pipeline(spec: DomainSpec, csv_path: Path,
             raise
 
     total = _elapsed(t_total)
-    print(f"{'='*60}")
-    print(f"Medallion load complete: {spec.name}")
-    print(f"  Bronze: {bronze_count:,} rows")
-    print(f"  Silver: {silver_count:,} rows (gate: {gate['pass_rate']}%)")
-    print(f"  Gold:   {gold['gold_count']:,} rows")
+    logger.info("=" * 60)
+    logger.info("Medallion load complete: %s", spec.name)
+    logger.info("  Bronze: %s rows", f"{bronze_count:,}")
+    logger.info("  Silver: %s rows (gate: %s%%)", f"{silver_count:,}", gate['pass_rate'])
+    logger.info("  Gold:   %s rows", f"{gold['gold_count']:,}")
     if fix_result["fixes_applied"]:
-        print(f"  Fixes:  {fix_result['fixes_applied']}")
-    print(f"  Time:   {total}")
-    print(f"{'='*60}\n")
+        logger.info("  Fixes:  %d", fix_result['fixes_applied'])
+    logger.info("  Time:   %s", total)
+    logger.info("=" * 60)
 
 
 # ---------------------------------------------------------------------------
@@ -418,10 +415,10 @@ def _run_legacy_load(
     if fast_mode:
         mode_flags.append("fast")
     mode_label = f" [{', '.join(mode_flags)}]" if mode_flags else ""
-    print(f"\n{'='*60}")
-    print(f"Loading {spec.name} -> {spec.table}{mode_label}")
-    print(f"CSV: {csv_path.name} ({csv_size_mb:,.0f} MB)")
-    print(f"{'='*60}\n")
+    logger.info("=" * 60)
+    logger.info("Loading %s -> %s%s", spec.name, spec.table, mode_label)
+    logger.info("CSV: %s (%s MB)", csv_path.name, f"{csv_size_mb:,.0f}")
+    logger.info("=" * 60)
 
     saved_indexes: list[tuple[str, str]] = []
     saved_constraints: list[tuple[str, str, list[str]]] = []
@@ -433,16 +430,17 @@ def _run_legacy_load(
         try:
             # ---- Phase 1: Session tuning (fast mode) ----
             if fast_mode:
-                print("[1/6] Tuning session for bulk load ...", flush=True)
+                logger.info("[1/6] Tuning session for bulk load ...")
                 cur.execute(f"SET work_mem = '{_PG_WORK_MEM}';")
                 cur.execute(f"SET maintenance_work_mem = '{_PG_MAINTENANCE_WORK_MEM}';")
                 cur.execute("SET synchronous_commit = 'off';")
-                print(f"       work_mem={_PG_WORK_MEM}, maintenance_work_mem={_PG_MAINTENANCE_WORK_MEM}, synchronous_commit=off\n", flush=True)
+                logger.info("       work_mem=%s, maintenance_work_mem=%s, synchronous_commit=off",
+                            _PG_WORK_MEM, _PG_MAINTENANCE_WORK_MEM)
             else:
-                print("[1/6] Session defaults (use --fast for tuned bulk load)\n", flush=True)
+                logger.info("[1/6] Session defaults (use --fast for tuned bulk load)")
 
             # ---- Phase 2: Create staging table + COPY ----
-            print(f"[2/6] COPY {csv_path.name} -> staging table ...", flush=True)
+            logger.info("[2/6] COPY %s -> staging table ...", csv_path.name)
             t0 = time.time()
             cur.execute(create_stage_sql)
             with cur.copy(copy_sql) as copy, csv_path.open("r", encoding="utf-8", newline="") as f:
@@ -452,125 +450,125 @@ def _run_legacy_load(
                     bytes_read += len(chunk)
                     if bytes_read % (100 * HASH_CHUNK_SIZE) < HASH_CHUNK_SIZE:
                         pct = (bytes_read / (csv_size_mb * 1024 * 1024) * 100) if csv_size_mb > 0 else 0
-                        print(f"       {bytes_read / (1024**2):,.0f} MB copied ({pct:.0f}%) ...", flush=True)
+                        logger.info("       %s MB copied (%.0f%%) ...", f"{bytes_read / (1024**2):,.0f}", pct)
             t_copy = time.time() - t0
             rate_mb = (bytes_read / (1024 ** 2)) / t_copy if t_copy > 0 else 0
-            print(f"       Done in {_elapsed(t0)} ({rate_mb:,.0f} MB/s)\n", flush=True)
+            logger.info("       Done in %s (%s MB/s)", _elapsed(t0), f"{rate_mb:,.0f}")
 
             # ---- Phase 3: Count staging rows ----
             load_archive = is_forecast and not skip_archive
             total_phases = 8 if is_forecast else 6
 
-            print(f"[3/{total_phases}] Counting staging rows ...", flush=True)
+            logger.info("[3/%d] Counting staging rows ...", total_phases)
             t0 = time.time()
             cur.execute(f"SELECT count(*) FROM {qident(stg_table)};")
             stg_rows = cur.fetchone()[0]
-            print(f"       {stg_rows:,} rows in staging ({_elapsed(t0)})\n", flush=True)
+            logger.info("       %s rows in staging (%s)", f"{stg_rows:,}", _elapsed(t0))
 
             # ---- Phase 3b (forecast only): Load ALL lags into archive ----
             archive_count = 0
             if load_archive:
-                print(f"[3b/{total_phases}] Loading ALL lags -> backtest_lag_archive (before staging mutation) ...", flush=True)
+                logger.info("[3b/%d] Loading ALL lags -> backtest_lag_archive (before staging mutation) ...", total_phases)
                 t0 = time.time()
                 archive_count = _load_forecast_archive(cur, stg_table, stg_alias)
-                print(f"       Inserted {archive_count:,} archive rows in {_elapsed(t0)}")
-                print(f"       Archive preserves each row's original lag as execution_lag\n", flush=True)
+                logger.info("       Inserted %s archive rows in %s", f"{archive_count:,}", _elapsed(t0))
+                logger.info("       Archive preserves each row's original lag as execution_lag")
             elif is_forecast and skip_archive:
-                print(f"[3b/{total_phases}] Skipping archive load (--skip-archive)\n", flush=True)
+                logger.info("[3b/%d] Skipping archive load (--skip-archive)", total_phases)
 
             # ---- Phase 3c (forecast only): Resolve execution lag from dim_dfu ----
             if is_forecast:
-                print(f"[3c/{total_phases}] Resolving execution lag from dim_dfu ...", flush=True)
+                logger.info("[3c/%d] Resolving execution lag from dim_dfu ...", total_phases)
                 t0 = time.time()
                 matched, unmatched = _resolve_forecast_execution_lag(cur, stg_table)
-                print(f"       Matched {matched:,} rows from dim_dfu, "
-                      f"defaulted {unmatched:,} rows to lag 0 ({_elapsed(t0)})")
+                logger.info("       Matched %s rows from dim_dfu, defaulted %s rows to lag 0 (%s)",
+                            f"{matched:,}", f"{unmatched:,}", _elapsed(t0))
                 # Add WHERE clause to main INSERT: keep only execution-lag rows
                 insert_sql = insert_sql.rstrip(";") + (
                     f" WHERE {src_alias}.\"lag\" = {src_alias}.\"execution_lag\";"
                 )
-                print(f"       Main table will receive execution-lag rows only\n", flush=True)
+                logger.info("       Main table will receive execution-lag rows only")
 
             # ---- Phase 4: Clear target rows ----
             if replace_mode:
-                print(f"[4/{total_phases}] DELETE model_id='{EXTERNAL_MODEL_ID}' from {spec.table} ...", flush=True)
+                logger.info("[4/%d] DELETE model_id='%s' from %s ...", total_phases, EXTERNAL_MODEL_ID, spec.table)
                 t0 = time.time()
                 cur.execute(
                     f"DELETE FROM {qident(spec.table)} WHERE model_id = %s",
                     [EXTERNAL_MODEL_ID],
                 )
                 deleted = cur.rowcount
-                print(f"       Deleted {deleted:,} external rows ({_elapsed(t0)})\n", flush=True)
+                logger.info("       Deleted %s external rows (%s)", f"{deleted:,}", _elapsed(t0))
             else:
-                print(f"[4/{total_phases}] TRUNCATE {spec.table}", end="", flush=True)
+                logger.info("[4/%d] TRUNCATE %s", total_phases, spec.table)
                 t0 = time.time()
                 cur.execute(truncate_sql)
             if fast_mode:
-                print(f" + dropping indexes & constraints ...", flush=True)
+                logger.info("       + dropping indexes & constraints ...")
                 saved_constraints = _get_unique_constraints(cur, spec.table)
                 if saved_constraints:
                     _drop_unique_constraints(cur, spec.table, saved_constraints)
                     for con_name, _, cols in saved_constraints:
-                        print(f"         - UNIQUE constraint {con_name} ({', '.join(cols)})")
+                        logger.info("         - UNIQUE constraint %s (%s)", con_name, ', '.join(cols))
                 saved_indexes = _get_all_indexes(cur, spec.table)
                 if saved_indexes:
                     _drop_indexes(cur, saved_indexes)
                     for idx_name, _ in saved_indexes:
-                        print(f"         - index {idx_name}")
+                        logger.info("         - index %s", idx_name)
                 total_dropped = len(saved_constraints) + len(saved_indexes)
                 if total_dropped:
-                    print(f"       Truncated + dropped {total_dropped} indexes/constraints ({_elapsed(t0)})\n", flush=True)
+                    logger.info("       Truncated + dropped %d indexes/constraints (%s)", total_dropped, _elapsed(t0))
                 else:
-                    print(f"       Truncated (no indexes to drop) ({_elapsed(t0)})\n", flush=True)
+                    logger.info("       Truncated (no indexes to drop) (%s)", _elapsed(t0))
             elif not replace_mode:
-                print(f" ({_elapsed(t0)})\n", flush=True)
+                logger.info("       (%s)", _elapsed(t0))
 
             # ---- Phase 5: INSERT into bare table ----
-            print(f"[5/{total_phases}] INSERT -> {spec.table} ...", flush=True)
+            logger.info("[5/%d] INSERT -> %s ...", total_phases, spec.table)
             t0 = time.time()
             dedup_label = "no dedup" if no_dedup else "with dedup sort"
             extra_label = " (execution-lag only)" if is_forecast else ""
-            print(f"       Inserting {stg_rows:,} rows ({dedup_label}{extra_label}) ...", flush=True)
+            logger.info("       Inserting %s rows (%s%s) ...", f"{stg_rows:,}", dedup_label, extra_label)
             cur.execute(insert_sql)
             row_count = cur.rowcount
             t_insert = time.time() - t0
             rate_rows = row_count / t_insert if t_insert > 0 else 0
-            print(f"       Inserted {row_count:,} rows in {_elapsed(t0)} ({rate_rows:,.0f} rows/s)\n", flush=True)
+            logger.info("       Inserted %s rows in %s (%s rows/s)", f"{row_count:,}", _elapsed(t0), f"{rate_rows:,.0f}")
 
             # ---- Phase 6: Recreate indexes + constraints (fast mode) ----
             total_rebuild = len(saved_indexes) + len(saved_constraints)
             if fast_mode and total_rebuild > 0:
-                print(f"[6/{total_phases}] Recreating {total_rebuild} indexes/constraints ...", flush=True)
+                logger.info("[6/%d] Recreating %d indexes/constraints ...", total_phases, total_rebuild)
                 t0 = time.time()
                 step = 0
                 for con_name, _, cols in saved_constraints:
                     step += 1
                     t_idx = time.time()
                     _recreate_unique_constraints(cur, spec.table, [(con_name, 'u', cols)])
-                    print(f"       [{step}/{total_rebuild}] UNIQUE {con_name} ({_elapsed(t_idx)})", flush=True)
+                    logger.info("       [%d/%d] UNIQUE %s (%s)", step, total_rebuild, con_name, _elapsed(t_idx))
                 for idx_name, idx_def in saved_indexes:
                     step += 1
                     t_idx = time.time()
                     cur.execute(idx_def + ";")
-                    print(f"       [{step}/{total_rebuild}] {idx_name} ({_elapsed(t_idx)})", flush=True)
-                print(f"       All indexes rebuilt in {_elapsed(t0)}\n", flush=True)
+                    logger.info("       [%d/%d] %s (%s)", step, total_rebuild, idx_name, _elapsed(t_idx))
+                logger.info("       All indexes rebuilt in %s", _elapsed(t0))
             else:
-                print(f"[6/{total_phases}] No index rebuild needed\n", flush=True)
+                logger.info("[6/%d] No index rebuild needed", total_phases)
 
             # ---- Commit ----
-            print("Committing ...", flush=True)
+            logger.info("Committing ...")
             conn.commit()
 
             # ---- Phase 8 (forecast only): Refresh archive views (D5) ----
             if load_archive:
-                print(f"[8/{total_phases}] Refreshing archive accuracy views ...", flush=True)
+                logger.info("[8/%d] Refreshing archive accuracy views ...", total_phases)
                 t0 = time.time()
                 for mv in MV_REFRESH_ARCHIVE:
                     cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
                 conn.commit()
-                print(f"       {' + '.join(MV_REFRESH_ARCHIVE)} refreshed ({_elapsed(t0)})\n", flush=True)
+                logger.info("       %s refreshed (%s)", ' + '.join(MV_REFRESH_ARCHIVE), _elapsed(t0))
             elif is_forecast and skip_archive:
-                print(f"[8/{total_phases}] Skipping archive view refresh (--skip-archive)\n", flush=True)
+                logger.info("[8/%d] Skipping archive view refresh (--skip-archive)", total_phases)
 
         except Exception as exc:
             # E1: fail gracefully on legacy load error
@@ -580,16 +578,16 @@ def _run_legacy_load(
     # ---- Summary ----
     entity_type = "fact" if spec.table.startswith("fact_") else "dimension"
     total = _elapsed(t_total)
-    print(f"\n{'='*60}")
-    print(f"Done: loaded {row_count:,} rows into {entity_type} table {spec.table}")
+    logger.info("=" * 60)
+    logger.info("Done: loaded %s rows into %s table %s", f"{row_count:,}", entity_type, spec.table)
     if is_forecast:
-        print(f"  Main table (execution-lag): {row_count:,} rows")
+        logger.info("  Main table (execution-lag): %s rows", f"{row_count:,}")
         if skip_archive:
-            print(f"  Archive: skipped (--skip-archive)")
+            logger.info("  Archive: skipped (--skip-archive)")
         else:
-            print(f"  Archive (all lags):         {archive_count:,} rows")
-    print(f"Total time: {total}")
-    print(f"{'='*60}\n")
+            logger.info("  Archive (all lags):         %s rows", f"{archive_count:,}")
+    logger.info("Total time: %s", total)
+    logger.info("=" * 60)
 
 
 def main() -> None:
@@ -647,4 +645,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     main()

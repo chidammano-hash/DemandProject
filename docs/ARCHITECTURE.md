@@ -84,14 +84,14 @@ flowchart TD
 
 | Domain | Source File | Format | Delimiter | Normalize Script | Clean Output | Key Columns |
 |--------|-----------|--------|-----------|-----------------|-------------|-------------|
-| **item** | `datafiles/itemdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset item` | `data/itemdata_clean.csv` | `item_no` (PK) |
-| **location** | `datafiles/locationdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset location` | `data/locationdata_clean.csv` | `location_id` (PK) |
-| **customer** | `datafiles/customerdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset customer` | `data/customerdata_clean.csv` | `site + customer_no` (CK) |
+| **item** | `data/input/itemdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset item` | `data/itemdata_clean.csv` | `item_no` (PK) |
+| **location** | `data/input/locationdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset location` | `data/locationdata_clean.csv` | `location_id` (PK) |
+| **customer** | `data/input/customerdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset customer` | `data/customerdata_clean.csv` | `site + customer_no` (CK) |
 | **time** | _(auto-generated 2020-2035)_ | — | — | `normalize_dataset_csv.py --dataset time` | `data/timedata_clean.csv` | `date_key` (PK) |
-| **dfu** | `datafiles/dfu.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset dfu` | `data/dfu_clean.csv` | `dmdunit + dmdgroup + loc` (CK) |
-| **sales** | `datafiles/dfu_lvl2_hist.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset sales` | `data/dfu_lvl2_hist_clean.csv` | `dmdunit + dmdgroup + loc + startdate + type` |
-| **forecast** | `datafiles/dfu_stat_fcst.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset forecast` | `data/dfu_stat_fcst_clean.csv` | `dmdunit + dmdgroup + loc + fcstdate + startdate` |
-| **inventory** | `datafiles/Inventory_Snapshot_YYYY_MM.csv` (14 files) | CSV | `,` | `normalize_inventory_csv.py` | `data/inventory_clean.csv` | `item_no + loc + snapshot_date` |
+| **dfu** | `data/input/dfu.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset dfu` | `data/dfu_clean.csv` | `dmdunit + dmdgroup + loc` (CK) |
+| **sales** | `data/input/dfu_lvl2_hist.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset sales` | `data/dfu_lvl2_hist_clean.csv` | `dmdunit + dmdgroup + loc + startdate + type` |
+| **forecast** | `data/input/dfu_stat_fcst.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset forecast` | `data/dfu_stat_fcst_clean.csv` | `dmdunit + dmdgroup + loc + fcstdate + startdate` |
+| **inventory** | `data/input/Inventory_Snapshot_YYYY_MM.csv` (14 files) | CSV | `,` | `normalize_inventory_csv.py` | `data/inventory_clean.csv` | `item_no + loc + snapshot_date` |
 
 **Normalization rules applied to all domains:**
 - Null normalization: `''`, `'null'`, `'none'`, `'NA'` → `NULL`
@@ -106,7 +106,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    subgraph SRC["Source Files (datafiles/)"]
+    subgraph SRC["Source Files (data/input/)"]
         I1["itemdata.csv"]
         I2["locationdata.csv"]
         I3["customerdata.csv"]
@@ -1267,13 +1267,13 @@ All config files live in `config/`. Every compute script externalizes parameters
 | `data/clustering/` | Feature matrices, KMeans model, labels | `generate_clustering_features.py`, `train_clustering_model.py` |
 | `data/tuning/` | `best_params_<model>.json` | `tune_hyperparams.py` |
 | `data/models/<model_id>/` | Persisted `.pkl` model artifacts | Backtest scripts (via `model_persistence_fn`) |
-| `datafiles/` | Raw source CSVs/TXTs (read-only) | External system export |
+| `data/input/` | Raw source CSVs/TXTs (read-only) | External system export |
 
 ---
 
 ## 22. Make Target Quick Reference — Full Pipeline
 
-Run from `mvp/demand/`. Execute phases in order; within a phase, targets can run in parallel unless noted.
+Run from the project root. Execute phases in order; within a phase, targets can run in parallel unless noted.
 
 ```bash
 # --- Phase 0: One-Time Setup -------------------------------------------------

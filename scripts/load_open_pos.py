@@ -11,9 +11,9 @@ after each load.
 
 Usage:
     uv run python scripts/load_open_pos.py [--dry-run]
-    uv run python scripts/load_open_pos.py --file datafiles/open_pos_20260306.csv
-    uv run python scripts/load_open_pos.py --receipts --file datafiles/po_receipts_20260306.csv
-    uv run python scripts/load_open_pos.py --suppliers --file datafiles/suppliers_20260306.csv
+    uv run python scripts/load_open_pos.py --file data/input/open_pos_20260306.csv
+    uv run python scripts/load_open_pos.py --receipts --file data/input/po_receipts_20260306.csv
+    uv run python scripts/load_open_pos.py --suppliers --file data/input/suppliers_20260306.csv
 """
 
 from __future__ import annotations

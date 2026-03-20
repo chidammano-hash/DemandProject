@@ -2,6 +2,9 @@
 
 Provides connection pool management, SQL helpers, domain spec wrappers,
 pagination (fetch_page / list_domain), and metric expression builders.
+
+Connection pool and OpenAI client are implemented in dedicated sub-modules
+(api.pool, api.llm) and re-exported here for backward compatibility.
 """
 from __future__ import annotations
 
@@ -15,6 +18,21 @@ from psycopg_pool import ConnectionPool
 from fastapi import HTTPException
 
 from common.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
+
+# ---------------------------------------------------------------------------
+# Re-exports from sub-modules (backward compatibility)
+# ---------------------------------------------------------------------------
+from api.pool import _get_pool  # noqa: F401
+from api.llm import get_openai  # noqa: F401
+
+
+def get_conn():
+    """Return a connection context manager from the shared pool.
+
+    Defined here (not re-exported) so that ``patch("api.core._get_pool")``
+    in tests correctly intercepts the pool used by this function.
+    """
+    return _get_pool().connection()
 
 
 def _require_env(name: str) -> str:
@@ -34,50 +52,6 @@ def _f(v: Any) -> float | None:
 def _s(v: Any) -> str | None:
     """Coerce a Postgres value to str, returning None for NULL."""
     return str(v) if v is not None else None
-
-
-# ---------------------------------------------------------------------------
-# Connection pool
-# ---------------------------------------------------------------------------
-_pool: ConnectionPool | None = None
-
-
-def _get_pool() -> ConnectionPool:
-    global _pool
-    if _pool is None:
-        password = os.environ.get("POSTGRES_PASSWORD")
-        if not password:
-            raise RuntimeError("Required environment variable 'POSTGRES_PASSWORD' is not set.")
-        conninfo = (
-            f"host={os.getenv('POSTGRES_HOST', 'localhost')} "
-            f"port={os.getenv('POSTGRES_PORT', '5440')} "
-            f"dbname={os.getenv('POSTGRES_DB', 'demand_mvp')} "
-            f"user={os.getenv('POSTGRES_USER', 'demand')} "
-            f"password={password}"
-        )
-        _pool = ConnectionPool(conninfo, min_size=2, max_size=10, open=True)
-    return _pool
-
-
-def get_conn():
-    return _get_pool().connection()
-
-
-# ---------------------------------------------------------------------------
-# OpenAI client (shared by chat + intel routers)
-# ---------------------------------------------------------------------------
-_openai_client = None
-
-
-def get_openai():
-    global _openai_client
-    if _openai_client is None:
-        from openai import OpenAI
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        if not api_key or api_key.startswith("sk-..."):
-            raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured")
-        _openai_client = OpenAI(api_key=api_key)
-    return _openai_client
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # Supply Chain Command Center — Operations Guide
 
-All commands run from `mvp/demand/` unless noted.
+All commands run from `` unless noted.
 
 This document is the single operations reference: environment setup, data pipeline,
 ML training, platform services, testing, cleanup, and troubleshooting. Follow the
@@ -1180,7 +1180,7 @@ After any cleanup that affects champion/ceiling rows, re-run `make champion-sele
 | Problem | Fix |
 |---|---|
 | Forecast load fails with "missing data for column model_id" | `make normalize-forecast && make load-forecast` |
-| Inventory normalize fails | Verify 14 CSVs in `datafiles/`: `ls datafiles/Inventory_Snapshot_*.csv \| wc -l` (expect 14); files must be UTF-8 CSV with columns `exec_date,item,loc,lead_time,tot_oh,tot_oh_oo,mtd_sls` |
+| Inventory normalize fails | Verify 14 CSVs in `data/input/`: `ls data/input/Inventory_Snapshot_*.csv \| wc -l` (expect 14); files must be UTF-8 CSV with columns `exec_date,item,loc,lead_time,tot_oh,tot_oh_oo,mtd_sls` |
 | Inventory load fails | Apply DDL first: `make db-apply-inventory`; verify `ls -lh data/inventory_clean.csv` |
 | Inventory tab shows no data | Verify load: `docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "SELECT COUNT(*) FROM fact_inventory_snapshot"`; refresh view: `make refresh-agg-inventory` |
 

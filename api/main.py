@@ -8,7 +8,10 @@ from __future__ import annotations
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI
+import logging
+import time
+
+from fastapi import FastAPI, Request
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -23,6 +26,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+logger = logging.getLogger("api.access")
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    if request.url.path == "/health":
+        return await call_next(request)
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000
+    logger.info(
+        "%s %s %d %.1fms",
+        request.method, request.url.path, response.status_code, duration_ms,
+    )
+    return response
 
 
 # ---------------------------------------------------------------------------

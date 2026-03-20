@@ -14,6 +14,7 @@ Key design choices for balanced clusters (tree-model friendly):
 
 import argparse
 import json
+import logging
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -38,6 +39,8 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+logger = logging.getLogger(__name__)
 
 # ── Feature groups ──────────────────────────────────────────────────────────
 # Core features that drive business-meaningful clusters for tree models.
@@ -97,9 +100,8 @@ def merge_small_clusters(
     if not small:
         return labels, centroids
 
-    print(f"\nMerging {len(small)} small clusters (min_size={min_size}):")
+    logger.info("Merging %d small clusters (min_size=%d):", len(small), min_size)
     for sc in sorted(small):
-        print(f"  Cluster {sc} ({size_map[sc]} DFUs) -> ", end="")
         # Find nearest large cluster by centroid distance
         sc_centroid = centroids[sc]
         best_dist = np.inf
@@ -109,7 +111,8 @@ def merge_small_clusters(
             if d < best_dist:
                 best_dist = d
                 best_target = lc
-        print(f"merged into cluster {best_target} (dist={best_dist:.4f})")
+        logger.info("  Cluster %d (%d DFUs) -> merged into cluster %s (dist=%.4f)",
+                    sc, size_map[sc], best_target, best_dist)
         labels[labels == sc] = best_target
 
     # Re-number labels to be contiguous 0..K-1
@@ -195,12 +198,11 @@ def find_optimal_k(
     # Use silhouette sampling for large datasets (>50K) — O(n^2) otherwise
     silhouette_sample_size = 10_000 if n_samples > 50_000 else None
 
-    print(
-        f"Testing K values from {k_min} to {k_max} "
-        f"({n_samples} samples, min_cluster_size={min_cluster_size} "
-        f"[{min_cluster_size_pct:.1f}%]"
-        f"{f', silhouette_sample={silhouette_sample_size}' if silhouette_sample_size else ''}"
-        f", workers={n_workers})..."
+    logger.info(
+        "Testing K values from %d to %d (%d samples, min_cluster_size=%d [%.1f%%]%s, workers=%d)...",
+        k_min, k_max, n_samples, min_cluster_size, min_cluster_size_pct,
+        f", silhouette_sample={silhouette_sample_size}" if silhouette_sample_size else "",
+        n_workers,
     )
 
     # Evaluate K values — parallel if workers > 1
@@ -222,13 +224,10 @@ def find_optimal_k(
                 smallest = result["smallest"]
                 smallest_pct = smallest / n_samples * 100
                 status = "OK" if result["feasible"] else f"PENALIZED (smallest={smallest} = {smallest_pct:.1f}%)"
-                print(
-                    f"  K={k}... sil={result['sil']:.4f}, CH={result['ch']:.1f}, "
-                    f"smallest={smallest} ({smallest_pct:.1f}%) [{status}]"
-                )
+                logger.info("  K=%d... sil=%.4f, CH=%.1f, smallest=%d (%.1f%%) [%s]",
+                            k, result['sil'], result['ch'], smallest, smallest_pct, status)
     else:
         for k in k_values:
-            print(f"  K={k}...", end=" ", flush=True)
             result = _evaluate_single_k(
                 k, X_scaled, n_samples, min_cluster_size, silhouette_sample_size,
             )
@@ -236,7 +235,8 @@ def find_optimal_k(
             smallest = result["smallest"]
             smallest_pct = smallest / n_samples * 100
             status = "OK" if result["feasible"] else f"PENALIZED (smallest={smallest} = {smallest_pct:.1f}%)"
-            print(f"sil={result['sil']:.4f}, CH={result['ch']:.1f}, smallest={smallest} ({smallest_pct:.1f}%) [{status}]")
+            logger.info("  K=%d... sil=%.4f, CH=%.1f, smallest=%d (%.1f%%) [%s]",
+                        k, result['sil'], result['ch'], smallest, smallest_pct, status)
 
     # Collect results in k_values order
     inertias = [results_by_k[k]["inertia"] for k in k_values]
@@ -265,8 +265,8 @@ def find_optimal_k(
         optimal_k = k_values[int(np.argmax(combined))]
     else:
         # All K values violated the constraint — fall back to best silhouette
-        print(
-            "Warning: no K passed the min-cluster-size constraint. "
+        logger.warning(
+            "No K passed the min-cluster-size constraint. "
             "Falling back to best silhouette score."
         )
         optimal_k = k_values[int(np.argmax(sil_arr))]
@@ -415,12 +415,12 @@ def main() -> None:
     # Load feature matrix
     input_path = root / args.input
     if not input_path.exists():
-        print(f"Error: Input file not found: {input_path}")
+        logger.error("Input file not found: %s", input_path)
         sys.exit(1)
 
-    print(f"Loading feature matrix from {input_path}...")
+    logger.info("Loading feature matrix from %s...", input_path)
     df = pd.read_csv(input_path)
-    print(f"Loaded {len(df)} samples with {len(df.columns)} features")
+    logger.info("Loaded %d samples with %d features", len(df), len(df.columns))
 
     # ── Feature selection ───────────────────────────────────────────────────
     metadata_cols = ["dfu_ck", "dmdunit", "dmdgroup", "loc"]
@@ -433,9 +433,9 @@ def main() -> None:
         numeric_cols = [c for c in CORE_FEATURES if c in df.columns]
         missing = [c for c in CORE_FEATURES if c not in df.columns]
         if missing:
-            print(f"Warning: missing core features (skipped): {missing}")
+            logger.warning("Missing core features (skipped): %s", missing)
 
-    print(f"Selected {len(numeric_cols)} features: {numeric_cols}")
+    logger.info("Selected %d features: %s", len(numeric_cols), numeric_cols)
 
     # ── Log-transform skewed volume features ────────────────────────────────
     # log1p handles zeros gracefully: log1p(0) = 0
@@ -453,14 +453,14 @@ def main() -> None:
                 log_applied.append(f"{col}(shifted)")
 
     if log_applied:
-        print(f"Log-transformed: {log_applied}")
+        logger.info("Log-transformed: %s", log_applied)
 
     # Sign-preserving log for trend_slope_norm (can be negative)
     if "trend_slope_norm" in X_df.columns:
         X_df["trend_slope_norm"] = (
             np.sign(X_df["trend_slope_norm"]) * np.log1p(np.abs(X_df["trend_slope_norm"]))
         )
-        print("Sign-preserving log applied to trend_slope_norm")
+        logger.info("Sign-preserving log applied to trend_slope_norm")
 
     X = X_df.values
     feature_names = list(numeric_cols)
@@ -470,7 +470,7 @@ def main() -> None:
     high_var_mask = variances > 0.001
     X = X[:, high_var_mask]
     feature_names = [feature_names[i] for i in range(len(feature_names)) if high_var_mask[i]]
-    print(f"Using {len(feature_names)} features after variance filtering: {feature_names}")
+    logger.info("Using %d features after variance filtering: %s", len(feature_names), feature_names)
 
     # Scale features
     scaler = StandardScaler()
@@ -482,7 +482,8 @@ def main() -> None:
         n_components = pca_components or min(50, X_scaled.shape[1])
         pca_model = PCA(n_components=n_components, random_state=42)
         X_scaled = pca_model.fit_transform(X_scaled)
-        print(f"Applied PCA: {X_scaled.shape[1]} components ({pca_model.explained_variance_ratio_.sum():.2%} variance explained)")
+        logger.info("Applied PCA: %d components (%.2f%% variance explained)",
+                    X_scaled.shape[1], pca_model.explained_variance_ratio_.sum() * 100)
 
     # Determine worker count for parallel K-search
     n_workers = args.workers if args.workers is not None else min(os.cpu_count() or 1, 8)
@@ -492,15 +493,15 @@ def main() -> None:
     k_results = find_optimal_k(X_scaled, k_range, min_cluster_size_pct, n_workers=n_workers)
     optimal_k = k_results["optimal_k"]
 
-    print(f"\nOptimal K selection:")
-    print(f"  Combined score method: K={optimal_k}")
-    print(f"  Silhouette-only method: K={k_results['optimal_k_silhouette']}")
-    print(f"  Elbow method: K={k_results['optimal_k_elbow']}")
-    print(f"  Selected: K={optimal_k}")
+    logger.info("Optimal K selection:")
+    logger.info("  Combined score method: K=%d", optimal_k)
+    logger.info("  Silhouette-only method: K=%d", k_results['optimal_k_silhouette'])
+    logger.info("  Elbow method: K=%d", k_results['optimal_k_elbow'])
+    logger.info("  Selected: K=%d", optimal_k)
 
     # Train final model with n_init=30 for robustness with 14 features
     # algorithm="elkan" is faster than "lloyd" for dense low-dimensional data
-    print(f"\nTraining final KMeans with K={optimal_k}, n_init=30, algorithm=elkan, max_iter=300...")
+    logger.info("Training final KMeans with K=%d, n_init=30, algorithm=elkan, max_iter=300...", optimal_k)
     kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=30, algorithm="elkan", max_iter=300)
     labels = kmeans.fit_predict(X_scaled)
 
@@ -515,11 +516,11 @@ def main() -> None:
             X_scaled, labels, kmeans.cluster_centers_, min_cluster_size
         )
         final_k = len(set(labels))
-        print(f"After merging: {final_k} clusters (was {optimal_k})")
+        logger.info("After merging: %d clusters (was %d)", final_k, optimal_k)
         optimal_k = final_k
     else:
         centroids_scaled = kmeans.cluster_centers_
-        print("All clusters meet minimum size -- no merging needed.")
+        logger.info("All clusters meet minimum size -- no merging needed.")
 
     # Compute final metrics
     silhouette = silhouette_score(X_scaled, labels)
@@ -530,21 +531,21 @@ def main() -> None:
     unique, counts = np.unique(labels, return_counts=True)
     cluster_sizes = dict(zip(unique.astype(int), counts.astype(int)))
 
-    print(f"\nFinal results:")
-    print(f"  Clusters: {optimal_k}")
-    print(f"  Silhouette score: {silhouette:.4f}")
-    print(f"  Calinski-Harabasz score: {ch_score_final:.2f}")
-    print(f"  Inertia: {inertia:.2f}")
+    logger.info("Final results:")
+    logger.info("  Clusters: %d", optimal_k)
+    logger.info("  Silhouette score: %.4f", silhouette)
+    logger.info("  Calinski-Harabasz score: %.2f", ch_score_final)
+    logger.info("  Inertia: %.2f", inertia)
     for cid, sz in sorted(cluster_sizes.items()):
         pct = sz / n_samples * 100
-        print(f"  Cluster {cid}: {sz:,} DFUs ({pct:.1f}%)")
+        logger.info("  Cluster %s: %s DFUs (%.1f%%)", cid, f"{sz:,}", pct)
 
     # Create output directory
     output_dir = root / args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate plots
-    print("Generating visualizations...")
+    logger.info("Generating visualizations...")
     plot_k_selection(
         k_results["k_values"],
         k_results["inertias"],
@@ -566,7 +567,7 @@ def main() -> None:
     })
     assignments_path = output_dir / "cluster_assignments.csv"
     assignments_df.to_csv(assignments_path, index=False)
-    print(f"Saved cluster assignments to {assignments_path}")
+    logger.info("Saved cluster assignments to %s", assignments_path)
 
     # Save cluster metadata
     cluster_metadata = {
@@ -593,7 +594,7 @@ def main() -> None:
     metadata_path = output_dir / "cluster_metadata.json"
     with open(metadata_path, "w") as f:
         json.dump(cluster_metadata, f, indent=2)
-    print(f"Saved cluster metadata to {metadata_path}")
+    logger.info("Saved cluster metadata to %s", metadata_path)
 
     # Save centroids -- inverse-transform back to original feature space
     if pca_model is None:
@@ -618,7 +619,7 @@ def main() -> None:
     centroids_df["cluster_id"] = range(optimal_k)
     centroids_path = output_dir / "cluster_centroids.csv"
     centroids_df.to_csv(centroids_path, index=False)
-    print(f"Saved cluster centroids to {centroids_path}")
+    logger.info("Saved cluster centroids to %s", centroids_path)
 
     # MLflow logging (optional: skip if server unavailable)
     try:
@@ -666,11 +667,12 @@ def main() -> None:
 
             mlflow.sklearn.log_model(kmeans, "model")
 
-            print(f"\nLogged to MLflow: {mlflow.get_artifact_uri()}")
+            logger.info("Logged to MLflow: %s", mlflow.get_artifact_uri())
     except (ConnectionError, OSError, mlflow.exceptions.MlflowException) as e:
-        print(f"\nMLflow logging skipped (server unavailable or error): {e}")
-        print("Clustering outputs were saved to disk. Start MLflow (e.g. make up) to enable experiment tracking.")
+        logger.warning("MLflow logging skipped (server unavailable or error): %s", e)
+        logger.info("Clustering outputs were saved to disk. Start MLflow (e.g. make up) to enable experiment tracking.")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     main()

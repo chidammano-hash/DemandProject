@@ -100,7 +100,7 @@ make refresh-inv-backtest  # Refresh inventory-forecast bridge view
 
 ## Dependencies
 
-- **Upstream:** 14 monthly CSV files in `datafiles/`
+- **Upstream:** 14 monthly CSV files in `data/input/`
 - **Downstream:** Safety stock, EOQ, health scores, fill rate, demand signals, intramonth stockouts, rebalancing
 - **Libraries:** pandas, psycopg
 

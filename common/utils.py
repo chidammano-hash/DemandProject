@@ -2,17 +2,21 @@
 
 Consolidates commonly duplicated helpers:
 - _ts(): Formatted timestamp for console logging
-- load_config(): Thread-safe YAML config loader with caching
+- load_config(): Thread-safe YAML config loader with caching (with optional
+  Pydantic validation when a model is registered in common.config_models)
 """
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Timestamp helper — used by backtest scripts, tuning, feature engineering,
@@ -38,7 +42,7 @@ def _ts() -> str:
 _config_store: dict[str, dict] = {}
 _config_lock = threading.Lock()
 
-# Base directory for config files: mvp/demand/config/
+# Base directory for config files: config/
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 
 
@@ -49,7 +53,7 @@ def load_config(name: str) -> dict:
     ----------
     name : str
         Config file name with extension, e.g. ``"notification_config.yaml"``.
-        Resolved relative to ``mvp/demand/config/``.
+        Resolved relative to ``config/``.
 
     Returns
     -------
@@ -69,9 +73,29 @@ def load_config(name: str) -> dict:
         cfg_path = _CONFIG_DIR / name
         if cfg_path.exists():
             with open(cfg_path) as f:
-                result = yaml.safe_load(f) or {}
+                raw = yaml.safe_load(f) or {}
         else:
-            result = {}
+            raw = {}
+
+        # Optional Pydantic validation — import lazily to avoid circular deps
+        try:
+            from common.config_models import _config_validators
+
+            validator = _config_validators.get(name)
+            if validator is not None:
+                validated = validator(**raw)
+                result = validated.model_dump()
+            else:
+                result = raw
+        except ImportError:
+            # config_models not available — skip validation
+            result = raw
+        except Exception:
+            logger.warning(
+                "Config validation failed for %s; returning raw dict", name,
+                exc_info=True,
+            )
+            result = raw
 
         _config_store[name] = result
         return result

@@ -32,11 +32,10 @@ catboost_info/
 **/e2e/blob-report/
 
 # Project data & archives
-reference/
-datafiles/
+archive/reference/
 
-# Generated data files — entire data directory (CSVs, models, tuning, backtest outputs, SHAP)
-mvp/demand/data/
+# All data — input CSVs, generated models, backtest outputs, SHAP artifacts
+data/
 
 # ML model files (safety net for any models outside data/)
 *.pkl

@@ -10,6 +10,7 @@ Produces two CSVs under data/backtest/lgbm_cluster/:
 """
 
 import json
+import logging
 import os
 import pickle
 import platform
@@ -32,7 +33,8 @@ if str(ROOT) not in sys.path:
 from common.backtest_framework import run_tree_backtest
 from common.constants import MIN_CLUSTER_ROWS
 from common.tuning import TRAIN_FOLD_FNS, load_best_params, tune_for_timeframe
-from common.utils import _ts
+
+logger = logging.getLogger(__name__)
 
 
 # ── LGBM per-cluster training function ───────────────────────────────────────
@@ -58,15 +60,15 @@ def train_and_predict_per_cluster(
     model_meta: dict[str, dict] = {}  # metadata stored separately, not monkey-patched onto model
 
     clusters = sorted(train_df["ml_cluster"].dropna().unique())
-    print(f"    [{_ts()}] Training {len(clusters)} per-cluster LGBM models...")
+    logger.info("Training %d per-cluster LGBM models...", len(clusters))
     for ci, cluster_label in enumerate(clusters, 1):
         train_c = train_df[train_df["ml_cluster"] == cluster_label]
         pred_c = predict_df[predict_df["ml_cluster"] == cluster_label]
 
         if len(train_c) < MIN_CLUSTER_ROWS or len(pred_c) == 0:
             if len(pred_c) > 0:
-                print(f"    [{_ts()}] Cluster {ci}/{len(clusters)} '{cluster_label}': "
-                      f"skipped (train={len(train_c)}), zeroing {len(pred_c)} predictions")
+                logger.info("Cluster %d/%d '%s': skipped (train=%d), zeroing %d predictions",
+                            ci, len(clusters), cluster_label, len(train_c), len(pred_c))
                 result = pred_c[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
                 result["basefcst_pref"] = 0.0
                 all_results.append(result)
@@ -108,9 +110,9 @@ def train_and_predict_per_cluster(
         models[cluster_label] = model
         n_est_used = model.best_iteration_ if model.best_iteration_ is not None else fit_params["n_estimators"]
         model_meta[cluster_label] = {"val_wape": val_wape, "train_rows": len(X_tr)}
-        print(f"    [{_ts()}] Cluster {ci}/{len(clusters)} '{cluster_label}': "
-              f"train={len(train_c):,}, pred={len(pred_c):,}, "
-              f"best_iter={n_est_used}, val_wape={val_wape:.1f}% ({time.time() - t0:.1f}s)")
+        logger.info("Cluster %d/%d '%s': train=%s, pred=%s, best_iter=%s, val_wape=%.1f%% (%.1fs)",
+                    ci, len(clusters), cluster_label, f"{len(train_c):,}", f"{len(pred_c):,}",
+                    n_est_used, val_wape, time.time() - t0)
 
     no_cluster = predict_df[
         predict_df["ml_cluster"].isna() | (
@@ -118,7 +120,7 @@ def train_and_predict_per_cluster(
         )
     ]
     if len(no_cluster) > 0:
-        print(f"    [{_ts()}] {len(no_cluster)} predict rows with no cluster → zeroing")
+        logger.info("%d predict rows with no cluster -> zeroing", len(no_cluster))
         result = no_cluster[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
         result["basefcst_pref"] = 0.0
         all_results.append(result)
@@ -135,8 +137,8 @@ def train_and_predict_global(
 ) -> tuple[pd.DataFrame, dict, dict]:
     """Train a single global LGBM on ALL data with ml_cluster as categorical feature."""
     # ml_cluster is INCLUDED as a feature — do NOT strip it
-    print(f"    [{_ts()}] Training global LGBM on {len(train_df):,} rows, "
-          f"{len(feature_cols)} features (includes ml_cluster)...")
+    logger.info("Training global LGBM on %s rows, %d features (includes ml_cluster)...",
+                f"{len(train_df):,}", len(feature_cols))
 
     X_train = train_df[feature_cols]
     y_train = train_df["qty"]
@@ -166,8 +168,8 @@ def train_and_predict_global(
     val_denom = float(abs(y_val.sum()))
     val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2) if val_denom > 0 else 0.0
     n_est_used = model.best_iteration_ if model.best_iteration_ is not None else fit_params["n_estimators"]
-    print(f"    [{_ts()}] Global LGBM: val_WAPE={val_wape:.1f}%, "
-          f"best_iter={n_est_used}, train={len(train_df):,}, pred={len(predict_df):,}")
+    logger.info("Global LGBM: val_WAPE=%.1f%%, best_iter=%s, train=%s, pred=%s",
+                val_wape, n_est_used, f"{len(train_df):,}", f"{len(predict_df):,}")
 
     result = predict_df[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
     result["basefcst_pref"] = np.clip(preds, 0, None)
@@ -243,7 +245,8 @@ def persist_cluster_models(
             with open(fi_dir / f"cluster_{cluster_label}.json", "w") as f:
                 json.dump(fi_sorted, f, indent=2)
 
-    print(f"  [{_ts()}] Persisted {saved} {model_id} cluster models to {out_dir}/ (timeframe={timeframe_label})")
+    logger.info("Persisted %d %s cluster models to %s/ (timeframe=%s)",
+                saved, model_id, out_dir, timeframe_label)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -299,28 +302,28 @@ def main() -> None:
     tune_inline = algo.get("tune_inline", False)
     params_file = algo.get("params_file", None)
 
-    print(f"[{_ts()}] LGBM config: model_id={model_id}, cluster_strategy={cluster_strategy}, "
-          f"recursive={recursive}, shap_select={shap_select}, tune_inline={tune_inline}, "
-          f"n_timeframes={n_timeframes}")
+    logger.info("LGBM config: model_id=%s, cluster_strategy=%s, recursive=%s, shap_select=%s, "
+                "tune_inline=%s, n_timeframes=%d",
+                model_id, cluster_strategy, recursive, shap_select, tune_inline, n_timeframes)
 
     # GPU detection with env-var override: DEMAND_GPU=on|off|auto (default: auto)
     _gpu_pref = os.getenv("DEMAND_GPU", "auto").lower()
     _use_gpu = False
     if _gpu_pref == "on":
         _use_gpu = True
-        print(f"[{_ts()}] GPU forced ON via DEMAND_GPU env var")
+        logger.info("GPU forced ON via DEMAND_GPU env var")
     elif _gpu_pref == "off":
         _use_gpu = False
-        print(f"[{_ts()}] GPU disabled via DEMAND_GPU env var")
+        logger.info("GPU disabled via DEMAND_GPU env var")
     else:  # auto
         if platform.system() == "Darwin":
             try:
                 _test = lgb.LGBMRegressor(device="gpu", n_estimators=1, verbosity=-1)
                 _test.fit([[0]], [0])
                 _use_gpu = True
-                print(f"[{_ts()}] Using Apple GPU (OpenCL) for LightGBM")
+                logger.info("Using Apple GPU (OpenCL) for LightGBM")
             except Exception:
-                print(f"[{_ts()}] GPU not available, falling back to CPU")
+                logger.info("GPU not available, falling back to CPU")
 
     lgbm_params = {
         "n_estimators": algo.get("n_estimators", 500),
@@ -341,8 +344,8 @@ def main() -> None:
         if n_est_tuned:
             lgbm_params["n_estimators"] = n_est_tuned
         params_source = f"tuning_file:{params_file}"
-        print(f"[{_ts()}] Loaded tuned params from {params_file} "
-              f"(best_wape={tuning_data.get('best_wape')}%, n_est={lgbm_params['n_estimators']})")
+        logger.info("Loaded tuned params from %s (best_wape=%s%%, n_est=%s)",
+                    params_file, tuning_data.get('best_wape'), lgbm_params['n_estimators'])
 
     if _use_gpu:
         lgbm_params["device"] = "gpu"
@@ -370,16 +373,16 @@ def main() -> None:
             if not tuned:
                 return _base_params.copy()
             result = {**_base_params, **tuned, "n_estimators": n_est}
-            print(f"    [{_ts()}] Inline tuned: n_estimators={n_est}, "
-                  f"lr={tuned.get('learning_rate', 'n/a'):.4f}")
+            logger.info("Inline tuned: n_estimators=%s, lr=%.4f",
+                        n_est, tuned.get('learning_rate', 0))
             return result
 
         params_source = "inline_tuning"
-        print(f"[{_ts()}] Inline tuning enabled "
-              f"(inline_n_trials={_tune_config['tuning'].get('inline_n_trials', 20)}, "
-              f"inline_n_splits={_tune_config['tuning'].get('inline_n_splits', 3)})")
+        logger.info("Inline tuning enabled (inline_n_trials=%s, inline_n_splits=%s)",
+                    _tune_config['tuning'].get('inline_n_trials', 20),
+                    _tune_config['tuning'].get('inline_n_splits', 3))
 
-    print(f"[{_ts()}] Params source: {params_source}")
+    logger.info("Params source: %s", params_source)
 
     # Build SHAP feature selector closure (Feature 42)
     feature_selector_fn = None
@@ -397,8 +400,8 @@ def main() -> None:
                 top_n=shap_top_n,
             )
 
-        print(f"[{_ts()}] SHAP feature selection enabled "
-              f"(threshold={shap_threshold}, top_n={shap_top_n}, sample={shap_sample_size})")
+        logger.info("SHAP feature selection enabled (threshold=%s, top_n=%s, sample=%s)",
+                    shap_threshold, shap_top_n, shap_sample_size)
 
     # Load production forecast config for model persistence (F1.1)
     prod_config_path = ROOT / "config" / "production_forecast_config.yaml"
@@ -428,4 +431,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     main()

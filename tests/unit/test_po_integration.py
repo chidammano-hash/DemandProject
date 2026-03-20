@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 import os
 from datetime import date, timedelta
+
+from common.planning_date import get_planning_date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -34,11 +36,11 @@ def _make_config(past_due_days: int = 180, require_confirmed: bool = False) -> d
 
 
 def _future(days: int = 30) -> date:
-    return date.today() + timedelta(days=days)
+    return get_planning_date() + timedelta(days=days)
 
 
 def _past(days: int = 30) -> date:
-    return date.today() - timedelta(days=days)
+    return get_planning_date() - timedelta(days=days)
 
 
 # ---------------------------------------------------------------------------

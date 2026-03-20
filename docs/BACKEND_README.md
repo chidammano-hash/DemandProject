@@ -8,7 +8,7 @@ A full-stack supply chain analytics platform for demand planning and inventory o
 
 | Layer | Technology |
 |---|---|
-| Backend API | Python + FastAPI + Uvicorn (55 mounted routers) |
+| Backend API | Python + FastAPI + Uvicorn (56 mounted routers) |
 | Frontend | React + Vite + TypeScript + Tailwind CSS + shadcn/ui |
 | Charts | Recharts + ECharts |
 | Database | PostgreSQL 16 (pgvector for embeddings) |
@@ -28,25 +28,24 @@ Data flow: raw CSVs -> normalize scripts -> PostgreSQL -> FastAPI (:8000) -> Rea
 
 ```
 DemandProject/
-├── mvp/demand/                  Main application (all dev work here)
-│   ├── api/                     FastAPI backend (main.py + routers/)
-│   │   └── routers/             58 router files (55 mounted)
-│   ├── common/                  27 shared Python modules
-│   ├── scripts/                 Data pipeline & ML scripts (ETL, clustering, backtesting)
-│   ├── frontend/                React + TypeScript UI
-│   │   ├── src/tabs/            21 tab components + sub-panels
-│   │   ├── src/components/      Shared UI components
-│   │   ├── src/hooks/           Custom React hooks
-│   │   ├── src/api/queries/     24 domain query modules
-│   │   └── e2e/                 Playwright E2E tests
-│   ├── tests/                   Backend test suite (pytest: unit/ + api/)
-│   ├── sql/                     79 DDL migration files
-│   ├── config/                  YAML configs (all tunable parameters externalized)
-│   ├── Makefile                 All dev commands
-│   └── docker-compose.yml       2-service infra (Postgres + MLflow)
+├── api/                         FastAPI backend (main.py + routers/)
+│   └── routers/                 58 router files (56 mounted)
+├── common/                      28 shared Python modules
+├── scripts/                     Data pipeline & ML scripts (ETL, clustering, backtesting)
+├── frontend/                    React + TypeScript UI
+│   ├── src/tabs/                21 tab components + sub-panels
+│   ├── src/components/          Shared UI components
+│   ├── src/hooks/               Custom React hooks
+│   ├── src/api/queries/         24 domain query modules
+│   └── e2e/                     Playwright E2E tests
+├── tests/                       Backend test suite (pytest: unit/ + api/)
+├── sql/                         86 DDL migration files
+├── config/                      YAML configs (all tunable parameters externalized)
 ├── docs/specs/                  Design specs (8 domains, 52 files)
+├── Makefile                     All dev commands
+├── docker-compose.yml           2-service infra (Postgres + MLflow)
 ├── CLAUDE.md                    Full project specification
-└── datafiles/                   Source CSVs (gitignored, ~15GB)
+└── data/input/                   Source CSVs (gitignored, ~15GB)
 ```
 
 ---
@@ -54,15 +53,15 @@ DemandProject/
 ## Datasets
 
 ### Dimensions
-- `dim_item` — from `datafiles/itemdata.csv`
-- `dim_location` — from `datafiles/locationdata.csv`
-- `dim_customer` — from `datafiles/customerdata.csv`
+- `dim_item` — from `data/input/itemdata.csv`
+- `dim_location` — from `data/input/locationdata.csv`
+- `dim_customer` — from `data/input/customerdata.csv`
 - `dim_time` — auto-generated 2020-2035
-- `dim_dfu` — from `datafiles/dfu.txt`
+- `dim_dfu` — from `data/input/dfu.txt`
 
 ### Facts
-- `fact_sales_monthly` — from `datafiles/dfu_lvl2_hist.txt`, only `TYPE=1` rows
-- `fact_external_forecast_monthly` — from `datafiles/dfu_stat_fcst.txt`, dual-path loading with execution-lag filtering
+- `fact_sales_monthly` — from `data/input/dfu_lvl2_hist.txt`, only `TYPE=1` rows
+- `fact_external_forecast_monthly` — from `data/input/dfu_stat_fcst.txt`, dual-path loading with execution-lag filtering
 - `fact_inventory_snapshot` — from 14 monthly CSVs (`Inventory_Snapshot_YYYY_MM.csv`, ~190M rows)
 
 ### Forecast Loading Details
@@ -77,7 +76,7 @@ DemandProject/
 ## Quick Start
 
 ```bash
-cd mvp/demand
+cd DemandProject
 
 make init              # Create .venv, install uv, sync dependencies
 make up                # Start Docker services (Postgres, MLflow)
@@ -216,10 +215,10 @@ APScheduler-powered engine with 7 job types across 4 groups (clustering, backtes
 
 ## Testing
 
-Full-stack automated testing (1,636+ backend / 457+ frontend):
+Full-stack automated testing (2,213 backend / 730 frontend):
 
 ```bash
-cd mvp/demand
+cd DemandProject
 
 make test              # All backend pytest tests (~0.7s, fully mocked DB)
 make test-unit         # Unit tests only (common/ modules)
@@ -243,22 +242,22 @@ Every feature ships with tests; every removed feature removes its tests.
 | Purpose | Path |
 |---|---|
 | Project spec | `CLAUDE.md` |
-| API entry point | `mvp/demand/api/main.py` |
-| API routers (54) | `mvp/demand/api/routers/` |
-| Shared Python modules (28) | `mvp/demand/common/` |
-| Shared SQL helpers | `mvp/demand/common/sql_helpers.py` |
-| Domain config | `mvp/demand/common/domain_specs.py` |
-| YAML configs | `mvp/demand/config/` |
-| Pipeline scripts | `mvp/demand/scripts/` |
-| DDL migrations (79) | `mvp/demand/sql/` |
-| Frontend app | `mvp/demand/frontend/src/App.tsx` |
-| Tab components | `mvp/demand/frontend/src/tabs/` |
-| API query modules | `mvp/demand/frontend/src/api/queries/` |
-| Backend tests | `mvp/demand/tests/` |
-| Frontend tests | `mvp/demand/frontend/src/**/__tests__/` |
-| E2E tests | `mvp/demand/frontend/e2e/tests/` |
+| API entry point | `api/main.py` |
+| API routers (58 files, 56 mounted) | `api/routers/` |
+| Shared Python modules (28) | `common/` |
+| Shared SQL helpers | `common/sql_helpers.py` |
+| Domain config | `common/domain_specs.py` |
+| YAML configs | `config/` |
+| Pipeline scripts | `scripts/` |
+| DDL migrations (86) | `sql/` |
+| Frontend app | `frontend/src/App.tsx` |
+| Tab components | `frontend/src/tabs/` |
+| API query modules | `frontend/src/api/queries/` |
+| Backend tests | `tests/` |
+| Frontend tests | `frontend/src/**/__tests__/` |
+| E2E tests | `frontend/e2e/tests/` |
 | Design specs | `docs/specs/` (8 domains, 52 files) |
-| Makefile | `mvp/demand/Makefile` |
+| Makefile | `Makefile` |
 
 ## Key Documentation
 
