@@ -219,7 +219,7 @@ These are hard constraints that cause bugs or test failures if violated.
 **When code is added, changed, or deleted, update these docs if affected:**
 
 1. `docs/ARCHITECTURE.md` — architecture, tables, data flow
-2. `docs/BACKEND_README.md` — stack, datasets, quick start
+2. `docs/PLATFORM_GUIDE.md` — stack, datasets, features, quick start
 3. `docs/specs/<domain>/<spec>.md` — create/update the relevant design spec
 4. `docs/specs/01-foundation/01-infrastructure.md` — add to "Implemented Features" list
 5. `CLAUDE.md` (this file) — if critical rules, entry points, or commands change
