@@ -29,6 +29,7 @@ Incremental stories to evolve the Supply Chain Command Center from a demand plan
 | **08** | [Master Data Sync & Governance](story-08-master-data-sync.md) | product_hierarchy, location_hierarchy, customer_hierarchy, item_lifecycle, uom_conversion, changelog | High | 4 |
 | **09** | [Warehouse & Distribution Capacity](story-09-capacity-constraints.md) | warehouse_master, warehouse_utilization, labor_plan, appointment_schedule | Medium | 4 |
 | **10** | [Sustainability & ESG Metrics](story-10-sustainability-metrics.md) | emission_factors, supplier_emissions, waste_tracking, packaging_master, water_energy_usage | Low | 4 |
+| **11** | [Data Ingestion Pipeline & UI](story-11-data-ingestion-ui.md) | *(no new input files — builds upload UI for existing domains)* | High | 4 |
 
 ## Recommended Implementation Order
 
@@ -47,4 +48,5 @@ Total estimated effort: ~40 sprints (phased over 10 quarters)
 
 ## Existing Backlog
 
+- [Data Ingestion Pipeline & UI](story-11-data-ingestion-ui.md) — generic upload UI, preview, batch monitoring, quarantine resolution (prerequisite for all other stories)
 - [Medallion Pipeline Refactoring](medallion-refactoring.md) — bug fixes + code dedup in medallion layer
