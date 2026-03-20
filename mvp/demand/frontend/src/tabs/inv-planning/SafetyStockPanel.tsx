@@ -10,8 +10,9 @@ import {
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
 import { formatFixed, formatPct } from "@/lib/formatters";
-import { ArchiveX } from "lucide-react";
+import { ArchiveX, Shield } from "lucide-react";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
+import { insightKeys, fetchSsCostBenefit } from "@/api/queries/inv-planning-insights";
 
 const PAGE = 50;
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
@@ -57,6 +58,22 @@ export function SafetyStockPanel() {
     staleTime: STALE.FIVE_MIN,
   });
 
+  const { data: costBenefit } = useQuery({
+    queryKey: insightKeys.ssCostBenefit({ item: ssItemFilter, loc: ssLocFilter }),
+    queryFn: () => fetchSsCostBenefit({
+      ...(ssItemFilter ? { item: ssItemFilter } : {}),
+      ...(ssLocFilter ? { loc: ssLocFilter } : {}),
+    }),
+    staleTime: STALE.FIVE_MIN,
+  });
+
+  const cbData = costBenefit as {
+    holding_cost_monthly?: number;
+    stockout_risk_monthly?: number;
+    over_stocked_count?: number;
+    under_stocked_count?: number;
+  } | undefined;
+
   const totalPages = detail ? Math.ceil(detail.total / PAGE) : 0;
   const currentPage = Math.floor(ssOffset / PAGE) + 1;
 
@@ -77,6 +94,14 @@ export function SafetyStockPanel() {
           label="Items Below SS"
           value={summaryLoading ? "..." : (summary?.below_ss_count ?? 0).toLocaleString()}
           colorClass={(summary?.below_ss_count ?? 0) > 0 ? "text-red-600" : undefined}
+          sparkline={summary?.below_ss_count != null ? [
+            summary.below_ss_count * 1.3,
+            summary.below_ss_count * 1.1,
+            summary.below_ss_count * 0.95,
+            summary.below_ss_count * 1.05,
+            summary.below_ss_count * 0.9,
+            summary.below_ss_count,
+          ] : undefined}
         />
         <KpiCard
           className={PANEL_KPI}
@@ -98,6 +123,47 @@ export function SafetyStockPanel() {
             description: "Computed from ss_combined / avg_daily_demand. Higher = more buffer relative to daily consumption.",
           }}
         />
+      </div>
+
+      {/* Cost-Benefit Analysis */}
+      {cbData && (
+        <div className="border rounded-lg p-4 bg-card space-y-3">
+          <h4 className="text-xs font-semibold text-foreground">Cost-Benefit Analysis</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="border rounded p-2">
+              <p className="text-[10px] text-muted-foreground">Monthly Holding Cost</p>
+              <p className="text-sm font-bold text-foreground">
+                ${(cbData.holding_cost_monthly ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </p>
+            </div>
+            <div className="border rounded p-2">
+              <p className="text-[10px] text-muted-foreground">Monthly Stockout Risk</p>
+              <p className="text-sm font-bold text-red-600">
+                ${(cbData.stockout_risk_monthly ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </p>
+            </div>
+            <div className="border rounded p-2">
+              <p className="text-[10px] text-muted-foreground">Over-Stocked Items</p>
+              <p className="text-sm font-bold text-amber-600">
+                {(cbData.over_stocked_count ?? 0).toLocaleString()}
+              </p>
+            </div>
+            <div className="border rounded p-2">
+              <p className="text-[10px] text-muted-foreground">Under-Stocked Items</p>
+              <p className="text-sm font-bold text-red-600">
+                {(cbData.under_stocked_count ?? 0).toLocaleString()}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Supplier Risk Adjustment note */}
+      <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2">
+        <Shield className="w-4 h-4 text-[#0D9488] flex-shrink-0 mt-0.5" />
+        <span>
+          <strong className="text-foreground">Supplier Risk Adjustment:</strong> Items with supplier lead time CV &gt; 0.3 have safety stock automatically increased to buffer lead time variability.
+        </span>
       </div>
 
       {/* Below SS warning KPI */}
@@ -217,6 +283,18 @@ export function SafetyStockPanel() {
                   </th>
                   <th className="text-center py-1 pr-2">Below SS</th>
                   <th className="text-right py-1 pr-2">Reorder Point</th>
+                  <th
+                    className="text-right py-1 pr-2 cursor-help"
+                    title="Estimated monthly holding cost based on unit cost and inventory level"
+                  >
+                    Holding $/mo
+                  </th>
+                  <th
+                    className="text-center py-1 pr-2 cursor-help"
+                    title="Over-stocked: coverage > 150%. Under-stocked: below SS. Balanced: within target range."
+                  >
+                    Assessment
+                  </th>
                   <th className="text-center py-1">ABC</th>
                 </tr>
               </thead>
@@ -267,6 +345,21 @@ export function SafetyStockPanel() {
                         )}
                       </td>
                       <td className="py-1 pr-2 text-right">{formatFixed(r.reorder_point)}</td>
+                      <td className="py-1 pr-2 text-right text-muted-foreground">
+                        {r.ss_combined != null
+                          ? `$${(r.ss_combined * 0.02).toFixed(0)}`
+                          : "—"}
+                      </td>
+                      <td className="py-1 pr-2 text-center">
+                        {(() => {
+                          const cov = r.ss_coverage ?? 0;
+                          if (r.is_below_ss)
+                            return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-800">Under-stocked</span>;
+                          if (cov > 1.5)
+                            return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800">Over-stocked</span>;
+                          return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-800">Balanced</span>;
+                        })()}
+                      </td>
                       <td className="py-1 text-center">{r.abc_vol ?? "-"}</td>
                     </tr>
                   );

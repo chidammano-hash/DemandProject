@@ -14,6 +14,12 @@ import { formatInt } from "@/lib/formatters";
 import { Radio } from "lucide-react";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
+function AiTag() {
+  return <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-[#0D9488]/10 text-[#0D9488]">AI</span>;
+}
+
+const AI_SIGNAL_TYPES = new Set(["demand_acceleration", "demand_deceleration"]);
+
 const PAGE = 50;
 const PANEL_KPI = "rounded-lg bg-muted/30 p-3";
 
@@ -214,12 +220,15 @@ export function DemandSignalsPanel() {
                       <td className="py-1 pr-2 font-mono">{r.item_no}</td>
                       <td className="py-1 pr-2">{r.loc}</td>
                       <td className="py-1 pr-2 text-center">
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-xs font-medium ${
-                            SIGNAL_TYPE_COLORS[r.signal_type] ?? "bg-neutral-100 text-neutral-600"
-                          }`}
-                        >
-                          {SIGNAL_TYPE_LABELS[r.signal_type] ?? r.signal_type.replace(/_/g, " ")}
+                        <span className="inline-flex items-center gap-1">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                              SIGNAL_TYPE_COLORS[r.signal_type] ?? "bg-neutral-100 text-neutral-600"
+                            }`}
+                          >
+                            {SIGNAL_TYPE_LABELS[r.signal_type] ?? r.signal_type.replace(/_/g, " ")}
+                          </span>
+                          {AI_SIGNAL_TYPES.has(r.signal_type) && <AiTag />}
                         </span>
                       </td>
                       <td className="py-1 pr-2 text-right">

@@ -1,11 +1,12 @@
 /**
- * Inventory Planning — 26-panel tab with horizontal group pills + sub-tab strip.
+ * Inventory Planning — 33-panel tab with horizontal group pills + sub-tab strip.
  *
- * IPfeature4–IPfeature14 + F1.1–F4.4
+ * IPfeature4–IPfeature14 + F1.1–F4.4 + Expert Panel Enhancements (20 suggestions).
  * Redesigned: replaced inner sidebar with horizontal navigation (PL-009 v2).
+ * Added: Insights group (7 new panels), role-based view presets, progressive disclosure.
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
@@ -36,6 +37,15 @@ import {
   TrendingDown,
   CheckSquare,
   Repeat2,
+  Inbox,
+  Map,
+  PieChart,
+  Award,
+  Wallet,
+  BarChart,
+  SlidersHorizontal,
+  LayoutTemplate,
+  type LucideIcon,
 } from "lucide-react";
 
 import { ExceptionQueuePanel } from "./inv-planning/ExceptionQueuePanel";
@@ -66,11 +76,51 @@ import { EventCalendarPanel } from "./inv-planning/EventCalendarPanel";
 import { ScenarioPlanningPanel } from "./inv-planning/ScenarioPlanningPanel";
 import { ReplenishmentPlanPanel } from "./inv-planning/ReplenishmentPlanPanel";
 import { RebalancingPanel } from "./inv-planning/RebalancingPanel";
+// Expert panel enhancements — 7 new insight panels
+import { ActionFeedPanel } from "./inv-planning/ActionFeedPanel";
+import { NetworkHeatmapPanel } from "./inv-planning/NetworkHeatmapPanel";
+import { SegmentDashboardPanel } from "./inv-planning/SegmentDashboardPanel";
+import { PlanningScorecardPanel } from "./inv-planning/PlanningScorecardPanel";
+import { CashFlowPanel } from "./inv-planning/CashFlowPanel";
+import { ServiceLevelWaterfallPanel } from "./inv-planning/ServiceLevelWaterfallPanel";
+import { ConstrainedOptPanel } from "./inv-planning/ConstrainedOptPanel";
+
+// ---------------------------------------------------------------------------
+// Role-based view presets (Expert #13 — Rachel Kim)
+// ---------------------------------------------------------------------------
+type ViewPreset = { id: string; label: string; icon: LucideIcon; groups: string[]; description: string };
+
+const VIEW_PRESETS: ViewPreset[] = [
+  { id: "all",      label: "All Panels",      icon: LayoutTemplate,    groups: ["insights", "daily", "optimize", "analytics", "planning", "sensing", "strategic", "supply"], description: "Full 33-panel toolkit" },
+  { id: "daily",    label: "Daily Ops",        icon: Inbox,             groups: ["insights", "daily", "analytics"], description: "Morning triage: action feed, exceptions, health, fill rate" },
+  { id: "weekly",   label: "Weekly Review",    icon: BarChart,          groups: ["analytics", "planning", "insights"], description: "Fill rate, ABC-XYZ, supplier, safety stock, scorecard" },
+  { id: "monthly",  label: "Monthly Planning", icon: CalendarDays,      groups: ["optimize", "planning", "strategic", "insights"], description: "EOQ, policy, investment, S&OP, financial plan" },
+  { id: "exec",     label: "Executive",        icon: Award,             groups: ["insights", "strategic"], description: "Scorecard, service level, cash flow, scenarios" },
+];
 
 // ---------------------------------------------------------------------------
 // Navigation config
 // ---------------------------------------------------------------------------
 const GROUPS = [
+  {
+    id: "insights",
+    label: "Insights",
+    shortLabel: "Insights",
+    tooltip: "Cross-domain intelligence: action feed, network view, segment drill-down, scorecard",
+    accent: "text-cyan-600",
+    accentBg: "bg-cyan-600",
+    accentBgMuted: "bg-cyan-50 dark:bg-cyan-950/30",
+    accentBorder: "border-cyan-600",
+    tabs: [
+      { key: "actionfeed",  label: "Action Feed",      icon: Inbox },
+      { key: "netheatmap",  label: "Network Balance",   icon: Map },
+      { key: "segment",     label: "Segment Drill",     icon: PieChart },
+      { key: "scorecard",   label: "Scorecard",         icon: Award },
+      { key: "cashflow",    label: "Cash Flow",         icon: Wallet },
+      { key: "waterfall",   label: "Service Level",     icon: BarChart },
+      { key: "budgetopt",   label: "Budget Optimizer",  icon: SlidersHorizontal },
+    ],
+  },
   {
     id: "daily",
     label: "Daily Operations",
@@ -217,42 +267,87 @@ const PANEL_META: Record<SubTabKey, { title: string; description?: string }> = {
   openpos:       { title: "Open Purchase Orders", description: "In-flight PO lines with delivery dates and risk flags." },
   projection:    { title: "Forward Inventory Projection", description: "Day-by-day projected position: no orders, with POs, with planned orders." },
   plannedorders: { title: "Planned Orders", description: "System-generated replenishment proposals awaiting approval." },
+  // Expert insight panels
+  actionfeed:  { title: "Unified Action Feed", description: "Priority-ranked actions from exceptions, signals, PO risks, and stockouts — your morning starting point." },
+  netheatmap:  { title: "Network Balance Heatmap", description: "Location × category DOS matrix — instantly see where inventory is pooling vs depleting." },
+  segment:     { title: "Segment Dashboard", description: "Deep-dive into any ABC-XYZ segment: KPIs, policies, exceptions, and recommended actions." },
+  scorecard:   { title: "Planning Effectiveness Scorecard", description: "Trailing metrics — are your planning actions actually improving outcomes?" },
+  cashflow:    { title: "Cash Flow Timeline", description: "Monthly cash outflow projection: PO commitments, planned orders, and SS investment." },
+  waterfall:   { title: "Service Level Waterfall", description: "How each inventory lever contributes to your achieved service level." },
+  budgetopt:   { title: "Budget-Constrained Optimizer", description: "Given a budget cap, find the optimal SS allocation for maximum service level." },
 };
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 export function InvPlanningTab() {
-  const [activePanel, setActivePanel] = useState<SubTabKey>("exceptions");
+  const [activePanel, setActivePanel] = useState<SubTabKey>("actionfeed");
+  const [activeView, setActiveView] = useState("all");
 
   const meta = PANEL_META[activePanel];
+
+  // Progressive disclosure: filter groups by active view preset (Expert #14)
+  const visibleGroups = useMemo(() => {
+    const preset = VIEW_PRESETS.find((v) => v.id === activeView);
+    if (!preset || preset.id === "all") return GROUPS;
+    return GROUPS.filter((g) => preset.groups.includes(g.id));
+  }, [activeView]);
+
   const activeGroup = useMemo(
-    () => GROUPS.find((g) =>
+    () => visibleGroups.find((g) =>
       (g.tabs as ReadonlyArray<{ key: string }>).some((t) => t.key === activePanel)
-    ),
-    [activePanel],
+    ) ?? visibleGroups[0],
+    [activePanel, visibleGroups],
   );
   const activeTab = activeGroup?.tabs.find((t) => t.key === activePanel);
+
+  // When switching views, jump to first tab of first visible group
+  const handleViewChange = useCallback((viewId: string) => {
+    setActiveView(viewId);
+    const preset = VIEW_PRESETS.find((v) => v.id === viewId);
+    if (preset && preset.id !== "all") {
+      const firstGroup = GROUPS.find((g) => preset.groups.includes(g.id));
+      if (firstGroup) setActivePanel(firstGroup.tabs[0].key as SubTabKey);
+    }
+  }, []);
 
   return (
     <div className="flex flex-col overflow-hidden" style={{ height: "calc(100vh - 108px)" }}>
       {/* ------------------------------------------------------------------ */}
-      {/* Header description                                                  */}
+      {/* Role-based view selector (Expert #13) + header                      */}
       {/* ------------------------------------------------------------------ */}
-      <div className="flex-shrink-0 px-5 pt-3 pb-2">
-        <p className="text-xs text-muted-foreground max-w-3xl leading-relaxed">
-          Comprehensive inventory planning toolkit. <strong>Daily Ops</strong>: triage exceptions and monitor health scores.{" "}
-          <strong>Optimize</strong>: configure EOQ order sizes, replenishment policies, and cross-location rebalancing.{" "}
-          <strong>Analytics</strong>: fill rate, ABC-XYZ classification, supplier performance.{" "}
-          <strong>Planning</strong>: safety stock, variability analysis, demand signals, Monte Carlo simulation.{" "}
-          Select a group above, then a sub-tab to drill in.
+      <div className="flex-shrink-0 flex items-center justify-between px-5 pt-3 pb-2">
+        <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
+          {VIEW_PRESETS.find((v) => v.id === activeView)?.description ?? "Full inventory planning toolkit."}
         </p>
+        <div className="flex items-center gap-1 ml-4 flex-shrink-0">
+          {VIEW_PRESETS.map((preset) => {
+            const Icon = preset.icon;
+            const isActive = activeView === preset.id;
+            return (
+              <button
+                key={preset.id}
+                onClick={() => handleViewChange(preset.id)}
+                title={preset.description}
+                className={cn(
+                  "flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-all",
+                  isActive
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <Icon size={11} />
+                <span className="hidden sm:inline">{preset.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
       {/* ------------------------------------------------------------------ */}
-      {/* Row 1: Group pills                                                  */}
+      {/* Row 1: Group pills (filtered by view)                               */}
       {/* ------------------------------------------------------------------ */}
       <div className="flex-shrink-0 flex items-center gap-1.5 border-b bg-muted/30 px-5 py-2 overflow-x-auto" role="tablist" aria-label="Inventory Planning groups">
-        {GROUPS.map((group) => {
+        {visibleGroups.map((group) => {
           const isActive = activeGroup?.id === group.id;
           return (
             <button
@@ -354,6 +449,14 @@ export function InvPlanningTab() {
           {activePanel === "projection"    && <ProjectionPanel />}
           {activePanel === "plannedorders" && <PlannedOrdersPanel />}
           {activePanel === "rebalancing"  && <RebalancingPanel />}
+          {/* Expert insight panels */}
+          {activePanel === "actionfeed"   && <ActionFeedPanel />}
+          {activePanel === "netheatmap"   && <NetworkHeatmapPanel />}
+          {activePanel === "segment"      && <SegmentDashboardPanel />}
+          {activePanel === "scorecard"    && <PlanningScorecardPanel />}
+          {activePanel === "cashflow"     && <CashFlowPanel />}
+          {activePanel === "waterfall"    && <ServiceLevelWaterfallPanel />}
+          {activePanel === "budgetopt"    && <ConstrainedOptPanel />}
         </div>
       </div>
     </div>

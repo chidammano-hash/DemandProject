@@ -33,8 +33,8 @@
 
 | Layer | File | Purpose |
 |---|---|---|
-| **API** | `api/main.py` | FastAPI app — mounts 54 routers, no inline routes |
-| **API** | `api/routers/` | 56 router files (54 mounted; `domains.py` mounted last — catch-all) |
+| **API** | `api/main.py` | FastAPI app — mounts 56 routers, no inline routes |
+| **API** | `api/routers/` | 58 router files (56 mounted; `domains.py` mounted last — catch-all) |
 | **API** | `api/core.py` | Shared pool, OpenAI client, SQL helpers |
 | **Frontend** | `frontend/src/App.tsx` | React shell — sidebar, lazy-loaded tabs |
 | **Frontend** | `frontend/src/api/queries/` | All API fetch functions (24 domain modules) |

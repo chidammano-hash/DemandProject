@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -12,10 +12,17 @@ import {
   type ExceptionRow,
   type ExceptionListParams,
 } from "@/api/queries";
+import { insightKeys, fetchRootCause } from "@/api/queries/inv-planning-insights";
 
 import { formatFixed } from "@/lib/formatters";
 import { EmptyState } from "@/components/EmptyState";
 import { AlertTriangle } from "lucide-react";
+
+function AiTag() {
+  return <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-[#0D9488]/10 text-[#0D9488]">AI</span>;
+}
+
+const AI_DETECTED_TYPES = new Set(["below_rop", "below_rop_critical", "below_ss", "stockout", "excess", "zero_velocity"]);
 
 const PAGE = 50;
 
@@ -76,6 +83,7 @@ export function ExceptionQueuePanel() {
     if (globalFilters.location.length === 1) setExcLoc(globalFilters.location[0]);
   }, [globalFilters.item, globalFilters.location]);
   const [generateStatus, setGenerateStatus] = useState("");
+  const [selectedExc, setSelectedExc] = useState<string | null>(null);
 
   const excParams: ExceptionListParams = {
     status: excStatusFilter || "open",
@@ -96,6 +104,18 @@ export function ExceptionQueuePanel() {
   const { data: excList, isLoading: excLoading } = useQuery({
     queryKey: exceptionKeys.list(excParams),
     queryFn: () => fetchExceptions(excParams),
+    staleTime: STALE.ONE_MIN,
+  });
+
+  // Root cause analysis for selected exception (Expert #2)
+  const selectedExcRow = (excList?.rows ?? []).find(
+    (r: ExceptionRow) => r.exception_id === selectedExc,
+  );
+
+  const { data: rootCauseData, isLoading: rootCauseLoading } = useQuery({
+    queryKey: insightKeys.rootCause(selectedExcRow?.item_no ?? "", selectedExcRow?.loc ?? ""),
+    queryFn: () => fetchRootCause(selectedExcRow!.item_no, selectedExcRow!.loc),
+    enabled: !!selectedExcRow,
     staleTime: STALE.ONE_MIN,
   });
 
@@ -289,11 +309,12 @@ export function ExceptionQueuePanel() {
           </thead>
           <tbody>
             {(excList?.rows ?? []).map((row: ExceptionRow) => (
+                <React.Fragment key={row.exception_id}>
                 <tr
-                  key={row.exception_id}
-                  className={`border-t ${SEVERITY_ROW_BG[row.severity] ?? ""} ${
+                  className={`border-t cursor-pointer ${SEVERITY_ROW_BG[row.severity] ?? ""} ${
                     row.status !== "open" ? "opacity-60" : ""
-                  }`}
+                  } ${selectedExc === row.exception_id ? "ring-1 ring-inset ring-primary/30" : ""}`}
+                  onClick={() => setSelectedExc(selectedExc === row.exception_id ? null : row.exception_id)}
                 >
                   <td className="px-2 py-1.5">
                     <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${SEVERITY_BADGE[row.severity] ?? ""}`}>
@@ -306,7 +327,15 @@ export function ExceptionQueuePanel() {
                     className="px-2 py-1.5"
                     title={EXC_TYPE_DESCRIPTIONS[row.exception_type] ?? row.exception_type}
                   >
-                    {row.exception_type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                    <span className="inline-flex items-center gap-1">
+                      {AI_DETECTED_TYPES.has(row.exception_type) && (
+                        <>
+                          <span className="inline-block w-2 h-2 rounded-full bg-[#0D9488] mr-0.5" title="AI-detected" />
+                          <AiTag />
+                        </>
+                      )}
+                      {row.exception_type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                    </span>
                   </td>
                   <td className="px-2 py-1.5 text-right">{formatFixed(row.current_qty_on_hand)}</td>
                   <td className="px-2 py-1.5 text-right">{formatFixed(row.ss_combined)}</td>
@@ -327,7 +356,7 @@ export function ExceptionQueuePanel() {
                       <button
                         className="px-2 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                         disabled={acknowledgeMutation.isPending}
-                        onClick={() => acknowledgeMutation.mutate({ id: row.exception_id })}
+                        onClick={(e) => { e.stopPropagation(); acknowledgeMutation.mutate({ id: row.exception_id }); }}
                       >
                         Acknowledge
                       </button>
@@ -336,7 +365,7 @@ export function ExceptionQueuePanel() {
                       <button
                         className="px-2 py-0.5 text-xs bg-sky-600 text-white rounded hover:bg-sky-700 disabled:opacity-50"
                         disabled={statusMutation.isPending}
-                        onClick={() => statusMutation.mutate({ id: row.exception_id, status: "ordered" })}
+                        onClick={(e) => { e.stopPropagation(); statusMutation.mutate({ id: row.exception_id, status: "ordered" }); }}
                       >
                         Mark Ordered
                       </button>
@@ -345,13 +374,48 @@ export function ExceptionQueuePanel() {
                       <button
                         className="px-2 py-0.5 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
                         disabled={statusMutation.isPending}
-                        onClick={() => statusMutation.mutate({ id: row.exception_id, status: "resolved" })}
+                        onClick={(e) => { e.stopPropagation(); statusMutation.mutate({ id: row.exception_id, status: "resolved" }); }}
                       >
                         Resolve
                       </button>
                     )}
                   </td>
                 </tr>
+                {/* Root Cause expandable section */}
+                {selectedExc === row.exception_id && (
+                  <tr className="border-t bg-muted/20">
+                    <td colSpan={10} className="px-4 py-3">
+                      <p className="text-xs font-semibold mb-2">Root Cause Analysis</p>
+                      {rootCauseLoading ? (
+                        <p className="text-xs text-muted-foreground">Analyzing root causes...</p>
+                      ) : rootCauseData?.causes?.length ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                          {rootCauseData.causes.map((cause) => (
+                            <div
+                              key={cause.factor}
+                              className="border rounded p-2 bg-background"
+                            >
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-medium">{cause.factor}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                                  cause.contribution_pct >= 50 ? "bg-red-100 text-red-700" :
+                                  cause.contribution_pct >= 25 ? "bg-amber-100 text-amber-700" :
+                                  "bg-blue-100 text-blue-700"
+                                }`}>
+                                  {cause.contribution_pct.toFixed(0)}%
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground">{cause.description}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">No root cause data available for this item-location.</p>
+                      )}
+                    </td>
+                  </tr>
+                )}
+                </React.Fragment>
               ))
             }
           </tbody>

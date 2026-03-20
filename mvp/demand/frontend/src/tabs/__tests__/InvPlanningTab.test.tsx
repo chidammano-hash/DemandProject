@@ -28,9 +28,37 @@ vi.mock("@/api/queries/evolution", () => ({
   fetchScenarioResults: vi.fn().mockResolvedValue({ scenario_id: "", items: [], total_impact: 0, total_stockout_days: 0 }),
 }));
 
+// Mock insights query module (Expert panel enhancements)
+vi.mock("@/api/queries/inv-planning-insights", () => ({
+  insightKeys: {
+    actionFeed: () => ["inv-planning", "action-feed"],
+    rootCause: (item: string, loc: string) => ["inv-planning", "root-cause", item, loc],
+    segmentDashboard: (segment: string) => ["inv-planning", "segment-dashboard", segment],
+    ssCostBenefit: (params: Record<string, unknown>) => ["inv-planning", "ss-cost-benefit", params],
+    serviceLevelWaterfall: () => ["inv-planning", "service-level-waterfall"],
+    networkHeatmap: () => ["inv-planning", "network-heatmap"],
+    planningScorecard: () => ["inv-planning", "planning-scorecard"],
+    cashFlow: () => ["inv-planning", "cash-flow-timeline"],
+    constrainedOpt: (budget: number) => ["inv-planning", "constrained-opt", budget],
+    proactiveRebalancing: () => ["inv-planning", "proactive-rebalancing"],
+  },
+  STALE_INSIGHTS: { ONE_MIN: 60000, FIVE_MIN: 300000 },
+  fetchActionFeed: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+  fetchRootCause: vi.fn().mockResolvedValue({ causes: [] }),
+  fetchSegmentDashboard: vi.fn().mockResolvedValue({ segment: "AX", dfu_count: 0, kpis: {}, exceptions: [], policy_distribution: {} }),
+  fetchSsCostBenefit: vi.fn().mockResolvedValue({ items: [], total: 0, summary: { total_holding_cost: 0, total_stockout_risk: 0, over_stocked_count: 0, under_stocked_count: 0 } }),
+  fetchServiceLevelWaterfall: vi.fn().mockResolvedValue({ steps: [], achieved_csl: 0 }),
+  fetchNetworkHeatmap: vi.fn().mockResolvedValue({ locations: [], categories: [], cells: [] }),
+  fetchPlanningScorecard: vi.fn().mockResolvedValue({ metrics: [] }),
+  fetchCashFlowTimeline: vi.fn().mockResolvedValue({ months: [] }),
+  fetchConstrainedOpt: vi.fn().mockResolvedValue({ budget: 0, allocated: 0, items_improved: 0, avg_csl_before: 0, avg_csl_after: 0, allocations: [] }),
+  fetchProactiveRebalancing: vi.fn().mockResolvedValue({ opportunities: [], total_opportunities: 0 }),
+}));
+
 // Mock recharts
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
   LineChart: ({ children }: { children: React.ReactNode }) => <div data-testid="line-chart">{children}</div>,
   ComposedChart: ({ children }: { children: React.ReactNode }) => <div data-testid="composed-chart">{children}</div>,
   PieChart: ({ children }: { children: React.ReactNode }) => <div data-testid="pie-chart">{children}</div>,
@@ -469,6 +497,30 @@ vi.mock("@/api/queries", () => ({
   exportPOsCSV: vi.fn().mockResolvedValue({ filename: "PO_export_test.csv", line_count: 1, total_value: 7584, csv_content: "" }),
   fetchPOTimeline: vi.fn().mockResolvedValue({ po_number: "DS-2026-04-001", current_status: "proposed", timeline: [] }),
   createPOFromException: vi.fn().mockResolvedValue({ po_number: "DS-2026-04-001", status: "proposed", total_value: null, requested_delivery_date: null }),
+  // Expert Panel Insights
+  insightKeys: {
+    actionFeed: () => ["inv-planning", "action-feed"],
+    rootCause: (item: string, loc: string) => ["inv-planning", "root-cause", item, loc],
+    segmentDashboard: (segment: string) => ["inv-planning", "segment-dashboard", segment],
+    ssCostBenefit: (params: Record<string, unknown>) => ["inv-planning", "ss-cost-benefit", params],
+    serviceLevelWaterfall: () => ["inv-planning", "service-level-waterfall"],
+    networkHeatmap: () => ["inv-planning", "network-heatmap"],
+    planningScorecard: () => ["inv-planning", "planning-scorecard"],
+    cashFlow: () => ["inv-planning", "cash-flow-timeline"],
+    constrainedOpt: (budget: number) => ["inv-planning", "constrained-opt", budget],
+    proactiveRebalancing: () => ["inv-planning", "proactive-rebalancing"],
+  },
+  STALE_INSIGHTS: { ONE_MIN: 60000, FIVE_MIN: 300000 },
+  fetchActionFeed: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+  fetchRootCause: vi.fn().mockResolvedValue({ causes: [] }),
+  fetchSegmentDashboard: vi.fn().mockResolvedValue({ segment: "AX", dfu_count: 0, kpis: {}, exceptions: [], policy_distribution: {} }),
+  fetchSsCostBenefit: vi.fn().mockResolvedValue({ items: [], total: 0, summary: { total_holding_cost: 0, total_stockout_risk: 0, over_stocked_count: 0, under_stocked_count: 0 } }),
+  fetchServiceLevelWaterfall: vi.fn().mockResolvedValue({ steps: [], achieved_csl: 0 }),
+  fetchNetworkHeatmap: vi.fn().mockResolvedValue({ locations: [], categories: [], cells: [] }),
+  fetchPlanningScorecard: vi.fn().mockResolvedValue({ metrics: [] }),
+  fetchCashFlowTimeline: vi.fn().mockResolvedValue({ months: [] }),
+  fetchConstrainedOpt: vi.fn().mockResolvedValue({ budget: 0, allocated: 0, items_improved: 0, avg_csl_before: 0, avg_csl_after: 0, allocations: [] }),
+  fetchProactiveRebalancing: vi.fn().mockResolvedValue({ opportunities: [], total_opportunities: 0 }),
   // Override Queue (F2.3)
   fetchOverrideSummary: vi.fn().mockResolvedValue({
     by_status: { pending_approval: 2, approved: 5, rejected: 1, expired: 0, superseded: 0 },
@@ -684,7 +736,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
+    navigateTo("Daily Ops", "Health");
     await waitFor(() => {
       expect(screen.getAllByText("Portfolio Health Score").length).toBeGreaterThan(0);
     });
@@ -698,7 +750,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
+    navigateTo("Daily Ops", "Health");
     await waitFor(() => {
       expect(screen.getByText("Healthy")).toBeDefined();
       expect(screen.getByText("Monitor")).toBeDefined();
@@ -717,7 +769,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
+    navigateTo("Daily Ops", "Health");
     await waitFor(() => {
       expect(screen.getByText("Health Detail")).toBeDefined();
     });
@@ -731,7 +783,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
+    navigateTo("Daily Ops", "Health");
     await waitFor(() => {
       // item_no appears in both EOQ and health detail tables
       const items = screen.getAllByText("ITEM001");
@@ -747,7 +799,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
+    navigateTo("Daily Ops", "Health");
     await waitFor(() => {
       expect(screen.getByText("Health Distribution")).toBeDefined();
     });
@@ -761,7 +813,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Health" }));
+    navigateTo("Daily Ops", "Health");
     await waitFor(() => {
       expect(screen.getByText(/Score Components/i)).toBeDefined();
     });
@@ -775,6 +827,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    navigateTo("Daily Ops", "Exceptions");
     await waitFor(() => {
       expect(screen.getAllByText("Exception Queue").length).toBeGreaterThan(0);
     });
@@ -788,6 +841,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    navigateTo("Daily Ops", "Exceptions");
     await waitFor(() => {
       expect(screen.getByText("Total Open")).toBeDefined();
       // "Critical" appears in multiple places — use getAllByText
@@ -804,6 +858,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    navigateTo("Daily Ops", "Exceptions");
     await waitFor(() => {
       // exception_type label should appear
       const els = screen.getAllByText(/below_rop|Below ROP/i);
@@ -819,6 +874,7 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
+    navigateTo("Daily Ops", "Exceptions");
     await waitFor(() => {
       expect(screen.getByText("Generate Exceptions")).toBeDefined();
     });

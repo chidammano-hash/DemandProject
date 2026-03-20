@@ -53,6 +53,9 @@ export function FillRatePanel() {
           value={formatPct((summary?.portfolio_fill_rate ?? 0) * 100)}
           severity={(summary?.portfolio_fill_rate ?? 0) >= 0.98 ? "best" : (summary?.portfolio_fill_rate ?? 0) < 0.90 ? "warning" : "neutral"}
           sublabel="Target: 98%"
+          sparkline={trendData?.months?.length
+            ? trendData.months.slice(-6).map((m: { fill_rate: number }) => m.fill_rate * 100)
+            : undefined}
         />
         <KpiCard className={PANEL_KPI} label="Total Ordered" value={formatInt(summary?.total_ordered)} />
         <KpiCard className={PANEL_KPI} label="Total Shortage" value={formatInt(summary?.total_shortage_qty)} colorClass="text-red-600" severity={(summary?.total_shortage_qty ?? 0) > 0 ? "warning" : "neutral"} />

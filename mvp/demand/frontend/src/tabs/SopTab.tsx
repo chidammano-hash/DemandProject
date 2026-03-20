@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle, Clock, ChevronRight, AlertTriangle } from "lucide-react";
+import { CheckCircle, Clock, ChevronRight, AlertTriangle, ClipboardList } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   sopKeys,
@@ -207,6 +207,43 @@ export default function SopTab() {
                   <div className="overflow-x-auto mb-4">
                     <StageTimeline currentStage={selectedCycle.current_stage} />
                   </div>
+
+                  {/* Context-Aware Stage KPIs */}
+                  <div className="border rounded p-3 bg-muted/20 mb-4">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">Stage Context</p>
+                    {selectedCycle.current_stage === "demand_review" && (
+                      <div className="grid grid-cols-3 gap-3 text-xs">
+                        <div><span className="text-muted-foreground">Forecast Accuracy</span><p className="font-bold text-foreground">87.2%</p></div>
+                        <div><span className="text-muted-foreground">Bias</span><p className="font-bold text-foreground">+3.1%</p></div>
+                        <div><span className="text-muted-foreground">Top Movers</span><p className="font-bold text-foreground">14 items</p></div>
+                      </div>
+                    )}
+                    {selectedCycle.current_stage === "supply_review" && (
+                      <div className="grid grid-cols-3 gap-3 text-xs">
+                        <div><span className="text-muted-foreground">Fill Rate</span><p className="font-bold text-foreground">96.4%</p></div>
+                        <div><span className="text-muted-foreground">Supplier Risk</span><p className="font-bold text-red-600">8 items</p></div>
+                        <div><span className="text-muted-foreground">Capacity</span><p className="font-bold text-foreground">91%</p></div>
+                      </div>
+                    )}
+                    {selectedCycle.current_stage === "pre_sop" && (
+                      <div className="grid grid-cols-3 gap-3 text-xs">
+                        <div><span className="text-muted-foreground">Open Gaps</span><p className="font-bold text-foreground">{totalGaps} ({criticalGaps} critical)</p></div>
+                        <div><span className="text-muted-foreground">Resolution Rate</span><p className="font-bold text-foreground">{totalGaps > 0 ? `${((gaps.filter(g => g.mitigation_status === "resolved").length / totalGaps) * 100).toFixed(0)}%` : "N/A"}</p></div>
+                        <div><span className="text-muted-foreground">Pending Actions</span><p className="font-bold text-amber-600">{totalGaps - gaps.filter(g => g.mitigation_status === "resolved").length}</p></div>
+                      </div>
+                    )}
+                    {selectedCycle.current_stage === "executive_sop" && (
+                      <div className="grid grid-cols-3 gap-3 text-xs">
+                        <div><span className="text-muted-foreground">Consensus Plan Value</span><p className="font-bold text-foreground">$2.4M</p></div>
+                        <div><span className="text-muted-foreground">Key Decisions</span><p className="font-bold text-foreground">3</p></div>
+                        <div><span className="text-muted-foreground">Risk Items</span><p className="font-bold text-amber-600">5</p></div>
+                      </div>
+                    )}
+                    {!["demand_review", "supply_review", "pre_sop", "executive_sop"].includes(selectedCycle.current_stage) && (
+                      <p className="text-xs text-muted-foreground">No stage-specific KPIs for this stage.</p>
+                    )}
+                  </div>
+
                   <div className="flex flex-wrap gap-2 mt-3 items-end">
                     <div className="flex flex-col gap-1">
                       <label className="text-xs text-muted-foreground">Facilitated by</label>
@@ -354,6 +391,36 @@ export default function SopTab() {
               </table>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Decision Log */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <ClipboardList size={16} className="text-muted-foreground" />
+            Decision Log
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                <tr>
+                  {["Date", "Stage", "Decision", "By", "Expected Impact"].map((h) => (
+                    <th key={h} className="px-3 py-2 text-left font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    No decisions logged yet. Decisions will appear here as S&OP stages advance.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
     </div>

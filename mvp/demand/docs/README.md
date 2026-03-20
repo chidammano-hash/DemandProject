@@ -8,7 +8,7 @@ A full-stack supply chain analytics platform for demand planning and inventory o
 
 | Layer | Technology |
 |---|---|
-| Backend API | Python + FastAPI + Uvicorn (54 mounted routers) |
+| Backend API | Python + FastAPI + Uvicorn (55 mounted routers) |
 | Frontend | React + Vite + TypeScript + Tailwind CSS + shadcn/ui |
 | Charts | Recharts + ECharts |
 | Database | PostgreSQL 16 (pgvector for embeddings) |
@@ -30,7 +30,7 @@ Data flow: raw CSVs -> normalize scripts -> PostgreSQL -> FastAPI (:8000) -> Rea
 DemandProject/
 ├── mvp/demand/                  Main application (all dev work here)
 │   ├── api/                     FastAPI backend (main.py + routers/)
-│   │   └── routers/             56 router files (54 mounted)
+│   │   └── routers/             58 router files (55 mounted)
 │   ├── common/                  27 shared Python modules
 │   ├── scripts/                 Data pipeline & ML scripts (ETL, clustering, backtesting)
 │   ├── frontend/                React + TypeScript UI
@@ -125,21 +125,31 @@ Three tree-based backtest models (LightGBM, CatBoost, XGBoost) with configurable
 
 KMeans clustering groups ~112K DFUs by demand patterns using **14 core features across 6 dimensions** (volume, trend, seasonality, periodicity, intermittency, lifecycle). Feature engineering includes FFT periodicity strength, OLS seasonal R-squared, Croston ADI, scale-invariant trend slope, IQR, CAGR, recency ratio, and YoY correlation (36-month window). Optimal K via combined Silhouette + Calinski-Harabasz scoring with 5% minimum cluster size constraint (k_range [5,18]). Priority-ordered taxonomy labeling produces compound labels like `high_volume_seasonal_growing`. What-If scenario engine runs trial clusterings with custom parameters without touching production. Seasonality detection computes strength, profile, and peak/trough months per DFU. ABC-XYZ classification cross-segments DFUs by revenue volume x demand variability into a 3x3 policy matrix.
 
-### 3. Inventory Planning (15 Sub-features, 28 Panels)
+### 3. Inventory Planning (15 Sub-features, 34 Panels)
 
-Two-column layout with 7 color-coded sidebar groups (Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply):
+Two-column layout with 8 color-coded sidebar groups and 5 role-based view presets (All Panels, Daily Ops, Weekly Review, Monthly Planning, Executive) with progressive disclosure:
 
-- **Safety Stock Engine**: Z-score service level targets with Monte Carlo simulation
+**Insights group** (7 new panels from expert recommendations):
+- **Unified Action Feed**: priority-ranked items aggregating exceptions, signals, PO risks, and stockouts with severity color-coding and auto-refresh
+- **Network Heatmap**: location × category DOS grid with 5 color tiers (red/orange/yellow/green/blue)
+- **Segment Dashboard**: ABC-XYZ segment deep-dive with policy distribution, top exceptions, and recommended actions
+- **Planning Scorecard**: effectiveness metrics with health score hero KPI, current/prior/trend/sparkline rows
+- **Cash Flow Timeline**: monthly stacked BarChart for PO Committed/Planned Orders/SS Investment breakdown
+- **Service Level Waterfall**: decomposing CSL into Base Forecast + SS Buffer + LT Buffer + Sensing contributions
+- **Budget Optimizer**: constrained optimization with budget input and allocation detail table
+
+**Core features** (15 sub-features across 7 groups):
+- **Safety Stock Engine**: Z-score service level targets with Monte Carlo simulation, cost-benefit analysis, supplier risk adjustment, sparklines
 - **EOQ Cycle Stock**: Economic Order Quantity with sensitivity analysis and MOQ guardrails
-- **Replenishment Policies**: 4 policy types with auto-assignment by ABC-XYZ segment
-- **Exception Queue**: 6 exception types with severity scoring and 7-day deduplication
-- **Fill Rate Analytics**: order fulfillment metrics by item-location-month
-- **Demand Signals**: short-horizon sensing from sales velocity and inventory movement
+- **Replenishment Policies**: 4 policy types with auto-assignment by ABC-XYZ segment and impact preview
+- **Exception Queue**: 6 exception types with severity scoring, 7-day dedup, root cause analysis, and AI annotation badges
+- **Fill Rate Analytics**: order fulfillment metrics by item-location-month with trend sparklines
+- **Demand Signals**: short-horizon sensing from sales velocity and inventory movement with AI tags
 - **Intramonth Stockout Detection**: within-month events before end-of-month snapshot
-- **Supplier Performance**: delivery reliability KPIs from receipt data
+- **Supplier Performance**: delivery reliability KPIs from receipt data with portfolio risk section
 - **Capital Investment Optimization**: efficient frontier for budget-vs-service-level trade-offs
 - **Portfolio Health Score**: 4-component 100-point composite score per DFU
-- **Inventory Rebalancing**: cross-location transfer optimization (greedy + LP solvers), 12 API endpoints
+- **Inventory Rebalancing**: cross-location transfer optimization (greedy + LP solvers) with proactive rebalancing opportunities
 - **Replenishment Plan**: forward 12-month plan with CI bands from champion models
 - **Blended Demand**: alpha-weighted sensing + statistical blend
 - **Multi-Echelon Safety Stock**: cascade risk severity badges across echelons

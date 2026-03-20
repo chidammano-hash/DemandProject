@@ -748,7 +748,7 @@ accuracy, ai_planner, analysis, auth_router, bias_corrections, blended_forecast,
 | **Portfolio Analysis** | `/forecast/accuracy/slice`, `/lag-curve`, `/champions/*`, `/shap/*` | `agg_accuracy_by_dim`, `backtest_lag_archive`, `fact_external_forecast_monthly` |
 | **Item Analysis** | `/dfu/*`, `/forecast/shap/{model}/dfu`, `/inventory/*` | `fact_sales_monthly`, `fact_external_forecast_monthly`, `fact_inventory_snapshot`, SHAP CSVs |
 | **Clusters** | `/clustering/list`, `/scenario`, `/scenario/{id}/status` | `dim_dfu`, `data/clustering/` |
-| **Inv Planning** (28 panels) | `/inv-planning/*` (13 router modules) | All `fact_*` inv planning tables + MVs |
+| **Inv Planning** (34 panels, 5 view presets) | `/inv-planning/*` (14 router modules) | All `fact_*` inv planning tables + MVs |
 | **Control Tower** | `/control-tower/kpis`, `/alerts`, `/top-critical`, `/trend` | `mv_control_tower_kpis` |
 | **AI Planner** | `/ai-planner/insights`, `/portfolio-scan`, `/metrics` | `ai_insights`, `ai_planning_memos`, `ai_call_log` |
 | **Storyboard** | `/storyboard/exceptions`, `/summary`, `/detail` | `fact_storyboard_exceptions` |

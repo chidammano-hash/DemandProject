@@ -59,6 +59,28 @@ export function SupplierPanel() {
           ]}
         />
       )}
+      {/* Supplier Portfolio Risk */}
+      {(detail?.rows?.length ?? 0) > 0 && detail && (() => {
+        const lowReliabilityRows = detail.rows.filter(
+          (r: SupplierRow) => (r.supplier_reliability_score ?? 100) < 40,
+        );
+        const criticalCount = lowReliabilityRows.length;
+        return criticalCount > 0 ? (
+          <div className="border border-red-200 rounded-lg p-3 bg-red-50 dark:bg-red-950/20 space-y-1">
+            <p className="text-xs font-semibold text-red-700 dark:text-red-400">
+              Supplier Portfolio Risk
+            </p>
+            <p className="text-xs text-muted-foreground">
+              <span className="font-bold text-red-600">{criticalCount}</span> supplier{criticalCount !== 1 ? "s" : ""} with
+              reliability score below 40 may be managing A-class items, posing service level risk.
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              Suppliers with reliability &lt; 40 managing A-class items pose service level risk.
+            </p>
+          </div>
+        ) : null;
+      })()}
+
       {(detail?.rows?.length ?? 0) > 0 && detail && (
         <div className="overflow-x-auto">
           <p className="text-xs font-medium mb-2">Suppliers by Reliability (highest first)</p>

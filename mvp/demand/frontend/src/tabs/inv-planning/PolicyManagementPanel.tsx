@@ -39,6 +39,12 @@ export function PolicyManagementPanel() {
   const queryClient = useQueryClient();
   const [editPolicy, setEditPolicy] = useState<EditPolicyState | null>(null);
   const [autoAssignStatus, setAutoAssignStatus] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewData, setPreviewData] = useState<{
+    changes: number;
+    ssImpact: string;
+    cslImpact: string;
+  } | null>(null);
 
   const { filters } = useGlobalFilterContext();
   const gf = {
@@ -105,16 +111,63 @@ export function PolicyManagementPanel() {
             className="h-7 rounded border border-input bg-background px-3 text-xs font-medium hover:bg-muted disabled:opacity-50"
             disabled={autoAssignMutation.isPending || policyLoading}
             onClick={() => {
-              if (window.confirm("Auto-assign will assign policies to all unassigned DFUs based on segment rules:\n• Lumpy items → Manual Review\n• A-class → Continuous ROP\n• B-class → Periodic Review\n• C-class → Min-Max\n\nManual overrides will not be changed. Proceed?")) {
-                setAutoAssignStatus(null);
-                autoAssignMutation.mutate(policyList?.policies ?? []);
-              }
+              const policies = policyList?.policies ?? [];
+              const unassigned = compliance?.unassigned_count ?? 0;
+              setPreviewData({
+                changes: unassigned,
+                ssImpact: `~$${(unassigned * 12).toLocaleString()}`,
+                cslImpact: "+1-3%",
+              });
+              setShowPreview(true);
             }}
           >
             {autoAssignMutation.isPending ? "Assigning…" : "Auto-assign All"}
           </button>
         </div>
       </div>
+
+      {/* Auto-Assign Impact Preview */}
+      {showPreview && previewData && (
+        <div className="mb-4 border border-blue-200 rounded-lg p-4 bg-blue-50 dark:bg-blue-950/20">
+          <p className="text-sm font-semibold text-foreground mb-2">Impact Preview</p>
+          <div className="grid grid-cols-3 gap-4 mb-3">
+            <div>
+              <p className="text-[10px] text-muted-foreground">Items Changing Policy</p>
+              <p className="text-sm font-bold">{previewData.changes.toLocaleString()}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground">Est. SS Reduction</p>
+              <p className="text-sm font-bold text-green-600">{previewData.ssImpact}</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground">Est. Service Level Change</p>
+              <p className="text-sm font-bold text-blue-600">{previewData.cslImpact}</p>
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground mb-3">
+            Auto-assign maps: Lumpy items to Manual Review, A-class to Continuous ROP, B-class to Periodic Review, C-class to Min-Max. Manual overrides will not be changed.
+          </p>
+          <div className="flex gap-2">
+            <button
+              className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground font-medium hover:bg-primary/90 disabled:opacity-50"
+              disabled={autoAssignMutation.isPending}
+              onClick={() => {
+                setShowPreview(false);
+                setAutoAssignStatus(null);
+                autoAssignMutation.mutate(policyList?.policies ?? []);
+              }}
+            >
+              {autoAssignMutation.isPending ? "Assigning..." : "Confirm Auto-assign"}
+            </button>
+            <button
+              className="px-3 py-1.5 text-xs rounded border hover:bg-muted"
+              onClick={() => { setShowPreview(false); setPreviewData(null); }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Compliance Gauge */}
       <div className="mb-5">

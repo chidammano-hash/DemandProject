@@ -76,6 +76,7 @@ from api.routers import sop               # noqa: E402
 from api.routers import events            # noqa: E402
 from api.routers import supply_scenarios  # noqa: E402
 from api.routers import inv_planning_rebalancing  # noqa: E402
+from api.routers import inv_planning_insights     # noqa: E402
 # --- Spec 08-xx: Next-gen platform routers ---
 from api.routers import auth_router       # noqa: E402  # 08-02 RBAC
 from api.routers import users             # noqa: E402  # 08-02 User mgmt
@@ -133,6 +134,7 @@ app.include_router(sop.router)
 app.include_router(events.router)
 app.include_router(supply_scenarios.router)
 app.include_router(inv_planning_rebalancing.router)
+app.include_router(inv_planning_insights.router)
 app.include_router(shap.router)
 
 # --- Spec 08-xx: Next-gen platform routers ---

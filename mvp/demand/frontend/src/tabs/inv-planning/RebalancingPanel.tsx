@@ -13,7 +13,7 @@ import {
   ZAxis,
   ReferenceLine,
 } from "recharts";
-import { Repeat2 } from "lucide-react";
+import { Repeat2, RefreshCcw } from "lucide-react";
 import {
   rebalancingKeys,
   fetchRebalancingKpis,
@@ -29,6 +29,7 @@ import {
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
 import { formatFixed, formatInt } from "@/lib/formatters";
+import { insightKeys, fetchProactiveRebalancing } from "@/api/queries/inv-planning-insights";
 
 const PAGE = 50;
 
@@ -154,11 +155,52 @@ export function RebalancingPanel() {
       item: t.item_no,
     }));
 
+  // Proactive rebalancing opportunities
+  const { data: proactiveData } = useQuery({
+    queryKey: insightKeys.proactiveRebalancing(),
+    queryFn: fetchProactiveRebalancing,
+    staleTime: STALE.TWO_MIN,
+  });
+
+  const proactive = proactiveData as {
+    total_opportunities?: number;
+    opportunities?: {
+      item_no: string;
+      source_loc: string;
+      dest_loc: string;
+      source_dos: number;
+      dest_dos: number;
+      suggested_qty: number;
+    }[];
+  } | undefined;
+
   const urgencyColor = (u: string) =>
     u === "critical" ? "#ef4444" : u === "high" ? "#f59e0b" : u === "medium" ? "#eab308" : "#6b7280";
 
   return (
     <div className="space-y-4">
+      {/* Proactive Opportunities banner */}
+      {(proactive?.total_opportunities ?? 0) > 0 && proactive && (
+        <div className="border border-blue-200 rounded-lg p-3 bg-blue-50 dark:bg-blue-950/20 space-y-3">
+          <div className="flex items-center gap-2">
+            <RefreshCcw className="w-4 h-4 text-blue-600" />
+            <p className="text-xs font-semibold text-blue-700 dark:text-blue-400">
+              {proactive.total_opportunities} proactive transfer opportunities detected — items with DOS imbalance across locations.
+            </p>
+          </div>
+          {(proactive.opportunities ?? []).slice(0, 5).map((opp, i) => (
+            <div key={`${opp.item_no}-${i}`} className="flex items-center gap-2 text-xs border rounded p-2 bg-background">
+              <span className="font-mono font-medium">{opp.item_no}</span>
+              <span className="text-muted-foreground">at</span>
+              <span className="text-red-600">{opp.dest_loc} (DOS: {opp.dest_dos.toFixed(0)}d)</span>
+              <span className="text-muted-foreground">&larr;</span>
+              <span className="text-green-600">{opp.source_loc} (DOS: {opp.source_dos.toFixed(0)}d)</span>
+              <span className="ml-auto text-muted-foreground">Suggested: <span className="font-medium text-foreground">{opp.suggested_qty.toLocaleString()} units</span></span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Info banner */}
       <div className="text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2">
         <strong className="text-foreground">Inventory Rebalancing</strong> identifies items
