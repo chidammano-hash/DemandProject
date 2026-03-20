@@ -10,6 +10,7 @@ import {
   Brain, Monitor,
   CalendarDays,
   Shield, BarChart3, MapPin,
+  Settings2,
   PanelLeftClose,
   PanelLeft,
   Menu,
@@ -48,6 +49,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "customerMap",       label: "Customer Map",   icon: MapPin,          section: "demand" },
   // System — data tools
   { key: "explorer",     label: "Explorer",      icon: Database,     section: "system" },
+  { key: "settings",     label: "Settings",      icon: Settings2,    section: "system" },
 ];
 
 const SECTION_LABELS: Record<string, string> = {

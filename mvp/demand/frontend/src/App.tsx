@@ -50,6 +50,7 @@ const FVATab = lazy(() => import("./tabs/FVATab"));
 const DataQualityTab = lazy(() => import("./tabs/DataQualityTab"));
 const CustomerMapTab = lazy(() => import("./tabs/CustomerMapTab").then((m) => ({ default: m.CustomerMapTab })));
 const CommandCenterTab = lazy(() => import("./tabs/CommandCenterTab"));
+const SettingsTab = lazy(() => import("./tabs/SettingsTab"));
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -273,6 +274,11 @@ export default function App() {
                 {activeTab === "customerMap" && (
                   <TabPanel tabKey="customerMap" resetKeys={[activeTab]}>
                     <CustomerMapTab />
+                  </TabPanel>
+                )}
+                {activeTab === "settings" && (
+                  <TabPanel tabKey="settings" resetKeys={[activeTab]}>
+                    <SettingsTab />
                   </TabPanel>
                 )}
               </div>

@@ -11,3 +11,4 @@ export * from "./evolution";
 export * from "./filter-meta";
 export * from "./platform";
 export * from "./inv-planning-rebalancing";
+export * from "./config";
