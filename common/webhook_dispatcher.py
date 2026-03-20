@@ -1,118 +1,40 @@
-"""Webhook dispatcher for Supply Chain Command Center (Spec 08-10).
+# common/webhook_dispatcher.py — backward-compatible shim
+# Real implementation moved to common/services/webhook_dispatcher.py
+import sys as _sys
+import types as _types
+import common.services.webhook_dispatcher as _real  # noqa: F401
 
-Dispatches signed webhook payloads to registered consumers with retry logic.
-"""
-from __future__ import annotations
+_this = _sys.modules[__name__]
 
-import hashlib
-import hmac
-import json
-import time
-import urllib.request
-from typing import Any
-
-
-def _sign_payload(payload: str, secret: str) -> str:
-    """Generate HMAC-SHA256 signature for webhook payload."""
-    return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+# Copy all non-dunder attributes from real module
+for _attr in dir(_real):
+    if not _attr.startswith("__"):
+        setattr(_this, _attr, getattr(_real, _attr))
 
 
-def dispatch_webhook(
-    url: str,
-    secret: str,
-    event_type: str,
-    payload: dict,
-    max_retries: int = 3,
-    backoff_base: float = 2.0,
-) -> dict:
-    """Send a signed webhook to a registered URL with retry logic."""
-    body = json.dumps({"event_type": event_type, "data": payload, "timestamp": time.time()}, default=str)
-    signature = _sign_payload(body, secret)
-    headers = {
-        "Content-Type": "application/json",
-        "X-DS-Signature": f"sha256={signature}",
-        "X-DS-Event": event_type,
-    }
+class _ShimModule(_types.ModuleType):
+    """Module subclass that propagates attribute writes to the real module.
 
-    for attempt in range(1, max_retries + 1):
-        try:
-            req = urllib.request.Request(url, data=body.encode(), headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return {
-                    "status": "delivered",
-                    "status_code": resp.status,
-                    "attempt": attempt,
-                }
-        except Exception as e:
-            if attempt < max_retries:
-                time.sleep(backoff_base ** attempt)
-            else:
-                return {
-                    "status": "failed",
-                    "status_code": None,
-                    "attempt": attempt,
-                    "error": str(e),
-                }
+    This ensures unittest.mock.patch("common.webhook_dispatcher.X", ...) also
+    sets X on common.services.webhook_dispatcher, where the actual functions
+    read their globals from.
+    """
 
-    return {"status": "failed", "attempt": max_retries}
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if not name.startswith("__"):
+            setattr(_real, name, value)
+
+    def __delattr__(self, name):
+        super().__delattr__(name)
+        if hasattr(_real, name):
+            delattr(_real, name)
 
 
-class WebhookEngine:
-    """Manages webhook registrations and dispatches events."""
-
-    def dispatch_event(self, event_type: str, payload: dict) -> list[dict]:
-        """Dispatch an event to all registered webhooks matching the event type."""
-        results = []
-        try:
-            from api.core import get_conn
-            with get_conn() as conn, conn.cursor() as cur:
-                cur.execute(
-                    """SELECT webhook_id, url, secret, event_types
-                       FROM dim_webhook_registration
-                       WHERE is_active = TRUE""",
-                )
-                registrations = cur.fetchall()
-        except Exception:
-            return [{"status": "error", "message": "Failed to load registrations"}]
-
-        for reg in registrations:
-            wh_id, url, secret, event_types = reg
-            # Check if this webhook is subscribed to this event type
-            subscribed = event_types or []
-            if isinstance(subscribed, str):
-                try:
-                    subscribed = json.loads(subscribed)
-                except Exception:
-                    subscribed = []
-            if subscribed and event_type not in subscribed:
-                continue
-
-            result = dispatch_webhook(url, secret, event_type, payload)
-            result["webhook_id"] = wh_id
-            results.append(result)
-
-            # Log delivery
-            self._log_delivery(wh_id, event_type, payload, result)
-
-        return results
-
-    def _log_delivery(self, webhook_id: int, event_type: str, payload: dict, result: dict):
-        try:
-            from api.core import get_conn
-            with get_conn() as conn, conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO fact_webhook_delivery
-                       (webhook_id, event_type, payload, status_code, attempt, status)
-                       VALUES (%s, %s, %s, %s, %s, %s)""",
-                    (
-                        webhook_id,
-                        event_type,
-                        json.dumps(payload, default=str),
-                        result.get("status_code"),
-                        result.get("attempt", 1),
-                        result["status"],
-                    ),
-                )
-                conn.commit()
-        except Exception:
-            pass
+_shim = _ShimModule(__name__)
+_shim.__dict__.update(_this.__dict__)
+_shim.__file__ = __file__
+_shim.__loader__ = getattr(_this, "__loader__", None)
+_shim.__spec__ = getattr(_this, "__spec__", None)
+_shim.__path__ = getattr(_this, "__path__", [])
+_sys.modules[__name__] = _shim

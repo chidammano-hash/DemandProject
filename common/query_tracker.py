@@ -1,80 +1,40 @@
-"""Query performance tracking middleware (Spec 08-03).
+# common/query_tracker.py — backward-compatible shim
+# Real implementation moved to common/services/query_tracker.py
+import sys as _sys
+import types as _types
+import common.services.query_tracker as _real  # noqa: F401
 
-Logs slow API responses to fact_query_performance for monitoring.
-"""
-from __future__ import annotations
+_this = _sys.modules[__name__]
 
-import threading
-import time
-from typing import Any
-
-
-class QueryTracker:
-    """Tracks API endpoint performance."""
-
-    def __init__(self, slow_threshold_ms: float = 500.0):
-        self.slow_threshold_ms = slow_threshold_ms
-        self._slow_queries: list[dict] = []
-
-    def record(
-        self,
-        endpoint: str,
-        method: str,
-        duration_ms: float,
-        cache_hit: bool = False,
-        user_id: str | None = None,
-        params: dict | None = None,
-    ) -> None:
-        """Record a query performance entry. Writes to DB for slow queries."""
-        if duration_ms >= self.slow_threshold_ms:
-            entry = {
-                "endpoint": endpoint,
-                "method": method,
-                "duration_ms": round(duration_ms, 2),
-                "cache_hit": cache_hit,
-                "user_id": user_id,
-                "params": params,
-            }
-            self._slow_queries.append(entry)
-            self._write_to_db(entry)
-
-    def _write_to_db(self, entry: dict) -> None:
-        """Persist slow query record. Best-effort."""
-        try:
-            import json
-            from api.core import get_conn
-            with get_conn() as conn, conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO fact_query_performance
-                       (endpoint, method, duration_ms, cache_hit, user_id, params)
-                       VALUES (%s, %s, %s, %s, %s, %s)""",
-                    (
-                        entry["endpoint"],
-                        entry["method"],
-                        entry["duration_ms"],
-                        entry["cache_hit"],
-                        entry.get("user_id"),
-                        json.dumps(entry.get("params")) if entry.get("params") else None,
-                    ),
-                )
-                conn.commit()
-        except Exception:
-            pass
-
-    def get_recent_slow(self, limit: int = 50) -> list[dict]:
-        """Return recent slow queries from memory."""
-        return list(reversed(self._slow_queries[-limit:]))
+# Copy all non-dunder attributes from real module
+for _attr in dir(_real):
+    if not _attr.startswith("__"):
+        setattr(_this, _attr, getattr(_real, _attr))
 
 
-# Singleton (thread-safe via double-checked locking)
-_tracker: QueryTracker | None = None
-_tracker_lock = threading.Lock()
+class _ShimModule(_types.ModuleType):
+    """Module subclass that propagates attribute writes to the real module.
+
+    This ensures unittest.mock.patch("common.query_tracker.X", ...) also
+    sets X on common.services.query_tracker, where the actual functions
+    read their globals from.
+    """
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if not name.startswith("__"):
+            setattr(_real, name, value)
+
+    def __delattr__(self, name):
+        super().__delattr__(name)
+        if hasattr(_real, name):
+            delattr(_real, name)
 
 
-def get_tracker() -> QueryTracker:
-    global _tracker
-    if _tracker is None:
-        with _tracker_lock:
-            if _tracker is None:
-                _tracker = QueryTracker()
-    return _tracker
+_shim = _ShimModule(__name__)
+_shim.__dict__.update(_this.__dict__)
+_shim.__file__ = __file__
+_shim.__loader__ = getattr(_this, "__loader__", None)
+_shim.__spec__ = getattr(_this, "__spec__", None)
+_shim.__path__ = getattr(_this, "__path__", [])
+_sys.modules[__name__] = _shim

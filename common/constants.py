@@ -1,38 +1,40 @@
-"""Shared constants for backtest scripts and feature engineering."""
+# common/constants.py — backward-compatible shim
+# Real implementation moved to common/core/constants.py
+import sys as _sys
+import types as _types
+import common.core.constants as _real  # noqa: F401
 
-# Feature engineering constants
-CAT_FEATURES = ["ml_cluster", "region", "brand", "abc_vol"]
-NUMERIC_DFU_FEATURES = ["execution_lag", "total_lt"]
-NUMERIC_ITEM_FEATURES = ["case_weight", "item_proof", "bpc"]
+_this = _sys.modules[__name__]
 
-LAG_RANGE = range(1, 13)  # qty_lag_1 .. qty_lag_12
-ROLLING_WINDOWS = [3, 6, 12]
-CALENDAR_FEATURES = ["month", "quarter", "month_sin", "month_cos",
-                     "is_quarter_end", "is_year_end", "days_in_month"]
-DERIVED_FEATURES = ["mom_growth", "demand_accel", "volatility_ratio"]
+# Copy all non-dunder attributes from real module
+for _attr in dir(_real):
+    if not _attr.startswith("__"):
+        setattr(_this, _attr, getattr(_real, _attr))
 
-# Output column ordering for fact_external_forecast_monthly
-OUTPUT_COLS = [
-    "forecast_ck", "dmdunit", "dmdgroup", "loc",
-    "fcstdate", "startdate", "lag", "execution_lag",
-    "basefcst_pref", "tothist_dmd", "model_id",
-]
 
-# Output column ordering for backtest_lag_archive
-ARCHIVE_COLS = [
-    "forecast_ck", "dmdunit", "dmdgroup", "loc",
-    "fcstdate", "startdate", "lag", "execution_lag",
-    "basefcst_pref", "tothist_dmd", "model_id", "timeframe",
-]
+class _ShimModule(_types.ModuleType):
+    """Module subclass that propagates attribute writes to the real module.
 
-# Metadata columns excluded from feature set
-METADATA_COLS = {"dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate", "qty", "_k"}
+    This ensures unittest.mock.patch("common.constants.X", ...) also
+    sets X on common.core.constants, where the actual functions
+    read their globals from.
+    """
 
-# Maximum archive lag (0-4)
-MAX_ARCHIVE_LAG = 4
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if not name.startswith("__"):
+            setattr(_real, name, value)
 
-# Minimum training months required
-MIN_TRAINING_MONTHS = 13
+    def __delattr__(self, name):
+        super().__delattr__(name)
+        if hasattr(_real, name):
+            delattr(_real, name)
 
-# Minimum rows per cluster for per-cluster training
-MIN_CLUSTER_ROWS = 50
+
+_shim = _ShimModule(__name__)
+_shim.__dict__.update(_this.__dict__)
+_shim.__file__ = __file__
+_shim.__loader__ = getattr(_this, "__loader__", None)
+_shim.__spec__ = getattr(_this, "__spec__", None)
+_shim.__path__ = getattr(_this, "__path__", [])
+_sys.modules[__name__] = _shim

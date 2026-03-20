@@ -1,68 +1,40 @@
-"""API rate limiting for Supply Chain Command Center (Spec 08-09).
+# common/rate_limiter.py — backward-compatible shim
+# Real implementation moved to common/services/rate_limiter.py
+import sys as _sys
+import types as _types
+import common.services.rate_limiter as _real  # noqa: F401
 
-Sliding-window rate limiter with configurable tiers.
-"""
-from __future__ import annotations
+_this = _sys.modules[__name__]
 
-import threading
-import time
-from collections import defaultdict
-from typing import Any
-
-from common.utils import load_config
-
-_CONFIG_NAME = "api_governance_config.yaml"
+# Copy all non-dunder attributes from real module
+for _attr in dir(_real):
+    if not _attr.startswith("__"):
+        setattr(_this, _attr, getattr(_real, _attr))
 
 
-# ---------------------------------------------------------------------------
-# Config (thread-safe via common.utils.load_config)
-# ---------------------------------------------------------------------------
-def _load_config() -> dict:
-    return load_config(_CONFIG_NAME)
+class _ShimModule(_types.ModuleType):
+    """Module subclass that propagates attribute writes to the real module.
+
+    This ensures unittest.mock.patch("common.rate_limiter.X", ...) also
+    sets X on common.services.rate_limiter, where the actual functions
+    read their globals from.
+    """
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if not name.startswith("__"):
+            setattr(_real, name, value)
+
+    def __delattr__(self, name):
+        super().__delattr__(name)
+        if hasattr(_real, name):
+            delattr(_real, name)
 
 
-# ---------------------------------------------------------------------------
-# Sliding window rate limiter
-# ---------------------------------------------------------------------------
-class RateLimiter:
-    """In-process sliding window rate limiter."""
-
-    def __init__(self):
-        self._windows: dict[str, list[float]] = defaultdict(list)
-
-    def check(self, key: str, max_requests: int = 60, window_seconds: int = 60) -> tuple[bool, int]:
-        """Check if request is allowed. Returns (allowed, remaining)."""
-        now = time.time()
-        cutoff = now - window_seconds
-        window = self._windows[key]
-        # Trim old entries
-        self._windows[key] = [t for t in window if t > cutoff]
-        window = self._windows[key]
-
-        if len(window) >= max_requests:
-            return False, 0
-
-        window.append(now)
-        remaining = max_requests - len(window)
-        return True, remaining
-
-    def get_tier_limit(self, tier: str = "standard") -> int:
-        """Get requests-per-minute for a tier."""
-        cfg = _load_config()
-        tiers = cfg.get("rate_limit_tiers", {})
-        tier_cfg = tiers.get(tier, tiers.get("standard", {"requests_per_minute": 300}))
-        return tier_cfg.get("requests_per_minute", 300)
-
-
-# Singleton (thread-safe via double-checked locking)
-_limiter: RateLimiter | None = None
-_limiter_lock = threading.Lock()
-
-
-def get_rate_limiter() -> RateLimiter:
-    global _limiter
-    if _limiter is None:
-        with _limiter_lock:
-            if _limiter is None:
-                _limiter = RateLimiter()
-    return _limiter
+_shim = _ShimModule(__name__)
+_shim.__dict__.update(_this.__dict__)
+_shim.__file__ = __file__
+_shim.__loader__ = getattr(_this, "__loader__", None)
+_shim.__spec__ = getattr(_this, "__spec__", None)
+_shim.__path__ = getattr(_this, "__path__", [])
+_sys.modules[__name__] = _shim

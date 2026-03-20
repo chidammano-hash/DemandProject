@@ -1,127 +1,40 @@
-"""Shared SQL helpers used by both medallion.py and load_dataset_postgres.py.
+# common/sql_helpers.py — backward-compatible shim
+# Real implementation moved to common/core/sql_helpers.py
+import sys as _sys
+import types as _types
+import common.core.sql_helpers as _real  # noqa: F401
 
-Extracted to eliminate duplication (D1) and centralise magic constants (M1-M7).
-"""
-from __future__ import annotations
+_this = _sys.modules[__name__]
 
-import logging
-import time
-
-from common.domain_specs import DomainSpec
-
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Magic-value constants (M1-M7)
-# ---------------------------------------------------------------------------
-
-NULL_SQL = "'', 'null', 'none', 'na', 'n/a'"
-
-IQR_OUTLIER_MULTIPLIER = 1.5        # M1
-LEAD_TIME_MAX_DAYS = 730             # M2
-LEAD_TIME_DEFAULT_DAYS = 7           # M3
-HASH_CHUNK_SIZE = 1024 * 1024        # M4 (1 MB)
-EXTERNAL_MODEL_ID = "external"       # M5
-PERCENTILE_MEDIAN = 0.5              # M7
-PERCENTILE_Q1 = 0.25                 # M7
-PERCENTILE_Q3 = 0.75                 # M7
-
-# MV refresh lists (D5) -------------------------------------------------------
-
-MV_REFRESH_ARCHIVE = [
-    "agg_accuracy_lag_archive",
-    "agg_dfu_coverage_lag_archive",
-]
-
-# ---------------------------------------------------------------------------
-# Formatting helpers
-# ---------------------------------------------------------------------------
+# Copy all non-dunder attributes from real module
+for _attr in dir(_real):
+    if not _attr.startswith("__"):
+        setattr(_this, _attr, getattr(_real, _attr))
 
 
-def _elapsed(t0: float) -> str:
-    """Format elapsed time since *t0* as a human-readable string."""
-    dt = time.time() - t0
-    if dt < 60:
-        return f"{dt:.1f}s"
-    m, s = divmod(dt, 60)
-    return f"{int(m)}m {s:.0f}s"
+class _ShimModule(_types.ModuleType):
+    """Module subclass that propagates attribute writes to the real module.
 
-
-def qident(name: str) -> str:
-    """Quote a SQL identifier (table or column name)."""
-    return '"' + name.replace('"', '""') + '"'
-
-
-# ---------------------------------------------------------------------------
-# Type casting / business-key SQL builders
-# ---------------------------------------------------------------------------
-
-
-def typed_expr(field: str, spec: DomainSpec, src_alias: str) -> str:
-    """Generate a SQL CASE-cast expression for *field* based on *spec* types.
-
-    Falls back to an untyped column reference if *field* is not in any
-    typed-field set, but logs a warning (E4).
+    This ensures unittest.mock.patch("common.sql_helpers.X", ...) also
+    sets X on common.core.sql_helpers, where the actual functions
+    read their globals from.
     """
-    col = f"{src_alias}.{qident(field)}"
-    if field in spec.int_fields:
-        return (
-            f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
-            f"ELSE {col}::integer END"
-        )
-    if field in spec.float_fields:
-        return (
-            f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
-            f"ELSE {col}::numeric END"
-        )
-    if field in spec.date_fields:
-        return (
-            f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
-            f"ELSE {col}::date END"
-        )
-    # E4 – warn when a column has no type mapping in the spec
-    if field not in spec.columns:
-        logger.warning(
-            "typed_expr: field '%s' not found in spec '%s' columns",
-            field, spec.name,
-        )
-    return col
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if not name.startswith("__"):
+            setattr(_real, name, value)
+
+    def __delattr__(self, name):
+        super().__delattr__(name)
+        if hasattr(_real, name):
+            delattr(_real, name)
 
 
-def typed_expr_sets(
-    field: str,
-    int_fields: set[str],
-    float_fields: set[str],
-    date_fields: set[str],
-    src_alias: str,
-) -> str:
-    """Legacy overload used by load_dataset_postgres.py (takes raw sets).
-
-    Logs a warning if the field is not in any typed set (E4).
-    """
-    col = f"{src_alias}.{qident(field)}"
-    if field in int_fields:
-        return (
-            f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
-            f"ELSE {col}::integer END"
-        )
-    if field in float_fields:
-        return (
-            f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
-            f"ELSE {col}::numeric END"
-        )
-    if field in date_fields:
-        return (
-            f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
-            f"ELSE {col}::date END"
-        )
-    return col
-
-
-def business_key_expr(spec: DomainSpec, src_alias: str) -> str:
-    """Generate SQL expression for the composite business key."""
-    cols = [f"trim({src_alias}.{qident(f)})" for f in spec.key_fields]
-    if len(cols) == 1:
-        return cols[0]
-    sep = (spec.business_key_separator or "-").replace("'", "''")
-    return f" || '{sep}' || ".join(cols)
+_shim = _ShimModule(__name__)
+_shim.__dict__.update(_this.__dict__)
+_shim.__file__ = __file__
+_shim.__loader__ = getattr(_this, "__loader__", None)
+_shim.__spec__ = getattr(_this, "__spec__", None)
+_shim.__path__ = getattr(_this, "__path__", [])
+_sys.modules[__name__] = _shim

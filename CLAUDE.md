@@ -238,6 +238,61 @@ Domains: Foundation, Forecasting, Demand Intelligence, Inventory Planning, Opera
 
 ---
 
+## Automatic Quality Workflow
+
+These rules are ALWAYS active. Claude MUST follow them without explicit user request.
+
+### After Writing/Editing Python Code
+- Launch `python-reviewer` agent on the changed file(s) after completing a feature or fixing a bug
+- Apply `python-patterns` skill conventions (type hints, EAFP, comprehensions)
+- For API routers: also apply `api-design` and `backend-patterns` skills
+- For SQL-heavy code: also apply `postgres-patterns` skill
+
+### After Writing/Editing SQL or Schema Files
+- Launch `database-reviewer` agent for any SQL/schema change
+- Verify `%s` placeholders, explicit column lists, index coverage
+
+### When Implementing New Features
+- Launch `tdd-guide` agent — write tests FIRST, then implement
+- Apply `tdd-workflow` skill (Red-Green-Refactor cycle)
+- Every new endpoint must have a corresponding test in `tests/api/`
+- Every new `common/` module must have a test in `tests/unit/`
+- Every new React component must have a co-located test
+
+### Before Suggesting a Commit
+- Launch `code-reviewer` agent on all uncommitted changes
+- Apply `security-review` skill (no secrets, no injection, no hardcoded keys)
+- Apply `verification-loop` skill (build, types, lint, tests all pass)
+
+### When Starting Complex Multi-File Changes
+- Launch `planner` agent first to create implementation plan
+- Wait for user confirmation before proceeding
+
+### When Fixing Bugs
+- Write a test that reproduces the bug FIRST
+- Verify the test fails, then fix the bug, then verify the test passes
+- Run the full affected test suite
+
+### Security Checks (Always Active)
+- Never commit files matching: `.env`, `credentials.*`, `*secret*`, `*.key`
+- Flag any hardcoded API keys, tokens, or passwords
+- Verify SQL queries use parameterized queries, never string interpolation
+
+### Agent Quick Reference
+| Agent | Auto-trigger |
+|---|---|
+| `python-reviewer` | After Python changes |
+| `code-reviewer` | Before commits, after features |
+| `database-reviewer` | SQL/schema changes |
+| `tdd-guide` | New features, bug fixes |
+| `planner` | Complex multi-file work |
+
+### Hooks (Configured in `.claude/settings.json`)
+- **PostToolUse (Write/Edit)**: Auto-runs `ruff check` on Python files, anti-pattern checks on SQL files, auto-runs edited test files
+- **PreToolUse (Bash)**: Blocks `git commit` if ruff lint or pytest fails
+
+---
+
 ## Do Not
 
 - Do not commit `__pycache__/`, `.pyc` files, or `.venv/`

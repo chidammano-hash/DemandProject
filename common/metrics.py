@@ -1,35 +1,40 @@
-"""Shared forecast accuracy metrics (WAPE, bias, accuracy)."""
+# common/metrics.py — backward-compatible shim
+# Real implementation moved to common/services/metrics.py
+import sys as _sys
+import types as _types
+import common.services.metrics as _real  # noqa: F401
 
-from typing import Any
+_this = _sys.modules[__name__]
 
-import pandas as pd
+# Copy all non-dunder attributes from real module
+for _attr in dir(_real):
+    if not _attr.startswith("__"):
+        setattr(_this, _attr, getattr(_real, _attr))
 
 
-def compute_accuracy_metrics(
-    forecast_col: pd.Series,
-    actual_col: pd.Series,
-) -> dict[str, Any]:
-    """Compute WAPE, bias, and accuracy from forecast and actual series.
+class _ShimModule(_types.ModuleType):
+    """Module subclass that propagates attribute writes to the real module.
 
-    Returns dict with keys: n_rows, wape, bias, accuracy_pct (any may be None).
+    This ensures unittest.mock.patch("common.metrics.X", ...) also
+    sets X on common.services.metrics, where the actual functions
+    read their globals from.
     """
-    df = pd.DataFrame({"f": forecast_col, "a": actual_col}).dropna()
-    n_rows = len(df)
 
-    if n_rows == 0 or df["a"].abs().sum() == 0:
-        return {"n_rows": n_rows, "wape": None, "bias": None, "accuracy_pct": None}
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if not name.startswith("__"):
+            setattr(_real, name, value)
 
-    total_f = df["f"].sum()
-    total_a = df["a"].sum()
-    abs_error = (df["f"] - df["a"]).abs().sum()
+    def __delattr__(self, name):
+        super().__delattr__(name)
+        if hasattr(_real, name):
+            delattr(_real, name)
 
-    wape = 100 * abs_error / abs(total_a) if abs(total_a) > 0 else None
-    bias = (total_f / total_a) - 1 if abs(total_a) > 0 else None
-    accuracy = 100 - wape if wape is not None else None
 
-    return {
-        "n_rows": n_rows,
-        "wape": round(float(wape), 2) if wape is not None else None,
-        "bias": round(float(bias), 4) if bias is not None else None,
-        "accuracy_pct": round(float(accuracy), 2) if accuracy is not None else None,
-    }
+_shim = _ShimModule(__name__)
+_shim.__dict__.update(_this.__dict__)
+_shim.__file__ = __file__
+_shim.__loader__ = getattr(_this, "__loader__", None)
+_shim.__spec__ = getattr(_this, "__spec__", None)
+_shim.__path__ = getattr(_this, "__path__", [])
+_sys.modules[__name__] = _shim

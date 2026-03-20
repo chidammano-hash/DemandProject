@@ -1,62 +1,40 @@
-"""Shared MLflow logging for backtest scripts."""
+# common/mlflow_utils.py — backward-compatible shim
+# Real implementation moved to common/ml/mlflow_utils.py
+import sys as _sys
+import types as _types
+import common.ml.mlflow_utils as _real  # noqa: F401
 
-import os
-import time
-from typing import Any
+_this = _sys.modules[__name__]
 
-from common.utils import _ts
+# Copy all non-dunder attributes from real module
+for _attr in dir(_real):
+    if not _attr.startswith("__"):
+        setattr(_this, _attr, getattr(_real, _attr))
 
 
-def log_backtest_run(
-    model_type: str,
-    model_id: str,
-    cluster_strategy: str,
-    hyperparams: dict[str, Any],
-    metrics: dict[str, Any],
-    metadata: dict[str, Any],
-    artifact_paths: list[str],
-) -> None:
-    """Log a backtest run to MLflow.
+class _ShimModule(_types.ModuleType):
+    """Module subclass that propagates attribute writes to the real module.
 
-    Args:
-        model_type: e.g. "lgbm_backtest", "catboost_backtest"
-        model_id: e.g. "lgbm_global", "catboost_cluster"
-        cluster_strategy: "global", "per_cluster", "transfer", "pooled"
-        hyperparams: Model hyperparameters to log as params
-        metrics: Dict of metric_name → value (n_predictions, n_dfus, etc.)
-        metadata: Full metadata dict (checked for accuracy_at_execution_lag)
-        artifact_paths: List of file paths to log as artifacts
+    This ensures unittest.mock.patch("common.mlflow_utils.X", ...) also
+    sets X on common.ml.mlflow_utils, where the actual functions
+    read their globals from.
     """
-    try:
-        import mlflow
 
-        mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5003")
-        mlflow.set_tracking_uri(mlflow_uri)
-        mlflow.set_experiment("demand_backtest")
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if not name.startswith("__"):
+            setattr(_real, name, value)
 
-        with mlflow.start_run():
-            mlflow.set_tag("model_type", model_type)
-            mlflow.set_tag("cluster_strategy", cluster_strategy)
-            mlflow.set_tag("model_id", model_id)
+    def __delattr__(self, name):
+        super().__delattr__(name)
+        if hasattr(_real, name):
+            delattr(_real, name)
 
-            mlflow.log_params(hyperparams)
-            mlflow.log_metrics(metrics)
 
-            if "accuracy_at_execution_lag" in metadata:
-                acc = metadata["accuracy_at_execution_lag"]
-                if acc.get("wape"):
-                    mlflow.log_metric("wape", acc["wape"])
-                if acc.get("accuracy_pct"):
-                    mlflow.log_metric("accuracy_pct", acc["accuracy_pct"])
-                if acc.get("bias"):
-                    mlflow.log_metric("bias", acc["bias"])
-
-            for path in artifact_paths:
-                try:
-                    mlflow.log_artifact(path)
-                except Exception as ae:
-                    print(f"\n  [{_ts()}] MLflow artifact skipped ({path}): {ae}")
-
-            print(f"\n  [{_ts()}] Logged to MLflow: {mlflow.get_artifact_uri()}")
-    except Exception as e:
-        print(f"\n  [{_ts()}] MLflow logging skipped: {e}")
+_shim = _ShimModule(__name__)
+_shim.__dict__.update(_this.__dict__)
+_shim.__file__ = __file__
+_shim.__loader__ = getattr(_this, "__loader__", None)
+_shim.__spec__ = getattr(_this, "__spec__", None)
+_shim.__path__ = getattr(_this, "__path__", [])
+_sys.modules[__name__] = _shim

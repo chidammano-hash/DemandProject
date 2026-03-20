@@ -1,57 +1,40 @@
-"""APScheduler wrapper for the job engine (Feature 39).
+# common/job_scheduler.py — backward-compatible shim
+# Real implementation moved to common/services/job_scheduler.py
+import sys as _sys
+import types as _types
+import common.services.job_scheduler as _real  # noqa: F401
 
-Contains:
-- APScheduler BackgroundScheduler factory (_make_scheduler)
-- Cron/interval trigger creation utilities (make_trigger)
+_this = _sys.modules[__name__]
 
-This module isolates all APScheduler-specific logic so that job_registry.py
-remains focused on orchestration and the public JobManager API.
-"""
-from __future__ import annotations
-
-import logging
-from typing import Any
-
-from apscheduler.executors.pool import ThreadPoolExecutor
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
-
-logger = logging.getLogger(__name__)
+# Copy all non-dunder attributes from real module
+for _attr in dir(_real):
+    if not _attr.startswith("__"):
+        setattr(_this, _attr, getattr(_real, _attr))
 
 
-def make_scheduler() -> BackgroundScheduler:
-    """Create and start a BackgroundScheduler with the standard project settings.
+class _ShimModule(_types.ModuleType):
+    """Module subclass that propagates attribute writes to the real module.
 
-    Returns a *started* scheduler instance ready to accept jobs.
+    This ensures unittest.mock.patch("common.job_scheduler.X", ...) also
+    sets X on common.services.job_scheduler, where the actual functions
+    read their globals from.
     """
-    executors = {
-        "default": ThreadPoolExecutor(max_workers=4),
-    }
-    job_defaults = {
-        "coalesce": True,
-        "max_instances": 1,
-        "misfire_grace_time": 3600,
-    }
-    scheduler = BackgroundScheduler(
-        executors=executors,
-        job_defaults=job_defaults,
-        timezone="UTC",
-    )
-    scheduler.start()
-    logger.info("APScheduler BackgroundScheduler started (4 workers)")
-    return scheduler
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if not name.startswith("__"):
+            setattr(_real, name, value)
+
+    def __delattr__(self, name):
+        super().__delattr__(name)
+        if hasattr(_real, name):
+            delattr(_real, name)
 
 
-def make_trigger(cron: str | None, interval_minutes: int | None) -> Any:
-    """Create an APScheduler trigger from a cron expression or interval.
-
-    Exactly one of *cron* or *interval_minutes* must be provided.
-
-    Returns a CronTrigger or IntervalTrigger instance.
-    """
-    if cron:
-        return CronTrigger.from_crontab(cron)
-    if interval_minutes is not None:
-        return IntervalTrigger(minutes=interval_minutes)
-    raise ValueError("Must specify either cron or interval_minutes")
+_shim = _ShimModule(__name__)
+_shim.__dict__.update(_this.__dict__)
+_shim.__file__ = __file__
+_shim.__loader__ = getattr(_this, "__loader__", None)
+_shim.__spec__ = getattr(_this, "__spec__", None)
+_shim.__path__ = getattr(_this, "__path__", [])
+_sys.modules[__name__] = _shim
