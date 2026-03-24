@@ -104,6 +104,12 @@ function SkuForecastChart({
       <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
         <span>
           Model: <strong className="text-foreground">{data.model_id}</strong>
+          {data.promoted_run && (
+            <span className="ml-1 inline-flex items-center rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 px-2 py-0.5 text-[10px] font-semibold">
+              Run #{data.promoted_run.run_id}
+              {data.promoted_run.accuracy_pct != null && ` · ${data.promoted_run.accuracy_pct.toFixed(1)}%`}
+            </span>
+          )}
         </span>
         <span>
           Version: <strong className="text-foreground">{data.plan_version}</strong>

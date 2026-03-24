@@ -267,7 +267,11 @@ def _train_single_cluster(
             cluster_stats["zero_demand_pct"], cluster_stats["seasonal_amplitude"],
         )
 
-    fit_params = {**resolved_params, **registry["fit_extras_per_cluster"](resolved_params, iter_param)}
+    # Filter resolved params to only include keys valid for this model
+    # (cluster profiles may inject LGBM-specific keys like reg_alpha, num_leaves)
+    valid_keys = set(params.keys())
+    filtered_params = {k: v for k, v in resolved_params.items() if k in valid_keys}
+    fit_params = {**filtered_params, **registry["fit_extras_per_cluster"](filtered_params, iter_param)}
     model = model_class(**fit_params)
 
     # Model-specific fit call

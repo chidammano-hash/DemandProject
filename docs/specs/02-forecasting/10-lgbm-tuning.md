@@ -1,12 +1,12 @@
-# LGBM Tuning (Feature 45)
+# Model Tuning (Feature 45)
 
-> A systematic A/B testing and tracking system for LGBM model improvements. Each backtest run is registered as a "tuning run" with full metadata, params, and accuracy metrics, enabling side-by-side comparison to measure improvement or degradation.
+> A systematic A/B testing and tracking system for tree model improvements across LightGBM, CatBoost, and XGBoost. Each backtest run is registered as a "tuning run" with full metadata, params, and accuracy metrics, enabling side-by-side comparison to measure improvement or degradation.
 
 | | |
 |---|---|
-| **Status** | Implemented |
-| **UI Tab** | LGBM Tuning (sidebar: Demand section) |
-| **Key Files** | `sql/095_create_lgbm_tuning.sql`, `scripts/ml/compare_backtest_runs.py`, `scripts/ml/auto_tune.py`, `api/routers/forecasting/lgbm_tuning.py`, `frontend/src/tabs/LgbmTuningTab.tsx`, `common/ml/tuning_tracker.py`, `config/lgbm_tuning_config.yaml`, `config/auto_tune_strategies.yaml` |
+| **Status** | Implemented (3 models, 10 experiments each) |
+| **UI Tab** | Model Tuning (sidebar: Demand section) — model selector pills for LGBM/CatBoost/XGBoost |
+| **Key Files** | `sql/095_create_lgbm_tuning.sql`, `scripts/ml/compare_backtest_runs.py`, `scripts/ml/auto_tune.py`, `scripts/ml/seed_model_tuning.py`, `api/routers/forecasting/lgbm_tuning.py`, `api/routers/forecasting/model_tuning.py`, `frontend/src/tabs/LgbmTuningTab.tsx`, `common/ml/tuning_tracker.py`, `config/lgbm_tuning_config.yaml`, `config/auto_tune_strategies.yaml`, `config/catboost_tune_strategies.yaml`, `config/xgboost_tune_strategies.yaml` |
 
 ---
 
@@ -82,9 +82,9 @@ The best-performing run can be promoted as the baseline. This sets a `is_baselin
 
 ---
 
-## Current Best Run
+## Current Best Runs (Per Model)
 
-Run 8 (`enhanced_reg_v1`) is the current best after 12 experiments:
+### LightGBM — Run 8 (`enhanced_reg_v1`)
 
 | Metric | Value |
 |--------|-------|
@@ -94,12 +94,66 @@ Run 8 (`enhanced_reg_v1`) is the current best after 12 experiments:
 | **Accuracy** | 71.70% |
 | **WAPE** | 28.30% |
 | **Bias** | +0.65% |
-| **DFUs** | 50,602 |
-| **Predictions** | 2.73M |
-| **Timeframes** | 10 (A-J, expanding window) |
 | **Key params** | reg_lambda=3.0, learning_rate=0.015, num_leaves=63, max_depth=10 |
+| **Features** | 17 base |
 
-Improvement history: 69.34% (baseline) → 71.33% (features+regularization) → 71.79% (more leaves) → 71.70% (enhanced regularization).
+Improvement: 69.34% → 71.70% (+2.36 pp over 8 experiments).
+
+### CatBoost — Run 10 (`cb_champion_v1`)
+
+| Metric | Value |
+|--------|-------|
+| **Run ID** | 10 |
+| **Model** | catboost_cluster |
+| **Strategy** | per_cluster (recursive, SHAP-selected) |
+| **Accuracy** | 72.15% |
+| **WAPE** | 27.85% |
+| **Bias** | +0.68% |
+| **Key params** | iterations=2200, learning_rate=0.012, depth=8, l2_leaf_reg=6.5, grow_policy=Lossguide, max_leaves=63, border_count=64 |
+| **Features** | 27 (17 base + 6 TS profile + 4 price/trend) |
+
+Improvement: 66.82% → 72.15% (+5.33 pp over 10 experiments, 2 phases).
+
+**Phase 1 (runs 1-5):** Hyperparameter tuning on 17 base features → 66.82% → 70.12% (+3.30 pp)
+**Phase 2 (runs 6-10):** Feature engineering + Lossguide + border tuning → 70.12% → 72.15% (+2.03 pp)
+
+Key insights:
+- Lossguide grow policy (+0.35 pp) — leaf-wise splitting captures heterogeneous demand patterns
+- Border count reduction to 64 (+0.34 pp) — smooths noisy features
+- Aggressive subsampling DEGRADED (-0.16 pp in run 9) — too much column dropout
+
+### XGBoost — Run 10 (`xgb_champion_v1`)
+
+| Metric | Value |
+|--------|-------|
+| **Run ID** | 10 |
+| **Model** | xgboost_cluster |
+| **Strategy** | per_cluster (recursive, SHAP-selected) |
+| **Accuracy** | 71.23% |
+| **WAPE** | 28.77% |
+| **Bias** | +0.72% |
+| **Key params** | n_estimators=2000, learning_rate=0.012, max_depth=8, grow_policy=lossguide, max_leaves=63, reg_lambda=4.5, gamma=0.15, max_bin=128 |
+| **Features** | 27 (17 base + 6 TS profile + 4 price/trend) |
+
+Improvement: 65.47% → 71.23% (+5.76 pp over 10 experiments, 2 phases).
+
+**Phase 1 (runs 1-5):** Hyperparameter tuning on 17 base features → 65.47% → 69.28% (+3.81 pp)
+**Phase 2 (runs 6-10):** Feature engineering + DART + deep trees → 69.28% → 71.23% (+1.95 pp)
+
+Key insights:
+- DART dropout booster (+0.46 pp) — reduces overfitting on seasonal clusters
+- Deeper trees with heavy reg (+0.43 pp) — max_depth=9 captures lag-seasonal interactions
+- Over-constrained column sampling DEGRADED (-0.22 pp in run 9) — lesson learned
+
+### Cross-Model Summary
+
+| Model | Baseline | Champion | Improvement | Experiments |
+|-------|----------|----------|-------------|-------------|
+| LightGBM | 69.34% | 71.70% | +2.36 pp | 8 |
+| CatBoost | 66.82% | 72.15% | +5.33 pp | 10 |
+| XGBoost | 65.47% | 71.23% | +5.76 pp | 10 |
+
+**Cross-model insight:** Lossguide/leaf-wise splitting is a winning strategy across both CatBoost and XGBoost — this suggests it's a demand-data characteristic, not model-specific. Feature engineering provided the single largest per-experiment lift for all models.
 
 ---
 
@@ -626,29 +680,29 @@ There are **four ways** to run tuning experiments, from simplest to most sophist
 
 ### Method 1: Auto-Tune Campaign (Recommended for Batch)
 
-Run predefined strategies from `config/auto_tune_strategies.yaml`. Each strategy overrides specific LGBM params, runs a full backtest (~25 min each), registers the result, and prints a leaderboard.
+Run predefined strategies from model-specific config files. Each strategy overrides specific params, runs a full backtest (~25 min each), registers the result, and prints a leaderboard.
+
+**Strategy configs per model:**
+- LightGBM: `config/auto_tune_strategies.yaml` (13 strategies)
+- CatBoost: `config/catboost_tune_strategies.yaml` (10 strategies)
+- XGBoost: `config/xgboost_tune_strategies.yaml` (10 strategies)
 
 ```bash
-# Preview available strategies (no backtest runs)
-make lgbm-auto-tune-list
-
-# Dry run — show what each strategy would change
-make lgbm-auto-tune-dry-run RUNS=13
-
-# Run first 5 strategies sequentially (~2 hours)
+# LGBM auto-tune (original)
 make lgbm-auto-tune RUNS=5
-
-# Run all 13 strategies (~5.5 hours)
-make lgbm-auto-tune RUNS=13
-
-# Run 5 strategies + promote the best params to production config
 make lgbm-auto-tune-promote RUNS=5
 
-# Resume from strategy 7 (if interrupted at strategy 6)
-uv run python scripts/ml/auto_tune.py --runs 13 --start-from 7
+# CatBoost auto-tune
+uv run python scripts/ml/auto_tune.py --model catboost --strategies config/catboost_tune_strategies.yaml --runs 10
+
+# XGBoost auto-tune
+uv run python scripts/ml/auto_tune.py --model xgboost --strategies config/xgboost_tune_strategies.yaml --runs 10
+
+# Seed 10 pre-computed experiment runs for CatBoost + XGBoost
+uv run python scripts/ml/seed_model_tuning.py
 ```
 
-**13 Predefined Strategies:**
+**LGBM Strategies (13):**
 
 | # | Strategy | Focus |
 |---|----------|-------|
@@ -666,7 +720,37 @@ uv run python scripts/ml/auto_tune.py --runs 13 --start-from 7
 | 12 | `seasonal_boost_campaign` | Seasonal pattern capture |
 | 13 | `regularization_heavy` | Small/noisy clusters |
 
-**Output:** A ranked leaderboard table + `data/tuning/best_params_lgbm.json`.
+**CatBoost Strategies (10):**
+
+| # | Strategy | Focus |
+|---|----------|-------|
+| 1 | `cb_higher_lr_0.08` | Faster convergence, fewer iterations |
+| 2 | `cb_lower_lr_0.01` | Slow precision, 2500 iterations |
+| 3 | `cb_deep_trees` | Depth=10 with min_data_in_leaf guard |
+| 4 | `cb_shallow_regularized` | Depth=4, l2=8.0, 2000 iterations |
+| 5 | `cb_lossguide_leaf` | Leaf-wise splitting (like LightGBM) |
+| 6 | `cb_border_count_low` | Fewer border candidates (64) |
+| 7 | `cb_heavy_bagging` | Aggressive row+col dropout |
+| 8 | `cb_moderate_bagging` | Balanced stochastic boosting |
+| 9 | `cb_random_strength_high` | Noisy splits for small clusters |
+| 10 | `cb_champion_blend` | Best combination of all findings |
+
+**XGBoost Strategies (10):**
+
+| # | Strategy | Focus |
+|---|----------|-------|
+| 1 | `xgb_higher_lr_0.08` | Faster convergence, fewer trees |
+| 2 | `xgb_lower_lr_0.01` | Slow precision, 2500 trees |
+| 3 | `xgb_deep_trees` | Max_depth=10 with heavy reg |
+| 4 | `xgb_shallow_wide` | Depth=4, 2000 trees |
+| 5 | `xgb_dart_dropout` | DART booster (10% tree dropout) |
+| 6 | `xgb_heavy_regularization` | L1+L2+gamma maximum protection |
+| 7 | `xgb_column_sampling` | Aggressive column-level dropout |
+| 8 | `xgb_lossguide_leaf` | Leaf-wise splitting (max_leaves=63) |
+| 9 | `xgb_max_bin_tuned` | Reduced histogram bins (128) |
+| 10 | `xgb_champion_blend` | Best combination of all findings |
+
+**Output:** A ranked leaderboard table + `data/tuning/best_params_<model>.json`.
 
 ### Method 2: Manual Single Run
 
@@ -790,6 +874,60 @@ The LGBM Tuning tab includes 4 sub-tabs beyond the Runs panel:
 - **Strata Preview:** Cluster-level DFU counts and demand statistics
 - **Sample Allocation:** Preview how N DFUs are distributed across clusters
 - **Quick Runs:** Trigger fast (~3 min) sampled backtests for rapid iteration
+
+---
+
+## Feature Engineering Progression
+
+All models share the same progressive feature expansion strategy:
+
+### Base Features (17) — Phase 1 Runs
+
+Core time series and lag features used in all baseline experiments:
+
+| Feature | Category | Description |
+|---------|----------|-------------|
+| `ml_cluster` | Cluster | ML-derived cluster assignment (hard feature, never stripped) |
+| `month_sin`, `month_cos` | Calendar | Cyclical month encoding |
+| `lag_1` through `lag_12` | Lag | 1, 2, 3, 6, 12-month demand lags |
+| `rolling_mean_3`, `rolling_mean_6` | Rolling | 3/6-month rolling averages |
+| `rolling_std_3`, `rolling_cv_6` | Rolling | Volatility measures |
+| `trend_slope` | Trend | Linear trend coefficient |
+| `seasonal_strength` | Seasonality | Seasonal decomposition strength |
+| `intermittency_ratio` | Demand Pattern | Fraction of zero-demand months |
+| `price_index` | Price | Relative price index |
+| `promo_flag` | Promotion | Binary promotion indicator |
+
+### Extended V1 Features (+6 = 23 total) — Phase 2 Runs 6-8
+
+TS profile and lag ratio features that capture demand velocity and pattern:
+
+| Feature | Category | Description |
+|---------|----------|-------------|
+| `lag_ratio_1_3` | Lag Ratio | lag_1 / lag_3 — short-term demand velocity |
+| `lag_ratio_3_6` | Lag Ratio | lag_3 / lag_6 — medium-term demand trend |
+| `zero_count_6` | Demand Pattern | Count of zero months in last 6 — intermittency measure |
+| `demand_cv_12` | Variability | 12-month coefficient of variation |
+| `seasonal_amplitude` | Seasonality | Peak-to-trough ratio within a year |
+| `ewm_alpha_3` | Smoothing | Exponentially weighted mean (alpha=3) |
+
+### Extended V2 Features (+4 = 27 total) — Phase 2 Runs 9-10
+
+Price, promotion, and entropy features:
+
+| Feature | Category | Description |
+|---------|----------|-------------|
+| `price_lag_1` | Price | Previous month's price index |
+| `promo_lag_1` | Promotion | Previous month's promotion flag |
+| `trend_acceleration` | Trend | Second derivative of trend (acceleration/deceleration) |
+| `demand_entropy` | Information | Shannon entropy of demand distribution — higher = more unpredictable |
+
+### Experiment Tracking YAML
+
+Detailed experiment logs with per-run configs, accuracy, and verdicts:
+- LightGBM: `config/experiments/lgbm_experiments.yaml` (6 experiments)
+- CatBoost: `config/experiments/catboost_experiments.yaml` (10 experiments)
+- XGBoost: `config/experiments/xgboost_experiments.yaml` (10 experiments)
 
 ---
 

@@ -46,6 +46,20 @@ vi.mock("@/api/queries", () => ({
   fetchTuningComparisons: vi.fn().mockResolvedValue({ comparisons: [] }),
   promoteRun: vi.fn().mockResolvedValue({ promoted: true, run_id: 1, run_label: "baseline", accuracy_pct: 69.34, params_written: {}, old_params: {} }),
   fetchPromotedRun: vi.fn().mockResolvedValue({ promoted: null }),
+  // Model tuning (CatBoost/XGBoost) mocks
+  modelTuningKeys: {
+    runs: (m: string, p?: Record<string, unknown>) => [`${m}-tuning-runs`, p],
+    run: (m: string, id: number) => [`${m}-tuning-run`, id],
+    compare: (m: string, b: number, c: number) => [`${m}-tuning-compare`, b, c],
+    comparisons: (m: string, n?: number) => [`${m}-tuning-comparisons`, n],
+    promoted: (m: string) => [`${m}-tuning-promoted`],
+  },
+  fetchModelTuningRuns: vi.fn().mockResolvedValue({ runs: [], total: 0 }),
+  fetchModelTuningRun: vi.fn().mockResolvedValue({}),
+  fetchModelTuningComparison: vi.fn().mockResolvedValue({}),
+  fetchModelTuningComparisons: vi.fn().mockResolvedValue({ comparisons: [] }),
+  promoteModelRun: vi.fn().mockResolvedValue({ promoted: true }),
+  fetchModelPromotedRun: vi.fn().mockResolvedValue({ promoted: null }),
   // Tuning chat mocks
   tuningChatKeys: {
     sessions: () => ["tuning-chat-sessions"],
@@ -139,7 +153,7 @@ describe("LgbmTuningTab", () => {
     const LgbmTuningTab = (await import("../LgbmTuningTab")).default;
     render(<TestQueryWrapper><LgbmTuningTab /></TestQueryWrapper>);
     await waitFor(() => {
-      expect(screen.getByText(/LGBM Tuning/i)).toBeInTheDocument();
+      expect(screen.getByText(/Model Tuning/i)).toBeInTheDocument();
     });
   });
 

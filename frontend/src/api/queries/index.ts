@@ -17,6 +17,7 @@ export * from "./sql-runner";
 export * from "./sourcing";
 export * from "./purchaseOrders";
 export * from "./lgbm-tuning";
+export * from "./model-tuning";
 export * from "./tuning-chat";
 export * from "./cluster-eda";
 export * from "./feature-lab";

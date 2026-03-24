@@ -38,7 +38,9 @@ def _forecast_row(lower=120.0, upper=180.0):
 async def test_production_forecast_returns_ci_bands():
     """GET /forecast/production returns forecast_qty_lower/upper when CI is present."""
     pool, conn, cursor = _make_pool()
-    # plan_version is provided → skip fetchone; only fetchall for rows
+    # plan_version is provided → skip fetchone for version resolution,
+    # fetchone called once for promoted run lookup (return None = no promoted run)
+    cursor.fetchone.return_value = None
     cursor.fetchall.return_value = [
         _forecast_row(lower=120.0, upper=180.0),
         _forecast_row(lower=128.0, upper=192.0),
@@ -71,6 +73,7 @@ async def test_production_forecast_returns_ci_bands():
 async def test_production_forecast_null_ci_bands():
     """Forecast rows with NULL CI bands yield None in response."""
     pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = None
     cursor.fetchall.return_value = [_forecast_row(lower=None, upper=None)]
 
     with patch("api.core._get_pool", return_value=pool):
@@ -185,7 +188,8 @@ async def test_summary_ci_coverage_zero_when_no_ci():
 async def test_production_forecast_explicit_plan_version():
     """plan_version param provided → version lookup skipped, row returned (line 68)."""
     pool, conn, cursor = _make_pool()
-    # Only one fetchall call — no fetchone needed for version lookup
+    # fetchone for promoted run lookup (return None = no promoted run)
+    cursor.fetchone.return_value = None
     cursor.fetchall.return_value = [_forecast_row()]
 
     with patch("api.core._get_pool", return_value=pool):

@@ -159,7 +159,7 @@ export async function fetchTuningRuns(params?: { limit?: number; status?: string
   const sp = new URLSearchParams();
   if (params?.limit) sp.set("limit", String(params.limit));
   if (params?.status) sp.set("status", params.status);
-  const res = await fetch(`/lgbm-tuning/runs?${sp}`);
+  const res = await fetch(`/lgbm-tuning/runs?${sp}`, { cache: "no-cache" });
   if (!res.ok) throw new Error(`Failed to fetch tuning runs: ${res.status}`);
   return res.json();
 }
@@ -194,7 +194,7 @@ export async function promoteRun(runId: number): Promise<PromoteResponse> {
 }
 
 export async function fetchPromotedRun(): Promise<{ promoted: PromotedRun | null }> {
-  const res = await fetch("/lgbm-tuning/promoted");
+  const res = await fetch("/lgbm-tuning/promoted", { cache: "no-cache" });
   if (!res.ok) throw new Error(`Failed to fetch promoted run: ${res.status}`);
   return res.json();
 }

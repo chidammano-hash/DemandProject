@@ -89,6 +89,27 @@ async def get_production_forecast(
             """, [item_id, loc, plan_version, horizon])
             rows = cur.fetchall()
 
+            # Look up promoted tuning run matching the forecast model_id
+            promoted_run = None
+            if rows:
+                try:
+                    cur.execute("""
+                        SELECT run_id, run_label, accuracy_pct, wape, promoted_at
+                        FROM lgbm_tuning_run
+                        WHERE is_promoted = TRUE AND model_id = %s
+                    """, [rows[0][4]])
+                    prow = cur.fetchone()
+                    if prow:
+                        promoted_run = {
+                            "run_id": prow[0],
+                            "run_label": prow[1],
+                            "accuracy_pct": float(prow[2]) if prow[2] is not None else None,
+                            "wape": float(prow[3]) if prow[3] is not None else None,
+                            "promoted_at": prow[4].isoformat() if prow[4] else None,
+                        }
+                except Exception:  # noqa: BLE001 — table may not exist yet
+                    pass
+
     if not rows:
         raise HTTPException(
             status_code=404,
@@ -106,6 +127,7 @@ async def get_production_forecast(
         "generated_at": generated_at.isoformat() if generated_at else None,
         "horizon_months": horizon,
         "is_recursive": any(r[7] for r in rows),
+        "promoted_run": promoted_run,
         "forecasts": [
             {
                 "forecast_month": r[0].isoformat() if r[0] else None,

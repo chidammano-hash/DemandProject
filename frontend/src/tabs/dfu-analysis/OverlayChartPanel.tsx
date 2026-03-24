@@ -138,8 +138,11 @@ export function OverlayChartPanel({
   const { chartColors } = useChartColors();
 
   const hasProdForecast = (prodForecastData?.forecasts.length ?? 0) > 0;
+  const promotedRun = prodForecastData?.promoted_run ?? null;
   const prodForecastLabel = hasProdForecast
-    ? `Production Forecast (${prodForecastData!.model_id})`
+    ? promotedRun
+      ? `Production Forecast (${prodForecastData!.model_id} · run #${promotedRun.run_id}${promotedRun.accuracy_pct != null ? ` · ${promotedRun.accuracy_pct.toFixed(1)}%` : ""})`
+      : `Production Forecast (${prodForecastData!.model_id})`
     : "Production Forecast";
 
   const allKeys = new Set([

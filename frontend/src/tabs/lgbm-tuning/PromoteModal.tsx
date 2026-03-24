@@ -13,12 +13,17 @@ export function PromoteModal({
   onConfirm,
   onCancel,
   isPending,
+  errorMessage,
+  modelLabel,
 }: {
   run: TuningRun;
   onConfirm: () => void;
   onCancel: () => void;
   isPending: boolean;
+  errorMessage?: string | null;
+  modelLabel?: string;
 }) {
+  const label = modelLabel ?? "LGBM";
   const params = run.params ?? {};
   const paramKeys = Object.keys(params).sort();
 
@@ -65,7 +70,7 @@ export function PromoteModal({
               This will:
             </p>
             <ul className="space-y-1 text-sm text-foreground list-disc pl-4">
-              <li>Write this run's LGBM hyperparameters to <code className="text-xs bg-muted px-1 py-0.5 rounded">algorithm_config.yaml</code></li>
+              <li>Write this run's {label} hyperparameters to <code className="text-xs bg-muted px-1 py-0.5 rounded">algorithm_config.yaml</code></li>
               <li>Mark this run as the promoted production configuration</li>
               <li>Clear any previously promoted run</li>
             </ul>
@@ -90,6 +95,13 @@ export function PromoteModal({
             </div>
           )}
         </div>
+
+        {/* Error */}
+        {errorMessage && (
+          <div className="mx-5 mb-0 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-400">
+            {errorMessage}
+          </div>
+        )}
 
         {/* Actions */}
         <div className="flex justify-end gap-2 border-t px-5 py-3">

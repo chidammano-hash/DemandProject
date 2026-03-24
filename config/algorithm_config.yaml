@@ -26,6 +26,7 @@ algorithms:
     reg_lambda: 1.0
     reg_alpha: 0.1
     path_smooth: 4.0
+    max_bin: 127
   catboost:
     enabled: true
     model_id: catboost_cluster
@@ -37,10 +38,26 @@ algorithms:
     shap_sample_size: 500
     tune_inline: false
     params_file: null
-    iterations: 500
-    learning_rate: 0.05
-    depth: 6
-    l2_leaf_reg: 3.0
+    iterations: 3000
+    learning_rate: 0.008
+    depth: 10
+    l2_leaf_reg: 7.5
+    subsample: 0.85
+    reg_lambda: 3.5
+    grow_policy: Lossguide
+    border_count: 64
+    random_strength: 0.5
+    min_data_in_leaf: 28
+    colsample_bylevel: 0.85
+    bagging_temperature: 0.4
+    max_leaves: 127
+    bootstrap_type: MVS
+    model_size_reg: 0.08
+    score_function: L2
+    boost_from_average: true
+    leaf_estimation_method: Newton
+    leaf_estimation_iterations: 10
+    max_ctr_complexity: 1
   xgboost:
     enabled: true
     model_id: xgboost_cluster

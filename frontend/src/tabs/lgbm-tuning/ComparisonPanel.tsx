@@ -16,7 +16,10 @@ import {
 import {
   lgbmTuningKeys,
   fetchTuningComparison,
+  modelTuningKeys,
+  fetchModelTuningComparison,
   STALE,
+  type ModelType,
   type TuningComparison,
   type ClusterComparison,
   type MonthComparison,
@@ -44,6 +47,7 @@ import { LoadingElement } from "@/components/LoadingElement";
 type ComparisonPanelProps = {
   baselineId: number;
   candidateId: number;
+  modelType?: ModelType;
 };
 
 // ---------------------------------------------------------------------------
@@ -312,13 +316,21 @@ const VIEW_LABELS: Record<ComparisonView, string> = {
 // ---------------------------------------------------------------------------
 // ComparisonPanel
 // ---------------------------------------------------------------------------
-export function ComparisonPanel({ baselineId, candidateId }: ComparisonPanelProps) {
+export function ComparisonPanel({ baselineId, candidateId, modelType = "lgbm" }: ComparisonPanelProps) {
   const { chartColors, trendColors } = useChartColors();
   const [view, setView] = useState<ComparisonView>("summary");
 
+  const queryKey = modelType === "lgbm"
+    ? lgbmTuningKeys.compare(baselineId, candidateId)
+    : modelTuningKeys.compare(modelType, baselineId, candidateId);
+
+  const queryFn = modelType === "lgbm"
+    ? () => fetchTuningComparison(baselineId, candidateId)
+    : () => fetchModelTuningComparison(modelType, baselineId, candidateId);
+
   const { data, isLoading, isError, error } = useQuery<TuningComparison>({
-    queryKey: lgbmTuningKeys.compare(baselineId, candidateId),
-    queryFn: () => fetchTuningComparison(baselineId, candidateId),
+    queryKey,
+    queryFn,
     staleTime: STALE.FIVE_MIN,
     enabled: baselineId > 0 && candidateId > 0,
   });

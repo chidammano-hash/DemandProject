@@ -113,6 +113,7 @@ from api.routers.inventory import sourcing as sourcing_router   # noqa: E402
 from api.routers.inventory import purchase_orders as po_router  # noqa: E402
 from api.routers.forecasting import accuracy_budget  # noqa: E402  # Accuracy budget
 from api.routers.forecasting import lgbm_tuning  # noqa: E402  # LGBM tuning
+from api.routers.forecasting import model_tuning  # noqa: E402  # CatBoost/XGBoost tuning
 from api.routers.forecasting import tuning_chat  # noqa: E402  # LGBM tuning chat
 from api.routers.forecasting import cluster_eda  # noqa: E402  # Cluster EDA
 from api.routers.forecasting import sampled_backtest  # noqa: E402  # Sampled backtest
@@ -183,6 +184,7 @@ app.include_router(po_router.router)
 
 app.include_router(accuracy_budget.router)
 app.include_router(lgbm_tuning.router)
+app.include_router(model_tuning.router)
 app.include_router(tuning_chat.router)
 app.include_router(cluster_eda.router)
 app.include_router(sampled_backtest.router)

@@ -47,7 +47,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "aggregateAnalysis", label: "Portfolio",      icon: LayoutDashboard, section: "demand",   shortcut: "6" },
   { key: "itemAnalysis",      label: "Item Analysis",  icon: TrendingUp,      section: "demand",   shortcut: "7" },
   { key: "fva",               label: "FVA & ROI",      icon: BarChart3,       section: "demand" },
-  { key: "lgbmTuning",        label: "LGBM Tuning",   icon: Activity,        section: "demand" },
+  { key: "lgbmTuning",        label: "Model Tuning",  icon: Activity,        section: "demand" },
   { key: "customerMap",       label: "Customer Map",   icon: MapPin,          section: "demand" },
   // System — data tools
   { key: "explorer",     label: "Explorer",      icon: Database,     section: "system" },

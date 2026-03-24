@@ -42,6 +42,25 @@ ALGO_CONFIG_FILE = ROOT / "config" / "algorithm_config.yaml"
 MAX_RUNS = 10
 UV = str(Path.home() / ".local" / "bin" / "uv")
 
+# Model-specific defaults
+_MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "lgbm": {
+        "algo_section": "lgbm",
+        "model_id": "lgbm_cluster",
+        "strategies_file": ROOT / "config" / "auto_tune_strategies.yaml",
+    },
+    "catboost": {
+        "algo_section": "catboost",
+        "model_id": "catboost_cluster",
+        "strategies_file": ROOT / "config" / "catboost_tune_strategies.yaml",
+    },
+    "xgboost": {
+        "algo_section": "xgboost",
+        "model_id": "xgboost_cluster",
+        "strategies_file": ROOT / "config" / "xgboost_tune_strategies.yaml",
+    },
+}
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -68,12 +87,14 @@ def load_algo_config(path: Path | None = None) -> dict[str, Any]:
 def apply_overrides(
     base_config: dict[str, Any],
     overrides: dict[str, Any],
+    model: str = "lgbm",
 ) -> dict[str, Any]:
-    """Deep-copy base config and apply strategy overrides to the LGBM section."""
+    """Deep-copy base config and apply strategy overrides to the model section."""
     cfg = copy.deepcopy(base_config)
-    lgbm = cfg["algorithms"]["lgbm"]
+    algo_section = _MODEL_DEFAULTS[model]["algo_section"]
+    section = cfg["algorithms"][algo_section]
     for key, value in overrides.items():
-        lgbm[key] = value
+        section[key] = value
     return cfg
 
 
@@ -176,40 +197,39 @@ def print_leaderboard(results: list[dict[str, Any]], baseline_accuracy: float | 
 # ── Run execution ────────────────────────────────────────────────────────────
 
 
-def run_backtest(config_path: Path, label: str) -> tuple[bool, float]:
-    """Run a single LGBM backtest with the given config. Returns (success, duration_secs)."""
+def run_backtest(config_path: Path, label: str, model: str = "lgbm") -> tuple[bool, float]:
+    """Run a single backtest with the given config. Returns (success, duration_secs)."""
     cmd = [
         UV, "run", "python", str(ROOT / "scripts" / "run_backtest.py"),
-        "--model", "lgbm",
+        "--model", model,
         "--config", str(config_path),
     ]
     logger.info("[%s] Running backtest: %s", _ts(), label)
     start = time.time()
+    # Stream subprocess output (stdout+stderr) so per-timeframe progress is visible
     result = subprocess.run(
         cmd,
         cwd=str(ROOT),
-        capture_output=True,
-        text=True,
+        stdout=None,   # inherit parent stdout (flows to log file)
+        stderr=subprocess.STDOUT,  # merge stderr into stdout stream
     )
     duration = time.time() - start
 
     if result.returncode != 0:
         logger.error("[%s] Backtest FAILED for '%s' (exit code %d)", _ts(), label, result.returncode)
-        # Log last 20 lines of stderr for debugging
-        stderr_lines = (result.stderr or "").strip().split("\n")
-        for line in stderr_lines[-20:]:
-            logger.error("  %s", line)
         return False, duration
 
     logger.info("[%s] Backtest completed for '%s' in %s", _ts(), label, format_duration(duration))
     return True, duration
 
 
-def register_run(label: str, notes: str) -> int | None:
+def register_run(label: str, notes: str, model: str = "lgbm") -> int | None:
     """Register the latest backtest as a tuning run. Returns run_id or None."""
+    model_id = _MODEL_DEFAULTS[model]["model_id"]
+    backtest_dir = str(ROOT / "data" / "backtest" / model_id)
     cmd = [
         UV, "run", "python", str(ROOT / "scripts" / "ml" / "compare_backtest_runs.py"),
-        "--register-latest",
+        "--register", backtest_dir,
         "--label", label,
         "--notes", notes,
     ]
@@ -250,9 +270,10 @@ def register_run(label: str, notes: str) -> int | None:
     return None
 
 
-def read_metadata() -> dict[str, Any] | None:
-    """Read backtest_metadata.json from the default output directory."""
-    meta_path = ROOT / "data" / "backtest" / "lgbm_cluster" / "backtest_metadata.json"
+def read_metadata(model: str = "lgbm") -> dict[str, Any] | None:
+    """Read backtest_metadata.json from the model's output directory."""
+    model_id = _MODEL_DEFAULTS[model]["model_id"]
+    meta_path = ROOT / "data" / "backtest" / model_id / "backtest_metadata.json"
     if not meta_path.exists():
         return None
     with open(meta_path) as f:
@@ -281,26 +302,29 @@ def get_baseline_accuracy() -> tuple[int | None, float | None]:
 def promote_params(
     overrides: dict[str, Any],
     algo_config_path: Path | None = None,
+    model: str = "lgbm",
 ) -> None:
     """Write the winning strategy's overrides into the production algorithm_config.yaml."""
     p = algo_config_path or ALGO_CONFIG_FILE
     with open(p) as f:
         cfg = yaml.safe_load(f)
 
-    lgbm = cfg["algorithms"]["lgbm"]
+    algo_section = _MODEL_DEFAULTS[model]["algo_section"]
+    section = cfg["algorithms"][algo_section]
     for key, value in overrides.items():
-        lgbm[key] = value
+        section[key] = value
 
     with open(p, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
-    logger.info("[%s] Promoted winning params to %s: %s", _ts(), p, overrides)
+    logger.info("[%s] Promoted winning %s params to %s: %s", _ts(), model, p, overrides)
 
 
 def export_best_params(
     run_result: dict[str, Any],
     base_config: dict[str, Any],
     overrides: dict[str, Any],
+    model: str = "lgbm",
 ) -> Path:
     """Export the best run's full params as a JSON file for production use.
 
@@ -308,23 +332,22 @@ def export_best_params(
     or passed to ``run_backtest.py`` directly, and is consumed by champion
     selection and production forecast pipelines.
     """
-    lgbm_base = base_config["algorithms"]["lgbm"]
-    full_params = {
-        "n_estimators": lgbm_base.get("n_estimators", 1500),
-        "learning_rate": lgbm_base.get("learning_rate", 0.02),
-        "num_leaves": lgbm_base.get("num_leaves", 63),
-        "min_child_samples": lgbm_base.get("min_child_samples", 20),
-        "max_depth": lgbm_base.get("max_depth", 10),
-        "subsample": lgbm_base.get("subsample", 0.80),
-        "colsample_bytree": lgbm_base.get("colsample_bytree", 0.80),
-        "reg_lambda": lgbm_base.get("reg_lambda", 1.0),
-    }
+    algo_section = _MODEL_DEFAULTS[model]["algo_section"]
+    model_base = base_config["algorithms"][algo_section]
+    full_params = dict(model_base)
+    # Remove non-hyperparameter keys
+    for k in ("enabled", "model_id", "cluster_strategy", "recursive",
+              "shap_select", "shap_threshold", "shap_top_n", "shap_sample_size",
+              "tune_inline", "params_file"):
+        full_params.pop(k, None)
     full_params.update(overrides)
 
+    iter_key = "iterations" if model == "catboost" else "n_estimators"
     out = {
-        "best_params": {k: v for k, v in full_params.items() if k != "n_estimators"},
-        "best_n_estimators": full_params.get("n_estimators", 1500),
+        "best_params": {k: v for k, v in full_params.items() if k != iter_key},
+        f"best_{iter_key}": full_params.get(iter_key),
         "source": "auto_tune",
+        "model": model,
         "run_id": run_result.get("run_id"),
         "accuracy_pct": run_result.get("accuracy_pct"),
         "wape": run_result.get("wape"),
@@ -333,11 +356,11 @@ def export_best_params(
 
     out_dir = ROOT / "data" / "tuning"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "best_params_lgbm.json"
+    out_path = out_dir / f"best_params_{model}.json"
     with open(out_path, "w") as f:
         json.dump(out, f, indent=2)
 
-    logger.info("[%s] Exported best params to %s", _ts(), out_path)
+    logger.info("[%s] Exported best %s params to %s", _ts(), model, out_path)
     return out_path
 
 
@@ -357,12 +380,14 @@ def cmd_list_strategies(strategies: list[dict[str, Any]]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Auto-tune LGBM: run N strategies, register, compare, and promote the best.",
+        description="Auto-tune: run N strategies for any model, register, compare, and promote the best.",
     )
+    parser.add_argument("--model", type=str, default="lgbm", choices=["lgbm", "catboost", "xgboost"],
+                        help="Model type to tune (default: lgbm)")
     parser.add_argument("--runs", type=int, default=3,
                         help="Number of strategies to run (default: 3, max: 10)")
     parser.add_argument("--strategies-file", type=str, default=None,
-                        help="Path to strategies YAML (default: config/auto_tune_strategies.yaml)")
+                        help="Path to strategies YAML (default: model-specific)")
     parser.add_argument("--promote", action="store_true",
                         help="Promote best run's params into algorithm_config.yaml")
     parser.add_argument("--dry-run", action="store_true",
@@ -373,8 +398,9 @@ def main() -> None:
                         help="Strategy number to start from (1-indexed, for resuming)")
     args = parser.parse_args()
 
+    model = args.model
     n_runs = min(max(args.runs, 1), MAX_RUNS)
-    strat_path = Path(args.strategies_file) if args.strategies_file else None
+    strat_path = Path(args.strategies_file) if args.strategies_file else _MODEL_DEFAULTS[model]["strategies_file"]
 
     strategies = load_strategies(strat_path)
 
@@ -390,8 +416,9 @@ def main() -> None:
         print("No strategies selected. Check --start-from and --runs values.")
         return
 
+    model_label = model.upper()
     print(f"\n{'=' * 70}")
-    print(f"  LGBM Auto-Tune: {len(selected)} strategies")
+    print(f"  {model_label} Auto-Tune: {len(selected)} strategies")
     print(f"{'=' * 70}")
     for i, s in enumerate(selected, start_idx + 1):
         print(f"  {i}. {s['label']:<30s} {s.get('description', '')}")
@@ -400,13 +427,13 @@ def main() -> None:
     if args.dry_run:
         print("  DRY RUN — showing configs that would be generated:\n")
         base_config = load_algo_config()
+        algo_section = _MODEL_DEFAULTS[model]["algo_section"]
         for s in selected:
-            cfg = apply_overrides(base_config, s.get("overrides", {}))
-            lgbm = cfg["algorithms"]["lgbm"]
+            cfg = apply_overrides(base_config, s.get("overrides", {}), model=model)
+            section = cfg["algorithms"][algo_section]
             print(f"  Strategy: {s['label']}")
-            for k in ("learning_rate", "n_estimators", "num_leaves", "max_depth",
-                       "min_child_samples", "subsample", "colsample_bytree", "reg_lambda"):
-                print(f"    {k}: {lgbm.get(k)}")
+            for k, v in s.get("overrides", {}).items():
+                print(f"    {k}: {section.get(k)}")
             print()
         return
 
@@ -432,11 +459,11 @@ def main() -> None:
         print(f"{'─' * 70}\n")
 
         # Generate temp config with overrides
-        cfg = apply_overrides(base_config, overrides)
+        cfg = apply_overrides(base_config, overrides, model=model)
         config_path = write_temp_config(cfg, label)
 
         # Run backtest
-        success, duration = run_backtest(config_path, label)
+        success, duration = run_backtest(config_path, label, model=model)
 
         if not success:
             results.append({
@@ -449,12 +476,12 @@ def main() -> None:
             continue
 
         # Read metrics from metadata
-        meta = read_metadata()
+        meta = read_metadata(model=model)
         acc_block = meta.get("accuracy_at_execution_lag", {}) if meta else {}
 
         # Register the run
         notes = f"Auto-tune strategy: {description}. Overrides: {json.dumps(overrides)}"
-        run_id = register_run(f"auto_{label}", notes)
+        run_id = register_run(f"auto_{label}", notes, model=model)
 
         result = {
             "run_id": run_id,
@@ -495,7 +522,7 @@ def main() -> None:
     best = max(completed, key=lambda r: r["accuracy_pct"])
 
     # ── Export best params JSON (always) ─────────────────────────────────
-    params_path = export_best_params(best, base_config, best["overrides"])
+    params_path = export_best_params(best, base_config, best["overrides"], model=model)
     print(f"  Best params exported to: {params_path}")
     print(f"  Use in algorithm_config.yaml:  params_file: {params_path.relative_to(ROOT)}")
 
@@ -505,9 +532,9 @@ def main() -> None:
             print(f"\n  Best run ({best['accuracy_pct']:.2f}%) did not beat baseline ({baseline_accuracy:.2f}%).")
             print("  Skipping promotion.")
         else:
-            promote_params(best["overrides"])
+            promote_params(best["overrides"], model=model)
             print(f"\n  PROMOTED: {best['label']} params written to algorithm_config.yaml")
-            print("  Run `make backtest-lgbm` to verify with production config.")
+            print(f"  Run `make backtest-{model}` to verify with production config.")
 
 
 if __name__ == "__main__":

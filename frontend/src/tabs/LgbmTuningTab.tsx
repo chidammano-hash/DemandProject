@@ -7,8 +7,12 @@ import {
   lgbmTuningKeys,
   fetchTuningRuns,
   promoteRun,
+  modelTuningKeys,
+  fetchModelTuningRuns,
+  promoteModelRun,
   STALE,
   type TuningRun,
+  type ModelType,
 } from "@/api/queries";
 import { useChartColors } from "@/hooks/useChartColors";
 import { formatPct, formatFixed, formatInt } from "@/lib/formatters";
@@ -40,6 +44,15 @@ import { ClusterEDAPanel } from "./lgbm-tuning/ClusterEDAPanel";
 import { FeatureLabPanel } from "./lgbm-tuning/FeatureLabPanel";
 import { AccuracyBudgetPanel } from "./lgbm-tuning/AccuracyBudgetPanel";
 import { PromoteModal } from "./lgbm-tuning/PromoteModal";
+
+// ---------------------------------------------------------------------------
+// Model display labels
+// ---------------------------------------------------------------------------
+const MODEL_LABELS: Record<ModelType, string> = {
+  lgbm: "LightGBM",
+  catboost: "CatBoost",
+  xgboost: "XGBoost",
+};
 
 // ---------------------------------------------------------------------------
 // Status badge
@@ -102,6 +115,9 @@ export default function LgbmTuningTab() {
   useChartColors(); // ensure theme context is active
   const queryClient = useQueryClient();
 
+  // ---- Model selector state ------------------------------------------------
+  const [modelType, setModelType] = useState<ModelType>("lgbm");
+
   // ---- Selection state ----------------------------------------------------
   const [selectedBaseline, setSelectedBaseline] = useState<number | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<number | null>(null);
@@ -109,25 +125,48 @@ export default function LgbmTuningTab() {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>("runs");
   const [promoteTarget, setPromoteTarget] = useState<TuningRun | null>(null);
 
+  // Clear selection when switching models
+  function handleModelChange(model: ModelType) {
+    if (model === modelType) return;
+    setModelType(model);
+    setSelectedBaseline(null);
+    setSelectedCandidate(null);
+    setPromoteTarget(null);
+  }
+
   // ---- Promote mutation ---------------------------------------------------
   const promoteMutation = useMutation({
-    mutationFn: (runId: number) => promoteRun(runId),
+    mutationFn: (runId: number) =>
+      modelType === "lgbm" ? promoteRun(runId) : promoteModelRun(modelType, runId),
     onSuccess: () => {
       setPromoteTarget(null);
-      queryClient.invalidateQueries({ queryKey: lgbmTuningKeys.runs() });
-      queryClient.invalidateQueries({ queryKey: lgbmTuningKeys.promoted() });
+      if (modelType === "lgbm") {
+        queryClient.invalidateQueries({ queryKey: lgbmTuningKeys.runs() });
+        queryClient.invalidateQueries({ queryKey: lgbmTuningKeys.promoted() });
+      } else {
+        queryClient.invalidateQueries({ queryKey: modelTuningKeys.runs(modelType) });
+        queryClient.invalidateQueries({ queryKey: modelTuningKeys.promoted(modelType) });
+      }
     },
   });
 
-  // ---- Fetch run list -----------------------------------------------------
+  // ---- Fetch run list (model-aware) ----------------------------------------
+  const runsQueryKey = modelType === "lgbm"
+    ? lgbmTuningKeys.runs()
+    : modelTuningKeys.runs(modelType);
+
+  const runsQueryFn = modelType === "lgbm"
+    ? () => fetchTuningRuns()
+    : () => fetchModelTuningRuns(modelType);
+
   const {
     data: runsPayload,
     isLoading,
     isError,
     error,
   } = useQuery({
-    queryKey: lgbmTuningKeys.runs(),
-    queryFn: () => fetchTuningRuns(),
+    queryKey: runsQueryKey,
+    queryFn: runsQueryFn,
     staleTime: STALE.TWO_MIN,
   });
 
@@ -198,16 +237,36 @@ export default function LgbmTuningTab() {
 
   return (
     <div className="flex flex-col gap-5 p-4 md:p-6">
-      {/* Header */}
-      <div>
-        <h2 className="flex items-center gap-2 text-lg font-semibold">
-          <FlaskConical className="h-5 w-5 text-muted-foreground" />
-          LGBM Tuning
-        </h2>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Review hyperparameter tuning runs for LightGBM models. Select two runs
-          to compare accuracy, WAPE, and bias across timeframes.
-        </p>
+      {/* Header with model selector */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold">
+            <FlaskConical className="h-5 w-5 text-muted-foreground" />
+            Model Tuning
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Review hyperparameter tuning runs for {MODEL_LABELS[modelType]}. Select two runs
+            to compare accuracy, WAPE, and bias across timeframes.
+          </p>
+        </div>
+
+        {/* Model selector pills */}
+        <div className="flex gap-1 rounded-lg border border-border bg-muted/30 p-1 shrink-0">
+          {(Object.keys(MODEL_LABELS) as ModelType[]).map((model) => (
+            <button
+              key={model}
+              onClick={() => handleModelChange(model)}
+              className={cn(
+                "px-3 py-1 text-xs font-medium rounded-md transition-colors",
+                modelType === model
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted",
+              )}
+            >
+              {MODEL_LABELS[model]}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Sub-tab navigation */}
@@ -288,7 +347,7 @@ export default function LgbmTuningTab() {
           <CardContent className="p-0">
             {runs.length === 0 ? (
               <p className="py-12 text-center text-sm text-muted-foreground">
-                No tuning runs found.
+                No tuning runs found for {MODEL_LABELS[modelType]}.
               </p>
             ) : (
               <div className="overflow-x-auto">
@@ -396,6 +455,7 @@ export default function LgbmTuningTab() {
             <ComparisonPanel
               baselineId={selectedBaseline}
               candidateId={selectedCandidate}
+              modelType={modelType}
             />
           ) : (
             <Card className="h-full">
@@ -425,6 +485,8 @@ export default function LgbmTuningTab() {
             promoteMutation.reset();
           }}
           isPending={promoteMutation.isPending}
+          errorMessage={promoteMutation.isError ? (promoteMutation.error as Error).message : null}
+          modelLabel={modelType === "lgbm" ? "LGBM" : modelType === "catboost" ? "CatBoost" : "XGBoost"}
         />
       )}
 

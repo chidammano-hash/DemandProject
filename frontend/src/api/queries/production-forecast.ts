@@ -16,6 +16,14 @@ export interface ProductionForecastPoint {
   lag_source: string | null;
 }
 
+export interface PromotedRunInfo {
+  run_id: number;
+  run_label: string;
+  accuracy_pct: number | null;
+  wape: number | null;
+  promoted_at: string | null;
+}
+
 export interface ProductionForecastPayload {
   item_id: string;
   loc: string;
@@ -24,6 +32,7 @@ export interface ProductionForecastPayload {
   generated_at: string | null;
   horizon_months: number;
   is_recursive: boolean;
+  promoted_run: PromotedRunInfo | null;
   forecasts: ProductionForecastPoint[];
 }
 

@@ -132,7 +132,9 @@ async def test_dfu_404_no_forecast():
 async def test_dfu_200_with_version():
     """DFU forecast with plan_version returns forecast series."""
     pool, conn, cursor = _make_pool()
-    # plan_version provided → skip fetchone, only fetchall for rows
+    # plan_version provided → skip fetchone for version resolution,
+    # fetchone called once for promoted run lookup (return None = no promoted run)
+    cursor.fetchone.return_value = None
     cursor.fetchall.return_value = [
         (
             datetime.date(2026, 4, 1),   # forecast_month
@@ -198,6 +200,7 @@ async def test_dfu_404_version_exists_but_no_rows():
 async def test_dfu_horizon_capped():
     """horizon param is capped at 18 without error."""
     pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = None
     cursor.fetchall.return_value = [
         (
             datetime.date(2026, 4, 1), 100.0, None, None,
@@ -221,6 +224,7 @@ async def test_dfu_horizon_capped():
 async def test_dfu_18_month_horizon():
     """18-month planning horizon returns all 18 forecast rows."""
     pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = None
     cursor.fetchall.return_value = [
         (
             datetime.date(2026, 2 + i if i < 11 else i - 10, 1),
@@ -244,3 +248,66 @@ async def test_dfu_18_month_horizon():
     assert len(data["forecasts"]) == 18
     assert data["forecasts"][0]["lag_source"] == "actual"
     assert data["forecasts"][1]["lag_source"] == "predicted"
+
+
+@pytest.mark.asyncio
+async def test_dfu_includes_promoted_run():
+    """DFU forecast includes promoted tuning run metadata when present."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchall.return_value = [
+        (
+            datetime.date(2026, 4, 1), 150.0, 120.0, 180.0,
+            "lgbm_cluster", 2, 1, True, "actual",
+            datetime.datetime(2026, 3, 1),
+        ),
+    ]
+    # fetchone returns promoted run row
+    cursor.fetchone.return_value = (
+        17,                                     # run_id
+        "enhanced_reg_v3",                       # run_label
+        71.79,                                   # accuracy_pct
+        28.21,                                   # wape
+        datetime.datetime(2026, 3, 20, 14, 0),  # promoted_at
+    )
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/forecast/production?item_id=ITEM001&loc=LOC1&plan_version=2026-03"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["promoted_run"] is not None
+    assert data["promoted_run"]["run_id"] == 17
+    assert data["promoted_run"]["run_label"] == "enhanced_reg_v3"
+    assert data["promoted_run"]["accuracy_pct"] == 71.79
+    assert data["promoted_run"]["wape"] == 28.21
+
+
+@pytest.mark.asyncio
+async def test_dfu_promoted_run_null_when_no_promoted():
+    """promoted_run is null when no tuning run is promoted."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchall.return_value = [
+        (
+            datetime.date(2026, 4, 1), 150.0, None, None,
+            "lgbm_cluster", 1, 1, False, "actual",
+            datetime.datetime(2026, 3, 1),
+        ),
+    ]
+    cursor.fetchone.return_value = None
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/forecast/production?item_id=ITEM001&loc=LOC1&plan_version=2026-03"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["promoted_run"] is None

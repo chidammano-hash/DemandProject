@@ -1,4 +1,9 @@
-"""LGBM Tuning endpoints — run tracking, comparison, and analysis."""
+"""Generic model tuning endpoints — CatBoost & XGBoost run tracking, comparison, and analysis.
+
+Reuses the existing lgbm_tuning_* tables (which have a model_id column)
+to store tuning runs for any model type. Each model gets its own URL prefix
+(e.g. /catboost-tuning/runs, /xgboost-tuning/runs).
+"""
 from __future__ import annotations
 
 import json
@@ -15,7 +20,49 @@ from api.core import get_conn, set_cache
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["lgbm-tuning"])
+router = APIRouter(tags=["model-tuning"])
+
+
+# ---------------------------------------------------------------------------
+# Model definitions
+# ---------------------------------------------------------------------------
+
+_MODEL_CONFIGS: dict[str, dict[str, Any]] = {
+    "catboost": {
+        "default_model_id": "catboost_cluster",
+        "algo_section": "catboost",
+        "param_keys": {
+            "iterations", "learning_rate", "depth", "l2_leaf_reg",
+            "border_count", "bagging_temperature", "random_strength",
+            "min_data_in_leaf", "grow_policy", "max_bin", "max_leaves", "max_ctr_complexity",
+            "subsample", "colsample_bylevel", "reg_lambda",
+            # Phase 3 params
+            "bootstrap_type", "model_size_reg", "leaf_estimation_method",
+            "boost_from_average", "leaf_estimation_iterations", "score_function",
+            "posterior_sampling", "langevin", "diffusion_temperature",
+        },
+    },
+    "xgboost": {
+        "default_model_id": "xgboost_cluster",
+        "algo_section": "xgboost",
+        "param_keys": {
+            "n_estimators", "learning_rate", "max_depth", "min_child_weight",
+            "subsample", "colsample_bytree", "colsample_bylevel",
+            "reg_lambda", "reg_alpha", "gamma", "max_bin",
+            "grow_policy", "tree_method", "max_leaves",
+            # Phase 2+3 params
+            "booster", "rate_drop", "skip_drop", "colsample_bynode",
+        },
+    },
+}
+
+_ALGO_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "algorithm_config.yaml"
+
+# Config keys to compare (non-hyperparameter settings from metadata)
+_CONFIG_KEYS = [
+    "cluster_strategy", "recursive", "shap_select", "shap_threshold",
+    "shap_top_n", "shap_sample_size", "tune_inline", "params_source",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +71,7 @@ router = APIRouter(tags=["lgbm-tuning"])
 
 class CreateRunBody(BaseModel):
     run_label: str = Field(min_length=1, max_length=200)
-    model_id: str = Field(default="lgbm_cluster", max_length=120)
+    model_id: str = Field(default="", max_length=120)
     params: dict[str, Any] | None = None
     features: list[str] | None = None
     notes: str | None = None
@@ -44,28 +91,61 @@ class UpdateRunBody(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Endpoints
+# Helpers
 # ---------------------------------------------------------------------------
 
-@router.get("/lgbm-tuning/runs")
-def list_runs(
+def _parse_json(val: Any) -> Any:
+    if val is None:
+        return None
+    if isinstance(val, (dict, list)):
+        return val
+    return json.loads(val)
+
+
+def _run_dict(r: tuple) -> dict[str, Any]:
+    return {
+        "run_id": r[0],
+        "run_label": r[1],
+        "model_id": r[2],
+        "accuracy_pct": float(r[3]) if r[3] is not None else None,
+        "wape": float(r[4]) if r[4] is not None else None,
+        "bias": float(r[5]) if r[5] is not None else None,
+        "n_predictions": int(r[6]) if r[6] is not None else None,
+        "n_dfus": int(r[7]) if r[7] is not None else None,
+        "status": r[8],
+        "params": _parse_json(r[9]),
+        "features": _parse_json(r[10]),
+        "feature_count": int(r[11]) if r[11] is not None else None,
+        "metadata": _parse_json(r[12]),
+    }
+
+
+def _get_model_config(model_type: str) -> dict[str, Any]:
+    cfg = _MODEL_CONFIGS.get(model_type)
+    if cfg is None:
+        raise HTTPException(status_code=400, detail=f"Unknown model type: {model_type}")
+    return cfg
+
+
+# ---------------------------------------------------------------------------
+# Endpoints — parameterised by model_type path prefix
+# ---------------------------------------------------------------------------
+
+def _list_runs_impl(
+    model_type: str,
     response: FastAPIResponse,
-    status: str = Query(default="", max_length=20),
-    model_id: str = Query(default="", max_length=120),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-):
-    """List LGBM tuning runs, newest first."""
+    status: str,
+    model_id: str,
+    limit: int,
+    offset: int,
+) -> dict[str, Any]:
+    cfg = _get_model_config(model_type)
     set_cache(response, max_age=30)
 
-    parts: list[str] = []
-    params: list[Any] = []
-    if model_id.strip():
-        parts.append("model_id = %s")
-        params.append(model_id.strip())
-    else:
-        parts.append("model_id LIKE %s")
-        params.append("lgbm%")
+    effective_model_id = model_id.strip() if model_id.strip() else cfg["default_model_id"]
+
+    parts: list[str] = ["model_id = %s"]
+    params: list[Any] = [effective_model_id]
     if status.strip():
         parts.append("status = %s")
         params.append(status.strip())
@@ -88,8 +168,8 @@ def list_runs(
             cur.execute(sql, params)
             rows = cur.fetchall()
     except Exception:
-        logger.exception("Failed to list tuning runs")
-        raise HTTPException(status_code=500, detail="Failed to list tuning runs")
+        logger.exception("Failed to list %s tuning runs", model_type)
+        raise HTTPException(status_code=500, detail=f"Failed to list {model_type} tuning runs")
 
     runs = []
     for r in rows:
@@ -112,9 +192,8 @@ def list_runs(
     return {"runs": runs}
 
 
-@router.get("/lgbm-tuning/runs/{run_id}")
-def get_run(run_id: int, response: FastAPIResponse):
-    """Get full detail for a single tuning run, including timeframe breakdowns."""
+def _get_run_impl(model_type: str, run_id: int, response: FastAPIResponse) -> dict[str, Any]:
+    cfg = _get_model_config(model_type)
     set_cache(response, max_age=30)
 
     run_sql = """
@@ -123,7 +202,7 @@ def get_run(run_id: int, response: FastAPIResponse):
                accuracy_pct, wape, bias, n_predictions, n_dfus,
                metadata, notes, backup_path
         FROM lgbm_tuning_run
-        WHERE run_id = %s
+        WHERE run_id = %s AND model_id = %s
     """
     tf_sql = """
         SELECT id, run_id, timeframe, train_end, predict_start, predict_end,
@@ -134,20 +213,13 @@ def get_run(run_id: int, response: FastAPIResponse):
     """
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(run_sql, [run_id])
+        cur.execute(run_sql, [run_id, cfg["default_model_id"]])
         row = cur.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
         cur.execute(tf_sql, [run_id])
         tf_rows = cur.fetchall()
-
-    def _parse_json(val: Any) -> Any:
-        if val is None:
-            return None
-        if isinstance(val, (dict, list)):
-            return val
-        return json.loads(val)
 
     run = {
         "run_id": row[0],
@@ -187,9 +259,11 @@ def get_run(run_id: int, response: FastAPIResponse):
     return {**run, "timeframes": timeframes}
 
 
-@router.post("/lgbm-tuning/runs", status_code=201)
-def create_run(body: CreateRunBody):
-    """Register a new tuning run."""
+def _create_run_impl(model_type: str, body: CreateRunBody) -> dict[str, Any]:
+    cfg = _get_model_config(model_type)
+
+    effective_model_id = body.model_id if body.model_id else cfg["default_model_id"]
+
     sql = """
         INSERT INTO lgbm_tuning_run (run_label, model_id, params, feature_count, features, notes)
         VALUES (%s, %s, %s, %s, %s, %s)
@@ -202,7 +276,7 @@ def create_run(body: CreateRunBody):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, [
             body.run_label,
-            body.model_id,
+            effective_model_id,
             params_json,
             feature_count,
             features_json,
@@ -214,9 +288,9 @@ def create_run(body: CreateRunBody):
     return {"run_id": row[0]}
 
 
-@router.put("/lgbm-tuning/runs/{run_id}")
-def update_run(run_id: int, body: UpdateRunBody):
-    """Update an existing tuning run (e.g. mark completed with results)."""
+def _update_run_impl(model_type: str, run_id: int, body: UpdateRunBody) -> dict[str, Any]:
+    _get_model_config(model_type)
+
     set_parts: list[str] = []
     params: list[Any] = []
 
@@ -264,13 +338,13 @@ def update_run(run_id: int, body: UpdateRunBody):
     return {"updated": True, "run_id": run_id}
 
 
-@router.get("/lgbm-tuning/compare")
-def compare_runs(
+def _compare_runs_impl(
+    model_type: str,
     response: FastAPIResponse,
-    baseline_id: int = Query(ge=1),
-    candidate_id: int = Query(ge=1),
-):
-    """Compare two tuning runs and return delta metrics."""
+    baseline_id: int,
+    candidate_id: int,
+) -> dict[str, Any]:
+    _get_model_config(model_type)
     set_cache(response, max_age=60)
 
     run_sql = """
@@ -291,36 +365,11 @@ def compare_runs(
         if candidate is None:
             raise HTTPException(status_code=404, detail="Candidate run not found")
 
-        # Check for existing comparison
         cur.execute(
             "SELECT id FROM lgbm_tuning_comparison WHERE baseline_run_id = %s AND candidate_run_id = %s",
             [baseline_id, candidate_id],
         )
         existing = cur.fetchone()
-
-    def _parse_json(val: Any) -> Any:
-        if val is None:
-            return None
-        if isinstance(val, (dict, list)):
-            return val
-        return json.loads(val)
-
-    def _run_dict(r: tuple) -> dict[str, Any]:
-        return {
-            "run_id": r[0],
-            "run_label": r[1],
-            "model_id": r[2],
-            "accuracy_pct": float(r[3]) if r[3] is not None else None,
-            "wape": float(r[4]) if r[4] is not None else None,
-            "bias": float(r[5]) if r[5] is not None else None,
-            "n_predictions": int(r[6]) if r[6] is not None else None,
-            "n_dfus": int(r[7]) if r[7] is not None else None,
-            "status": r[8],
-            "params": _parse_json(r[9]),
-            "features": _parse_json(r[10]),
-            "feature_count": int(r[11]) if r[11] is not None else None,
-            "metadata": _parse_json(r[12]),
-        }
 
     b = _run_dict(baseline)
     c = _run_dict(candidate)
@@ -340,7 +389,7 @@ def compare_runs(
     if b["bias"] is not None and c["bias"] is not None:
         delta_bias = round(c["bias"] - b["bias"], 4)
 
-    # Fetch cluster and month breakdowns for both runs
+    # Fetch cluster and month breakdowns
     cluster_sql = """
         SELECT cluster_type, cluster_value, n_predictions, n_dfus,
                accuracy_pct, wape, bias
@@ -356,8 +405,8 @@ def compare_runs(
         ORDER BY month_start
     """
 
-    def _cluster_rows(cur_inner: Any, run_id: int) -> list[dict[str, Any]]:
-        cur_inner.execute(cluster_sql, [run_id])
+    def _cluster_rows(cur_inner: Any, rid: int) -> list[dict[str, Any]]:
+        cur_inner.execute(cluster_sql, [rid])
         return [
             {
                 "cluster_type": r[0], "cluster_value": r[1],
@@ -369,8 +418,8 @@ def compare_runs(
             for r in cur_inner.fetchall()
         ]
 
-    def _month_rows(cur_inner: Any, run_id: int) -> list[dict[str, Any]]:
-        cur_inner.execute(month_sql, [run_id])
+    def _month_rows(cur_inner: Any, rid: int) -> list[dict[str, Any]]:
+        cur_inner.execute(month_sql, [rid])
         return [
             {
                 "month_start": str(r[0]),
@@ -388,7 +437,7 @@ def compare_runs(
         base_months = _month_rows(cur2, baseline_id)
         cand_months = _month_rows(cur2, candidate_id)
 
-    # Build per-cluster comparison (grouped by cluster_type)
+    # Build per-cluster comparison
     per_cluster: dict[str, list[dict[str, Any]]] = {}
     for ct in ("ml_cluster", "business_cluster"):
         b_map = {r["cluster_value"]: r for r in base_clusters if r["cluster_type"] == ct}
@@ -431,7 +480,7 @@ def compare_runs(
             "candidate_wape": cr.get("wape"),
         })
 
-    # Build parameter comparison — diffs and common values
+    # Parameter comparison
     param_diffs: list[dict[str, Any]] = []
     param_common: list[dict[str, Any]] = []
     b_params = b.get("params") or {}
@@ -445,25 +494,18 @@ def compare_runs(
         else:
             param_common.append({"param": key, "value": bv})
 
-    # Build feature diff — added / removed / common count
+    # Feature diff
     b_features = set(b.get("features") or [])
     c_features = set(c.get("features") or [])
-    features_added = sorted(c_features - b_features)
-    features_removed = sorted(b_features - c_features)
-    features_common_count = len(b_features & c_features)
     feature_diffs = {
         "baseline_count": b.get("feature_count") or len(b_features),
         "candidate_count": c.get("feature_count") or len(c_features),
-        "added": features_added,
-        "removed": features_removed,
-        "common_count": features_common_count,
+        "added": sorted(c_features - b_features),
+        "removed": sorted(b_features - c_features),
+        "common_count": len(b_features & c_features),
     }
 
-    # Build config diff — non-hyperparameter settings from metadata
-    _CONFIG_KEYS = [
-        "cluster_strategy", "recursive", "shap_select", "shap_threshold",
-        "shap_top_n", "shap_sample_size", "tune_inline", "params_source",
-    ]
+    # Config diff
     config_diffs: list[dict[str, Any]] = []
     config_common: list[dict[str, Any]] = []
     b_meta = b.get("metadata") or {}
@@ -498,9 +540,8 @@ def compare_runs(
     }
 
 
-@router.get("/lgbm-tuning/runs/{run_id}/clusters")
-def get_run_clusters(run_id: int, response: FastAPIResponse):
-    """Get per-cluster accuracy breakdowns for a single run."""
+def _get_clusters_impl(model_type: str, run_id: int, response: FastAPIResponse) -> dict[str, Any]:
+    _get_model_config(model_type)
     set_cache(response, max_age=60)
 
     sql = """
@@ -529,9 +570,8 @@ def get_run_clusters(run_id: int, response: FastAPIResponse):
     return {"run_id": run_id, "clusters": clusters}
 
 
-@router.get("/lgbm-tuning/runs/{run_id}/months")
-def get_run_months(run_id: int, response: FastAPIResponse):
-    """Get per-month accuracy breakdowns for a single run."""
+def _get_months_impl(model_type: str, run_id: int, response: FastAPIResponse) -> dict[str, Any]:
+    _get_model_config(model_type)
     set_cache(response, max_age=60)
 
     sql = """
@@ -558,32 +598,16 @@ def get_run_months(run_id: int, response: FastAPIResponse):
     return {"run_id": run_id, "months": months}
 
 
-# ---------------------------------------------------------------------------
-# Promote to production
-# ---------------------------------------------------------------------------
+def _promote_run_impl(model_type: str, run_id: int) -> dict[str, Any]:
+    cfg = _get_model_config(model_type)
 
-# Known LGBM hyperparameter keys that belong in algorithm_config.yaml
-_LGBM_PARAM_KEYS = {
-    "n_estimators", "learning_rate", "num_leaves", "min_child_samples",
-    "max_depth", "min_gain_to_split", "subsample", "bagging_freq",
-    "colsample_bytree", "feature_fraction_bynode", "reg_lambda", "reg_alpha",
-    "path_smooth", "max_bin",
-}
-
-_ALGO_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "algorithm_config.yaml"
-
-
-@router.post("/lgbm-tuning/runs/{run_id}/promote")
-def promote_run(run_id: int):
-    """Promote a tuning run to production — writes params to algorithm_config.yaml."""
-    # 1. Fetch run (only LGBM runs)
     sql = """
         SELECT run_id, run_label, status, params, accuracy_pct, backup_path
         FROM lgbm_tuning_run
-        WHERE run_id = %s AND model_id LIKE %s
+        WHERE run_id = %s AND model_id = %s
     """
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, [run_id, "lgbm%"])
+        cur.execute(sql, [run_id, cfg["default_model_id"]])
         row = cur.fetchone()
 
     if row is None:
@@ -599,33 +623,38 @@ def promote_run(run_id: int):
 
     params = params_raw if isinstance(params_raw, dict) else json.loads(params_raw)
 
-    # 2. Filter to known LGBM keys
-    lgbm_overrides = {k: v for k, v in params.items() if k in _LGBM_PARAM_KEYS}
-    if not lgbm_overrides:
-        raise HTTPException(status_code=400, detail="Run params contain no recognized LGBM hyperparameters")
+    # Filter to known model param keys
+    param_keys = cfg["param_keys"]
+    overrides = {k: v for k, v in params.items() if k in param_keys}
+    if not overrides:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Run params contain no recognized {model_type} hyperparameters",
+        )
 
-    # 3. Write to algorithm_config.yaml
+    # Write to algorithm_config.yaml
+    algo_section = cfg["algo_section"]
     try:
         with open(_ALGO_CONFIG_PATH) as f:
-            cfg = yaml.safe_load(f)
+            algo_cfg = yaml.safe_load(f)
 
-        lgbm_section = cfg["algorithms"]["lgbm"]
-        old_params = {k: lgbm_section.get(k) for k in lgbm_overrides}
-        for key, value in lgbm_overrides.items():
-            lgbm_section[key] = value
+        section = algo_cfg["algorithms"][algo_section]
+        old_params = {k: section.get(k) for k in overrides}
+        for key, value in overrides.items():
+            section[key] = value
 
         with open(_ALGO_CONFIG_PATH, "w") as f:
-            yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
+            yaml.dump(algo_cfg, f, default_flow_style=False, sort_keys=False)
     except (OSError, KeyError, yaml.YAMLError) as exc:
-        logger.exception("Failed to write algorithm_config.yaml during promote")
+        logger.exception("Failed to write algorithm_config.yaml during %s promote", model_type)
         raise HTTPException(status_code=500, detail=f"Failed to update config: {exc}")
 
-    # 4. Atomically clear previous promoted run and set new one
+    # Atomically clear previous promoted run for this model and set new one
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             "UPDATE lgbm_tuning_run SET is_promoted = FALSE, promoted_at = NULL "
-            "WHERE is_promoted = TRUE AND model_id LIKE %s AND run_id != %s",
-            ["lgbm%", run_id],
+            "WHERE is_promoted = TRUE AND model_id = %s AND run_id != %s",
+            [cfg["default_model_id"], run_id],
         )
         cur.execute(
             "UPDATE lgbm_tuning_run SET is_promoted = TRUE, promoted_at = NOW() WHERE run_id = %s",
@@ -633,31 +662,30 @@ def promote_run(run_id: int):
         )
         conn.commit()
 
-    logger.info("Promoted run #%d to production. Overrides: %s", run_id, lgbm_overrides)
+    logger.info("Promoted %s run #%d to production. Overrides: %s", model_type, run_id, overrides)
 
     return {
         "promoted": True,
         "run_id": run_id,
         "run_label": row[1],
         "accuracy_pct": float(row[4]) if row[4] is not None else None,
-        "params_written": lgbm_overrides,
+        "params_written": overrides,
         "old_params": old_params,
     }
 
 
-@router.get("/lgbm-tuning/promoted")
-def get_promoted(response: FastAPIResponse):
-    """Return the currently promoted run (if any)."""
+def _get_promoted_impl(model_type: str, response: FastAPIResponse) -> dict[str, Any]:
+    cfg = _get_model_config(model_type)
     set_cache(response, max_age=30)
 
     sql = """
         SELECT run_id, run_label, model_id, accuracy_pct, wape, bias,
                promoted_at, params
         FROM lgbm_tuning_run
-        WHERE is_promoted = TRUE AND model_id LIKE %s
+        WHERE is_promoted = TRUE AND model_id = %s
     """
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, ["lgbm%"])
+        cur.execute(sql, [cfg["default_model_id"]])
         row = cur.fetchone()
 
     if row is None:
@@ -677,13 +705,13 @@ def get_promoted(response: FastAPIResponse):
     }
 
 
-@router.get("/lgbm-tuning/comparisons")
-def list_comparisons(
+def _list_comparisons_impl(
+    model_type: str,
     response: FastAPIResponse,
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-):
-    """List saved pairwise comparisons."""
+    limit: int,
+    offset: int,
+) -> dict[str, Any]:
+    cfg = _get_model_config(model_type)
     set_cache(response, max_age=30)
 
     sql = """
@@ -693,12 +721,13 @@ def list_comparisons(
         FROM lgbm_tuning_comparison c
         JOIN lgbm_tuning_run b ON b.run_id = c.baseline_run_id
         JOIN lgbm_tuning_run d ON d.run_id = c.candidate_run_id
+        WHERE b.model_id = %s
         ORDER BY c.created_at DESC
         LIMIT %s OFFSET %s
     """
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, [limit, offset])
+        cur.execute(sql, [cfg["default_model_id"], limit, offset])
         rows = cur.fetchall()
 
     comparisons = []
@@ -716,3 +745,139 @@ def list_comparisons(
             "candidate_label": r[9],
         })
     return {"comparisons": comparisons}
+
+
+# ---------------------------------------------------------------------------
+# CatBoost endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/catboost-tuning/runs")
+def cb_list_runs(
+    response: FastAPIResponse,
+    status: str = Query(default="", max_length=20),
+    model_id: str = Query(default="", max_length=120),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    return _list_runs_impl("catboost", response, status, model_id, limit, offset)
+
+
+@router.get("/catboost-tuning/runs/{run_id}")
+def cb_get_run(run_id: int, response: FastAPIResponse):
+    return _get_run_impl("catboost", run_id, response)
+
+
+@router.post("/catboost-tuning/runs", status_code=201)
+def cb_create_run(body: CreateRunBody):
+    return _create_run_impl("catboost", body)
+
+
+@router.put("/catboost-tuning/runs/{run_id}")
+def cb_update_run(run_id: int, body: UpdateRunBody):
+    return _update_run_impl("catboost", run_id, body)
+
+
+@router.get("/catboost-tuning/compare")
+def cb_compare_runs(
+    response: FastAPIResponse,
+    baseline_id: int = Query(ge=1),
+    candidate_id: int = Query(ge=1),
+):
+    return _compare_runs_impl("catboost", response, baseline_id, candidate_id)
+
+
+@router.get("/catboost-tuning/runs/{run_id}/clusters")
+def cb_get_clusters(run_id: int, response: FastAPIResponse):
+    return _get_clusters_impl("catboost", run_id, response)
+
+
+@router.get("/catboost-tuning/runs/{run_id}/months")
+def cb_get_months(run_id: int, response: FastAPIResponse):
+    return _get_months_impl("catboost", run_id, response)
+
+
+@router.post("/catboost-tuning/runs/{run_id}/promote")
+def cb_promote_run(run_id: int):
+    return _promote_run_impl("catboost", run_id)
+
+
+@router.get("/catboost-tuning/promoted")
+def cb_get_promoted(response: FastAPIResponse):
+    return _get_promoted_impl("catboost", response)
+
+
+@router.get("/catboost-tuning/comparisons")
+def cb_list_comparisons(
+    response: FastAPIResponse,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    return _list_comparisons_impl("catboost", response, limit, offset)
+
+
+# ---------------------------------------------------------------------------
+# XGBoost endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/xgboost-tuning/runs")
+def xgb_list_runs(
+    response: FastAPIResponse,
+    status: str = Query(default="", max_length=20),
+    model_id: str = Query(default="", max_length=120),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    return _list_runs_impl("xgboost", response, status, model_id, limit, offset)
+
+
+@router.get("/xgboost-tuning/runs/{run_id}")
+def xgb_get_run(run_id: int, response: FastAPIResponse):
+    return _get_run_impl("xgboost", run_id, response)
+
+
+@router.post("/xgboost-tuning/runs", status_code=201)
+def xgb_create_run(body: CreateRunBody):
+    return _create_run_impl("xgboost", body)
+
+
+@router.put("/xgboost-tuning/runs/{run_id}")
+def xgb_update_run(run_id: int, body: UpdateRunBody):
+    return _update_run_impl("xgboost", run_id, body)
+
+
+@router.get("/xgboost-tuning/compare")
+def xgb_compare_runs(
+    response: FastAPIResponse,
+    baseline_id: int = Query(ge=1),
+    candidate_id: int = Query(ge=1),
+):
+    return _compare_runs_impl("xgboost", response, baseline_id, candidate_id)
+
+
+@router.get("/xgboost-tuning/runs/{run_id}/clusters")
+def xgb_get_clusters(run_id: int, response: FastAPIResponse):
+    return _get_clusters_impl("xgboost", run_id, response)
+
+
+@router.get("/xgboost-tuning/runs/{run_id}/months")
+def xgb_get_months(run_id: int, response: FastAPIResponse):
+    return _get_months_impl("xgboost", run_id, response)
+
+
+@router.post("/xgboost-tuning/runs/{run_id}/promote")
+def xgb_promote_run(run_id: int):
+    return _promote_run_impl("xgboost", run_id)
+
+
+@router.get("/xgboost-tuning/promoted")
+def xgb_get_promoted(response: FastAPIResponse):
+    return _get_promoted_impl("xgboost", response)
+
+
+@router.get("/xgboost-tuning/comparisons")
+def xgb_list_comparisons(
+    response: FastAPIResponse,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    return _list_comparisons_impl("xgboost", response, limit, offset)
