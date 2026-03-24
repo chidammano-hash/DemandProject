@@ -9,7 +9,7 @@ An APScheduler-powered background job engine with per-group concurrency control,
 | Frontend | `JobsTab.tsx`, `jobs/` panels, `context/JobNotificationContext.tsx` |
 | Backend | `api/routers/jobs.py`, `common/job_registry.py`, `common/job_state.py`, `common/job_scheduler.py` |
 | Config | None (job types defined in `JOB_TYPE_REGISTRY`) |
-| SQL | `sql/020_create_job_history.sql`, `sql/021_alter_job_history_scheduling.sql` |
+| SQL | `sql/020_create_job_history.sql`, `sql/097_add_job_pid_and_log.sql` |
 
 ---
 
@@ -36,6 +36,7 @@ A `JobManager` singleton wraps APScheduler 3.11's `BackgroundScheduler` with a `
 | seasonality | `seasonality_pipeline` | Emerald |
 | champion | `champion_selection` | Amber |
 | forecast | `generate_production_forecast` | Teal |
+| tuning | `tuning_backtest` | Violet |
 
 ### Concurrency Model
 
@@ -75,11 +76,20 @@ Example: `cluster_pipeline` -> `backtest_lgbm` -> `champion_selection`
 
 If any step fails, the pipeline stops and records the failure point.
 
+### Resilient Execution (Survive Restarts)
+
+All subprocess-based jobs run via `subprocess.Popen()` with `start_new_session=True`, placing each child in its own process group. This means stopping the API does **not** kill running jobs. The subprocess PID is stored in `job_history.pid` for kill and recovery.
+
+**Kill mechanism:** The Kill button sends `SIGTERM` to the entire process group via `os.killpg(os.getpgid(pid), signal.SIGTERM)`. A `cancel_event` (`threading.Event`) is also threaded through all callables and checked between subprocess output lines, enabling cooperative cancellation for multi-step jobs.
+
+**Persistent logs:** Subprocess stdout is streamed to the `job_history.log` column in real-time (flushed every 20 lines or 5 seconds). The frontend polls `GET /jobs/{id}/logs` for live log display during execution and on-demand viewing in job history.
+
 ### Recovery
 
-On application restart, `recover_stale_jobs()`:
-- Marks previously `running` jobs as `failed` (they died with the process).
-- Re-enqueues previously `queued` jobs for dispatch.
+On application restart, `recover_stale_jobs()` performs PID-aware recovery:
+- If PID is alive (`os.kill(pid, 0)` succeeds) → re-adopt the process via a monitoring thread that polls PID status
+- If PID is dead or missing → mark as `failed`
+- Re-enqueue previously `queued` jobs for dispatch.
 
 ### Thread Safety
 
@@ -94,7 +104,7 @@ On application restart, `recover_stale_jobs()`:
 
 | Table | Purpose | Key Columns |
 |---|---|---|
-| `job_history` | Persistent job execution log | `job_id`, `job_type`, `group_name`, `status`, `params` (JSONB), `result` (JSONB), `error`, `started_at`, `completed_at`, `duration_seconds` |
+| `job_history` | Persistent job execution log | `job_id`, `job_type`, `group_name`, `status`, `params` (JSONB), `result` (JSONB), `error`, `pid` (INTEGER), `log` (TEXT), `started_at`, `completed_at`, `duration_seconds` |
 | `job_schedule` | Recurring schedule definitions | `schedule_id`, `job_type`, `cron_expression`, `interval_seconds`, `enabled`, `last_run_at`, `next_run_at` |
 
 ---
@@ -112,6 +122,7 @@ On application restart, `recover_stale_jobs()`:
 | DELETE | `/jobs/schedules/{id}` | Remove a schedule |
 | POST | `/jobs/pipeline` | Submit a sequential job pipeline |
 | GET | `/jobs/stats` | Dashboard KPIs: total, active, success rate, avg duration |
+| GET | `/jobs/{job_id}/logs` | Persistent execution log (supports `offset` for incremental polling) |
 | GET | `/jobs/history` | Paginated job history with filtering |
 
 Route ordering note: literal paths (`/jobs/schedules`, `/jobs/pipeline`, `/jobs/stats`) are defined before the parameterized `{job_id}` path to avoid conflicts.
@@ -126,9 +137,9 @@ Route ordering note: literal paths (`/jobs/schedules`, `/jobs/pipeline`, `/jobs/
 |---|---|---|
 | KPI cards | Total Jobs, Active Now, Success Rate, Avg Duration | 5 seconds |
 | Job group cards | Grouped by type with category colors and "Run Now" buttons | 2 seconds |
-| Active jobs | Animated progress bars with elapsed timers | 2 seconds |
+| Active jobs | Animated progress bars, elapsed timers, persistent log panel, Kill button (2-step confirm) | 2 seconds |
 | Schedules | Cron badge display with enable/disable toggle | 10 seconds |
-| History | Expandable rows with params, results, errors | 10 seconds |
+| History | Expandable rows with params, results, errors, "View Execution Log" button | 10 seconds |
 
 ### Cross-Tab Notifications
 
@@ -148,6 +159,6 @@ Route ordering note: literal paths (`/jobs/schedules`, `/jobs/pipeline`, `/jobs/
 
 ## See Also
 
-- `02-forecasting/10-dfu-clustering.md` -- clustering scenarios dispatched as jobs
+- `02-forecasting/10-sku-clustering.md` -- clustering scenarios dispatched as jobs
 - `02-forecasting/08-production-forecast.md` -- forecast generation as a scheduled job
 - `07-user-experience/02-ui-architecture.md` -- sidebar badge and notification context

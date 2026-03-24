@@ -40,7 +40,7 @@ Two complementary views answer "Is the planning process adding value?"
 | `intervention_id` | `BIGSERIAL PK` | Auto-increment ID |
 | `user_id` | `UUID` | Planner who took the action (nullable) |
 | `intervention_type` | `TEXT` | forecast_override, ss_change, policy_change, ai_insight_action, sop_approval |
-| `resource_type` | `TEXT` | Target entity type (dfu, policy, plan) |
+| `resource_type` | `TEXT` | Target entity type (sku, policy, plan) |
 | `resource_id` | `TEXT` | Target entity identifier (e.g., "100320-1401") |
 | `metric_before` | `JSONB` | Key metrics snapshot before intervention |
 | `metric_after` | `JSONB` | Key metrics snapshot after measurement window |

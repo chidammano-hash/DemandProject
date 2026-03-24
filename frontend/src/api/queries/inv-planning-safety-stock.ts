@@ -10,7 +10,7 @@ export const safetyStockKeys = {
 };
 
 export interface SafetyStockSummary {
-  total_dfus: number;
+  total_skus: number;
   below_ss_count: number;
   avg_ss_coverage: number;
   avg_ss_days: number;
@@ -18,7 +18,7 @@ export interface SafetyStockSummary {
 }
 
 export interface SafetyStockRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   ss_combined: number;
   ss_coverage: number;
@@ -35,7 +35,7 @@ export interface SafetyStockRow {
 }
 
 export interface SafetyStockWaterfall {
-  item_no: string;
+  item_id: string;
   loc: string;
   ss_demand_only: number;
   ss_lt_only: number;
@@ -74,7 +74,7 @@ export async function fetchSafetyStockDetail(params?: {
 
 export async function fetchSafetyStockWaterfall(itemNo: string, loc: string): Promise<SafetyStockWaterfall> {
   const res = await fetch(
-    `/inv-planning/safety-stock/waterfall?item_no=${encodeURIComponent(itemNo)}&loc=${encodeURIComponent(loc)}`,
+    `/inv-planning/safety-stock/waterfall?item_id=${encodeURIComponent(itemNo)}&loc=${encodeURIComponent(loc)}`,
   );
   if (!res.ok) throw new Error("Failed to fetch safety stock waterfall");
   return res.json();

@@ -16,7 +16,7 @@ vi.mock("../../api/queries", () => ({
       {
         po_number: "DS-2026-04-001",
         line_number: 1,
-        item_no: "100320",
+        item_id: "100320",
         item_description: "Bulk Cleaning Solution",
         loc: "1401-BULK",
         supplier_id: "SUP-4821",
@@ -38,7 +38,7 @@ vi.mock("../../api/queries", () => ({
       {
         po_number: "DS-2026-04-002",
         line_number: 1,
-        item_no: "204771",
+        item_id: "204771",
         item_description: "Industrial Degreaser",
         loc: "2203-STD",
         supplier_id: "SUP-4821",

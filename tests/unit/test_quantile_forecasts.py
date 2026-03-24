@@ -117,7 +117,7 @@ def test_weekly_weights_31_day_month():
 
 def _make_monthly_row(plan_month: date, quantile: float, qty: float) -> dict:
     return {
-        "item_no": "100320",
+        "item_id": "100320",
         "loc": "1401-BULK",
         "plan_month": plan_month,
         "quantile": quantile,

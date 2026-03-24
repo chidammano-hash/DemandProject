@@ -357,9 +357,9 @@ def _make_full_grid(n_months: int = 48) -> pd.DataFrame:
             qty = float(rng.integers(50, 200))
             row = {
                 "startdate": m,
-                "dfu_ck": f"dfu_{dfu:02d}",
-                "dmdunit": f"item_{dfu:02d}",
-                "dmdgroup": "grp",
+                "sku_ck": f"dfu_{dfu:02d}",
+                "item_id": f"item_{dfu:02d}",
+                "customer_group": "grp",
                 "loc": "LOC1",
                 "qty": qty,
                 "ml_cluster": f"cluster_{dfu % 2}",
@@ -419,7 +419,7 @@ def _mock_fold_fn(X_train, y_train, X_val, y_val, cat_cols, params, n_est_max, e
 
 class TestTuneForTimeframe:
     def _feature_cols(self, grid: pd.DataFrame) -> list[str]:
-        exclude = {"dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate", "qty"}
+        exclude = {"sku_ck", "item_id", "customer_group", "loc", "startdate", "qty"}
         return [c for c in grid.columns if c not in exclude]
 
     def test_returns_tuple_of_dict_and_int(self):

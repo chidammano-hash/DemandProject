@@ -51,7 +51,7 @@ make exceptions-schema         # fact_replenishment_exceptions
 make fill-rate-schema          # mv_fill_rate_monthly
 make demand-signals-schema     # fact_demand_signals
 make sim-schema                # fact_ss_simulation_results
-make abc-xyz-schema            # XYZ classification columns on dim_dfu
+make abc-xyz-schema            # XYZ classification columns on dim_sku
 make supplier-perf-schema      # mv_supplier_performance
 make investment-schema         # fact_inventory_investment_plan + fact_efficient_frontier
 make intramonth-schema         # mv_intramonth_stockout
@@ -64,7 +64,7 @@ make rebalancing-schema        # mv_network_balance + fact_rebalancing_recommend
 make ai-insights-schema        # ai_insights + ai_planning_memos + ai_call_log + ai_recommendation_outcomes
 
 # Production Forecast (F1.1)
-make forecast-prod-schema      # fact_production_forecast + fact_model_registry + source_model_id migration
+make forecast-prod-schema      # fact_production_forecast (source_model_id included in base DDL)
 
 # Forward-Looking Replenishment Plan (CI Bands + Repl. Plan)
 make replplan-schema           # fact_replenishment_plan
@@ -100,8 +100,6 @@ make fva-schema                # fact_fva_tracking (sql/068)
 # Reporting (Spec 08-08)
 make report-schema             # dim_report_template + fact_report_schedule + fact_report_delivery (sql/069)
 
-# Medallion Pipeline (layered ETL)
-make medallion-schema          # audit_load_batch, bronze_*, silver_*, quarantine, lineage (sql/080-086)
 ```
 
 > **Tip:** `make db-apply-sql` covers the majority of tables (including DDL 062-070 for auth, data quality, cache, notifications, webhooks, reports, rate limiting). The remaining `make *-schema` commands add feature-specific tables on top.
@@ -130,7 +128,7 @@ Run after schema setup. Seeds default admin user and configures JWT-based authen
 ### 2.1 All Datasets (Recommended Starting Point)
 
 ```bash
-make normalize-all     # Normalize all 8 datasets (CSV → clean CSV)
+make normalize-all     # Normalize all 10 datasets (CSV → clean CSV)
 make load-all          # Load all datasets into Postgres + refresh materialized views
 ```
 
@@ -141,9 +139,11 @@ make normalize-item && make load-item
 make normalize-location && make load-location
 make normalize-customer && make load-customer
 make normalize-time && make load-time       # Auto-generates 2020–2035 time dimension
-make normalize-dfu && make load-dfu
+make normalize-sku && make load-sku
 make normalize-sales && make load-sales     # TYPE=1 rows only
 make normalize-forecast && make load-forecast
+make normalize-sourcing && make load-sourcing
+make normalize-purchase-order && make load-purchase-order
 ```
 
 **Forecast loading flags:**
@@ -220,7 +220,7 @@ make exceptions-generate     # Detect stockout/excess/below-ROP exceptions → D
 make fill-rate-refresh       # Refresh mv_fill_rate_monthly
 
 # Demand variability (IPfeature1/3 — requires sales loaded)
-make variability-compute     # CV, dispersion, volatility profiles → dim_dfu
+make variability-compute     # CV, dispersion, volatility profiles → dim_sku
 
 # Lead time variability (IPfeature2/3 — requires inventory loaded)
 make lt-profile-compute      # LT CV, reliability bands → fact_lead_time_profile
@@ -232,7 +232,7 @@ make demand-signals-compute  # Short-horizon signals → fact_demand_signals
 make sim-run                 # Monte Carlo SS simulation → fact_ss_simulation_results
 
 # ABC-XYZ segmentation (IPfeature11 — requires sales loaded)
-make abc-xyz-classify        # Volume × variability classification → dim_dfu
+make abc-xyz-classify        # Volume × variability classification → dim_sku
 
 # Supplier performance (IPfeature12 — requires inventory loaded)
 make supplier-perf-refresh   # Refresh mv_supplier_performance
@@ -309,7 +309,7 @@ make sim-run     # Run Monte Carlo safety stock simulation (reads config/simulat
 ```bash
 make abc-xyz-all      # Apply schema + run classification
 make abc-xyz-schema   # Apply DDL only
-make abc-xyz-classify # Run ABC-XYZ classification + write to dim_dfu
+make abc-xyz-classify # Run ABC-XYZ classification + write to dim_sku
 ```
 
 **Supplier Performance** (IPfeature12 — requires inventory loaded):
@@ -363,14 +363,14 @@ make rebalancing-refresh       # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_netwo
 
 ## Phase 4: ML — Clustering & Seasonality
 
-Run after Phase 2. These enrich `dim_dfu` with segment labels used as ML features.
+Run after Phase 2. These enrich `dim_sku` with segment labels used as ML features.
 
 ```bash
 # DFU clustering (groups DFUs by demand pattern)
-make cluster-all             # features → train → label → update dim_dfu
+make cluster-all             # features → train → label → update dim_sku
 
 # Seasonality profiles
-make seasonality-all         # detect → update dim_dfu
+make seasonality-all         # detect → update dim_sku
 ```
 
 **Clustering individual steps:**
@@ -379,10 +379,10 @@ make seasonality-all         # detect → update dim_dfu
 make cluster-features  # Extract 14 core features (volume, trend, seasonality, periodicity, intermittency, lifecycle) from 36-month sales history
 make cluster-train     # KMeans with combined Silhouette + Calinski-Harabasz scoring, 5% min cluster size, k_range [5,18] (logged to MLflow: dfu_clustering)
 make cluster-label     # Priority-ordered taxonomy labeling: Intermittency → Periodicity → Seasonality → Trend → Volatility → Volume (5 tiers)
-make cluster-update    # Write cluster_assignment to dim_dfu in Postgres
+make cluster-update    # Write cluster_assignment to dim_sku in Postgres
 ```
 
-Cluster assignments are filterable in the Data Explorer via the `cluster_assignment` column and viewable via `/domains/dfu/clusters`.
+Cluster assignments are filterable in the Data Explorer via the `cluster_assignment` column and viewable via `/domains/sku/clusters`.
 
 ---
 
@@ -414,6 +414,33 @@ lgbm:
 Same structure for `catboost:` and `xgboost:` sections.
 
 **Architecture (Feature 44):** Tree-based models (LGBM, CatBoost, XGBoost) share `common/backtest_framework.py` via `run_tree_backtest()`. Each script provides both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting based on the `cluster_strategy` config key (`per_cluster` or `global`). **`ml_cluster` is always a hard feature** — never stripped from feature_cols in either strategy. Algorithm options (cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparameters) are read from `config/algorithm_config.yaml`. Shared modules: `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py`, `shap_selector.py`.
+
+### GPU Acceleration
+
+GPU acceleration is available for backtesting and simulation pipelines via optional dependencies.
+
+**Backtesting (LGBM):** Controlled by the `DEMAND_GPU` environment variable:
+
+| Value | Behavior |
+|---|---|
+| `auto` (default) | Auto-detect GPU availability at runtime |
+| `on` | Force GPU usage (fails if unavailable) |
+| `off` | Disable GPU, use CPU only |
+
+```bash
+DEMAND_GPU=on make backtest-lgbm    # Force GPU
+DEMAND_GPU=off make backtest-lgbm   # Force CPU
+```
+
+CatBoost and XGBoost also auto-detect GPU at runtime (`task_type="GPU"` and `device="cuda"` respectively).
+
+**Monte Carlo Simulation:** Uses CuPy for GPU-accelerated array operations when available, falls back to NumPy.
+
+**Seasonality Detection:** Uses Numba JIT compilation for numerical kernels when available, falls back to pure NumPy.
+
+**Optional dependencies** (not required -- all scripts fall back gracefully):
+- `cupy` -- GPU array library for Monte Carlo simulation
+- `numba` -- JIT compilation for seasonality detection kernels
 
 ### Optional: Hyperparameter Tuning (Before Backtests)
 
@@ -590,7 +617,7 @@ Run after Phase 6. Generates future-period (T+1 to T+12) demand forecasts using 
 ```bash
 make forecast-generate       # Generate 12-month forward forecasts → fact_production_forecast
 # or for a single DFU:
-make forecast-generate-dfu ITEM=100320 LOC=1401-BULK
+make forecast-generate-sku ITEM=100320 LOC=1401-BULK
 # preview without writing:
 make forecast-generate-dry
 ```
@@ -619,7 +646,7 @@ make replplan-compute-dry
 
 ---
 
-## Phase 8-9: AI, Storyboard, DQ, FVA, S&OP, Notifications, Reports, Medallion
+## Phase 8-9: AI, Storyboard, DQ, FVA, S&OP, Notifications, Reports
 
 ### AI Planning Agent (IPAIfeature1)
 
@@ -627,7 +654,7 @@ Run after Phases 2-7 to give the agent full context. Requires `ANTHROPIC_API_KEY
 
 ```bash
 make ai-insights-scan        # Portfolio-wide AI exception scan → ai_insights table
-make ai-insights-dfu ITEM=100320 LOC=1401-BULK  # Single DFU analysis
+make ai-insights-sku ITEM=100320 LOC=1401-BULK  # Single DFU analysis
 make ai-insights-all         # ai-insights-schema + ai-insights-scan (full pipeline)
 ```
 
@@ -764,30 +791,64 @@ curl -X POST http://localhost:8000/reports/schedule \
 
 Templates define the data queries, layout, and output format (PDF/CSV/Excel).
 
-### Medallion Data Pipeline
+### Unified Pipeline Orchestrator
 
-Bronze -> Silver -> Gold layered ETL with DQ gate checks, auto-fix, row lineage, and quarantine.
+Single-command data pipeline that handles normalize, load, and MV refresh for all 10 domains. Data loads directly from CSV into main tables via `scripts/load_dataset_postgres.py` (single-pass: COPY to staging, type-cast + dedup, INSERT). Batch tracking via `audit_load_batch`. Two modes: **full reload** (wipe and reload everything) and **incremental refresh** (detect changes, reload only deltas).
 
 ```bash
-# One-time schema (if not done in Phase 1):
-make medallion-schema        # Apply DDL: sql/080-086 (audit_load_batch, bronze_*, silver_*,
-                             # silver_quarantine, dq_corrections_audit, row_lineage, fact_sales_original)
+# Full reload — all domains, parallel normalization
+make pipeline-full
 
-# Ingest data through medallion layers:
-make medallion-load-sales     # Sales only: bronze → silver → gold (fact_sales_monthly)
-make medallion-load-all       # All domains: bronze → silver → gold
-make medallion-load-all-fix   # All domains with DQ auto-fix enabled
+# Incremental refresh — only changed files reloaded
+make pipeline-refresh
 
-# Maintenance:
-make medallion-prune          # Remove expired rows per retention config (bronze 90d, silver 30d)
-
-# All-in-one:
-make medallion-all            # schema + load-all + prune
+# Inventory only
+make pipeline-inventory              # Full reload
+make pipeline-inventory-refresh      # Incremental
 ```
 
-Config: `config/medallion_config.yaml` — layer retention (bronze 90d, silver 30d), promotion gates (`min_pass_rate: 95%`), auto-fix strategies per domain, sales dual-track (original + corrected).
+**Full reload flow** (`--mode full`):
+1. Runs `data/input/cleanup_input.py` (input cleanup)
+2. Normalizes all requested domains (parallel for non-inventory, sequential for inventory)
+3. Loads each domain directly into target tables (COPY to staging, type-cast + dedup, INSERT)
+4. Refreshes all affected materialized views
+5. Prints summary table (rows loaded, elapsed time per domain)
 
-**Dependency:** Requires Phase 2 data loaded first (needs populated dimension + fact tables).
+**Incremental refresh flow** (`--mode refresh`):
+1. Compares SHA256 hashes of clean CSVs against `audit_load_batch.source_hash`
+2. For inventory: per-file hash comparison of each `Inventory_Snapshot_YYYY_MM.csv`
+3. Normalizes only changed domains
+4. Loads changed domains (inventory uses targeted DELETE by month range instead of TRUNCATE)
+5. Refreshes only MVs affected by the changed domains
+6. Unchanged domains are skipped entirely
+
+**CLI flags:**
+
+| Flag | Description |
+|---|---|
+| `--mode full\|refresh` | Full wipe-and-reload vs incremental delta |
+| `--domains item,sales` | Comma-separated subset (default: all 10) |
+| `--parallel` | Normalize non-inventory domains in parallel |
+| `--dry-run` | Preview what would be done without making changes |
+| `--data-dir /path` | Override source directory (default: `data/input`) |
+
+**Config:** `config/pipeline_config.yaml` — domain order, parallel workers, MV refresh mapping per domain, always-refresh list.
+
+**Error handling:** If normalization fails for a domain, that domain is skipped during loading (logged as `(skipped)` in the summary table). Other domains continue normally.
+
+**Examples:**
+
+```bash
+# Preview a full reload
+~/.local/bin/uv run python scripts/etl/run_pipeline.py --mode full --parallel --dry-run
+
+# Reload only sales and forecast
+~/.local/bin/uv run python scripts/etl/run_pipeline.py --mode full --domains sales,forecast
+
+# Incremental refresh after adding a new inventory snapshot
+~/.local/bin/uv run python scripts/etl/run_pipeline.py --mode refresh --domains inventory
+
+```
 
 ---
 
@@ -825,6 +886,44 @@ Open in browser:
 
 ## Full First-Time Run (New Environment)
 
+### Option A: Automated Setup Targets (Recommended)
+
+Use the orchestrated `setup-*` targets that handle dependency ordering automatically:
+
+```bash
+# 0. Environment + schema
+make init && make up && make ui-init
+make db-apply-sql
+make db-apply-inventory db-apply-inv-backtest db-apply-jobs
+
+# 1. Full setup — data + ML + inventory + demand + ops (everything)
+make setup-all
+
+# 2. Start services
+make api   # terminal 1
+make ui    # terminal 2
+```
+
+**Available setup targets:**
+
+| Target | What it does |
+|---|---|
+| `make setup-data` | Normalize + load all 10 domains into Postgres |
+| `make setup-planning` | Data load + inventory planning (no ML — fastest path to a working UI) |
+| `make setup-all` | Full pipeline: data + features + backtests + champion + inv planning + demand planning + ops |
+
+**Intermediate targets** (called by `setup-all` in dependency order):
+
+| Target | Phase |
+|---|---|
+| `make setup-features` | Clustering, seasonality, variability, lead time, ABC-XYZ, demand signals |
+| `make setup-backtest` | All backtests + champion selection (depends on setup-features) |
+| `make setup-inv-planning` | Safety stock, EOQ, policies, exceptions, health, rebalancing, control tower |
+| `make setup-demand-planning` | Production forecasts, projections, orders, replenishment, consensus |
+| `make setup-ops` | S&OP, events, financial plan, storyboard, DQ |
+
+### Option B: Manual Step-by-Step
+
 ```bash
 # 0. Setup
 make init && make up && make ui-init
@@ -839,11 +938,12 @@ make rebalancing-schema
 make ai-insights-schema storyboard-schema forecast-prod-schema
 make auth-schema dq-schema cache-perf-schema notification-schema
 make collaboration-schema external-signals-schema fva-schema report-schema
-make medallion-schema
+# 2. Ingest (Option A: unified pipeline — recommended)
+make pipeline-full               # Normalize + load + refresh MVs (all 10 domains)
 
-# 2. Ingest
-make normalize-all && make load-all
-make inventory-pipeline
+# 2. Ingest (Option B: manual)
+# make normalize-all && make load-all
+# make inventory-pipeline
 
 # 2b. Data Quality
 make dq-run
@@ -889,7 +989,10 @@ make ui    # terminal 2
 When new monthly data files are added:
 
 ```bash
-# Re-ingest changed datasets
+# Option A: Unified pipeline orchestrator (recommended)
+make pipeline-refresh            # Detects changed files, reloads only deltas, refreshes affected MVs
+
+# Option B: Manual per-dataset reload
 make load-forecast-replace       # New external forecast (preserves ML rows)
 make inventory-pipeline          # New inventory snapshots
 
@@ -1045,7 +1148,7 @@ make test-unit     # Unit tests only (common/ modules)
 make test-api      # API endpoint tests only
 make test-cov      # Backend tests with coverage report
 make ui-test       # All frontend tests (Vitest + RTL, ~1.5s)
-make test-all      # Backend + frontend (1636+ backend tests, 457+ frontend tests, <3s)
+make test-all      # Backend + frontend (2273+ backend tests, 741+ frontend tests, <3s)
 ```
 
 **Test structure:**
@@ -1055,7 +1158,7 @@ tests/
 ├── unit/
 │   ├── test_metrics.py      # WAPE, bias, accuracy %
 │   ├── test_constants.py    # LAG_RANGE, ROLLING_WINDOWS, thresholds
-│   ├── test_domain_specs.py # All 8 domains (parametrized)
+│   ├── test_domain_specs.py # All 10 domains (parametrized)
 │   ├── test_backtest_framework.py
 │   ├── test_mlflow_utils.py
 │   ├── test_db.py
@@ -1250,7 +1353,6 @@ Phase 2  (Ingest)
     └─► Phase 9d (S&OP Cycle)         [needs 3 + 7, multi-stage approval]
     └─► Phase 9e (Notifications + Webhooks)  [config-only, no data deps]
     └─► Phase 9f (Report Generation)  [needs loaded data for report queries]
-    └─► Phase 9g (Medallion Pipeline) [needs 2, layered ETL with DQ gates]
 Phase 10 (Start Services)
     └─► Cache layer active (Redis or in-memory fallback)
     └─► Query performance tracking active (fact_query_performance)

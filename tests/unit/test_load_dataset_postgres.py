@@ -1,320 +1,333 @@
-"""Tests for scripts/load_dataset_postgres.py — forecast execution-lag loading."""
+"""Tests for scripts/load_dataset_postgres.py — simplified loader."""
 
-from unittest.mock import MagicMock, call
+import pytest
+from unittest.mock import MagicMock, patch, call
+from pathlib import Path
 
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from scripts.load_dataset_postgres import (
+    _get_all_indexes,
+    _get_unique_constraints,
+    _drop_indexes,
+    _drop_unique_constraints,
+    _recreate_indexes,
+    _recreate_unique_constraints,
     _resolve_forecast_execution_lag,
+    _filter_unmatched_dfus,
     _load_forecast_archive,
-)
-from common.sql_helpers import (
-    qident,
-    business_key_expr,
-    typed_expr_sets as typed_expr,
+    _is_partitioned,
+    _ensure_partition_exists,
+    load_domain,
 )
 
 
 # ---------- Helpers ----------
 
-def _make_cursor(fetchone_values=None, rowcount_values=None):
-    """Build a MagicMock cursor with configurable fetchone/rowcount sequences."""
-    cur = MagicMock()
-    if fetchone_values:
-        cur.fetchone.side_effect = fetchone_values
-    if rowcount_values:
-        # rowcount is a property, but MagicMock handles repeated attribute reads;
-        # use a side_effect on a function to cycle through values
-        type(cur).rowcount = _cycling_property(rowcount_values)
-    return cur
-
-
 def _cycling_property(values):
-    """Return a property descriptor that cycles through *values* on each get."""
     it = iter(values)
     return property(lambda self: next(it))
 
 
-# ---------- qident ----------
+def _cursor_with_rowcounts(rowcounts):
+    """Build a MagicMock cursor that cycles through rowcount values on execute."""
+    cur = MagicMock()
+    rc_iter = iter(rowcounts)
 
-class TestQident:
-    def test_simple_name(self):
-        assert qident("my_table") == '"my_table"'
+    def _on_execute(*a, **kw):
+        cur.rowcount = next(rc_iter)
 
-    def test_name_with_quotes(self):
-        assert qident('table"name') == '"table""name"'
-
-
-# ---------- typed_expr ----------
-
-class TestTypedExpr:
-    def test_int_field(self):
-        result = typed_expr("qty", {"qty"}, set(), set(), "s")
-        assert "::integer" in result
-        assert "CASE WHEN" in result
-
-    def test_float_field(self):
-        result = typed_expr("amount", set(), {"amount"}, set(), "s")
-        assert "::numeric" in result
-
-    def test_date_field(self):
-        result = typed_expr("startdate", set(), set(), {"startdate"}, "s")
-        assert "::date" in result
-
-    def test_text_field(self):
-        result = typed_expr("name", set(), set(), set(), "s")
-        assert "::integer" not in result
-        assert "::numeric" not in result
-        assert "::date" not in result
-        assert 's."name"' in result
+    cur.execute.side_effect = _on_execute
+    return cur
 
 
-# ---------- _resolve_forecast_execution_lag ----------
+# ---------- TestResolveForecastExecutionLag ----------
 
-class TestResolveForecastExecutionLag:
-    def test_no_dim_dfu_defaults_to_zero(self):
-        """When dim_dfu doesn't exist, all rows should default to execution_lag=0."""
-        cur = MagicMock()
-        cur.fetchone.return_value = (False,)  # dim_dfu doesn't exist
-        cur.rowcount = 500
-
-        matched, unmatched = _resolve_forecast_execution_lag(cur, "stg_test")
-
-        assert matched == 0
-        assert unmatched == 500
-        # Should have checked for dim_dfu existence
-        assert cur.execute.call_count == 2  # EXISTS check + UPDATE
-        # Second call should be the blanket UPDATE to '0'
-        second_call_sql = cur.execute.call_args_list[1][0][0]
-        assert '"execution_lag"' in second_call_sql
-        assert "'0'" in second_call_sql
-
-    def test_with_dim_dfu_all_matched(self):
-        """When dim_dfu exists and all DFUs match, should return (matched, 0)."""
-        cur = MagicMock()
-        cur.fetchone.return_value = (True,)
-        # Track execute calls and set rowcount accordingly
-        rowcounts = iter([None, 1000, 0])  # EXISTS, matched UPDATE, unmatched UPDATE
-
-        def _set_rowcount(*args, **kwargs):
-            cur.rowcount = next(rowcounts)
-
-        cur.execute.side_effect = _set_rowcount
-
-        matched, unmatched = _resolve_forecast_execution_lag(cur, "stg_test")
-
-        assert matched == 1000
-        assert unmatched == 0
-        assert cur.execute.call_count == 3  # EXISTS + matched UPDATE + unmatched UPDATE
-
-    def test_with_dim_dfu_partial_match(self):
-        """Some DFUs match dim_dfu, others don't → both counts > 0."""
-        cur = MagicMock()
-        cur.fetchone.return_value = (True,)
-        rowcounts = iter([None, 800, 200])
-
-        def _set_rowcount(*args, **kwargs):
-            cur.rowcount = next(rowcounts)
-
-        cur.execute.side_effect = _set_rowcount
-
-        matched, unmatched = _resolve_forecast_execution_lag(cur, "stg_test")
-
-        assert matched == 800
-        assert unmatched == 200
-
-    def test_update_sql_joins_on_dfu_ck(self):
-        """The UPDATE SQL should join staging with dim_dfu on dfu_ck."""
-        cur = MagicMock()
-        cur.fetchone.return_value = (True,)
-        type(cur).rowcount = _cycling_property([None, 100, 0])
-
-        _resolve_forecast_execution_lag(cur, "stg_forecast")
-
-        # Check the matched UPDATE SQL references dim_dfu join
-        matched_sql = cur.execute.call_args_list[1][0][0]
-        assert "dim_dfu" in matched_sql
-        assert "dfu_ck" in matched_sql
-        assert "COALESCE" in matched_sql
-        assert "execution_lag" in matched_sql
-
-    def test_unmatched_update_defaults_to_zero(self):
-        """Unmatched DFUs should have execution_lag set to '0'."""
-        cur = MagicMock()
-        cur.fetchone.return_value = (True,)
-        type(cur).rowcount = _cycling_property([None, 50, 50])
-
-        _resolve_forecast_execution_lag(cur, "stg_test")
-
-        # Third execute call is the unmatched UPDATE
-        unmatched_sql = cur.execute.call_args_list[2][0][0]
-        assert "NOT EXISTS" in unmatched_sql
-        assert "'0'" in unmatched_sql
-
-    def test_staging_table_name_is_quoted(self):
-        """The staging table name should be properly quoted in SQL."""
+class TestFilterUnmatchedDfus:
+    def test_dim_sku_missing_skips_filter(self):
         cur = MagicMock()
         cur.fetchone.return_value = (False,)
-        cur.rowcount = 0
 
-        _resolve_forecast_execution_lag(cur, "stg_with_special")
+        deleted = _filter_unmatched_dfus(cur, "stg_sales", "sales")
 
+        assert deleted == 0
+        assert cur.execute.call_count == 1  # EXISTS only
+
+    def test_sales_deletes_unmatched_by_sku_ck(self):
+        cur = _cursor_with_rowcounts([None, 200])
+        cur.fetchone.side_effect = [(True,)]
+
+        deleted = _filter_unmatched_dfus(cur, "stg_sales", "sales")
+
+        assert deleted == 200
+        delete_sql = cur.execute.call_args_list[1][0][0]
+        assert "DELETE" in delete_sql
+        assert "NOT EXISTS" in delete_sql
+        assert "sku_ck" in delete_sql
+
+    def test_inventory_matches_on_item_id_loc(self):
+        cur = _cursor_with_rowcounts([None, 50])
+        cur.fetchone.side_effect = [(True,)]
+
+        deleted = _filter_unmatched_dfus(cur, "stg_inv", "inventory")
+
+        assert deleted == 50
+        delete_sql = cur.execute.call_args_list[1][0][0]
+        assert "DELETE" in delete_sql
+        assert "item_id" in delete_sql
+        assert "loc" in delete_sql
+        assert "sku_ck" not in delete_sql  # inventory uses item_id + loc, not sku_ck
+
+    def test_forecast_deletes_unmatched_by_sku_ck(self):
+        cur = _cursor_with_rowcounts([None, 1000])
+        cur.fetchone.side_effect = [(True,)]
+
+        deleted = _filter_unmatched_dfus(cur, "stg_fcst", "forecast")
+
+        assert deleted == 1000
+        delete_sql = cur.execute.call_args_list[1][0][0]
+        assert "sku_ck" in delete_sql
+
+    def test_no_unmatched_returns_zero(self):
+        cur = _cursor_with_rowcounts([None, 0])
+        cur.fetchone.side_effect = [(True,)]
+
+        assert _filter_unmatched_dfus(cur, "stg_sales", "sales") == 0
+
+
+class TestResolveForecastExecutionLag:
+    def test_dim_sku_exists_updates_lag_and_execution_lag(self):
+        cur = _cursor_with_rowcounts([None, 500])
+        cur.fetchone.side_effect = [(True,)]
+
+        matched = _resolve_forecast_execution_lag(cur, "stg_fcst")
+
+        assert matched == 500
+        assert cur.execute.call_count == 2  # EXISTS + UPDATE
         update_sql = cur.execute.call_args_list[1][0][0]
-        assert '"stg_with_special"' in update_sql
+        assert "dim_sku" in update_sql
+        assert '"lag"' in update_sql
+        assert '"execution_lag"' in update_sql
 
-
-# ---------- Phase ordering contract ----------
-
-class TestPhaseOrdering:
-    """The archive must be loaded BEFORE _resolve_forecast_execution_lag
-    mutates the staging table, so the archive preserves each row's
-    original lag as execution_lag."""
-
-    def test_archive_load_reads_original_execution_lag(self):
-        """Archive INSERT should read execution_lag from staging as-is
-        (not the DFU-level value from dim_dfu)."""
+    def test_dim_sku_missing_returns_zero(self):
         cur = MagicMock()
-        type(cur).rowcount = _cycling_property([0, 5000])
+        cur.fetchone.return_value = (False,)
 
-        _load_forecast_archive(cur, "stg_test", "d")
+        matched = _resolve_forecast_execution_lag(cur, "stg_fcst")
 
-        insert_sql = cur.execute.call_args_list[1][0][0]
-        # Archive reads execution_lag directly from staging (stg_alias."execution_lag")
-        assert '"execution_lag"' in insert_sql
-        # It should NOT reference dim_dfu (that's the resolve function's job)
-        assert "dim_dfu" not in insert_sql
-
-    def test_resolve_mutates_staging(self):
-        """_resolve_forecast_execution_lag UPDATEs the staging table —
-        confirming it must run AFTER archive load."""
-        cur = MagicMock()
-        cur.fetchone.return_value = (True,)
-        type(cur).rowcount = _cycling_property([None, 100, 50])
-
-        _resolve_forecast_execution_lag(cur, "stg_test")
-
-        update_sqls = [c[0][0] for c in cur.execute.call_args_list
-                       if "UPDATE" in c[0][0]]
-        assert len(update_sqls) >= 1, "Resolve must UPDATE staging"
+        assert matched == 0
+        assert cur.execute.call_count == 1  # EXISTS only
 
 
-# ---------- _load_forecast_archive ----------
+# ---------- TestLoadForecastArchive ----------
 
 class TestLoadForecastArchive:
-    def test_deletes_existing_external_rows(self):
-        """Should DELETE existing 'external' rows from archive before inserting."""
+    def test_deletes_old_and_inserts_new(self):
         cur = MagicMock()
-        type(cur).rowcount = _cycling_property([100, 5000])
+        type(cur).rowcount = _cycling_property([50, 8000])
 
-        _load_forecast_archive(cur, "stg_test", "d")
+        count = _load_forecast_archive(cur, "stg_fcst", "d")
 
-        # First execute should be DELETE with parameterized model_id
-        delete_sql = cur.execute.call_args_list[0][0][0]
-        delete_params = cur.execute.call_args_list[0][0][1]
-        assert "DELETE" in delete_sql
-        assert "backtest_lag_archive" in delete_sql
-        assert "external" in delete_params
-
-    def test_inserts_all_lags_into_archive(self):
-        """Should INSERT all staging rows (all lags) into backtest_lag_archive."""
-        cur = MagicMock()
-        type(cur).rowcount = _cycling_property([0, 45000])
-
-        count = _load_forecast_archive(cur, "stg_test", "d")
-
-        assert count == 45000
-        # Second execute should be INSERT
-        insert_sql = cur.execute.call_args_list[1][0][0]
-        assert "INSERT INTO" in insert_sql
-        assert "backtest_lag_archive" in insert_sql
-
-    def test_uses_on_conflict_upsert(self):
-        """Should use ON CONFLICT (forecast_ck, model_id, lag) DO UPDATE."""
-        cur = MagicMock()
-        type(cur).rowcount = _cycling_property([0, 1000])
-
-        _load_forecast_archive(cur, "stg_test", "d")
-
-        insert_sql = cur.execute.call_args_list[1][0][0]
-        assert "ON CONFLICT" in insert_sql
-        assert "forecast_ck" in insert_sql
-        assert "model_id" in insert_sql
-        assert "DO UPDATE" in insert_sql
-
-    def test_timeframe_is_null(self):
-        """External forecast archive rows should have timeframe=NULL."""
-        cur = MagicMock()
-        type(cur).rowcount = _cycling_property([0, 1000])
-
-        _load_forecast_archive(cur, "stg_test", "d")
-
-        insert_sql = cur.execute.call_args_list[1][0][0]
-        # The SELECT should include NULL for timeframe
-        assert "NULL" in insert_sql
-
-    def test_builds_forecast_ck_from_key_fields(self):
-        """forecast_ck should be built from dmdunit_dmdgroup_loc_fcstdate_startdate."""
-        cur = MagicMock()
-        type(cur).rowcount = _cycling_property([0, 1000])
-
-        _load_forecast_archive(cur, "stg_test", "d")
-
-        insert_sql = cur.execute.call_args_list[1][0][0]
-        assert '"dmdunit"' in insert_sql
-        assert '"dmdgroup"' in insert_sql
-        assert '"loc"' in insert_sql
-        assert '"fcstdate"' in insert_sql
-        assert '"startdate"' in insert_sql
-
-    def test_casts_numeric_fields(self):
-        """lag, execution_lag should be cast to integer; basefcst_pref, tothist_dmd to numeric."""
-        cur = MagicMock()
-        type(cur).rowcount = _cycling_property([0, 1000])
-
-        _load_forecast_archive(cur, "stg_test", "d")
-
-        insert_sql = cur.execute.call_args_list[1][0][0]
-        assert "::integer" in insert_sql
-        assert "::numeric" in insert_sql
-        assert "::date" in insert_sql
+        assert count == 8000
+        # First call: DELETE
+        del_sql = cur.execute.call_args_list[0][0][0]
+        assert "DELETE" in del_sql
+        assert "backtest_lag_archive" in del_sql
+        # Second call: SELECT EXISTS (check for non-external rows)
+        exists_sql = cur.execute.call_args_list[1][0][0]
+        assert "SELECT EXISTS" in exists_sql
+        # Third call: INSERT (with or without ON CONFLICT depending on EXISTS result)
+        ins_sql = cur.execute.call_args_list[2][0][0]
+        assert "INSERT INTO" in ins_sql
 
     def test_returns_inserted_row_count(self):
-        """Should return the number of rows inserted into the archive."""
         cur = MagicMock()
-        type(cur).rowcount = _cycling_property([50, 12345])
+        type(cur).rowcount = _cycling_property([0, 12345])
 
-        count = _load_forecast_archive(cur, "stg_test", "d")
+        assert _load_forecast_archive(cur, "stg", "s") == 12345
 
-        assert count == 12345
-
-    def test_stg_alias_used_in_sql(self):
-        """The staging alias parameter should be used in the SQL."""
+    def test_uses_staging_alias_in_sql(self):
         cur = MagicMock()
         type(cur).rowcount = _cycling_property([0, 100])
 
-        _load_forecast_archive(cur, "stg_test", "myalias")
+        _load_forecast_archive(cur, "stg", "myalias")
 
-        insert_sql = cur.execute.call_args_list[1][0][0]
-        assert 'myalias."dmdunit"' in insert_sql
+        ins_sql = cur.execute.call_args_list[2][0][0]
+        assert 'myalias."item_id"' in ins_sql
 
 
-# ---------- business_key_expr ----------
+# ---------- TestIndexManagement ----------
 
-class TestBusinessKeyExpr:
-    def test_single_key_field(self):
+class TestIndexManagement:
+    def test_drop_indexes(self):
+        cur = MagicMock()
+        indexes = [("idx_a", "CREATE INDEX idx_a ..."), ("idx_b", "CREATE INDEX idx_b ...")]
+
+        _drop_indexes(cur, indexes)
+
+        assert cur.execute.call_count == 2
+        assert 'DROP INDEX IF EXISTS "idx_a"' in cur.execute.call_args_list[0][0][0]
+        assert 'DROP INDEX IF EXISTS "idx_b"' in cur.execute.call_args_list[1][0][0]
+
+    def test_recreate_indexes(self):
+        cur = MagicMock()
+        indexes = [("idx_a", "CREATE INDEX idx_a ON t(col)")]
+
+        _recreate_indexes(cur, indexes)
+
+        assert cur.execute.call_count == 1
+        assert "CREATE INDEX idx_a ON t(col);" in cur.execute.call_args_list[0][0][0]
+
+    def test_drop_unique_constraints(self):
+        cur = MagicMock()
+        constraints = [("uq_a", "u", ["col1", "col2"])]
+
+        _drop_unique_constraints(cur, "my_table", constraints)
+
+        sql = cur.execute.call_args_list[0][0][0]
+        assert "DROP CONSTRAINT IF EXISTS" in sql
+        assert '"uq_a"' in sql
+        assert '"my_table"' in sql
+
+    def test_recreate_unique_constraints(self):
+        cur = MagicMock()
+        constraints = [("uq_a", "u", ["col1", "col2"])]
+
+        _recreate_unique_constraints(cur, "my_table", constraints)
+
+        sql = cur.execute.call_args_list[0][0][0]
+        assert "ADD CONSTRAINT" in sql
+        assert "UNIQUE" in sql
+        assert '"col1"' in sql
+        assert '"col2"' in sql
+
+    def test_get_all_indexes_queries_pg_indexes(self):
+        cur = MagicMock()
+        cur.fetchall.return_value = [("idx_a", "CREATE INDEX ...")]
+
+        result = _get_all_indexes(cur, "my_table")
+
+        assert result == [("idx_a", "CREATE INDEX ...")]
+        sql = cur.execute.call_args[0][0]
+        assert "pg_indexes" in sql
+
+    def test_get_unique_constraints_queries_pg_constraint(self):
+        cur = MagicMock()
+        cur.fetchall.return_value = [("uq_a", "u", ["c1"])]
+
+        result = _get_unique_constraints(cur, "my_table")
+
+        assert result == [("uq_a", "u", ["c1"])]
+        sql = cur.execute.call_args[0][0]
+        assert "pg_constraint" in sql
+
+
+# ---------- TestPartitionHelpers ----------
+
+class TestPartitionHelpers:
+    def test_is_partitioned_true(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (True,)
+
+        assert _is_partitioned(cur, "fact_inventory_snapshot") is True
+        sql = cur.execute.call_args[0][0]
+        assert "relkind" in sql
+
+    def test_is_partitioned_false(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (False,)
+
+        assert _is_partitioned(cur, "fact_sales_monthly") is False
+
+    def test_is_partitioned_table_missing(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = None
+
+        assert _is_partitioned(cur, "nonexistent") is False
+
+    def test_ensure_partition_exists_creates_when_missing(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = None  # partition doesn't exist
+
+        name = _ensure_partition_exists(cur, "fact_inventory_snapshot", "2027-07-01", "2027-08-01")
+
+        assert name == "fact_inventory_snapshot_2027_07"
+        assert cur.execute.call_count == 2  # SELECT + CREATE
+        create_sql = cur.execute.call_args_list[1][0][0]
+        assert "PARTITION OF" in create_sql
+
+    def test_ensure_partition_exists_skips_when_present(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (1,)  # partition exists
+
+        name = _ensure_partition_exists(cur, "fact_inventory_snapshot", "2025-01-01", "2025-02-01")
+
+        assert name == "fact_inventory_snapshot_2025_01"
+        assert cur.execute.call_count == 1  # Only SELECT, no CREATE
+
+
+# ---------- TestLoadDomain ----------
+
+class TestLoadDomain:
+    @patch("scripts.load_dataset_postgres.complete_batch")
+    @patch("scripts.load_dataset_postgres.create_batch", return_value=1)
+    @patch("scripts.load_dataset_postgres.file_hash", return_value="abc123")
+    @patch("scripts.load_dataset_postgres.get_db_params", return_value={"dbname": "test"})
+    @patch("scripts.load_dataset_postgres.psycopg")
+    def test_load_returns_summary(self, mock_pg, mock_db, mock_hash, mock_batch, mock_complete, tmp_path):
+        csv_file = tmp_path / "clean_sales.csv"
+        csv_file.write_text("col1,col2\na,b\n")
+
+        cur = MagicMock()
+        # fetchone calls: staging count, DFU filter EXISTS check (False=skip),
+        # then _is_partitioned check (False)
+        cur.fetchone.side_effect = [(1,), (False,), (False,)]
+        cur.fetchall.return_value = []    # no indexes/constraints
+        cur.rowcount = 1
+
+        copy_ctx = MagicMock()
+        cur.copy.return_value.__enter__ = MagicMock(return_value=copy_ctx)
+        cur.copy.return_value.__exit__ = MagicMock(return_value=False)
+
+        conn = MagicMock()
+        conn.cursor.return_value.__enter__ = MagicMock(return_value=cur)
+        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_pg.connect.return_value.__enter__ = MagicMock(return_value=conn)
+        mock_pg.connect.return_value.__exit__ = MagicMock(return_value=False)
+
         spec = MagicMock()
-        spec.key_fields = ["item_no"]
+        spec.name = "sales"
+        spec.table = "fact_sales_monthly"
+        spec.columns = ["col1", "col2"]
+        spec.ck_field = "sales_ck"
+        spec.key_fields = ["col1"]
+        spec.int_fields = set()
+        spec.float_fields = set()
+        spec.date_fields = set()
         spec.business_key_separator = "_"
-        result = business_key_expr(spec, "s")
-        assert 'trim(s."item_no")' in result
+        spec.clean_file = "clean_sales.csv"
 
-    def test_multi_key_field(self):
+        result = load_domain(spec, csv_file)
+
+        assert result["domain"] == "sales"
+        assert "rows_in" in result
+        assert "rows_loaded" in result
+        assert "elapsed" in result
+        # Verify staging table created and TRUNCATE issued
+        executed_sqls = [c[0][0] for c in cur.execute.call_args_list]
+        assert any("CREATE TEMP TABLE" in s for s in executed_sqls)
+        assert any("TRUNCATE" in s for s in executed_sqls)
+
+    @patch("scripts.load_dataset_postgres.get_db_params", return_value={"dbname": "test"})
+    @patch("scripts.load_dataset_postgres.psycopg")
+    def test_load_skips_missing_csv(self, mock_pg, mock_db, tmp_path):
         spec = MagicMock()
-        spec.key_fields = ["dmdunit", "dmdgroup", "loc"]
-        spec.business_key_separator = "_"
-        result = business_key_expr(spec, "s")
-        assert "'_'" in result
-        assert 'trim(s."dmdunit")' in result
-        assert 'trim(s."loc")' in result
+        spec.name = "sales"
+        missing = tmp_path / "does_not_exist.csv"
+
+        result = load_domain(spec, missing)
+
+        assert result["skipped"] is True
+        mock_pg.connect.assert_not_called()

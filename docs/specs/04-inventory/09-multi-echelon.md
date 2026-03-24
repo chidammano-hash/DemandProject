@@ -62,7 +62,7 @@ DC-EAST supplies 5 regional warehouses. Single-echelon total SS = 15,000 units. 
 | Table | Grain | Key Columns |
 |---|---|---|
 | `dim_supply_network` | source_loc + dest_loc | echelon_level, transit_days, is_active |
-| `fact_echelon_targets` | item_no + loc + echelon | ss_single, ss_echelon, pooling_benefit, cascade_risk |
+| `fact_echelon_targets` | item_id + loc + echelon | ss_single, ss_echelon, pooling_benefit, cascade_risk |
 
 ---
 

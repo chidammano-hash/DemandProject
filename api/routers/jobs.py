@@ -225,6 +225,29 @@ def submit_pipeline(req: SubmitPipelineRequest):
 # otherwise FastAPI would match "schedules", "pipeline", etc. as a job_id.
 # ---------------------------------------------------------------------------
 
+@router.get("/jobs/{job_id}/logs")
+def get_job_logs(
+    job_id: str,
+    offset: int = Query(default=0, ge=0),
+):
+    """Get the persistent execution log for a job.
+
+    Supports incremental fetching via `offset` — the frontend can poll for
+    new log content by passing the last known total_length as offset.
+    """
+    mgr = _get_manager()
+    job = mgr.get_status(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+    full_log = mgr.get_job_logs(job_id)
+    return {
+        "job_id": job_id,
+        "log": full_log[offset:],
+        "total_length": len(full_log),
+        "offset": offset,
+    }
+
+
 @router.get("/jobs/{job_id}")
 def get_job_detail(job_id: str):
     """Get a single job's status and result."""

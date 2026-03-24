@@ -27,7 +27,7 @@ beforeEach(() => {
   (fetchSafetyStockSummary as any).mockResolvedValue({
     below_ss_count: 25,
     avg_ss_coverage: 0.85,
-    total_dfus: 500,
+    total_skus: 500,
     avg_ss_days: 12.3,
     by_abc: [
       { abc_vol: "A", count: 100, below_ss_count: 10, avg_coverage: 0.9 },
@@ -37,7 +37,7 @@ beforeEach(() => {
     total: 1,
     rows: [
       {
-        item_no: "100320",
+        item_id: "100320",
         loc: "1401-BULK",
         ss_combined: 200,
         ss_demand_only: 150,
@@ -62,7 +62,7 @@ describe("SafetyStockPanel", () => {
       expect(screen.getByText("Items Below SS")).toBeInTheDocument();
     });
     expect(screen.getByText("Avg SS Coverage")).toBeInTheDocument();
-    expect(screen.getByText("Total DFUs")).toBeInTheDocument();
+    expect(screen.getByText("Total SKUs")).toBeInTheDocument();
     expect(screen.getByText("Avg SS Days")).toBeInTheDocument();
   });
 

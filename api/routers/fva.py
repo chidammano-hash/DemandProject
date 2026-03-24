@@ -1,10 +1,9 @@
 """Forecast Value Added (FVA) & ROI tracking endpoints (Spec 08-07)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 
 from api.core import get_conn
-from common.auth import CurrentUser, get_current_user
 
 router = APIRouter(prefix="/fva", tags=["fva"])
 

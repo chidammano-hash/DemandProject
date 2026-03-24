@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS fact_event_calendar (
     pantry_loading_pct      NUMERIC(6,3)    NOT NULL DEFAULT 0,
     pantry_loading_weeks    INTEGER         NOT NULL DEFAULT 0,
     last_order_date         DATE,
-    cannibalized_item_no    VARCHAR(50),
+    cannibalized_item_id    VARCHAR(50),
     override_multiplier     NUMERIC(6,4),
     target_items            JSONB,
     target_locations        JSONB,
@@ -36,7 +36,7 @@ CREATE INDEX IF NOT EXISTS idx_event_cal_type_status
 
 CREATE TABLE IF NOT EXISTS fact_event_adjusted_forecast (
     id                      BIGSERIAL       PRIMARY KEY,
-    item_no                 VARCHAR(50)     NOT NULL,
+    item_id                 VARCHAR(50)     NOT NULL,
     loc                     VARCHAR(50)     NOT NULL,
     plan_month              DATE            NOT NULL,
     event_id                BIGINT          NOT NULL REFERENCES fact_event_calendar(event_id),
@@ -47,18 +47,18 @@ CREATE TABLE IF NOT EXISTS fact_event_adjusted_forecast (
     adjustment_type         VARCHAR(30)     NOT NULL,
     order_deadline          DATE,
     computed_at             TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_event_adj UNIQUE (item_no, loc, plan_month, event_id)
+    CONSTRAINT uq_event_adj UNIQUE (item_id, loc, plan_month, event_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_event_adj_item_loc
-    ON fact_event_adjusted_forecast (item_no, loc, plan_month);
+    ON fact_event_adjusted_forecast (item_id, loc, plan_month);
 
 -- -----------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS fact_event_performance (
     id                      BIGSERIAL       PRIMARY KEY,
     event_id                BIGINT          NOT NULL REFERENCES fact_event_calendar(event_id),
-    item_no                 VARCHAR(50)     NOT NULL,
+    item_id                 VARCHAR(50)     NOT NULL,
     loc                     VARCHAR(50)     NOT NULL,
     plan_month              DATE            NOT NULL,
     forecasted_lift_qty     NUMERIC(12,2),
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS fact_event_performance (
     actual_lift_qty         NUMERIC(12,2),
     lift_accuracy_pct       NUMERIC(6,2),
     uplift_calibration_factor NUMERIC(6,4),
-    CONSTRAINT uq_event_perf UNIQUE (event_id, item_no, loc, plan_month)
+    CONSTRAINT uq_event_perf UNIQUE (event_id, item_id, loc, plan_month)
 );
 
 -- -----------------------------------------------------------------------

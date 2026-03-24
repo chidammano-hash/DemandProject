@@ -7,7 +7,7 @@ from tests.api.conftest import make_pool as _make_pool
 
 @pytest.mark.asyncio
 async def test_simulation_results_200():
-    # 17 columns: sim_run_id, item_no, loc, simulation_date, n_simulations,
+    # 17 columns: sim_run_id, item_id, loc, simulation_date, n_simulations,
     # demand_distribution, demand_mean, demand_std, lt_distribution,
     # lt_mean_days, lt_std_days, results_by_ss_level, target_csl,
     # recommended_ss, recommended_ss_days, analytical_ss, sim_vs_analytical_pct
@@ -27,7 +27,7 @@ async def test_simulation_results_200():
             resp = await client.get("/inv-planning/simulation/results?item=ITEM1&location=LOC1")
     assert resp.status_code == 200
     data = resp.json()
-    assert "item_no" in data
+    assert "item_id" in data
     assert "sim_run_id" in data
 
 

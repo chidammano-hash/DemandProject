@@ -32,7 +32,7 @@ async def test_clusters_list(mock_pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/domains/dfu/clusters")
+            response = await client.get("/domains/sku/clusters")
             assert response.status_code == 200
             data = response.json()
             assert "clusters" in data
@@ -46,5 +46,5 @@ async def test_clusters_profiles(mock_pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/domains/dfu/clusters/profiles")
+            response = await client.get("/domains/sku/clusters/profiles")
             assert response.status_code == 200

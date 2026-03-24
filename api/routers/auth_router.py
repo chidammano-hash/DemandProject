@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 from api.core import get_conn
 from common.auth import (
@@ -11,7 +11,6 @@ from common.auth import (
     create_refresh_token,
     decode_token,
     get_current_user,
-    hash_password,
     log_audit,
     verify_password,
 )

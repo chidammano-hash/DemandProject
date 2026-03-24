@@ -12,7 +12,6 @@ FastAPI inspects mock signatures in tests.
 """
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -57,7 +56,7 @@ def _get_config() -> dict:
 # ---------------------------------------------------------------------------
 
 class AnalyzeRequest(BaseModel):
-    item_no: str
+    item_id: str
     loc: str
 
 
@@ -92,14 +91,14 @@ async def analyze_dfu(body: AnalyzeRequest, request: Request):
     agent = AIPlannerAgent(pool, _get_config())
 
     try:
-        insights = agent.run_dfu_analysis(body.item_no, body.loc, scan_run_id)
+        insights = agent.run_sku_analysis(body.item_id, body.loc, scan_run_id)
     except Exception as exc:
-        log.exception("DFU analysis failed for %s@%s", body.item_no, body.loc)
+        log.exception("DFU analysis failed for %s@%s", body.item_id, body.loc)
         raise HTTPException(status_code=500, detail="Analysis failed. Check server logs for details.") from exc
 
     return {
         "scan_run_id": scan_run_id,
-        "item_no": body.item_no,
+        "item_id": body.item_id,
         "loc": body.loc,
         "total_insights": len(insights),
         "insights": insights,
@@ -141,7 +140,7 @@ async def get_insights(
     severity: Optional[str] = Query(None),
     status: Optional[str] = Query(None, alias="status"),
     insight_type: Optional[str] = Query(None),
-    item_no: Optional[str] = Query(None),
+    item_id: Optional[str] = Query(None),
     loc: Optional[str] = Query(None),
     brand: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
@@ -166,20 +165,20 @@ async def get_insights(
     if insight_type:
         conditions.append("insight_type = %s")
         params.append(insight_type)
-    if item_no:
-        conditions.append("item_no = %s")
-        params.append(item_no)
+    if item_id:
+        conditions.append("item_id = %s")
+        params.append(item_id)
     if loc:
         conditions.append("loc = %s")
         params.append(loc)
     if brand:
         conditions.append(
-            "EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = ai.item_no AND di.brand_name = ANY(%s))"
+            "EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = ai.item_id AND di.brand_name = ANY(%s))"
         )
         params.append(brand.split(","))
     if category:
         conditions.append(
-            "EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = ai.item_no AND di.class = ANY(%s))"
+            "EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = ai.item_id AND di.class = ANY(%s))"
         )
         params.append(category.split(","))
     if market:
@@ -191,7 +190,7 @@ async def get_insights(
         conditions.append(
             "EXISTS (SELECT 1 FROM dim_customer dc "
             "JOIN fact_sales_monthly fsm ON fsm.cust_grp = dc.customer_group "
-            "WHERE fsm.dmdunit = ai.item_no AND fsm.loc = ai.loc AND dc.channel = ANY(%s))"
+            "WHERE fsm.item_id = ai.item_id AND fsm.loc = ai.loc AND dc.channel = ANY(%s))"
         )
         params.append(channel.split(","))
 
@@ -242,7 +241,7 @@ async def update_insight_status(insight_id: int, body: StatusUpdateRequest, requ
     update_sql = (
         f"UPDATE ai_insights SET status = %s, updated_at = NOW() {ts_col} "
         "WHERE insight_id = %s "
-        "RETURNING insight_id, status, insight_type, item_no, loc, abc_vol, "
+        "RETURNING insight_id, status, insight_type, item_id, loc, abc_vol, "
         "          financial_impact_estimate, dos, total_lt_days, "
         "          champion_wape, forecast_bias_pct"
     )
@@ -259,11 +258,11 @@ async def update_insight_status(insight_id: int, body: StatusUpdateRequest, requ
             # Write outcome record when planner makes a decision
             if body.status in ("acknowledged", "resolved"):
                 decision = "accepted" if body.status == "acknowledged" else "resolved"
-                (_, _, ins_type, item_no, loc, abc_vol,
+                (_, _, ins_type, item_id, loc, abc_vol,
                  fin_impact, dos, lt, wape, bias) = row
                 outcome_sql = """
                     INSERT INTO ai_recommendation_outcomes
-                        (insight_id, insight_type, item_no, loc, abc_vol,
+                        (insight_id, insight_type, item_id, loc, abc_vol,
                          planner_decision, financial_impact_est,
                          metric_before_dos, metric_before_wape, metric_before_bias_pct,
                          lead_time_days, action_taken, executed_at, outcome_check_due_at)
@@ -272,7 +271,7 @@ async def update_insight_status(insight_id: int, body: StatusUpdateRequest, requ
                 """
                 try:
                     cur.execute(outcome_sql, (
-                        insight_id, ins_type, item_no, loc, abc_vol,
+                        insight_id, ins_type, item_id, loc, abc_vol,
                         decision, fin_impact,
                         dos, wape, bias,
                         lt, body.action_taken,
@@ -357,7 +356,7 @@ async def auto_accept_insights(body: AutoAcceptRequest, request: Request):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT insight_id, insight_type, item_no, loc, abc_vol, "
+                f"SELECT insight_id, insight_type, item_id, loc, abc_vol, "
                 f"financial_impact_estimate, dos, total_lt_days, champion_wape, forecast_bias_pct "
                 f"FROM ai_insights {where} "
                 "ORDER BY CASE severity "
@@ -380,12 +379,12 @@ async def auto_accept_insights(body: AutoAcceptRequest, request: Request):
             )
 
             for row in rows:
-                (iid, itype, item_no, loc, abc_vol, fin_impact, dos, lt, wape, bias) = row
+                (iid, itype, item_id, loc, abc_vol, fin_impact, dos, lt, wape, bias) = row
                 try:
                     cur.execute(
                         """
                         INSERT INTO ai_recommendation_outcomes
-                            (insight_id, insight_type, item_no, loc, abc_vol,
+                            (insight_id, insight_type, item_id, loc, abc_vol,
                              planner_decision, financial_impact_est,
                              metric_before_dos, metric_before_wape, metric_before_bias_pct,
                              lead_time_days, executed_at, outcome_check_due_at)
@@ -393,7 +392,7 @@ async def auto_accept_insights(body: AutoAcceptRequest, request: Request):
                                 NOW(), NOW() + INTERVAL '30 days')
                         ON CONFLICT DO NOTHING
                         """,
-                        (iid, itype, item_no, loc, abc_vol, fin_impact, dos, wape, bias, lt),
+                        (iid, itype, item_id, loc, abc_vol, fin_impact, dos, wape, bias, lt),
                     )
                 except Exception:
                     log.warning("Failed to write outcome for insight %s", iid)
@@ -475,7 +474,7 @@ async def get_memos(
     limit: int = Query(10, ge=1, le=50),
 ):
     """Return planning memos (latest first)."""
-    valid_scopes = {"portfolio", "dfu"}
+    valid_scopes = {"portfolio", "sku"}
     conditions: list[str] = []
     params: list = []
 

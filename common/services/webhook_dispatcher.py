@@ -9,7 +9,6 @@ import hmac
 import json
 import time
 import urllib.request
-from typing import Any
 
 
 def _sign_payload(payload: str, secret: str) -> str:

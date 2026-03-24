@@ -31,7 +31,7 @@ export interface HealthHistogramBucket {
 }
 
 export interface HealthSummaryPayload {
-  total_dfus: number;
+  total_skus: number;
   by_tier: HealthTierBreakdown;
   avg_health_score: number | null;
   component_avgs: HealthComponentAvgs;
@@ -52,7 +52,7 @@ export interface HealthDetailParams {
 }
 
 export interface HealthDetailRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   abc_vol: string | null;
   variability_class: string | null;

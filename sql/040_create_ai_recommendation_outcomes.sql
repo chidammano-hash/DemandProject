@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS ai_recommendation_outcomes (
     outcome_id              SERIAL PRIMARY KEY,
     insight_id              INTEGER NOT NULL REFERENCES ai_insights(insight_id),
     insight_type            VARCHAR(80) NOT NULL,
-    item_no                 TEXT NOT NULL,
+    item_id                 TEXT NOT NULL,
     loc                     TEXT NOT NULL,
     abc_vol                 TEXT,
 

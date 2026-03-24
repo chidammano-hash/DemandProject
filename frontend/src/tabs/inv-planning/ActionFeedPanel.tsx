@@ -120,7 +120,7 @@ export function ActionFeedPanel() {
                         {sevCfg.label}
                       </span>
                       <span className="text-xs font-mono text-muted-foreground">
-                        {action.item_no} @ {action.loc}
+                        {action.item_id} @ {action.loc}
                       </span>
                     </div>
                     <p className="text-sm font-medium text-foreground">{action.title}</p>

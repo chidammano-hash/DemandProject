@@ -43,7 +43,6 @@ from common.tuning import (
     best_rounds_to_n_estimators,
     compute_wape_stabilised,
     generate_cv_month_splits,
-    load_best_params,
     save_best_params,
     suggest_params,
 )
@@ -372,7 +371,7 @@ def main() -> None:
         n_estimators_max=t_cfg["n_estimators_max"],
     )
     if per_cluster_wape:
-        print(f"  Per-cluster WAPE:")
+        print("  Per-cluster WAPE:")
         for cluster, wape in sorted(per_cluster_wape.items(), key=lambda x: x[1]):
             print(f"    {cluster}: {wape * 100:.2f}%")
 

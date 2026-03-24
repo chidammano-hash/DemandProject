@@ -11,14 +11,12 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch, call
 
 from common.dq_engine import (
-    _check_freshness,
     _check_completeness,
     _check_row_count,
     _check_uniqueness,
     _check_range,
     _check_volume_delta,
     _check_referential_integrity,
-    _check_statistical_outlier,
     _check_distribution_drift,
     _check_temporal_gaps,
     _check_cross_column,
@@ -46,69 +44,6 @@ def _mock_conn(fetchone_return=None, fetchall_return=None):
 
 
 # ---------------------------------------------------------------------------
-# _check_freshness
-# ---------------------------------------------------------------------------
-
-class TestCheckFreshness:
-    """Freshness checks compare against the planning date (2026-02-24), not wall-clock time."""
-
-    _PLANNING_DATE = datetime(2026, 2, 24).date()
-
-    def test_pass_recent_load(self):
-        """Table loaded 1 hour before planning date passes a 48-hour threshold."""
-        recent = datetime(2026, 2, 23, 23, 0, tzinfo=timezone.utc)
-        conn, _ = _mock_conn(fetchone_return=(recent,))
-        with patch("common.dq_engine.get_planning_date", return_value=self._PLANNING_DATE):
-            result = _check_freshness(conn, "dim_item", max_hours=48)
-        assert result["status"] == "pass"
-        assert result["metric_value"] is not None
-        assert result["metric_value"] < 2
-
-    def test_fail_stale_load(self):
-        """Table loaded 72 hours before planning date fails a 48-hour threshold."""
-        stale = datetime(2026, 2, 21, 0, 0, tzinfo=timezone.utc)
-        conn, _ = _mock_conn(fetchone_return=(stale,))
-        with patch("common.dq_engine.get_planning_date", return_value=self._PLANNING_DATE):
-            result = _check_freshness(conn, "fact_sales_monthly", max_hours=48)
-        assert result["status"] == "fail"
-        assert result["metric_value"] > 48
-
-    def test_fail_no_load_ts(self):
-        """No load_ts found returns fail with None metric."""
-        conn, _ = _mock_conn(fetchone_return=(None,))
-        with patch("common.dq_engine.get_planning_date", return_value=self._PLANNING_DATE):
-            result = _check_freshness(conn, "dim_item", max_hours=48)
-        assert result["status"] == "fail"
-        assert result["metric_value"] is None
-        assert "No load_ts" in result["details"]["message"]
-
-    def test_fail_empty_row(self):
-        """Empty fetchone result returns fail."""
-        conn, _ = _mock_conn(fetchone_return=(None,))
-        with patch("common.dq_engine.get_planning_date", return_value=self._PLANNING_DATE):
-            result = _check_freshness(conn, "dim_item", max_hours=48)
-        assert result["status"] == "fail"
-
-    def test_pass_exactly_at_threshold(self):
-        """Load_ts exactly at the threshold boundary passes."""
-        boundary = datetime(2026, 2, 22, 0, 1, tzinfo=timezone.utc)  # ~47h59m before planning date
-        conn, _ = _mock_conn(fetchone_return=(boundary,))
-        with patch("common.dq_engine.get_planning_date", return_value=self._PLANNING_DATE):
-            result = _check_freshness(conn, "dim_item", max_hours=48)
-        assert result["status"] == "pass"
-
-    def test_details_contain_hours_since_load_and_planning_date(self):
-        """Details dict includes hours_since_load and planning_date."""
-        recent = datetime(2026, 2, 23, 19, 0, tzinfo=timezone.utc)
-        conn, _ = _mock_conn(fetchone_return=(recent,))
-        with patch("common.dq_engine.get_planning_date", return_value=self._PLANNING_DATE):
-            result = _check_freshness(conn, "dim_item", max_hours=48)
-        assert "hours_since_load" in result["details"]
-        assert isinstance(result["details"]["hours_since_load"], float)
-        assert result["details"]["planning_date"] == "2026-02-24"
-
-
-# ---------------------------------------------------------------------------
 # _check_completeness
 # ---------------------------------------------------------------------------
 
@@ -130,7 +65,7 @@ class TestCheckCompleteness:
     def test_warn_empty_table(self):
         """Empty table returns warn status."""
         conn, _ = _mock_conn(fetchone_return=(0, 0))
-        result = _check_completeness(conn, "dim_item", "item_no", max_null_pct=0.0)
+        result = _check_completeness(conn, "dim_item", "item_id", max_null_pct=0.0)
         assert result["status"] == "warn"
         assert result["details"]["message"] == "Empty table"
 
@@ -207,28 +142,28 @@ class TestCheckUniqueness:
     def test_pass_no_dupes(self):
         """No duplicate groups → pass."""
         conn, _ = _mock_conn(fetchone_return=(0,))
-        result = _check_uniqueness(conn, "dim_item", key_columns=["item_no"])
+        result = _check_uniqueness(conn, "dim_item", key_columns=["item_id"])
         assert result["status"] == "pass"
         assert result["metric_value"] == 0
 
     def test_fail_has_dupes(self):
         """5 duplicate groups → fail."""
         conn, _ = _mock_conn(fetchone_return=(5,))
-        result = _check_uniqueness(conn, "dim_dfu", key_columns=["dmdunit", "loc"])
+        result = _check_uniqueness(conn, "dim_sku", key_columns=["item_id", "loc"])
         assert result["status"] == "fail"
         assert result["metric_value"] == 5
 
     def test_details_contain_duplicate_groups(self):
         conn, _ = _mock_conn(fetchone_return=(3,))
-        result = _check_uniqueness(conn, "dim_item", key_columns=["item_no"])
+        result = _check_uniqueness(conn, "dim_item", key_columns=["item_id"])
         assert result["details"]["duplicate_groups"] == 3
 
     def test_sql_uses_correct_columns(self):
         """Verify the SQL groups by the requested key columns."""
         conn, cursor = _mock_conn(fetchone_return=(0,))
-        _check_uniqueness(conn, "fact_sales_monthly", key_columns=["dmdunit", "loc", "startdate"])
+        _check_uniqueness(conn, "fact_sales_monthly", key_columns=["item_id", "loc", "startdate"])
         sql = cursor.execute.call_args[0][0]
-        assert "dmdunit, loc, startdate" in sql
+        assert "item_id, loc, startdate" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -236,11 +171,11 @@ class TestCheckUniqueness:
 # ---------------------------------------------------------------------------
 
 class TestCheckFunctionsRegistry:
-    def test_all_twelve_types_registered(self):
+    def test_all_ten_types_registered(self):
         assert set(CHECK_FUNCTIONS.keys()) == {
-            "freshness", "completeness", "row_count", "uniqueness",
+            "completeness", "row_count", "uniqueness",
             "range", "volume_delta", "referential_integrity",
-            "statistical_outlier", "distribution_drift", "temporal_gaps",
+            "distribution_drift", "temporal_gaps",
             "cross_column", "cardinality_anomaly",
         }
 
@@ -258,26 +193,6 @@ class TestRunSingle:
         """Create DQEngine with a mocked config."""
         with patch("common.dq_engine._load_config", return_value={"checks": checks or []}):
             return DQEngine()
-
-    def test_freshness_check(self):
-        engine = self._make_engine()
-        # 2 hours before the planning date
-        recent = datetime(2026, 2, 23, 22, 0, tzinfo=timezone.utc)
-        conn, _ = _mock_conn(fetchone_return=(recent,))
-        check = {
-            "check_name": "test_fresh",
-            "check_type": "freshness",
-            "table_name": "dim_item",
-            "max_hours": 48,
-            "domain": "item",
-            "severity": "warning",
-        }
-        with patch("common.dq_engine.get_planning_date", return_value=datetime(2026, 2, 24).date()):
-            result = engine._run_single(conn, check)
-        assert result["check_name"] == "test_fresh"
-        assert result["status"] == "pass"
-        assert result["domain"] == "item"
-        assert result["severity"] == "warning"
 
     def test_unknown_check_type_returns_skip(self):
         engine = self._make_engine()
@@ -321,9 +236,9 @@ class TestRunSingle:
         check = {
             "check_name": "dupe_check",
             "check_type": "uniqueness",
-            "table_name": "dim_dfu",
-            "key_columns": ["dmdunit", "loc"],
-            "domain": "dfu",
+            "table_name": "dim_sku",
+            "key_columns": ["item_id", "loc"],
+            "domain": "sku",
             "severity": "critical",
         }
         result = engine._run_single(conn, check)
@@ -544,63 +459,6 @@ class TestGetDomainScore:
 # DQEngine.get_pipeline_health
 # ---------------------------------------------------------------------------
 
-class TestGetPipelineHealth:
-    def test_returns_all_five_tables(self):
-        with patch("common.dq_engine._load_config", return_value={"checks": []}):
-            engine = DQEngine()
-
-        recent = datetime(2026, 2, 23, 23, 0, tzinfo=timezone.utc)
-        mock_conn = MagicMock()
-        cursor = MagicMock()
-        cursor.fetchone.return_value = (recent,)
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
-
-        with patch("psycopg.connect", return_value=mock_conn), \
-             patch("common.dq_engine.get_db_params", return_value={}), \
-             patch("common.dq_engine.get_planning_date", return_value=datetime(2026, 2, 24).date()):
-            health = engine.get_pipeline_health()
-
-        assert len(health["tables"]) == 5
-        expected_tables = {"dim_item", "dim_location", "dim_dfu", "fact_sales_monthly", "fact_external_forecast_monthly"}
-        actual_tables = {t["table"] for t in health["tables"]}
-        assert actual_tables == expected_tables
-
-    def test_handles_table_error_gracefully(self):
-        """If a table check raises, that table gets error status."""
-        with patch("common.dq_engine._load_config", return_value={"checks": []}):
-            engine = DQEngine()
-
-        call_count = 0
-
-        def side_effect_execute(sql):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise Exception("permission denied")
-
-        mock_conn = MagicMock()
-        cursor = MagicMock()
-        recent = datetime(2026, 2, 23, 23, 0, tzinfo=timezone.utc)
-        cursor.execute.side_effect = side_effect_execute
-        cursor.fetchone.return_value = (recent,)
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
-
-        with patch("psycopg.connect", return_value=mock_conn), \
-             patch("common.dq_engine.get_db_params", return_value={}), \
-             patch("common.dq_engine.get_planning_date", return_value=datetime(2026, 2, 24).date()):
-            health = engine.get_pipeline_health()
-
-        # First table should have error, rest should succeed
-        assert health["tables"][0]["status"] == "error"
-        assert len(health["tables"]) == 5
-
-
 # ---------------------------------------------------------------------------
 # Connection / initialization errors
 # ---------------------------------------------------------------------------
@@ -743,8 +601,8 @@ class TestCheckReferentialIntegrity:
     def test_pass_no_orphans(self):
         conn, _ = _mock_conn(fetchone_return=(0,))
         result = _check_referential_integrity(
-            conn, "fact_sales_monthly", ["dmdunit", "loc"],
-            "dim_dfu", ["dmdunit", "loc"],
+            conn, "fact_sales_monthly", ["item_id", "loc"],
+            "dim_sku", ["item_id", "loc"],
         )
         assert result["status"] == "pass"
         assert result["metric_value"] == 0
@@ -752,8 +610,8 @@ class TestCheckReferentialIntegrity:
     def test_fail_with_orphans(self):
         conn, _ = _mock_conn(fetchone_return=(42,))
         result = _check_referential_integrity(
-            conn, "fact_sales_monthly", ["dmdunit", "loc"],
-            "dim_dfu", ["dmdunit", "loc"],
+            conn, "fact_sales_monthly", ["item_id", "loc"],
+            "dim_sku", ["item_id", "loc"],
         )
         assert result["status"] == "fail"
         assert result["metric_value"] == 42
@@ -762,8 +620,8 @@ class TestCheckReferentialIntegrity:
     def test_single_column_fk(self):
         conn, _ = _mock_conn(fetchone_return=(0,))
         result = _check_referential_integrity(
-            conn, "fact_inventory_snapshot", ["item_no"],
-            "dim_item", ["item_no"],
+            conn, "fact_inventory_snapshot", ["item_id"],
+            "dim_item", ["item_id"],
         )
         assert result["status"] == "pass"
 
@@ -822,9 +680,9 @@ class TestRunSingleNewTypes:
             "check_name": "ri_sales_to_dfu",
             "table_name": "fact_sales_monthly",
             "source_table": "fact_sales_monthly",
-            "source_columns": ["dmdunit", "loc"],
-            "target_table": "dim_dfu",
-            "target_columns": ["dmdunit", "loc"],
+            "source_columns": ["item_id", "loc"],
+            "target_table": "dim_sku",
+            "target_columns": ["item_id", "loc"],
         })
         assert result["status"] == "pass"
 
@@ -845,28 +703,6 @@ class TestFlattenChecks:
         result = engine._flatten_checks()
         assert result == flat_checks
 
-    def test_freshness_flattened(self):
-        config = {
-            "checks": {
-                "freshness": {
-                    "sales": {
-                        "table": "fact_sales_monthly",
-                        "max_hours_since_load": 48,
-                        "severity": "critical",
-                    }
-                }
-            }
-        }
-        engine = self._make_engine(config)
-        flat = engine._flatten_checks()
-        assert len(flat) == 1
-        c = flat[0]
-        assert c["check_type"] == "freshness"
-        assert c["check_name"] == "freshness_sales"
-        assert c["domain"] == "sales"
-        assert c["table_name"] == "fact_sales_monthly"
-        assert c["max_hours"] == 48
-        assert c["severity"] == "critical"
 
     def test_completeness_per_column(self):
         config = {
@@ -875,7 +711,7 @@ class TestFlattenChecks:
                     "item": {
                         "table": "dim_item",
                         "columns": [
-                            {"column": "item_no", "null_pct_threshold": 0.0, "severity": "critical"},
+                            {"column": "item_id", "null_pct_threshold": 0.0, "severity": "critical"},
                             {"column": "brand", "null_pct_threshold": 10.0, "severity": "warning"},
                         ],
                     }
@@ -885,8 +721,8 @@ class TestFlattenChecks:
         engine = self._make_engine(config)
         flat = engine._flatten_checks()
         assert len(flat) == 2
-        assert flat[0]["check_name"] == "completeness_item_item_no"
-        assert flat[0]["column"] == "item_no"
+        assert flat[0]["check_name"] == "completeness_item_item_id"
+        assert flat[0]["column"] == "item_id"
         assert flat[0]["max_null_pct"] == 0.0
         assert flat[1]["check_name"] == "completeness_item_brand"
         assert flat[1]["max_null_pct"] == 10.0
@@ -895,9 +731,9 @@ class TestFlattenChecks:
         config = {
             "checks": {
                 "uniqueness": {
-                    "dfu": {
-                        "table": "dim_dfu",
-                        "key_columns": ["dmdunit", "loc"],
+                    "sku": {
+                        "table": "dim_sku",
+                        "key_columns": ["item_id", "loc"],
                         "severity": "critical",
                     }
                 }
@@ -906,7 +742,7 @@ class TestFlattenChecks:
         engine = self._make_engine(config)
         flat = engine._flatten_checks()
         assert len(flat) == 1
-        assert flat[0]["key_columns"] == ["dmdunit", "loc"]
+        assert flat[0]["key_columns"] == ["item_id", "loc"]
 
     def test_range_per_column(self):
         config = {
@@ -953,9 +789,9 @@ class TestFlattenChecks:
                 "referential_integrity": {
                     "sales_to_dfu": {
                         "source_table": "fact_sales_monthly",
-                        "source_columns": ["dmdunit", "loc"],
-                        "target_table": "dim_dfu",
-                        "target_columns": ["dmdunit", "loc"],
+                        "source_columns": ["item_id", "loc"],
+                        "target_table": "dim_sku",
+                        "target_columns": ["item_id", "loc"],
                         "severity": "warning",
                     }
                 }
@@ -967,16 +803,16 @@ class TestFlattenChecks:
         c = flat[0]
         assert c["check_type"] == "referential_integrity"
         assert c["source_table"] == "fact_sales_monthly"
-        assert c["target_table"] == "dim_dfu"
-        assert c["source_columns"] == ["dmdunit", "loc"]
-        assert c["target_columns"] == ["dmdunit", "loc"]
+        assert c["target_table"] == "dim_sku"
+        assert c["source_columns"] == ["item_id", "loc"]
+        assert c["target_columns"] == ["item_id", "loc"]
 
     def test_global_defaults_applied(self):
         config = {
             "global_defaults": {"severity": "info", "enabled": True},
             "checks": {
-                "freshness": {
-                    "x": {"table": "t", "max_hours_since_load": 24}
+                "volume_delta": {
+                    "x": {"table": "t", "max_pct_change": 25.0}
                 }
             },
         }
@@ -993,8 +829,8 @@ class TestFlattenChecks:
         """Multiple check types in one config produce correct total."""
         config = {
             "checks": {
-                "freshness": {
-                    "a": {"table": "t1", "max_hours_since_load": 48},
+                "completeness": {
+                    "a": {"table": "t1", "columns": [{"column": "c1", "null_pct_threshold": 5.0}]},
                 },
                 "uniqueness": {
                     "b": {"table": "t2", "key_columns": ["id"]},
@@ -1008,30 +844,7 @@ class TestFlattenChecks:
         flat = engine._flatten_checks()
         assert len(flat) == 3
         types = {c["check_type"] for c in flat}
-        assert types == {"freshness", "uniqueness", "volume_delta"}
-
-    def test_statistical_outlier_per_column(self):
-        config = {
-            "checks": {
-                "statistical_outlier": {
-                    "sales": {
-                        "table": "fact_sales_monthly",
-                        "columns": [
-                            {"column": "qty", "method": "iqr", "threshold": 1.5},
-                            {"column": "qty_shipped", "method": "zscore", "threshold": 3.0},
-                        ],
-                    }
-                }
-            }
-        }
-        engine = self._make_engine(config)
-        flat = engine._flatten_checks()
-        assert len(flat) == 2
-        assert flat[0]["check_name"] == "statistical_outlier_sales_qty"
-        assert flat[0]["method"] == "iqr"
-        assert flat[1]["check_name"] == "statistical_outlier_sales_qty_shipped"
-        assert flat[1]["method"] == "zscore"
-        assert flat[1]["threshold"] == 3.0
+        assert types == {"completeness", "uniqueness", "volume_delta"}
 
     def test_distribution_drift_per_column(self):
         config = {
@@ -1105,70 +918,6 @@ class TestFlattenChecks:
         assert flat[0]["check_type"] == "cardinality_anomaly"
         assert flat[0]["column"] == "category"
         assert flat[0]["max_change_pct"] == 15.0
-
-
-# ---------------------------------------------------------------------------
-# _check_statistical_outlier
-# ---------------------------------------------------------------------------
-
-class TestCheckStatisticalOutlier:
-    def test_iqr_pass_no_outliers(self):
-        conn = MagicMock()
-        cursor = MagicMock()
-        conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
-        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        # First call: stats; second call: count outliers
-        cursor.fetchone.side_effect = [
-            (1000, 50.0, 10.0, 40.0, 50.0, 60.0, 0.0, 100.0),  # stats
-            (0,),  # outlier count
-        ]
-        result = _check_statistical_outlier(conn, "t", "c", method="iqr", threshold=1.5)
-        assert result["status"] == "pass"
-        assert result["metric_value"] == 0
-        assert result["details"]["method"] == "iqr"
-
-    def test_iqr_fail_many_outliers(self):
-        conn = MagicMock()
-        cursor = MagicMock()
-        conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
-        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        cursor.fetchone.side_effect = [
-            (1000, 50.0, 10.0, 40.0, 50.0, 60.0, 0.0, 100.0),
-            (60,),  # 6% outliers → fail
-        ]
-        result = _check_statistical_outlier(conn, "t", "c", method="iqr", threshold=1.5)
-        assert result["status"] == "fail"
-        assert result["details"]["outlier_pct"] == 6.0
-
-    def test_zscore_method(self):
-        conn = MagicMock()
-        cursor = MagicMock()
-        conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
-        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        cursor.fetchone.side_effect = [
-            (1000, 100.0, 20.0, 80.0, 100.0, 120.0, 10.0, 200.0),
-            (5,),  # 0.5% → pass
-        ]
-        result = _check_statistical_outlier(conn, "t", "c", method="zscore", threshold=3.0)
-        assert result["status"] == "pass"
-        assert result["details"]["method"] == "zscore"
-
-    def test_warn_empty_table(self):
-        conn, _ = _mock_conn(fetchone_return=(0, None, None, None, None, None, None, None))
-        result = _check_statistical_outlier(conn, "t", "c")
-        assert result["status"] == "warn"
-
-    def test_warn_moderate_outliers(self):
-        conn = MagicMock()
-        cursor = MagicMock()
-        conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
-        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        cursor.fetchone.side_effect = [
-            (1000, 50.0, 10.0, 40.0, 50.0, 60.0, 0.0, 100.0),
-            (20,),  # 2% → warn (between 1% and 5%)
-        ]
-        result = _check_statistical_outlier(conn, "t", "c")
-        assert result["status"] == "warn"
 
 
 # ---------------------------------------------------------------------------
@@ -1372,27 +1121,6 @@ class TestRunSingleStatisticalTypes:
     def _make_engine(self, checks=None):
         with patch("common.dq_engine._load_config", return_value={"checks": checks or []}):
             return DQEngine()
-
-    def test_statistical_outlier_dispatch(self):
-        engine = self._make_engine()
-        conn = MagicMock()
-        cursor = MagicMock()
-        conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor)
-        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        cursor.fetchone.side_effect = [
-            (1000, 50.0, 10.0, 40.0, 50.0, 60.0, 0.0, 100.0),
-            (0,),
-        ]
-        result = engine._run_single(conn, {
-            "check_type": "statistical_outlier",
-            "check_name": "stat_sales_qty",
-            "table_name": "fact_sales_monthly",
-            "column": "qty",
-            "method": "iqr",
-            "threshold": 1.5,
-        })
-        assert result["status"] == "pass"
-        assert result["check_name"] == "stat_sales_qty"
 
     def test_cross_column_dispatch(self):
         engine = self._make_engine()

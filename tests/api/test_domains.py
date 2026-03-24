@@ -40,7 +40,7 @@ async def test_list_domains(mock_pool):
             assert "location" in domains
             assert "sales" in domains
             assert "forecast" in domains
-            assert len(domains) == 8
+            assert len(domains) == 10
             assert "inventory" in domains
 
 
@@ -56,7 +56,7 @@ async def test_domain_meta_item(mock_pool):
             data = response.json()
             assert data["name"] == "item"
             assert "columns" in data
-            assert "item_no" in data["columns"]
+            assert "item_id" in data["columns"]
             assert "numeric_fields" in data
             assert "date_fields" in data
 
@@ -81,7 +81,7 @@ async def test_domain_meta_all_domains(mock_pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            for domain in ["item", "location", "customer", "time", "dfu", "sales", "forecast"]:
+            for domain in ["item", "location", "customer", "time", "sku", "sales", "forecast"]:
                 response = await client.get(f"/domains/{domain}/meta")
                 assert response.status_code == 200, f"Failed for domain: {domain}"
                 data = response.json()
@@ -166,7 +166,7 @@ async def test_domain_suggest_valid_field(mock_pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/domains/item/suggest?field=item_no&q=Ap")
+            response = await client.get("/domains/item/suggest?field=item_id&q=Ap")
     assert response.status_code == 200
     data = response.json()
     assert data["domain"] == "item"
@@ -249,7 +249,7 @@ async def test_dfu_count_no_filters(mock_pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/domains/dfu/count")
+            response = await client.get("/domains/sku/count")
     assert response.status_code == 200
     assert response.json()["count"] == 5000
 
@@ -264,7 +264,7 @@ async def test_dfu_count_with_filters(mock_pool):
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
-                "/domains/dfu/count?brand=BrandA&location=LOC1,LOC2"
+                "/domains/sku/count?brand=BrandA&location=LOC1,LOC2"
             )
     assert response.status_code == 200
     assert response.json()["count"] == 42
@@ -310,7 +310,7 @@ async def test_distinct_values_invalid_column(mock_pool):
 
 @pytest.mark.asyncio
 async def test_distinct_with_cascade_filters(mock_pool):
-    """Distinct with cascading filter params narrows results via dim_dfu."""
+    """Distinct with cascading filter params narrows results via dim_sku."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("BrandX",)]
     with patch("api.core._get_pool", return_value=pool):

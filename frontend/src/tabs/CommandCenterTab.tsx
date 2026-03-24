@@ -31,7 +31,7 @@ import {
   fetchSbExceptions,
   STALE,
 } from "@/api/queries";
-import type { AiInsight, InsightSeverity } from "@/types/ai-planner";
+import type { AiInsight, InsightStatus } from "@/types/ai-planner";
 import type { StoryboardException } from "@/types/storyboard";
 import { Skeleton } from "@/components/Skeleton";
 import { cn } from "@/lib/utils";
@@ -150,7 +150,7 @@ function normalizeAiInsight(insight: AiInsight): UnifiedException {
     severity: insight.severity,
     type: insight.insight_type,
     typeLabel: INSIGHT_TYPE_LABELS[insight.insight_type] ?? insight.insight_type,
-    itemNo: insight.item_no,
+    itemNo: insight.item_id,
     location: insight.loc,
     summary: insight.summary,
     recommendation: insight.recommendation,
@@ -171,7 +171,7 @@ function normalizeStoryboardException(
     type: exc.exception_type,
     typeLabel:
       EXCEPTION_TYPE_LABELS[exc.exception_type] ?? exc.exception_type,
-    itemNo: exc.item_no,
+    itemNo: exc.item_id,
     location: exc.loc,
     summary: exc.headline ?? `${exc.exception_type} detected`,
     recommendation: undefined,
@@ -215,7 +215,7 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
     queryKey: queryKeys.aiInsights({ status: statusFilter === "all" ? undefined : statusFilter }),
     queryFn: () =>
       fetchAiInsights({
-        status: statusFilter === "all" ? undefined : (statusFilter as InsightSeverity),
+        status: statusFilter === "all" ? undefined : (statusFilter as InsightStatus),
         page_size: 50,
       }),
     staleTime: STALE.THIRTY_SEC,

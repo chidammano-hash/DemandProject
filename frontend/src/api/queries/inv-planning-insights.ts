@@ -35,7 +35,7 @@ export interface ActionFeedItem {
   id: string;
   source: string;
   severity: string;
-  item_no: string;
+  item_id: string;
   loc: string;
   title: string;
   detail: string;
@@ -56,7 +56,7 @@ export interface ActionFeedPayload {
 }
 
 export interface RootCausePayload {
-  item_no: string;
+  item_id: string;
   loc: string;
   causes: {
     factor: string;
@@ -67,14 +67,14 @@ export interface RootCausePayload {
 
 export interface SegmentDashboardPayload {
   segment: string;
-  dfu_count: number;
+  sku_count: number;
   open_exceptions: number;
   below_ss_count: number;
   avg_fill_rate: number | null;
   avg_health_score: number | null;
   policy_distribution: { policy_id: string; count: number }[];
   top_exceptions: {
-    item_no: string;
+    item_id: string;
     loc: string;
     exception_type: string;
     severity: string;
@@ -149,7 +149,7 @@ export interface CashFlowPayload {
 }
 
 export interface ConstrainedOptItem {
-  item_no: string;
+  item_id: string;
   loc: string;
   current_ss: number;
   recommended_ss: number;

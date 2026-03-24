@@ -2,9 +2,9 @@
 IPfeature11 — ABC-XYZ Policy Matrix Classification
 
 Classifies DFUs into 9-cell ABC-XYZ matrix using demand_cv and
-intermittency_ratio from dim_dfu (populated by IPfeature1).
+intermittency_ratio from dim_sku (populated by IPfeature1).
 
-Writes xyz_class, abc_xyz_segment, dos targets, and service level to dim_dfu.
+Writes xyz_class, abc_xyz_segment, dos targets, and service level to dim_sku.
 
 Usage:
     uv run python scripts/classify_abc_xyz.py [--dry-run]
@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import psycopg
 from common.db import get_db_params  # noqa: E402
+from common.services.perf_profiler import profiled_section
 
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "replenishment_policy_config.yaml"
@@ -57,17 +58,19 @@ def compute_abc_xyz_segment(abc_vol: str | None, xyz_class: str | None) -> str |
 
 
 def run(dry_run: bool = False) -> None:
-    config = yaml.safe_load(open(CONFIG_PATH))
-    abc_xyz_policies: dict = config.get("abc_xyz_policies", {})
+    with profiled_section("load_config"):
+        config = yaml.safe_load(open(CONFIG_PATH))
+        abc_xyz_policies: dict = config.get("abc_xyz_policies", {})
 
-    with psycopg.connect(**get_db_params()) as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT dmdunit, dmdgroup, loc, abc_vol, demand_cv, intermittency_ratio
-                FROM dim_dfu
-                WHERE abc_vol IS NOT NULL
-            """)
-            rows = cur.fetchall()
+    with profiled_section("load_dfus"):
+        with psycopg.connect(**get_db_params()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT item_id, customer_group, loc, abc_vol, demand_cv, intermittency_ratio
+                    FROM dim_sku
+                    WHERE abc_vol IS NOT NULL
+                """)
+                rows = cur.fetchall()
 
     print(f"Loaded {len(rows)} DFUs for ABC-XYZ classification")
 
@@ -75,32 +78,33 @@ def run(dry_run: bool = False) -> None:
     skipped = 0
     segment_counts: dict[str, int] = {}
 
-    for row in rows:
-        dmdunit, dmdgroup, loc, abc_vol, demand_cv, intermittency_ratio = row
+    with profiled_section("classify_xyz"):
+        for row in rows:
+            item_id, customer_group, loc, abc_vol, demand_cv, intermittency_ratio = row
 
-        if demand_cv is not None:
-            demand_cv = float(demand_cv)
-        if intermittency_ratio is not None:
-            intermittency_ratio = float(intermittency_ratio)
+            if demand_cv is not None:
+                demand_cv = float(demand_cv)
+            if intermittency_ratio is not None:
+                intermittency_ratio = float(intermittency_ratio)
 
-        xyz_class = classify_xyz(demand_cv, intermittency_ratio)
-        if xyz_class is None or abc_vol not in _ABC_VALID:
-            skipped += 1
-            continue
+            xyz_class = classify_xyz(demand_cv, intermittency_ratio)
+            if xyz_class is None or abc_vol not in _ABC_VALID:
+                skipped += 1
+                continue
 
-        segment = compute_abc_xyz_segment(abc_vol, xyz_class)
-        if segment is None:
-            skipped += 1
-            continue
+            segment = compute_abc_xyz_segment(abc_vol, xyz_class)
+            if segment is None:
+                skipped += 1
+                continue
 
-        policy_cfg = abc_xyz_policies.get(segment, {})
-        dos_min = policy_cfg.get("dos_min")
-        dos_max = policy_cfg.get("dos_max")
-        service_level = policy_cfg.get("service_level")
+            policy_cfg = abc_xyz_policies.get(segment, {})
+            dos_min = policy_cfg.get("dos_min")
+            dos_max = policy_cfg.get("dos_max")
+            service_level = policy_cfg.get("service_level")
 
-        segment_counts[segment] = segment_counts.get(segment, 0) + 1
-        updates.append((xyz_class, segment, dos_min, dos_max, service_level,
-                        dmdunit, dmdgroup, loc))
+            segment_counts[segment] = segment_counts.get(segment, 0) + 1
+            updates.append((xyz_class, segment, dos_min, dos_max, service_level,
+                            item_id, customer_group, loc))
 
     print("\nClassification summary:")
     for seg in sorted(segment_counts):
@@ -116,23 +120,24 @@ def run(dry_run: bool = False) -> None:
         return
 
     update_sql = """
-        UPDATE dim_dfu
+        UPDATE dim_sku
         SET xyz_class             = %s,
             abc_xyz_segment       = %s,
             abc_xyz_dos_min       = %s,
             abc_xyz_dos_max       = %s,
             abc_xyz_service_level = %s,
             abc_xyz_classified_ts = NOW()
-        WHERE dmdunit = %s AND dmdgroup = %s AND loc = %s
+        WHERE item_id = %s AND customer_group = %s AND loc = %s
     """
 
-    with psycopg.connect(**get_db_params()) as conn:
-        with conn.cursor() as cur:
-            for upd in updates:
-                cur.execute(update_sql, list(upd))
-        conn.commit()
+    with profiled_section("write_updates"):
+        with psycopg.connect(**get_db_params()) as conn:
+            with conn.cursor() as cur:
+                for upd in updates:
+                    cur.execute(update_sql, list(upd))
+            conn.commit()
 
-    print(f"\nUpdated {len(updates)} DFUs in dim_dfu.")
+    print(f"\nUpdated {len(updates)} DFUs in dim_sku.")
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ export function ProjectionPanel() {
   const [itemNo, setItemNo] = useState("");
   const [loc, setLoc] = useState("");
   const [horizonDays, setHorizonDays] = useState(90);
-  const [activeItem, setActiveItem] = useState<{ item_no: string; loc: string } | null>(null);
+  const [activeItem, setActiveItem] = useState<{ item_id: string; loc: string } | null>(null);
   const qc = useQueryClient();
 
   const syncedGlobalRef = useRef<string>("");
@@ -54,14 +54,14 @@ export function ProjectionPanel() {
 
   // DFU projection (only when user has submitted)
   const proj = useQuery({
-    queryKey: projectionKeys.dfu({ item_no: activeItem?.item_no, loc: activeItem?.loc, horizon_days: horizonDays }),
-    queryFn: () => fetchProjection({ item_no: activeItem!.item_no, loc: activeItem!.loc, horizon_days: horizonDays }),
+    queryKey: projectionKeys.sku({ item_id: activeItem?.item_id, loc: activeItem?.loc, horizon_days: horizonDays }),
+    queryFn: () => fetchProjection({ item_id: activeItem!.item_id, loc: activeItem!.loc, horizon_days: horizonDays }),
     enabled: !!activeItem,
     staleTime: 5 * 60_000,
   });
 
   const refreshMut = useMutation({
-    mutationFn: () => refreshProjection({ item_no: activeItem!.item_no, loc: activeItem!.loc, horizon_days: horizonDays }),
+    mutationFn: () => refreshProjection({ item_id: activeItem!.item_id, loc: activeItem!.loc, horizon_days: horizonDays }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["projection"] });
     },
@@ -69,7 +69,7 @@ export function ProjectionPanel() {
 
   const handleSearch = () => {
     if (itemNo.trim() && loc.trim()) {
-      setActiveItem({ item_no: itemNo.trim(), loc: loc.trim() });
+      setActiveItem({ item_id: itemNo.trim(), loc: loc.trim() });
     }
   };
 
@@ -86,20 +86,20 @@ export function ProjectionPanel() {
         <div className="rounded-md border border-orange-300 bg-orange-50 dark:bg-orange-950/30 p-3 flex items-center gap-3">
           <AlertTriangle className="h-4 w-4 text-orange-500 shrink-0" />
           <span className="text-sm font-medium text-orange-800 dark:text-orange-300">
-            {atRisk.data.total} DFU{atRisk.data.total !== 1 ? "s" : ""} at stockout risk within 30 days
+            {atRisk.data.total} SKU{atRisk.data.total !== 1 ? "s" : ""} at stockout risk within 30 days
           </span>
           <div className="ml-auto flex gap-2">
             {atRisk.data.items.slice(0, 3).map(item => (
               <button
-                key={`${item.item_no}/${item.loc}`}
+                key={`${item.item_id}/${item.loc}`}
                 onClick={() => {
-                  setItemNo(item.item_no);
+                  setItemNo(item.item_id);
                   setLoc(item.loc);
-                  setActiveItem({ item_no: item.item_no, loc: item.loc });
+                  setActiveItem({ item_id: item.item_id, loc: item.loc });
                 }}
                 className="text-xs px-2 py-0.5 rounded bg-orange-100 dark:bg-orange-900/50 hover:bg-orange-200 dark:hover:bg-orange-900 text-orange-800 dark:text-orange-200"
               >
-                {item.item_no}/{item.loc} ({item.days_until_stockout}d)
+                {item.item_id}/{item.loc} ({item.days_until_stockout}d)
               </button>
             ))}
           </div>
@@ -160,7 +160,7 @@ export function ProjectionPanel() {
 
       {proj.isError && (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-          No projection data found. Run <code className="font-mono">make projection-compute-dfu ITEM={itemNo} LOC={loc}</code> first,
+          No projection data found. Run <code className="font-mono">make projection-compute-sku ITEM={itemNo} LOC={loc}</code> first,
           or click Refresh to compute now.
         </div>
       )}

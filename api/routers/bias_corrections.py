@@ -9,7 +9,7 @@ Endpoints:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter
 
 from api.core import get_conn
 
@@ -18,7 +18,7 @@ router = APIRouter(tags=["bias-corrections"])
 
 @router.get("/forecast/bias-corrections")
 async def get_bias_corrections(
-    item_no: str | None = None,
+    item_id: str | None = None,
     loc: str | None = None,
     plan_month: str | None = None,
     segment_type: str | None = None,
@@ -31,14 +31,18 @@ async def get_bias_corrections(
 
     conditions = ["1=1"]
     params: list = []
-    if item_no:
-        conditions.append("item_no = %s"); params.append(item_no)
+    if item_id:
+        conditions.append("item_id = %s")
+        params.append(item_id)
     if loc:
-        conditions.append("loc = %s"); params.append(loc)
+        conditions.append("loc = %s")
+        params.append(loc)
     if plan_month:
-        conditions.append("plan_month = %s"); params.append(plan_month)
+        conditions.append("plan_month = %s")
+        params.append(plan_month)
     if segment_type:
-        conditions.append("segment_type = %s"); params.append(segment_type)
+        conditions.append("segment_type = %s")
+        params.append(segment_type)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -50,13 +54,13 @@ async def get_bias_corrections(
             total = cur.fetchone()[0] or 0
             cur.execute(
                 f"""
-                SELECT item_no, loc, plan_month, segment_type, segment_value,
+                SELECT item_id, loc, plan_month, segment_type, segment_value,
                        rolling_bias_3m, correction_factor, correction_was_clipped,
                        correction_pct, flagged_for_review, correction_applied,
                        months_of_data, computed_at
                 FROM fact_bias_corrections
                 WHERE {where}
-                ORDER BY plan_month DESC, flagged_for_review DESC, item_no
+                ORDER BY plan_month DESC, flagged_for_review DESC, item_id
                 LIMIT %s OFFSET %s
                 """,
                 params + [page_size, offset],
@@ -64,7 +68,7 @@ async def get_bias_corrections(
             rows = cur.fetchall()
 
     cols = [
-        "item_no", "loc", "plan_month", "segment_type", "segment_value",
+        "item_id", "loc", "plan_month", "segment_type", "segment_value",
         "rolling_bias_3m", "correction_factor", "correction_was_clipped",
         "correction_pct", "flagged_for_review", "correction_applied",
         "months_of_data", "computed_at",
@@ -93,7 +97,7 @@ async def get_bias_corrections_summary(
                 f"""
                 SELECT
                     COUNT(*)                                                    AS total_corrections,
-                    COUNT(DISTINCT item_no || '@' || loc)                       AS dfu_count,
+                    COUNT(DISTINCT item_id || '@' || loc)                       AS dfu_count,
                     SUM(CASE WHEN flagged_for_review THEN 1 ELSE 0 END)         AS flagged_count,
                     SUM(CASE WHEN correction_was_clipped THEN 1 ELSE 0 END)     AS clipped_count,
                     AVG(rolling_bias_3m)                                        AS avg_rolling_bias,
@@ -144,7 +148,7 @@ async def get_flagged_bias_corrections(
             total = cur.fetchone()[0] or 0
             cur.execute(
                 f"""
-                SELECT item_no, loc, plan_month, segment_type, rolling_bias_3m,
+                SELECT item_id, loc, plan_month, segment_type, rolling_bias_3m,
                        correction_factor_raw, correction_factor, correction_was_clipped,
                        months_of_data
                 FROM fact_bias_corrections
@@ -157,7 +161,7 @@ async def get_flagged_bias_corrections(
             rows = cur.fetchall()
 
     cols = [
-        "item_no", "loc", "plan_month", "segment_type", "rolling_bias_3m",
+        "item_id", "loc", "plan_month", "segment_type", "rolling_bias_3m",
         "correction_factor_raw", "correction_factor", "correction_was_clipped",
         "months_of_data",
     ]

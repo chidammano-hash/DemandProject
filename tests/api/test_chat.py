@@ -16,7 +16,7 @@ class TestIsSafeSql:
 
     def test_allows_select_with_subquery(self):
         from api.routers.chat import _is_safe_sql
-        assert _is_safe_sql("SELECT * FROM (SELECT item_no FROM dim_item) t LIMIT 10") is True
+        assert _is_safe_sql("SELECT * FROM (SELECT item_id FROM dim_item) t LIMIT 10") is True
 
     def test_blocks_insert(self):
         from api.routers.chat import _is_safe_sql

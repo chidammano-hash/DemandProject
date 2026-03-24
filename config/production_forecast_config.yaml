@@ -7,13 +7,13 @@ inference:
 
 confidence_interval:
   enabled: true               # Set to false to skip CI band computation entirely
-  # Source of backtest residuals used to estimate per-DFU sigma
+  # Source of backtest residuals used to estimate per-SKU sigma
   source_model_ids:           # models whose backtest residuals are pooled
     - lgbm_cluster
     - catboost_cluster
     - xgboost_cluster
   residual_lag: 0             # Lag-0 = execution-lag residuals (closest to production forecast)
-  min_residual_months: 6      # Min backtest months needed for DFU-level sigma; else use cluster fallback
+  min_residual_months: 6      # Min backtest months needed for SKU-level sigma; else use cluster fallback
   # Z-scores for lower/upper bounds (1.282 ≈ P10/P90, 1.645 ≈ P5/P95)
   z_lower: 1.282
   z_upper: 1.282
@@ -24,7 +24,7 @@ confidence_interval:
   sigma_cap_multiplier: 3.0   # Cap sigma at this multiple of the global median sigma
 
 model_selection:
-  strategy: champion          # 'champion' = use each DFU's current champion model assignment
+  strategy: champion          # 'champion' = use each SKU's current champion model assignment
   fallback_model_id: lgbm_cluster  # fallback when no champion is assigned
 
 plan_version:

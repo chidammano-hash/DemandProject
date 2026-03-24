@@ -22,7 +22,7 @@ async def test_get_projection_404_no_data():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/inv-planning/projection?item_no=100320&loc=1401-BULK")
+            resp = await client.get("/inv-planning/projection?item_id=100320&loc=1401-BULK")
 
     assert resp.status_code == 404
 
@@ -64,11 +64,11 @@ async def test_get_projection_success_all_scenarios():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/inv-planning/projection?item_no=100320&loc=1401-BULK")
+            resp = await client.get("/inv-planning/projection?item_id=100320&loc=1401-BULK")
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["item_no"] == "100320"
+    assert data["item_id"] == "100320"
     assert data["loc"] == "1401-BULK"
     assert data["current_qty_on_hand"] == 120.0
     assert data["safety_stock"] == 60.0
@@ -103,7 +103,7 @@ async def test_get_projection_stockout_in_key_dates():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/inv-planning/projection?item_no=100320&loc=1401-BULK")
+            resp = await client.get("/inv-planning/projection?item_id=100320&loc=1401-BULK")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -134,7 +134,7 @@ async def test_get_projection_no_po_data():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/inv-planning/projection?item_no=100320&loc=1401-BULK")
+            resp = await client.get("/inv-planning/projection?item_id=100320&loc=1401-BULK")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -206,7 +206,7 @@ async def test_get_projection_at_risk_list():
     assert data["horizon_days"] == 30
     items = data["items"]
     assert len(items) == 2
-    assert items[0]["item_no"] == "100320"
+    assert items[0]["item_id"] == "100320"
     assert items[0]["severity"] == "critical"
     assert items[0]["days_until_stockout"] == 7
     assert items[1]["severity"] == "high"
@@ -237,7 +237,7 @@ async def test_post_projection_refresh():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
                 "/inv-planning/projection/refresh",
-                json={"item_no": "100320", "loc": "1401-BULK", "horizon_days": 90},
+                json={"item_id": "100320", "loc": "1401-BULK", "horizon_days": 90},
             )
 
     assert resp.status_code == 200

@@ -38,7 +38,7 @@ async def test_list_external_signals():
     sig = data["signals"][0]
     assert sig["signal_id"] == 1
     assert sig["source_name"] == "NOAA Weather"
-    assert sig["item_no"] == "100320"
+    assert sig["item_id"] == "100320"
     assert sig["signal_type"] == "weather"
     assert sig["confidence"] == 0.9
 
@@ -126,11 +126,11 @@ async def test_demand_decomposition():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/demand-signals/external/decomposition",
-                params={"item_no": "100320", "loc": "1401-BULK"},
+                params={"item_id": "100320", "loc": "1401-BULK"},
             )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["item_no"] == "100320"
+    assert data["item_id"] == "100320"
     assert data["loc"] == "1401-BULK"
     assert len(data["decomposition"]) == 2
     d = data["decomposition"][0]
@@ -149,6 +149,6 @@ async def test_demand_decomposition_not_found():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/demand-signals/external/decomposition",
-                params={"item_no": "NONE", "loc": "NONE"},
+                params={"item_id": "NONE", "loc": "NONE"},
             )
     assert resp.status_code == 404

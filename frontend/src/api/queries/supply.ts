@@ -11,7 +11,7 @@ import { fetchJson } from "./core";
 export interface OpenPOLine {
   po_number: string;
   po_line_number: number;
-  item_no: string;
+  item_id: string;
   loc: string;
   supplier_id: string | null;
   supplier_name: string | null;
@@ -52,7 +52,7 @@ export interface OpenPOSummaryPayload {
 
 export interface PastDuePOLine {
   po_number: string;
-  item_no: string;
+  item_id: string;
   loc: string;
   supplier_name: string | null;
   open_qty: number | null;
@@ -72,7 +72,7 @@ export interface PastDuePOPayload {
 // ---------------------------------------------------------------------------
 
 export async function fetchOpenPOs(params: {
-  item_no?: string;
+  item_id?: string;
   loc?: string;
   supplier_id?: string;
   status?: string;
@@ -84,7 +84,7 @@ export async function fetchOpenPOs(params: {
     page: String(params.page ?? 1),
     page_size: String(params.page_size ?? 50),
   });
-  if (params.item_no?.trim()) qs.set("item_no", params.item_no.trim());
+  if (params.item_id?.trim()) qs.set("item_id", params.item_id.trim());
   if (params.loc?.trim()) qs.set("loc", params.loc.trim());
   if (params.supplier_id?.trim()) qs.set("supplier_id", params.supplier_id.trim());
   if (params.status) qs.set("status", params.status);
@@ -117,7 +117,7 @@ export async function fetchPastDuePOs(params: {
 
 export interface PlannedOrder {
   id: number;
-  item_no: string;
+  item_id: string;
   loc: string;
   supplier_id: string | null;
   supplier_name: string | null;
@@ -168,7 +168,7 @@ export interface PlannedOrdersSummaryPayload {
 }
 
 export async function fetchPlannedOrders(params: {
-  item_no?: string;
+  item_id?: string;
   loc?: string;
   status?: string;
   past_due_only?: boolean;
@@ -180,7 +180,7 @@ export async function fetchPlannedOrders(params: {
     page: String(params.page ?? 1),
     page_size: String(params.page_size ?? 50),
   });
-  if (params.item_no?.trim()) qs.set("item_no", params.item_no.trim());
+  if (params.item_id?.trim()) qs.set("item_id", params.item_id.trim());
   if (params.loc?.trim()) qs.set("loc", params.loc.trim());
   if (params.status) qs.set("status", params.status);
   if (params.supplier_id?.trim()) qs.set("supplier_id", params.supplier_id.trim());
@@ -215,7 +215,7 @@ export async function rejectPlannedOrder(
 }
 
 export async function generatePlannedOrders(body?: {
-  item_no?: string;
+  item_id?: string;
   loc?: string;
 }): Promise<{ status: string; job_id: string }> {
   return fetchJson("/supply/planned-orders/generate", {
@@ -232,7 +232,7 @@ export async function generatePlannedOrders(body?: {
 export interface PurchaseOrderLine {
   po_number: string;
   line_number: number;
-  item_no: string;
+  item_id: string;
   item_description: string | null;
   loc: string;
   supplier_id: string | null;
@@ -287,7 +287,7 @@ export interface POExportPayload {
 export async function fetchPurchaseOrders(params?: {
   status?: string;
   supplier_id?: string;
-  item_no?: string;
+  item_id?: string;
   loc?: string;
   po_date_from?: string;
   po_date_to?: string;
@@ -297,7 +297,7 @@ export async function fetchPurchaseOrders(params?: {
   const qs = new URLSearchParams();
   if (params?.status) qs.set("status", params.status);
   if (params?.supplier_id) qs.set("supplier_id", params.supplier_id);
-  if (params?.item_no) qs.set("item_no", params.item_no);
+  if (params?.item_id) qs.set("item_id", params.item_id);
   if (params?.loc) qs.set("loc", params.loc);
   if (params?.po_date_from) qs.set("po_date_from", params.po_date_from);
   if (params?.po_date_to) qs.set("po_date_to", params.po_date_to);

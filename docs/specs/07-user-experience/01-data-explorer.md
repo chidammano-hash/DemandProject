@@ -6,7 +6,7 @@ A paginated, filterable data grid for browsing all eight domain tables (items, l
 |---|---|
 | Status | Implemented |
 | Spec | 07-user-experience/01-data-explorer |
-| Frontend | `ExplorerTab.tsx`, `ItemAnalysisTab.tsx`, `dfu-analysis/` panels, `inventory/` panels |
+| Frontend | `ExplorerTab.tsx`, `ItemAnalysisTab.tsx`, `sku-analysis/` panels, `inventory/` panels |
 | Backend | `api/routers/domains.py`, `api/routers/analysis.py`, `api/routers/inventory.py` |
 | Config | None (behavior driven by `common/domain_specs.py`) |
 
@@ -87,8 +87,8 @@ No new tables. The explorer reads from all eight domain tables via the generic `
 | GET | `/domains/{domain}/rows` | Paginated, filtered data for any domain |
 | GET | `/domains/{domain}/search` | Full-text trigram search across configured columns |
 | GET | `/domains/{domain}/columns` | Column metadata (name, type, filterable) |
-| GET | `/dfu/analysis` | Multi-model forecast + actuals for a DFU |
-| GET | `/forecast/shap/{model_id}/dfu` | Per-DFU signed SHAP values (on-demand computation) |
+| GET | `/sku/analysis` | Multi-model forecast + actuals for a DFU |
+| GET | `/forecast/shap/{model_id}/sku` | Per-DFU signed SHAP values (on-demand computation) |
 | GET | `/inventory/position` | Monthly inventory position for an item-location |
 | GET | `/inventory/kpis` | Point-in-time inventory KPIs |
 

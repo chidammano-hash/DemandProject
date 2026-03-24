@@ -1,0 +1,8 @@
+# Backtest sampling — stratified DFU sampling for fast iteration
+sampling:
+  default_target_n: 5000
+  default_method: proportional  # proportional, equal, sqrt
+  min_per_cluster: 10
+  max_target_n: 20000
+  seed: 42
+  representativeness_threshold: 0.05  # KS stat threshold

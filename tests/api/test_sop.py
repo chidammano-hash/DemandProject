@@ -186,7 +186,7 @@ async def test_get_approved_plan_200():
     assert "approved_plan" in data
     assert len(data["approved_plan"]) == 1
     row = data["approved_plan"][0]
-    assert row["item_no"] == "ITEM001"
+    assert row["item_id"] == "ITEM001"
     assert row["approved_qty"] == pytest.approx(1500.0)
     assert row["plan_month"] == "2025-04-01"
     assert row["locked"] is True

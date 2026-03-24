@@ -14,7 +14,7 @@ export interface ReplenishmentPolicy {
   use_eoq: boolean;
   use_safety_stock: boolean;
   active: boolean;
-  dfu_count: number;
+  sku_count: number;
 }
 
 export interface PolicyListPayload {
@@ -22,7 +22,7 @@ export interface PolicyListPayload {
 }
 
 export interface PolicyAssignmentRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   policy_id: string;
   policy_name: string;
@@ -40,14 +40,14 @@ export interface PolicyAssignmentsPayload {
 export interface PolicyComplianceByPolicy {
   policy_name: string;
   policy_type: string;
-  dfu_count: number;
+  sku_count: number;
   below_ss_pct: number | null;
   avg_ss_coverage: number | null;
   avg_dos: number | null;
 }
 
 export interface PolicyCompliancePayload {
-  total_dfus: number;
+  total_skus: number;
   assigned_count: number;
   unassigned_count: number;
   assignment_pct: number;
@@ -136,7 +136,7 @@ export async function fetchPolicyAssignments(params: {
 }
 
 export async function assignPolicy(body: {
-  item_no?: string;
+  item_id?: string;
   loc?: string;
   policy_id?: string;
   override_reason?: string;

@@ -21,7 +21,7 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Request
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel
 
 from api.core import get_conn
@@ -36,7 +36,7 @@ router = APIRouter(tags=["supply"])
 
 @router.get("/supply/open-pos")
 async def get_open_pos(
-    item_no: str | None = None,
+    item_id: str | None = None,
     loc: str | None = None,
     supplier_id: str | None = None,
     status: str = "open,partially_received",
@@ -54,9 +54,9 @@ async def get_open_pos(
     conditions = [f"po.line_status IN ({status_placeholders})"]
     params: list = list(status_list)
 
-    if item_no:
-        conditions.append("po.item_no = %s")
-        params.append(item_no)
+    if item_id:
+        conditions.append("po.item_id = %s")
+        params.append(item_id)
     if loc:
         conditions.append("po.loc = %s")
         params.append(loc)
@@ -92,7 +92,7 @@ async def get_open_pos(
                 SELECT
                     po.po_number,
                     po.po_line_number,
-                    po.item_no,
+                    po.item_id,
                     po.loc,
                     po.supplier_id,
                     s.supplier_name,
@@ -127,7 +127,7 @@ async def get_open_pos(
             {
                 "po_number": r[0],
                 "po_line_number": r[1],
-                "item_no": r[2],
+                "item_id": r[2],
                 "loc": r[3],
                 "supplier_id": r[4],
                 "supplier_name": r[5],
@@ -234,7 +234,7 @@ async def get_past_due_pos(
             cur.execute(f"""
                 SELECT
                     po.po_number,
-                    po.item_no,
+                    po.item_id,
                     po.loc,
                     s.supplier_name,
                     po.open_qty,
@@ -259,7 +259,7 @@ async def get_past_due_pos(
         "items": [
             {
                 "po_number": r[0],
-                "item_no": r[1],
+                "item_id": r[1],
                 "loc": r[2],
                 "supplier_name": r[3],
                 "open_qty": float(r[4]) if r[4] is not None else None,
@@ -379,7 +379,7 @@ async def get_planned_orders_summary():
 # ---------------------------------------------------------------------------
 
 class GeneratePlannedOrdersRequest(BaseModel):
-    item_no: Optional[str] = None
+    item_id: Optional[str] = None
     loc: Optional[str] = None
 
 
@@ -410,14 +410,14 @@ async def generate_planned_orders_async(
             config = load_config()
             run_id = job_id
             with psycopg.connect(**get_db_params()) as conn:
-                if body.item_no and body.loc:
-                    dfus = [(body.item_no, body.loc)]
+                if body.item_id and body.loc:
+                    dfus = [(body.item_id, body.loc)]
                 else:
                     dfus = get_active_dfus_for_recommendation(conn)
 
-                for item_no, loc in dfus:
+                for item_id, loc in dfus:
                     try:
-                        inputs = get_dfu_inputs(item_no, loc, run_id, conn)
+                        inputs = get_dfu_inputs(item_id, loc, run_id, conn)
                         inputs["run_id"] = run_id
                         orders = compute_net_requirements(inputs, config)
                         score, reason = compute_confidence_score(inputs, orders, config)
@@ -442,7 +442,7 @@ async def generate_planned_orders_async(
 
 @router.get("/supply/planned-orders")
 async def get_planned_orders(
-    item_no: Optional[str] = None,
+    item_id: Optional[str] = None,
     loc: Optional[str] = None,
     status: str = "proposed,approved",
     past_due_only: bool = False,
@@ -460,9 +460,9 @@ async def get_planned_orders(
     conditions = [f"po.status IN ({status_placeholders})"]
     params: list = list(status_list)
 
-    if item_no:
-        conditions.append("po.item_no = %s")
-        params.append(item_no)
+    if item_id:
+        conditions.append("po.item_id = %s")
+        params.append(item_id)
     if loc:
         conditions.append("po.loc = %s")
         params.append(loc)
@@ -484,7 +484,7 @@ async def get_planned_orders(
 
             cur.execute(f"""
                 SELECT
-                    po.id, po.item_no, po.loc, po.supplier_id, s.supplier_name,
+                    po.id, po.item_id, po.loc, po.supplier_id, s.supplier_name,
                     po.net_requirement_qty, po.recommended_qty, po.moq,
                     po.unit_cost, po.order_value, po.currency,
                     po.trigger_date, po.trigger_reason,
@@ -517,7 +517,7 @@ async def get_planned_orders(
         "items": [
             {
                 "id": r[0],
-                "item_no": r[1],
+                "item_id": r[1],
                 "loc": r[2],
                 "supplier_id": r[3],
                 "supplier_name": r[4],
@@ -661,8 +661,6 @@ async def release_planned_order(
 
 import io
 import csv as _csv
-import json as _json
-from fastapi.responses import StreamingResponse
 
 
 class _CreatePORequest(BaseModel):
@@ -702,7 +700,7 @@ class _SendErpRequest(BaseModel):
 async def list_purchase_orders(
     status: Optional[str] = None,
     supplier_id: Optional[str] = None,
-    item_no: Optional[str] = None,
+    item_id: Optional[str] = None,
     loc: Optional[str] = None,
     po_date_from: Optional[str] = None,
     po_date_to: Optional[str] = None,
@@ -715,17 +713,23 @@ async def list_purchase_orders(
 
     clauses, params = [], []
     if status:
-        clauses.append("po.status = %s"); params.append(status)
+        clauses.append("po.status = %s")
+        params.append(status)
     if supplier_id:
-        clauses.append("po.supplier_id = %s"); params.append(supplier_id)
-    if item_no:
-        clauses.append("po.item_no = %s"); params.append(item_no)
+        clauses.append("po.supplier_id = %s")
+        params.append(supplier_id)
+    if item_id:
+        clauses.append("po.item_id = %s")
+        params.append(item_id)
     if loc:
-        clauses.append("po.loc = %s"); params.append(loc)
+        clauses.append("po.loc = %s")
+        params.append(loc)
     if po_date_from:
-        clauses.append("po.po_date >= %s"); params.append(po_date_from)
+        clauses.append("po.po_date >= %s")
+        params.append(po_date_from)
     if po_date_to:
-        clauses.append("po.po_date <= %s"); params.append(po_date_to)
+        clauses.append("po.po_date <= %s")
+        params.append(po_date_to)
 
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
@@ -740,7 +744,7 @@ async def list_purchase_orders(
 
             cur.execute(f"""
                 SELECT
-                    po.po_number, po.line_number, po.item_no, po.item_description,
+                    po.po_number, po.line_number, po.item_id, po.item_description,
                     po.loc, po.supplier_id, s.supplier_name,
                     po.ordered_qty, po.unit_cost, po.total_value, po.currency,
                     po.po_date, po.requested_delivery_date, po.confirmed_delivery_date,
@@ -758,7 +762,7 @@ async def list_purchase_orders(
         return {
             "po_number": r[0],
             "line_number": r[1],
-            "item_no": r[2],
+            "item_id": r[2],
             "item_description": r[3],
             "loc": r[4],
             "supplier_id": r[5],
@@ -798,7 +802,6 @@ async def create_po_from_exception(
 
     from scripts.release_planned_orders import (
         create_po_from_exception as _create_po,
-        generate_po_number as _gen_num,
     )
 
     with get_conn() as conn:
@@ -928,7 +931,7 @@ async def export_pos_csv(body: _ExportCsvRequest, request: Request):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
-                    po.po_number, po.line_number, po.item_no, po.item_description,
+                    po.po_number, po.line_number, po.item_id, po.item_description,
                     po.loc, po.supplier_id, s.supplier_name, po.ordered_qty,
                     po.unit_of_measure, po.unit_cost, po.total_value, po.currency,
                     po.requested_delivery_date, po.po_date, po.buyer_code,

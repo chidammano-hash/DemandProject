@@ -22,10 +22,10 @@ import {
 import { Skeleton } from "@/components/Skeleton";
 
 import { useChartColors } from "@/hooks/useChartColors";
-import { fetchDfuShap, fetchShapSummary } from "@/api/queries/core";
-import type { DfuShapPayload } from "@/types/shap";
+import { fetchSkuShap, fetchShapSummary } from "@/api/queries/core";
+import type { SkuShapPayload } from "@/types/shap";
 import type { ShapSummaryPayload } from "@/types/shap";
-import type { DfuAnalysisMode } from "@/types";
+import type { SkuAnalysisMode } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Color palette for features (15 distinct colors)
@@ -43,11 +43,11 @@ function featureColor(idx: number): string {
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
-interface DfuShapPanelProps {
+interface SkuShapPanelProps {
   selectedModel: string | null;
   itemNo: string;
   loc: string;
-  dfuMode: DfuAnalysisMode;
+  skuMode: SkuAnalysisMode;
   visibleMonths: string[];
 }
 
@@ -111,22 +111,22 @@ function FallbackShapChart({
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-export function DfuShapPanel({
+export function SkuShapPanel({
   selectedModel,
   itemNo,
   loc,
-  dfuMode,
+  skuMode,
   visibleMonths,
-}: DfuShapPanelProps) {
+}: SkuShapPanelProps) {
   const { chartColors } = useChartColors();
 
-  const [shapData, setShapData] = useState<DfuShapPayload | null>(null);
+  const [shapData, setShapData] = useState<SkuShapPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isFallback, setIsFallback] = useState(false);
 
   useEffect(() => {
-    if (!selectedModel || dfuMode !== "item_location") {
+    if (!selectedModel || skuMode !== "item_location") {
       setShapData(null);
       setError(null);
       setIsFallback(false);
@@ -145,7 +145,7 @@ export function DfuShapPanel({
     // Extract raw model_id from production forecast label "Production Forecast (model_id)"
     const modelIdForApi =
       selectedModel.match(/^Production Forecast \((.+)\)$/)?.[1] ?? selectedModel;
-    fetchDfuShap(modelIdForApi, itemNo.trim(), loc.trim())
+    fetchSkuShap(modelIdForApi, itemNo.trim(), loc.trim())
       .then((data) => {
         if (!cancelled) {
           setShapData(data);
@@ -164,7 +164,7 @@ export function DfuShapPanel({
         }
       });
     return () => { cancelled = true; };
-  }, [selectedModel, itemNo, loc, dfuMode]);
+  }, [selectedModel, itemNo, loc, skuMode]);
 
   // -- No model selected --
   if (!selectedModel) {
@@ -178,7 +178,7 @@ export function DfuShapPanel({
   }
 
   // -- Wrong mode --
-  if (dfuMode !== "item_location") {
+  if (skuMode !== "item_location") {
     return (
       <Card className="min-w-0 border-muted shadow-none">
         <CardContent className="flex h-[80px] items-center justify-center text-sm text-muted-foreground">
@@ -332,7 +332,7 @@ function ShapStackedChart({
   visibleMonths,
   chartColors,
 }: {
-  shapData: DfuShapPayload;
+  shapData: SkuShapPayload;
   visibleMonths: string[];
   chartColors: ReturnType<typeof useChartColors>["chartColors"];
 }) {

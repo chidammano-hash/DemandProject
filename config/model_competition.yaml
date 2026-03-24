@@ -2,7 +2,7 @@ competition:
   name: default
   metric: accuracy_pct
   lag: execution
-  min_dfu_rows: 3
+  min_sku_rows: 3
   champion_model_id: champion
   fallback_model_id: lgbm_cluster
   models:

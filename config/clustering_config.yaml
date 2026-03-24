@@ -2,7 +2,7 @@ clustering:
   min_months_history: 12
   time_window_months: 36   # 3 years for better seasonality detection
   k_range: [9, 18]          # 5% min = max 20 clusters; start at 5 for business meaningfulness
-  min_cluster_size_pct: 2.0  # Each cluster must be >= 2% of DFUs (~5,490 with 274K DFUs)
+  min_cluster_size_pct: 2.0  # Each cluster must be >= 2% of SKUs (~5,490 with 274K SKUs)
   feature_scaling: "standard"
   use_pca: false
   pca_components: null

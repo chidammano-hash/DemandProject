@@ -12,7 +12,7 @@ def _planned_order_row(order_id=1001):
     today = datetime.date.today()
     return (
         order_id,                               # id
-        "100320",                               # item_no
+        "100320",                               # item_id
         "1401-BULK",                            # loc
         "VENDOR-0042",                          # supplier_id
         "Acme Supply Co.",                      # supplier_name
@@ -114,7 +114,7 @@ async def test_get_planned_orders_success():
     assert data["total"] == 1
     assert len(data["items"]) == 1
     item = data["items"][0]
-    assert item["item_no"] == "100320"
+    assert item["item_id"] == "100320"
     assert item["recommended_qty"] == 300.0
     assert item["status"] == "proposed"
 

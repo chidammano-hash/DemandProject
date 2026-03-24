@@ -1,9 +1,9 @@
 -- F2.3 — Consensus Forecasting & Planner Overrides
--- Tables: fact_forecast_overrides, fact_consensus_plan, fact_override_audit_log
+-- Tables: fact_forecast_overrides, fact_consensus_plan
 
 CREATE TABLE IF NOT EXISTS fact_forecast_overrides (
     override_id                 BIGSERIAL       PRIMARY KEY,
-    item_no                     VARCHAR(50)     NOT NULL,
+    item_id                     VARCHAR(50)     NOT NULL,
     loc                         VARCHAR(50)     NOT NULL,
     override_month              DATE            NOT NULL,
     override_type               VARCHAR(20)     NOT NULL,
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS fact_forecast_overrides (
 );
 
 CREATE INDEX IF NOT EXISTS idx_override_item_loc_month
-    ON fact_forecast_overrides (item_no, loc, override_month);
+    ON fact_forecast_overrides (item_id, loc, override_month);
 
 CREATE INDEX IF NOT EXISTS idx_override_status
     ON fact_forecast_overrides (status, override_month);
@@ -53,7 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_override_valid_dates
 
 CREATE TABLE IF NOT EXISTS fact_consensus_plan (
     id                  BIGSERIAL       PRIMARY KEY,
-    item_no             VARCHAR(50)     NOT NULL,
+    item_id             VARCHAR(50)     NOT NULL,
     loc                 VARCHAR(50)     NOT NULL,
     plan_month          DATE            NOT NULL,
     plan_version        VARCHAR(50)     NOT NULL,
@@ -73,11 +73,11 @@ CREATE TABLE IF NOT EXISTS fact_consensus_plan (
     approver            VARCHAR(100),
     uplift_pct          NUMERIC(8,4),
     generated_at        TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_consensus_plan UNIQUE (item_no, loc, plan_month, plan_version)
+    CONSTRAINT uq_consensus_plan UNIQUE (item_id, loc, plan_month, plan_version)
 );
 
 CREATE INDEX IF NOT EXISTS idx_consensus_plan_item_loc_month
-    ON fact_consensus_plan (item_no, loc, plan_month);
+    ON fact_consensus_plan (item_id, loc, plan_month);
 
 CREATE INDEX IF NOT EXISTS idx_consensus_plan_version
     ON fact_consensus_plan (plan_version, plan_month);
@@ -85,23 +85,3 @@ CREATE INDEX IF NOT EXISTS idx_consensus_plan_version
 CREATE INDEX IF NOT EXISTS idx_consensus_plan_overridden
     ON fact_consensus_plan (plan_version)
     WHERE override_applied = TRUE;
-
-
-CREATE TABLE IF NOT EXISTS fact_override_audit_log (
-    log_id          BIGSERIAL       PRIMARY KEY,
-    override_id     BIGINT          NOT NULL REFERENCES fact_forecast_overrides(override_id),
-    action          VARCHAR(30)     NOT NULL,
-    performed_by    VARCHAR(100)    NOT NULL,
-    performed_at    TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    old_status      VARCHAR(20),
-    new_status      VARCHAR(20),
-    old_qty         NUMERIC(12,2),
-    new_qty         NUMERIC(12,2),
-    old_multiplier  NUMERIC(6,4),
-    new_multiplier  NUMERIC(6,4),
-    reason          TEXT,
-    system_note     TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_override_audit_override_id
-    ON fact_override_audit_log (override_id, performed_at DESC);

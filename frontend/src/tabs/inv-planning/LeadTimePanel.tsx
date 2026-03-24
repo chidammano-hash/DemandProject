@@ -113,8 +113,8 @@ export function LeadTimePanel() {
             </thead>
             <tbody>
               {volatile.rows.map((r: LtProfileRow, i: number) => (
-                <tr key={`${r.item_no}-${r.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
-                  <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                <tr key={`${r.item_id}-${r.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
+                  <td className="py-1 pr-2 font-mono">{r.item_id}</td>
                   <td className="py-1 pr-2">{r.loc}</td>
                   <td className="py-1 pr-2 text-right">{r.lt_mean_days != null ? formatFixed(r.lt_mean_days) : "—"}</td>
                   <td className="py-1 pr-2 text-right">{r.lt_std_days != null ? formatFixed(r.lt_std_days) : "—"}</td>

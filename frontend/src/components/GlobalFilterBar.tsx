@@ -3,7 +3,7 @@ import { ChevronDown, X, RotateCcw, Search, CalendarClock } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
-import { fetchDistinctValues, fetchPlanningDate, queryKeys, STALE, filterMetaKeys, fetchDfuCount } from "@/api/queries";
+import { fetchDistinctValues, fetchPlanningDate, queryKeys, STALE, filterMetaKeys, fetchSkuCount } from "@/api/queries";
 import type { CascadeFilterParams } from "@/api/queries";
 import type { GlobalFilters } from "@/types/theme";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -22,11 +22,11 @@ interface FilterConfig {
 const FILTERS: FilterConfig[] = [
   { key: "brand", label: "Brand", domain: "item", column: "brand_name" },
   { key: "category", label: "Category", domain: "item", column: "class_" },
-  { key: "item", label: "Item", domain: "item", column: "item_no", searchable: true },
+  { key: "item", label: "Item", domain: "item", column: "item_id", searchable: true },
   { key: "location", label: "Location", domain: "location", column: "location_id", searchable: true },
   { key: "market", label: "Market", domain: "location", column: "state_id" },
   { key: "channel", label: "Channel", domain: "customer", column: "rpt_channel_desc" },
-  { key: "cluster", label: "Cluster", domain: "dfu", column: "cluster_assignment" },
+  { key: "cluster", label: "Cluster", domain: "sku", column: "cluster_assignment" },
 ];
 
 /** Build cascade params from all filters EXCEPT the one being queried. */
@@ -309,9 +309,9 @@ export function GlobalFilterBar() {
     staleTime: STALE.TEN_MIN,
   });
 
-  const { data: dfuCountData } = useQuery({
-    queryKey: filterMetaKeys.dfuCount(filters),
-    queryFn: () => fetchDfuCount(filters),
+  const { data: skuCountData } = useQuery({
+    queryKey: filterMetaKeys.skuCount(filters),
+    queryFn: () => fetchSkuCount(filters),
     staleTime: STALE.FIVE_MIN,
     enabled: hasActiveFilters,
   });
@@ -354,9 +354,9 @@ export function GlobalFilterBar() {
         onChange={(v) => setFilters({ timeGrain: v })}
       />
 
-      {hasActiveFilters && dfuCountData != null && (
+      {hasActiveFilters && skuCountData != null && (
         <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
-          {dfuCountData.count.toLocaleString()} DFUs
+          {skuCountData.count.toLocaleString()} SKUs
         </span>
       )}
 

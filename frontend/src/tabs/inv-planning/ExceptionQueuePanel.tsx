@@ -113,8 +113,8 @@ export function ExceptionQueuePanel() {
   );
 
   const { data: rootCauseData, isLoading: rootCauseLoading } = useQuery({
-    queryKey: insightKeys.rootCause(selectedExcRow?.item_no ?? "", selectedExcRow?.loc ?? ""),
-    queryFn: () => fetchRootCause(selectedExcRow!.item_no, selectedExcRow!.loc),
+    queryKey: insightKeys.rootCause(selectedExcRow?.item_id ?? "", selectedExcRow?.loc ?? ""),
+    queryFn: () => fetchRootCause(selectedExcRow!.item_id, selectedExcRow!.loc),
     enabled: !!selectedExcRow,
     staleTime: STALE.ONE_MIN,
   });
@@ -321,7 +321,7 @@ export function ExceptionQueuePanel() {
                       {row.severity}
                     </span>
                   </td>
-                  <td className="px-2 py-1.5 font-mono">{row.item_no}</td>
+                  <td className="px-2 py-1.5 font-mono">{row.item_id}</td>
                   <td className="px-2 py-1.5 font-mono">{row.loc}</td>
                   <td
                     className="px-2 py-1.5"

@@ -20,7 +20,7 @@ The production forecast pipeline persists trained model weights during backtesti
 
 ## How It Works
 
-1. During backtest, model weights are saved as `.pkl` files to `data/models/<model_id>/cluster_<N>.pkl` and registered in `fact_model_registry`
+1. During backtest, model weights are saved as `.pkl` files to `data/models/<model_id>/cluster_<N>.pkl` and saved to `data/models/<model_id>/` directory
 2. The inference script loads the champion assignment for each DFU from the forecast table
 3. For each DFU, it loads the appropriate cluster model from the registry
 4. It builds a feature matrix for future months using the last known actuals
@@ -36,7 +36,7 @@ The production forecast pipeline persists trained model weights during backtesti
 | Column | Type | Description |
 |--------|------|-------------|
 | `plan_version` | VARCHAR(30) | Version label (e.g., "2026-03") |
-| `item_no` | VARCHAR(50) | Item identifier |
+| `item_id` | VARCHAR(50) | Item identifier |
 | `loc` | VARCHAR(50) | Location code |
 | `forecast_month` | DATE | Future month being forecast |
 | `forecast_qty` | NUMERIC(12,2) | Point forecast |
@@ -49,9 +49,7 @@ The production forecast pipeline persists trained model weights during backtesti
 | `lag_source` | VARCHAR(20) | "actual" (T+1) or "predicted" (T+2+) |
 | `run_id` | UUID | Ties rows to a single inference run |
 
-**Grain:** `(plan_version, item_no, loc, forecast_month)`
-
-### `fact_model_registry`
+**Grain:** `(plan_version, item_id, loc, forecast_month)`
 
 Tracks persisted model weights so the inference pipeline can reload them.
 
@@ -77,7 +75,7 @@ Tracks persisted model weights so the inference pipeline can reload them.
 |--------|-------------|
 | `make forecast-prod-schema` | Create tables (one-time) |
 | `make forecast-generate` | Run full inference for all DFUs |
-| `make forecast-generate-dfu ITEM=100320 LOC=1401-BULK` | Single DFU inference |
+| `make forecast-generate-sku ITEM=100320 LOC=1401-BULK` | Single DFU inference |
 | `make forecast-generate-dry` | Preview without writing |
 | `make forecast-prod-all` | Schema + generate |
 

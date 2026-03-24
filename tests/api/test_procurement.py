@@ -17,7 +17,7 @@ from tests.api.conftest import make_pool as _make_pool
 def _po_row(
     po_number="DS-2026-04-001",
     line_number=1,
-    item_no="100320",
+    item_id="100320",
     item_description="Bulk Cleaning Solution",
     loc="1401-BULK",
     supplier_id="SUP-4821",
@@ -37,7 +37,7 @@ def _po_row(
     erp_po_number=None,
 ):
     return (
-        po_number, line_number, item_no, item_description, loc,
+        po_number, line_number, item_id, item_description, loc,
         supplier_id, supplier_name, ordered_qty, unit_cost, total_value, currency,
         po_date or datetime.date(2026, 4, 15),
         requested_delivery_date or datetime.date(2026, 4, 28),
@@ -72,7 +72,7 @@ async def test_get_purchase_orders_list():
     assert len(data["orders"]) == 2
     order = data["orders"][0]
     assert order["po_number"] == "DS-2026-04-001"
-    assert order["item_no"] == "100320"
+    assert order["item_id"] == "100320"
     assert order["status"] == "proposed"
 
 

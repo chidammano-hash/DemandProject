@@ -34,7 +34,7 @@ beforeEach(() => {
     rows: [
       {
         sim_run_id: "sim-001",
-        item_no: "100320",
+        item_id: "100320",
         loc: "1401-BULK",
         simulation_date: "2026-03-01T00:00:00Z",
         recommended_ss: 250,

@@ -53,7 +53,7 @@ export function ExceptionCard({
 
       {/* Row 2: Item @ Loc */}
       <p className="text-xs font-medium truncate">
-        {exception.item_no} @ {exception.loc}
+        {exception.item_id} @ {exception.loc}
       </p>
 
       {/* Row 3: Headline (truncated) */}

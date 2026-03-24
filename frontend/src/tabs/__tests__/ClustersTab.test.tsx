@@ -5,7 +5,7 @@ import { ScenarioNotificationProvider } from "@/context/ScenarioNotificationCont
 
 vi.mock("@/api/queries", () => ({
   queryKeys: {
-    dfuClusters: (s: string) => ["dfu-clusters", s],
+    skuClusters: (s: string) => ["sku-clusters", s],
     clusterProfiles: () => ["cluster-profiles"],
     clusteringDefaults: () => ["clustering-defaults"],
     clusteringScenario: (id: string) => ["clustering-scenario", id],
@@ -14,8 +14,8 @@ vi.mock("@/api/queries", () => ({
     scenarioHistory: () => ["scenario-history"],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
-  fetchDfuClusters: vi.fn().mockResolvedValue({
-    domain: "dfu",
+  fetchSkuClusters: vi.fn().mockResolvedValue({
+    domain: "sku",
     total_assigned: 10,
     clusters: [
       { cluster_id: "1", label: "high_volume_steady", count: 5, pct_of_total: 50, avg_demand: 1000, cv_demand: 0.3 },
@@ -32,7 +32,7 @@ vi.mock("@/api/queries", () => ({
   }),
   fetchScenarioEstimate: vi.fn().mockResolvedValue({
     estimated_seconds: 45,
-    dfu_count: 1200,
+    sku_count: 1200,
     k_range: 10,
   }),
   fetchScenarioStatus: vi.fn().mockResolvedValue({
@@ -85,7 +85,7 @@ function renderTab() {
   return render(
     <TestQueryWrapper>
       <ScenarioNotificationProvider>
-        <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
+        <ClustersTab domain="sku" onDomainChange={vi.fn()} />
       </ScenarioNotificationProvider>
     </TestQueryWrapper>
   );
@@ -130,7 +130,7 @@ describe("ClustersTab", () => {
           optimal_k: 5,
           silhouette_score: 0.45,
           inertia: 20000,
-          total_dfus: 500,
+          total_skus: 500,
           profiles: [
             { label: "high_volume_steady", count: 200, pct_of_total: 40, mean_demand: 1000, cv_demand: 0.2, seasonality_strength: 0.1, trend_slope: 0.02, growth_rate: 0.05, zero_demand_pct: 0.0 },
           ],

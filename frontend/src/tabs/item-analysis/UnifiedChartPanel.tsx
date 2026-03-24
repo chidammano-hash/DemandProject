@@ -11,14 +11,15 @@ import {
 } from "recharts";
 
 import { useChartColors } from "@/hooks/useChartColors";
-import { DFU_SALES_COLORS, dfuModelColor } from "@/constants/colors";
+import { SKU_SALES_COLORS, skuModelColor } from "@/constants/colors";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 import type {
-  DfuAnalysisPayload,
+  SkuAnalysisPayload,
   InventoryTrendPoint,
   InventoryTrendParams,
 } from "@/types";
 import type { ProductionForecastPayload } from "@/api/queries/production-forecast";
+import type { DQCorrection } from "@/api/queries/platform";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -63,12 +64,25 @@ const DEFAULT_HIDDEN_SUPPLY = new Set(
   SUPPLY_SERIES_DEFS.filter((s) => !s.defaultVisible).map((s) => s.key),
 );
 
+const DQ_ORIG_COLOR = "#DC2626"; // red for original (pre-DQ) values
+
+// Map DB column_name + table → chart dataKey for the original series
+const DQ_COLUMN_MAP: Record<string, { dataKey: string; origKey: string; label: string }> = {
+  "fact_sales_monthly:qty": { dataKey: "sales_qty", origKey: "sales_qty_orig", label: "Sale Qty (original)" },
+  "fact_sales_monthly:qty_shipped": { dataKey: "qty_shipped", origKey: "qty_shipped_orig", label: "Shipped (original)" },
+  "fact_inventory_snapshot:qty_on_hand": { dataKey: "total_on_hand", origKey: "total_on_hand_orig", label: "On Hand (original)" },
+};
+
 const TOOLTIP_LABELS: Record<string, string> = {
   tothist_dmd: "Sale Qty (external)",
+  sales_qty: "Sale Qty",
+  sales_qty_orig: "Sale Qty (original)",
   qty_shipped: "Qty Shipped",
+  qty_shipped_orig: "Shipped (original)",
   qty_ordered: "Qty Ordered",
   production_forecast: "Production Forecast",
   total_on_hand: "On Hand",
+  total_on_hand_orig: "On Hand (original)",
   total_on_order: "On Order",
   total_position: "Total Position",
   inv_monthly_sales: "Inv Monthly Sales",
@@ -83,43 +97,48 @@ const TOOLTIP_LABELS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 export interface UnifiedChartPanelProps {
   // Demand data
-  dfuData: DfuAnalysisPayload;
-  dfuFilteredSeries: Record<string, unknown>[];
-  dfuMonths: string[];
-  dfuTimeStart: string;
-  setDfuTimeStart: (v: string) => void;
-  dfuTimeEnd: string;
-  setDfuTimeEnd: (v: string) => void;
-  dfuDefaultStart: string;
-  dfuVisibleSeries: Set<string>;
-  setDfuVisibleSeries: (updater: (prev: Set<string>) => Set<string>) => void;
+  skuData: SkuAnalysisPayload;
+  skuFilteredSeries: Record<string, unknown>[];
+  skuMonths: string[];
+  skuTimeStart: string;
+  setSkuTimeStart: (v: string) => void;
+  skuTimeEnd: string;
+  setSkuTimeEnd: (v: string) => void;
+  skuDefaultStart: string;
+  skuVisibleSeries: Set<string>;
+  setSkuVisibleSeries: (updater: (prev: Set<string>) => Set<string>) => void;
   prodForecastData?: ProductionForecastPayload | null;
   selectedModel?: string | null;
   onModelSelect?: (model: string | null) => void;
   // Supply data (optional)
   trendData?: InventoryTrendPoint[];
   trendParams?: InventoryTrendParams;
+  // DQ corrections overlay (optional)
+  corrections?: DQCorrection[];
+  showCorrections?: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 export function UnifiedChartPanel({
-  dfuData,
-  dfuFilteredSeries,
-  dfuMonths,
-  dfuTimeStart,
-  setDfuTimeStart,
-  dfuTimeEnd,
-  setDfuTimeEnd,
-  dfuDefaultStart,
-  dfuVisibleSeries,
-  setDfuVisibleSeries,
+  skuData,
+  skuFilteredSeries,
+  skuMonths,
+  skuTimeStart,
+  setSkuTimeStart,
+  skuTimeEnd,
+  setSkuTimeEnd,
+  skuDefaultStart,
+  skuVisibleSeries,
+  setSkuVisibleSeries,
   prodForecastData,
   selectedModel = null,
   onModelSelect,
   trendData = [],
   trendParams,
+  corrections = [],
+  showCorrections = false,
 }: UnifiedChartPanelProps) {
   const { chartColors } = useChartColors();
   const [hiddenSupply, setHiddenSupply] = useState<Set<string>>(DEFAULT_HIDDEN_SUPPLY);
@@ -133,37 +152,77 @@ export function UnifiedChartPanel({
   const ropUnits = trendParams?.reorder_point_units ?? null;
   const hasSs = ss != null;
 
-  // Merge demand + supply data on month key
+  // Build corrections overlay map: month → { origKey: old_value }
+  const correctionOverlay = useMemo(() => {
+    if (!showCorrections || corrections.length === 0) return null;
+    const map = new Map<string, Record<string, number>>();
+    for (const c of corrections) {
+      if (c.old_value == null || c.period == null) continue;
+      // Skip corrections where old == new (no actual change)
+      if (c.new_value != null && Math.abs(c.old_value - c.new_value) < 0.01) continue;
+      const mapKey = `${c.table_name}:${c.column_name}`;
+      const def = DQ_COLUMN_MAP[mapKey];
+      if (!def) continue;
+      const month = c.period.slice(0, 7);
+      const existing = map.get(month) ?? {};
+      existing[def.origKey] = c.old_value;
+      map.set(month, existing);
+    }
+    return map;
+  }, [corrections, showCorrections]);
+
+  // Which correction series are active?
+  const activeCorrectionSeries = useMemo(() => {
+    if (!correctionOverlay) return [];
+    const keys = new Set<string>();
+    for (const vals of correctionOverlay.values()) {
+      for (const k of Object.keys(vals)) keys.add(k);
+    }
+    return Array.from(keys);
+  }, [correctionOverlay]);
+
+  // Merge demand + supply + corrections data on month key
   const mergedData = useMemo(() => {
-    if (!hasSupplyData) return dfuFilteredSeries;
-    const supplyMap = new Map<string, Record<string, number | null>>();
-    for (const pt of trendData) {
-      const key = String(pt.month).slice(0, 7);
-      supplyMap.set(key, {
-        total_on_hand: pt.total_on_hand,
-        total_on_order: pt.total_on_order,
-        total_position: pt.total_on_hand + pt.total_on_order,
-        inv_monthly_sales: pt.monthly_sales,
-        dos: pt.dos,
-        avg_lead_time: pt.avg_lead_time,
-        ...(pt.safety_stock != null
-          ? {
-              safety_stock: pt.safety_stock,
-              cycle_stock: Math.max(0, pt.total_on_hand - pt.safety_stock),
-            }
-          : {}),
+    let data = skuFilteredSeries;
+    if (hasSupplyData) {
+      const supplyMap = new Map<string, Record<string, number | null>>();
+      for (const pt of trendData) {
+        const key = String(pt.month).slice(0, 7);
+        supplyMap.set(key, {
+          total_on_hand: pt.total_on_hand,
+          total_on_order: pt.total_on_order,
+          total_position: pt.total_on_hand + pt.total_on_order,
+          inv_monthly_sales: pt.monthly_sales,
+          dos: pt.dos,
+          avg_lead_time: pt.avg_lead_time,
+          ...(pt.safety_stock != null
+            ? {
+                safety_stock: pt.safety_stock,
+                cycle_stock: Math.max(0, pt.total_on_hand - pt.safety_stock),
+              }
+            : {}),
+        });
+      }
+      data = data.map((pt) => {
+        const key = String(pt.month).slice(0, 7);
+        const supply = supplyMap.get(key);
+        return supply ? { ...pt, ...supply } : pt;
       });
     }
-    return dfuFilteredSeries.map((pt) => {
-      const key = String(pt.month).slice(0, 7);
-      const supply = supplyMap.get(key);
-      return supply ? { ...pt, ...supply } : pt;
-    });
-  }, [dfuFilteredSeries, trendData, hasSupplyData]);
+    // Overlay DQ corrections original values
+    if (correctionOverlay && correctionOverlay.size > 0) {
+      data = data.map((pt) => {
+        const key = String(pt.month).slice(0, 7);
+        const orig = correctionOverlay.get(key);
+        return orig ? { ...pt, ...orig } : pt;
+      });
+    }
+    return data;
+  }, [skuFilteredSeries, trendData, hasSupplyData, correctionOverlay]);
 
   // Demand toggle helper
   function toggleDemandSeries(key: string, checked: boolean) {
-    setDfuVisibleSeries((prev) => {
+    setSkuVisibleSeries((prev) => {
       const next = new Set(prev);
       if (checked) next.add(key);
       else next.delete(key);
@@ -198,10 +257,45 @@ export function UnifiedChartPanel({
 
   // Sales measures
   const salesMeasures = [
-    { key: "tothist_dmd", label: "Sale Qty", color: DFU_SALES_COLORS.tothist_dmd },
-    { key: "qty_shipped", label: "Shipped", color: DFU_SALES_COLORS.qty_shipped },
-    { key: "qty_ordered", label: "Ordered", color: DFU_SALES_COLORS.qty_ordered },
+    { key: "tothist_dmd", label: "Sale Qty (ext)", color: SKU_SALES_COLORS.tothist_dmd },
+    { key: "sales_qty", label: "Sale Qty", color: SKU_SALES_COLORS.sales_qty },
+    { key: "qty_shipped", label: "Shipped", color: SKU_SALES_COLORS.qty_shipped },
+    { key: "qty_ordered", label: "Ordered", color: SKU_SALES_COLORS.qty_ordered },
   ];
+
+  // All demand keys for select/deselect all
+  const allDemandKeys = useMemo(() => {
+    const keys = salesMeasures.map((s) => s.key);
+    keys.push(...skuData.models.map((m) => `forecast_${m}`));
+    if (hasProdForecast) keys.push("production_forecast");
+    return keys;
+  }, [skuData.models, hasProdForecast]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const allDemandOn = allDemandKeys.every((k) => skuVisibleSeries.has(k));
+
+  const toggleAllDemand = useCallback(() => {
+    setSkuVisibleSeries((prev) => {
+      const next = new Set(prev);
+      if (allDemandOn) {
+        for (const k of allDemandKeys) next.delete(k);
+      } else {
+        for (const k of allDemandKeys) next.add(k);
+      }
+      return next;
+    });
+  }, [allDemandKeys, allDemandOn, setSkuVisibleSeries]);
+
+  // Supply select/deselect all
+  const allSupplyOn = availableSupply.every((s) => !hiddenSupply.has(s.key));
+
+  const toggleAllSupply = useCallback(() => {
+    setHiddenSupply(() => {
+      if (allSupplyOn) {
+        return new Set(availableSupply.map((s) => s.key));
+      }
+      return new Set();
+    });
+  }, [allSupplyOn, availableSupply]);
 
   return (
     <div className="space-y-3">
@@ -209,22 +303,26 @@ export function UnifiedChartPanel({
       <div className="space-y-1.5">
         {/* Demand pills */}
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="w-16 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-            Demand
-          </span>
+          <button
+            onClick={toggleAllDemand}
+            className="w-16 text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors text-left"
+            title={allDemandOn ? "Deselect all demand series" : "Select all demand series"}
+          >
+            {allDemandOn ? "Demand \u2212" : "Demand +"}
+          </button>
           {salesMeasures.map(({ key, label, color }) => (
             <TogglePill
               key={key}
               label={label}
               color={color}
-              active={dfuVisibleSeries.has(key)}
-              onClick={() => toggleDemandSeries(key, !dfuVisibleSeries.has(key))}
+              active={skuVisibleSeries.has(key)}
+              onClick={() => toggleDemandSeries(key, !skuVisibleSeries.has(key))}
             />
           ))}
-          {dfuData.models.map((model, idx) => {
+          {skuData.models.map((model, idx) => {
             const key = `forecast_${model}`;
-            const color = dfuModelColor(model, idx);
-            const isVisible = dfuVisibleSeries.has(key);
+            const color = skuModelColor(model, idx);
+            const isVisible = skuVisibleSeries.has(key);
             const isShapSelected = selectedModel === model;
             return (
               <span key={key} className="inline-flex items-center gap-0.5">
@@ -256,21 +354,50 @@ export function UnifiedChartPanel({
             <TogglePill
               label={prodForecastLabel}
               color={PROD_FORECAST_COLOR}
-              active={dfuVisibleSeries.has("production_forecast")}
+              active={skuVisibleSeries.has("production_forecast")}
               onClick={() =>
-                toggleDemandSeries("production_forecast", !dfuVisibleSeries.has("production_forecast"))
+                toggleDemandSeries("production_forecast", !skuVisibleSeries.has("production_forecast"))
               }
               dashed
             />
           )}
         </div>
 
+        {/* DQ corrections indicator */}
+        {showCorrections && activeCorrectionSeries.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="w-16 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              DQ Orig
+            </span>
+            {activeCorrectionSeries.map((origKey) => {
+              const label = TOOLTIP_LABELS[origKey] ?? origKey;
+              return (
+                <TogglePill
+                  key={origKey}
+                  label={label}
+                  color={DQ_ORIG_COLOR}
+                  active
+                  onClick={() => {}}
+                  dashed
+                />
+              );
+            })}
+            <span className="text-[10px] text-muted-foreground">
+              ({corrections.length} corrections)
+            </span>
+          </div>
+        )}
+
         {/* Supply pills */}
         {hasSupplyData && (
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="w-16 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-              Supply
-            </span>
+            <button
+              onClick={toggleAllSupply}
+              className="w-16 text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors text-left"
+              title={allSupplyOn ? "Deselect all supply series" : "Select all supply series"}
+            >
+              {allSupplyOn ? "Supply \u2212" : "Supply +"}
+            </button>
             {availableSupply.map((s) => (
               <TogglePill
                 key={s.key}
@@ -291,10 +418,10 @@ export function UnifiedChartPanel({
           <span className="font-semibold uppercase tracking-wider text-muted-foreground">From</span>
           <select
             className="h-7 w-28 rounded border border-input bg-background px-2 text-xs"
-            value={dfuTimeStart || dfuMonths[0] || ""}
-            onChange={(e) => setDfuTimeStart(e.target.value)}
+            value={skuTimeStart || skuMonths[0] || ""}
+            onChange={(e) => setSkuTimeStart(e.target.value)}
           >
-            {dfuMonths.map((m) => (
+            {skuMonths.map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>
@@ -305,10 +432,10 @@ export function UnifiedChartPanel({
           <span className="font-semibold uppercase tracking-wider text-muted-foreground">To</span>
           <select
             className="h-7 w-28 rounded border border-input bg-background px-2 text-xs"
-            value={dfuTimeEnd || dfuMonths[dfuMonths.length - 1] || ""}
-            onChange={(e) => setDfuTimeEnd(e.target.value)}
+            value={skuTimeEnd || skuMonths[skuMonths.length - 1] || ""}
+            onChange={(e) => setSkuTimeEnd(e.target.value)}
           >
-            {dfuMonths.map((m) => (
+            {skuMonths.map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>
@@ -318,8 +445,8 @@ export function UnifiedChartPanel({
         <button
           className="h-7 rounded border border-input bg-background px-2.5 text-xs text-muted-foreground hover:text-foreground"
           onClick={() => {
-            setDfuTimeStart("");
-            setDfuTimeEnd("");
+            setSkuTimeStart("");
+            setSkuTimeEnd("");
           }}
         >
           All
@@ -327,8 +454,8 @@ export function UnifiedChartPanel({
         <button
           className="h-7 rounded border border-input bg-background px-2.5 text-xs text-muted-foreground hover:text-foreground"
           onClick={() => {
-            setDfuTimeStart(dfuDefaultStart);
-            setDfuTimeEnd("");
+            setSkuTimeStart(skuDefaultStart);
+            setSkuTimeEnd("");
           }}
         >
           Default
@@ -338,11 +465,11 @@ export function UnifiedChartPanel({
             SHAP: {selectedModel}
           </span>
         )}
-        {dfuData.scope_count != null && (
+        {skuData.scope_count != null && (
           <span className="ml-auto rounded bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-            {dfuData.mode === "item_at_all_locations"
-              ? `${dfuData.scope_count} locations`
-              : `${dfuData.scope_count} items`}
+            {skuData.mode === "item_at_all_locations"
+              ? `${skuData.scope_count} locations`
+              : `${skuData.scope_count} items`}
           </span>
         )}
       </div>
@@ -390,44 +517,56 @@ export function UnifiedChartPanel({
               />
 
               {/* ---- Demand lines ---- */}
-              {dfuVisibleSeries.has("tothist_dmd") && (
+              {skuVisibleSeries.has("tothist_dmd") && (
                 <Line
                   type="monotone"
                   dataKey="tothist_dmd"
                   yAxisId="left"
                   name="tothist_dmd"
-                  stroke={DFU_SALES_COLORS.tothist_dmd}
+                  stroke={SKU_SALES_COLORS.tothist_dmd}
                   strokeWidth={2.5}
                   dot={false}
                   activeDot={{ r: 4 }}
                 />
               )}
-              {dfuVisibleSeries.has("qty_shipped") && (
+              {skuVisibleSeries.has("sales_qty") && (
+                <Line
+                  type="monotone"
+                  dataKey="sales_qty"
+                  yAxisId="left"
+                  name="sales_qty"
+                  stroke={SKU_SALES_COLORS.sales_qty}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              )}
+              {skuVisibleSeries.has("qty_shipped") && (
                 <Line
                   type="monotone"
                   dataKey="qty_shipped"
                   yAxisId="left"
                   name="qty_shipped"
-                  stroke={DFU_SALES_COLORS.qty_shipped}
+                  stroke={SKU_SALES_COLORS.qty_shipped}
                   strokeWidth={2}
                   dot={false}
                   activeDot={{ r: 4 }}
                 />
               )}
-              {dfuVisibleSeries.has("qty_ordered") && (
+              {skuVisibleSeries.has("qty_ordered") && (
                 <Line
                   type="monotone"
                   dataKey="qty_ordered"
                   yAxisId="left"
                   name="qty_ordered"
-                  stroke={DFU_SALES_COLORS.qty_ordered}
+                  stroke={SKU_SALES_COLORS.qty_ordered}
                   strokeWidth={2}
                   dot={false}
                   activeDot={{ r: 4 }}
                 />
               )}
-              {dfuData.models
-                .filter((m) => dfuVisibleSeries.has(`forecast_${m}`))
+              {skuData.models
+                .filter((m) => skuVisibleSeries.has(`forecast_${m}`))
                 .map((model, idx) => {
                   const isSelected = selectedModel === model;
                   const isOtherSelected = selectedModel !== null && selectedModel !== model;
@@ -438,7 +577,7 @@ export function UnifiedChartPanel({
                       dataKey={`forecast_${model}`}
                       yAxisId="left"
                       name={model}
-                      stroke={dfuModelColor(model, idx)}
+                      stroke={skuModelColor(model, idx)}
                       strokeWidth={isSelected ? 3 : model === "champion" ? 2.5 : 1.5}
                       strokeDasharray={model === "champion" ? undefined : "5 3"}
                       dot={false}
@@ -447,7 +586,7 @@ export function UnifiedChartPanel({
                     />
                   );
                 })}
-              {hasProdForecast && dfuVisibleSeries.has("production_forecast") && (
+              {hasProdForecast && skuVisibleSeries.has("production_forecast") && (
                 <Line
                   type="monotone"
                   dataKey="production_forecast"
@@ -480,6 +619,24 @@ export function UnifiedChartPanel({
                       activeDot={{ r: 3 }}
                     />
                   ))}
+
+              {/* ---- DQ correction original-value lines ---- */}
+              {showCorrections &&
+                activeCorrectionSeries.map((origKey) => (
+                  <Line
+                    key={origKey}
+                    type="monotone"
+                    dataKey={origKey}
+                    yAxisId="left"
+                    name={origKey}
+                    stroke={DQ_ORIG_COLOR}
+                    strokeWidth={2}
+                    strokeDasharray="4 3"
+                    dot={{ r: 3, fill: DQ_ORIG_COLOR }}
+                    connectNulls={false}
+                    activeDot={{ r: 5 }}
+                  />
+                ))}
 
               {/* ---- Reference lines ---- */}
               {hasSs && showSupply("safety_stock") && (

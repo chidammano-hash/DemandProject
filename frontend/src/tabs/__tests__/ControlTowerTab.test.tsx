@@ -23,7 +23,7 @@ vi.mock("@/api/queries", () => ({
   fetchControlTowerKpis: vi.fn().mockResolvedValue({
     computed_at: "2026-03-01",
     health: {
-      total_dfus: 500, healthy_count: 310, monitor_count: 133,
+      total_skus: 500, healthy_count: 310, monitor_count: 133,
       at_risk_count: 45, critical_count: 12,
       avg_health_score: 68.5, avg_ss_coverage: 1.4,
       below_ss_count: 85, below_ss_pct: 0.17, avg_portfolio_dos: 22.5,
@@ -39,21 +39,21 @@ vi.mock("@/api/queries", () => ({
   fetchControlTowerAlerts: vi.fn().mockResolvedValue({
     total: 2,
     alerts: [
-      { alert_id: "EXC-1", source: "exception", severity: "critical", item_no: "ITEM001",
+      { alert_id: "EXC-1", source: "exception", severity: "critical", item_id: "ITEM001",
         loc: "LOC1", alert_type: "stockout", description: "Stockout risk detected",
         action: "Place emergency order", alert_ts: "2026-03-04T00:00:00", abc_vol: "A" },
-      { alert_id: "DS-ITEM002-LOC2", source: "demand_signal", severity: "high", item_no: "ITEM002",
+      { alert_id: "DS-ITEM002-LOC2", source: "demand_signal", severity: "high", item_id: "ITEM002",
         loc: "LOC2", alert_type: "above_plan", description: "Demand 25% above plan",
         action: "Monitor demand pace", alert_ts: "2026-03-04T10:00:00", abc_vol: "B" },
     ],
   }),
   fetchControlTowerTopCritical: vi.fn().mockResolvedValue({
     items: [
-      { item_no: "ITEM001", loc: "LOC1", abc_vol: "A", abc_xyz_segment: "AX",
+      { item_id: "ITEM001", loc: "LOC1", abc_vol: "A", abc_xyz_segment: "AX",
         health_score: 18, health_tier: "critical",
         ss_coverage: 0.3, is_below_ss: true, current_dos: 4.5,
         target_dos_min: 15.0, target_dos_max: 30.0, open_exceptions: 3, fill_rate_3m: 0.72 },
-      { item_no: "ITEM002", loc: "LOC2", abc_vol: "B", abc_xyz_segment: "BY",
+      { item_id: "ITEM002", loc: "LOC2", abc_vol: "B", abc_xyz_segment: "BY",
         health_score: 32, health_tier: "critical",
         ss_coverage: 0.6, is_below_ss: false, current_dos: 7.0,
         target_dos_min: 15.0, target_dos_max: 30.0, open_exceptions: 1, fill_rate_3m: 0.81 },

@@ -1,12 +1,12 @@
 """Inventory Planning — IPfeature12: Supplier Performance Intelligence endpoints."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
+from api.core import _f, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -149,20 +149,20 @@ def get_supplier_items(
     """Items supplied by a specific supplier with LT profile data."""
     set_cache(response, max_age=3600)
     sql = """
-        SELECT ltp.item_no, ltp.loc,
+        SELECT ltp.item_id, ltp.loc,
                ltp.lt_mean_days, ltp.lt_std_days, ltp.lt_cv, ltp.lt_variability_class,
                ltp.observation_months,
                d.abc_vol, d.cluster_assignment
         FROM dim_item_lead_time_profile ltp
-        INNER JOIN dim_item i ON ltp.item_no = i.item_no
-        LEFT JOIN dim_dfu d ON ltp.item_no = d.dmdunit AND ltp.loc = d.loc
+        INNER JOIN dim_item i ON ltp.item_id = i.item_id
+        LEFT JOIN dim_sku d ON ltp.item_id = d.item_id AND ltp.loc = d.loc
         WHERE i.supplier_no = %s
         ORDER BY ltp.lt_cv DESC NULLS LAST
         LIMIT %s OFFSET %s
     """
     count_sql = """
         SELECT COUNT(*) FROM dim_item_lead_time_profile ltp
-        INNER JOIN dim_item i ON ltp.item_no = i.item_no
+        INNER JOIN dim_item i ON ltp.item_id = i.item_id
         WHERE i.supplier_no = %s
     """
 
@@ -178,7 +178,7 @@ def get_supplier_items(
         "total": int(total),
         "rows": [
             {
-                "item_no":              r[0],
+                "item_id":              r[0],
                 "loc":                  r[1],
                 "lt_mean_days":         _f(r[2]),
                 "lt_std_days":          _f(r[3]),

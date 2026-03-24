@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS fact_po_receipts (
     receipt_number      VARCHAR(50)     NOT NULL,
     po_number           VARCHAR(50)     NOT NULL,
     po_line_number      INTEGER         NOT NULL DEFAULT 1,
-    item_no             VARCHAR(50)     NOT NULL,
+    item_id             VARCHAR(50)     NOT NULL,
     loc                 VARCHAR(50)     NOT NULL,
     supplier_id         VARCHAR(50),
     received_qty        NUMERIC(12, 2)  NOT NULL,
@@ -21,7 +21,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_po_receipt_number
     ON fact_po_receipts (receipt_number, po_number, po_line_number);
 
 CREATE INDEX IF NOT EXISTS idx_po_receipts_item_loc_date
-    ON fact_po_receipts (item_no, loc, actual_receipt_date);
+    ON fact_po_receipts (item_id, loc, actual_receipt_date);
 
 CREATE INDEX IF NOT EXISTS idx_po_receipts_po_number
     ON fact_po_receipts (po_number, po_line_number);

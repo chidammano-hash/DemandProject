@@ -47,7 +47,7 @@ async def get_inventory_plan(
             cur.execute(
                 """
                 SELECT
-                    COUNT(DISTINCT item_no || '@' || loc)   AS sku_loc_count,
+                    COUNT(DISTINCT item_id || '@' || loc)   AS sku_loc_count,
                     SUM(projected_inventory_value)          AS total_projected_value,
                     SUM(planned_order_value)                AS total_order_value,
                     SUM(carrying_cost_monthly)              AS total_carrying_cost,
@@ -68,7 +68,7 @@ async def get_inventory_plan(
                        SUM(planned_order_value)        AS order_value,
                        SUM(excess_value)               AS excess_value
                 FROM fact_financial_inventory_plan
-                JOIN dim_item USING (item_no)
+                JOIN dim_item USING (item_id)
                 WHERE plan_version = %s
                 GROUP BY item_category, plan_month
                 ORDER BY plan_month, item_category
@@ -194,7 +194,7 @@ async def get_excess_value(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT item_no, loc, plan_month, excess_qty, excess_value,
+                SELECT item_id, loc, plan_month, excess_qty, excess_value,
                        projected_inventory_value, budget_cap, within_budget
                 FROM fact_financial_inventory_plan
                 WHERE plan_version = %s AND excess_value >= %s
@@ -206,7 +206,7 @@ async def get_excess_value(
             rows = cur.fetchall()
 
     cols = [
-        "item_no", "loc", "plan_month", "excess_qty", "excess_value",
+        "item_id", "loc", "plan_month", "excess_qty", "excess_value",
         "projected_inventory_value", "budget_cap", "within_budget",
     ]
     items = []

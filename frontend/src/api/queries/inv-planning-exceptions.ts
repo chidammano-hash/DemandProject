@@ -22,7 +22,7 @@ export interface ExceptionListParams {
 
 export interface ExceptionRow {
   exception_id: string;
-  item_no: string;
+  item_id: string;
   loc: string;
   exception_date: string;
   exception_type: string;

@@ -74,7 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_sop_gaps_cycle
 CREATE TABLE IF NOT EXISTS fact_sop_approved_plan (
     id                  BIGSERIAL       PRIMARY KEY,
     cycle_id            BIGINT          NOT NULL REFERENCES fact_sop_cycles(cycle_id),
-    item_no             VARCHAR(50)     NOT NULL,
+    item_id             VARCHAR(50)     NOT NULL,
     loc                 VARCHAR(50)     NOT NULL,
     plan_month          DATE            NOT NULL,
     approved_qty        NUMERIC(12,2)   NOT NULL,
@@ -82,8 +82,8 @@ CREATE TABLE IF NOT EXISTS fact_sop_approved_plan (
     override_qty        NUMERIC(12,2),
     source              VARCHAR(30)     NOT NULL DEFAULT 'consensus',
     locked              BOOLEAN         NOT NULL DEFAULT TRUE,
-    CONSTRAINT uq_sop_approved UNIQUE (cycle_id, item_no, loc, plan_month)
+    CONSTRAINT uq_sop_approved UNIQUE (cycle_id, item_id, loc, plan_month)
 );
 
 CREATE INDEX IF NOT EXISTS idx_sop_approved_item_loc
-    ON fact_sop_approved_plan (item_no, loc, plan_month);
+    ON fact_sop_approved_plan (item_id, loc, plan_month);

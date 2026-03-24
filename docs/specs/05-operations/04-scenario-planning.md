@@ -64,7 +64,7 @@ A scenario engine accepts disruption parameters (type, magnitude, scope, duratio
 | Table | Purpose | Key Columns |
 |---|---|---|
 | `fact_supply_scenarios` | Scenario definitions | `scenario_id`, `scenario_type`, `name`, `parameters` (JSONB), `status`, `created_at` |
-| `fact_scenario_results` | Simulation output per item-location-month | `scenario_id`, `item_no`, `loc`, `month`, `projected_oh`, `stockout_flag`, `excess_qty`, `carrying_cost` |
+| `fact_scenario_results` | Simulation output per item-location-month | `scenario_id`, `item_id`, `loc`, `month`, `projected_oh`, `stockout_flag`, `excess_qty`, `carrying_cost` |
 | `fact_scenario_comparison` | Baseline vs. scenario deltas | `scenario_id`, `metric`, `baseline_value`, `scenario_value`, `delta`, `delta_pct` |
 | `fact_scenario_audit` | Execution history | `scenario_id`, `run_at`, `duration_seconds`, `row_count` |
 

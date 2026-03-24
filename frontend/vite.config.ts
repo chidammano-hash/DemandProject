@@ -28,7 +28,7 @@ export default defineConfig({
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
-      "/dfu": {
+      "/sku": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
@@ -145,6 +145,30 @@ export default defineConfig({
         changeOrigin: true,
       },
       "/sql-runner": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/sourcing": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/purchase-orders": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/lgbm-tuning": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/cluster-eda": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/feature-lab": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/accuracy-budget": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },

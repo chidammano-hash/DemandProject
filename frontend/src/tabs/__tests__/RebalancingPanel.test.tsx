@@ -92,7 +92,7 @@ const mockPlan = {
 
 const mockTransfer = {
   transfer_id: "t-001",
-  item_no: "100320",
+  item_id: "100320",
   source_loc: "1401-BULK",
   dest_loc: "1501-PICK",
   transfer_mode: "truck",
@@ -126,7 +126,7 @@ const mockTransfer = {
 const mockTransfer2 = {
   ...mockTransfer,
   transfer_id: "t-002",
-  item_no: "200450",
+  item_id: "200450",
   source_loc: "2001-BULK",
   dest_loc: "2501-PICK",
   urgency: "low",

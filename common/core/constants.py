@@ -2,31 +2,65 @@
 
 # Feature engineering constants
 CAT_FEATURES = ["ml_cluster", "region", "brand", "abc_vol"]
-NUMERIC_DFU_FEATURES = ["execution_lag", "total_lt"]
+NUMERIC_SKU_FEATURES = ["execution_lag", "total_lt"]
 NUMERIC_ITEM_FEATURES = ["case_weight", "item_proof", "bpc"]
 
 LAG_RANGE = range(1, 13)  # qty_lag_1 .. qty_lag_12
 ROLLING_WINDOWS = [3, 6, 12]
 CALENDAR_FEATURES = ["month", "quarter", "month_sin", "month_cos",
                      "is_quarter_end", "is_year_end", "days_in_month"]
-DERIVED_FEATURES = ["mom_growth", "demand_accel", "volatility_ratio"]
+DERIVED_FEATURES = ["mom_growth", "demand_accel", "volatility_ratio",
+                    "lag_ratio_yoy", "lag_ratio_mom", "lag_ratio_3v12",
+                    "n_zero_last_6m"]
+
+# Per-DFU time-series profile features (computed from full history per DFU)
+TS_PROFILE_FEATURES = [
+    "cv_demand", "zero_demand_pct", "trend_slope_norm", "recency_ratio",
+    "seasonal_amplitude", "adi", "mean_demand", "yoy_correlation",
+]
+
+# Fourier seasonal terms — sub-annual seasonality (quarterly, biannual patterns)
+FOURIER_FEATURES: list[str] = []
+for _period in [12, 6, 4, 3]:
+    FOURIER_FEATURES.extend([f"fourier_sin_{_period}", f"fourier_cos_{_period}"])
+
+# Croston decomposition features — intermittent demand signals
+CROSTON_FEATURES = ["croston_demand_size", "croston_demand_interval", "croston_probability"]
+
+# Cross-DFU cluster aggregate features — cluster-level demand signals
+CROSS_DFU_FEATURES = ["cluster_mean_lag1", "cluster_total_lag1",
+                      "cluster_demand_trend", "cluster_zero_pct"]
+
+# External forecast signal features — optional enrichment
+EXTERNAL_FORECAST_FEATURES = ["ext_fcst_ratio", "ext_fcst_lag1_ratio"]
+
+# All enhanced features from the four new feature groups
+ENHANCED_FEATURES = FOURIER_FEATURES + CROSTON_FEATURES + CROSS_DFU_FEATURES + EXTERNAL_FORECAST_FEATURES
+
+# Features always kept by SHAP selection (never dropped regardless of SHAP rank).
+# These provide essential temporal/categorical context the model needs.
+# Fourier terms are calendar-derived (no leakage), so they are also protected.
+PROTECTED_FEATURES = {
+    "month", "month_sin", "month_cos", "quarter", "ml_cluster",
+    *FOURIER_FEATURES,
+}
 
 # Output column ordering for fact_external_forecast_monthly
 OUTPUT_COLS = [
-    "forecast_ck", "dmdunit", "dmdgroup", "loc",
+    "forecast_ck", "item_id", "customer_group", "loc",
     "fcstdate", "startdate", "lag", "execution_lag",
     "basefcst_pref", "tothist_dmd", "model_id",
 ]
 
 # Output column ordering for backtest_lag_archive
 ARCHIVE_COLS = [
-    "forecast_ck", "dmdunit", "dmdgroup", "loc",
+    "forecast_ck", "item_id", "customer_group", "loc",
     "fcstdate", "startdate", "lag", "execution_lag",
     "basefcst_pref", "tothist_dmd", "model_id", "timeframe",
 ]
 
 # Metadata columns excluded from feature set
-METADATA_COLS = {"dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate", "qty", "_k"}
+METADATA_COLS = {"sku_ck", "item_id", "customer_group", "loc", "startdate", "qty", "_k"}
 
 # Maximum archive lag (0-4)
 MAX_ARCHIVE_LAG = 4

@@ -6,7 +6,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
+from api.core import _f, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -39,7 +39,7 @@ def variability_summary(
         where_parts.append("cluster_assignment ILIKE %s")
         params.append(f"%{cluster_assignment.strip()}%")
     add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market,
-                          item_col="t.dmdunit")
+                          item_col="t.item_id")
 
     where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
@@ -56,13 +56,13 @@ def variability_summary(
             PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY demand_cv)   AS cv_p75,
             PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY demand_cv)   AS cv_p95,
             AVG(intermittency_ratio)                                   AS avg_intermittency_ratio
-        FROM dim_dfu t
+        FROM dim_sku t
         {where_clause}
     """
 
     top_sql = f"""
         SELECT
-            dmdunit AS item_no,
+            item_id AS item_id,
             loc,
             abc_vol,
             cluster_assignment,
@@ -72,7 +72,7 @@ def variability_summary(
             demand_mad,
             intermittency_ratio,
             variability_class
-        FROM dim_dfu t
+        FROM dim_sku t
         {where_clause}
         ORDER BY demand_cv DESC NULLS LAST
         LIMIT 20
@@ -147,7 +147,7 @@ def variability_detail(
     params: list[Any] = []
 
     if item.strip():
-        where_parts.append("dmdunit ILIKE %s")
+        where_parts.append("item_id ILIKE %s")
         params.append(f"%{item.strip()}%")
     if location.strip():
         where_parts.append("loc ILIKE %s")
@@ -159,14 +159,14 @@ def variability_detail(
         where_parts.append("variability_class = %s")
         params.append(variability_class.strip().lower())
     add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market,
-                          item_col="t.dmdunit")
+                          item_col="t.item_id")
 
     where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
-    count_sql = f"SELECT COUNT(*) FROM dim_dfu t {where_clause}"
+    count_sql = f"SELECT COUNT(*) FROM dim_sku t {where_clause}"
     data_sql = f"""
         SELECT
-            dmdunit          AS item_no,
+            item_id          AS item_id,
             loc,
             abc_vol,
             cluster_assignment,
@@ -183,7 +183,7 @@ def variability_detail(
             intermittency_ratio,
             variability_class,
             demand_profile_ts
-        FROM dim_dfu t
+        FROM dim_sku t
         {where_clause}
         ORDER BY {order_col} {order_dir} NULLS LAST
         LIMIT %s OFFSET %s
@@ -229,12 +229,12 @@ def variability_histogram(
     where_clause = "WHERE " + " AND ".join(where_parts)
 
     # Two-step: fetch bounds, then compute histogram buckets
-    bounds_sql = f"SELECT MIN({col}) AS lo, MAX({col}) AS hi FROM dim_dfu {where_clause}"
+    bounds_sql = f"SELECT MIN({col}) AS lo, MAX({col}) AS hi FROM dim_sku {where_clause}"
     hist_sql = f"""
         SELECT
             width_bucket({col}, %s, %s + 0.000001, %s) AS bucket,
             COUNT(*) AS count
-        FROM dim_dfu
+        FROM dim_sku
         {where_clause}
         GROUP BY 1
         ORDER BY 1

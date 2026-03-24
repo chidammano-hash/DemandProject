@@ -1,6 +1,6 @@
 """IPfeature4: EOQ & Cycle Stock Calculator.
 
-Reads demand stats from dim_dfu (populated by IPfeature1) and computes
+Reads demand stats from dim_sku (populated by IPfeature1) and computes
 EOQ, cycle stock, order frequency, and annual cost metrics per item-location.
 Upserts results into fact_eoq_targets.
 
@@ -22,6 +22,7 @@ import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 
 
 # ---------------------------------------------------------------------------
@@ -170,44 +171,45 @@ def sensitivity_curve(
 # ---------------------------------------------------------------------------
 
 def run(config: dict, dry_run: bool = False) -> dict[str, int]:
-    """Load demand stats from dim_dfu, compute EOQ, upsert fact_eoq_targets.
+    """Load demand stats from dim_sku, compute EOQ, upsert fact_eoq_targets.
 
     Returns {processed, updated, skipped}.
     """
     import psycopg
 
-    batch_size = config["batch"]["batch_size"]
-    conn_params = get_db_params()
+    with profiled_section("load_config"):
+        batch_size = config["batch"]["batch_size"]
+        conn_params = get_db_params()
 
     load_sql = """
         SELECT
-            dmdunit  AS item_no,
+            item_id  AS item_id,
             loc,
             abc_vol,
             demand_mean
-        FROM dim_dfu
+        FROM dim_sku
         WHERE demand_mean IS NOT NULL
           AND demand_mean > 0
-        ORDER BY dmdunit, loc
+        ORDER BY item_id, loc
     """
 
     upsert_sql = """
         INSERT INTO fact_eoq_targets (
-            item_no, loc, abc_vol,
+            item_id, loc, abc_vol,
             demand_mean_monthly, annual_demand,
             ordering_cost, holding_cost_pct, unit_cost, moq,
             eoq, effective_eoq, eoq_cycle_stock, order_frequency,
             annual_holding_cost, annual_order_cost, total_annual_cost,
             computed_at
         ) VALUES (
-            %(item_no)s, %(loc)s, %(abc_vol)s,
+            %(item_id)s, %(loc)s, %(abc_vol)s,
             %(demand_mean_monthly)s, %(annual_demand)s,
             %(ordering_cost)s, %(holding_cost_pct)s, %(unit_cost)s, %(moq)s,
             %(eoq)s, %(effective_eoq)s, %(eoq_cycle_stock)s, %(order_frequency)s,
             %(annual_holding_cost)s, %(annual_order_cost)s, %(total_annual_cost)s,
             %(computed_at)s
         )
-        ON CONFLICT (item_no, loc) DO UPDATE SET
+        ON CONFLICT (item_id, loc) DO UPDATE SET
             abc_vol              = EXCLUDED.abc_vol,
             demand_mean_monthly  = EXCLUDED.demand_mean_monthly,
             annual_demand        = EXCLUDED.annual_demand,
@@ -231,41 +233,39 @@ def run(config: dict, dry_run: bool = False) -> dict[str, int]:
     now = datetime.now(timezone.utc)
 
     with psycopg.connect(**conn_params) as conn:
-        with conn.cursor() as cur:
-            cur.execute(load_sql)
-            rows = cur.fetchall()
-
-        batch: list[dict] = []
-        for item_no, loc, abc_vol, demand_mean in rows:
-            processed += 1
-            demand_mean_f = float(demand_mean)
-            metrics = compute_eoq_metrics(demand_mean_f, config)
-            if metrics is None:
-                skipped += 1
-                continue
-
-            row = {
-                "item_no": item_no,
-                "loc": loc,
-                "abc_vol": abc_vol,
-                "demand_mean_monthly": demand_mean_f,
-                **metrics,
-                "computed_at": now,
-            }
-            batch.append(row)
-
-            if len(batch) >= batch_size and not dry_run:
-                with conn.cursor() as cur:
-                    cur.executemany(upsert_sql, batch)
-                conn.commit()
-                updated += len(batch)
-                batch.clear()
-
-        if batch and not dry_run:
+        with profiled_section("load_dfu_data"):
             with conn.cursor() as cur:
-                cur.executemany(upsert_sql, batch)
-            conn.commit()
-            updated += len(batch)
+                cur.execute(load_sql)
+                rows = cur.fetchall()
+
+        with profiled_section("compute_eoq"):
+            all_rows: list[dict] = []
+            for item_id, loc, abc_vol, demand_mean in rows:
+                processed += 1
+                demand_mean_f = float(demand_mean)
+                metrics = compute_eoq_metrics(demand_mean_f, config)
+                if metrics is None:
+                    skipped += 1
+                    continue
+
+                row = {
+                    "item_id": item_id,
+                    "loc": loc,
+                    "abc_vol": abc_vol,
+                    "demand_mean_monthly": demand_mean_f,
+                    **metrics,
+                    "computed_at": now,
+                }
+                all_rows.append(row)
+
+        with profiled_section("batch_upsert"):
+            if all_rows and not dry_run:
+                for i in range(0, len(all_rows), batch_size):
+                    batch = all_rows[i : i + batch_size]
+                    with conn.cursor() as cur:
+                        cur.executemany(upsert_sql, batch)
+                    updated += len(batch)
+                conn.commit()
 
     return {"processed": processed, "updated": updated, "skipped": skipped}
 

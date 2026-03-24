@@ -33,7 +33,7 @@ A two-layer architecture: (1) raw daily snapshots loaded into `fact_inventory_sn
 
 ### Inventory-Forecast Bridge (Feature 37)
 
-`mv_inventory_forecast_monthly` joins `agg_inventory_monthly` + `fact_external_forecast_monthly` + `dim_dfu` at grain: item_no + loc + month_start + model_id. Computed columns:
+`mv_inventory_forecast_monthly` joins `agg_inventory_monthly` + `fact_external_forecast_monthly` + `dim_sku` at grain: item_id + loc + month_start + model_id. Computed columns:
 
 | Column | Formula | Purpose |
 |---|---|---|
@@ -52,11 +52,20 @@ A two-layer architecture: (1) raw daily snapshots loaded into `fact_inventory_sn
 
 ## Data Model
 
-| Table / View | Grain | Row Count |
-|---|---|---|
-| `fact_inventory_snapshot` | item_no + loc + snapshot_date | ~190M |
-| `agg_inventory_monthly` | item_no + loc + month | Materialized view |
-| `mv_inventory_forecast_monthly` | item_no + loc + month + model_id | Materialized view |
+| Table / View | Grain | Row Count | Notes |
+|---|---|---|---|
+| `fact_inventory_snapshot` | item_id + loc + snapshot_date | ~198M | Monthly range partitioned by `snapshot_date` |
+| `agg_inventory_monthly` | item_id + loc + month | MV | Aggregates from partitioned parent |
+| `mv_inventory_forecast_monthly` | item_id + loc + month + model_id | MV | Bridge view |
+
+### Partitioning
+
+`fact_inventory_snapshot` uses PostgreSQL declarative range partitioning on `snapshot_date`:
+- **Partition granularity:** 1 calendar month per partition (~13M rows each)
+- **Benefits:** Instant TRUNCATE per partition (no index rebuild), partition pruning on date queries, parallel partition scans
+- **Auto-creation:** The loader creates new partitions automatically via `_ensure_partition_exists()` if data arrives for a month without a pre-existing partition
+- **Default partition:** Catches out-of-range dates (should remain empty in normal operation)
+- **No surrogate key:** `inventory_sk BIGSERIAL` was removed; uniqueness enforced by `UNIQUE(inventory_ck, snapshot_date)`
 
 DDL: `sql/017_create_fact_inventory_snapshot.sql`, `sql/019_inventory_forecast_view.sql`
 

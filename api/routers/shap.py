@@ -16,7 +16,6 @@ Endpoints:
 """
 from __future__ import annotations
 
-import math
 import os
 import pickle
 import re
@@ -66,7 +65,7 @@ def _resolve_filter_clusters(
 
     if item:
         items = [i.strip() for i in item.split(",")]
-        conditions.append(f"d.dmdunit IN ({','.join(['%s'] * len(items))})")
+        conditions.append(f"d.item_id IN ({','.join(['%s'] * len(items))})")
         params.extend(items)
     if location:
         locs = [loc.strip() for loc in location.split(",")]
@@ -87,9 +86,9 @@ def _resolve_filter_clusters(
         params.extend(markets)
         need_loc_join = True
 
-    sql = "SELECT DISTINCT d.ml_cluster::TEXT FROM dim_dfu d"
+    sql = "SELECT DISTINCT d.ml_cluster::TEXT FROM dim_sku d"
     if need_item_join:
-        sql += " LEFT JOIN dim_item i ON i.item_no = d.dmdunit"
+        sql += " LEFT JOIN dim_item i ON i.item_id = d.item_id"
     if need_loc_join:
         sql += " LEFT JOIN dim_location l ON l.loc = d.loc"
     sql += f" WHERE {' AND '.join(conditions)} AND d.ml_cluster IS NOT NULL"
@@ -380,23 +379,23 @@ async def shap_clusters(model_id: str) -> dict:
 
 
 def _build_cat_encoders_from_distinct(conn) -> dict[str, dict]:
-    """Build int label encoders from sorted unique values in dim_dfu.
+    """Build int label encoders from sorted unique values in dim_sku.
 
     Replicates build_cat_encoders() in generate_production_forecasts.py so
     inference uses the same encoding that was applied during training.
 
     NOTE: Training used pandas Categorical codes from the training grid, which
-    contains only DFUs with sales. Inference builds from ALL dim_dfu rows.
-    If dim_dfu has brands/regions with no historical sales, their insertion into
+    contains only DFUs with sales. Inference builds from ALL dim_sku rows.
+    If dim_sku has brands/regions with no historical sales, their insertion into
     the sorted list shifts codes for other values. The correct long-term fix is to
     persist encoders in the pkl artifact. For now, we match generate_production_forecasts.py
-    which also uses all dim_dfu rows — so SHAP and production inference are consistent.
+    which also uses all dim_sku rows — so SHAP and production inference are consistent.
     """
     with conn.cursor() as cur:
         # Query each column independently to get ALL unique values per column
         # (not just combinations) — same as build_cat_encoders() in generate_production_forecasts.py
         cur.execute(
-            "SELECT ml_cluster, region, brand, abc_vol FROM dim_dfu"
+            "SELECT ml_cluster, region, brand, abc_vol FROM dim_sku"
         )
         rows = cur.fetchall()
 
@@ -498,7 +497,7 @@ def _compute_shap_full(model, X: pd.DataFrame, model_id: str, feature_cols: list
 @router.get("/forecast/shap/{model_id}/dfu")
 async def shap_dfu(
     model_id: str,
-    item_no: str = Query(..., description="Item number (dmdunit)"),
+    item_id: str = Query(..., description="Item number (item_id)"),
     loc: str = Query(..., description="Location code"),
     top_n: int = Query(default=10, ge=1, le=30),
     lookback_months: int = Query(default=48, ge=12, le=60),
@@ -534,25 +533,25 @@ async def shap_dfu(
                 """
                 SELECT d.ml_cluster, d.execution_lag, d.total_lt,
                        d.brand, d.region, d.abc_vol,
-                       d.dmdgroup,
+                       d.customer_group,
                        i.bpc, i.item_proof, i.case_weight
-                FROM dim_dfu d
-                LEFT JOIN dim_item i ON i.item_no = d.dmdunit
-                WHERE d.dmdunit = %s AND d.loc = %s
-                ORDER BY d.dmdgroup ASC
+                FROM dim_sku d
+                LEFT JOIN dim_item i ON i.item_id = d.item_id
+                WHERE d.item_id = %s AND d.loc = %s
+                ORDER BY d.customer_group ASC
                 LIMIT 1
                 """,
-                (item_no, loc),
+                (item_id, loc),
             )
             dfu_row = cur.fetchone()
 
         if dfu_row is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"DFU not found: item_no={item_no!r}, loc={loc!r}",
+                detail=f"DFU not found: item_id={item_id!r}, loc={loc!r}",
             )
 
-        ml_cluster, execution_lag, total_lt, brand, region, abc_vol, dmdgroup, bpc, item_proof, case_weight = dfu_row
+        ml_cluster, execution_lag, total_lt, brand, region, abc_vol, customer_group, bpc, item_proof, case_weight = dfu_row
 
         # -- Step 3: load pkl for this cluster --
         cluster_str = str(ml_cluster) if ml_cluster is not None else "__unknown__"
@@ -593,8 +592,8 @@ async def shap_dfu(
                 effective_feature_cols = [c for c in model_feature_names if c != "ml_cluster"]
 
         # -- Step 4: load historical sales --
-        # Filter by dmdgroup to match backtest training data exactly.
-        # The backtest (backtest_framework.py) joins dim_dfu ON dmdunit + dmdgroup + loc,
+        # Filter by customer_group to match backtest training data exactly.
+        # The backtest (backtest_framework.py) joins dim_sku ON item_id + customer_group + loc,
         # so training used only the DFU's specific customer group — NOT a sum of all groups.
         # Summing across all customer groups would give 2-3× larger qty, making all lag
         # features different from training and causing SHAP values to be "way off".
@@ -603,12 +602,12 @@ async def shap_dfu(
                 """
                 SELECT startdate, SUM(COALESCE(qty, 0)) AS qty
                 FROM fact_sales_monthly
-                WHERE dmdunit = %s AND dmdgroup = %s AND loc = %s
+                WHERE item_id = %s AND customer_group = %s AND loc = %s
                 GROUP BY startdate
                 ORDER BY startdate DESC
                 LIMIT %s
                 """,
-                (item_no, dmdgroup, loc, lookback_months),
+                (item_id, customer_group, loc, lookback_months),
             )
             sales_rows = list(reversed(cur.fetchall()))
 
@@ -623,15 +622,15 @@ async def shap_dfu(
                 """
                 SELECT forecast_month, forecast_qty, model_id
                 FROM fact_production_forecast
-                WHERE item_no = %s AND loc = %s
+                WHERE item_id = %s AND loc = %s
                   AND plan_version = (
                       SELECT MAX(plan_version)
                       FROM fact_production_forecast
-                      WHERE item_no = %s AND loc = %s
+                      WHERE item_id = %s AND loc = %s
                   )
                 ORDER BY forecast_month
                 """,
-                (item_no, loc, item_no, loc),
+                (item_id, loc, item_id, loc),
             )
             future_rows = cur.fetchall()
 
@@ -823,7 +822,7 @@ async def shap_dfu(
         })
 
     return {
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "model_id": model_id,
         "cluster_id": cluster_str,

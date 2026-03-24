@@ -1,4 +1,4 @@
-"""Shared SQL helpers used by both medallion.py and load_dataset_postgres.py.
+"""Shared SQL helpers used by pipeline scripts and load_dataset_postgres.py.
 
 Extracted to eliminate duplication (D1) and centralise magic constants (M1-M7).
 """
@@ -20,7 +20,7 @@ NULL_SQL = "'', 'null', 'none', 'na', 'n/a'"
 IQR_OUTLIER_MULTIPLIER = 1.5        # M1
 LEAD_TIME_MAX_DAYS = 730             # M2
 LEAD_TIME_DEFAULT_DAYS = 7           # M3
-HASH_CHUNK_SIZE = 1024 * 1024        # M4 (1 MB)
+HASH_CHUNK_SIZE = 8 * 1024 * 1024    # M4 (8 MB — optimized for large CSVs)
 EXTERNAL_MODEL_ID = "external"       # M5
 PERCENTILE_MEDIAN = 0.5              # M7
 PERCENTILE_Q1 = 0.25                 # M7
@@ -79,6 +79,11 @@ def typed_expr(field: str, spec: DomainSpec, src_alias: str) -> str:
             f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
             f"ELSE {col}::date END"
         )
+    if field in spec.bool_fields:
+        return (
+            f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
+            f"ELSE {col}::boolean END"
+        )
     # E4 – warn when a column has no type mapping in the spec
     if field not in spec.columns:
         logger.warning(
@@ -94,6 +99,7 @@ def typed_expr_sets(
     float_fields: set[str],
     date_fields: set[str],
     src_alias: str,
+    bool_fields: set[str] | None = None,
 ) -> str:
     """Legacy overload used by load_dataset_postgres.py (takes raw sets).
 
@@ -114,6 +120,11 @@ def typed_expr_sets(
         return (
             f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
             f"ELSE {col}::date END"
+        )
+    if bool_fields and field in bool_fields:
+        return (
+            f"CASE WHEN lower(trim({col})) IN ({NULL_SQL}) THEN NULL "
+            f"ELSE {col}::boolean END"
         )
     return col
 

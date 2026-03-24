@@ -133,7 +133,7 @@ def get_health_detail(
 ):
     """Paginated health score detail rows with filtering and sorting."""
     allowed_sort = {
-        "health_score", "health_tier", "item_no", "loc", "abc_vol",
+        "health_score", "health_tier", "item_id", "loc", "abc_vol",
         "variability_class", "current_dos", "recent_wape",
         "score_ss_coverage", "score_dos_target", "score_stockout_risk",
         "score_forecast_accuracy",
@@ -146,7 +146,7 @@ def get_health_detail(
     params: list = []
 
     if item:
-        where_clauses.append("item_no ILIKE %s")
+        where_clauses.append("item_id ILIKE %s")
         params.append(f"%{item}%")
     if location:
         where_clauses.append("loc ILIKE %s")
@@ -170,7 +170,7 @@ def get_health_detail(
     count_sql = f"SELECT COUNT(*) FROM mv_inventory_health_score t {where_sql}"
     rows_sql = f"""
         SELECT
-            item_no, loc, abc_vol, variability_class, cluster_assignment,
+            item_id, loc, abc_vol, variability_class, cluster_assignment,
             health_score, health_tier,
             score_ss_coverage, score_dos_target, score_stockout_risk, score_forecast_accuracy,
             ss_coverage, current_dos, target_dos_min, target_dos_max, is_below_ss,

@@ -17,7 +17,7 @@ Output: fact_consensus_plan
 import argparse
 import sys
 import os
-from datetime import date, timedelta
+from datetime import date
 
 import psycopg
 import yaml
@@ -25,6 +25,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 # ---------------------------------------------------------------------------
 # Override type priority (lower = higher priority in conflict resolution)
@@ -106,7 +107,7 @@ def resolve_conflicts(overrides: list[dict]) -> dict:
 
     n_conflicts = len(overrides) - 1
     print(
-        f"[CONFLICT] {winner['item_no']}@{winner['loc']} "
+        f"[CONFLICT] {winner['item_id']}@{winner['loc']} "
         f"{winner['override_month']}: {n_conflicts} override(s) superseded "
         f"by {winner['override_type']} (override_id={winner['override_id']})"
     )
@@ -121,20 +122,20 @@ def load_statistical_baseline(plan_version: str, conn) -> list[dict]:
     """Load P10/P50/P90 from fact_demand_plan pivoted by plan_month."""
     sql = """
         SELECT
-            item_no, loc, plan_month,
+            item_id, loc, plan_month,
             MAX(CASE WHEN quantile = 0.10 THEN forecast_qty END) AS p10,
             MAX(CASE WHEN quantile = 0.50 THEN forecast_qty END) AS p50,
             MAX(CASE WHEN quantile = 0.90 THEN forecast_qty END) AS p90
         FROM fact_demand_plan
         WHERE plan_version = %s
-        GROUP BY item_no, loc, plan_month
-        ORDER BY item_no, loc, plan_month
+        GROUP BY item_id, loc, plan_month
+        ORDER BY item_id, loc, plan_month
     """
     with conn.cursor() as cur:
         cur.execute(sql, (plan_version,))
         rows = cur.fetchall()
     return [
-        {"item_no": r[0], "loc": r[1], "plan_month": r[2],
+        {"item_id": r[0], "loc": r[1], "plan_month": r[2],
          "p10": float(r[3]) if r[3] is not None else None,
          "p50": float(r[4]) if r[4] is not None else 0.0,
          "p90": float(r[5]) if r[5] is not None else None}
@@ -146,7 +147,7 @@ def load_approved_overrides(plan_run_date: date, conn) -> list[dict]:
     """Load all approved, non-expired overrides valid as of plan_run_date."""
     sql = """
         SELECT
-            override_id, item_no, loc, override_month,
+            override_id, item_id, loc, override_month,
             override_type, override_qty, override_multiplier,
             override_additive_qty, is_hard_override,
             priority_rank, created_at, approved_by
@@ -154,7 +155,7 @@ def load_approved_overrides(plan_run_date: date, conn) -> list[dict]:
         WHERE status = 'approved'
           AND valid_from <= %s
           AND valid_to   >= %s
-        ORDER BY item_no, loc, override_month,
+        ORDER BY item_id, loc, override_month,
                  priority_rank ASC, created_at DESC
     """
     with conn.cursor() as cur:
@@ -163,7 +164,7 @@ def load_approved_overrides(plan_run_date: date, conn) -> list[dict]:
     return [
         {
             "override_id": r[0],
-            "item_no": r[1],
+            "item_id": r[1],
             "loc": r[2],
             "override_month": r[3],
             "override_type": r[4],
@@ -200,13 +201,13 @@ def write_consensus_rows(rows: list[dict], conn) -> int:
         return 0
     sql = """
         INSERT INTO fact_consensus_plan
-            (item_no, loc, plan_month, plan_version,
+            (item_id, loc, plan_month, plan_version,
              statistical_qty, statistical_p10, statistical_p90,
              override_qty, consensus_qty, consensus_p10, consensus_p90,
              override_applied, override_id, override_type, override_multiplier,
              is_hard_override, overrider, approver, uplift_pct, generated_at)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
-        ON CONFLICT (item_no, loc, plan_month, plan_version)
+        ON CONFLICT (item_id, loc, plan_month, plan_version)
         DO UPDATE SET
             statistical_qty  = EXCLUDED.statistical_qty,
             override_qty     = EXCLUDED.override_qty,
@@ -219,7 +220,7 @@ def write_consensus_rows(rows: list[dict], conn) -> int:
     with conn.cursor() as cur:
         cur.executemany(sql, [
             (
-                r["item_no"], r["loc"], r["plan_month"], r["plan_version"],
+                r["item_id"], r["loc"], r["plan_month"], r["plan_version"],
                 r["statistical_qty"], r["statistical_p10"], r["statistical_p90"],
                 r["override_qty"], r["consensus_qty"], r["consensus_p10"], r["consensus_p90"],
                 r["override_applied"], r.get("override_id"), r.get("override_type"),
@@ -254,99 +255,129 @@ def generate_consensus_plan(
 
     with psycopg.connect(**get_db_params()) as conn:
         # Step 1: expire stale overrides
-        n_expired = expire_stale_overrides(plan_run_date, conn)
+        with profiled_section("expire_stale_overrides"):
+            n_expired = expire_stale_overrides(plan_run_date, conn)
         if n_expired:
             print(f"Expired {n_expired} stale overrides.")
 
         # Step 2: load baseline and overrides
-        baseline = load_statistical_baseline(plan_version, conn)
-        overrides = load_approved_overrides(plan_run_date, conn)
+        with profiled_section("load_baseline_and_overrides"):
+            baseline = load_statistical_baseline(plan_version, conn)
+            overrides = load_approved_overrides(plan_run_date, conn)
 
     if not baseline:
         print(f"No statistical baseline found for plan_version={plan_version}.")
         return {"total_rows": 0, "overridden_rows": 0, "total_override_impact_units": 0.0}
 
-    # Step 3: build override lookup: (item_no, loc, override_month) → [overrides]
+    # Step 3: pre-sort ALL overrides once and build a resolved lookup
+    # so we avoid re-sorting per DFU-month during conflict resolution
     from collections import defaultdict
-    override_by_dfu_month: dict = defaultdict(list)
-    for o in overrides:
-        key = (o["item_no"], o["loc"], o["override_month"])
-        override_by_dfu_month[key].append(o)
+    with profiled_section("resolve_override_conflicts"):
+        override_by_dfu_month: dict = defaultdict(list)
+        for o in overrides:
+            o["_type_priority"] = OVERRIDE_PRIORITY.get(o["override_type"], 99)
+            key = (o["item_id"], o["loc"], o["override_month"])
+            override_by_dfu_month[key].append(o)
+
+        # Pre-resolve conflicts: pick the winning override per key
+        override_lookup: dict[tuple, dict] = {}
+        for key, ov_list in override_by_dfu_month.items():
+            if len(ov_list) == 1:
+                override_lookup[key] = ov_list[0]
+            else:
+                # Sort once: type_priority ASC, priority_rank ASC, created_at DESC
+                sorted_ovs = sorted(
+                    ov_list,
+                    key=lambda o: (
+                        o["_type_priority"],
+                        o["priority_rank"],
+                        -o["created_at"].timestamp() if hasattr(o["created_at"], "timestamp") else 0,
+                    ),
+                )
+                winner = sorted_ovs[0]
+                n_conflicts = len(ov_list) - 1
+                print(
+                    f"[CONFLICT] {winner['item_id']}@{winner['loc']} "
+                    f"{winner['override_month']}: {n_conflicts} override(s) superseded "
+                    f"by {winner['override_type']} (override_id={winner['override_id']})"
+                )
+                override_lookup[key] = winner
 
     # Step 4: merge
     consensus_rows = []
     n_overridden = 0
     total_impact = 0.0
 
-    for b in baseline:
-        key = (b["item_no"], b["loc"], b["plan_month"])
-        ov_list = override_by_dfu_month.get(key, [])
+    with profiled_section("merge_baseline_overrides"):
+        for b in baseline:
+            key = (b["item_id"], b["loc"], b["plan_month"])
+            ov = override_lookup.get(key)
 
-        if ov_list:
-            ov = resolve_conflicts(ov_list) if len(ov_list) > 1 else ov_list[0]
-            consensus_qty, delta = apply_override(
-                statistical_qty=b["p50"],
-                override_type=ov["override_type"],
-                override_qty=ov["override_qty"],
-                override_multiplier=ov["override_multiplier"],
-                override_additive_qty=ov["override_additive_qty"],
-                is_hard_override=ov["is_hard_override"],
-            )
+            if ov:
+                consensus_qty, delta = apply_override(
+                    statistical_qty=b["p50"],
+                    override_type=ov["override_type"],
+                    override_qty=ov["override_qty"],
+                    override_multiplier=ov["override_multiplier"],
+                    override_additive_qty=ov["override_additive_qty"],
+                    is_hard_override=ov["is_hard_override"],
+                )
 
-            # Scale P10/P90 proportionally if configured
-            ratio = (consensus_qty / b["p50"]) if b["p50"] and b["p50"] > 0 else 1.0
-            c_p10 = round(b["p10"] * ratio, 2) if b["p10"] is not None and adjust_p else b["p10"]
-            c_p90 = round(b["p90"] * ratio, 2) if b["p90"] is not None and adjust_p else b["p90"]
+                # Scale P10/P90 proportionally if configured
+                ratio = (consensus_qty / b["p50"]) if b["p50"] and b["p50"] > 0 else 1.0
+                c_p10 = round(b["p10"] * ratio, 2) if b["p10"] is not None and adjust_p else b["p10"]
+                c_p90 = round(b["p90"] * ratio, 2) if b["p90"] is not None and adjust_p else b["p90"]
 
-            uplift_pct = round((delta / b["p50"]) * 100, 4) if b["p50"] else 0.0
-            n_overridden += 1
-            total_impact += abs(delta)
+                uplift_pct = round((delta / b["p50"]) * 100, 4) if b["p50"] else 0.0
+                n_overridden += 1
+                total_impact += abs(delta)
 
-            consensus_rows.append({
-                "item_no": b["item_no"],
-                "loc": b["loc"],
-                "plan_month": b["plan_month"],
-                "plan_version": plan_version,
-                "statistical_qty": b["p50"],
-                "statistical_p10": b["p10"],
-                "statistical_p90": b["p90"],
-                "override_qty": delta,
-                "consensus_qty": consensus_qty,
-                "consensus_p10": c_p10,
-                "consensus_p90": c_p90,
-                "override_applied": True,
-                "override_id": ov["override_id"],
-                "override_type": ov["override_type"],
-                "override_multiplier": ov.get("override_multiplier"),
-                "is_hard_override": ov["is_hard_override"],
-                "overrider": ov.get("approved_by", ""),
-                "approver": ov.get("approved_by", ""),
-                "uplift_pct": uplift_pct,
-            })
-        else:
-            consensus_rows.append({
-                "item_no": b["item_no"],
-                "loc": b["loc"],
-                "plan_month": b["plan_month"],
-                "plan_version": plan_version,
-                "statistical_qty": b["p50"],
-                "statistical_p10": b["p10"],
-                "statistical_p90": b["p90"],
-                "override_qty": 0.0,
-                "consensus_qty": b["p50"],
-                "consensus_p10": b["p10"],
-                "consensus_p90": b["p90"],
-                "override_applied": False,
-                "uplift_pct": 0.0,
-            })
+                consensus_rows.append({
+                    "item_id": b["item_id"],
+                    "loc": b["loc"],
+                    "plan_month": b["plan_month"],
+                    "plan_version": plan_version,
+                    "statistical_qty": b["p50"],
+                    "statistical_p10": b["p10"],
+                    "statistical_p90": b["p90"],
+                    "override_qty": delta,
+                    "consensus_qty": consensus_qty,
+                    "consensus_p10": c_p10,
+                    "consensus_p90": c_p90,
+                    "override_applied": True,
+                    "override_id": ov["override_id"],
+                    "override_type": ov["override_type"],
+                    "override_multiplier": ov.get("override_multiplier"),
+                    "is_hard_override": ov["is_hard_override"],
+                    "overrider": ov.get("approved_by", ""),
+                    "approver": ov.get("approved_by", ""),
+                    "uplift_pct": uplift_pct,
+                })
+            else:
+                consensus_rows.append({
+                    "item_id": b["item_id"],
+                    "loc": b["loc"],
+                    "plan_month": b["plan_month"],
+                    "plan_version": plan_version,
+                    "statistical_qty": b["p50"],
+                    "statistical_p10": b["p10"],
+                    "statistical_p90": b["p90"],
+                    "override_qty": 0.0,
+                    "consensus_qty": b["p50"],
+                    "consensus_p10": b["p10"],
+                    "consensus_p90": b["p90"],
+                    "override_applied": False,
+                    "uplift_pct": 0.0,
+                })
 
     if dry_run:
         print(f"[dry-run] Would write {len(consensus_rows)} consensus rows "
               f"({n_overridden} with overrides, impact={total_impact:.0f} units).")
     else:
-        with psycopg.connect(**get_db_params()) as conn:
-            n_written = write_consensus_rows(consensus_rows, conn)
-            conn.commit()
+        with profiled_section("write_consensus_rows"):
+            with psycopg.connect(**get_db_params()) as conn:
+                n_written = write_consensus_rows(consensus_rows, conn)
+                conn.commit()
         print(f"Written {n_written} consensus rows ({n_overridden} overridden, "
               f"total impact={total_impact:.0f} units).")
 

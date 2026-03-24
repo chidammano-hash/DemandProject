@@ -180,7 +180,7 @@ export function LeadTimeProfilePanel() {
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium">
                   {classFilter
-                    ? `${classFilter.charAt(0).toUpperCase() + classFilter.slice(1)} LT DFUs`
+                    ? `${classFilter.charAt(0).toUpperCase() + classFilter.slice(1)} LT SKUs`
                     : "Most volatile item-locations"}{" "}
                   <span className="text-muted-foreground">
                     ({ltProfileData?.total ?? 0} total)
@@ -212,11 +212,11 @@ export function LeadTimeProfilePanel() {
                   <TableBody>
                     {ltRows.map((r: LtProfileRow) => (
                       <TableRow
-                        key={`${r.item_no}-${r.loc}`}
+                        key={`${r.item_id}-${r.loc}`}
                         className={ROW_COLORS[r.lt_variability_class ?? ""] ?? ""}
                       >
                         <TableCell className="font-mono text-xs">
-                          {r.item_no}
+                          {r.item_id}
                         </TableCell>
                         <TableCell className="text-xs">{r.loc}</TableCell>
                         <TableCell className="text-right tabular-nums text-xs">

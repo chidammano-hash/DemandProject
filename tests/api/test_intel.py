@@ -17,7 +17,7 @@ async def test_intel_missing_item(mock_pool):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/market-intelligence",
-                json={"item_no": "", "location_id": "LOC1"},
+                json={"item_id": "", "location_id": "LOC1"},
             )
             assert response.status_code == 422
 
@@ -32,7 +32,7 @@ async def test_intel_missing_location(mock_pool):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/market-intelligence",
-                json={"item_no": "100320", "location_id": ""},
+                json={"item_id": "100320", "location_id": ""},
             )
             assert response.status_code == 422
 
@@ -63,11 +63,11 @@ async def test_intel_success(mock_pool):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
                 "/market-intelligence",
-                json={"item_no": "100320", "location_id": "1401-BULK"},
+                json={"item_id": "100320", "location_id": "1401-BULK"},
             )
             assert response.status_code == 200
             data = response.json()
             assert "narrative" in data
-            assert "item_no" in data
+            assert "item_id" in data
             assert "location_id" in data
-            assert data["item_no"] == "100320"
+            assert data["item_id"] == "100320"

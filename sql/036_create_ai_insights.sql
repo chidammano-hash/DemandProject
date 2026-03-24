@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS ai_insights (
     severity                VARCHAR(20) NOT NULL CHECK (severity IN ('critical','high','medium','low')),
 
     -- DFU identity
-    item_no                 TEXT NOT NULL,
+    item_id                 TEXT NOT NULL,
     loc                     TEXT NOT NULL,
     abc_vol                 TEXT,
     cluster_assignment      TEXT,
@@ -34,9 +34,10 @@ CREATE TABLE IF NOT EXISTS ai_insights (
 
     -- Workflow status
     status                  VARCHAR(20) NOT NULL DEFAULT 'open'
-                                CHECK (status IN ('open','acknowledged','resolved')),
+                                CHECK (status IN ('open','acknowledged','resolved','snoozed')),
     acknowledged_at         TIMESTAMPTZ,
     resolved_at             TIMESTAMPTZ,
+    snoozed_until           TIMESTAMPTZ,
 
     -- Provenance
     model_version           TEXT,
@@ -51,13 +52,17 @@ CREATE INDEX IF NOT EXISTS idx_ai_insights_status_severity
     ON ai_insights (status, severity, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_ai_insights_item_loc
-    ON ai_insights (item_no, loc);
+    ON ai_insights (item_id, loc);
 
 CREATE INDEX IF NOT EXISTS idx_ai_insights_scan_run
     ON ai_insights (scan_run_id);
 
 CREATE INDEX IF NOT EXISTS idx_ai_insights_type
     ON ai_insights (insight_type);
+
+CREATE INDEX IF NOT EXISTS idx_ai_insights_snoozed_until
+    ON ai_insights (snoozed_until)
+    WHERE status = 'snoozed';
 
 -- ---------------------------------------------------------------------------
 -- ai_planning_memos
@@ -67,7 +72,7 @@ CREATE TABLE IF NOT EXISTS ai_planning_memos (
     memo_id         SERIAL PRIMARY KEY,
     period          DATE NOT NULL,
     scope           VARCHAR(20) NOT NULL CHECK (scope IN ('portfolio','dfu')),
-    item_no         TEXT,
+    item_id         TEXT,
     loc             TEXT,
     narrative_text  TEXT NOT NULL,
     content_json    JSONB,
@@ -79,5 +84,5 @@ CREATE INDEX IF NOT EXISTS idx_ai_memos_period_scope
     ON ai_planning_memos (period DESC, scope);
 
 CREATE INDEX IF NOT EXISTS idx_ai_memos_dfu
-    ON ai_planning_memos (item_no, loc, period DESC)
+    ON ai_planning_memos (item_id, loc, period DESC)
     WHERE scope = 'dfu';

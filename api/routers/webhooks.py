@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from api.auth import require_api_key
 from api.core import get_conn
-from common.auth import CurrentUser, get_current_user, require_role
+from common.auth import CurrentUser, require_role
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 

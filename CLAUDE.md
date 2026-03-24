@@ -34,7 +34,7 @@
 
 ```
 api/                         # FastAPI backend
-├── main.py                  # App entry point — mounts 56 routers
+├── main.py                  # App entry point — mounts 60 routers
 ├── core.py                  # SQL helpers, filtering, pagination
 ├── pool.py                  # Connection pool management
 ├── llm.py                   # OpenAI client management
@@ -50,7 +50,7 @@ api/                         # FastAPI backend
 common/                      # Shared Python modules (backward-compat shims at root)
 ├── core/                    # db, utils, planning_date, constants, sql_helpers, domain_specs
 ├── ml/                      # backtest_framework, champion_strategies, tuning, shap, features
-├── engines/                 # dq_engine, exception_engine, medallion
+├── engines/                 # dq_engine, exception_engine
 ├── services/                # job_registry, job_scheduler, notifications, webhooks, cache
 ├── ai/                      # ai_planner
 └── auth.py                  # Authentication helpers
@@ -65,14 +65,14 @@ scripts/                     # Pipeline scripts
 
 frontend/                    # React + Vite + TypeScript
 ├── src/tabs/                # 21 tab components + sub-panels
-├── src/api/queries/         # 24 domain API modules
+├── src/api/queries/         # 30 domain API modules
 ├── src/components/          # Shared UI components
 ├── Dockerfile               # Nginx multi-stage build
 └── nginx.conf               # SPA fallback + API reverse proxy
 
 config/                      # 41 YAML config files (one per module/pipeline)
-sql/                         # 79 DDL migration files
-tests/                       # 2213 backend tests (api/ + unit/)
+sql/                         # 71 DDL migration files
+tests/                       # 2380 backend tests (api/ + unit/)
 docs/                        # ARCHITECTURE, PLATFORM_GUIDE, RUNBOOK, specs/
 data/                        # Generated ML artifacts + input CSVs (gitignored)
 archive/                     # Archived reference materials
@@ -94,9 +94,13 @@ make down              # Stop services
 make db-apply-sql      # Apply DDL schemas
 
 # Data Pipeline
-make normalize-all     # CSV → clean CSV (all 8 datasets)
+make normalize-all     # CSV → clean CSV (all 10 datasets)
 make load-all          # Clean CSV → Postgres + refresh views
 make load-forecast-replace  # Reload external forecast only
+make pipeline-full     # Full reload: normalize + load + refresh MVs
+make pipeline-refresh  # Incremental: detect changes, reload only deltas
+make pipeline-inventory        # Full reload inventory domain only
+make pipeline-inventory-refresh # Incremental inventory refresh only
 
 # Run Services
 make api               # FastAPI on :8000
@@ -121,6 +125,22 @@ make e2e               # Playwright E2E (needs API on :8000)
 
 # Validation
 make check-all         # DB row counts + API health
+
+# Performance
+make perf-report           # Full system performance report with suggestions
+make perf-script SCRIPT=X  # Profile specific script (read-only, zero side effects)
+make perf-api              # API endpoint performance analysis
+make perf-pipeline         # ETL pipeline performance analysis
+
+# Full Pipeline (input CSVs -> ready app)
+make setup-all            # Everything: data + ML + planning + ops (~4-6 hours)
+make setup-data           # Data only: normalize + load all 10 domains (~30 min)
+make setup-planning       # Data + inventory planning, no ML (~1 hour)
+make setup-features       # Data + clustering + seasonality + variability
+make setup-backtest       # Features + 3 backtests + champion selection
+make setup-inv-planning   # Inventory planning (SS, EOQ, policies, exceptions)
+make setup-demand-planning # Forecasts + projections + orders + replenishment
+make setup-ops            # S&OP + events + financial + storyboard + DQ
 ```
 
 See `Makefile` for the full list (100+ targets including one-time schema setup, inv-planning pipelines, cleanup utilities).
@@ -133,7 +153,7 @@ See `Makefile` for the full list (100+ targets including one-time schema setup, 
 
 All datasets extend a single `DomainSpec` dataclass in `common/domain_specs.py`. Scripts and API endpoints are generic — they operate on any domain via `--dataset <name>` or `/domains/{domain}/*`.
 
-**8 Domains:** item, location, customer, time, dfu (dimensions); sales, forecast (facts); inventory (dedicated pipeline).
+**10 Domains:** item, location, customer, time, sku (dimensions); sales, forecast (facts); inventory (dedicated pipeline); sourcing, purchase_order (procurement).
 
 ### Data Flow
 
@@ -160,8 +180,8 @@ Source CSV → normalize_dataset_csv.py → clean CSV → load_dataset_postgres.
 ### Fact Tables
 - `fact_sales_monthly`: grain = item + customer_group + location + month + type
 - `fact_external_forecast_monthly`: grain = item + loc + forecast_date + actual_month; tracks lag 0–4
-- `fact_inventory_snapshot`: grain = item_no + loc + snapshot_date (~190M rows)
-- `fact_production_forecast`: grain = item_no + loc + plan_version + month
+- `fact_inventory_snapshot`: grain = item_id + loc + snapshot_date (~198M rows); **monthly range-partitioned** by `snapshot_date`
+- `fact_production_forecast`: grain = item_id + loc + plan_version + month
 
 ### Archive Tables
 - `backtest_lag_archive`: All-lags (0–4) backtest predictions with `timeframe` column
@@ -184,14 +204,14 @@ These are hard constraints that cause bugs or test failures if violated.
 
 - **`get_conn()` not `Depends(_get_pool)`** for all `inv_planning_*.py` routers. Using `Depends(_get_pool)` causes 422 errors in tests because FastAPI inspects MagicMock signatures.
 - **psycopg3 uses `%s` placeholders** — NOT `$1`, `$2`. All SQL in scripts and routers must use `%s`.
-- **Column names in fact tables**: `fact_sales_monthly` and `fact_external_forecast_monthly` use `dmdunit` (not `item_no`). Forecast qty column is `basefcst_pref` (not `qty`).
+- **Column names in fact tables**: All tables now use `item_id` (standardized from legacy `dmdunit`/`item_no`). Forecast qty column is `basefcst_pref` (not `qty`).
 - **`domains.py` mounted last** in `main.py` — it has catch-all `{domain}` path params that would shadow other routes.
 - **Shared test pool factory**: Import `from tests.api.conftest import make_pool as _make_pool`. For multi-fetchall endpoints use `cursor.fetchall.side_effect = [list1, list2]`; for single-call use `cursor.fetchall.return_value`.
 - **API test pattern**: Use inline `httpx.AsyncClient(transport=ASGITransport(app))` with `patch("api.core._get_pool")`.
 
 ### Frontend Patterns
 
-- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`.
+- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`.
 - **Theme context, not props**: Use `useThemeContext()` or `useChartColors()` — never pass `theme` as a prop from `App.tsx`.
 - **Test wrappers**: Wrap components with `TestQueryWrapper` from `src/tabs/__tests__/test-utils.tsx`. Mock API with `vi.mock("../api/queries")`. Mock `echarts-for-react` for chart tests. Mock `@tanstack/react-virtual` for virtualized row tests.
 
@@ -206,6 +226,13 @@ These are hard constraints that cause bugs or test failures if violated.
 - **Backward-compatible imports**: `common/` root has shim modules that re-export from subpackages (e.g., `from common.db import get_db_params` works via shim → `common/core/db.py`). New code may use either path; existing imports remain valid.
 - **Structured logging**: Scripts use `logging.getLogger(__name__)` — no raw `print()`. `basicConfig()` only in `__main__` blocks.
 - **Exception handling**: Catch specific exceptions (`psycopg.Error`, `ValueError`) — never bare `except Exception`. Always log with `logger.exception()`.
+- **GPU acceleration**: `DEMAND_GPU` env var controls GPU usage in backtests (`on`/`off`/`auto`, default `auto`). Optional deps: `cupy` (Monte Carlo simulation GPU arrays), `numba` (seasonality JIT kernels). All scripts fall back gracefully when these are absent.
+
+### Performance Profiling
+
+- **Use `profiled_section()` for major stages**: New scripts should wrap major computation stages with `profiled_section()` from `common/services/perf_profiler.py` instead of raw `time.time()`.
+- **DB profiling is read-only**: `wrap_connection()` sets `default_transaction_read_only = true` and always rolls back. Safe for production.
+- **Config in YAML**: All perf thresholds in `config/perf_config.yaml`. No hardcoded timing thresholds.
 
 ### File Placement Rules
 
@@ -231,6 +258,7 @@ These are hard constraints that cause bugs or test failures if violated.
 | Inventory planning script | `scripts/inventory/` | `calculate_new_metric.py` |
 | Operations/SOP script | `scripts/ops/` | `generate_report.py` |
 | AI/embeddings script | `scripts/ai/` | `retrain_embeddings.py` |
+| Performance profiling | `common/services/` | `perf_profiler.py` |
 | Backend unit test | `tests/unit/test_<module>.py` | `test_new_helper.py` |
 | API endpoint test | `tests/api/test_<feature>.py` | `test_forecast_ensemble.py` |
 
@@ -295,7 +323,7 @@ When adding a new router, also:
 
 ## Design Specs
 
-Located in `docs/specs/` — 8 domains, 52 spec files. See [docs/specs/README.md](docs/specs/README.md) for the full index with reading order.
+Located in `docs/specs/` — 8 domains, 53 spec files. See [docs/specs/README.md](docs/specs/README.md) for the full index with reading order.
 
 Domains: Foundation, Forecasting, Demand Intelligence, Inventory Planning, Operations, AI Platform, User Experience, Integration.
 
@@ -335,6 +363,11 @@ These rules are ALWAYS active. Claude MUST follow them without explicit user req
 - Write a test that reproduces the bug FIRST
 - Verify the test fails, then fix the bug, then verify the test passes
 - Run the full affected test suite
+
+### After Adding or Modifying Pipeline Scripts
+- Run `make perf-script SCRIPT=<name>` to profile the script
+- Review suggestions for N+1 queries, memory spikes, and unbatched inserts
+- Use `profiled_section()` for major computation stages in new scripts
 
 ### Security Checks (Always Active)
 - Never commit files matching: `.env`, `credentials.*`, `*secret*`, `*.key`

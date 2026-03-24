@@ -65,7 +65,7 @@ export function AccuracyTab() {
   const categoryParam = filters.category.length > 0 ? filters.category.join(",") : undefined;
   const marketParam = filters.market.length > 0 ? filters.market.join(",") : undefined;
   const clusterParam = filters.cluster.length > 0 ? filters.cluster.join(",") : undefined;
-  const needDfuCount = sliceKpis.includes("dfu_count");
+  const needDfuCount = sliceKpis.includes("sku_count");
 
   const monthFrom = useMemo(() => {
     if (sliceGroupBy === "month_start") return "";
@@ -76,7 +76,7 @@ export function AccuracyTab() {
 
   const sliceParams: SliceParams = useMemo(() => ({
     group_by: sliceGroupBy, lag: sliceLag, models: sliceModels, month_from: monthFrom,
-    common_dfus: commonDfus, include_dfu_count: needDfuCount,
+    common_skus: commonDfus, include_sku_count: needDfuCount,
     item: globalItem, location: globalLocation, seasonality_profile: seasonalityProfile || undefined,
     time_grain: filters.timeGrain,
     brand: brandParam, category: categoryParam, market: marketParam, cluster_assignment: clusterParam,
@@ -94,8 +94,8 @@ export function AccuracyTab() {
   }, [globalItem, globalLocation, brandParam, categoryParam, marketParam, clusterParam]);
 
   const lagCurveParams: LagCurveParams = useMemo(() => ({
-    models: sliceModels, month_from: monthFrom, common_dfus: commonDfus,
-    include_dfu_count: needDfuCount, item: globalItem, location: globalLocation,
+    models: sliceModels, month_from: monthFrom, common_skus: commonDfus,
+    include_sku_count: needDfuCount, item: globalItem, location: globalLocation,
     seasonality_profile: seasonalityProfile || undefined,
     time_grain: filters.timeGrain,
     brand: brandParam, category: categoryParam, market: marketParam, cluster_assignment: clusterParam,
@@ -183,8 +183,8 @@ export function AccuracyTab() {
             sliceKpis={sliceKpis} sliceMonths={sliceMonths} commonDfus={commonDfus}
             seasonalityProfile={seasonalityProfile} seasonalityProfiles={seasonalityProfiles}
             loadingSlice={loadingSlice} sliceData={sliceData} allModels={allModels}
-            commonDfuCount={slicePayload?.common_dfu_count ?? null}
-            dfuCounts={slicePayload?.dfu_counts ?? null}
+            commonDfuCount={slicePayload?.common_sku_count ?? null}
+            skuCounts={slicePayload?.sku_counts ?? null}
             onSliceGroupByChange={handleSliceGroupByChange}
             onSliceLagChange={handleSliceLagChange}
             onSliceModelsChange={handleSliceModelsChange}

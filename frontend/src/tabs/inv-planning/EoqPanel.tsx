@@ -153,7 +153,7 @@ export function EoqPanel() {
               <thead>
                 <tr className="border-b text-muted-foreground">
                   <th className="text-left py-1 pr-4">Class</th>
-                  <th className="text-right py-1 pr-4">DFUs</th>
+                  <th className="text-right py-1 pr-4">SKUs</th>
                   <th className="text-right py-1 pr-4">Avg EOQ</th>
                   <th className="text-right py-1 pr-4">Cycle Stock</th>
                   <th className="text-right py-1">Annual Cost</th>
@@ -300,7 +300,7 @@ export function EoqPanel() {
             description="Economic Order Quantity targets minimise total annual inventory cost (ordering + holding) for each item-location based on demand history and cost parameters."
             steps={[
               { label: "Apply schema (first time only)", command: "make eoq-schema" },
-              { label: "Compute EOQ for all DFUs", command: "make eoq-compute" },
+              { label: "Compute EOQ for all SKUs", command: "make eoq-compute" },
             ]}
           />
         ) : (
@@ -321,8 +321,8 @@ export function EoqPanel() {
                 </thead>
                 <tbody>
                   {(eoqDetail?.rows ?? []).map((r: EoqDetailRow, i) => (
-                    <tr key={`${r.item_no}-${r.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/40">
-                      <td className="py-1 pr-3 font-mono text-xs">{r.item_no}</td>
+                    <tr key={`${r.item_id}-${r.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/40">
+                      <td className="py-1 pr-3 font-mono text-xs">{r.item_id}</td>
                       <td className="py-1 pr-3 text-muted-foreground">{r.loc}</td>
                       <td className="py-1 pr-3 text-center">{r.abc_vol ?? "—"}</td>
                       <td className="py-1 pr-3 text-right">{formatFixed(r.eoq, 1)}</td>
@@ -349,7 +349,7 @@ export function EoqPanel() {
                   Prev
                 </button>
                 <span>
-                  Page {currentPage} / {totalPages} ({eoqDetail?.total.toLocaleString()} DFUs)
+                  Page {currentPage} / {totalPages} ({eoqDetail?.total.toLocaleString()} SKUs)
                 </span>
                 <button
                   className="rounded border px-2 py-1 hover:bg-muted disabled:opacity-40"

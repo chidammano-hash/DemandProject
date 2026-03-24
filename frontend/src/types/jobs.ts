@@ -4,7 +4,7 @@
 
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
-export type JobGroup = "clustering" | "backtest" | "seasonality" | "champion" | "ai" | "forecast" | "replenishment" | "inventory";
+export type JobGroup = "clustering" | "backtest" | "seasonality" | "champion" | "ai" | "forecast" | "replenishment" | "inventory" | "tuning";
 
 export interface JobType {
   type_id: string;
@@ -27,6 +27,15 @@ export interface Job {
   completed_at: string | null;
   progress_pct: number;
   progress_msg: string | null;
+  logs?: Array<{ ts: string; pct: number; msg: string }>;
+  pid: number | null;
+}
+
+export interface JobLogsPayload {
+  job_id: string;
+  log: string;
+  total_length: number;
+  offset: number;
 }
 
 export interface JobListPayload {
@@ -144,6 +153,13 @@ export const GROUP_CONFIG: Record<string, GroupConfig> = {
     bgColor: "bg-cyan-50 dark:bg-cyan-950/30",
     borderColor: "border-cyan-200 dark:border-cyan-800",
     iconBg: "bg-cyan-100 dark:bg-cyan-900/50",
+  },
+  tuning: {
+    label: "AI Tuning",
+    color: "text-violet-600 dark:text-violet-400",
+    bgColor: "bg-violet-50 dark:bg-violet-950/30",
+    borderColor: "border-violet-200 dark:border-violet-800",
+    iconBg: "bg-violet-100 dark:bg-violet-900/50",
   },
   platform: {
     label: "Platform",

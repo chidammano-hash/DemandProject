@@ -153,57 +153,6 @@ async def test_dq_history_invalid_days():
 
 
 # ---------------------------------------------------------------------------
-# GET /data-quality/freshness
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_dq_freshness_200():
-    pool, conn, cursor = _make_pool(fetchone_return=(_NOW,))
-    mock_conn = MagicMock()
-    mock_cur = MagicMock()
-    mock_cur.fetchone.return_value = (_NOW,)
-    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
-    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-    mock_conn.__exit__ = MagicMock(return_value=False)
-
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("psycopg.connect", return_value=mock_conn):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/data-quality/freshness")
-    assert resp.status_code == 200
-    tables = resp.json()["tables"]
-    assert len(tables) == 6  # 6 tables checked
-    assert tables[0]["table"] == "dim_item"
-    assert tables[0]["last_load"] is not None
-
-
-@pytest.mark.asyncio
-async def test_dq_freshness_no_data():
-    """Tables with no rows return last_load=None."""
-    pool, conn, cursor = _make_pool(fetchone_return=(None,))
-    mock_conn = MagicMock()
-    mock_cur = MagicMock()
-    mock_cur.fetchone.return_value = (None,)
-    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
-    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-    mock_conn.__exit__ = MagicMock(return_value=False)
-
-    with patch("api.core._get_pool", return_value=pool), \
-         patch("psycopg.connect", return_value=mock_conn):
-        from api.main import app
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/data-quality/freshness")
-    assert resp.status_code == 200
-    for t in resp.json()["tables"]:
-        assert t["last_load"] is None
-
-
-# ---------------------------------------------------------------------------
 # POST /data-quality/run
 # ---------------------------------------------------------------------------
 
@@ -263,8 +212,7 @@ async def test_dq_fix_preview_200():
     with patch("api.core._get_pool", return_value=pool), \
          patch.dict("sys.modules", {"scripts.fix_dq_issues": MagicMock(
              preview_all_fixes=MagicMock(return_value=mock_items),
-             FIX_REGISTRY={"range": None, "lead_time": None, "completeness": None,
-                           "orphans": None, "outliers": None},
+             FIX_REGISTRY={"range": None, "completeness": None, "orphans": None},
          )}):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -285,8 +233,7 @@ async def test_dq_fix_preview_invalid_type():
     pool, conn, cursor = _make_pool()
     with patch("api.core._get_pool", return_value=pool), \
          patch.dict("sys.modules", {"scripts.fix_dq_issues": MagicMock(
-             FIX_REGISTRY={"range": None, "lead_time": None, "completeness": None,
-                           "orphans": None, "outliers": None},
+             FIX_REGISTRY={"range": None, "completeness": None, "orphans": None},
          )}):
         from api.main import app
         transport = ASGITransport(app=app)

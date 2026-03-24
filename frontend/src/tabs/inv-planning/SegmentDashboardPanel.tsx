@@ -78,7 +78,7 @@ export function SegmentDashboardPanel() {
         <KpiCard
           className={PANEL_KPI}
           label="DFU Count"
-          value={isLoading ? "..." : formatInt(data?.dfu_count)}
+          value={isLoading ? "..." : formatInt(data?.sku_count)}
         />
         <KpiCard
           className={PANEL_KPI}
@@ -106,11 +106,11 @@ export function SegmentDashboardPanel() {
 
       {isLoading ? (
         <p className="text-xs text-muted-foreground">Loading segment data...</p>
-      ) : !data || data.dfu_count === 0 ? (
+      ) : !data || data.sku_count === 0 ? (
         <EmptyState
           icon={LayoutGrid}
           title={`No data for segment ${segment}`}
-          description="This segment has no DFUs assigned. Ensure ABC-XYZ classification has been computed."
+          description="This segment has no SKUs assigned. Ensure ABC-XYZ classification has been computed."
           steps={[
             { label: "Compute ABC-XYZ classification", command: "make abc-xyz-compute" },
           ]}
@@ -154,8 +154,8 @@ export function SegmentDashboardPanel() {
                     {data.top_exceptions.map((exc, i) => {
                       const sevCfg = getSeverityConfig(exc.severity);
                       return (
-                        <tr key={`${exc.item_no}-${exc.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/40">
-                          <td className="py-1 pr-2 font-mono">{exc.item_no}</td>
+                        <tr key={`${exc.item_id}-${exc.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/40">
+                          <td className="py-1 pr-2 font-mono">{exc.item_id}</td>
                           <td className="py-1 pr-2">{exc.loc}</td>
                           <td className="py-1 pr-2">{exc.exception_type}</td>
                           <td className="py-1 pr-2">

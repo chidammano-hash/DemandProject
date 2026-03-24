@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 QUANTILES = [0.10, 0.50, 0.90]
 
@@ -163,7 +164,7 @@ def generate_quantile_predictions(
 
         for alpha, qty in [(0.10, p10), (0.50, p50), (0.90, p90)]:
             rows.append({
-                "item_no": row["item_no"],
+                "item_id": row["item_id"],
                 "loc": row["loc"],
                 "plan_month": plan_month,
                 "quantile": alpha,
@@ -194,12 +195,12 @@ def write_demand_plan(rows: list[dict], conn) -> int:
         return 0
     sql = """
         INSERT INTO fact_demand_plan
-            (item_no, loc, plan_month, quantile, forecast_qty, lower_bound,
+            (item_id, loc, plan_month, quantile, forecast_qty, lower_bound,
              upper_bound, model_id, plan_version, horizon_months,
              sigma_forecast, sigma_demand, sigma_combined,
              cluster_id, abc_class, seasonality_profile, generated_at)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
-        ON CONFLICT (item_no, loc, plan_month, quantile, plan_version)
+        ON CONFLICT (item_id, loc, plan_month, quantile, plan_version)
         DO UPDATE SET
             forecast_qty        = EXCLUDED.forecast_qty,
             lower_bound         = EXCLUDED.lower_bound,
@@ -212,7 +213,7 @@ def write_demand_plan(rows: list[dict], conn) -> int:
     with conn.cursor() as cur:
         cur.executemany(sql, [
             (
-                r["item_no"], r["loc"], r["plan_month"], r["quantile"],
+                r["item_id"], r["loc"], r["plan_month"], r["quantile"],
                 r["forecast_qty"], r["lower_bound"], r["upper_bound"],
                 r["model_id"], r["plan_version"], r["horizon_months"],
                 r["sigma_forecast"], r["sigma_demand"], r["sigma_combined"],
@@ -229,10 +230,10 @@ def write_weekly_plan(weekly_rows: list[dict], conn) -> int:
         return 0
     sql = """
         INSERT INTO fact_demand_plan_weekly
-            (item_no, loc, plan_week, iso_week, iso_year, plan_month,
+            (item_id, loc, plan_week, iso_week, iso_year, plan_month,
              quantile, forecast_qty, weekly_weight, plan_version, generated_at)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
-        ON CONFLICT (item_no, loc, plan_week, quantile, plan_version)
+        ON CONFLICT (item_id, loc, plan_week, quantile, plan_version)
         DO UPDATE SET
             forecast_qty  = EXCLUDED.forecast_qty,
             weekly_weight = EXCLUDED.weekly_weight,
@@ -241,7 +242,7 @@ def write_weekly_plan(weekly_rows: list[dict], conn) -> int:
     with conn.cursor() as cur:
         cur.executemany(sql, [
             (
-                r["item_no"], r["loc"], r["plan_week"],
+                r["item_id"], r["loc"], r["plan_week"],
                 r["iso_week"], r["iso_year"], r["plan_month"],
                 r["quantile"], r["forecast_qty"], r["weekly_weight"],
                 r["plan_version"],
@@ -292,7 +293,7 @@ def disaggregate_to_weekly(
         for week_start, weight in weights:
             iso = week_start.isocalendar()
             weekly_rows.append({
-                "item_no": row["item_no"],
+                "item_id": row["item_id"],
                 "loc": row["loc"],
                 "plan_week": week_start,
                 "iso_week": iso[1],
@@ -313,13 +314,13 @@ def disaggregate_to_weekly(
 def get_active_dfus(conn) -> list[dict]:
     """Fetch all active DFU-location combinations with cluster + ABC metadata."""
     sql = """
-        SELECT d.dmdunit AS item_no, d.dmdgroup AS loc,
-               d.cluster_assignment::INTEGER AS cluster_id,
-               d.abc_vol_class AS abc_class,
+        SELECT d.item_id AS item_id, d.customer_group AS loc,
+               d.cluster_assignment AS cluster_id,
+               d.abc_vol AS abc_class,
                d.seasonality_profile
-        FROM dim_dfu d
-        WHERE d.is_active = TRUE
-        ORDER BY d.cluster_assignment, d.dmdunit, d.dmdgroup
+        FROM dim_sku d
+        WHERE d.cluster_assignment IS NOT NULL
+        ORDER BY d.cluster_assignment, d.item_id, d.customer_group
         LIMIT 10000
     """
     with conn.cursor() as cur:
@@ -328,30 +329,30 @@ def get_active_dfus(conn) -> list[dict]:
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def get_monthly_demand(item_no: str, loc: str, n_months: int, conn) -> list[float]:
+def get_monthly_demand(item_id: str, loc: str, n_months: int, conn) -> list[float]:
     """Fetch last n months of actual demand for a DFU."""
     sql = """
         SELECT COALESCE(SUM(qty), 0) AS demand
         FROM fact_sales_monthly
-        WHERE dmdunit = %s AND dmdgroup = %s AND type = 1
+        WHERE item_id = %s AND customer_group = %s AND type = 1
         ORDER BY startdate DESC
         LIMIT %s
     """
     with conn.cursor() as cur:
-        cur.execute(sql, (item_no, loc, n_months))
+        cur.execute(sql, (item_id, loc, n_months))
         return [float(row[0]) for row in cur.fetchall()]
 
 
-def get_sigma_demand(item_no: str, loc: str, conn) -> float:
+def get_sigma_demand(item_id: str, loc: str, conn) -> float:
     """Fetch historical demand std dev from safety stock targets (if available)."""
     sql = """
         SELECT sigma_demand FROM fact_safety_stock_targets
-        WHERE item_no = %s AND loc = %s
+        WHERE item_id = %s AND loc = %s
         ORDER BY computed_at DESC LIMIT 1
     """
     try:
         with conn.cursor() as cur:
-            cur.execute(sql, (item_no, loc))
+            cur.execute(sql, (item_id, loc))
             row = cur.fetchone()
             return float(row[0]) if row and row[0] is not None else 0.0
     except Exception:
@@ -365,12 +366,11 @@ def build_dummy_features(dfus: list[dict], plan_month: date):
     In production, this would use the full feature engineering pipeline.
     """
     import pandas as pd
-    import numpy as np
 
     rows = []
     for dfu in dfus:
         rows.append({
-            "item_no": dfu["item_no"],
+            "item_id": dfu["item_id"],
             "loc": dfu["loc"],
             "ml_cluster": dfu.get("cluster_id") or 0,
             "month_num": plan_month.month,
@@ -409,12 +409,13 @@ def run(
     model_cfg = cfg["quantile_forecast"]["model"]
     model_id = "lgbm_quantile_cluster"
 
-    with psycopg.connect(**get_db_params()) as conn:
-        dfus = get_active_dfus(conn)
+    with profiled_section("load_active_dfus"):
+        with psycopg.connect(**get_db_params()) as conn:
+            dfus = get_active_dfus(conn)
 
     if dfu_filter:
-        item_no, loc = dfu_filter
-        dfus = [d for d in dfus if d["item_no"] == item_no and d["loc"] == loc]
+        item_id, loc = dfu_filter
+        dfus = [d for d in dfus if d["item_id"] == item_id and d["loc"] == loc]
 
     if not dfus:
         print("No active DFUs found.")
@@ -436,8 +437,18 @@ def run(
     all_weekly: list[dict] = []
 
     with psycopg.connect(**get_db_params()) as conn:
+        # Batch-load all sigma_demand values to avoid per-DFU DB calls
+        with profiled_section("load_sigma_demand"):
+            sigma_map: dict[tuple[str, str], float] = {}
+            with conn.cursor() as cur:
+                cur.execute("SELECT item_id, loc, demand_std_monthly FROM fact_safety_stock_targets")
+                for row in cur.fetchall():
+                    sigma_map[(row[0], row[1])] = float(row[2]) if row[2] is not None else 0.0
+
         for cluster_id, cluster_dfus in by_cluster.items():
             print(f"  Cluster {cluster_id}: {len(cluster_dfus)} DFUs")
+            # Pre-index DFU metadata for O(1) lookup instead of linear search
+            dfu_meta_map = {(d["item_id"], d["loc"]): d for d in cluster_dfus}
 
             # Build training features (simplified — real pipeline uses backtest_framework)
             feature_cols = [
@@ -447,18 +458,19 @@ def run(
 
             # Generate dummy training data for each DFU in cluster
             n_train = max(len(cluster_dfus) * 24, 100)
-            rng = np.random.default_rng(seed=42 + cluster_id)
+            rng = np.random.default_rng(seed=42 + hash(cluster_id) % (2**31))
             X_train = pd.DataFrame({
                 col: rng.uniform(50, 500, n_train) for col in feature_cols
             })
             y_train = pd.Series(rng.uniform(50, 500, n_train))
 
             # Train one quantile model per quantile
-            models: dict[float, object] = {}
-            for alpha in QUANTILES:
-                models[alpha] = train_quantile_model(
-                    alpha, X_train, y_train, dict(model_cfg)
-                )
+            with profiled_section(f"train_cluster_{cluster_id}"):
+                models: dict[float, object] = {}
+                for alpha in QUANTILES:
+                    models[alpha] = train_quantile_model(
+                        alpha, X_train, y_train, dict(model_cfg)
+                    )
 
             # Generate predictions for each future month
             for h in range(1, horizon + 1):
@@ -468,8 +480,7 @@ def run(
                 predict_data = build_dummy_features(cluster_dfus, plan_month)
 
                 for dfu in cluster_dfus:
-                    sigma_d = get_sigma_demand(dfu["item_no"], dfu["loc"], conn)
-                    dfu["_sigma_d"] = sigma_d
+                    dfu["_sigma_d"] = sigma_map.get((dfu["item_id"], dfu["loc"]), 0.0)
 
                 # Predict per cluster
                 rows = generate_quantile_predictions(
@@ -485,11 +496,7 @@ def run(
 
                 # Re-compute sigma per DFU with actual sigma_d
                 for r in rows:
-                    dfu_meta = next(
-                        (d for d in cluster_dfus
-                         if d["item_no"] == r["item_no"] and d["loc"] == r["loc"]),
-                        None,
-                    )
+                    dfu_meta = dfu_meta_map.get((r["item_id"], r["loc"]))
                     if dfu_meta:
                         sd = dfu_meta.get("_sigma_d", 0.0)
                         sf = r["sigma_forecast"]
@@ -508,25 +515,26 @@ def run(
                   f"and {len(all_weekly)} weekly rows.")
             return
 
-        print(f"Writing {len(all_monthly)} monthly rows to fact_demand_plan ...")
-        n_m = write_demand_plan(all_monthly, conn)
+        with profiled_section("write_to_db"):
+            print(f"Writing {len(all_monthly)} monthly rows to fact_demand_plan ...")
+            n_m = write_demand_plan(all_monthly, conn)
 
-        if weekly:
-            print(f"Writing {len(all_weekly)} weekly rows to fact_demand_plan_weekly ...")
-            n_w = write_weekly_plan(all_weekly, conn)
-        else:
-            n_w = 0
+            if weekly:
+                print(f"Writing {len(all_weekly)} weekly rows to fact_demand_plan_weekly ...")
+                n_w = write_weekly_plan(all_weekly, conn)
+            else:
+                n_w = 0
 
-        upsert_plan_version(
-            plan_version=plan_version,
-            plan_date=plan_date,
-            plan_label=plan_version.split("_", 1)[-1] if "_" in plan_version else "production",
-            model_id=model_id,
-            horizon_months=horizon,
-            dfu_count=len(dfus),
-            conn=conn,
-        )
-        conn.commit()
+            upsert_plan_version(
+                plan_version=plan_version,
+                plan_date=plan_date,
+                plan_label=plan_version.split("_", 1)[-1] if "_" in plan_version else "production",
+                model_id=model_id,
+                horizon_months=horizon,
+                dfu_count=len(dfus),
+                conn=conn,
+            )
+            conn.commit()
 
     print(f"Done. Written {n_m} monthly rows, {n_w} weekly rows.")
 

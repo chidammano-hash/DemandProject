@@ -104,7 +104,7 @@ export function InvestmentPanel() {
         />
         <KpiCard
           className={PANEL_KPI}
-          label="DFUs Analyzed"
+          label="SKUs Analyzed"
           value={summaryLoading ? "..." : (summary?.total_items ?? 0).toLocaleString()}
         />
       </div>
@@ -187,7 +187,7 @@ export function InvestmentPanel() {
                     r.investment_rank <= Math.ceil((detail?.total ?? 0) / 4) ? "bg-green-50 dark:bg-green-950/20" : ""
                   }`}>
                     <td className="py-1 pr-2 text-right text-muted-foreground">{r.investment_rank}</td>
-                    <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                    <td className="py-1 pr-2 font-mono">{r.item_id}</td>
                     <td className="py-1 pr-2">{r.loc}</td>
                     <td className="py-1 pr-2 text-center">{r.abc_vol ?? "-"}</td>
                     <td className="py-1 pr-2 text-right">

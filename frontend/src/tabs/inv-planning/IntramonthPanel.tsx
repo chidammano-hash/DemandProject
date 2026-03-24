@@ -85,8 +85,8 @@ export function IntramonthPanel() {
             </thead>
             <tbody>
               {detail.rows.map((r: IntramonthStockoutRow) => (
-                <tr key={`${r.item_no}-${r.loc}-${r.month_start}`} className="border-b hover:bg-muted/30">
-                  <td className="py-1 pr-2 font-medium">{r.item_no}</td>
+                <tr key={`${r.item_id}-${r.loc}-${r.month_start}`} className="border-b hover:bg-muted/30">
+                  <td className="py-1 pr-2 font-medium">{r.item_id}</td>
                   <td className="py-1 px-2">{r.loc}</td>
                   <td className="text-right py-1 px-2 text-red-600 font-semibold">{r.stockout_days}</td>
                   <td className="text-right py-1 px-2">{r.stockout_day_rate != null ? `${(r.stockout_day_rate * 100).toFixed(0)}%` : "—"}</td>

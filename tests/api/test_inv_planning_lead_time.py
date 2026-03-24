@@ -121,7 +121,7 @@ async def test_lt_profile_200():
     ]
     cursor.fetchall.return_value = detail_rows
     cursor.description = [
-        ("item_no",), ("loc",),
+        ("item_id",), ("loc",),
         ("lt_mean_days",), ("lt_std_days",), ("lt_cv",),
         ("lt_min_days",), ("lt_max_days",),
         ("lt_p25_days",), ("lt_p50_days",), ("lt_p75_days",), ("lt_p95_days",),

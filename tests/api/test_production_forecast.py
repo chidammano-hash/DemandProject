@@ -123,7 +123,7 @@ async def test_dfu_404_no_forecast():
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/forecast/production?item_no=ITEM001&loc=LOC1")
+            resp = await client.get("/forecast/production?item_id=ITEM001&loc=LOC1")
 
     assert resp.status_code == 404
 
@@ -159,12 +159,12 @@ async def test_dfu_200_with_version():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/forecast/production?item_no=ITEM001&loc=LOC1&plan_version=2026-03"
+                "/forecast/production?item_id=ITEM001&loc=LOC1&plan_version=2026-03"
             )
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["item_no"] == "ITEM001"
+    assert data["item_id"] == "ITEM001"
     assert data["loc"] == "LOC1"
     assert data["plan_version"] == "2026-03"
     assert data["model_id"] == "lgbm_cluster"
@@ -188,7 +188,7 @@ async def test_dfu_404_version_exists_but_no_rows():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/forecast/production?item_no=UNKNOWN&loc=LOC1&plan_version=2026-03"
+                "/forecast/production?item_id=UNKNOWN&loc=LOC1&plan_version=2026-03"
             )
 
     assert resp.status_code == 404
@@ -211,7 +211,7 @@ async def test_dfu_horizon_capped():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/forecast/production?item_no=ITEM001&loc=LOC1&plan_version=2026-02&horizon=99"
+                "/forecast/production?item_id=ITEM001&loc=LOC1&plan_version=2026-02&horizon=99"
             )
 
     assert resp.status_code == 200
@@ -236,7 +236,7 @@ async def test_dfu_18_month_horizon():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/forecast/production?item_no=ITEM001&loc=LOC1&plan_version=2026-02&horizon=18"
+                "/forecast/production?item_id=ITEM001&loc=LOC1&plan_version=2026-02&horizon=18"
             )
 
     assert resp.status_code == 200

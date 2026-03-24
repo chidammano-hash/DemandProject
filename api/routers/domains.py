@@ -499,7 +499,7 @@ def list_times(limit: int = Query(default=50, ge=1, le=1000)):
 
 @router.get("/dfus")
 def list_dfus(limit: int = Query(default=50, ge=1, le=1000)):
-    return list_domain(get_spec_or_404("dfu"), limit)
+    return list_domain(get_spec_or_404("sku"), limit)
 
 
 @router.get("/sales")
@@ -518,7 +518,7 @@ def list_items_page(
     offset: int = Query(default=0, ge=0),
     q: str = Query(default="", max_length=120),
     filters: str = Query(default="", max_length=4000),
-    sort_by: str = Query(default="item_no"),
+    sort_by: str = Query(default="item_id"),
     sort_dir: str = Query(default="asc"),
 ):
     return fetch_page(get_spec_or_404("item"), limit, offset, q, filters, sort_by, sort_dir)
@@ -566,10 +566,10 @@ def list_dfus_page(
     offset: int = Query(default=0, ge=0),
     q: str = Query(default="", max_length=120),
     filters: str = Query(default="", max_length=4000),
-    sort_by: str = Query(default="dmdunit"),
+    sort_by: str = Query(default="item_id"),
     sort_dir: str = Query(default="asc"),
 ):
-    return fetch_page(get_spec_or_404("dfu"), limit, offset, q, filters, sort_by, sort_dir)
+    return fetch_page(get_spec_or_404("sku"), limit, offset, q, filters, sort_by, sort_dir)
 
 
 @router.get("/sales/page")
@@ -600,7 +600,7 @@ def list_forecasts_page(
 # DFU count with optional global filters (used by GlobalFilterBar badge)
 # ---------------------------------------------------------------------------
 
-@router.get("/domains/dfu/count")
+@router.get("/domains/sku/count")
 def dfu_count(
     response: FastAPIResponse,
     brand: str = Query(default="", max_length=500),
@@ -619,13 +619,13 @@ def dfu_count(
 
     if brand:
         params.append(brand.split(","))
-        conditions.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = d.dmdunit AND di.brand_name = ANY(%s))")
+        conditions.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = d.item_id AND di.brand_name = ANY(%s))")
     if category:
         params.append(category.split(","))
-        conditions.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = d.dmdunit AND di.class = ANY(%s))")
+        conditions.append("EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = d.item_id AND di.class = ANY(%s))")
     if item:
         params.append(item.split(","))
-        conditions.append("d.dmdunit = ANY(%s)")
+        conditions.append("d.item_id = ANY(%s)")
     if location:
         params.append(location.split(","))
         conditions.append("d.loc = ANY(%s)")
@@ -637,7 +637,7 @@ def dfu_count(
         conditions.append(
             "EXISTS (SELECT 1 FROM dim_customer dc "
             "JOIN fact_sales_monthly fsm ON fsm.cust_grp = dc.customer_group "
-            "WHERE fsm.dmdunit = d.dmdunit AND fsm.loc = d.loc AND dc.rpt_channel_desc = ANY(%s))"
+            "WHERE fsm.item_id = d.item_id AND fsm.loc = d.loc AND dc.rpt_channel_desc = ANY(%s))"
         )
     if cluster:
         params.append(cluster.split(","))
@@ -645,7 +645,7 @@ def dfu_count(
 
     where_sql = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-    sql = f"SELECT COUNT(*) FROM dim_dfu d {where_sql}"
+    sql = f"SELECT COUNT(*) FROM dim_sku d {where_sql}"
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -660,30 +660,30 @@ def dfu_count(
 # ---------------------------------------------------------------------------
 
 _DISTINCT_ALLOWED: dict[str, list[str]] = {
-    "item": ["brand_name", "class", "item_desc", "item_no"],
+    "item": ["brand_name", "class", "item_desc", "item_id"],
     "location": ["state_id", "site_desc", "location_id"],
     "customer": ["rpt_channel_desc"],
-    "dfu": ["cluster_assignment"],
+    "sku": ["cluster_assignment"],
 }
 
 
-# Mapping: (domain, column) → SQL expression to extract value through dim_dfu joins
+# Mapping: (domain, column) → SQL expression to extract value through dim_sku joins
 _CASCADING_EXPR: dict[tuple[str, str], tuple[str, str]] = {
     # (domain, column) → (join_clause, select_expr)
     ("item", "brand_name"): (
-        "JOIN dim_item di ON di.item_no = d.dmdunit",
+        "JOIN dim_item di ON di.item_id = d.item_id",
         "di.brand_name",
     ),
     ("item", "class"): (
-        "JOIN dim_item di ON di.item_no = d.dmdunit",
+        "JOIN dim_item di ON di.item_id = d.item_id",
         "di.class",
     ),
-    ("item", "item_no"): (
-        "",  # dmdunit lives on dim_dfu
-        "d.dmdunit",
+    ("item", "item_id"): (
+        "",  # item_id lives on dim_sku
+        "d.item_id",
     ),
     ("location", "location_id"): (
-        "",  # loc lives on dim_dfu
+        "",  # loc lives on dim_sku
         "d.loc",
     ),
     ("location", "state_id"): (
@@ -691,7 +691,7 @@ _CASCADING_EXPR: dict[tuple[str, str], tuple[str, str]] = {
         "dl.state_id",
     ),
     ("customer", "rpt_channel_desc"): (
-        "JOIN fact_sales_monthly fsm ON fsm.dmdunit = d.dmdunit AND fsm.loc = d.loc "
+        "JOIN fact_sales_monthly fsm ON fsm.item_id = d.item_id AND fsm.loc = d.loc "
         "JOIN dim_customer dc ON dc.customer_group = fsm.cust_grp",
         "dc.rpt_channel_desc",
     ),
@@ -709,17 +709,17 @@ def _build_cascade_conditions(
     channel: str = "",
     cluster: str = "",
 ) -> list[str]:
-    """Build WHERE conditions for cascading filter narrowing via dim_dfu d."""
+    """Build WHERE conditions for cascading filter narrowing via dim_sku d."""
     conds: list[str] = []
     if brand:
         params.append(brand.split(","))
-        conds.append("EXISTS (SELECT 1 FROM dim_item _di WHERE _di.item_no = d.dmdunit AND _di.brand_name = ANY(%s))")
+        conds.append("EXISTS (SELECT 1 FROM dim_item _di WHERE _di.item_id = d.item_id AND _di.brand_name = ANY(%s))")
     if category:
         params.append(category.split(","))
-        conds.append("EXISTS (SELECT 1 FROM dim_item _di WHERE _di.item_no = d.dmdunit AND _di.class = ANY(%s))")
+        conds.append("EXISTS (SELECT 1 FROM dim_item _di WHERE _di.item_id = d.item_id AND _di.class = ANY(%s))")
     if item:
         params.append(item.split(","))
-        conds.append("d.dmdunit = ANY(%s)")
+        conds.append("d.item_id = ANY(%s)")
     if location:
         params.append(location.split(","))
         conds.append("d.loc = ANY(%s)")
@@ -731,7 +731,7 @@ def _build_cascade_conditions(
         conds.append(
             "EXISTS (SELECT 1 FROM dim_customer _dc "
             "JOIN fact_sales_monthly _fsm ON _fsm.cust_grp = _dc.customer_group "
-            "WHERE _fsm.dmdunit = d.dmdunit AND _fsm.loc = d.loc AND _dc.rpt_channel_desc = ANY(%s))"
+            "WHERE _fsm.item_id = d.item_id AND _fsm.loc = d.loc AND _dc.rpt_channel_desc = ANY(%s))"
         )
     if cluster:
         params.append(cluster.split(","))
@@ -758,7 +758,7 @@ def domain_distinct(
     """Distinct values for a column -- used by global filter dropdowns.
 
     When cascading filter params are provided, results are narrowed to only
-    values that co-exist with the active filter selection (via dim_dfu joins).
+    values that co-exist with the active filter selection (via dim_sku joins).
     """
     set_cache(response, max_age=120)
     spec = get_spec_or_404(domain)
@@ -767,10 +767,10 @@ def domain_distinct(
     if sql_col not in allowed:
         raise HTTPException(400, f"Column '{column}' not allowed for distinct on domain '{domain}'")
 
-    has_cascade = bool(brand or category or item or location or market or channel or cluster)
+    bool(brand or category or item or location or market or channel or cluster)
     cascade_key = (spec.name, sql_col)
 
-    # Always query through dim_dfu for mapped columns so that items/locations
+    # Always query through dim_sku for mapped columns so that items/locations
     # with zero DFUs never appear in the filter dropdowns.
     if cascade_key in _CASCADING_EXPR:
         join_clause, select_expr = _CASCADING_EXPR[cascade_key]
@@ -784,7 +784,7 @@ def domain_distinct(
             conds.append(f"{select_expr}::text ILIKE %s")
             params.append(f"{search.strip()}%")
         where_sql = "WHERE " + " AND ".join(conds)
-        sql = f"SELECT DISTINCT {select_expr} FROM dim_dfu d {join_clause} {where_sql} ORDER BY {select_expr} LIMIT %s"
+        sql = f"SELECT DISTINCT {select_expr} FROM dim_sku d {join_clause} {where_sql} ORDER BY {select_expr} LIMIT %s"
         params.append(limit)
     else:
         # Original non-cascading path

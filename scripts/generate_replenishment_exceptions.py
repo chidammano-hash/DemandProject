@@ -26,6 +26,7 @@ import yaml
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 
 # ---------------------------------------------------------------------------
@@ -131,31 +132,32 @@ def run(dry_run: bool = False) -> dict:
             # ----------------------------------------------------------------
             # 1. Latest inventory position from agg_inventory_monthly
             # ----------------------------------------------------------------
-            try:
-                cur.execute("""
-                    SELECT
-                        item_no,
-                        loc,
-                        eom_qty_on_hand      AS current_qty,
-                        avg_daily_sls        AS avg_daily_sls
-                    FROM (
+            with profiled_section("fetch_inventory_position"):
+                try:
+                    cur.execute("""
                         SELECT
-                            item_no,
+                            item_id,
                             loc,
-                            eom_qty_on_hand,
-                            avg_daily_sls,
-                            ROW_NUMBER() OVER (
-                                PARTITION BY item_no, loc
-                                ORDER BY month_start DESC
-                            ) AS rn
-                        FROM agg_inventory_monthly
-                    ) t
-                    WHERE rn = 1
-                """)
-                inv_rows = cur.fetchall()
-            except Exception:
-                conn.rollback()
-                inv_rows = []
+                            eom_qty_on_hand      AS current_qty,
+                            avg_daily_sls        AS avg_daily_sls
+                        FROM (
+                            SELECT
+                                item_id,
+                                loc,
+                                eom_qty_on_hand,
+                                avg_daily_sls,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY item_id, loc
+                                    ORDER BY month_start DESC
+                                ) AS rn
+                            FROM agg_inventory_monthly
+                        ) t
+                        WHERE rn = 1
+                    """)
+                    inv_rows = cur.fetchall()
+                except Exception:
+                    conn.rollback()
+                    inv_rows = []
 
             inv_map: dict[tuple, dict] = {}
             for r in inv_rows:
@@ -168,19 +170,20 @@ def run(dry_run: bool = False) -> dict:
             # ----------------------------------------------------------------
             # 2. Safety stock targets (stub until IPfeature3)
             # ----------------------------------------------------------------
-            try:
-                cur.execute("""
-                    SELECT
-                        item_no, loc,
-                        ss_combined, reorder_point,
-                        target_max_qty,
-                        target_dos_max, demand_mean_monthly
-                    FROM fact_safety_stock_targets
-                """)
-                ss_rows = cur.fetchall()
-            except Exception:
-                conn.rollback()
-                ss_rows = []
+            with profiled_section("fetch_safety_stock_targets"):
+                try:
+                    cur.execute("""
+                        SELECT
+                            item_id, loc,
+                            ss_combined, reorder_point,
+                            target_max_qty,
+                            target_dos_max, demand_mean_monthly
+                        FROM fact_safety_stock_targets
+                    """)
+                    ss_rows = cur.fetchall()
+                except Exception:
+                    conn.rollback()
+                    ss_rows = []
 
             ss_map: dict[tuple, dict] = {}
             for r in ss_rows:
@@ -197,16 +200,17 @@ def run(dry_run: bool = False) -> dict:
             # ----------------------------------------------------------------
             # 3. Policy assignments (review_cycle_days from IPfeature5)
             # ----------------------------------------------------------------
-            try:
-                cur.execute("""
-                    SELECT a.item_no, a.loc, a.policy_id, p.review_cycle_days
-                    FROM fact_dfu_policy_assignment a
-                    JOIN dim_replenishment_policy p ON p.policy_id = a.policy_id
-                """)
-                policy_rows = cur.fetchall()
-            except Exception:
-                conn.rollback()
-                policy_rows = []
+            with profiled_section("fetch_policy_assignments"):
+                try:
+                    cur.execute("""
+                        SELECT a.item_id, a.loc, a.policy_id, p.review_cycle_days
+                        FROM fact_dfu_policy_assignment a
+                        JOIN dim_replenishment_policy p ON p.policy_id = a.policy_id
+                    """)
+                    policy_rows = cur.fetchall()
+                except Exception:
+                    conn.rollback()
+                    policy_rows = []
 
             policy_map: dict[tuple, dict] = {}
             for r in policy_rows:
@@ -219,120 +223,123 @@ def run(dry_run: bool = False) -> dict:
             # ----------------------------------------------------------------
             # 4. Lead time profile (stub until IPfeature2)
             # ----------------------------------------------------------------
-            try:
-                cur.execute("""
-                    SELECT item_no, loc, lt_mean_days
-                    FROM dim_item_lead_time_profile
-                """)
-                lt_rows = cur.fetchall()
-                lt_map = {(r[0], r[1]): float(r[2] or 0) for r in lt_rows}
-            except Exception:
-                conn.rollback()
-                lt_map = {}
+            with profiled_section("fetch_lead_time_profile"):
+                try:
+                    cur.execute("""
+                        SELECT item_id, loc, lt_mean_days
+                        FROM dim_item_lead_time_profile
+                    """)
+                    lt_rows = cur.fetchall()
+                    lt_map = {(r[0], r[1]): float(r[2] or 0) for r in lt_rows}
+                except Exception:
+                    conn.rollback()
+                    lt_map = {}
 
             # ----------------------------------------------------------------
             # 5. Load existing open exceptions (dedup: last 7 days)
             # ----------------------------------------------------------------
-            dedup_cutoff = today - datetime.timedelta(days=7)
-            try:
-                cur.execute("""
-                    SELECT item_no, loc, exception_type
-                    FROM fact_replenishment_exceptions
-                    WHERE status = 'open'
-                      AND exception_date >= %s
-                """, [dedup_cutoff])
-                existing = {(r[0], r[1], r[2]) for r in cur.fetchall()}
-            except Exception:
-                conn.rollback()
-                existing = set()
+            with profiled_section("fetch_existing_exceptions"):
+                dedup_cutoff = today - datetime.timedelta(days=7)
+                try:
+                    cur.execute("""
+                        SELECT item_id, loc, exception_type
+                        FROM fact_replenishment_exceptions
+                        WHERE status = 'open'
+                          AND exception_date >= %s
+                    """, [dedup_cutoff])
+                    existing = {(r[0], r[1], r[2]) for r in cur.fetchall()}
+                except Exception:
+                    conn.rollback()
+                    existing = set()
 
         # ----------------------------------------------------------------
         # 6. Detect exceptions
         # ----------------------------------------------------------------
-        to_insert: list[dict] = []
-        counts_by_type: dict[str, int] = defaultdict(int)
-        skipped_dedup = 0
+        with profiled_section("detect_exceptions"):
+            to_insert: list[dict] = []
+            counts_by_type: dict[str, int] = defaultdict(int)
+            skipped_dedup = 0
 
-        for (item_no, loc), inv in inv_map.items():
-            current_qty = inv["current_qty"]
-            avg_daily_sls = inv["avg_daily_sls"]
+            for (item_id, loc), inv in inv_map.items():
+                current_qty = inv["current_qty"]
+                avg_daily_sls = inv["avg_daily_sls"]
 
-            ss_data = ss_map.get((item_no, loc), {})
-            ss_combined = ss_data.get("ss_combined")
-            reorder_point = ss_data.get("reorder_point")
-            effective_eoq = ss_data.get("effective_eoq")
-            target_dos_max = ss_data.get("target_dos_max")
-            unit_cost = ss_data.get("unit_cost")
-            demand_mean_monthly = ss_data.get("demand_mean_monthly")
+                ss_data = ss_map.get((item_id, loc), {})
+                ss_combined = ss_data.get("ss_combined")
+                reorder_point = ss_data.get("reorder_point")
+                effective_eoq = ss_data.get("effective_eoq")
+                target_dos_max = ss_data.get("target_dos_max")
+                unit_cost = ss_data.get("unit_cost")
+                demand_mean_monthly = ss_data.get("demand_mean_monthly")
 
-            current_dos: float | None = None
-            if avg_daily_sls > 0:
-                current_dos = current_qty / avg_daily_sls
+                current_dos: float | None = None
+                if avg_daily_sls > 0:
+                    current_dos = current_qty / avg_daily_sls
 
-            exc_type, severity = detect_exception_type(
-                current_qty, ss_combined, reorder_point,
-                current_dos, target_dos_max, avg_daily_sls,
-            )
-            if exc_type is None:
-                continue
+                exc_type, severity = detect_exception_type(
+                    current_qty, ss_combined, reorder_point,
+                    current_dos, target_dos_max, avg_daily_sls,
+                )
+                if exc_type is None:
+                    continue
 
-            # Deduplication check
-            if (item_no, loc, exc_type) in existing:
-                skipped_dedup += 1
-                continue
+                # Deduplication check
+                if (item_id, loc, exc_type) in existing:
+                    skipped_dedup += 1
+                    continue
 
-            pol = policy_map.get((item_no, loc), {})
-            policy_id = pol.get("policy_id")
-            review_cycle_days = pol.get("review_cycle_days", 7)
-            lead_time = lt_map.get((item_no, loc))
+                pol = policy_map.get((item_id, loc), {})
+                policy_id = pol.get("policy_id")
+                review_cycle_days = pol.get("review_cycle_days", 7)
+                lead_time = lt_map.get((item_id, loc))
 
-            rec_qty, order_by, receipt = compute_recommendation(
-                exc_type, severity, current_qty, ss_combined, effective_eoq,
-                demand_mean_monthly, review_cycle_days, lead_time, max_months, today,
-            )
+                rec_qty, order_by, receipt = compute_recommendation(
+                    exc_type, severity, current_qty, ss_combined, effective_eoq,
+                    demand_mean_monthly, review_cycle_days, lead_time, max_months, today,
+                )
 
-            est_value = round(rec_qty * (unit_cost or 0.0), 2)
+                est_value = round(rec_qty * (unit_cost or 0.0), 2)
 
-            to_insert.append({
-                "item_no": item_no,
-                "loc": loc,
-                "exception_date": today,
-                "exception_type": exc_type,
-                "severity": severity,
-                "current_qty_on_hand": current_qty,
-                "current_dos": current_dos,
-                "ss_combined": ss_combined,
-                "reorder_point": reorder_point,
-                "recommended_order_qty": rec_qty,
-                "recommended_order_by": order_by,
-                "expected_receipt_date": receipt,
-                "estimated_order_value": est_value,
-                "policy_id": policy_id,
-                "lead_time_mean_days": lead_time,
-            })
-            counts_by_type[exc_type] += 1
+                to_insert.append({
+                    "item_id": item_id,
+                    "loc": loc,
+                    "exception_date": today,
+                    "exception_type": exc_type,
+                    "severity": severity,
+                    "current_qty_on_hand": current_qty,
+                    "current_dos": current_dos,
+                    "ss_combined": ss_combined,
+                    "reorder_point": reorder_point,
+                    "recommended_order_qty": rec_qty,
+                    "recommended_order_by": order_by,
+                    "expected_receipt_date": receipt,
+                    "estimated_order_value": est_value,
+                    "policy_id": policy_id,
+                    "lead_time_mean_days": lead_time,
+                })
+                counts_by_type[exc_type] += 1
 
         # ----------------------------------------------------------------
         # 7. Insert (skip on dry-run)
         # ----------------------------------------------------------------
-        if not dry_run and to_insert:
-            with conn.cursor() as cur:
-                for row in to_insert:
-                    cur.execute("""
+        with profiled_section("insert_exceptions"):
+            if not dry_run and to_insert:
+                with conn.cursor() as cur:
+                    cur.executemany("""
                         INSERT INTO fact_replenishment_exceptions (
-                            item_no, loc, exception_date, exception_type, severity,
+                            item_id, loc, exception_date, exception_type, severity,
                             current_qty_on_hand, current_dos, ss_combined, reorder_point,
                             recommended_order_qty, recommended_order_by, expected_receipt_date,
                             estimated_order_value, policy_id, lead_time_mean_days
                         ) VALUES (
-                            %(item_no)s, %(loc)s, %(exception_date)s, %(exception_type)s, %(severity)s,
+                            %(item_id)s, %(loc)s, %(exception_date)s, %(exception_type)s, %(severity)s,
                             %(current_qty_on_hand)s, %(current_dos)s, %(ss_combined)s, %(reorder_point)s,
                             %(recommended_order_qty)s, %(recommended_order_by)s, %(expected_receipt_date)s,
                             %(estimated_order_value)s, %(policy_id)s, %(lead_time_mean_days)s
                         )
                         ON CONFLICT DO NOTHING
-                    """, row)
-            conn.commit()
+                    """, to_insert)
+                conn.commit()
 
     generated_count = len(to_insert)
     result = {

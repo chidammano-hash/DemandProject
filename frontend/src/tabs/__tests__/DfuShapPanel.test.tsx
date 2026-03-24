@@ -5,13 +5,13 @@ import { TestQueryWrapper } from "./test-utils";
 // ---------------------------------------------------------------------------
 // Use vi.hoisted to ensure mocks are available before vi.mock factory runs
 // ---------------------------------------------------------------------------
-const { mockFetchDfuShap, mockFetchShapSummary } = vi.hoisted(() => ({
-  mockFetchDfuShap: vi.fn(),
+const { mockFetchSkuShap, mockFetchShapSummary } = vi.hoisted(() => ({
+  mockFetchSkuShap: vi.fn(),
   mockFetchShapSummary: vi.fn(),
 }));
 
 vi.mock("@/api/queries/core", () => ({
-  fetchDfuShap: (...args: unknown[]) => mockFetchDfuShap(...args),
+  fetchSkuShap: (...args: unknown[]) => mockFetchSkuShap(...args),
   fetchShapSummary: (...args: unknown[]) => mockFetchShapSummary(...args),
 }));
 
@@ -19,7 +19,7 @@ vi.mock("@/api/queries/core", () => ({
 // Test data
 // ---------------------------------------------------------------------------
 const _SHAP_PAYLOAD = {
-  item_no: "100320",
+  item_id: "100320",
   loc: "1401-BULK",
   model_id: "lgbm_cluster",
   cluster_id: "0",
@@ -72,9 +72,9 @@ const _SHAP_SUMMARY = {
   ],
 };
 
-import { DfuShapPanel } from "@/tabs/dfu-analysis/DfuShapPanel";
+import { SkuShapPanel } from "@/tabs/dfu-analysis/DfuShapPanel";
 
-describe("DfuShapPanel", () => {
+describe("SkuShapPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -85,11 +85,11 @@ describe("DfuShapPanel", () => {
   it("shows placeholder when no model is selected", () => {
     render(
       <TestQueryWrapper>
-        <DfuShapPanel
+        <SkuShapPanel
           selectedModel={null}
           itemNo="100320"
           loc="1401-BULK"
-          dfuMode="item_location"
+          skuMode="item_location"
           visibleMonths={[]}
         />
       </TestQueryWrapper>
@@ -103,14 +103,14 @@ describe("DfuShapPanel", () => {
   // -------------------------------------------------------------------------
   // 2. Note shown for non item_location modes
   // -------------------------------------------------------------------------
-  it("shows mode restriction note when dfuMode is not item_location", () => {
+  it("shows mode restriction note when skuMode is not item_location", () => {
     render(
       <TestQueryWrapper>
-        <DfuShapPanel
+        <SkuShapPanel
           selectedModel="lgbm_cluster"
           itemNo="100320"
           loc="1401-BULK"
-          dfuMode="all_items_at_location"
+          skuMode="all_items_at_location"
           visibleMonths={[]}
         />
       </TestQueryWrapper>
@@ -126,15 +126,15 @@ describe("DfuShapPanel", () => {
   // -------------------------------------------------------------------------
   it("shows card title while fetching (loading state)", async () => {
     // Return a promise that never resolves → stays in loading state
-    mockFetchDfuShap.mockReturnValue(new Promise(() => {}));
+    mockFetchSkuShap.mockReturnValue(new Promise(() => {}));
 
     render(
       <TestQueryWrapper>
-        <DfuShapPanel
+        <SkuShapPanel
           selectedModel="lgbm_cluster"
           itemNo="100320"
           loc="1401-BULK"
-          dfuMode="item_location"
+          skuMode="item_location"
           visibleMonths={[]}
         />
       </TestQueryWrapper>
@@ -150,15 +150,15 @@ describe("DfuShapPanel", () => {
   // 4. Chart rendered on successful fetch
   // -------------------------------------------------------------------------
   it("renders cluster info and future note on successful fetch", async () => {
-    mockFetchDfuShap.mockResolvedValue(_SHAP_PAYLOAD);
+    mockFetchSkuShap.mockResolvedValue(_SHAP_PAYLOAD);
 
     render(
       <TestQueryWrapper>
-        <DfuShapPanel
+        <SkuShapPanel
           selectedModel="lgbm_cluster"
           itemNo="100320"
           loc="1401-BULK"
-          dfuMode="item_location"
+          skuMode="item_location"
           visibleMonths={["2024-01-01", "2024-02-01", "2026-04-01"]}
         />
       </TestQueryWrapper>
@@ -173,16 +173,16 @@ describe("DfuShapPanel", () => {
   // 5. Fallback to cluster-level summary on 404
   // -------------------------------------------------------------------------
   it("falls back to cluster-level summary on 404 error", async () => {
-    mockFetchDfuShap.mockRejectedValue(new Error("HTTP 404 Not Found"));
+    mockFetchSkuShap.mockRejectedValue(new Error("HTTP 404 Not Found"));
     mockFetchShapSummary.mockResolvedValue(_SHAP_SUMMARY);
 
     render(
       <TestQueryWrapper>
-        <DfuShapPanel
+        <SkuShapPanel
           selectedModel="lgbm_cluster"
           itemNo="100320"
           loc="1401-BULK"
-          dfuMode="item_location"
+          skuMode="item_location"
           visibleMonths={[]}
         />
       </TestQueryWrapper>

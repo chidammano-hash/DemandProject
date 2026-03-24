@@ -1,7 +1,6 @@
 """Shared MLflow logging for backtest scripts."""
 
 import os
-import time
 from typing import Any
 
 from common.utils import _ts

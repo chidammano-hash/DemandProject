@@ -7,7 +7,12 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from common.backtest_framework import generate_timeframes
+from common.backtest_framework import (
+    compute_cluster_demand_stats,
+    generate_timeframes,
+    resolve_cluster_params,
+    _matches_profile,
+)
 
 
 class TestGenerateTimeframes:
@@ -90,9 +95,9 @@ class TestPredictSingleMonth:
         feature_cols = ["qty_lag_1", "qty_lag_2", "ml_cluster", "month"]
 
         predict_data = pd.DataFrame({
-            "dfu_ck": ["A_B_C", "D_E_F"],
-            "dmdunit": ["A", "D"],
-            "dmdgroup": ["B", "E"],
+            "sku_ck": ["A_B_C", "D_E_F"],
+            "item_id": ["A", "D"],
+            "customer_group": ["B", "E"],
             "loc": ["C", "F"],
             "startdate": [pd.Timestamp("2025-01-01"), pd.Timestamp("2025-01-01")],
             "qty_lag_1": [100.0, 200.0],
@@ -119,9 +124,9 @@ class TestPredictSingleMonth:
 
         feature_cols = ["qty_lag_1", "ml_cluster"]
         predict_data = pd.DataFrame({
-            "dfu_ck": ["A", "B"],
-            "dmdunit": ["A", "B"],
-            "dmdgroup": ["G", "G"],
+            "sku_ck": ["A", "B"],
+            "item_id": ["A", "B"],
+            "customer_group": ["G", "G"],
             "loc": ["L1", "L2"],
             "startdate": [pd.Timestamp("2025-01-01")] * 2,
             "qty_lag_1": [100.0, 200.0],
@@ -146,9 +151,9 @@ class TestPredictSingleMonth:
 
         feature_cols = ["qty_lag_1", "ml_cluster"]
         predict_data = pd.DataFrame({
-            "dfu_ck": ["A"],
-            "dmdunit": ["A"],
-            "dmdgroup": ["G"],
+            "sku_ck": ["A"],
+            "item_id": ["A"],
+            "customer_group": ["G"],
             "loc": ["L1"],
             "startdate": [pd.Timestamp("2025-01-01")],
             "qty_lag_1": [100.0],
@@ -192,3 +197,223 @@ class TestPlanningDateCap:
         cutoff = get_planning_date().replace(day=1)
         assert cutoff.day == 1
         assert cutoff == datetime.date(2026, 2, 1)
+
+
+# ── Per-cluster adaptive hyperparameter profile tests ───────────────────────
+
+
+def _make_train_df(
+    cluster_id: str = "c0",
+    n_rows: int = 120,
+    mean_qty: float = 100.0,
+    std_qty: float = 30.0,
+    zero_frac: float = 0.0,
+    seasonal: bool = False,
+) -> pd.DataFrame:
+    """Build a synthetic training DataFrame for cluster demand stat tests."""
+    rng = np.random.RandomState(42)
+    dates = pd.date_range("2023-01-01", periods=n_rows, freq="MS")
+    qty = rng.normal(mean_qty, std_qty, size=n_rows).clip(0)
+    if zero_frac > 0:
+        n_zero = int(n_rows * zero_frac)
+        zero_idx = rng.choice(n_rows, size=n_zero, replace=False)
+        qty[zero_idx] = 0.0
+    if seasonal:
+        # Add a strong month-of-year seasonal pattern
+        month_effect = np.array([0.5, 0.3, 0.7, 1.0, 1.5, 2.0, 1.8, 1.3, 1.0, 0.8, 0.6, 0.4])
+        for i in range(n_rows):
+            qty[i] *= month_effect[dates[i].month - 1]
+    return pd.DataFrame({
+        "ml_cluster": [cluster_id] * n_rows,
+        "qty": qty,
+        "startdate": dates[:n_rows],
+    })
+
+
+class TestComputeClusterDemandStats:
+    """Tests for compute_cluster_demand_stats()."""
+
+    def test_basic_stats(self):
+        df = _make_train_df(mean_qty=100.0, std_qty=20.0, zero_frac=0.0)
+        stats = compute_cluster_demand_stats(df, "c0")
+        assert stats["mean_demand"] > 50  # non-zero mean should be positive
+        assert stats["cv_demand"] > 0
+        assert stats["zero_demand_pct"] == 0.0
+
+    def test_sparse_demand(self):
+        df = _make_train_df(mean_qty=5.0, std_qty=3.0, zero_frac=0.6)
+        stats = compute_cluster_demand_stats(df, "c0")
+        assert stats["zero_demand_pct"] >= 0.5
+        assert stats["mean_demand"] < 20  # low non-zero mean
+
+    def test_high_volume_stable(self):
+        df = _make_train_df(mean_qty=500.0, std_qty=50.0, zero_frac=0.0)
+        stats = compute_cluster_demand_stats(df, "c0")
+        assert stats["mean_demand"] > 200
+        assert stats["cv_demand"] < 0.5  # low CV = stable
+
+    def test_seasonal_amplitude(self):
+        df = _make_train_df(mean_qty=100.0, std_qty=10.0, seasonal=True)
+        stats = compute_cluster_demand_stats(df, "c0")
+        assert stats["seasonal_amplitude"] > 0.1
+
+    def test_empty_cluster(self):
+        df = pd.DataFrame({"ml_cluster": [], "qty": [], "startdate": []})
+        stats = compute_cluster_demand_stats(df, "c0")
+        assert stats["mean_demand"] == 0.0
+        assert stats["zero_demand_pct"] == 1.0
+        assert stats["cv_demand"] == 0.0
+        assert stats["seasonal_amplitude"] == 0.0
+
+    def test_wrong_cluster_id_returns_empty_stats(self):
+        df = _make_train_df(cluster_id="c1", mean_qty=100.0)
+        stats = compute_cluster_demand_stats(df, "c0")
+        assert stats["mean_demand"] == 0.0
+        assert stats["zero_demand_pct"] == 1.0
+
+    def test_all_zero_demand(self):
+        df = _make_train_df(mean_qty=0.0, std_qty=0.0, zero_frac=1.0)
+        stats = compute_cluster_demand_stats(df, "c0")
+        assert stats["zero_demand_pct"] == 1.0
+        assert stats["mean_demand"] == 0.0
+        assert stats["cv_demand"] == 0.0
+
+
+class TestMatchesProfile:
+    """Tests for _matches_profile()."""
+
+    def test_empty_criteria_always_matches(self):
+        assert _matches_profile({"mean_demand": 100}, {}) is True
+
+    def test_min_criteria_pass(self):
+        assert _matches_profile(
+            {"zero_demand_pct": 0.6},
+            {"zero_demand_pct_min": 0.5},
+        ) is True
+
+    def test_min_criteria_fail(self):
+        assert _matches_profile(
+            {"zero_demand_pct": 0.3},
+            {"zero_demand_pct_min": 0.5},
+        ) is False
+
+    def test_max_criteria_pass(self):
+        assert _matches_profile(
+            {"mean_demand": 10},
+            {"mean_demand_max": 20},
+        ) is True
+
+    def test_max_criteria_fail(self):
+        assert _matches_profile(
+            {"mean_demand": 30},
+            {"mean_demand_max": 20},
+        ) is False
+
+    def test_combined_min_max_pass(self):
+        assert _matches_profile(
+            {"zero_demand_pct": 0.6, "mean_demand": 10},
+            {"zero_demand_pct_min": 0.5, "mean_demand_max": 20},
+        ) is True
+
+    def test_combined_min_max_fail_one(self):
+        assert _matches_profile(
+            {"zero_demand_pct": 0.6, "mean_demand": 30},
+            {"zero_demand_pct_min": 0.5, "mean_demand_max": 20},
+        ) is False
+
+    def test_missing_stat_treated_as_zero(self):
+        """Stats not present default to 0.0."""
+        assert _matches_profile(
+            {},
+            {"mean_demand_min": 10},
+        ) is False
+
+
+class TestResolveClusterParams:
+    """Tests for resolve_cluster_params()."""
+
+    _ENABLED_CONFIG = {
+        "enabled": True,
+        "min_cluster_size": 100,
+        "cluster_profiles": {
+            "sparse_intermittent": {
+                "description": "Sparse",
+                "match_criteria": {"zero_demand_pct_min": 0.5, "mean_demand_max": 20},
+                "overrides": {"num_leaves": 15, "min_child_samples": 200},
+            },
+            "high_volume_stable": {
+                "description": "Stable",
+                "match_criteria": {"mean_demand_min": 200, "cv_demand_max": 0.5},
+                "overrides": {"num_leaves": 127, "learning_rate": 0.01},
+            },
+            "default": {
+                "description": "Default",
+                "match_criteria": {},
+                "overrides": {},
+            },
+        },
+    }
+
+    def test_sparse_match(self):
+        base = {"num_leaves": 63, "min_child_samples": 20, "learning_rate": 0.02}
+        stats = {"mean_demand": 5.0, "cv_demand": 1.5, "zero_demand_pct": 0.7, "seasonal_amplitude": 0.1}
+        with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
+            resolved, profile = resolve_cluster_params("c0", stats, base)
+        assert profile == "sparse_intermittent"
+        assert resolved["num_leaves"] == 15
+        assert resolved["min_child_samples"] == 200
+        assert resolved["learning_rate"] == 0.02  # unchanged from base
+
+    def test_stable_match(self):
+        base = {"num_leaves": 63, "learning_rate": 0.02}
+        stats = {"mean_demand": 500.0, "cv_demand": 0.3, "zero_demand_pct": 0.0, "seasonal_amplitude": 0.1}
+        with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
+            resolved, profile = resolve_cluster_params("c1", stats, base)
+        assert profile == "high_volume_stable"
+        assert resolved["num_leaves"] == 127
+        assert resolved["learning_rate"] == 0.01
+
+    def test_default_fallback(self):
+        base = {"num_leaves": 63}
+        stats = {"mean_demand": 80.0, "cv_demand": 0.6, "zero_demand_pct": 0.1, "seasonal_amplitude": 0.05}
+        with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
+            resolved, profile = resolve_cluster_params("c2", stats, base)
+        assert profile == "default"
+        assert resolved == base  # no overrides
+
+    def test_disabled_returns_base(self):
+        base = {"num_leaves": 63}
+        stats = {"mean_demand": 5.0, "cv_demand": 1.5, "zero_demand_pct": 0.7, "seasonal_amplitude": 0.1}
+        disabled_cfg = {**self._ENABLED_CONFIG, "enabled": False}
+        with patch("common.ml.backtest_framework.load_config", return_value=disabled_cfg):
+            resolved, profile = resolve_cluster_params("c0", stats, base)
+        assert profile == "none"
+        assert resolved is base  # identity check — not modified
+
+    def test_empty_profiles_returns_base(self):
+        base = {"num_leaves": 63}
+        empty_cfg = {"enabled": True, "cluster_profiles": {}}
+        with patch("common.ml.backtest_framework.load_config", return_value=empty_cfg):
+            resolved, profile = resolve_cluster_params("c0", {}, base)
+        assert profile == "none"
+        assert resolved is base
+
+    def test_priority_order_sparse_before_stable(self):
+        """sparse_intermittent has higher priority than high_volume_stable.
+        If a cluster somehow matches both, sparse wins."""
+        base = {"num_leaves": 63}
+        # Stats that match both sparse (zero_pct > 0.5, mean < 20) and
+        # technically can't match stable (mean < 200), but this tests priority
+        stats = {"mean_demand": 5.0, "cv_demand": 2.0, "zero_demand_pct": 0.7, "seasonal_amplitude": 0.0}
+        with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
+            _, profile = resolve_cluster_params("c0", stats, base)
+        assert profile == "sparse_intermittent"
+
+    def test_base_params_not_mutated(self):
+        """Ensure the original base_params dict is never mutated."""
+        base = {"num_leaves": 63, "min_child_samples": 20}
+        base_copy = base.copy()
+        stats = {"mean_demand": 5.0, "cv_demand": 1.5, "zero_demand_pct": 0.7, "seasonal_amplitude": 0.1}
+        with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
+            resolve_cluster_params("c0", stats, base)
+        assert base == base_copy

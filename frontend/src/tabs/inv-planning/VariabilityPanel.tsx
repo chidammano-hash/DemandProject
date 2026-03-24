@@ -74,13 +74,13 @@ export function VariabilityPanel() {
         />
       </div>
 
-      {!isLoading && (!summary || summary.total_dfus === 0) && (
+      {!isLoading && (!summary || summary.total_skus === 0) && (
         <EmptyState
           icon={BarChart2}
           title="Demand variability not yet profiled"
           description="Demand variability profiles classify each DFU as Stable (CV < 0.30), Moderate (CV 0.30–0.80), Volatile (CV > 0.80), or Lumpy (intermittent, >30% zero months). These profiles feed safety stock and replenishment policy assignment."
           steps={[
-            { label: "Run clustering (populates dim_dfu variability_class)", command: "make cluster-all" },
+            { label: "Run clustering (populates dim_sku variability_class)", command: "make cluster-all" },
             { label: "Alternatively compute variability only", command: "make variability-compute" },
           ]}
         />
@@ -134,8 +134,8 @@ export function VariabilityPanel() {
             </thead>
             <tbody>
               {volatile.rows.map((r: VariabilityDetailRow, i: number) => (
-                <tr key={`${r.item_no}-${r.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
-                  <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                <tr key={`${r.item_id}-${r.loc}-${i}`} className="border-b last:border-0 hover:bg-muted/30">
+                  <td className="py-1 pr-2 font-mono">{r.item_id}</td>
                   <td className="py-1 pr-2">{r.loc}</td>
                   <td className="py-1 pr-2 text-right">
                     {r.demand_cv != null ? (r.demand_cv * 100).toFixed(1) + "%" : "-"}

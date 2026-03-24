@@ -22,7 +22,15 @@ import psycopg
 from datetime import date
 from typing import Optional
 
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 
 CONFIG_PATH = "config/event_planning_config.yaml"
 
@@ -141,7 +149,7 @@ def fetch_approved_events(
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            SELECT event_id, event_name, event_type, item_no, loc,
+            SELECT event_id, event_name, event_type, item_id, loc,
                    event_start_date, event_end_date,
                    uplift_multiplier, additive_qty, is_hard_override, override_qty
             FROM fact_event_calendar
@@ -156,7 +164,7 @@ def fetch_approved_events(
             "event_id": r[0],
             "event_name": r[1],
             "event_type": r[2],
-            "item_no": r[3],
+            "item_id": r[3],
             "loc": r[4],
             "start_date": r[5],
             "end_date": r[6],
@@ -171,7 +179,7 @@ def fetch_approved_events(
 
 def fetch_base_forecast(
     conn: psycopg.Connection,
-    item_no: str,
+    item_id: str,
     loc: str,
     start_date: date,
     end_date: date,
@@ -182,12 +190,12 @@ def fetch_base_forecast(
             """
             SELECT startdate, basefcst_pref
             FROM fact_external_forecast_monthly
-            WHERE dmdunit = %s AND loc = %s
+            WHERE item_id = %s AND loc = %s
               AND model_id = 'champion'
               AND startdate >= %s AND startdate <= %s
             ORDER BY startdate
             """,
-            (item_no, loc, start_date, end_date),
+            (item_id, loc, start_date, end_date),
         )
         rows = cur.fetchall()
     return [
@@ -199,17 +207,17 @@ def fetch_base_forecast(
 def upsert_adjusted_forecasts(conn: psycopg.Connection, rows: list[dict]) -> int:
     sql = """
         INSERT INTO fact_event_adjusted_forecast (
-            event_id, item_no, loc, plan_month,
+            event_id, item_id, loc, plan_month,
             base_forecast_qty, uplift_multiplier, additive_qty,
             adjusted_forecast_qty, uplift_delta_units, impact_value_usd,
             is_hard_override
         ) VALUES (
-            %(event_id)s, %(item_no)s, %(loc)s, %(plan_month)s,
+            %(event_id)s, %(item_id)s, %(loc)s, %(plan_month)s,
             %(base_forecast_qty)s, %(uplift_multiplier)s, %(additive_qty)s,
             %(adjusted_forecast_qty)s, %(uplift_delta_units)s, %(impact_value_usd)s,
             %(is_hard_override)s
         )
-        ON CONFLICT (event_id, item_no, loc, plan_month)
+        ON CONFLICT (event_id, item_id, loc, plan_month)
         DO UPDATE SET
             base_forecast_qty       = EXCLUDED.base_forecast_qty,
             uplift_multiplier       = EXCLUDED.uplift_multiplier,
@@ -221,6 +229,61 @@ def upsert_adjusted_forecasts(conn: psycopg.Connection, rows: list[dict]) -> int
     with conn.cursor() as cur:
         cur.executemany(sql, rows)
     return len(rows)
+
+
+def _batch_load_forecasts(
+    conn: psycopg.Connection,
+    events: list[dict],
+) -> dict[tuple[str, str], list[dict]]:
+    """Batch-load base forecasts for all events in a single query.
+
+    Builds a WHERE (item_id, loc) IN (...) clause covering the full date range
+    across all events, then indexes results by (item_id, loc).
+    """
+    # Collect unique (item_id, loc) pairs and overall date range
+    keys: set[tuple[str, str]] = set()
+    min_date = None
+    max_date = None
+    for e in events:
+        keys.add((e["item_id"], e["loc"]))
+        sd, ed = e["start_date"], e["end_date"]
+        if min_date is None or sd < min_date:
+            min_date = sd
+        if max_date is None or ed > max_date:
+            max_date = ed
+
+    if not keys or min_date is None:
+        return {}
+
+    # Build parameterized IN-list for (item_id, loc) pairs
+    key_list = list(keys)
+    placeholders = ", ".join(["(%s, %s)"] * len(key_list))
+    params: list = []
+    for item_id, loc in key_list:
+        params.extend([item_id, loc])
+    params.extend([min_date, max_date])
+
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT item_id, loc, startdate, basefcst_pref
+            FROM fact_external_forecast_monthly
+            WHERE (item_id, loc) IN ({placeholders})
+              AND model_id = 'champion'
+              AND startdate >= %s AND startdate <= %s
+            ORDER BY item_id, loc, startdate
+            """,
+            params,
+        )
+        rows = cur.fetchall()
+
+    lookup: dict[tuple[str, str], list[dict]] = {}
+    for r in rows:
+        key = (r[0], r[1])
+        lookup.setdefault(key, []).append(
+            {"plan_month": r[2], "stat_qty": float(r[3]) if r[3] else 0.0}
+        )
+    return lookup
 
 
 def run(
@@ -238,46 +301,58 @@ def run(
     events_processed = 0
 
     with psycopg.connect(**get_db_params()) as conn:
-        events = fetch_approved_events(conn, event_id, month)
+        with profiled_section("fetch_approved_events"):
+            events = fetch_approved_events(conn, event_id, month)
 
-        for event in events:
-            events_processed += 1
-            item = event["item_no"]
-            loc = event["loc"]
+        # Batch-load all base forecasts for all events in a single query
+        forecast_lookup: dict[tuple[str, str], list[dict]] = {}
+        if events:
+            with profiled_section("batch_load_forecasts"):
+                forecast_lookup = _batch_load_forecasts(conn, events)
 
-            base_forecasts = fetch_base_forecast(
-                conn, item, loc, event["start_date"], event["end_date"]
-            )
+        with profiled_section("compute_adjustments"):
+            for event in events:
+                events_processed += 1
+                item = event["item_id"]
+                loc = event["loc"]
 
-            for forecast in base_forecasts:
-                adjusted, delta = apply_event_uplift(
-                    base_qty=forecast["stat_qty"],
-                    uplift_multiplier=event["uplift_multiplier"],
-                    additive_qty=event["additive_qty"],
-                    is_hard_override=event["is_hard_override"],
-                    override_qty=event["override_qty"],
-                    max_multiplier=max_multiplier,
-                )
-                impact_value = compute_event_impact_value(delta, avg_unit_cost=0.0)
+                base_forecasts = forecast_lookup.get((item, loc), [])
+                # Filter to the event's date range
+                base_forecasts = [
+                    f for f in base_forecasts
+                    if event["start_date"] <= f["plan_month"] <= event["end_date"]
+                ]
 
-                rows_to_write.append({
-                    "event_id": event["event_id"],
-                    "item_no": item,
-                    "loc": loc,
-                    "plan_month": forecast["plan_month"],
-                    "base_forecast_qty": forecast["stat_qty"],
-                    "uplift_multiplier": event["uplift_multiplier"],
-                    "additive_qty": event["additive_qty"],
-                    "adjusted_forecast_qty": adjusted,
-                    "uplift_delta_units": delta,
-                    "impact_value_usd": impact_value,
-                    "is_hard_override": event["is_hard_override"],
-                })
+                for forecast in base_forecasts:
+                    adjusted, delta = apply_event_uplift(
+                        base_qty=forecast["stat_qty"],
+                        uplift_multiplier=event["uplift_multiplier"],
+                        additive_qty=event["additive_qty"],
+                        is_hard_override=event["is_hard_override"],
+                        override_qty=event["override_qty"],
+                        max_multiplier=max_multiplier,
+                    )
+                    impact_value = compute_event_impact_value(delta, avg_unit_cost=0.0)
+
+                    rows_to_write.append({
+                        "event_id": event["event_id"],
+                        "item_id": item,
+                        "loc": loc,
+                        "plan_month": forecast["plan_month"],
+                        "base_forecast_qty": forecast["stat_qty"],
+                        "uplift_multiplier": event["uplift_multiplier"],
+                        "additive_qty": event["additive_qty"],
+                        "adjusted_forecast_qty": adjusted,
+                        "uplift_delta_units": delta,
+                        "impact_value_usd": impact_value,
+                        "is_hard_override": event["is_hard_override"],
+                    })
 
         rows_written = 0
         if not dry_run and rows_to_write:
-            rows_written = upsert_adjusted_forecasts(conn, rows_to_write)
-            conn.commit()
+            with profiled_section("write_adjusted_forecasts"):
+                rows_written = upsert_adjusted_forecasts(conn, rows_to_write)
+                conn.commit()
 
     return {
         "events_processed": events_processed,

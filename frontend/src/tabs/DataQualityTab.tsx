@@ -6,14 +6,12 @@
  *  2. Domain Health Grid — clickable domain cards that filter check catalog + issues
  *  3. Check Catalog Table — all checks, filterable by domain/status/severity, sortable
  *  4. Recent Issues — history entries for failed/error/warn checks with details
- *  5. Pipeline Freshness — per-table last-load timestamps
  */
 import { useState, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   fetchDQDashboard,
   fetchDQChecks,
-  fetchDQFreshness,
   fetchDQHistory,
   fetchDQFixPreview,
   applyDQFixes,
@@ -21,13 +19,13 @@ import {
   dqKeys,
   STALE_PLATFORM,
   fetchBatches,
-  fetchCorrections,
-  fetchQuarantine,
-  resolveQuarantine,
+  fetchCorrectionsByItem,
+  fetchCorrectionsSummary,
+  correctionKeys,
   lineageKeys,
   STALE_LINEAGE,
 } from "@/api/queries";
-import type { DQDomainScore, DQCheck, DQHistoryEntry, DQFixItem, LoadBatch, DQCorrection, QuarantineEntry } from "@/api/queries/platform";
+import type { DQDomainScore, DQCheck, DQHistoryEntry, DQFixItem, LoadBatch, DQCorrection, DQCorrectionSummary } from "@/api/queries/platform";
 import {
   RefreshCw,
   CheckCircle2,
@@ -108,20 +106,6 @@ function analyzeIssue(entry: DQHistoryEntry): { summary: string; rootCause: stri
   }
 
   switch (entry.check_type ?? name.split("_")[0]) {
-    case "freshness": {
-      const hrs = Number(d.hours_since_load ?? val ?? 0);
-      const days = Math.round(hrs / 24);
-      return {
-        summary: `Table ${table} has not been refreshed in ${days} days (${Math.round(hrs)} hours).`,
-        rootCause: `The ETL pipeline for ${table} has not loaded new data recently. This could indicate a stalled data pipeline, upstream source delays, or a scheduler failure.`,
-        fixSteps: [
-          `Check the ETL job scheduler for ${table} (make check-db to verify row counts)`,
-          `Verify upstream data source availability`,
-          `Re-run the data load: make load-all or the specific load target for this table`,
-          `If this is expected (e.g., monthly data), adjust the freshness threshold in config/data_quality_config.yaml`,
-        ],
-      };
-    }
     case "referential_integrity":
     case "referential": {
       const orphans = Number(d.orphan_keys ?? val ?? 0);
@@ -356,12 +340,6 @@ export default function DataQualityTab() {
     staleTime: STALE_PLATFORM,
   });
 
-  const { data: freshness } = useQuery({
-    queryKey: dqKeys.freshness,
-    queryFn: fetchDQFreshness,
-    staleTime: STALE_PLATFORM,
-  });
-
   const { data: history } = useQuery({
     queryKey: dqKeys.history(),
     queryFn: () => fetchDQHistory(undefined, 7, 200),
@@ -377,7 +355,6 @@ export default function DataQualityTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: dqKeys.dashboard });
       queryClient.invalidateQueries({ queryKey: dqKeys.checks });
-      queryClient.invalidateQueries({ queryKey: dqKeys.freshness });
       queryClient.invalidateQueries({ queryKey: ["dq", "history"] });
       setShowSuccess(true);
     },
@@ -453,7 +430,6 @@ export default function DataQualityTab() {
   /* ---- derived data ---- */
   const domains = dashboard?.domains ?? [];
   const checkList = checks?.checks ?? [];
-  const tables = freshness?.tables ?? [];
   const historyEntries = history?.entries ?? [];
 
   /* ---- filters & sort ---- */
@@ -1100,25 +1076,9 @@ export default function DataQualityTab() {
         )}
       </div>
 
-      {/* ================================================================== */}
-      {/* SECTION 5: Pipeline Freshness                                      */}
-      {/* ================================================================== */}
-      <div className="rounded-lg border border-border bg-card p-4">
-        <h3 className="mb-3 text-sm font-medium text-foreground">Pipeline Freshness</h3>
-        <div className="space-y-2">
-          {tables.map((t: { table: string; last_load: string | null }) => (
-            <div key={t.table} className="flex items-center justify-between rounded-md border border-border/40 px-3 py-2 text-sm">
-              <span className="font-mono text-xs">{t.table}</span>
-              <span className={`text-xs ${t.last_load ? "text-muted-foreground" : "text-red-500"}`}>
-                {t.last_load ? new Date(t.last_load).toLocaleString() : "Never loaded"}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
 
       {/* ================================================================== */}
-      {/* SECTION 6: Pipeline Lineage (Medallion)                            */}
+      {/* SECTION 6: Pipeline Lineage                                        */}
       {/* ================================================================== */}
       <PipelineLineageSection />
 
@@ -1126,11 +1086,6 @@ export default function DataQualityTab() {
       {/* SECTION 7: Corrections Audit Log                                   */}
       {/* ================================================================== */}
       <CorrectionsSection />
-
-      {/* ================================================================== */}
-      {/* SECTION 8: Quarantine Queue                                        */}
-      {/* ================================================================== */}
-      <QuarantineSection />
     </div>
   );
 }
@@ -1150,7 +1105,7 @@ function PipelineLineageSection() {
     <div className="rounded-lg border border-border bg-card p-4">
       <h3 className="mb-3 text-sm font-medium text-foreground">Pipeline Lineage</h3>
       {batches.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No medallion batches yet. Run <code className="rounded bg-muted px-1">make medallion-load-all</code> to ingest data.</p>
+        <p className="text-xs text-muted-foreground">No pipeline batches yet. Run <code className="rounded bg-muted px-1">make load-all</code> to ingest data.</p>
       ) : (
         <div className="space-y-2">
           {batches.map((b) => (
@@ -1163,9 +1118,6 @@ function PipelineLineageSection() {
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <span>{b.row_count_in?.toLocaleString() ?? "—"} in</span>
                 <span>{b.row_count_out?.toLocaleString() ?? "—"} out</span>
-                {(b.row_count_quarantined ?? 0) > 0 && (
-                  <span className="text-amber-600">{b.row_count_quarantined} quarantined</span>
-                )}
                 <span>{b.started_at ? new Date(b.started_at).toLocaleString() : "—"}</span>
               </div>
             </div>
@@ -1177,103 +1129,280 @@ function PipelineLineageSection() {
 }
 
 /* ========================================================================== */
-/*  Section 7: Corrections Audit Log                                          */
+/*  Section 7: DQ Corrections Browser                                         */
 /* ========================================================================== */
 function CorrectionsSection() {
-  const { data } = useQuery({
-    queryKey: lineageKeys.corrections,
-    queryFn: () => fetchCorrections(undefined, undefined, undefined, 50),
+  const [domainFilter, setDomainFilter] = useState("");
+  const [fixTypeFilter, setFixTypeFilter] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [selectedSku, setSelectedSku] = useState<{ item_id: string; loc: string } | null>(null);
+  const PAGE = 50;
+
+  // Summary query — all corrected SKUs
+  const { data: summaryData, isLoading: summaryLoading } = useQuery({
+    queryKey: correctionKeys.summary(domainFilter, fixTypeFilter),
+    queryFn: () => fetchCorrectionsSummary(domainFilter || undefined, fixTypeFilter || undefined, PAGE, offset),
     staleTime: STALE_LINEAGE,
   });
-  const corrections: DQCorrection[] = data?.corrections ?? [];
+  const skus: DQCorrectionSummary[] = summaryData?.skus ?? [];
+  const totalSkus = summaryData?.total ?? 0;
+  const totalPages = Math.ceil(totalSkus / PAGE);
+  const currentPage = Math.floor(offset / PAGE) + 1;
+
+  // Detail query — corrections for selected SKU
+  const { data: detailData, isLoading: detailLoading } = useQuery({
+    queryKey: selectedSku
+      ? correctionKeys.byItem(selectedSku.item_id, selectedSku.loc)
+      : ["dq", "corrections", "none"],
+    queryFn: () =>
+      selectedSku
+        ? fetchCorrectionsByItem(selectedSku.item_id, selectedSku.loc, 1000)
+        : Promise.resolve({ corrections: [], total: 0 }),
+    staleTime: STALE_LINEAGE,
+    enabled: !!selectedSku,
+  });
+  const detailRows: DQCorrection[] = detailData?.corrections ?? [];
+
+  function handleSkuSelect(item_id: string, loc: string) {
+    if (selectedSku?.item_id === item_id && selectedSku?.loc === loc) {
+      setSelectedSku(null);
+    } else {
+      setSelectedSku({ item_id, loc });
+    }
+  }
+
+  const formatNum = (v: number | null) =>
+    v != null ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "NULL";
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <h3 className="mb-3 text-sm font-medium text-foreground">Corrections Audit Log</h3>
-      {corrections.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No DQ corrections recorded. Corrections appear after running <code className="rounded bg-muted px-1">make medallion-load-sales-fix</code>.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-border text-left text-muted-foreground">
-                <th className="pb-2 pr-3">Domain</th>
-                <th className="pb-2 pr-3">Column</th>
-                <th className="pb-2 pr-3">Fix Type</th>
-                <th className="pb-2 pr-3">Old</th>
-                <th className="pb-2 pr-3">New</th>
-                <th className="pb-2 pr-3">Applied</th>
-              </tr>
-            </thead>
-            <tbody>
-              {corrections.map((c) => (
-                <tr key={c.correction_id} className="border-b border-border/30">
-                  <td className="py-1.5 pr-3 font-mono">{c.domain}</td>
-                  <td className="py-1.5 pr-3">{c.column_name}</td>
-                  <td className="py-1.5 pr-3">
-                    <span className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">{c.fix_type}</span>
-                  </td>
-                  <td className="py-1.5 pr-3 text-red-600 dark:text-red-400">{c.old_value ?? "NULL"}</td>
-                  <td className="py-1.5 pr-3 text-emerald-600 dark:text-emerald-400">{c.new_value ?? "NULL"}</td>
-                  <td className="py-1.5 pr-3 text-muted-foreground">{c.applied_at ? new Date(c.applied_at).toLocaleString() : "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <div className="space-y-4">
+      {/* ---- Summary table ---- */}
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h3 className="text-sm font-medium text-foreground">
+            DQ Corrections — Corrected SKUs
+            {totalSkus > 0 && (
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                ({totalSkus.toLocaleString()} SKUs)
+              </span>
+            )}
+          </h3>
+          <div className="flex items-center gap-2">
+            <select
+              className="h-7 rounded border border-input bg-background px-2 text-xs"
+              value={domainFilter}
+              onChange={(e) => { setDomainFilter(e.target.value); setOffset(0); setSelectedSku(null); }}
+            >
+              <option value="">All Domains</option>
+              <option value="sales">Sales</option>
+              <option value="inventory">Inventory</option>
+              <option value="forecast">Forecast</option>
+              <option value="purchase_order">Purchase Order</option>
+            </select>
+            <select
+              className="h-7 rounded border border-input bg-background px-2 text-xs"
+              value={fixTypeFilter}
+              onChange={(e) => { setFixTypeFilter(e.target.value); setOffset(0); setSelectedSku(null); }}
+            >
+              <option value="">All Fix Types</option>
+              <option value="outliers">Outliers (IQR/Z-score)</option>
+              <option value="range">Range Clamp</option>
+              <option value="completeness">Completeness</option>
+              <option value="lead_time">Lead Time</option>
+            </select>
+          </div>
         </div>
-      )}
-    </div>
-  );
-}
 
-/* ========================================================================== */
-/*  Section 8: Quarantine Queue                                               */
-/* ========================================================================== */
-function QuarantineSection() {
-  const queryClient = useQueryClient();
-  const { data } = useQuery({
-    queryKey: lineageKeys.quarantine,
-    queryFn: () => fetchQuarantine(undefined, false, 50),
-    staleTime: STALE_LINEAGE,
-  });
-  const items: QuarantineEntry[] = data?.quarantine ?? [];
+        {summaryLoading ? (
+          <p className="text-xs text-muted-foreground">Loading…</p>
+        ) : skus.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No DQ corrections recorded. Corrections appear after running{" "}
+            <code className="rounded bg-muted px-1">uv run python scripts/fix_dq_issues.py --apply</code>.
+          </p>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-muted-foreground">
+                    <th className="pb-2 pr-3">Item</th>
+                    <th className="pb-2 pr-3">Location</th>
+                    <th className="pb-2 pr-3 text-center">Corrections</th>
+                    <th className="pb-2 pr-3">Domain</th>
+                    <th className="pb-2 pr-3">Columns</th>
+                    <th className="pb-2 pr-3">Fix Types</th>
+                    <th className="pb-2 pr-3">Period Range</th>
+                    <th className="pb-2 pr-3">Last Applied</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {skus.map((s) => {
+                    const isSelected = selectedSku?.item_id === s.item_id && selectedSku?.loc === s.loc;
+                    return (
+                      <tr
+                        key={`${s.item_id}-${s.loc}`}
+                        className="border-b border-border/30 cursor-pointer transition-colors hover:bg-primary/10"
+                        onClick={() => {
+                          window.location.href = `?tab=itemAnalysis&item=${encodeURIComponent(s.item_id)}&loc=${encodeURIComponent(s.loc)}&dqCorrections=1`;
+                        }}
+                      >
+                        <td className="py-1.5 pr-3 font-mono font-medium">{s.item_id}</td>
+                        <td className="py-1.5 pr-3">{s.loc}</td>
+                        <td className="py-1.5 pr-3 text-center">
+                          <span className="inline-block min-w-[2rem] rounded-full bg-amber-100 px-2 py-0.5 text-center font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                            {s.correction_count}
+                          </span>
+                        </td>
+                        <td className="py-1.5 pr-3">{s.domains.join(", ")}</td>
+                        <td className="py-1.5 pr-3">
+                          {s.columns.map((col) => (
+                            <span key={col} className="mr-1 rounded bg-muted px-1 py-0.5 text-foreground">{col}</span>
+                          ))}
+                        </td>
+                        <td className="py-1.5 pr-3">
+                          {s.fix_types.map((ft) => (
+                            <span key={ft} className="mr-1 rounded bg-blue-50 px-1 py-0.5 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">{ft}</span>
+                          ))}
+                        </td>
+                        <td className="py-1.5 pr-3 text-muted-foreground">
+                          {s.earliest_period && s.latest_period
+                            ? `${s.earliest_period.slice(0, 7)} → ${s.latest_period.slice(0, 7)}`
+                            : "—"}
+                        </td>
+                        <td className="py-1.5 pr-3 text-muted-foreground">
+                          {s.latest_at ? new Date(s.latest_at).toLocaleDateString() : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
 
-  const resolveMut = useMutation({
-    mutationFn: (id: number) => resolveQuarantine(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: lineageKeys.quarantine }),
-  });
-
-  return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <h3 className="mb-3 text-sm font-medium text-foreground">Quarantine Queue</h3>
-      {items.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No quarantined rows. Rows failing DQ gate checks appear here.</p>
-      ) : (
-        <div className="space-y-2">
-          {items.map((q) => (
-            <div key={q.quarantine_id} className="rounded-md border border-amber-200 bg-amber-50/50 px-3 py-2 dark:border-amber-800/40 dark:bg-amber-950/20">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
-                  <span className="font-mono text-xs">{q.domain}</span>
-                  <span className="text-xs text-muted-foreground">#{q.quarantine_id}</span>
-                </div>
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center gap-2 mt-3 text-xs">
                 <button
-                  onClick={() => resolveMut.mutate(q.quarantine_id)}
-                  disabled={resolveMut.isPending}
-                  className="rounded px-2 py-0.5 text-xs text-muted-foreground hover:bg-background"
+                  disabled={offset === 0}
+                  onClick={() => { setOffset(Math.max(0, offset - PAGE)); setSelectedSku(null); }}
+                  className="px-2 py-1 rounded border disabled:opacity-40"
                 >
-                  Dismiss
+                  Prev
+                </button>
+                <span className="text-muted-foreground">
+                  Page {currentPage} of {totalPages} · {totalSkus.toLocaleString()} SKUs
+                </span>
+                <button
+                  disabled={currentPage >= totalPages}
+                  onClick={() => { setOffset(offset + PAGE); setSelectedSku(null); }}
+                  className="px-2 py-1 rounded border disabled:opacity-40"
+                >
+                  Next
                 </button>
               </div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">{q.rejection_reason}</span>
-                {" — Batch #{q.load_batch_id}"}
-              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ---- Detail panel — corrections for selected SKU ---- */}
+      {selectedSku && (
+        <div className="rounded-lg border-2 border-primary/30 bg-card p-4 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-foreground">
+              Corrections for{" "}
+              <span className="font-mono font-semibold text-primary">{selectedSku.item_id}</span>
+              {" @ "}
+              <span className="font-mono">{selectedSku.loc}</span>
+              {detailRows.length > 0 && (
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  ({detailRows.length} changes)
+                </span>
+              )}
+            </h3>
+            <div className="flex items-center gap-2">
+              <a
+                href={`?tab=itemAnalysis&item=${encodeURIComponent(selectedSku.item_id)}&loc=${encodeURIComponent(selectedSku.loc)}&dqCorrections=1`}
+                className="rounded border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
+                title="Open in Item Analysis"
+              >
+                View in Item Analysis
+              </a>
+              <button
+                onClick={() => setSelectedSku(null)}
+                className="rounded border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                Close
+              </button>
             </div>
-          ))}
+          </div>
+
+          {detailLoading ? (
+            <p className="text-xs text-muted-foreground">Loading corrections…</p>
+          ) : detailRows.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No correction records found.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-muted-foreground">
+                    <th className="pb-2 pr-3">Table</th>
+                    <th className="pb-2 pr-3">Column</th>
+                    <th className="pb-2 pr-3">Period</th>
+                    <th className="pb-2 pr-3 text-right">Old Value</th>
+                    <th className="pb-2 pr-3 text-center">→</th>
+                    <th className="pb-2 pr-3 text-right">New Value</th>
+                    <th className="pb-2 pr-3 text-right">Change</th>
+                    <th className="pb-2 pr-3">Fix Type</th>
+                    <th className="pb-2 pr-3">Strategy</th>
+                    <th className="pb-2 pr-3 text-right">Bounds</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detailRows.map((c) => {
+                    const pctChange =
+                      c.old_value != null && c.old_value !== 0 && c.new_value != null
+                        ? ((c.new_value - c.old_value) / Math.abs(c.old_value)) * 100
+                        : null;
+                    return (
+                      <tr key={c.correction_id} className="border-b border-border/30 hover:bg-muted/30">
+                        <td className="py-1.5 pr-3 font-mono text-muted-foreground">{c.table_name.replace("fact_", "").replace("dim_", "")}</td>
+                        <td className="py-1.5 pr-3 font-medium">{c.column_name}</td>
+                        <td className="py-1.5 pr-3 font-mono">{c.period?.slice(0, 7) ?? "—"}</td>
+                        <td className="py-1.5 pr-3 text-right font-mono text-red-600 dark:text-red-400">
+                          {formatNum(c.old_value)}
+                        </td>
+                        <td className="py-1.5 pr-3 text-center text-muted-foreground">→</td>
+                        <td className="py-1.5 pr-3 text-right font-mono text-emerald-600 dark:text-emerald-400">
+                          {formatNum(c.new_value)}
+                        </td>
+                        <td className={`py-1.5 pr-3 text-right font-mono ${
+                          pctChange != null && pctChange < 0
+                            ? "text-red-500"
+                            : "text-emerald-500"
+                        }`}>
+                          {pctChange != null ? `${pctChange > 0 ? "+" : ""}${pctChange.toFixed(1)}%` : "—"}
+                        </td>
+                        <td className="py-1.5 pr-3">
+                          <span className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">{c.fix_type}</span>
+                        </td>
+                        <td className="py-1.5 pr-3 text-muted-foreground">{c.fix_strategy ?? "—"}</td>
+                        <td className="py-1.5 pr-3 text-right text-muted-foreground font-mono">
+                          {c.lower_bound != null && c.upper_bound != null
+                            ? `[${formatNum(c.lower_bound)}, ${formatNum(c.upper_bound)}]`
+                            : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
+

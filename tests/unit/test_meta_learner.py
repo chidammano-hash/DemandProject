@@ -21,8 +21,8 @@ def _make_monthly_errors(
         for i, month in enumerate(months):
             fcst, actual = values[model_id][i]
             rows.append({
-                "dmdunit": dfu[0],
-                "dmdgroup": dfu[1],
+                "item_id": dfu[0],
+                "customer_group": dfu[1],
                 "loc": dfu[2],
                 "startdate": pd.Timestamp(month),
                 "model_id": model_id,
@@ -39,10 +39,10 @@ def _make_dfu_features(
     if dfus is None:
         dfus = [("ITEM1", "GRP1", "LOC1")]
     rows = []
-    for dmdunit, dmdgroup, loc in dfus:
+    for item_id, customer_group, loc in dfus:
         rows.append({
-            "dmdunit": dmdunit,
-            "dmdgroup": dmdgroup,
+            "item_id": item_id,
+            "customer_group": customer_group,
             "loc": loc,
             "ml_cluster": 0,
             "abc_vol": 1,

@@ -1,7 +1,7 @@
 # Forward-Looking Replenishment Plan Configuration
 # Script: scripts/compute_replenishment_plan.py
 # Output: fact_replenishment_plan
-# Sources: fact_production_forecast (CI bands) + fact_dfu_policy_assignment + fact_safety_stock_targets
+# Sources: fact_production_forecast (CI bands) + fact_sku_policy_assignment + fact_safety_stock_targets
 #
 # All configurable parameters are defined here — no magic numbers in the compute script.
 
@@ -17,8 +17,8 @@ replenishment_plan:
   ci_confidence: 0.80            # CI band confidence level (P10/P90 = 80% interval)
   ci_z_score: 1.282              # Z for 80% CI (one-tailed P10/P90; must match ci_confidence)
 
-  # Fallback when CI bands are NULL (e.g. DFUs not yet covered by production forecast):
-  # use dim_dfu.demand_std as sigma_demand_monthly directly.
+  # Fallback when CI bands are NULL (e.g. SKUs not yet covered by production forecast):
+  # use dim_sku.demand_std as sigma_demand_monthly directly.
   fallback_to_historical: true
 
   # ---------------------------------------------------------------------------
@@ -69,13 +69,13 @@ replenishment_plan:
 
   constraints:
     max_eoq_months_supply: 6           # Cap EOQ at this many months of avg demand
-    min_annual_demand: 0.001           # Skip DFUs with effectively zero demand
+    min_annual_demand: 0.001           # Skip SKUs with effectively zero demand
 
   # ---------------------------------------------------------------------------
   # Forward horizon
   # ---------------------------------------------------------------------------
-  # How many forward months to compute per DFU per run (max 18).
-  # T+1 through T+horizon_months rows are written per DFU.
+  # How many forward months to compute per SKU per run (max 18).
+  # T+1 through T+horizon_months rows are written per SKU.
   horizon_months: 12
 
   # ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ replenishment_plan:
   #   periodic_review  — populates order_up_to_level; review_cycle_days drives demand coverage
   #   min_max          — populates reorder_point (min) + order_up_to_level (max)
   #   manual / jit     — sets is_jit = TRUE; all replenishment parameters are NULL
-  default_policy_type: continuous_rop   # Applied when DFU has no policy assignment
+  default_policy_type: continuous_rop   # Applied when SKU has no policy assignment
 
   # ---------------------------------------------------------------------------
   # Output / batching

@@ -17,7 +17,7 @@ export interface ProductionForecastPoint {
 }
 
 export interface ProductionForecastPayload {
-  item_no: string;
+  item_id: string;
   loc: string;
   plan_version: string;
   model_id: string;
@@ -29,14 +29,14 @@ export interface ProductionForecastPayload {
 
 export interface ProductionForecastAbcRow {
   abc_class: string;
-  dfu_count: number;
+  sku_count: number;
   forecast_qty: number;
 }
 
 export interface ProductionForecastSummaryPayload {
   plan_version: string | null;
   horizon_months: number;
-  total_dfu_count: number;
+  total_sku_count: number;
   total_forecast_qty: number;
   generated_at: string | null;
   by_abc_class: ProductionForecastAbcRow[];
@@ -44,7 +44,7 @@ export interface ProductionForecastSummaryPayload {
 
 export interface ProductionForecastVersion {
   plan_version: string;
-  dfu_count: number;
+  sku_count: number;
   total_rows: number;
   generated_at: string | null;
 }
@@ -54,13 +54,13 @@ export interface ProductionForecastVersionsPayload {
 }
 
 export async function fetchProductionForecast(params: {
-  item_no: string;
+  item_id: string;
   loc: string;
   horizon?: number;
   plan_version?: string;
 }): Promise<ProductionForecastPayload> {
   const qs = new URLSearchParams({
-    item_no: params.item_no,
+    item_id: params.item_id,
     loc: params.loc,
     horizon: String(params.horizon ?? 18),
   });
@@ -103,7 +103,7 @@ export interface DemandPlanRow {
 }
 
 export interface DemandPlanPayload {
-  item_no: string;
+  item_id: string;
   loc: string;
   plan_version: string;
   generated_at: string | null;
@@ -117,7 +117,7 @@ export interface DemandPlanVersion {
   plan_label: string | null;
   model_id: string;
   horizon_months: number;
-  dfu_count: number | null;
+  sku_count: number | null;
   status: string;
   generated_at: string | null;
 }
@@ -138,7 +138,7 @@ export interface DemandPlanWeekRow {
 }
 
 export interface DemandPlanWeeklyPayload {
-  item_no: string;
+  item_id: string;
   loc: string;
   plan_version: string;
   weeks: DemandPlanWeekRow[];
@@ -157,7 +157,7 @@ export interface DemandPlanComparisonMonth {
 }
 
 export interface DemandPlanComparisonPayload {
-  item_no: string;
+  item_id: string;
   loc: string;
   v1: string;
   v2: string;
@@ -165,14 +165,14 @@ export interface DemandPlanComparisonPayload {
 }
 
 export async function fetchDemandPlan(params: {
-  item_no: string;
+  item_id: string;
   loc: string;
   plan_version?: string;
   quantile?: number;
   horizon?: number;
 }): Promise<DemandPlanPayload> {
   const qs = new URLSearchParams({
-    item_no: params.item_no,
+    item_id: params.item_id,
     loc: params.loc,
     horizon: String(params.horizon ?? 18),
   });
@@ -186,13 +186,13 @@ export async function fetchDemandPlanVersions(): Promise<DemandPlanVersionsPaylo
 }
 
 export async function fetchDemandPlanWeekly(params: {
-  item_no: string;
+  item_id: string;
   loc: string;
   plan_version?: string;
   weeks_ahead?: number;
 }): Promise<DemandPlanWeeklyPayload> {
   const qs = new URLSearchParams({
-    item_no: params.item_no,
+    item_id: params.item_id,
     loc: params.loc,
     weeks_ahead: String(params.weeks_ahead ?? 8),
   });
@@ -203,13 +203,13 @@ export async function fetchDemandPlanWeekly(params: {
 export async function fetchDemandPlanComparison(params: {
   v1: string;
   v2: string;
-  item_no: string;
+  item_id: string;
   loc: string;
 }): Promise<DemandPlanComparisonPayload> {
   const qs = new URLSearchParams({
     v1: params.v1,
     v2: params.v2,
-    item_no: params.item_no,
+    item_id: params.item_id,
     loc: params.loc,
   });
   return fetchJson(`/forecast/demand-plan/comparison?${qs}`);
@@ -221,7 +221,7 @@ export async function fetchDemandPlanComparison(params: {
 
 export interface OverrideRow {
   override_id: number;
-  item_no: string;
+  item_id: string;
   loc: string;
   override_month: string;
   override_type: string;
@@ -263,7 +263,7 @@ export interface OverrideSummaryPayload {
     expired: number;
     superseded: number;
   };
-  dfu_count_overridden: number;
+  sku_count_overridden: number;
   total_uplift_units: number;
   total_uplift_value: number;
   by_type: Record<string, number>;
@@ -289,13 +289,13 @@ export interface ConsensusPlanMonth {
 
 export interface ConsensusPlanPayload {
   plan_version: string;
-  item_no: string;
+  item_id: string;
   loc: string;
   months: ConsensusPlanMonth[];
 }
 
 export async function fetchOverrides(params?: {
-  item_no?: string;
+  item_id?: string;
   loc?: string;
   status?: string;
   override_type?: string;
@@ -303,7 +303,7 @@ export async function fetchOverrides(params?: {
   page_size?: number;
 }): Promise<OverrideListPayload> {
   const qs = new URLSearchParams();
-  if (params?.item_no) qs.set("item_no", params.item_no);
+  if (params?.item_id) qs.set("item_id", params.item_id);
   if (params?.loc) qs.set("loc", params.loc);
   if (params?.status) qs.set("status", params.status);
   if (params?.override_type) qs.set("override_type", params.override_type);
@@ -317,7 +317,7 @@ export async function fetchOverrideSummary(): Promise<OverrideSummaryPayload> {
 }
 
 export async function submitOverride(body: {
-  item_no: string;
+  item_id: string;
   loc: string;
   override_month: string;
   override_type: string;
@@ -362,14 +362,14 @@ export async function rejectOverride(
 }
 
 export async function fetchConsensusPlan(params: {
-  item_no: string;
+  item_id: string;
   loc: string;
   plan_version?: string;
   month_from?: string;
   month_to?: string;
 }): Promise<ConsensusPlanPayload> {
   const qs = new URLSearchParams({
-    item_no: params.item_no,
+    item_id: params.item_id,
     loc: params.loc,
   });
   if (params.plan_version) qs.set("plan_version", params.plan_version);

@@ -38,7 +38,7 @@ Supports trending over time and slicing by location, category, ABC class.
 | Inventory movement | Rate of stock depletion | Days-to-stockout projection |
 | Intra-month projection | Current MTD extrapolated to full month | Early warning vs forecast |
 
-Written to `fact_demand_signals` at grain: item_no + loc + signal_date. Consumed by blended demand and exception detection.
+Written to `fact_demand_signals` at grain: item_id + loc + signal_date. Consumed by blended demand and exception detection.
 
 ### Intramonth Stockout Detection (IPfeature14)
 
@@ -60,9 +60,9 @@ This catches "hidden" stockouts where a replenishment arrives before the EOM sna
 
 | Table / View | Grain | Row Count |
 |---|---|---|
-| `mv_fill_rate_monthly` | item_no + loc + month | ~7.2M rows |
-| `fact_demand_signals` | item_no + loc + signal_date | ~483K rows |
-| `mv_intramonth_stockout` | item_no + loc + month + event | ~8.2M rows |
+| `mv_fill_rate_monthly` | item_id + loc + month | ~7.2M rows |
+| `fact_demand_signals` | item_id + loc + signal_date | ~483K rows |
+| `mv_intramonth_stockout` | item_id + loc + month + event | ~8.2M rows |
 
 DDL: `sql/028_create_fill_rate_monthly.sql`, `sql/029_create_demand_signals.sql`, `sql/034_create_intramonth_stockout.sql`
 

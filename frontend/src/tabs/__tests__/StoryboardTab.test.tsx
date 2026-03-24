@@ -14,7 +14,7 @@ const mockSummary = {
     { exception_type: "forecast_bias", count: 4, open_count: 4, avg_severity: 0.5 },
   ],
   top_items: [
-    { item_no: "ITEM001", loc: "LOC1", exception_count: 3 },
+    { item_id: "ITEM001", loc: "LOC1", exception_count: 3 },
   ],
 };
 
@@ -24,7 +24,7 @@ const mockList = {
     {
       exception_id: "EXC-001",
       exception_type: "stockout_risk",
-      item_no: "ITEM001",
+      item_id: "ITEM001",
       loc: "LOC1",
       severity: 0.85,
       financial_impact: 12500,
@@ -39,7 +39,7 @@ const mockList = {
     {
       exception_id: "EXC-002",
       exception_type: "forecast_bias",
-      item_no: "ITEM002",
+      item_id: "ITEM002",
       loc: "LOC2",
       severity: 0.45,
       financial_impact: null,

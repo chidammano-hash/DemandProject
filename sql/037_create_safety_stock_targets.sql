@@ -5,14 +5,14 @@
 -- with only a few columns so that mv_inventory_health_score could be created before
 -- IPfeature3 was implemented. This DDL uses CREATE TABLE IF NOT EXISTS — if the stub
 -- already exists with fewer columns, the table structure stays as-is. The compute script
--- (scripts/compute_safety_stock.py) will upsert data using ON CONFLICT on (item_no, loc,
+-- (scripts/compute_safety_stock.py) will upsert data using ON CONFLICT on (item_id, loc,
 -- policy_version) once you run: make ss-schema ss-compute
 --
 -- If you need the full column set, drop the stub first:
 --   DROP TABLE IF EXISTS fact_safety_stock_targets CASCADE;
 -- then re-run: make health-schema ss-schema
 --
--- Table grain: one row per (item_no, loc, policy_version).
+-- Table grain: one row per (item_id, loc, policy_version).
 -- Populated by scripts/compute_safety_stock.py on each SS refresh run.
 
 -- Migrate stub table created by 026_create_inventory_health_score.sql:
@@ -102,10 +102,10 @@ END $$;
 CREATE TABLE IF NOT EXISTS fact_safety_stock_targets (
     -- Surrogate / composite keys
     ss_sk                  BIGSERIAL PRIMARY KEY,
-    ss_ck                  TEXT UNIQUE,            -- item_no || '_' || loc || '_' || policy_version
+    ss_ck                  TEXT UNIQUE,            -- item_id || '_' || loc || '_' || policy_version
 
     -- Business key
-    item_no                TEXT        NOT NULL,
+    item_id                TEXT        NOT NULL,
     loc                    TEXT        NOT NULL,
     policy_version         TEXT        NOT NULL    DEFAULT 'v1',
 
@@ -160,11 +160,11 @@ CREATE TABLE IF NOT EXISTS fact_safety_stock_targets (
 
 -- Primary business key uniqueness
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ss_targets_bk
-    ON fact_safety_stock_targets (item_no, loc, policy_version);
+    ON fact_safety_stock_targets (item_id, loc, policy_version);
 
 -- Item / location lookups
 CREATE INDEX IF NOT EXISTS idx_ss_targets_item
-    ON fact_safety_stock_targets (item_no);
+    ON fact_safety_stock_targets (item_id);
 
 CREATE INDEX IF NOT EXISTS idx_ss_targets_loc
     ON fact_safety_stock_targets (loc);

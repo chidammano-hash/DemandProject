@@ -9,7 +9,7 @@ import {
 import { Input } from "@/components/ui/input";
 
 import { titleCase } from "@/lib/formatters";
-import type { DfuAnalysisPayload } from "@/types";
+import type { SkuAnalysisPayload } from "@/types";
 import type { InventoryKpis } from "@/types";
 import type { InventoryTrendParams } from "@/types";
 
@@ -59,15 +59,15 @@ function leadTimeColor(v: number | null | undefined): string {
 // Props
 // ---------------------------------------------------------------------------
 export interface SelectorPanelProps {
-  dfuItem: string;
-  setDfuItem: (v: string) => void;
-  dfuLocation: string;
-  setDfuLocation: (v: string) => void;
-  dfuPoints: number;
-  setDfuPoints: (v: number) => void;
-  dfuItemSuggestions: string[];
-  dfuLocationSuggestions: string[];
-  dfuData: DfuAnalysisPayload | null;
+  skuItem: string;
+  setSkuItem: (v: string) => void;
+  skuLocation: string;
+  setSkuLocation: (v: string) => void;
+  skuPoints: number;
+  setSkuPoints: (v: number) => void;
+  skuItemSuggestions: string[];
+  skuLocationSuggestions: string[];
+  skuData: SkuAnalysisPayload | null;
   onReset: () => void;
   kpiData?: InventoryKpis | null;
   trendParams?: InventoryTrendParams | null;
@@ -79,15 +79,15 @@ export interface SelectorPanelProps {
 // Component
 // ---------------------------------------------------------------------------
 export function SelectorPanel({
-  dfuItem,
-  setDfuItem,
-  dfuLocation,
-  setDfuLocation,
-  dfuPoints,
-  setDfuPoints,
-  dfuItemSuggestions,
-  dfuLocationSuggestions,
-  dfuData,
+  skuItem,
+  setSkuItem,
+  skuLocation,
+  setSkuLocation,
+  skuPoints,
+  setSkuPoints,
+  skuItemSuggestions,
+  skuLocationSuggestions,
+  skuData,
   onReset,
   kpiData,
   trendParams,
@@ -120,16 +120,16 @@ export function SelectorPanel({
       {/* Row 1: Item + Location + Points */}
       <div className="grid gap-2 md:grid-cols-3">
         <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Item (dmdunit)
+          Item (item_id)
           <Input
             className="h-9"
             placeholder="Type to search items..."
-            list="dfu-analysis-item-suggest"
-            value={dfuItem}
-            onChange={(e) => setDfuItem(e.target.value)}
+            list="sku-analysis-item-suggest"
+            value={skuItem}
+            onChange={(e) => setSkuItem(e.target.value)}
           />
-          <datalist id="dfu-analysis-item-suggest">
-            {dfuItemSuggestions.map((val) => (
+          <datalist id="sku-analysis-item-suggest">
+            {skuItemSuggestions.map((val) => (
               <option key={val} value={val} />
             ))}
           </datalist>
@@ -139,12 +139,12 @@ export function SelectorPanel({
           <Input
             className="h-9"
             placeholder="Type to search locations..."
-            list="dfu-analysis-loc-suggest"
-            value={dfuLocation}
-            onChange={(e) => setDfuLocation(e.target.value)}
+            list="sku-analysis-loc-suggest"
+            value={skuLocation}
+            onChange={(e) => setSkuLocation(e.target.value)}
           />
-          <datalist id="dfu-analysis-loc-suggest">
-            {dfuLocationSuggestions.map((val) => (
+          <datalist id="sku-analysis-loc-suggest">
+            {skuLocationSuggestions.map((val) => (
               <option key={val} value={val} />
             ))}
           </datalist>
@@ -153,8 +153,8 @@ export function SelectorPanel({
           Points
           <select
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-            value={dfuPoints}
-            onChange={(e) => setDfuPoints(Number(e.target.value))}
+            value={skuPoints}
+            onChange={(e) => setSkuPoints(Number(e.target.value))}
           >
             {[12, 24, 36, 48, 60].map((v) => (
               <option key={v} value={v}>{v}</option>
@@ -164,26 +164,26 @@ export function SelectorPanel({
       </div>
 
       {/* DFU Attributes (collapsible) — includes inventory KPIs, lead-time grouped */}
-      {dfuData &&
-        dfuData.dfu_attributes &&
-        dfuData.dfu_attributes.length > 0 && (
+      {skuData &&
+        skuData.dfu_attributes &&
+        skuData.dfu_attributes.length > 0 && (
           <details className="group rounded-md border border-input bg-background">
             <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
-              DFU Attributes ({dfuData.dfu_attributes.length}{" "}
-              {dfuData.dfu_attributes.length === 1 ? "record" : "records"})
+              DFU Attributes ({skuData.dfu_attributes.length}{" "}
+              {skuData.dfu_attributes.length === 1 ? "record" : "records"})
               <span className="ml-1 text-xs text-muted-foreground group-open:hidden">
                 + expand
               </span>
             </summary>
             <div className="border-t border-input px-3 py-2 space-y-3">
-              {dfuData.dfu_attributes.map((attrs, dfuIdx) => {
+              {skuData.dfu_attributes.map((attrs, skuIdx) => {
                 const allAttrs = Object.entries(attrs);
 
                 return (
-                  <div key={dfuIdx}>
-                    {dfuData.dfu_attributes.length > 1 && (
+                  <div key={skuIdx}>
+                    {skuData.dfu_attributes.length > 1 && (
                       <p className="mb-1 text-xs font-medium text-foreground">
-                        {attrs.dmdunit} / {attrs.dmdgroup} @ {attrs.loc}
+                        {attrs.item_id} / {attrs.customer_group} @ {attrs.loc}
                       </p>
                     )}
                     <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">

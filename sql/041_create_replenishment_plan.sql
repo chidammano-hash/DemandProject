@@ -1,13 +1,13 @@
 -- Forward-Looking Replenishment Plan
 -- Feature: Forward-Looking Replenishment Plan
 --
--- Grain: (plan_version, item_no, loc, plan_month) — one row per DFU per forward month per version.
+-- Grain: (plan_version, item_id, loc, plan_month) — one row per DFU per forward month per version.
 -- Computed from fact_production_forecast CI bands + fact_dfu_policy_assignment
 -- by scripts/compute_replenishment_plan.py.
 --
 -- sigma_method tracks how demand variability was derived:
 --   'ci_spread'         — sigma = (forecast_qty_upper - forecast_qty_lower) / (2 * z_ci)
---   'historical_fallback' — CI bands were NULL; fell back to dim_dfu.demand_std
+--   'historical_fallback' — CI bands were NULL; fell back to dim_sku.demand_std
 --
 -- Policy-type dispatch:
 --   continuous_rop   — ROP + order_qty (= effective_eoq)
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS fact_replenishment_plan (
     plan_version            TEXT        NOT NULL,
 
     -- Business key
-    item_no                 TEXT        NOT NULL,
+    item_id                 TEXT        NOT NULL,
     loc                     TEXT        NOT NULL,
     plan_month              DATE        NOT NULL,    -- first day of the forward month covered
 
@@ -94,11 +94,11 @@ CREATE TABLE IF NOT EXISTS fact_replenishment_plan (
 
 -- Primary uniqueness: one row per DFU per forward month per plan version
 CREATE UNIQUE INDEX IF NOT EXISTS uix_replenishment_plan_key
-    ON fact_replenishment_plan (plan_version, item_no, loc, plan_month);
+    ON fact_replenishment_plan (plan_version, item_id, loc, plan_month);
 
 -- DFU lookup (most common filter pattern)
 CREATE INDEX IF NOT EXISTS ix_replenishment_plan_dfu
-    ON fact_replenishment_plan (item_no, loc);
+    ON fact_replenishment_plan (item_id, loc);
 
 -- Plan version filtering (latest version queries)
 CREATE INDEX IF NOT EXISTS ix_replenishment_plan_version

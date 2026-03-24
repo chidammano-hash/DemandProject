@@ -25,7 +25,15 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 from typing import Optional
 
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 
 CONFIG_PATH = "config/sop_config.yaml"
 
@@ -216,7 +224,7 @@ def populate_demand_review(
             SUM(f.basefcst_pref),
             SUM(f.basefcst_pref)   -- start with statistical as consensus
         FROM fact_external_forecast_monthly f
-        LEFT JOIN dim_item i ON i.item_no = f.dmdunit
+        LEFT JOIN dim_item i ON i.item_id = f.item_id
         WHERE f.model_id = 'champion'
           AND f.startdate >= %s
           AND f.startdate < %s
@@ -251,7 +259,7 @@ def populate_supply_constraints(
             e.exception_type,
             NULL,
             e.recommended_order_qty,
-            e.created_at::DATE,
+            e.load_ts::DATE,
             'open'
         FROM fact_replenishment_exceptions e
         WHERE e.status NOT IN ('rejected', 'closed')
@@ -299,12 +307,12 @@ def generate_approved_plan_snapshot(
     # Insert approved plan rows from champion forecast
     sql = """
         INSERT INTO fact_sop_approved_plan (
-            cycle_id, item_no, loc, plan_month,
+            cycle_id, item_id, loc, plan_month,
             approved_qty, statistical_qty, source, locked
         )
         SELECT
             %s,
-            f.dmdunit,
+            f.item_id,
             f.loc,
             f.startdate,
             f.basefcst_pref,
@@ -315,7 +323,7 @@ def generate_approved_plan_snapshot(
         WHERE f.model_id = 'champion'
           AND f.startdate >= %s
           AND f.startdate < %s
-        ON CONFLICT (cycle_id, item_no, loc, plan_month)
+        ON CONFLICT (cycle_id, item_id, loc, plan_month)
         DO UPDATE SET
             approved_qty = EXCLUDED.approved_qty,
             statistical_qty = EXCLUDED.statistical_qty
@@ -354,7 +362,8 @@ def run(
                         "scheduled_dates": {k: str(v) for k, v in dates.items()},
                         "dry_run": True}
 
-            new_cycle_id = create_sop_cycle(conn, cycle_month, cfg, performed_by)
+            with profiled_section("create_sop_cycle"):
+                new_cycle_id = create_sop_cycle(conn, cycle_month, cfg, performed_by)
             conn.commit()
             return {"action": "create", "cycle_id": new_cycle_id, "cycle_month": str(cycle_month),
                     "stage": "demand_review"}
@@ -372,7 +381,8 @@ def run(
                 new_stage = next_stage(row[0])
                 return {"action": "advance", "cycle_id": cycle_id, "new_stage": new_stage, "dry_run": True}
 
-            new_stage = advance_sop_cycle(conn, cycle_id, performed_by)
+            with profiled_section("advance_sop_cycle"):
+                new_stage = advance_sop_cycle(conn, cycle_id, performed_by)
 
             # If advancing to 'approved', generate approved plan snapshot
             if new_stage == "approved":
@@ -380,7 +390,8 @@ def run(
                     cur.execute("SELECT cycle_month FROM fact_sop_cycles WHERE cycle_id = %s", (cycle_id,))
                     row = cur.fetchone()
                 if row:
-                    n = generate_approved_plan_snapshot(conn, cycle_id, row[0], performed_by)
+                    with profiled_section("generate_approved_plan_snapshot"):
+                        generate_approved_plan_snapshot(conn, cycle_id, row[0], performed_by)
 
             conn.commit()
             return {"action": "advance", "cycle_id": cycle_id, "new_stage": new_stage}
@@ -404,8 +415,10 @@ def run(
                 return {"action": "populate-demand", "cycle_id": cycle_id,
                         "cycle_month": str(cycle_month), "dry_run": True}
 
-            n_demand = populate_demand_review(conn, cycle_id, cycle_month, horizon)
-            n_supply = populate_supply_constraints(conn, cycle_id)
+            with profiled_section("populate_demand_review"):
+                n_demand = populate_demand_review(conn, cycle_id, cycle_month, horizon)
+            with profiled_section("populate_supply_constraints"):
+                n_supply = populate_supply_constraints(conn, cycle_id)
             conn.commit()
             return {"action": "populate-demand", "cycle_id": cycle_id,
                     "demand_rows": n_demand, "supply_constraints": n_supply}

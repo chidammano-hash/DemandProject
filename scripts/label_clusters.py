@@ -280,14 +280,11 @@ def main() -> None:
     assignments_df = pd.read_csv(assignments_path)
     print(f"Loaded {len(assignments_df)} DFU assignments")
 
-    # Load metadata to get feature names
+    # Load metadata (feature_names available for future centroid analysis)
     metadata_path = root / args.metadata
     if metadata_path.exists():
         with open(metadata_path, "r") as f:
-            metadata = json.load(f)
-        feature_names = metadata.get("feature_names", [])
-    else:
-        feature_names = [c for c in centroids_df.columns if c != "cluster_id"]
+            json.load(f)  # metadata loaded for validation; feature_names reserved for future use
 
     # Compute percentile-based volume thresholds from actual centroid mean_demand values
     mean_demands = centroids_df["mean_demand"].values

@@ -180,7 +180,7 @@ async def test_imbalances_200():
     data = resp.json()
     assert data["total"] == 3
     assert len(data["rows"]) == 3
-    assert data["rows"][0]["item_no"] == "ITEM-001"
+    assert data["rows"][0]["item_id"] == "ITEM-001"
     assert data["rows"][0]["excess_loc_count"] == 2
     assert data["rows"][0]["shortage_loc_count"] == 1
 
@@ -328,7 +328,7 @@ async def test_transfers_list_200():
     assert len(data["rows"]) == 1
     row = data["rows"][0]
     assert row["transfer_id"] == "txn-001"
-    assert row["item_no"] == "ITEM-001"
+    assert row["item_id"] == "ITEM-001"
     assert row["urgency"] == "high"
     assert row["status"] == "recommended"
     assert row["planned_ship_date"] == "2026-03-01"

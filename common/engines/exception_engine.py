@@ -5,8 +5,8 @@ human-readable headlines. The `run_exception_detection` function orchestrates th
 full pipeline against a live DB connection.
 
 Detection functions follow a consistent contract:
-  - Inputs: item_no, loc, signal data, config dict
-  - Output: dict with keys {exception_type, item_no, loc, severity, financial_impact,
+  - Inputs: item_id, loc, signal data, config dict
+  - Output: dict with keys {exception_type, item_id, loc, severity, financial_impact,
             headline, supporting_data, month_start} or None if no exception found.
 
 Usage (from scripts):
@@ -27,7 +27,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 def detect_forecast_bias(
-    item_no: str,
+    item_id: str,
     loc: str,
     bias_history: list[dict],
     config: dict,
@@ -82,7 +82,7 @@ def detect_forecast_bias(
     avg_monthly = total_actual / min_months
 
     headline = (
-        f"Forecast Bias: Item {item_no} @ {loc} is "
+        f"Forecast Bias: Item {item_id} @ {loc} is "
         f"{abs_bias:.0f}% {direction} over {min_months} months"
     )
 
@@ -94,7 +94,7 @@ def detect_forecast_bias(
 
     return {
         "exception_type": "forecast_bias",
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "severity": round(severity_score, 4),
         "financial_impact": None,
@@ -112,7 +112,7 @@ def detect_forecast_bias(
 
 
 def detect_stockout_risk(
-    item_no: str,
+    item_id: str,
     loc: str,
     dos: float,
     is_below_ss: bool,
@@ -127,7 +127,7 @@ def detect_stockout_risk(
     cfg = config.get("thresholds", {}).get("stockout_risk", {})
     dos_threshold = float(cfg.get("dos_threshold", 14))
     critical_dos = float(cfg.get("critical_dos_threshold", 7))
-    min_daily_sales = float(cfg.get("min_daily_sales", 1.0))
+    _ = float(cfg.get("min_daily_sales", 1.0))  # reserved for future threshold use
 
     if dos >= dos_threshold and not is_below_ss:
         return None
@@ -152,14 +152,14 @@ def detect_stockout_risk(
     )
 
     headline = (
-        f"Stockout Risk: Item {item_no} @ {loc} has "
+        f"Stockout Risk: Item {item_id} @ {loc} has "
         f"{dos:.1f} days of supply"
         + (" (below safety stock)" if is_below_ss else "")
     )
 
     return {
         "exception_type": "stockout_risk",
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "severity": round(severity_score, 4),
         "financial_impact": None,
@@ -174,7 +174,7 @@ def detect_stockout_risk(
 
 
 def detect_accuracy_drop(
-    item_no: str,
+    item_id: str,
     loc: str,
     recent_wape: float,
     baseline_wape: float,
@@ -215,13 +215,13 @@ def detect_accuracy_drop(
     )
 
     headline = (
-        f"Accuracy Drop: Item {item_no} @ {loc} WAPE rose "
+        f"Accuracy Drop: Item {item_id} @ {loc} WAPE rose "
         f"{wape_delta:.1f}pp (from {baseline_wape:.1f}% to {recent_wape:.1f}%)"
     )
 
     return {
         "exception_type": "accuracy_drop",
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "severity": round(severity_score, 4),
         "financial_impact": None,
@@ -236,7 +236,7 @@ def detect_accuracy_drop(
 
 
 def detect_excess_risk(
-    item_no: str,
+    item_id: str,
     loc: str,
     dos: float,
     config: dict,
@@ -267,13 +267,13 @@ def detect_excess_risk(
     )
 
     headline = (
-        f"Excess Risk: Item {item_no} @ {loc} has "
+        f"Excess Risk: Item {item_id} @ {loc} has "
         f"{dos:.0f} days of supply (threshold: {excess_dos:.0f}d)"
     )
 
     return {
         "exception_type": "excess_risk",
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "severity": round(severity_score, 4),
         "financial_impact": None,
@@ -338,7 +338,7 @@ def generate_headline(exception_type: str, data: dict) -> str:
 
     Uses rule-based templates — no LLM required.
     """
-    item_no = data.get("item_no", "?")
+    item_id = data.get("item_id", "?")
     loc = data.get("loc", "?")
     sd = data.get("supporting_data", {})
 
@@ -347,28 +347,28 @@ def generate_headline(exception_type: str, data: dict) -> str:
         direction = "over-forecast" if bias > 0 else "under-forecast"
         months = sd.get("months_evaluated", 3)
         return (
-            f"Forecast Bias: Item {item_no} @ {loc} is "
+            f"Forecast Bias: Item {item_id} @ {loc} is "
             f"{abs(bias):.0f}% {direction} over {months} months"
         )
     if exception_type == "stockout_risk":
         dos = sd.get("dos", 0)
-        return f"Stockout Risk: Item {item_no} @ {loc} has {dos:.1f} days of supply"
+        return f"Stockout Risk: Item {item_id} @ {loc} has {dos:.1f} days of supply"
     if exception_type == "accuracy_drop":
         delta = sd.get("wape_delta_pp", 0)
         recent = sd.get("recent_wape", 0)
         return (
-            f"Accuracy Drop: Item {item_no} @ {loc} WAPE rose "
+            f"Accuracy Drop: Item {item_id} @ {loc} WAPE rose "
             f"{delta:.1f}pp to {recent:.1f}%"
         )
     if exception_type == "excess_risk":
         dos = sd.get("dos", 0)
-        return f"Excess Risk: Item {item_no} @ {loc} has {dos:.0f} days of supply"
+        return f"Excess Risk: Item {item_id} @ {loc} has {dos:.0f} days of supply"
     if exception_type == "model_drift":
-        return f"Model Drift: Champion model unstable for Item {item_no} @ {loc}"
+        return f"Model Drift: Champion model unstable for Item {item_id} @ {loc}"
     if exception_type == "new_item":
         months = sd.get("history_months", "< 3")
-        return f"New Item: Item {item_no} @ {loc} has only {months} months of history"
-    return f"{exception_type}: Item {item_no} @ {loc}"
+        return f"New Item: Item {item_id} @ {loc} has only {months} months of history"
+    return f"{exception_type}: Item {item_id} @ {loc}"
 
 
 # ---------------------------------------------------------------------------
@@ -421,28 +421,28 @@ def run_exception_detection(
 
             cur.execute("""
                 SELECT
-                    dmdunit AS item_no,
+                    item_id AS item_id,
                     loc,
                     COUNT(DISTINCT startdate)                    AS month_count,
-                    SUM(qty)                                     AS total_actual,
-                    SUM(qty_forecast)                            AS total_forecast,
-                    (SUM(qty_forecast) / NULLIF(SUM(qty), 0) - 1) * 100 AS bias_pct
+                    SUM(tothist_dmd)                                     AS total_actual,
+                    SUM(basefcst_pref)                            AS total_forecast,
+                    (SUM(basefcst_pref) / NULLIF(SUM(tothist_dmd), 0) - 1) * 100 AS bias_pct
                 FROM fact_external_forecast_monthly
                 WHERE
                     startdate >= %s - INTERVAL '3 months'
                     AND startdate < %s
                     AND lag = 0
-                    AND qty > 0
+                    AND tothist_dmd > 0
                     AND model_id = 'external'
-                GROUP BY dmdunit, loc
+                GROUP BY item_id, loc
                 HAVING
                     COUNT(DISTINCT startdate) >= %s
-                    AND SUM(qty) >= %s
-                    AND ABS((SUM(qty_forecast) / NULLIF(SUM(qty), 0) - 1) * 100) >= %s
+                    AND SUM(tothist_dmd) >= %s
+                    AND ABS((SUM(basefcst_pref) / NULLIF(SUM(tothist_dmd), 0) - 1) * 100) >= %s
             """, (month_start, month_start, min_months, min_actual, bias_threshold))
 
             for row in cur.fetchall():
-                item_no, loc, month_count, total_actual, total_forecast, bias_pct = row
+                item_id, loc, month_count, total_actual, total_forecast, bias_pct = row
                 if total_actual is None or total_actual == 0:
                     continue
 
@@ -471,13 +471,13 @@ def run_exception_detection(
                     "total_forecast": float(total_forecast or 0),
                 }
                 headline = generate_headline("forecast_bias", {
-                    "item_no": item_no, "loc": loc, "supporting_data": sd,
+                    "item_id": item_id, "loc": loc, "supporting_data": sd,
                 })
 
                 exceptions_to_insert.append({
                     "exception_id": str(uuid.uuid4()),
                     "exception_type": "forecast_bias",
-                    "item_no": str(item_no),
+                    "item_id": str(item_id),
                     "loc": str(loc),
                     "severity": round(severity_score, 4),
                     "financial_impact": None,
@@ -497,20 +497,20 @@ def run_exception_detection(
 
             cur.execute("""
                 SELECT
-                    item_no,
+                    item_id,
                     loc,
-                    dos,
+                    current_dos,
                     is_below_ss,
-                    ss_coverage_score
+                    ss_coverage
                 FROM mv_inventory_health_score
                 WHERE
-                    (dos < %s OR is_below_ss = TRUE)
-                    AND dos IS NOT NULL
+                    (current_dos < %s OR is_below_ss = TRUE)
+                    AND current_dos IS NOT NULL
                 LIMIT %s
             """, (dos_threshold, max_exceptions))
 
             for row in cur.fetchall():
-                item_no, loc, dos, is_below_ss, ss_coverage_score = row
+                item_id, loc, dos, is_below_ss, ss_coverage_score = row
                 dos_val = float(dos or 0)
                 below_ss = bool(is_below_ss)
 
@@ -539,13 +539,13 @@ def run_exception_detection(
                     "is_below_safety_stock": below_ss,
                 }
                 headline = generate_headline("stockout_risk", {
-                    "item_no": item_no, "loc": loc, "supporting_data": sd,
+                    "item_id": item_id, "loc": loc, "supporting_data": sd,
                 })
 
                 exceptions_to_insert.append({
                     "exception_id": str(uuid.uuid4()),
                     "exception_type": "stockout_risk",
-                    "item_no": str(item_no),
+                    "item_id": str(item_id),
                     "loc": str(loc),
                     "severity": round(severity_score, 4),
                     "financial_impact": None,
@@ -566,38 +566,38 @@ def run_exception_detection(
             cur.execute("""
                 WITH recent AS (
                     SELECT
-                        dmdunit AS item_no,
+                        item_id AS item_id,
                         loc,
-                        (1 - (SUM(ABS(qty_forecast - qty)) / NULLIF(ABS(SUM(qty)), 0))) * 100 AS recent_accuracy
+                        (1 - (SUM(ABS(basefcst_pref - tothist_dmd)) / NULLIF(ABS(SUM(tothist_dmd)), 0))) * 100 AS recent_accuracy
                     FROM fact_external_forecast_monthly
                     WHERE
                         startdate >= %s - INTERVAL '1 month'
                         AND startdate < %s
                         AND lag = 0
                         AND model_id = 'external'
-                    GROUP BY dmdunit, loc
+                    GROUP BY item_id, loc
                 ),
                 baseline AS (
                     SELECT
-                        dmdunit AS item_no,
+                        item_id AS item_id,
                         loc,
-                        (1 - (SUM(ABS(qty_forecast - qty)) / NULLIF(ABS(SUM(qty)), 0))) * 100 AS baseline_accuracy
+                        (1 - (SUM(ABS(basefcst_pref - tothist_dmd)) / NULLIF(ABS(SUM(tothist_dmd)), 0))) * 100 AS baseline_accuracy
                     FROM fact_external_forecast_monthly
                     WHERE
                         startdate >= %s - INTERVAL '4 months'
                         AND startdate < %s - INTERVAL '1 month'
                         AND lag = 0
                         AND model_id = 'external'
-                    GROUP BY dmdunit, loc
+                    GROUP BY item_id, loc
                 )
                 SELECT
-                    r.item_no,
+                    r.item_id,
                     r.loc,
                     r.recent_accuracy,
                     b.baseline_accuracy,
                     b.baseline_accuracy - r.recent_accuracy AS accuracy_drop_pp
                 FROM recent r
-                JOIN baseline b ON r.item_no = b.item_no AND r.loc = b.loc
+                JOIN baseline b ON r.item_id = b.item_id AND r.loc = b.loc
                 WHERE
                     b.baseline_accuracy - r.recent_accuracy >= %s
                     OR (100 - r.recent_accuracy) >= %s
@@ -609,7 +609,7 @@ def run_exception_detection(
             ))
 
             for row in cur.fetchall():
-                item_no, loc, recent_acc, baseline_acc, acc_drop = row
+                item_id, loc, recent_acc, baseline_acc, acc_drop = row
                 recent_wape = float(100 - (recent_acc or 0))
                 baseline_wape = float(100 - (baseline_acc or 0))
                 wape_delta = float(acc_drop or 0)
@@ -637,13 +637,13 @@ def run_exception_detection(
                     "wape_delta_pp": round(wape_delta, 2),
                 }
                 headline = generate_headline("accuracy_drop", {
-                    "item_no": item_no, "loc": loc, "supporting_data": sd,
+                    "item_id": item_id, "loc": loc, "supporting_data": sd,
                 })
 
                 exceptions_to_insert.append({
                     "exception_id": str(uuid.uuid4()),
                     "exception_type": "accuracy_drop",
-                    "item_no": str(item_no),
+                    "item_id": str(item_id),
                     "loc": str(loc),
                     "severity": round(severity_score, 4),
                     "financial_impact": None,
@@ -663,18 +663,18 @@ def run_exception_detection(
 
             cur.execute("""
                 SELECT
-                    item_no,
+                    item_id,
                     loc,
-                    dos
+                    eom_qty_on_hand / NULLIF(avg_daily_sls, 0) AS dos
                 FROM agg_inventory_monthly
                 WHERE
                     month_start = %s
-                    AND dos > %s
+                    AND eom_qty_on_hand / NULLIF(avg_daily_sls, 0) > %s
                 LIMIT %s
             """, (month_start, excess_dos, max_exceptions))
 
             for row in cur.fetchall():
-                item_no, loc, dos = row
+                item_id, loc, dos = row
                 dos_val = float(dos or 0)
 
                 if dos_val < excess_dos:
@@ -699,13 +699,13 @@ def run_exception_detection(
                     "critical_dos_threshold": critical_dos_er,
                 }
                 headline = generate_headline("excess_risk", {
-                    "item_no": item_no, "loc": loc, "supporting_data": sd,
+                    "item_id": item_id, "loc": loc, "supporting_data": sd,
                 })
 
                 exceptions_to_insert.append({
                     "exception_id": str(uuid.uuid4()),
                     "exception_type": "excess_risk",
-                    "item_no": str(item_no),
+                    "item_id": str(item_id),
                     "loc": str(loc),
                     "severity": round(severity_score, 4),
                     "financial_impact": None,
@@ -731,43 +731,54 @@ def run_exception_detection(
             "skipped_dedupe": 0,
             "dry_run": True,
             "sample": [
-                {"exception_type": e["exception_type"], "item_no": e["item_no"],
+                {"exception_type": e["exception_type"], "item_id": e["item_id"],
                  "loc": e["loc"], "severity": e["severity"], "headline": e["headline"]}
                 for e in exceptions_to_insert[:5]
             ],
         }
 
-    inserted = 0
-    skipped = 0
-
     with conn.cursor() as cur:
-        for exc in exceptions_to_insert:
-            # Dedupe check: same item/loc/type within dedupe window
-            cur.execute("""
-                SELECT 1 FROM exception_queue
-                WHERE item_no = %s
-                  AND loc = %s
-                  AND exception_type = %s
-                  AND status IN ('open', 'investigating')
-                  AND generated_at > %s
-                LIMIT 1
-            """, (exc["item_no"], exc["loc"], exc["exception_type"], dedupe_cutoff))
+        # Batch dedupe: find all (item_id, loc, exception_type) combos that
+        # already have an open/investigating exception within the dedupe window.
+        # Use a temp table to avoid building huge IN-lists.
+        cur.execute("""
+            CREATE TEMP TABLE _exc_candidates (
+                idx int, item_id text, loc text, exception_type text
+            ) ON COMMIT DROP
+        """)
+        candidate_rows = [
+            (i, exc["item_id"], exc["loc"], exc["exception_type"])
+            for i, exc in enumerate(exceptions_to_insert)
+        ]
+        if candidate_rows:
+            cur.executemany(
+                "INSERT INTO _exc_candidates (idx, item_id, loc, exception_type) "
+                "VALUES (%s, %s, %s, %s)",
+                candidate_rows,
+            )
 
-            if cur.fetchone():
-                skipped += 1
+        # Find indices that are duplicates of existing open exceptions
+        cur.execute("""
+            SELECT DISTINCT c.idx
+            FROM _exc_candidates c
+            JOIN exception_queue eq
+              ON eq.item_id = c.item_id
+             AND eq.loc = c.loc
+             AND eq.exception_type = c.exception_type
+             AND eq.status IN ('open', 'investigating')
+             AND eq.generated_at > %s
+        """, (dedupe_cutoff,))
+        dupe_indices = {row[0] for row in cur.fetchall()}
+
+        # Build rows to insert, skipping duplicates
+        insert_rows = []
+        for i, exc in enumerate(exceptions_to_insert):
+            if i in dupe_indices:
                 continue
-
-            cur.execute("""
-                INSERT INTO exception_queue
-                    (exception_id, exception_type, item_no, loc,
-                     severity, financial_impact, headline, supporting_data,
-                     status, generated_at, expires_at, month_start)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, 'open', NOW(), %s, %s)
-                ON CONFLICT (exception_id) DO NOTHING
-            """, (
+            insert_rows.append((
                 exc["exception_id"],
                 exc["exception_type"],
-                exc["item_no"],
+                exc["item_id"],
                 exc["loc"],
                 exc["severity"],
                 exc.get("financial_impact"),
@@ -776,7 +787,19 @@ def run_exception_detection(
                 exc.get("expires_at"),
                 exc.get("month_start"),
             ))
-            inserted += 1
+
+        if insert_rows:
+            cur.executemany("""
+                INSERT INTO exception_queue
+                    (exception_id, exception_type, item_id, loc,
+                     severity, financial_impact, headline, supporting_data,
+                     status, generated_at, expires_at, month_start)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, 'open', NOW(), %s, %s)
+                ON CONFLICT (exception_id) DO NOTHING
+            """, insert_rows)
+
+        inserted = len(insert_rows)
+        skipped = len(dupe_indices)
 
     conn.commit()
 

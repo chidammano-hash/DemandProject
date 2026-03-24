@@ -214,10 +214,10 @@ export function DemandSignalsPanel() {
               <tbody>
                 {(signals?.rows ?? []).map((r: DemandSignalRow, i: number) => (
                     <tr
-                      key={`${r.item_no}-${r.loc}-${i}`}
+                      key={`${r.item_id}-${r.loc}-${i}`}
                       className={`border-b last:border-0 hover:bg-muted/40 ${ROW_BG[r.alert_priority] ?? ""}`}
                     >
-                      <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                      <td className="py-1 pr-2 font-mono">{r.item_id}</td>
                       <td className="py-1 pr-2">{r.loc}</td>
                       <td className="py-1 pr-2 text-center">
                         <span className="inline-flex items-center gap-1">

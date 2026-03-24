@@ -90,7 +90,7 @@ Plans start as drafts. Planners review, approve specific transfers, and track ex
 | `dim_transfer_lane` | source_loc + dest_loc | Network topology |
 | `fact_rebalancing_plan` | plan_id | Plan header (status, solver, total cost) |
 | `fact_rebalancing_transfer` | transfer_id | Individual transfers within a plan |
-| `mv_network_balance` | item_no | Per-item network balance metrics |
+| `mv_network_balance` | item_id | Per-item network balance metrics |
 
 DDL: `sql/071_create_transfer_network.sql`, `sql/072_create_rebalancing_plan.sql`, `sql/073_create_rebalancing_views.sql`
 

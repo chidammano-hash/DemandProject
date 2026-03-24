@@ -5,7 +5,7 @@ export type DecisionType = 'override_forecast' | 'accept_exception' | 'escalate'
 export interface StoryboardException {
   exception_id: string
   exception_type: ExceptionType
-  item_no: string
+  item_id: string
   loc: string
   severity: number
   financial_impact: number | null
@@ -23,13 +23,13 @@ export interface StoryboardSummary {
   total_investigating: number
   avg_severity: number
   by_type: Array<{ exception_type: string; open_count: number; avg_severity: number }>
-  top_items: Array<{ item_no: string; loc: string; exception_count: number }>
+  top_items: Array<{ item_id: string; loc: string; exception_count: number }>
 }
 
 export interface PlannerDecision {
   decision_id: string
   exception_id: string
-  item_no: string
+  item_id: string
   loc: string
   decision_type: DecisionType
   decision_value: Record<string, unknown> | null

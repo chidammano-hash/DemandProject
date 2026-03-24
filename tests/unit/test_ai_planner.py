@@ -46,7 +46,7 @@ def test_get_dfu_full_context_found():
                          42.0, 14, 1000.0, 33.0, 250.0, 3000.0, 500.0, 3.0, 8000.0,
                          "continuous_rop", "rop", 7, 0.95, True, 28.5),
         description=[
-            ("item_no",), ("loc",), ("abc_vol",), ("variability_class",), ("cluster_assignment",),
+            ("item_id",), ("loc",), ("abc_vol",), ("variability_class",), ("cluster_assignment",),
             ("seasonality_profile",), ("is_yearly_seasonal",),
             ("current_dos",), ("total_lt_days",), ("avg_on_hand",), ("avg_daily_sales",),
             ("eoq_effective",), ("annual_demand",), ("total_annual_cost",),
@@ -57,7 +57,7 @@ def test_get_dfu_full_context_found():
     )
 
     result = get_dfu_full_context(pool, "100320", "1401-BULK")
-    assert result["item_no"] == "100320"
+    assert result["item_id"] == "100320"
     assert result["loc"] == "1401-BULK"
     assert result["abc_vol"] == "A"
     assert result["current_dos"] == 42.0
@@ -108,7 +108,7 @@ def test_get_portfolio_exceptions_returns_list():
             ("100320", "1401-BULK", "A", "L", "high_volume_steady", 10.0, 14, 52.5, True, False, True),
         ],
         description=[
-            ("item_no",), ("loc",), ("abc_vol",), ("variability_class",),
+            ("item_id",), ("loc",), ("abc_vol",), ("variability_class",),
             ("cluster_assignment",), ("avg_dos",), ("total_lt_days",),
             ("champion_wape",), ("stockout_risk",), ("excess_flag",), ("high_wape_flag",),
         ],
@@ -253,7 +253,7 @@ def test_create_insight_returns_id():
         pool,
         insight_type="stockout_risk",
         severity="high",
-        item_no="100320",
+        item_id="100320",
         loc="1401-BULK",
         summary="DOS 18d below lead time 21d — stockout risk within 3 days.",
         recommendation="Trigger emergency reorder of 250 units immediately and review policy.",
@@ -273,7 +273,7 @@ def test_create_insight_no_row_returns_minus1():
         pool,
         insight_type="excess_inventory",
         severity="medium",
-        item_no="999",
+        item_id="999",
         loc="LOC",
         summary="DOS 247d is 6.5× peer average — excess stock accumulating.",
         recommendation="Suspend planned orders until DOS falls below 120d and review policy.",
@@ -291,7 +291,7 @@ def test_create_insight_validation_rejects_bad_summary():
         pool,
         insight_type="forecast_bias",
         severity="medium",
-        item_no="100320",
+        item_id="100320",
         loc="LOC",
         summary="Persistent over-forecast detected this month",  # no digit → invalid
         recommendation="Apply a multiplier adjustment and review the champion model.",
@@ -309,7 +309,7 @@ def test_create_insight_validation_rejects_bad_type():
         pool,
         insight_type="inventory_risk",  # not a valid Literal
         severity="high",
-        item_no="100320",
+        item_id="100320",
         loc="LOC",
         summary="DOS 12d below LT 14d — stockout risk.",
         recommendation="Reorder 200 units immediately and switch policy.",
@@ -382,7 +382,7 @@ def test_dispatch_tool_create_insight_injects_scan_run_id():
         agent._dispatch_tool("create_insight", {
             "insight_type": "stockout_risk",
             "severity": "high",
-            "item_no": "100320",
+            "item_id": "100320",
             "loc": "1401-BULK",
             "summary": "test",
             "recommendation": "test rec",
@@ -445,7 +445,7 @@ def test_openai_loop_tool_call_then_stop():
                          42.0, 14, 1000.0, 33.0, 250.0, 3000.0, 500.0, 3.0,
                          8000.0, "rop", "rop", 7, 0.95, True, 28.5),
         description=[
-            ("item_no",), ("loc",), ("abc_vol",), ("variability_class",),
+            ("item_id",), ("loc",), ("abc_vol",), ("variability_class",),
             ("cluster_assignment",), ("seasonality_profile",), ("is_yearly_seasonal",),
             ("current_dos",), ("total_lt_days",), ("avg_on_hand",), ("avg_daily_sales",),
             ("eoq_effective",), ("annual_demand",), ("total_annual_cost",),
@@ -458,7 +458,7 @@ def test_openai_loop_tool_call_then_stop():
 
     tool_resp = _make_oai_response(
         "tool_calls",
-        tool_calls=[_make_oai_tool_call("get_dfu_full_context", {"item_no": "100320", "loc": "1401-BULK"})],
+        tool_calls=[_make_oai_tool_call("get_dfu_full_context", {"item_id": "100320", "loc": "1401-BULK"})],
     )
     final_resp = _make_oai_response("stop", content="Analysis done.")
 

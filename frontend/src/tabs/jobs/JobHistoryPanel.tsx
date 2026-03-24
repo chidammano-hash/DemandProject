@@ -3,10 +3,12 @@
  * type filters, inline param/result/error details, and delete/view-results actions.
  */
 import { useState } from "react";
-import { BarChart3, ChevronDown, ChevronRight, Trash2, Zap } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { BarChart3, ChevronDown, ChevronRight, ScrollText, Trash2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Job, JobType } from "@/types/jobs";
 import { GROUP_CONFIG } from "@/types/jobs";
+import { fetchJobLogs, queryKeys } from "@/api/queries";
 import { formatTimestamp, jobDuration, getGroupKey, GROUP_ICONS } from "./jobsShared";
 import { StatusBadge } from "./StatusBadge";
 
@@ -23,8 +25,16 @@ function JobHistoryRow({
   onViewResults?: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showPersistentLog, setShowPersistentLog] = useState(false);
   const groupKey = getGroupKey(job.job_type);
   const cfg = GROUP_CONFIG[groupKey] || GROUP_CONFIG.clustering;
+
+  // Lazy-load persistent log only when requested
+  const { data: logsData, isLoading: logsLoading } = useQuery({
+    queryKey: queryKeys.jobLogs(job.job_id),
+    queryFn: () => fetchJobLogs(job.job_id),
+    enabled: showPersistentLog,
+  });
 
   return (
     <>
@@ -147,6 +157,34 @@ function JobHistoryRow({
                   )}
                 </div>
               )}
+
+              {/* Persistent execution log */}
+              <div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowPersistentLog((v) => !v);
+                  }}
+                  className={cn(
+                    "flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-medium transition-colors",
+                    showPersistentLog
+                      ? "border-primary/40 bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  <ScrollText className="h-3 w-3" />
+                  {showPersistentLog ? "Hide Execution Log" : "View Execution Log"}
+                </button>
+                {showPersistentLog && (
+                  <pre className="mt-2 text-green-300 bg-black/80 rounded-lg p-2 overflow-x-auto overflow-y-auto max-h-64 text-[10px] font-mono whitespace-pre-wrap">
+                    {logsLoading
+                      ? "Loading..."
+                      : logsData?.log
+                        ? logsData.log
+                        : "No execution log available"}
+                  </pre>
+                )}
+              </div>
             </div>
           </td>
         </tr>

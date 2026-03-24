@@ -140,7 +140,7 @@ auto_assign:
 
 ## Dependencies
 
-- **Upstream:** `agg_inventory_monthly`, `fact_safety_stock_targets`, `dim_dfu` (ABC-XYZ class), forecast accuracy views
+- **Upstream:** `agg_inventory_monthly`, `fact_safety_stock_targets`, `dim_sku` (ABC-XYZ class), forecast accuracy views
 - **Downstream:** Exception queue (policy violations), replenishment plan (policy parameters), investment optimization (EOQ costs)
 
 ---

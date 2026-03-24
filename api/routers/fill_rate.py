@@ -5,12 +5,12 @@ Queries mv_fill_rate_monthly materialized view for fill rate metrics.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
+from api.core import _f, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["fill-rate"])
 
@@ -55,7 +55,7 @@ def get_fill_rate_summary(
         where_parts.append("month_start <= %s")
     if item:
         params.append(f"%{item}%")
-        where_parts.append("item_no ILIKE %s")
+        where_parts.append("item_id ILIKE %s")
     if location:
         params.append(f"%{location}%")
         where_parts.append("loc ILIKE %s")
@@ -101,7 +101,7 @@ def get_fill_rate_summary(
     # If there are existing filters, we need AND, else WHERE
     if where_parts:
         worst_sql = f"""
-            SELECT item_no, loc, fill_rate, shortage_qty, abc_vol
+            SELECT item_id, loc, fill_rate, shortage_qty, abc_vol
             FROM mv_fill_rate_monthly t
             WHERE {' AND '.join(where_parts)} AND shortage_qty > 0
             ORDER BY shortage_qty DESC
@@ -109,7 +109,7 @@ def get_fill_rate_summary(
         """
     else:
         worst_sql = """
-            SELECT item_no, loc, fill_rate, shortage_qty, abc_vol
+            SELECT item_id, loc, fill_rate, shortage_qty, abc_vol
             FROM mv_fill_rate_monthly t
             WHERE shortage_qty > 0
             ORDER BY shortage_qty DESC
@@ -155,7 +155,7 @@ def get_fill_rate_summary(
 
     worst_items = [
         {
-            "item_no": r[0],
+            "item_id": r[0],
             "loc": r[1],
             "fill_rate": _f(r[2]),
             "shortage_qty": _f(r[3]),
@@ -218,7 +218,7 @@ def get_fill_rate_trend(
         where_parts.append("month_start <= %s")
     if item:
         params.append(f"%{item}%")
-        where_parts.append("item_no ILIKE %s")
+        where_parts.append("item_id ILIKE %s")
     if location:
         params.append(f"%{location}%")
         where_parts.append("loc ILIKE %s")
@@ -304,7 +304,7 @@ def get_fill_rate_detail(
         where_parts.append("month_start <= %s")
     if item:
         params.append(f"%{item}%")
-        where_parts.append("item_no ILIKE %s")
+        where_parts.append("item_id ILIKE %s")
     if location:
         params.append(f"%{location}%")
         where_parts.append("loc ILIKE %s")
@@ -325,7 +325,7 @@ def get_fill_rate_detail(
     params.append(offset)
     data_sql = f"""
         SELECT
-            item_no, loc, month_start,
+            item_id, loc, month_start,
             total_ordered, total_shipped,
             fill_rate, shortage_qty,
             had_partial_fulfillment,
@@ -348,7 +348,7 @@ def get_fill_rate_detail(
         "total": int(total),
         "rows": [
             {
-                "item_no": r[0],
+                "item_id": r[0],
                 "loc": r[1],
                 "month_start": str(r[2]),
                 "total_ordered": _f(r[3]),

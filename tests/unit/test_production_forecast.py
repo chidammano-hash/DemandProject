@@ -30,22 +30,22 @@ from common.constants import LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES
 # Fixtures
 # ---------------------------------------------------------------------------
 
-def _make_sales(item_no="ITEM001", loc="LOC1", n_months=24, start="2024-01-01") -> pd.DataFrame:
+def _make_sales(item_id="ITEM001", loc="LOC1", n_months=24, start="2024-01-01") -> pd.DataFrame:
     """Synthetic sales history with n_months rows."""
     dates = pd.date_range(start=start, periods=n_months, freq="MS")
     return pd.DataFrame({
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "startdate": dates,
         "qty": np.random.default_rng(42).uniform(80, 120, n_months),
     })
 
 
-def _make_dfu_attrs(item_no="ITEM001", loc="LOC1") -> pd.DataFrame:
+def _make_dfu_attrs(item_id="ITEM001", loc="LOC1") -> pd.DataFrame:
     return pd.DataFrame([{
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
-        "dmdgroup": "GROUP1",
+        "customer_group": "GROUP1",
         "ml_cluster": 2,
         "execution_lag": 1,
         "total_lt": 30,
@@ -102,7 +102,7 @@ def test_build_grid_unknown_dfu_attrs():
     """Missing DFU attributes use __unknown__ for categorical cols."""
     sales = _make_sales(n_months=24)
     # Empty attrs — no matching row
-    attrs = pd.DataFrame(columns=["item_no", "loc", "dmdgroup", "ml_cluster",
+    attrs = pd.DataFrame(columns=["item_id", "loc", "customer_group", "ml_cluster",
                                    "execution_lag", "total_lt", "brand", "region", "abc_vol"])
     grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=2)
     assert grid is not None
@@ -198,7 +198,7 @@ def test_generate_forecast_returns_rows():
         feature_cols=feature_cols,
         grid=grid,
         horizon=3,
-        item_no="ITEM001",
+        item_id="ITEM001",
         loc="LOC1",
         plan_version="2026-03",
         run_id="test-run-id",
@@ -219,7 +219,7 @@ def test_generate_forecast_keys():
         feature_cols=feature_cols,
         grid=grid,
         horizon=2,
-        item_no="ITEM001",
+        item_id="ITEM001",
         loc="LOC1",
         plan_version="2026-03",
         run_id="test-run-id",
@@ -227,7 +227,7 @@ def test_generate_forecast_keys():
         cluster_id=2,
     )
     for row in rows:
-        assert "item_no" in row
+        assert "item_id" in row
         assert "loc" in row
         assert "forecast_month" in row
         assert "forecast_qty" in row
@@ -249,7 +249,7 @@ def test_generate_forecast_qty_nonneg():
         feature_cols=feature_cols,
         grid=grid,
         horizon=3,
-        item_no="ITEM001",
+        item_id="ITEM001",
         loc="LOC1",
         plan_version="2026-03",
         run_id="test-run-id",
@@ -265,7 +265,7 @@ def test_generate_forecast_qty_nonneg():
 # ---------------------------------------------------------------------------
 
 def test_build_sales_index_structure():
-    """Returns dict keyed by (item_no, loc) with (dates, qty) tuples."""
+    """Returns dict keyed by (item_id, loc) with (dates, qty) tuples."""
     sales = _make_sales(n_months=6)
     idx = build_sales_index(sales)
     assert ("ITEM001", "LOC1") in idx
@@ -298,7 +298,7 @@ def test_build_sales_index_multiple_dfus():
 # ---------------------------------------------------------------------------
 
 def test_build_attrs_index_structure():
-    """Returns dict keyed by (item_no, loc) with attr dicts."""
+    """Returns dict keyed by (item_id, loc) with attr dicts."""
     attrs = _make_dfu_attrs()
     idx = build_attrs_index(attrs)
     assert ("ITEM001", "LOC1") in idx
@@ -395,7 +395,7 @@ def test_generate_forecasts_batch_returns_rows():
     rows = generate_forecasts_batch(
         artifact=artifact,
         dfu_list=[
-            ({"item_no": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid),
+            ({"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid),
         ],
         horizon=3,
         plan_version="2026-03",
@@ -420,8 +420,8 @@ def test_generate_forecasts_batch_multi_dfu():
     rows = generate_forecasts_batch(
         artifact=artifact,
         dfu_list=[
-            ({"item_no": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid1),
-            ({"item_no": "ITEM002", "loc": "LOC2", "cluster_id": 2}, grid2),
+            ({"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid1),
+            ({"item_id": "ITEM002", "loc": "LOC2", "cluster_id": 2}, grid2),
         ],
         horizon=3,
         plan_version="2026-03",
@@ -444,7 +444,7 @@ def test_generate_forecasts_batch_nonneg_qty():
 
     rows = generate_forecasts_batch(
         artifact=artifact,
-        dfu_list=[({"item_no": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid)],
+        dfu_list=[({"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid)],
         horizon=2,
         plan_version="2026-03",
         run_id="test-run-id",
@@ -479,7 +479,7 @@ def test_generate_forecasts_batch_18_months():
 
     rows = generate_forecasts_batch(
         artifact=artifact,
-        dfu_list=[({"item_no": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid)],
+        dfu_list=[({"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid)],
         horizon=18,
         plan_version="2026-02",
         run_id="test-run-id",

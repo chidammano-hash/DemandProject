@@ -110,8 +110,8 @@ export function SafetyStockPanel() {
         />
         <KpiCard
           className={PANEL_KPI}
-          label="Total DFUs"
-          value={summaryLoading ? "..." : (summary?.total_dfus ?? 0).toLocaleString()}
+          label="Total SKUs"
+          value={summaryLoading ? "..." : (summary?.total_skus ?? 0).toLocaleString()}
         />
         <KpiCard
           className={PANEL_KPI}
@@ -177,7 +177,7 @@ export function SafetyStockPanel() {
             severity="warning"
             tooltip={{
               title: "Items currently below their safety stock target",
-              description: "These DFUs have on-hand inventory below the computed safety stock level and may be at risk of stockout before the next replenishment arrives.",
+              description: "These SKUs have on-hand inventory below the computed safety stock level and may be at risk of stockout before the next replenishment arrives.",
             }}
           />
         </div>
@@ -317,10 +317,10 @@ export function SafetyStockPanel() {
 
                   return (
                     <tr
-                      key={`${r.item_no}-${r.loc}-${i}`}
+                      key={`${r.item_id}-${r.loc}-${i}`}
                       className={`border-b last:border-0 hover:bg-muted/40 ${r.is_below_ss ? "bg-red-50 dark:bg-red-950/20" : ""}`}
                     >
-                      <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                      <td className="py-1 pr-2 font-mono">{r.item_id}</td>
                       <td className="py-1 pr-2">{r.loc}</td>
                       <td className="py-1 pr-2 text-right">{formatFixed(r.ss_combined)}</td>
                       <td className="py-1 pr-2 text-right text-muted-foreground">

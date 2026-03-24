@@ -8,7 +8,7 @@ A full-stack supply chain analytics platform for demand planning and inventory o
 
 | Layer | Technology |
 |---|---|
-| Backend API | Python + FastAPI + Uvicorn (56 mounted routers) |
+| Backend API | Python + FastAPI + Uvicorn (60 mounted routers) |
 | Frontend | React + Vite + TypeScript + Tailwind CSS + shadcn/ui |
 | Charts | Recharts + ECharts |
 | Database | PostgreSQL 16 (pgvector for embeddings) |
@@ -29,19 +29,19 @@ Data flow: raw CSVs -> normalize scripts -> PostgreSQL -> FastAPI (:8000) -> Rea
 ```
 DemandProject/
 ├── api/                         FastAPI backend (main.py + routers/)
-│   └── routers/                 58 router files (56 mounted)
-├── common/                      28 shared Python modules
+│   └── routers/                 62 router files (60 mounted)
+├── common/                      29 shared Python modules
 ├── scripts/                     Data pipeline & ML scripts (ETL, clustering, backtesting)
 ├── frontend/                    React + TypeScript UI
 │   ├── src/tabs/                21 tab components + sub-panels
 │   ├── src/components/          Shared UI components
 │   ├── src/hooks/               Custom React hooks
-│   ├── src/api/queries/         24 domain query modules
+│   ├── src/api/queries/         30 domain query modules
 │   └── e2e/                     Playwright E2E tests
 ├── tests/                       Backend test suite (pytest: unit/ + api/)
-├── sql/                         86 DDL migration files
+├── sql/                         72 DDL migration files
 ├── config/                      YAML configs (all tunable parameters externalized)
-├── docs/specs/                  Design specs (8 domains, 52 files)
+├── docs/specs/                  Design specs (8 domains, 53 files)
 ├── Makefile                     All dev commands
 ├── docker-compose.yml           2-service infra (Postgres + MLflow)
 ├── CLAUDE.md                    Full project specification
@@ -57,19 +57,22 @@ DemandProject/
 - `dim_location` — from `data/input/locationdata.csv`
 - `dim_customer` — from `data/input/customerdata.csv`
 - `dim_time` — auto-generated 2020-2035
-- `dim_dfu` — from `data/input/dfu.txt`
+- `dim_sku` — from `data/input/sku.txt`
+- `dim_sourcing` — from `data/input/sourcing.csv` (~1.05M rows), maps item-location to supply sources (supplier-plant)
 
 ### Facts
 - `fact_sales_monthly` — from `data/input/dfu_lvl2_hist.txt`, only `TYPE=1` rows
-- `fact_external_forecast_monthly` — from `data/input/dfu_stat_fcst.txt`, dual-path loading with execution-lag filtering
-- `fact_inventory_snapshot` — from 14 monthly CSVs (`Inventory_Snapshot_YYYY_MM.csv`, ~190M rows)
+- `fact_external_forecast_monthly` — from `data/input/dfu_stat_fcst.txt`, 12-month rolling window, execution lag from `dim_sku`
+- `fact_inventory_snapshot` — monthly range-partitioned, from 14 monthly CSVs (`Inventory_Snapshot_YYYY_MM.csv`, ~198M rows)
+- `fact_purchase_orders` — from `data/input/purchase_orders.csv` (~5.64M rows), both open and closed POs with lead time tracking
 
 ### Forecast Loading Details
-- `lag = month_diff(startdate, fcstdate)` with allowed range 0..4
 - `model_id` identifies forecasting algorithm (default `'external'`); uniqueness: `(forecast_ck, model_id)`
-- **Phase ordering:** archive loads FIRST from untouched staging (all lags 0-4), THEN staging is mutated from `dim_dfu`, THEN main table receives execution-lag rows only
+- **12-month filter:** only `startdate` within the last 12 months from planning date is loaded
+- **Execution lag:** all external forecasts are assumed to be at execution lag; source file's `lag` and `execution_lag` fields are ignored — both are overwritten from `dim_sku` (unmatched DFUs default to 0)
+- **Phase ordering:** 12-month filter first, archive loads from untouched staging, THEN staging is mutated, THEN all rows enter main table (no lag filter)
 - `--replace` flag: replaces only `model_id='external'` rows, preserving backtest/champion/ceiling data
-- `--skip-archive` flag: skips the 45M-row archive load for faster reloads
+- `--skip-archive` flag: skips archive load for faster reloads
 
 ---
 
@@ -81,7 +84,7 @@ cd DemandProject
 make init              # Create .venv, install uv, sync dependencies
 make up                # Start Docker services (Postgres, MLflow)
 make db-apply-sql      # Apply DDL schemas
-make normalize-all     # Normalize source CSVs
+make normalize-all     # Normalize all 10 source domains
 make load-all          # Load into Postgres + refresh materialized views
 
 make api               # Start FastAPI on :8000
@@ -91,14 +94,60 @@ make ui                # Start React dev server on :5173
 
 Open UI at `http://127.0.0.1:5173`
 
+### Full Pipeline Setup
+
+```bash
+# Option 1: Everything (data + ML + planning + ops, ~4-6 hours)
+make init && make up
+make setup-all
+make api &             # Start API on :8000
+make ui                # Start UI on :5173
+
+# Option 2: Data only (~30 min)
+make setup-data        # normalize + load all 10 domains
+
+# Option 3: Data + Inventory Planning, no ML (~1 hour)
+make setup-planning    # data + inv planning features
+```
+
+### Setup Dependency Chain
+
+```
+setup-all
+├── setup-backtest
+│   ├── setup-features
+│   │   ├── setup-data (normalize-all + load-all)
+│   │   ├── cluster-all, seasonality-all, variability-all
+│   │   ├── lt-profile-all, abc-xyz-all, demand-signals-all
+│   │   └── (10 domains: item, location, customer, time, sku, sales, forecast, inventory, sourcing, purchase_order)
+│   ├── backtest-all (LGBM + CatBoost + XGBoost)
+│   ├── backtest-load-all + accuracy-slice-refresh
+│   └── champion-all (meta-learner + simulate + select)
+├── setup-inv-planning (SS, EOQ, policies, exceptions, health, fill rate, supplier, investment, rebalancing)
+├── setup-demand-planning (production forecasts, projections, POs, quantile, consensus, planned orders, replenishment, bias, blended, service level, lead time, echelon)
+└── setup-ops (S&OP, events, financial plan, storyboard, scenarios, DQ)
+```
+
 ### Optional Pipelines
 
 ```bash
-make inventory-pipeline       # Normalize 14 monthly inventory CSVs + load + refresh
+make inventory-pipeline       # Normalize 15 monthly inventory CSVs + load + refresh
+make pipeline-full            # Full reload all domains + refresh MVs
+make pipeline-refresh         # Incremental: detect changes, reload only deltas
+make pipeline-inventory       # Full reload inventory only
+make pipeline-inventory-refresh  # Incremental inventory refresh only
+make setup-data               # Normalize + load all 10 domains (~30 min)
+make setup-features           # Data + clustering + seasonality + variability + lead time + ABC-XYZ + demand signals
+make setup-backtest           # Features + backtests + champion selection
+make setup-inv-planning       # Inventory planning features (SS, EOQ, policies, exceptions, health, etc.)
+make setup-demand-planning    # Demand planning features (production forecasts, projections, consensus, etc.)
+make setup-ops                # Operations features (S&OP, events, financial plan, storyboard, DQ)
+make setup-planning           # Data + inventory planning (no ML)
+make setup-all                # Everything: data + ML + planning + ops (~4-6 hours)
 make cluster-all              # Full clustering pipeline (features -> train -> label -> update)
 make backtest-all             # Run LGBM + CatBoost + XGBoost backtests
 make champion-all             # Train meta-learner + simulate strategies + select champions
-make seasonality-all          # Detect seasonality patterns + write to dim_dfu
+make seasonality-all          # Detect seasonality patterns + write to dim_sku
 make forecast-prod-all        # Generate production forecasts from champion models
 make ai-insights-all          # Run AI portfolio scan + write insights
 make dq-all                   # Data quality schema + checks
@@ -119,6 +168,12 @@ Three tree-based backtest models (LightGBM, CatBoost, XGBoost) with configurable
 **SHAP Feature Selection:** Enable with `shap_select: true` in algorithm config. Per-timeframe SHAP computation selects features covering 95% cumulative importance. 4 read-only API endpoints under `/forecast/shap/` plus on-demand per-DFU SHAP endpoint. UI panels in Accuracy tab and Item Analysis tab.
 
 **Recursive Forecasting:** Enable with `recursive: true`. Each predict month writes predictions back into the feature grid, giving `qty_lag_1` a real signal instead of zero for subsequent months.
+
+**LGBM Tuning Tracker:** Systematic experiment tracking for LGBM hyperparameter optimization. Records each backtest run's config, accuracy, WAPE, and bias into `lgbm_tuning_run` with per-timeframe, per-cluster, and per-month breakdowns. Pairwise A/B comparisons compute deltas and verdicts (improved/degraded/neutral). Four ways to run experiments: (1) `make lgbm-auto-tune RUNS=N` — batch campaign with 13 predefined strategies, (2) manual single runs via `make backtest-lgbm` + `compare_backtest_runs.py --register-latest`, (3) AI Tuning Advisor chat in the UI, (4) sampled fast backtests (~3 min) via `/lgbm-tuning/sampled/run`. Per-cluster adaptive profiles (`config/cluster_tuning_profiles.yaml`) auto-apply different params for sparse, volatile, stable, and seasonal clusters. Current best: Run 8 at 71.70% accuracy (+236 bps over 69.34% baseline). See `docs/specs/02-forecasting/10-lgbm-tuning.md` for full instructions.
+
+**AI Tuning Chat:** Interactive AI-powered chat panel within the LGBM Tuning tab. An agentic advisor (OpenAI/Anthropic, 7 tools, 20-turn loop) reviews previous runs, identifies cluster/timeframe patterns, recommends parameter changes via structured cards, and (with user confirmation) triggers new backtest runs. Results flow back into the chat for iterative tuning. DB-backed sessions (`tuning_chat_session`, `tuning_chat_message`) with 6 API endpoints under `/lgbm-tuning/chat/`. Safety: max 1 concurrent run, 5-minute cooldown, user confirmation required.
+
+**Tuning Analysis Panels:** The LGBM Tuning tab includes 4 analysis sub-tabs: Cluster EDA (cluster demand profiles, error concentration, seasonality heatmap), Feature Lab (SHAP importance, stability, correlation, per-cluster importance), Accuracy Budget (waterfall decomposition, ABC targets, monthly trend, model comparison), and Sampled Backtest (stratified DFU sampling for fast ~3-min iteration runs). API prefixes: `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/lgbm-tuning/sampled`.
 
 ### 2. DFU Clustering & Segmentation
 
@@ -169,9 +224,24 @@ Proactive exception work-queue (not a chatbot) powered by Claude (`claude-opus-4
 - **Event Calendar**: promotion and event planning with approval status
 - **Scenario Planning**: disruption what-if scenarios with financial impact results
 
-### 6. Platform Services
+### 6. Performance Profiling
 
-- **Data Quality**: DQEngine with 12 check types, statistical auto-fix, Self-Heal UI, Medallion pipeline (Bronze/Silver/Gold)
+Centralized profiling for scripts, API endpoints, and full pipelines. Instruments code with `@profile_function` decorators and `profiled_section()` context managers, auto-tracks all DB queries via `wrap_connection()`, and monitors memory with `tracemalloc`. A rule-based suggestion engine detects 8 anti-patterns (slow queries, N+1, unbatched inserts, memory spikes, sequential processing, query dominance) and generates actionable recommendations.
+
+```bash
+make perf-report                         # Generate summary report from last run
+make perf-script SCRIPT=compute_safety_stock  # Profile a specific pipeline script
+make perf-api                            # Profile API endpoint latencies
+make perf-pipeline                       # Profile end-to-end pipeline
+```
+
+**Production safety:** All profiled DB connections use `SET default_transaction_read_only = true` and always `ROLLBACK` -- zero side effects on the target database. Reports are written to `data/perf_reports/` (gitignored).
+
+Configuration: `config/perf_config.yaml` (thresholds for all 8 suggestion rules). Spec: [docs/specs/01-foundation/05-performance-profiling.md](docs/specs/01-foundation/05-performance-profiling.md).
+
+### 7. Platform Services
+
+- **Data Quality**: DQEngine with 12 check types, statistical auto-fix, Self-Heal UI
 - **RBAC**: JWT authentication, 4 roles (admin/planner/analyst/viewer), session management
 - **Notifications**: Slack, Teams, Email, PagerDuty dispatch with user preferences
 - **Collaboration**: threaded annotations on DFUs, forecasts, and exceptions
@@ -183,11 +253,11 @@ Proactive exception work-queue (not a chatbot) powered by Claude (`claude-opus-4
 - **Webhooks**: HMAC-SHA256 signed outbound event delivery with retry and dead-letter queue
 - **Caching**: multi-tier (in-memory LRU + optional Redis) with automatic invalidation
 
-### 7. Job Automation
+### 8. Job Automation
 
-APScheduler-powered engine with 7 job types across 4 groups (clustering, backtest, seasonality, champion). Per-group FIFO concurrency, cron/interval scheduling, job pipelines (sequential chaining), retry with exponential backoff. Jobs tab with live progress bars, elapsed timers, and cross-tab completion alerts.
+APScheduler-powered engine with 8 job types across 5 groups (clustering, backtest, seasonality, champion, tuning). Per-group FIFO concurrency, cron/interval scheduling, job pipelines (sequential chaining), retry with exponential backoff. Resilient execution: subprocesses survive API restarts via `Popen(start_new_session=True)` with PID tracking, real kill via SIGTERM to process group, PID-aware startup recovery (re-adopt live processes, fail dead ones), and persistent execution log streaming to DB. Jobs tab with live progress bars, elapsed timers, persistent log panels, Kill button (2-step confirm), and cross-tab completion alerts.
 
-### 8. UI Platform
+### 9. UI Platform
 
 12-tab sidebar navigation across 5 sections (Tower, Operations, Supply, Demand, System). Single "General" (Supply Chain Command Center) theme with light/dark modes. Global filter bar (brand, category, item, location, market, channel) synced across tabs via URL state. Keyboard shortcuts (1-9 tabs, `[` sidebar, `d` dark mode, `?` help). Virtualized data grid with CSV export. TanStack Query caching with lazy-loaded tab components and per-tab error boundaries. Item Analysis tab merges DFU Analysis + Inventory with 7 toggleable panels (clickable forecast lines, per-DFU SHAP panel).
 
@@ -195,17 +265,17 @@ APScheduler-powered engine with 7 job types across 4 groups (clustering, backtes
 
 ## Data Scale
 
-- **~190M rows** in `fact_inventory_snapshot` (14 monthly snapshots)
+- **~198M rows** in `fact_inventory_snapshot` (15 monthly partitions, range-partitioned by `snapshot_date`)
 - **~112K DFUs** across item x location combinations
 - **45M+ rows** in the backtest lag archive
-- **8 domain tables**: 5 dimensions + 3 facts (sales, forecast, inventory)
-- **35+ materialized views and fact tables** for O(1) KPI queries
+- **80 tables** across 10 domains: 6 dimensions + 4 facts + materialized views + planning tables
+- **35+ materialized views** for O(1) KPI queries
 
 ---
 
 ## Performance Defaults
 
-- Fact indexes on `(dmdunit, loc, startdate/fcstdate)` via `sql/008_perf_indexes_and_agg.sql`
+- Fact indexes on `(item_id, loc, startdate/fcstdate)` via `sql/008_perf_indexes_and_agg.sql`
 - Trigram (`pg_trgm`) indexes for common `ILIKE` search fields
 - Monthly materialized views: `agg_sales_monthly`, `agg_forecast_monthly`
 - Accuracy slice views: `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` for O(1) aggregate KPIs
@@ -216,7 +286,7 @@ APScheduler-powered engine with 7 job types across 4 groups (clustering, backtes
 
 ## Testing
 
-Full-stack automated testing (2,213 backend / 730 frontend):
+Full-stack automated testing (2,273 backend / 741 frontend):
 
 ```bash
 cd DemandProject
@@ -244,26 +314,25 @@ Every feature ships with tests; every removed feature removes its tests.
 |---|---|
 | Project spec | `CLAUDE.md` |
 | API entry point | `api/main.py` |
-| API routers (58 files, 56 mounted) | `api/routers/` |
-| Shared Python modules (28) | `common/` |
+| API routers (62 files, 60 mounted) | `api/routers/` |
+| Shared Python modules (29) | `common/` |
 | Shared SQL helpers | `common/sql_helpers.py` |
 | Domain config | `common/domain_specs.py` |
 | YAML configs | `config/` |
 | Pipeline scripts | `scripts/` |
-| DDL migrations (86) | `sql/` |
+| DDL migrations (80) | `sql/` |
 | Frontend app | `frontend/src/App.tsx` |
 | Tab components | `frontend/src/tabs/` |
 | API query modules | `frontend/src/api/queries/` |
 | Backend tests | `tests/` |
 | Frontend tests | `frontend/src/**/__tests__/` |
 | E2E tests | `frontend/e2e/tests/` |
-| Design specs | `docs/specs/` (8 domains, 52 files) |
+| Design specs | `docs/specs/` (8 domains, 53 files) |
 | Makefile | `Makefile` |
 
 ## Key Documentation
 
 - [CLAUDE.md](../../CLAUDE.md) -- Complete project specification (tech stack, commands, conventions)
-- [docs/specs/](../../docs/specs/) -- Feature design specifications (8 domains, 52 files)
+- [docs/specs/](../../docs/specs/) -- Feature design specifications (8 domains, 53 files)
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- Architecture, data flow, database schema, API routing
-- [OPERATIONS.md](OPERATIONS.md) -- Setup, workflow, troubleshooting guide
-- [CLAUDE_SKILLS_GUIDE.md](CLAUDE_SKILLS_GUIDE.md) -- Claude Code skills developer guide
+- [RUNBOOK.md](RUNBOOK.md) -- Setup, workflow, troubleshooting guide

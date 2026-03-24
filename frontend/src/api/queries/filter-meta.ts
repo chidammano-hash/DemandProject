@@ -1,15 +1,15 @@
 import { fetchJson } from "./core";
 import type { GlobalFilters } from "@/types/theme";
 
-export interface DfuCountPayload {
+export interface SkuCountPayload {
   count: number;
 }
 
 export const filterMetaKeys = {
-  dfuCount: (filters: Partial<GlobalFilters>) => ["dfu-count", filters] as const,
+  skuCount: (filters: Partial<GlobalFilters>) => ["sku-count", filters] as const,
 };
 
-export async function fetchDfuCount(filters: Partial<GlobalFilters>): Promise<DfuCountPayload> {
+export async function fetchSkuCount(filters: Partial<GlobalFilters>): Promise<SkuCountPayload> {
   const qs = new URLSearchParams();
   if (filters.brand?.length) qs.set("brand", filters.brand.join(","));
   if (filters.category?.length) qs.set("category", filters.category.join(","));
@@ -19,5 +19,5 @@ export async function fetchDfuCount(filters: Partial<GlobalFilters>): Promise<Df
   if (filters.channel?.length) qs.set("channel", filters.channel.join(","));
   if (filters.cluster?.length) qs.set("cluster", filters.cluster.join(","));
   const q = qs.toString();
-  return fetchJson(`/domains/dfu/count${q ? `?${q}` : ""}`);
+  return fetchJson(`/domains/sku/count${q ? `?${q}` : ""}`);
 }

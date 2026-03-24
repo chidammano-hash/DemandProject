@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -34,6 +33,7 @@ from common.champion_strategies import (
     compute_strategy_accuracy,
 )
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 
 
 def load_monthly_errors(
@@ -52,7 +52,7 @@ def load_monthly_errors(
         params.append(int(lag_mode))
 
     sql = f"""
-        SELECT dmdunit, dmdgroup, loc, startdate, fcstdate, execution_lag,
+        SELECT item_id, customer_group, loc, startdate, fcstdate, execution_lag,
                model_id, basefcst_pref, tothist_dmd,
                ABS(basefcst_pref - tothist_dmd) AS abs_err
         FROM fact_external_forecast_monthly
@@ -60,7 +60,7 @@ def load_monthly_errors(
           AND {lag_cond}
           AND basefcst_pref IS NOT NULL
           AND tothist_dmd IS NOT NULL
-        ORDER BY dmdunit, dmdgroup, loc, model_id, startdate
+        ORDER BY item_id, customer_group, loc, model_id, startdate
     """
 
     with psycopg.connect(**db) as conn:
@@ -77,13 +77,13 @@ def load_monthly_errors(
 def load_dfu_features(db: dict[str, Any]) -> pd.DataFrame:
     """Load DFU static features for meta-learner strategy."""
     sql = """
-        SELECT dmdunit, dmdgroup, loc,
+        SELECT item_id, customer_group, loc,
                ml_cluster, abc_vol, execution_lag, total_lt,
                brand, region,
                seasonality_profile, seasonality_strength,
                is_yearly_seasonal, peak_month, trough_month,
                peak_trough_ratio
-        FROM dim_dfu
+        FROM dim_sku
     """
     with psycopg.connect(**db) as conn:
         df = pd.read_sql(sql, conn)
@@ -208,21 +208,24 @@ def main() -> None:
     # Load data
     print("Loading monthly errors...")
     t0 = time.time()
-    monthly_errors = load_monthly_errors(db, models, lag_mode)
+    with profiled_section("load_monthly_errors"):
+        monthly_errors = load_monthly_errors(db, models, lag_mode)
     n_dfu_months = monthly_errors.groupby(
-        ["dmdunit", "dmdgroup", "loc", "startdate"]
+        ["item_id", "customer_group", "loc", "startdate"]
     ).ngroups
     print(f"  {len(monthly_errors):,} rows, {n_dfu_months:,} DFU-months ({time.time() - t0:.1f}s)")
     print()
 
     # Load DFU features for meta-learner
-    dfu_features = load_dfu_features(db)
+    with profiled_section("load_dfu_features"):
+        dfu_features = load_dfu_features(db)
 
     # Compute ceiling (oracle upper bound)
     print("Computing ceiling (oracle)...")
     t1 = time.time()
-    ceiling_winners = compute_ceiling(monthly_errors)
-    ceiling_acc = compute_strategy_accuracy(ceiling_winners)
+    with profiled_section("compute_ceiling"):
+        ceiling_winners = compute_ceiling(monthly_errors)
+        ceiling_acc = compute_strategy_accuracy(ceiling_winners)
     print(f"  Ceiling: accuracy={ceiling_acc['accuracy_pct']}%, "
           f"WAPE={ceiling_acc['wape']}%, "
           f"DFU-months={ceiling_acc['n_dfu_months']:,} ({time.time() - t1:.1f}s)")
@@ -254,9 +257,10 @@ def main() -> None:
             strat_kwargs["dfu_features"] = dfu_features
 
         t2 = time.time()
-        winners = strategy_fn(monthly_errors, **strat_kwargs)
-        elapsed = time.time() - t2
-        acc = compute_strategy_accuracy(winners)
+        with profiled_section(f"strategy_{sim_name}"):
+            winners = strategy_fn(monthly_errors, **strat_kwargs)
+            elapsed = time.time() - t2
+            acc = compute_strategy_accuracy(winners)
 
         gap = ""
         if acc["accuracy_pct"] is not None and ceiling_acc["accuracy_pct"] is not None:
@@ -303,10 +307,11 @@ def main() -> None:
               f"gap to ceiling: {results[best_name].get('gap_to_ceiling', 'N/A')} pp)")
 
     # Save results
-    output_path = ROOT / args.output
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
-        json.dump(results, f, indent=2, default=str)
+    with profiled_section("save_results"):
+        output_path = ROOT / args.output
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(results, f, indent=2, default=str)
     print(f"\nResults saved to {output_path}")
 
 

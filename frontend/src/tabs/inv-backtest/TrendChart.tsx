@@ -12,7 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { LoadingElement } from "@/components/LoadingElement";
-import { dfuModelColor } from "@/constants/colors";
+import { skuModelColor } from "@/constants/colors";
 import { CHART_MARGIN, TREND_METRICS } from "./invBacktestShared";
 
 export function TrendChart({
@@ -75,7 +75,7 @@ export function TrendChart({
               type="monotone"
               dataKey={mid}
               name={mid}
-              stroke={dfuModelColor(mid, idx)}
+              stroke={skuModelColor(mid, idx)}
               strokeWidth={2}
               dot={{ r: 2 }}
               connectNulls

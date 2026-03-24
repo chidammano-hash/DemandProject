@@ -41,12 +41,12 @@ async def test_get_blended_forecast_200():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/blended",
-                params={"item_no": "ITEM001", "loc": "LOC001"},
+                params={"item_id": "ITEM001", "loc": "LOC001"},
             )
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["item_no"] == "ITEM001"
+    assert data["item_id"] == "ITEM001"
     assert data["loc"] == "LOC001"
     assert "weekly_forecast" in data
     assert len(data["weekly_forecast"]) == 1
@@ -80,7 +80,7 @@ async def test_get_blended_forecast_empty_weeks():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/blended",
-                params={"item_no": "ITEM_NODATA", "loc": "LOC_NODATA"},
+                params={"item_id": "ITEM_NODATA", "loc": "LOC_NODATA"},
             )
 
     assert resp.status_code == 200
@@ -99,7 +99,7 @@ async def test_get_blended_forecast_with_plan_version():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/blended",
-                params={"item_no": "ITEM001", "loc": "LOC001", "plan_version": "v2025-03", "weeks": 4},
+                params={"item_id": "ITEM001", "loc": "LOC001", "plan_version": "v2025-03", "weeks": 4},
             )
 
     assert resp.status_code == 200
@@ -161,7 +161,7 @@ async def test_get_sensing_active_200():
     assert "active_overrides" in data
     assert len(data["active_overrides"]) == 1
     item = data["active_overrides"][0]
-    assert item["item_no"] == "ITEM001"
+    assert item["item_id"] == "ITEM001"
     assert item["alpha_weight"] == pytest.approx(0.72)
     assert item["week_start"] == "2025-03-03"
 

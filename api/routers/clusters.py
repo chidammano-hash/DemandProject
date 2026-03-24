@@ -40,7 +40,7 @@ def _validate_scenario_id(scenario_id: str) -> str:
 # ---------------------------------------------------------------------------
 # Cluster summary / profiles / visualization
 # ---------------------------------------------------------------------------
-@router.get("/domains/dfu/clusters")
+@router.get("/domains/sku/clusters")
 def dfu_clusters(source: str = Query(default="ml", pattern="^(ml|source)$")):
     """Get cluster summary statistics for DFU clustering.
 
@@ -55,7 +55,7 @@ def dfu_clusters(source: str = Query(default="ml", pattern="^(ml|source)$")):
                 SELECT
                     {col} AS cluster_label,
                     COUNT(*) AS dfu_count
-                FROM dim_dfu
+                FROM dim_sku
                 WHERE {col} IS NOT NULL AND {col} != ''
                 GROUP BY {col}
             ),
@@ -70,10 +70,10 @@ def dfu_clusters(source: str = Query(default="ml", pattern="^(ml|source)$")):
                         WHEN AVG(s.qty) > 0 THEN COALESCE(STDDEV(s.qty), 0) / AVG(s.qty)
                         ELSE 0
                     END AS cv_demand
-                FROM dim_dfu d
+                FROM dim_sku d
                 INNER JOIN fact_sales_monthly s
-                    ON s.dmdunit = d.dmdunit
-                    AND s.dmdgroup = d.dmdgroup
+                    ON s.item_id = d.item_id
+                    AND s.customer_group = d.customer_group
                     AND s.loc = d.loc
                 WHERE d.{col} IS NOT NULL AND d.{col} != ''
                     AND s.qty IS NOT NULL
@@ -106,14 +106,14 @@ def dfu_clusters(source: str = Query(default="ml", pattern="^(ml|source)$")):
             })
 
         return {
-            "domain": "dfu",
+            "domain": "sku",
             "source": source,
             "total_assigned": total_assigned,
             "clusters": clusters,
         }
 
 
-@router.get("/domains/dfu/clusters/profiles")
+@router.get("/domains/sku/clusters/profiles")
 def dfu_cluster_profiles():
     """Get cluster profiles with centroid features and metadata."""
     root = Path(__file__).resolve().parents[2]
@@ -141,7 +141,7 @@ def dfu_cluster_profiles():
     }
 
 
-@router.get("/domains/dfu/clusters/visualization/{image_name}")
+@router.get("/domains/sku/clusters/visualization/{image_name}")
 def dfu_cluster_visualization(image_name: str):
     """Serve clustering visualization images."""
     allowed = {"k_selection_plots.png", "cluster_visualization.png"}
@@ -154,7 +154,7 @@ def dfu_cluster_visualization(image_name: str):
     return FileResponse(str(img_path), media_type="image/png")
 
 
-@router.get("/domains/dfu/seasonality-profiles")
+@router.get("/domains/sku/seasonality-profiles")
 def dfu_seasonality_profiles():
     """Get distinct seasonality_profile values with DFU counts."""
     with get_conn() as conn, conn.cursor() as cur:
@@ -162,7 +162,7 @@ def dfu_seasonality_profiles():
             SELECT
                 COALESCE(seasonality_profile, '(unknown)') AS profile,
                 COUNT(*)::bigint AS dfu_count
-            FROM dim_dfu
+            FROM dim_sku
             GROUP BY 1
             ORDER BY dfu_count DESC
         """)
@@ -296,7 +296,7 @@ def estimate_scenario_runtime(
 ):
     """Estimate scenario runtime based on parameters."""
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM dim_dfu")
+        cur.execute("SELECT COUNT(*) FROM dim_sku")
         dfu_count = int(cur.fetchone()[0])
 
     k_range = max(1, k_max - k_min + 1)
@@ -304,15 +304,15 @@ def estimate_scenario_runtime(
 
     # Empirical constants calibrated from observed runs:
     # Feature generation: ~0.001s per DFU (per-DFU loop, runs on ALL DFUs)
-    feature_gen_per_dfu = 0.001
+    feature_gen_per_sku = 0.001
     # KMeans training: ~0.002s per training DFU per K (runs on sample if large)
-    kmeans_per_dfu_per_k = 0.002
+    kmeans_per_sku_per_k = 0.002
     # Fixed overhead for SQL query + data loading
     overhead_seconds = 10.0
 
     training_dfus = min(dfu_count, max_training_dfus)
-    feature_gen_time = feature_gen_per_dfu * dfu_count
-    kmeans_time = kmeans_per_dfu_per_k * training_dfus * k_range
+    feature_gen_time = feature_gen_per_sku * dfu_count
+    kmeans_time = kmeans_per_sku_per_k * training_dfus * k_range
     estimated = overhead_seconds + feature_gen_time + kmeans_time
 
     return {
@@ -454,7 +454,7 @@ def get_clustering_scenario(scenario_id: str):
 
 @router.post("/clustering/scenario/{scenario_id}/promote", dependencies=[Depends(require_api_key)])
 def promote_clustering_scenario(scenario_id: str):
-    """Promote a scenario to production (updates dim_dfu.ml_cluster)."""
+    """Promote a scenario to production (updates dim_sku.ml_cluster)."""
     _validate_scenario_id(scenario_id)
     from scripts.run_clustering_scenario import promote_scenario
 

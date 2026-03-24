@@ -20,6 +20,8 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
+from common.constants import PROTECTED_FEATURES
+
 # ---------------------------------------------------------------------------
 # Type alias
 # ---------------------------------------------------------------------------
@@ -191,6 +193,11 @@ def _select_features_from_shap(
 
     selected_set = set(sorted_features[:n_select])
 
+    # Always keep protected features (month, month_sin, month_cos, quarter, ml_cluster)
+    for feat in feature_cols:
+        if feat in PROTECTED_FEATURES:
+            selected_set.add(feat)
+
     shap_df = pd.DataFrame({
         "feature": sorted_features,
         "mean_abs_shap": sorted_shap.tolist(),
@@ -200,11 +207,14 @@ def _select_features_from_shap(
         "cutoff_date": [str(cutoff_date.date())] * len(sorted_features),
     })
 
+    # Return selected features in SHAP-rank order, with protected features appended
+    result_features = [f for f in sorted_features if f in selected_set]
     print(
-        f"    [shap] Selected {n_select}/{len(feature_cols)} features "
-        f"(threshold={cumulative_threshold:.2f}, top: {sorted_features[0]})"
+        f"    [shap] Selected {len(result_features)}/{len(feature_cols)} features "
+        f"(threshold={cumulative_threshold:.2f}, protected={len(PROTECTED_FEATURES & set(feature_cols))}, "
+        f"top: {sorted_features[0]})"
     )
-    return sorted_features[:n_select], shap_df
+    return result_features, shap_df
 
 
 # ---------------------------------------------------------------------------

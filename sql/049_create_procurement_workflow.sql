@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS fact_purchase_orders (
     po_line_id              BIGSERIAL       PRIMARY KEY,
     po_number               VARCHAR(50)     NOT NULL,
     line_number             INTEGER         NOT NULL DEFAULT 1,
-    item_no                 VARCHAR(50)     NOT NULL,
+    item_id                 VARCHAR(50)     NOT NULL,
     item_description        VARCHAR(255),
     loc                     VARCHAR(50)     NOT NULL,
     supplier_id             VARCHAR(50)     REFERENCES dim_supplier(supplier_id),
@@ -53,7 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_fpo_supplier
     ON fact_purchase_orders (supplier_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_fpo_item_loc
-    ON fact_purchase_orders (item_no, loc, status);
+    ON fact_purchase_orders (item_id, loc, status);
 
 CREATE INDEX IF NOT EXISTS idx_fpo_po_number
     ON fact_purchase_orders (po_number);

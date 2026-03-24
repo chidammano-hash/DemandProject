@@ -22,7 +22,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import date, datetime
+from datetime import date
 from common.planning_date import get_planning_date
 from typing import Any, Annotated, Literal
 
@@ -47,7 +47,7 @@ class CreateInsightInput(BaseModel):
         "policy_gap", "champion_degradation"
     ]
     severity: Literal["critical", "high", "medium", "low"]
-    item_no: str
+    item_id: str
     loc: str
     summary: str = Field(min_length=20, max_length=300)
     recommendation: str = Field(min_length=30, max_length=600)
@@ -74,11 +74,11 @@ class CreateInsightInput(BaseModel):
 # Tool implementations — all direct psycopg queries, no HTTP round-trips
 # ---------------------------------------------------------------------------
 
-def get_dfu_full_context(pool, item_no: str, loc: str) -> dict:
+def get_dfu_full_context(pool, item_id: str, loc: str) -> dict:
     """Return a single-row snapshot of all planning layers for a DFU."""
     sql = """
         SELECT
-            d.dmdunit AS item_no, d.loc,
+            d.item_id AS item_id, d.loc,
             d.abc_vol, d.variability_class, d.cluster_assignment,
             d.seasonality_profile, d.is_yearly_seasonal,
             -- latest inventory
@@ -103,19 +103,19 @@ def get_dfu_full_context(pool, item_no: str, loc: str) -> dict:
                 SELECT ROUND(100.0 * SUM(ABS(basefcst_pref - tothist_dmd)) /
                              NULLIF(ABS(SUM(tothist_dmd)), 0), 2)
                 FROM fact_external_forecast_monthly
-                WHERE dmdunit = d.dmdunit AND loc = d.loc
+                WHERE item_id = d.item_id AND loc = d.loc
                   AND model_id = 'champion'
                   AND lag = 0
                   AND startdate >= date_trunc('month', NOW() - INTERVAL '6 months')
             ) AS champion_wape
-        FROM dim_dfu d
+        FROM dim_sku d
         LEFT JOIN LATERAL (
             SELECT ROUND((eom_qty_on_hand / NULLIF(avg_daily_sls, 0))::NUMERIC, 1) AS current_dos,
                    latest_lead_time_days AS total_lt_days,
                    avg_qty_on_hand AS avg_on_hand,
                    avg_daily_sls AS avg_daily_sales
             FROM agg_inventory_monthly
-            WHERE item_no = d.dmdunit AND loc = d.loc
+            WHERE item_id = d.item_id AND loc = d.loc
             ORDER BY month_start DESC
             LIMIT 1
         ) i ON TRUE
@@ -126,7 +126,7 @@ def get_dfu_full_context(pool, item_no: str, loc: str) -> dict:
                    ROUND((effective_eoq / NULLIF(annual_demand / 12.0, 0))::NUMERIC, 2) AS eoq_months_supply,
                    eoq_cycle_stock AS cycle_stock_value
             FROM fact_eoq_targets
-            WHERE item_no = d.dmdunit AND loc = d.loc
+            WHERE item_id = d.item_id AND loc = d.loc
             ORDER BY computed_at DESC
             LIMIT 1
         ) e ON TRUE
@@ -137,24 +137,24 @@ def get_dfu_full_context(pool, item_no: str, loc: str) -> dict:
                    rp.use_safety_stock
             FROM fact_dfu_policy_assignment pa
             JOIN dim_replenishment_policy rp USING (policy_id)
-            WHERE pa.item_no = d.dmdunit AND pa.loc = d.loc
+            WHERE pa.item_id = d.item_id AND pa.loc = d.loc
             ORDER BY pa.effective_date DESC
             LIMIT 1
         ) p ON TRUE
-        WHERE d.dmdunit = %s AND d.loc = %s
+        WHERE d.item_id = %s AND d.loc = %s
         LIMIT 1
     """
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (item_no, loc))
+            cur.execute(sql, (item_id, loc))
             row = cur.fetchone()
             if row is None:
-                return {"error": f"DFU {item_no}@{loc} not found"}
+                return {"error": f"DFU {item_id}@{loc} not found"}
             cols = [d[0] for d in cur.description]
             return dict(zip(cols, row))
 
 
-def get_forecast_performance(pool, item_no: str, loc: str, months: int = 6) -> list[dict]:
+def get_forecast_performance(pool, item_id: str, loc: str, months: int = 6) -> list[dict]:
     """Return per-month champion forecast accuracy for a DFU."""
     sql = """
         SELECT
@@ -164,7 +164,7 @@ def get_forecast_performance(pool, item_no: str, loc: str, months: int = 6) -> l
             ROUND(100.0 * (basefcst_pref - tothist_dmd) / NULLIF(tothist_dmd, 0), 2) AS bias_pct,
             ROUND(100.0 * ABS(basefcst_pref - tothist_dmd) / NULLIF(ABS(tothist_dmd), 0), 2) AS abs_err_pct
         FROM fact_external_forecast_monthly
-        WHERE dmdunit = %s AND loc = %s
+        WHERE item_id = %s AND loc = %s
           AND model_id = 'champion'
           AND lag = 0
           AND startdate >= date_trunc('month', NOW() - INTERVAL '1 month' * %s)
@@ -172,7 +172,7 @@ def get_forecast_performance(pool, item_no: str, loc: str, months: int = 6) -> l
     """
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (item_no, loc, months))
+            cur.execute(sql, (item_id, loc, months))
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, r)) for r in cur.fetchall()]
 
@@ -181,24 +181,24 @@ def get_portfolio_exceptions(pool, limit: int = 50) -> list[dict]:
     """Return top exception DFUs ranked by severity signals."""
     sql = """
         WITH latest_inv AS (
-            SELECT DISTINCT ON (item_no, loc)
-                item_no, loc,
+            SELECT DISTINCT ON (item_id, loc)
+                item_id, loc,
                 ROUND((eom_qty_on_hand / NULLIF(avg_daily_sls, 0))::NUMERIC, 1) AS avg_dos,
                 latest_lead_time_days AS total_lt_days
             FROM agg_inventory_monthly
-            ORDER BY item_no, loc, month_start DESC
+            ORDER BY item_id, loc, month_start DESC
         ),
         champion_wape AS (
-            SELECT dmdunit, loc,
+            SELECT item_id, loc,
                 ROUND(100.0 * SUM(ABS(basefcst_pref - tothist_dmd)) /
                       NULLIF(ABS(SUM(tothist_dmd)), 0), 2) AS wape
             FROM fact_external_forecast_monthly
             WHERE model_id = 'champion' AND lag = 0
               AND startdate >= date_trunc('month', NOW() - INTERVAL '3 months')
-            GROUP BY dmdunit, loc
+            GROUP BY item_id, loc
         )
         SELECT
-            d.dmdunit AS item_no, d.loc, d.abc_vol, d.variability_class, d.cluster_assignment,
+            d.item_id AS item_id, d.loc, d.abc_vol, d.variability_class, d.cluster_assignment,
             i.avg_dos,
             i.total_lt_days,
             w.wape                                                          AS champion_wape,
@@ -214,9 +214,9 @@ def get_portfolio_exceptions(pool, limit: int = 50) -> list[dict]:
                 WHEN w.wape > 50                                            THEN true
                 ELSE false
             END AS high_wape_flag
-        FROM dim_dfu d
-        JOIN latest_inv i ON d.dmdunit = i.item_no AND d.loc = i.loc
-        LEFT JOIN champion_wape w ON d.dmdunit = w.dmdunit AND d.loc = w.loc
+        FROM dim_sku d
+        JOIN latest_inv i ON d.item_id = i.item_id AND d.loc = i.loc
+        LEFT JOIN champion_wape w ON d.item_id = w.item_id AND d.loc = w.loc
         WHERE d.abc_vol IN ('A','B')
            OR w.wape > 35
            OR i.avg_dos < i.total_lt_days * 1.5
@@ -237,7 +237,7 @@ def get_portfolio_exceptions(pool, limit: int = 50) -> list[dict]:
             return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def compute_bias_trend(pool, item_no: str, loc: str) -> dict:
+def compute_bias_trend(pool, item_id: str, loc: str) -> dict:
     """Compute rolling bias averages for a DFU."""
     sql = """
         WITH monthly AS (
@@ -245,7 +245,7 @@ def compute_bias_trend(pool, item_no: str, loc: str) -> dict:
                 startdate,
                 ROUND(100.0 * (basefcst_pref - tothist_dmd) / NULLIF(tothist_dmd, 0), 2) AS bias_pct
             FROM fact_external_forecast_monthly
-            WHERE dmdunit = %s AND loc = %s
+            WHERE item_id = %s AND loc = %s
               AND model_id = 'champion' AND lag = 0
               AND tothist_dmd IS NOT NULL
             ORDER BY startdate DESC
@@ -260,7 +260,7 @@ def compute_bias_trend(pool, item_no: str, loc: str) -> dict:
     """
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (item_no, loc))
+            cur.execute(sql, (item_id, loc))
             row = cur.fetchone()
             if row is None:
                 return {}
@@ -268,7 +268,7 @@ def compute_bias_trend(pool, item_no: str, loc: str) -> dict:
             return dict(zip(cols, row))
 
 
-def get_inventory_trend(pool, item_no: str, loc: str, months: int = 6) -> list[dict]:
+def get_inventory_trend(pool, item_id: str, loc: str, months: int = 6) -> list[dict]:
     """Return monthly inventory trend for a DFU."""
     sql = """
         SELECT month_start,
@@ -277,18 +277,18 @@ def get_inventory_trend(pool, item_no: str, loc: str, months: int = 6) -> list[d
                avg_daily_sls AS avg_daily_sales,
                latest_lead_time_days AS total_lt_days
         FROM agg_inventory_monthly
-        WHERE item_no = %s AND loc = %s
+        WHERE item_id = %s AND loc = %s
         ORDER BY month_start DESC
         LIMIT %s
     """
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (item_no, loc, months))
+            cur.execute(sql, (item_id, loc, months))
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def get_eoq_context(pool, item_no: str, loc: str) -> dict:
+def get_eoq_context(pool, item_id: str, loc: str) -> dict:
     """Return EOQ health context for a DFU."""
     sql = """
         SELECT
@@ -302,13 +302,13 @@ def get_eoq_context(pool, item_no: str, loc: str) -> dict:
             eoq_cycle_stock AS cycle_stock_value,
             computed_at
         FROM fact_eoq_targets
-        WHERE item_no = %s AND loc = %s
+        WHERE item_id = %s AND loc = %s
         ORDER BY computed_at DESC
         LIMIT 1
     """
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (item_no, loc))
+            cur.execute(sql, (item_id, loc))
             row = cur.fetchone()
             if row is None:
                 return {"error": "No EOQ data"}
@@ -316,42 +316,42 @@ def get_eoq_context(pool, item_no: str, loc: str) -> dict:
             return dict(zip(cols, row))
 
 
-def get_similar_dfus(pool, item_no: str, loc: str, limit: int = 5) -> list[dict]:
+def get_similar_dfus(pool, item_id: str, loc: str, limit: int = 5) -> list[dict]:
     """Return peer DFUs in the same cluster+ABC class."""
     sql = """
         SELECT
-            d.dmdunit AS item_no, d.loc, d.abc_vol,
+            d.item_id AS item_id, d.loc, d.abc_vol,
             ROUND((eom_on_hand / NULLIF(avg_sls, 0))::NUMERIC, 1) AS avg_dos,
             ROUND(100.0 * SUM(ABS(f.basefcst_pref - f.tothist_dmd)) /
                   NULLIF(ABS(SUM(f.tothist_dmd)), 0), 2) AS peer_wape
-        FROM dim_dfu d
-        JOIN dim_dfu ref ON ref.cluster_assignment = d.cluster_assignment
+        FROM dim_sku d
+        JOIN dim_sku ref ON ref.cluster_assignment = d.cluster_assignment
                          AND ref.abc_vol = d.abc_vol
-                         AND ref.dmdunit = %s AND ref.loc = %s
+                         AND ref.item_id = %s AND ref.loc = %s
         LEFT JOIN LATERAL (
-            SELECT DISTINCT ON (item_no, loc)
+            SELECT DISTINCT ON (item_id, loc)
                 eom_qty_on_hand AS eom_on_hand,
                 avg_daily_sls AS avg_sls
             FROM agg_inventory_monthly
-            WHERE item_no = d.dmdunit AND loc = d.loc
-            ORDER BY item_no, loc, month_start DESC
+            WHERE item_id = d.item_id AND loc = d.loc
+            ORDER BY item_id, loc, month_start DESC
         ) i ON TRUE
         LEFT JOIN fact_external_forecast_monthly f
-            ON f.dmdunit = d.dmdunit AND f.loc = d.loc
+            ON f.item_id = d.item_id AND f.loc = d.loc
            AND f.model_id = 'champion' AND f.lag = 0
            AND f.startdate >= date_trunc('month', NOW() - INTERVAL '3 months')
-        WHERE d.dmdunit <> %s OR d.loc <> %s
-        GROUP BY d.dmdunit, d.loc, d.abc_vol, i.eom_on_hand, i.avg_sls
+        WHERE d.item_id <> %s OR d.loc <> %s
+        GROUP BY d.item_id, d.loc, d.abc_vol, i.eom_on_hand, i.avg_sls
         LIMIT %s
     """
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (item_no, loc, item_no, loc, limit))
+            cur.execute(sql, (item_id, loc, item_id, loc, limit))
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def check_stockout_history(pool, item_no: str, loc: str) -> dict:
+def check_stockout_history(pool, item_id: str, loc: str) -> dict:
     """Return stockout/excess history for a DFU over last 6 months."""
     sql = """
         SELECT
@@ -360,12 +360,12 @@ def check_stockout_history(pool, item_no: str, loc: str) -> dict:
             ROUND(AVG(dos)::NUMERIC, 1)          AS avg_dos,
             COUNT(*)                             AS total_months
         FROM mv_inventory_forecast_monthly
-        WHERE item_no = %s AND loc = %s
+        WHERE item_id = %s AND loc = %s
           AND month_start >= date_trunc('month', NOW() - INTERVAL '6 months')
     """
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (item_no, loc))
+            cur.execute(sql, (item_id, loc))
             row = cur.fetchone()
             if row is None:
                 return {}
@@ -377,7 +377,7 @@ def get_portfolio_health_summary(pool) -> dict:
     """Return aggregated health metrics across the full portfolio."""
     sql = """
         SELECT
-            COUNT(DISTINCT d.dmdunit || '|' || d.loc)       AS total_dfus,
+            COUNT(DISTINCT d.item_id || '|' || d.loc)       AS total_dfus,
             ROUND(AVG(i.avg_dos), 1)                        AS avg_dos,
             COUNT(*) FILTER (WHERE i.avg_dos < i.total_lt_days * 1.5) AS stockout_risk_count,
             COUNT(*) FILTER (WHERE i.avg_dos > 180)         AS excess_count,
@@ -387,16 +387,16 @@ def get_portfolio_health_summary(pool) -> dict:
             )                                               AS portfolio_champion_wape,
             (SELECT COUNT(*) FROM ai_insights
              WHERE status = 'open')                         AS open_insights
-        FROM dim_dfu d
+        FROM dim_sku d
         LEFT JOIN LATERAL (
             SELECT ROUND((eom_qty_on_hand / NULLIF(avg_daily_sls, 0))::NUMERIC, 1) AS avg_dos,
                    latest_lead_time_days AS total_lt_days
             FROM agg_inventory_monthly
-            WHERE item_no = d.dmdunit AND loc = d.loc
+            WHERE item_id = d.item_id AND loc = d.loc
             ORDER BY month_start DESC LIMIT 1
         ) i ON TRUE
         LEFT JOIN fact_external_forecast_monthly f
-            ON f.dmdunit = d.dmdunit AND f.loc = d.loc
+            ON f.item_id = d.item_id AND f.loc = d.loc
            AND f.model_id = 'champion' AND f.lag = 0
            AND f.startdate >= date_trunc('month', NOW() - INTERVAL '3 months')
     """
@@ -450,7 +450,7 @@ def create_insight(
     pool,
     insight_type: str,
     severity: str,
-    item_no: str,
+    item_id: str,
     loc: str,
     summary: str,
     recommendation: str,
@@ -472,7 +472,7 @@ def create_insight(
         validated = CreateInsightInput(
             insight_type=insight_type,  # type: ignore[arg-type]
             severity=severity,  # type: ignore[arg-type]
-            item_no=item_no,
+            item_id=item_id,
             loc=loc,
             summary=summary,
             recommendation=recommendation,
@@ -494,7 +494,7 @@ def create_insight(
     sql = """
         INSERT INTO ai_insights (
             insight_type, severity,
-            item_no, loc, abc_vol, cluster_assignment,
+            item_id, loc, abc_vol, cluster_assignment,
             summary, recommendation, reasoning,
             financial_impact_estimate,
             dos, total_lt_days, champion_wape, forecast_bias_pct,
@@ -510,7 +510,7 @@ def create_insight(
         with conn.cursor() as cur:
             cur.execute(sql, (
                 validated.insight_type, validated.severity,
-                validated.item_no, validated.loc, validated.abc_vol, validated.cluster_assignment,
+                validated.item_id, validated.loc, validated.abc_vol, validated.cluster_assignment,
                 validated.summary, validated.recommendation, validated.reasoning,
                 validated.financial_impact_estimate,
                 validated.dos, validated.total_lt_days, validated.champion_wape,
@@ -554,10 +554,10 @@ _TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "item_no": {"type": "string", "description": "Item number"},
+                "item_id": {"type": "string", "description": "Item number"},
                 "loc":     {"type": "string", "description": "Location code"},
             },
-            "required": ["item_no", "loc"],
+            "required": ["item_id", "loc"],
         },
     },
     {
@@ -570,11 +570,11 @@ _TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "item_no": {"type": "string"},
+                "item_id": {"type": "string"},
                 "loc":     {"type": "string"},
                 "months":  {"type": "integer", "description": "Look-back months (default 6)"},
             },
-            "required": ["item_no", "loc"],
+            "required": ["item_id", "loc"],
         },
     },
     {
@@ -601,10 +601,10 @@ _TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "item_no": {"type": "string"},
+                "item_id": {"type": "string"},
                 "loc":     {"type": "string"},
             },
-            "required": ["item_no", "loc"],
+            "required": ["item_id", "loc"],
         },
     },
     {
@@ -617,11 +617,11 @@ _TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "item_no": {"type": "string"},
+                "item_id": {"type": "string"},
                 "loc":     {"type": "string"},
                 "months":  {"type": "integer"},
             },
-            "required": ["item_no", "loc"],
+            "required": ["item_id", "loc"],
         },
     },
     {
@@ -634,10 +634,10 @@ _TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "item_no": {"type": "string"},
+                "item_id": {"type": "string"},
                 "loc":     {"type": "string"},
             },
-            "required": ["item_no", "loc"],
+            "required": ["item_id", "loc"],
         },
     },
     {
@@ -649,11 +649,11 @@ _TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "item_no": {"type": "string"},
+                "item_id": {"type": "string"},
                 "loc":     {"type": "string"},
                 "limit":   {"type": "integer"},
             },
-            "required": ["item_no", "loc"],
+            "required": ["item_id", "loc"],
         },
     },
     {
@@ -666,10 +666,10 @@ _TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "item_no": {"type": "string"},
+                "item_id": {"type": "string"},
                 "loc":     {"type": "string"},
             },
-            "required": ["item_no", "loc"],
+            "required": ["item_id", "loc"],
         },
     },
     {
@@ -699,7 +699,7 @@ _TOOL_DEFINITIONS = [
             "properties": {
                 "insight_type":              {"type": "string"},
                 "severity":                  {"type": "string", "enum": ["critical","high","medium","low"]},
-                "item_no":                   {"type": "string"},
+                "item_id":                   {"type": "string"},
                 "loc":                       {"type": "string"},
                 "summary":                   {"type": "string"},
                 "recommendation":            {"type": "string"},
@@ -714,7 +714,7 @@ _TOOL_DEFINITIONS = [
                 "abc_vol":                   {"type": "string"},
                 "cluster_assignment":        {"type": "string"},
             },
-            "required": ["insight_type","severity","item_no","loc","summary","recommendation"],
+            "required": ["insight_type","severity","item_id","loc","summary","recommendation"],
         },
     },
 ]
@@ -1032,17 +1032,17 @@ class AIPlannerAgent:
         return "", insight_ids
 
     # ------------------------------------------------------------------
-    def run_dfu_analysis(self, item_no: str, loc: str, scan_run_id: str | None = None) -> list[dict]:
+    def run_sku_analysis(self, item_id: str, loc: str, scan_run_id: str | None = None) -> list[dict]:
         """Analyse a single DFU and return list of insight dicts created."""
         scan_run_id = scan_run_id or str(uuid.uuid4())
         task = (
-            f"Analyse DFU {item_no} @ {loc}. "
+            f"Analyse DFU {item_id} @ {loc}. "
             "Start with get_dfu_full_context, then drill into forecast performance, "
             "inventory trend, and EOQ context as needed. "
             "Call create_insight for every exception you identify. "
             "End with a brief summary of your findings."
         )
-        log.info("DFU analysis: %s @ %s  scan_run_id=%s", item_no, loc, scan_run_id)
+        log.info("DFU analysis: %s @ %s  scan_run_id=%s", item_id, loc, scan_run_id)
         _, insight_ids = self._run_agentic_loop(task, scan_run_id)
         return self._fetch_insights_by_ids(insight_ids)
 
@@ -1116,19 +1116,19 @@ class AIPlannerAgent:
         scope: str,
         narrative_text: str,
         content_json: dict,
-        item_no: str | None = None,
+        item_id: str | None = None,
         loc: str | None = None,
     ) -> int:
         sql = """
             INSERT INTO ai_planning_memos
-                (period, scope, item_no, loc, narrative_text, content_json, model_version)
+                (period, scope, item_id, loc, narrative_text, content_json, model_version)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING memo_id
         """
         with self.pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, (
-                    period, scope, item_no, loc,
+                    period, scope, item_id, loc,
                     narrative_text, json.dumps(content_json, default=str),
                     self.model,
                 ))

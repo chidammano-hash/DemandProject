@@ -7,13 +7,13 @@ Algorithm:
 1. Load config/replenishment_policy_config.yaml
 2. Upsert all policies into dim_replenishment_policy (ON CONFLICT DO UPDATE)
 3. If auto_assign.enabled:
-   - Load dim_dfu: dmdunit (item_no), loc, abc_vol, variability_class
+   - Load dim_sku: item_id (item_id), loc, abc_vol, variability_class
    - For each DFU:
      a. If variability_class in variability_override → use override policy
      b. Else: match abc_vol (A/B/C) → corresponding policy
      c. If abc_vol is NULL or unrecognized → skip
    - Batch upsert into fact_dfu_policy_assignment (assigned_by='system')
-     ON CONFLICT (item_no, loc) DO UPDATE only if assigned_by='system'
+     ON CONFLICT (item_id, loc) DO UPDATE only if assigned_by='system'
      (manual overrides preserved)
 4. Print summary: assigned, skipped, preserved_manual
 
@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +38,7 @@ if str(ROOT) not in sys.path:
 
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "replenishment_policy_config.yaml")
 
@@ -124,8 +124,8 @@ def upsert_policies(conn, policies: list[dict], dry_run: bool = False) -> int:
 
 
 def load_dfus(conn) -> list[dict]:
-    """Load all DFUs with abc_vol and variability_class from dim_dfu."""
-    sql = "SELECT dmdunit AS item_no, loc, abc_vol, variability_class FROM dim_dfu"
+    """Load all DFUs with abc_vol and variability_class from dim_sku."""
+    sql = "SELECT item_id AS item_id, loc, abc_vol, variability_class FROM dim_sku"
     with conn.cursor() as cur:
         cur.execute(sql)
         cols = [d[0] for d in cur.description]
@@ -161,9 +161,9 @@ def auto_assign_dfus(
     if force_overwrite:
         upsert_sql = """
             INSERT INTO fact_dfu_policy_assignment
-                (item_no, loc, policy_id, assigned_by, effective_date, modified_ts)
+                (item_id, loc, policy_id, assigned_by, effective_date, modified_ts)
             VALUES (%s, %s, %s, 'system', %s, NOW())
-            ON CONFLICT (item_no, loc) DO UPDATE SET
+            ON CONFLICT (item_id, loc) DO UPDATE SET
                 policy_id      = EXCLUDED.policy_id,
                 assigned_by    = 'system',
                 effective_date = EXCLUDED.effective_date,
@@ -173,9 +173,9 @@ def auto_assign_dfus(
         # Preserve manual overrides: only update system-assigned rows
         upsert_sql = """
             INSERT INTO fact_dfu_policy_assignment
-                (item_no, loc, policy_id, assigned_by, effective_date, modified_ts)
+                (item_id, loc, policy_id, assigned_by, effective_date, modified_ts)
             VALUES (%s, %s, %s, 'system', %s, NOW())
-            ON CONFLICT (item_no, loc) DO UPDATE SET
+            ON CONFLICT (item_id, loc) DO UPDATE SET
                 policy_id      = EXCLUDED.policy_id,
                 assigned_by    = 'system',
                 effective_date = EXCLUDED.effective_date,
@@ -184,9 +184,9 @@ def auto_assign_dfus(
         """
 
     with conn.cursor() as cur:
-        # Count existing manual assignments before upsert
+        # Consume existing manual count (reserved for future audit logging)
         cur.execute("SELECT COUNT(*) FROM fact_dfu_policy_assignment WHERE assigned_by = 'manual'")
-        manual_before = cur.fetchone()[0] or 0
+        cur.fetchone()  # discard — reserved for future audit logging
 
         batch: list[tuple[Any, ...]] = []
         for dfu in dfus:
@@ -196,7 +196,7 @@ def auto_assign_dfus(
                 config,
             )
             if policy_id:
-                batch.append((dfu["item_no"], dfu["loc"], policy_id, effective_date))
+                batch.append((dfu["item_id"], dfu["loc"], policy_id, effective_date))
             else:
                 skipped += 1
 
@@ -223,13 +223,15 @@ def run(config_path: str = CONFIG_PATH, dry_run: bool = False, force_overwrite: 
     from dotenv import load_dotenv
     load_dotenv()
 
-    config = load_config(config_path)
-    policies = config.get("policies", [])
-    auto_cfg = config.get("auto_assign", {})
+    with profiled_section("load_config"):
+        config = load_config(config_path)
+        policies = config.get("policies", [])
+        auto_cfg = config.get("auto_assign", {})
 
     with psycopg.connect(**get_db_params()) as conn:
         # Step 1: Upsert policies
-        n_policies = upsert_policies(conn, policies, dry_run=dry_run)
+        with profiled_section("upsert_policies"):
+            n_policies = upsert_policies(conn, policies, dry_run=dry_run)
         print(f"[policies] {'Would upsert' if dry_run else 'Upserted'} {n_policies} policies")
 
         # Step 2: Auto-assign DFUs
@@ -237,10 +239,12 @@ def run(config_path: str = CONFIG_PATH, dry_run: bool = False, force_overwrite: 
             print("[auto_assign] disabled in config — skipping DFU assignment")
             return
 
-        dfus = load_dfus(conn)
-        print(f"[auto_assign] Loaded {len(dfus)} DFUs from dim_dfu")
+        with profiled_section("load_dfus"):
+            dfus = load_dfus(conn)
+        print(f"[auto_assign] Loaded {len(dfus)} DFUs from dim_sku")
 
-        summary = auto_assign_dfus(conn, dfus, config, dry_run=dry_run, force_overwrite=force_overwrite)
+        with profiled_section("compute_assignments"):
+            summary = auto_assign_dfus(conn, dfus, config, dry_run=dry_run, force_overwrite=force_overwrite)
         mode = "(dry-run) " if dry_run else ""
         print(
             f"[auto_assign] {mode}assigned={summary['assigned']} "

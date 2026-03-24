@@ -12,7 +12,7 @@
 -- Dependencies:
 --   agg_inventory_monthly            (existing)
 --   mv_inventory_forecast_monthly    (Feature 37)
---   dim_dfu                          (existing)
+--   dim_sku                          (existing)
 --   fact_safety_stock_targets        (IPfeature3 — stub created below if missing)
 
 -- -------------------------------------------------------------------------
@@ -21,7 +21,7 @@
 -- When IPfeature3 is implemented it will replace this stub.
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS fact_safety_stock_targets (
-    item_no           TEXT,
+    item_id           TEXT,
     loc               TEXT,
     ss_combined       NUMERIC,
     ss_coverage       NUMERIC,
@@ -40,46 +40,46 @@ DROP MATERIALIZED VIEW IF EXISTS mv_inventory_health_score CASCADE;
 CREATE MATERIALIZED VIEW mv_inventory_health_score AS
 WITH latest_inv AS (
     -- Most recent month per item-location from inventory aggregates
-    SELECT DISTINCT ON (item_no, loc)
-        item_no, loc, month_start,
+    SELECT DISTINCT ON (item_id, loc)
+        item_id, loc, month_start,
         eom_qty_on_hand,
         monthly_sales,
         avg_daily_sls,
         latest_lead_time_days
     FROM agg_inventory_monthly
-    ORDER BY item_no, loc, month_start DESC
+    ORDER BY item_id, loc, month_start DESC
 ),
 recent_stockout AS (
     -- Stockout events in the 3 most recent months with forecast data
-    SELECT item_no, loc,
+    SELECT item_id, loc,
         SUM(CASE WHEN is_stockout THEN 1 ELSE 0 END) AS stockout_count_3m
     FROM mv_inventory_forecast_monthly
     WHERE month_start >= (
               SELECT MAX(month_start) FROM mv_inventory_forecast_monthly
           ) - INTERVAL '2 months'
       AND model_id IN ('champion', 'external')
-    GROUP BY item_no, loc
+    GROUP BY item_id, loc
 ),
 recent_accuracy AS (
     -- WAPE over the 3 most recent months with forecast data
-    SELECT item_no, loc,
+    SELECT item_id, loc,
         SUM(abs_error) / NULLIF(ABS(SUM(actual_demand)), 0) AS recent_wape
     FROM mv_inventory_forecast_monthly
     WHERE month_start >= (
               SELECT MAX(month_start) FROM mv_inventory_forecast_monthly
           ) - INTERVAL '2 months'
       AND model_id IN ('champion', 'external')
-    GROUP BY item_no, loc
+    GROUP BY item_id, loc
 ),
 ss AS (
-    SELECT item_no, loc,
+    SELECT item_id, loc,
         ss_combined, ss_coverage, reorder_point,
         is_below_ss, target_dos_min, target_dos_max
     FROM fact_safety_stock_targets
 ),
 scored AS (
     SELECT
-        l.item_no,
+        l.item_id,
         l.loc,
         l.month_start,
         d.cluster_assignment,
@@ -148,17 +148,17 @@ scored AS (
         END AS score_forecast_accuracy
 
     FROM latest_inv l
-    LEFT JOIN dim_dfu d
-           ON l.item_no = d.dmdunit AND l.loc = d.loc
+    LEFT JOIN dim_sku d
+           ON l.item_id = d.item_id AND l.loc = d.loc
     LEFT JOIN ss s
-           ON l.item_no = s.item_no AND l.loc = s.loc
+           ON l.item_id = s.item_id AND l.loc = s.loc
     LEFT JOIN recent_stockout rs
-           ON l.item_no = rs.item_no AND l.loc = rs.loc
+           ON l.item_id = rs.item_id AND l.loc = rs.loc
     LEFT JOIN recent_accuracy ra
-           ON l.item_no = ra.item_no AND l.loc = ra.loc
+           ON l.item_id = ra.item_id AND l.loc = ra.loc
 )
 SELECT
-    item_no, loc, month_start,
+    item_id, loc, month_start,
     cluster_assignment, abc_vol, variability_class,
     seasonality_profile, region,
     eom_qty_on_hand, avg_daily_sls, current_dos,
@@ -186,7 +186,7 @@ WITH NO DATA;
 -- Indexes
 -- -------------------------------------------------------------------------
 CREATE UNIQUE INDEX IF NOT EXISTS idx_health_score_pk
-    ON mv_inventory_health_score (item_no, loc);
+    ON mv_inventory_health_score (item_id, loc);
 
 CREATE INDEX IF NOT EXISTS idx_health_score_tier
     ON mv_inventory_health_score (health_tier);

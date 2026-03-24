@@ -20,7 +20,7 @@ Supply Chain Command Center uses a domain-driven design where all 8 datasets sha
 
 ## How It Works
 
-1. Each domain (item, location, customer, time, dfu, sales, forecast, inventory) is defined as a `DomainSpec` dataclass.
+1. Each domain (item, location, customer, time, sku, sales, forecast, inventory) is defined as a `DomainSpec` dataclass.
 2. Raw CSVs are normalized via `scripts/normalize_dataset_csv.py` (null normalization, type casting, date parsing).
 3. Clean CSVs are loaded into PostgreSQL via `scripts/load_dataset_postgres.py`.
 4. Materialized views aggregate data for O(1) KPI queries.
@@ -41,11 +41,11 @@ Supply Chain Command Center uses a domain-driven design where all 8 datasets sha
 
 | Table | Grain | Composite Key (`_ck`) | Key Business Fields | Row Count |
 |---|---|---|---|---|
-| `dim_item` | One row per item | `item_no` | item_desc, brand_name, category, class, supplier_no | ~3K |
+| `dim_item` | One row per item | `item_id` | item_desc, brand_name, category, class, supplier_no | ~3K |
 | `dim_location` | One row per location | `location_id` | site_id, site_desc, state_id, primary_demand_location | ~1K |
 | `dim_customer` | One row per site+customer | `site-customer_no` | customer_name, city, state, chain_type_desc, rpt_channel_desc | ~50K |
 | `dim_time` | One row per day | `date_key` | day_name, month_bucket, quarter_bucket, year_number | ~5.8K |
-| `dim_dfu` | One row per item+group+location | `dmdunit_dmdgroup_loc` | brand, region, abc_vol, execution_lag, cluster_assignment, ml_cluster, seasonality_profile | ~113K |
+| `dim_sku` | One row per item+group+location | `item_id_customer_group_loc` | brand, region, abc_vol, execution_lag, cluster_assignment, ml_cluster, seasonality_profile | ~113K |
 
 ### DFU Extended Attributes
 
@@ -66,9 +66,9 @@ The DFU (Demand Forecast Unit — an item+customerGroup+location combination) ta
 
 | Table | Grain | Key Measures | Notes |
 |---|---|---|---|
-| `fact_sales_monthly` | dmdunit + dmdgroup + loc + startdate + type | qty_shipped, qty_ordered, qty | Only TYPE=1 loaded; startdate must be month-start |
-| `fact_external_forecast_monthly` | dmdunit + dmdgroup + loc + fcstdate + startdate + model_id | basefcst_pref, tothist_dmd | UNIQUE(forecast_ck, model_id); lags 0-4 |
-| `fact_inventory_snapshot` | item_no + loc + snapshot_date | qty_on_hand, qty_on_order, mtd_sales, lead_time_days | ~190M rows from 14 monthly CSVs |
+| `fact_sales_monthly` | item_id + customer_group + loc + startdate + type | qty_shipped, qty_ordered, qty | Only TYPE=1 loaded; startdate must be month-start |
+| `fact_external_forecast_monthly` | item_id + customer_group + loc + fcstdate + startdate + model_id | basefcst_pref, tothist_dmd | UNIQUE(forecast_ck, model_id); lags 0-4 |
+| `fact_inventory_snapshot` | item_id + loc + snapshot_date | qty_on_hand, qty_on_order, mtd_sales, lead_time_days | ~190M rows from 14 monthly CSVs |
 | `backtest_lag_archive` | forecast_ck + model_id + lag | basefcst_pref, tothist_dmd, timeframe | All-lags (0-4) backtest predictions |
 
 ### Forecast Loading (Dual-Path)
@@ -76,7 +76,7 @@ The DFU (Demand Forecast Unit — an item+customerGroup+location combination) ta
 The forecast loader uses phase ordering to preserve archive integrity:
 
 1. **Phase 3b** (Archive): Load ALL 5 lag rows into `backtest_lag_archive` from untouched staging data
-2. **Phase 3c** (Mutation): Update staging `execution_lag` from `dim_dfu` values
+2. **Phase 3c** (Mutation): Update staging `execution_lag` from `dim_sku` values
 3. **Phase 5** (Main): Insert only rows where `lag = execution_lag` into the main forecast table
 
 This ensures the archive always has all 5 lags per DFU while the main table keeps only the execution-lag row.
@@ -85,19 +85,18 @@ This ensures the archive always has all 5 lags per DFU while the main table keep
 
 | View | Grain | Purpose |
 |---|---|---|
-| `agg_sales_monthly` | month + dmdunit + loc | Pre-aggregated sales for KPI queries |
-| `agg_forecast_monthly` | month + dmdunit + loc + model_id | Pre-aggregated forecasts per model |
-| `agg_inventory_monthly` | month + item_no + loc | EOM on-hand, monthly sales, avg daily sales, lead time |
+| `agg_sales_monthly` | month + item_id + loc | Pre-aggregated sales for KPI queries |
+| `agg_forecast_monthly` | month + item_id + loc + model_id | Pre-aggregated forecasts per model |
+| `agg_inventory_monthly` | month + item_id + loc | EOM on-hand, monthly sales, avg daily sales, lead time |
 | `agg_accuracy_by_dim` | model_id + lag + month + 8 dimensions | Forecast vs actual by every dimension |
 | `agg_accuracy_lag_archive` | model_id + lag + month + dimensions | Same as above for archive lags |
 | `agg_dfu_coverage` | model_id + lag | DFU count per model per lag |
-| `mv_top_movers` | dmdunit | Period-over-period top movers |
-| `mv_inventory_forecast_monthly` | item_no + loc + month + model_id | Inventory-forecast bridge for backtest attribution |
+| `mv_inventory_forecast_monthly` | item_id + loc + month + model_id | Inventory-forecast bridge for backtest attribution |
 | `mv_dq_dashboard` | domain + run_date | Data quality pass/fail/warn counts |
 
 ### Indexes
 
-Each table has B-tree indexes on key lookup columns and GIN trigram indexes on text search fields. Composite indexes on `(dmdunit, loc, startdate)` and `(model_id, lag)` serve the most common query patterns.
+Each table has B-tree indexes on key lookup columns and GIN trigram indexes on text search fields. Composite indexes on `(item_id, loc, startdate)` and `(model_id, lag)` serve the most common query patterns.
 
 ## Pipeline
 

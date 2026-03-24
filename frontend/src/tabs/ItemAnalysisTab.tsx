@@ -16,12 +16,14 @@ import {
   fetchInventoryKpis,
   fetchInventoryTrend,
   fetchLtProfile,
+  correctionKeys,
+  fetchCorrectionsByItem,
 } from "@/api/queries";
 import { fetchProductionForecast } from "@/api/queries/production-forecast";
 import type { ProductionForecastPayload } from "@/api/queries/production-forecast";
 import type {
-  DfuAnalysisKpis,
-  DfuAnalysisPayload,
+  SkuAnalysisKpis,
+  SkuAnalysisPayload,
   SamplePairPayload,
   SuggestPayload,
   InventoryKpis,
@@ -31,7 +33,7 @@ import type {
 // DFU Analysis panels
 import { SelectorPanel } from "./dfu-analysis/SelectorPanel";
 import { ModelKpiSection } from "./dfu-analysis/ModelKpiSection";
-import { DfuShapPanel } from "./dfu-analysis/DfuShapPanel";
+import { SkuShapPanel } from "./dfu-analysis/DfuShapPanel";
 
 // Unified chart (demand + supply in one view)
 import { UnifiedChartPanel } from "./item-analysis/UnifiedChartPanel";
@@ -43,44 +45,46 @@ const PANEL_DEFAULTS: Record<string, boolean> = {
   overlay: true,
   shap: true,
   forecastKpis: true,
+  dqCorrections: false,
 };
 
 const DEMAND_PANELS = [
   { key: "overlay", label: "Chart" },
   { key: "shap", label: "SHAP" },
   { key: "forecastKpis", label: "Forecast KPIs" },
+  { key: "dqCorrections", label: "DQ Corrections" },
 ] as const;
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 export function ItemAnalysisTab() {
-  const { panels, toggle, setAll, allOn } = usePanelToggles("ds:itemAnalysis:panels", PANEL_DEFAULTS);
+  const { panels, toggle, set: setPanel, setAll, allOn } = usePanelToggles("ds:itemAnalysis:panels", PANEL_DEFAULTS);
 
   // ========================================================================
   // DFU Analysis state — single DFU mode only
   // ========================================================================
-  const [dfuItem, setDfuItem] = useState("");
-  const [dfuLocation, setDfuLocation] = useState("");
-  const [dfuPoints, setDfuPoints] = useState(36);
-  const [dfuKpiMonths, setDfuKpiMonths] = useState(12);
-  const [dfuData, setDfuData] = useState<DfuAnalysisPayload | null>(null);
-  const [dfuVisibleSeries, setDfuVisibleSeries] = useState<Set<string>>(
-    new Set(["tothist_dmd", "qty_shipped", "qty_ordered"]),
+  const [skuItem, setSkuItem] = useState("");
+  const [skuLocation, setSkuLocation] = useState("");
+  const [skuPoints, setSkuPoints] = useState(36);
+  const [skuKpiMonths, setSkuKpiMonths] = useState(12);
+  const [skuData, setSkuData] = useState<SkuAnalysisPayload | null>(null);
+  const [skuVisibleSeries, setSkuVisibleSeries] = useState<Set<string>>(
+    new Set(["tothist_dmd", "sales_qty", "qty_shipped", "qty_ordered"]),
   );
-  const [dfuTimeStart, setDfuTimeStart] = useState("");
-  const [dfuTimeEnd, setDfuTimeEnd] = useState("");
-  const [dfuDefaultStart, setDfuDefaultStart] = useState("");
-  const [dfuLoading, setDfuLoading] = useState(false);
-  const [dfuAutoSampled, setDfuAutoSampled] = useState(false);
-  const [dfuItemSuggestions, setDfuItemSuggestions] = useState<string[]>([]);
-  const [dfuLocationSuggestions, setDfuLocationSuggestions] = useState<string[]>([]);
+  const [skuTimeStart, setSkuTimeStart] = useState("");
+  const [skuTimeEnd, setSkuTimeEnd] = useState("");
+  const [skuDefaultStart, setSkuDefaultStart] = useState("");
+  const [skuLoading, setSkuLoading] = useState(false);
+  const [skuAutoSampled, setSkuAutoSampled] = useState(false);
+  const [skuItemSuggestions, setSkuItemSuggestions] = useState<string[]>([]);
+  const [skuLocationSuggestions, setSkuLocationSuggestions] = useState<string[]>([]);
   const [prodForecastData, setProdForecastData] = useState<ProductionForecastPayload | null>(null);
   // SHAP model selection via dropdown (null = none)
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
 
-  const debouncedDfuItem = useDebounce(dfuItem, 500);
-  const debouncedDfuLocation = useDebounce(dfuLocation, 500);
+  const debouncedSkuItem = useDebounce(skuItem, 500);
+  const debouncedSkuLocation = useDebounce(skuLocation, 500);
 
   // Deep-link: consume ?item=…&loc=… URL params on mount
   useEffect(() => {
@@ -88,12 +92,17 @@ export function ItemAnalysisTab() {
     const urlItem = params.get("item");
     const urlLoc = params.get("loc");
     if (urlItem) {
-      setDfuItem(urlItem);
-      if (urlLoc) setDfuLocation(urlLoc);
-      setDfuAutoSampled(true);
+      setSkuItem(urlItem);
+      if (urlLoc) setSkuLocation(urlLoc);
+      setSkuAutoSampled(true);
+      // Auto-enable DQ Corrections panel when navigating from DQ tab
+      if (params.get("dqCorrections") === "1") {
+        setPanel("dqCorrections", true);
+      }
       // Clean up URL params so they don't persist on refresh
       params.delete("item");
       params.delete("loc");
+      params.delete("dqCorrections");
       const newUrl = params.toString()
         ? `${window.location.pathname}?${params}`
         : window.location.pathname;
@@ -110,8 +119,8 @@ export function ItemAnalysisTab() {
     const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
     if (key === syncedGlobalRef.current) return;
     syncedGlobalRef.current = key;
-    if (globalFilters.item.length === 1) setDfuItem(globalFilters.item[0]);
-    if (globalFilters.location.length === 1) setDfuLocation(globalFilters.location[0]);
+    if (globalFilters.item.length === 1) setSkuItem(globalFilters.item[0]);
+    if (globalFilters.location.length === 1) setSkuLocation(globalFilters.location[0]);
   }, [globalFilters.item, globalFilters.location]);
 
   // ========================================================================
@@ -120,8 +129,8 @@ export function ItemAnalysisTab() {
 
   // Auto-sample on first visit
   useEffect(() => {
-    if (dfuAutoSampled) return;
-    if (dfuItem.trim() || dfuLocation.trim()) { setDfuAutoSampled(true); return; }
+    if (skuAutoSampled) return;
+    if (skuItem.trim() || skuLocation.trim()) { setSkuAutoSampled(true); return; }
     let cancelled = false;
     async function loadSample() {
       try {
@@ -129,36 +138,36 @@ export function ItemAnalysisTab() {
         if (!res.ok) throw new Error("HTTP error");
         const payload = (await res.json()) as SamplePairPayload;
         if (!cancelled) {
-          if (payload.item) setDfuItem(String(payload.item));
-          if (payload.location) setDfuLocation(String(payload.location));
+          if (payload.item) setSkuItem(String(payload.item));
+          if (payload.location) setSkuLocation(String(payload.location));
         }
       } catch { /* non-blocking */ } finally {
-        if (!cancelled) setDfuAutoSampled(true);
+        if (!cancelled) setSkuAutoSampled(true);
       }
     }
     loadSample();
     return () => { cancelled = true; };
-  }, [dfuAutoSampled, dfuItem, dfuLocation]);
+  }, [skuAutoSampled, skuItem, skuLocation]);
 
   // Fetch DFU analysis data (always item_location mode)
   const anyDemandPanelOn = panels.overlay || panels.shap || panels.forecastKpis;
   useEffect(() => {
     if (!anyDemandPanelOn) return;
-    if (!debouncedDfuItem.trim() || !debouncedDfuLocation.trim()) return;
-    setDfuData(null);
+    if (!debouncedSkuItem.trim() || !debouncedSkuLocation.trim()) return;
+    setSkuData(null);
     let cancelled = false;
     async function loadAnalysis() {
-      setDfuLoading(true);
+      setSkuLoading(true);
       try {
-        const params = new URLSearchParams({ mode: "item_location", item: debouncedDfuItem.trim(), location: debouncedDfuLocation.trim(), points: String(dfuPoints) });
-        const res = await fetch(`/dfu/analysis?${params}`);
+        const params = new URLSearchParams({ mode: "item_location", item: debouncedSkuItem.trim(), location: debouncedSkuLocation.trim(), points: String(skuPoints) });
+        const res = await fetch(`/sku/analysis?${params}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const payload = (await res.json()) as DfuAnalysisPayload;
+        const payload = (await res.json()) as SkuAnalysisPayload;
         if (!cancelled) {
-          setDfuData(payload);
+          setSkuData(payload);
           setSelectedModel(null);
-          const allKeys = new Set(["tothist_dmd", "qty_shipped", "qty_ordered", "production_forecast", ...payload.models.map((m) => `forecast_${m}`)]);
-          setDfuVisibleSeries(allKeys);
+          const allKeys = new Set(["tothist_dmd", "sales_qty", "qty_shipped", "qty_ordered", "production_forecast", ...payload.models.map((m) => `forecast_${m}`)]);
+          setSkuVisibleSeries(allKeys);
           const measureKeys = new Set<string>();
           for (const pt of payload.series) for (const k of Object.keys(pt)) if (k !== "month") measureKeys.add(k);
           let smartStart = "";
@@ -166,69 +175,69 @@ export function ItemAnalysisTab() {
             const keys = Array.from(measureKeys);
             for (const pt of payload.series) { if (keys.every((k) => k in pt)) { smartStart = String(pt.month); break; } }
           }
-          setDfuDefaultStart(smartStart);
-          setDfuTimeStart(smartStart);
-          setDfuTimeEnd("");
+          setSkuDefaultStart(smartStart);
+          setSkuTimeStart(smartStart);
+          setSkuTimeEnd("");
         }
-      } catch { if (!cancelled) setDfuData(null); }
-      finally { if (!cancelled) setDfuLoading(false); }
+      } catch { if (!cancelled) setSkuData(null); }
+      finally { if (!cancelled) setSkuLoading(false); }
     }
     loadAnalysis();
     return () => { cancelled = true; };
-  }, [debouncedDfuItem, debouncedDfuLocation, dfuPoints, anyDemandPanelOn]);
+  }, [debouncedSkuItem, debouncedSkuLocation, skuPoints, anyDemandPanelOn]);
 
   // Fetch production forecast (future months)
   useEffect(() => {
-    if (!debouncedDfuItem.trim() || !debouncedDfuLocation.trim()) { setProdForecastData(null); return; }
+    if (!debouncedSkuItem.trim() || !debouncedSkuLocation.trim()) { setProdForecastData(null); return; }
     let cancelled = false;
-    fetchProductionForecast({ item_no: debouncedDfuItem.trim(), loc: debouncedDfuLocation.trim() })
+    fetchProductionForecast({ item_id: debouncedSkuItem.trim(), loc: debouncedSkuLocation.trim() })
       .then((payload) => { if (!cancelled) setProdForecastData(payload); })
       .catch(() => { if (!cancelled) setProdForecastData(null); });
     return () => { cancelled = true; };
-  }, [debouncedDfuItem, debouncedDfuLocation]);
+  }, [debouncedSkuItem, debouncedSkuLocation]);
 
   // Item typeahead
   useEffect(() => {
-    if (!dfuItem.trim()) { setDfuItemSuggestions([]); return; }
+    if (!skuItem.trim()) { setSkuItemSuggestions([]); return; }
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
-        const params = new URLSearchParams({ field: "dmdunit", q: dfuItem.trim(), limit: "12" });
-        if (debouncedDfuLocation.trim()) params.set("filters", JSON.stringify({ loc: `=${debouncedDfuLocation.trim()}` }));
+        const params = new URLSearchParams({ field: "item_id", q: skuItem.trim(), limit: "12" });
+        if (debouncedSkuLocation.trim()) params.set("filters", JSON.stringify({ loc: `=${debouncedSkuLocation.trim()}` }));
         const res = await fetch(`/domains/sales/suggest?${params}`);
         if (!res.ok) throw new Error("HTTP error");
         const payload = (await res.json()) as SuggestPayload;
-        if (!cancelled) setDfuItemSuggestions(payload.values || []);
-      } catch { if (!cancelled) setDfuItemSuggestions([]); }
+        if (!cancelled) setSkuItemSuggestions(payload.values || []);
+      } catch { if (!cancelled) setSkuItemSuggestions([]); }
     }, 180);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [dfuItem, debouncedDfuLocation]);
+  }, [skuItem, debouncedSkuLocation]);
 
   // Location typeahead
   useEffect(() => {
-    if (!dfuLocation.trim()) { setDfuLocationSuggestions([]); return; }
+    if (!skuLocation.trim()) { setSkuLocationSuggestions([]); return; }
     let cancelled = false;
     const timer = window.setTimeout(async () => {
       try {
-        const params = new URLSearchParams({ field: "loc", q: dfuLocation.trim(), limit: "12" });
-        if (debouncedDfuItem.trim()) params.set("filters", JSON.stringify({ dmdunit: `=${debouncedDfuItem.trim()}` }));
+        const params = new URLSearchParams({ field: "loc", q: skuLocation.trim(), limit: "12" });
+        if (debouncedSkuItem.trim()) params.set("filters", JSON.stringify({ item_id: `=${debouncedSkuItem.trim()}` }));
         const res = await fetch(`/domains/sales/suggest?${params}`);
         if (!res.ok) throw new Error("HTTP error");
         const payload = (await res.json()) as SuggestPayload;
-        if (!cancelled) setDfuLocationSuggestions(payload.values || []);
-      } catch { if (!cancelled) setDfuLocationSuggestions([]); }
+        if (!cancelled) setSkuLocationSuggestions(payload.values || []);
+      } catch { if (!cancelled) setSkuLocationSuggestions([]); }
     }, 180);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [dfuLocation, debouncedDfuItem]);
+  }, [skuLocation, debouncedSkuItem]);
 
   // ========================================================================
   // DFU computed values
   // ========================================================================
-  const dfuKpis = useMemo<Record<string, DfuAnalysisKpis>>(() => {
-    if (!dfuData?.model_monthly) return {};
-    const result: Record<string, DfuAnalysisKpis> = {};
-    for (const [modelId, rows] of Object.entries(dfuData.model_monthly)) {
-      const window = rows.slice(0, dfuKpiMonths);
+  const skuKpis = useMemo<Record<string, SkuAnalysisKpis>>(() => {
+    if (!skuData?.model_monthly) return {};
+    const result: Record<string, SkuAnalysisKpis> = {};
+    for (const [modelId, rows] of Object.entries(skuData.model_monthly)) {
+      const window = rows.slice(0, skuKpiMonths);
       if (window.length === 0) continue;
       let sumForecast = 0, sumActual = 0, sumAbsErr = 0;
       for (const r of window) { sumForecast += r.forecast; sumActual += r.actual; sumAbsErr += Math.abs(r.forecast - r.actual); }
@@ -239,24 +248,24 @@ export function ItemAnalysisTab() {
       result[modelId] = { accuracy_pct: accuracy !== null ? Math.round(accuracy * 10000) / 10000 : null, wape: wape !== null ? Math.round(wape * 10000) / 10000 : null, bias: bias !== null ? Math.round(bias * 10000) / 10000 : null, sum_forecast: sumForecast, sum_actual: sumActual, months_covered: window.length };
     }
     return result;
-  }, [dfuData, dfuKpiMonths]);
+  }, [skuData, skuKpiMonths]);
 
-  const dfuMonths = useMemo(() => (!dfuData?.series.length ? [] : dfuData.series.map((p) => String(p.month))), [dfuData]);
+  const skuMonths = useMemo(() => (!skuData?.series.length ? [] : skuData.series.map((p) => String(p.month))), [skuData]);
 
-  const dfuFilteredSeries = useMemo(() => {
-    if (!dfuData?.series.length) return [];
-    const start = dfuTimeStart || dfuMonths[0];
-    const end = dfuTimeEnd || dfuMonths[dfuMonths.length - 1];
-    return dfuData.series.filter((p) => { const m = String(p.month); return m >= start && m <= end; });
-  }, [dfuData, dfuMonths, dfuTimeStart, dfuTimeEnd]);
+  const skuFilteredSeries = useMemo(() => {
+    if (!skuData?.series.length) return [];
+    const start = skuTimeStart || skuMonths[0];
+    const end = skuTimeEnd || skuMonths[skuMonths.length - 1];
+    return skuData.series.filter((p) => { const m = String(p.month); return m >= start && m <= end; });
+  }, [skuData, skuMonths, skuTimeStart, skuTimeEnd]);
 
   const mergedFilteredSeries = useMemo(() => {
-    if (!prodForecastData?.forecasts.length) return dfuFilteredSeries as Record<string, unknown>[];
-    const lastHistMonth = dfuMonths[dfuMonths.length - 1] ?? "";
+    if (!prodForecastData?.forecasts.length) return skuFilteredSeries as Record<string, unknown>[];
+    const lastHistMonth = skuMonths[skuMonths.length - 1] ?? "";
     const prodMap = new Map<string, number | null>(
       prodForecastData.forecasts.map((pt) => [pt.forecast_month, pt.forecast_qty]),
     );
-    const enhanced = dfuFilteredSeries.map((pt) => {
+    const enhanced = skuFilteredSeries.map((pt) => {
       const m = String(pt.month);
       return prodMap.has(m) ? { ...pt, production_forecast: prodMap.get(m) } : pt;
     });
@@ -265,24 +274,24 @@ export function ItemAnalysisTab() {
       .sort((a, b) => a.forecast_month.localeCompare(b.forecast_month))
       .map((pt) => ({ month: pt.forecast_month, production_forecast: pt.forecast_qty }));
     return [...enhanced, ...futurePts] as Record<string, unknown>[];
-  }, [dfuFilteredSeries, dfuMonths, prodForecastData]);
+  }, [skuFilteredSeries, skuMonths, prodForecastData]);
 
   // Available models for the SHAP dropdown
   const shapModelOptions = useMemo(() => {
-    if (!dfuData?.models.length) return [];
-    return dfuData.models;
-  }, [dfuData]);
+    if (!skuData?.models.length) return [];
+    return skuData.models;
+  }, [skuData]);
 
   function handleReset() {
-    setDfuData(null);
-    setDfuAutoSampled(false);
-    setDfuItem("");
-    setDfuLocation("");
+    setSkuData(null);
+    setSkuAutoSampled(false);
+    setSkuItem("");
+    setSkuLocation("");
     setSelectedModel(null);
   }
 
   const emptyMessage =
-    !dfuItem.trim() || !dfuLocation.trim()
+    !skuItem.trim() || !skuLocation.trim()
       ? "Enter both item and location to view analysis."
       : "No data available for the selected filters.";
 
@@ -291,19 +300,19 @@ export function ItemAnalysisTab() {
   // ========================================================================
   const invMonths = 12;
   const invKpiParams = useMemo(
-    () => ({ item: debouncedDfuItem, location: debouncedDfuLocation, months: invMonths }),
-    [debouncedDfuItem, debouncedDfuLocation],
+    () => ({ item: debouncedSkuItem, location: debouncedSkuLocation, months: invMonths }),
+    [debouncedSkuItem, debouncedSkuLocation],
   );
   const invTrendParams = useMemo(
-    () => ({ item: debouncedDfuItem, location: debouncedDfuLocation, months: invMonths }),
-    [debouncedDfuItem, debouncedDfuLocation],
+    () => ({ item: debouncedSkuItem, location: debouncedSkuLocation, months: invMonths }),
+    [debouncedSkuItem, debouncedSkuLocation],
   );
   const invPositionParams = useMemo(
-    () => ({ item: debouncedDfuItem, location: debouncedDfuLocation, limit: 1, offset: 0, sort_by: "snapshot_date" as const, sort_dir: "desc" as const }),
-    [debouncedDfuItem, debouncedDfuLocation],
+    () => ({ item: debouncedSkuItem, location: debouncedSkuLocation, limit: 1, offset: 0, sort_by: "snapshot_date" as const, sort_dir: "desc" as const }),
+    [debouncedSkuItem, debouncedSkuLocation],
   );
 
-  const hasDfu = !!(debouncedDfuItem.trim() && debouncedDfuLocation.trim());
+  const hasDfu = !!(debouncedSkuItem.trim() && debouncedSkuLocation.trim());
 
   // Always fetch KPIs for the DFU attributes section
   const { data: kpiData } = useQuery({
@@ -335,8 +344,8 @@ export function ItemAnalysisTab() {
 
   // Single-DFU lead time profile for inline attributes
   const ltProfileParams = useMemo(
-    () => ({ item: debouncedDfuItem, location: debouncedDfuLocation, limit: 1 }),
-    [debouncedDfuItem, debouncedDfuLocation],
+    () => ({ item: debouncedSkuItem, location: debouncedSkuLocation, limit: 1 }),
+    [debouncedSkuItem, debouncedSkuLocation],
   );
   const { data: ltProfilePayload } = useQuery({
     queryKey: queryKeys.ltProfile(ltProfileParams),
@@ -346,6 +355,15 @@ export function ItemAnalysisTab() {
   });
   const ltProfileRow = ltProfilePayload?.rows?.[0] ?? null;
 
+  // DQ corrections query
+  const { data: correctionsPayload } = useQuery({
+    queryKey: correctionKeys.byItem(debouncedSkuItem, debouncedSkuLocation),
+    queryFn: () => fetchCorrectionsByItem(debouncedSkuItem.trim(), debouncedSkuLocation.trim()),
+    staleTime: STALE.FIVE_MIN,
+    enabled: hasDfu && panels.dqCorrections,
+  });
+  const corrections = correctionsPayload?.corrections ?? [];
+
   // ========================================================================
   // Render
   // ========================================================================
@@ -354,12 +372,12 @@ export function ItemAnalysisTab() {
       {/* ---- Selector (always visible) ---- */}
       <Card className="animate-fade-in">
         <SelectorPanel
-          dfuItem={dfuItem} setDfuItem={setDfuItem}
-          dfuLocation={dfuLocation} setDfuLocation={setDfuLocation}
-          dfuPoints={dfuPoints} setDfuPoints={setDfuPoints}
-          dfuItemSuggestions={dfuItemSuggestions}
-          dfuLocationSuggestions={dfuLocationSuggestions}
-          dfuData={dfuData}
+          skuItem={skuItem} setSkuItem={setSkuItem}
+          skuLocation={skuLocation} setSkuLocation={setSkuLocation}
+          skuPoints={skuPoints} setSkuPoints={setSkuPoints}
+          skuItemSuggestions={skuItemSuggestions}
+          skuLocationSuggestions={skuLocationSuggestions}
+          skuData={skuData}
           onReset={handleReset}
           kpiData={kpiData as InventoryKpis | undefined}
           trendParams={trendParams2}
@@ -417,45 +435,47 @@ export function ItemAnalysisTab() {
       {anyDemandPanelOn && (
         <Card>
           <CardContent className="space-y-4 pt-4">
-            {dfuData && dfuData.series.length > 0 ? (
+            {skuData && skuData.series.length > 0 ? (
               <>
                 {panels.overlay && (
                   <UnifiedChartPanel
-                    dfuData={dfuData}
-                    dfuFilteredSeries={mergedFilteredSeries}
-                    dfuMonths={dfuMonths}
-                    dfuTimeStart={dfuTimeStart} setDfuTimeStart={setDfuTimeStart}
-                    dfuTimeEnd={dfuTimeEnd} setDfuTimeEnd={setDfuTimeEnd}
-                    dfuDefaultStart={dfuDefaultStart}
-                    dfuVisibleSeries={dfuVisibleSeries}
-                    setDfuVisibleSeries={setDfuVisibleSeries}
+                    skuData={skuData}
+                    skuFilteredSeries={mergedFilteredSeries}
+                    skuMonths={skuMonths}
+                    skuTimeStart={skuTimeStart} setSkuTimeStart={setSkuTimeStart}
+                    skuTimeEnd={skuTimeEnd} setSkuTimeEnd={setSkuTimeEnd}
+                    skuDefaultStart={skuDefaultStart}
+                    skuVisibleSeries={skuVisibleSeries}
+                    setSkuVisibleSeries={setSkuVisibleSeries}
                     prodForecastData={prodForecastData}
                     selectedModel={selectedModel}
                     onModelSelect={setSelectedModel}
                     trendData={trendData}
                     trendParams={trendParams2}
+                    corrections={corrections}
+                    showCorrections={panels.dqCorrections}
                   />
                 )}
                 {panels.shap && selectedModel && (
-                  <DfuShapPanel
+                  <SkuShapPanel
                     selectedModel={selectedModel}
-                    itemNo={debouncedDfuItem}
-                    loc={debouncedDfuLocation}
-                    dfuMode="item_location"
+                    itemNo={debouncedSkuItem}
+                    loc={debouncedSkuLocation}
+                    skuMode="item_location"
                     visibleMonths={mergedFilteredSeries.map((p) => String(p.month))}
                   />
                 )}
                 {panels.forecastKpis && (
                   <ModelKpiSection
-                    dfuData={dfuData}
-                    dfuKpis={dfuKpis}
-                    dfuKpiMonths={dfuKpiMonths}
-                    setDfuKpiMonths={setDfuKpiMonths}
-                    dfuVisibleSeries={dfuVisibleSeries}
+                    skuData={skuData}
+                    skuKpis={skuKpis}
+                    skuKpiMonths={skuKpiMonths}
+                    setSkuKpiMonths={setSkuKpiMonths}
+                    skuVisibleSeries={skuVisibleSeries}
                   />
                 )}
               </>
-            ) : dfuLoading ? (
+            ) : skuLoading ? (
               <div className="flex h-[320px] items-center justify-center">
                 <LoadingElement message="Fetching analysis..." />
               </div>

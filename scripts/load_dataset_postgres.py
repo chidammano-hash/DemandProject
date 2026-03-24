@@ -1,10 +1,20 @@
+"""Load normalized CSV directly into PostgreSQL tables.
+
+Usage:
+    python scripts/load_dataset_postgres.py --dataset <domain> [--replace] [--skip-archive]
+
+Single-pass loader: CSV → temp staging → main table. No intermediate layers.
+"""
 import argparse
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
 from pathlib import Path
 import sys
 
 import psycopg
+import psycopg.errors
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,58 +33,70 @@ from common.sql_helpers import (
     typed_expr_sets,
     business_key_expr,
 )
+from common.engines.medallion import file_hash, create_batch, complete_batch, fail_batch
+from common.services.perf_profiler import profiled_section
+from common.planning_date import get_planning_date
 
 logger = logging.getLogger(__name__)
 
-# Unmatched DFU warning threshold (E5)
-_UNMATCHED_DFU_WARN_PCT = 10.0
-
-# PG session tuning defaults (M6) — can be overridden via medallion_config.yaml
+# PG session tuning
 _PG_WORK_MEM = "512MB"
 _PG_MAINTENANCE_WORK_MEM = "1GB"
 
+# Unmatched DFU warning threshold
+_UNMATCHED_DFU_WARN_PCT = 10.0
+
+
+# ---------------------------------------------------------------------------
+# Index management — drop before bulk load, recreate after
+# ---------------------------------------------------------------------------
 
 def _get_all_indexes(cur, table: str) -> list[tuple[str, str]]:
-    """Return list of (index_name, index_def) for ALL indexes on *table*,
-    excluding only the primary key."""
+    """Return (index_name, index_def) for non-PK, non-constraint-backing indexes on table."""
     cur.execute("""
-        SELECT indexname, indexdef
-        FROM pg_indexes
-        WHERE tablename = %s
-          AND indexname NOT LIKE '%%_pkey'
-        ORDER BY indexname;
+        SELECT i.indexname, i.indexdef
+        FROM pg_indexes i
+        WHERE i.tablename = %s
+          AND i.schemaname = 'public'
+          AND i.indexname NOT LIKE '%%_pkey'
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_constraint c
+              WHERE c.conindid = (
+                  SELECT oid FROM pg_class
+                  WHERE relname = i.indexname
+                    AND relnamespace = 'public'::regnamespace
+              )
+          )
+        ORDER BY i.indexname
     """, (table,))
     return cur.fetchall()
 
 
 def _get_unique_constraints(cur, table: str) -> list[tuple[str, str, list[str]]]:
-    """Return list of (constraint_name, constraint_type, [columns]) for UNIQUE
-    constraints on *table* (excludes PK)."""
+    """Return (constraint_name, type, [columns]) for UNIQUE constraints."""
     cur.execute("""
-        SELECT con.conname,
-               con.contype::text,
+        SELECT con.conname, con.contype::text,
                array_agg(att.attname ORDER BY u.pos)
         FROM pg_constraint con
         JOIN pg_class rel ON rel.oid = con.conrelid
         JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS u(attnum, pos) ON true
         JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = u.attnum
-        WHERE rel.relname = %s
-          AND con.contype = 'u'
-        GROUP BY con.conname, con.contype;
+        WHERE rel.relname = %s AND con.contype = 'u'
+        GROUP BY con.conname, con.contype
     """, (table,))
     return [(r[0], r[1], r[2]) for r in cur.fetchall()]
 
 
 def _drop_indexes(cur, indexes: list[tuple[str, str]]) -> None:
     for idx_name, _ in indexes:
-        cur.execute(f"DROP INDEX IF EXISTS {qident(idx_name)};")
+        cur.execute(f"DROP INDEX IF EXISTS {qident(idx_name)}")
 
 
 def _drop_unique_constraints(cur, table: str,
                              constraints: list[tuple[str, str, list[str]]]) -> None:
     for con_name, _, _ in constraints:
         cur.execute(
-            f"ALTER TABLE {qident(table)} DROP CONSTRAINT IF EXISTS {qident(con_name)};"
+            f"ALTER TABLE {qident(table)} DROP CONSTRAINT IF EXISTS {qident(con_name)}"
         )
 
 
@@ -89,78 +111,136 @@ def _recreate_unique_constraints(cur, table: str,
         col_list = ", ".join(qident(c) for c in cols)
         cur.execute(
             f"ALTER TABLE {qident(table)} ADD CONSTRAINT {qident(con_name)} "
-            f"UNIQUE ({col_list});"
+            f"UNIQUE ({col_list})"
         )
 
 
-def _resolve_forecast_execution_lag(cur, stg_table: str) -> tuple[int, int]:
-    """For forecast domain: update staging execution_lag from dim_dfu.
+# ---------------------------------------------------------------------------
+# Partition helpers — for partitioned tables (e.g., fact_inventory_snapshot)
+# ---------------------------------------------------------------------------
 
-    The normalized CSV sets execution_lag = lag for every row (since the source
-    file doesn't have an execution_lag column).  We resolve the actual DFU
-    execution lag from dim_dfu so we can filter to execution-lag rows only
-    for the main table INSERT.
+def _is_partitioned(cur, table: str) -> bool:
+    """Check if a table uses declarative partitioning."""
+    cur.execute("""
+        SELECT relkind = 'p'
+        FROM pg_class
+        WHERE relname = %s AND relnamespace = 'public'::regnamespace
+    """, (table,))
+    row = cur.fetchone()
+    return bool(row and row[0])
 
-    IMPORTANT: This MUST be called AFTER the archive load, because the archive
-    needs the untouched staging data where each row's execution_lag = its own lag.
 
-    Returns (matched_rows, unmatched_rows).
+def _ensure_partition_exists(cur, parent: str, start_date: str, end_date: str) -> str:
+    """Create a monthly partition if it doesn't exist. Returns partition name."""
+    # Parse YYYY-MM from start_date
+    parts = start_date.split("-")
+    part_name = f"{parent}_{parts[0]}_{parts[1]}"
+    cur.execute("""
+        SELECT 1 FROM pg_class
+        WHERE relname = %s AND relnamespace = 'public'::regnamespace
+    """, (part_name,))
+    if not cur.fetchone():
+        # DDL doesn't support %s parameters — use validated date literals
+        # start_date/end_date are always YYYY-MM-DD from _month_range_from_filename
+        cur.execute(
+            f"CREATE TABLE {qident(part_name)} PARTITION OF {qident(parent)} "
+            f"FOR VALUES FROM ('{start_date}') TO ('{end_date}')"
+        )
+        logger.info("  Created partition %s", part_name)
+    return part_name
+
+
+# ---------------------------------------------------------------------------
+# DFU matching — only load rows that exist in dim_sku
+# ---------------------------------------------------------------------------
+
+# Domains that require a matching DFU in dim_sku to be loaded.
+_DFU_MATCH_DOMAINS = {"sales", "forecast", "inventory"}
+
+
+def _filter_unmatched_dfus(cur, stg_table: str, domain: str) -> int:
+    """Delete staging rows that have no matching DFU in dim_sku.
+
+    Returns number of deleted rows.
+    Sales/forecast match on item_id + customer_group + loc (full sku_ck).
+    Inventory matches on item_id + loc only (no customer_group in inventory data).
     """
-    # Check if dim_dfu exists
     cur.execute("""
         SELECT EXISTS(
             SELECT 1 FROM information_schema.tables
-            WHERE table_name = 'dim_dfu' AND table_schema = 'public'
+            WHERE table_name = 'dim_sku' AND table_schema = 'public'
         )
     """)
     if not cur.fetchone()[0]:
-        logger.info("dim_dfu table not found -- defaulting execution_lag to 0")
-        cur.execute(f'UPDATE {qident(stg_table)} SET "execution_lag" = \'0\'')
-        return (0, cur.rowcount)
+        logger.warning("dim_sku not found — skipping DFU match filter for %s", domain)
+        return 0
 
-    # Update staging execution_lag from dim_dfu (all rows for matched DFUs)
-    cur.execute(f"""
-        UPDATE {qident(stg_table)} s
-        SET "execution_lag" = COALESCE(d.execution_lag, 0)::text
-        FROM dim_dfu d
-        WHERE d.dfu_ck = trim(s."dmdunit") || '_' || trim(s."dmdgroup") || '_' || trim(s."loc")
-    """)
-    matched_rows = cur.rowcount
+    if domain == "inventory":
+        # Inventory has no customer_group — match on item_id + loc
+        cur.execute(f"""
+            DELETE FROM {qident(stg_table)} s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dim_sku d
+                WHERE d.item_id = trim(s."item_id")
+                  AND d.loc = trim(s."loc")
+            )
+        """)
+    else:
+        # Sales/forecast — match on full sku_ck (item_id_customer_group_loc)
+        cur.execute(f"""
+            DELETE FROM {qident(stg_table)} s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dim_sku d
+                WHERE d.sku_ck = trim(s."item_id") || '_' || trim(s."customer_group") || '_' || trim(s."loc")
+            )
+        """)
 
-    # Default execution_lag to 0 for DFUs not in dim_dfu
-    cur.execute(f"""
-        UPDATE {qident(stg_table)} s
-        SET "execution_lag" = '0'
-        WHERE NOT EXISTS (
-            SELECT 1 FROM dim_dfu d
-            WHERE d.dfu_ck = trim(s."dmdunit") || '_' || trim(s."dmdgroup") || '_' || trim(s."loc")
+    deleted = cur.rowcount
+    if deleted:
+        logger.info("  Deleted %s staging rows with no matching DFU in dim_sku",
+                     f"{deleted:,}")
+    return deleted
+
+
+# ---------------------------------------------------------------------------
+# Forecast-specific helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_forecast_execution_lag(cur, stg_table: str) -> int:
+    """Set lag and execution_lag from dim_sku on staging table.
+
+    Assumes unmatched rows have already been deleted by _filter_unmatched_dfus().
+    All external forecasts are assumed to be at execution lag — the source
+    file's lag/execution_lag fields are ignored and overwritten from dim_sku.
+    Returns number of matched (updated) rows.
+    """
+    cur.execute("""
+        SELECT EXISTS(
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'dim_sku' AND table_schema = 'public'
         )
     """)
-    unmatched_rows = cur.rowcount
+    if not cur.fetchone()[0]:
+        logger.warning("dim_sku not found — cannot resolve execution lag")
+        return 0
 
-    # E5: warn if unmatched DFU percentage exceeds threshold
-    total = (matched_rows or 0) + (unmatched_rows or 0)
-    if total > 0:
-        unmatched_pct = ((unmatched_rows or 0) / total) * 100
-        if unmatched_pct > _UNMATCHED_DFU_WARN_PCT:
-            logger.warning(
-                "%.1f%% of forecast rows (%d/%d) could not match a DFU in dim_dfu "
-                "(defaulted to execution_lag=0). Threshold: %.1f%%",
-                unmatched_pct, unmatched_rows, total, _UNMATCHED_DFU_WARN_PCT,
-            )
-
-    return (matched_rows, unmatched_rows)
+    cur.execute(f"""
+        UPDATE {qident(stg_table)} s
+        SET "execution_lag" = d.execution_lag::text,
+            "lag" = d.execution_lag::text
+        FROM dim_sku d
+        WHERE d.sku_ck = trim(s."item_id") || '_' || trim(s."customer_group") || '_' || trim(s."loc")
+    """)
+    return cur.rowcount
 
 
 def _load_forecast_archive(cur, stg_table: str, stg_alias: str) -> int:
-    """Load ALL forecast rows from staging into backtest_lag_archive.
+    """Load ALL forecast lags into backtest_lag_archive (preserves multi-lag accuracy).
 
-    This preserves all 5 lags (0-4) for multi-lag accuracy analysis while
-    the main table holds only execution-lag rows.
+    Optimized: when no non-external rows exist, skips ON CONFLICT for ~3x speedup.
     """
     archive_table = "backtest_lag_archive"
 
-    # Delete existing external rows from archive
     cur.execute(
         f"DELETE FROM {archive_table} WHERE model_id = %s",
         [EXTERNAL_MODEL_ID],
@@ -169,21 +249,24 @@ def _load_forecast_archive(cur, stg_table: str, stg_alias: str) -> int:
     if deleted:
         logger.info("Deleted %s existing '%s' archive rows", f"{deleted:,}", EXTERNAL_MODEL_ID)
 
-    # Build forecast_ck expression (same separator as FORECAST_SPEC)
+    # Check if non-external rows exist — if not, skip ON CONFLICT (massive speedup)
+    cur.execute(
+        f"SELECT EXISTS(SELECT 1 FROM {archive_table} WHERE model_id != %s LIMIT 1)",
+        [EXTERNAL_MODEL_ID],
+    )
+    has_other_models = cur.fetchone()[0]
+
     ck_expr = (
-        f"trim({stg_alias}.\"dmdunit\") || '_' || trim({stg_alias}.\"dmdgroup\") || '_' || "
+        f"trim({stg_alias}.\"item_id\") || '_' || trim({stg_alias}.\"customer_group\") || '_' || "
         f"trim({stg_alias}.\"loc\") || '_' || trim({stg_alias}.\"fcstdate\") || '_' || "
         f"trim({stg_alias}.\"startdate\")"
     )
 
-    insert_sql = f"""
-        INSERT INTO {archive_table}
-            (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
-             lag, execution_lag, basefcst_pref, tothist_dmd, model_id, timeframe)
+    select_sql = f"""
         SELECT
             {ck_expr},
-            {stg_alias}."dmdunit",
-            {stg_alias}."dmdgroup",
+            {stg_alias}."item_id",
+            {stg_alias}."customer_group",
             {stg_alias}."loc",
             {stg_alias}."fcstdate"::date,
             {stg_alias}."startdate"::date,
@@ -197,177 +280,193 @@ def _load_forecast_archive(cur, stg_table: str, stg_alias: str) -> int:
             {stg_alias}."model_id",
             NULL
         FROM {qident(stg_table)} {stg_alias}
-        ON CONFLICT (forecast_ck, model_id, lag) DO UPDATE SET
-            basefcst_pref = EXCLUDED.basefcst_pref,
-            tothist_dmd   = EXCLUDED.tothist_dmd,
-            execution_lag = EXCLUDED.execution_lag
     """
-    cur.execute(insert_sql)
+
+    if has_other_models:
+        # Other model rows exist — use ON CONFLICT to merge
+        cur.execute(f"""
+            INSERT INTO {archive_table}
+                (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
+                 lag, execution_lag, basefcst_pref, tothist_dmd, model_id, timeframe)
+            {select_sql}
+            ON CONFLICT (forecast_ck, model_id, lag) DO UPDATE SET
+                basefcst_pref = EXCLUDED.basefcst_pref,
+                tothist_dmd   = EXCLUDED.tothist_dmd,
+                execution_lag = EXCLUDED.execution_lag
+        """)
+    else:
+        # No conflicting rows — plain INSERT (much faster, no conflict check)
+        logger.info("  Fast-path: no other model rows — skipping ON CONFLICT")
+        cur.execute(f"""
+            INSERT INTO {archive_table}
+                (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
+                 lag, execution_lag, basefcst_pref, tothist_dmd, model_id, timeframe)
+            {select_sql}
+        """)
     return cur.rowcount
 
 
-def _run_medallion_pipeline(spec: DomainSpec, csv_path: Path,
-                            apply_fixes: bool = False) -> None:
-    """Run the full medallion pipeline: Bronze -> Silver -> Gold."""
-    from common.medallion import (
-        create_batch, complete_batch, fail_batch, file_hash,
-        ingest_bronze, promote_to_silver, run_silver_dq_gate,
-        apply_silver_fixes, promote_to_gold, write_lineage,
-    )
+# ---------------------------------------------------------------------------
+# Post-load hooks (domain-specific)
+# ---------------------------------------------------------------------------
 
+def _post_load_purchase_order(cur) -> None:
+    """Populate lead time actuals + sync open POs after loading purchase orders."""
+    cur.execute("""
+        INSERT INTO fact_lead_time_actuals
+            (po_number, line_number, supplier_id, item_id, loc,
+             promised_delivery_date, actual_receipt_date,
+             lead_time_days_promised, lead_time_days_actual, source_file)
+        SELECT po.po_number,
+            ROW_NUMBER() OVER (PARTITION BY po.po_number ORDER BY po.item_id, po.loc)::integer,
+            po.supplier_id, po.item_id, po.loc,
+            po.original_delivery_date, po.delivery_date,
+            (po.original_delivery_date - po.original_ship_date),
+            (po.delivery_date - po.original_ship_date),
+            'purchase_orders.csv'
+        FROM fact_purchase_orders po
+        WHERE po.closure_code = 'CLOSED'
+          AND po.delivery_date IS NOT NULL
+          AND po.original_ship_date IS NOT NULL
+        ON CONFLICT (po_number, line_number) DO UPDATE SET
+            supplier_id             = EXCLUDED.supplier_id,
+            actual_receipt_date     = EXCLUDED.actual_receipt_date,
+            lead_time_days_actual   = EXCLUDED.lead_time_days_actual,
+            lead_time_days_promised = EXCLUDED.lead_time_days_promised
+    """)
+    logger.info("  Upserted %s lead time actuals from closed POs", f"{cur.rowcount:,}")
+
+    cur.execute("SAVEPOINT sp_open_po")
+    try:
+        cur.execute("""
+            INSERT INTO fact_open_purchase_orders
+                (po_number, po_line_number, item_id, loc, supplier_id,
+                 po_date, ordered_qty, received_qty, unit_cost,
+                 promised_delivery_date, po_status, line_status, source_file)
+            SELECT po.po_number,
+                ROW_NUMBER() OVER (PARTITION BY po.po_number ORDER BY po.item_id, po.loc)::integer,
+                po.item_id, po.loc, po.supplier_id,
+                po.original_ship_date, po.ordered_qty,
+                COALESCE(po.orig_po_qty - po.ordered_qty, 0),
+                po.net_price, po.delivery_date, 'open', 'open', 'purchase_orders.csv'
+            FROM fact_purchase_orders po
+            WHERE (po.closure_code IS NULL OR po.closure_code = '')
+              AND po.ordered_qty IS NOT NULL
+              AND po.original_ship_date IS NOT NULL
+            ON CONFLICT (po_number, po_line_number) DO UPDATE SET
+                ordered_qty            = EXCLUDED.ordered_qty,
+                received_qty           = EXCLUDED.received_qty,
+                unit_cost              = EXCLUDED.unit_cost,
+                promised_delivery_date = EXCLUDED.promised_delivery_date,
+                modified_ts            = NOW()
+        """)
+        cur.execute("RELEASE SAVEPOINT sp_open_po")
+        logger.info("  Upserted %s open POs", f"{cur.rowcount:,}")
+    except psycopg.errors.ForeignKeyViolation:
+        cur.execute("ROLLBACK TO SAVEPOINT sp_open_po")
+        logger.warning("  Skipped open PO sync — dim_supplier not yet populated")
+
+
+def _post_load_sourcing(cur) -> None:
+    """Sync sourcing data into dim_item_supplier."""
+    cur.execute("""
+        SELECT EXISTS(
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'dim_item_supplier' AND table_schema = 'public'
+        )
+    """)
+    if not cur.fetchone()[0]:
+        logger.info("  dim_item_supplier not found, skipping sourcing sync")
+        return
+
+    cur.execute("SAVEPOINT sp_item_supplier")
+    try:
+        cur.execute("""
+            INSERT INTO dim_item_supplier (item_id, loc, supplier_id, is_preferred, lead_time_days)
+            SELECT DISTINCT ON (s.item_id, s.loc, s.supplier_id)
+                s.item_id, s.loc, s.supplier_id, FALSE, NULL
+            FROM dim_sourcing s
+            WHERE s.supplier_id IS NOT NULL AND s.supplier_id != ''
+            ON CONFLICT (item_id, loc, supplier_id) DO NOTHING
+        """)
+        logger.info("  Synced %s sourcing rows into dim_item_supplier", f"{cur.rowcount:,}")
+
+        cur.execute("""
+            UPDATE dim_item_supplier dis SET is_preferred = TRUE
+            WHERE dis.id IN (
+                SELECT DISTINCT ON (item_id, loc) id
+                FROM dim_item_supplier ORDER BY item_id, loc, id
+            ) AND NOT dis.is_preferred
+        """)
+        logger.info("  Marked %s preferred suppliers", f"{cur.rowcount:,}")
+        cur.execute("RELEASE SAVEPOINT sp_item_supplier")
+    except psycopg.errors.ForeignKeyViolation:
+        cur.execute("ROLLBACK TO SAVEPOINT sp_item_supplier")
+        logger.warning("  Skipped item-supplier sync — dim_supplier not yet populated")
+
+
+# ---------------------------------------------------------------------------
+# Main load function
+# ---------------------------------------------------------------------------
+
+def load_domain(spec: DomainSpec, csv_path: Path,
+                replace_mode: bool = False,
+                skip_archive: bool = False,
+                incremental_delete: str | None = None) -> dict:
+    """Load CSV directly into main table. Single transaction, minimal overhead.
+
+    Returns summary dict: {domain, rows_in, rows_loaded}.
+    """
     t_total = time.time()
+    csv_size_mb = csv_path.stat().st_size / (1024 ** 2) if csv_path.exists() else 0
     logger.info("=" * 60)
-    logger.info("Medallion pipeline: %s -> bronze -> silver -> gold", spec.name)
-    logger.info("CSV: %s", csv_path.name)
-    if apply_fixes:
-        logger.info("DQ auto-fixes: ENABLED")
+    logger.info("Loading %s -> %s (%.0f MB)", spec.name, spec.table, csv_size_mb)
     logger.info("=" * 60)
 
     if not csv_path.exists():
-        logger.info("SKIPPED -- %s not found.", csv_path.name)
-        logger.info("Run 'make normalize-all' first to generate clean CSVs.")
-        return
+        logger.info("SKIPPED — %s not found. Run 'make normalize-all' first.", csv_path.name)
+        return {"domain": spec.name, "skipped": True}
 
     db = get_db_params()
     src_hash = file_hash(csv_path)
-
-    with psycopg.connect(**db) as conn, conn.cursor() as cur:
-        batch_id = create_batch(
-            cur, spec.name, source_file=csv_path.name,
-            source_hash=src_hash,
-        )
-        conn.commit()
-        logger.info("[1/6] Created batch %s", batch_id)
-
-        try:
-            # Phase 1: Bronze ingest
-            logger.info("[2/6] Bronze ingest: COPY -> bronze_%s ...", spec.name)
-            t0 = time.time()
-            bronze_count = ingest_bronze(cur, spec, csv_path, batch_id)
-            conn.commit()
-            logger.info("       %s rows ingested (%s)", f"{bronze_count:,}", _elapsed(t0))
-
-            # Phase 2: Silver promotion (type cast + dedup)
-            logger.info("[3/6] Silver promotion: bronze -> silver_%s ...", spec.name)
-            t0 = time.time()
-            silver_count, quarantine_count = promote_to_silver(cur, spec, batch_id)
-            conn.commit()
-            logger.info("       %s rows promoted (%s)", f"{silver_count:,}", _elapsed(t0))
-
-            # Phase 3: DQ gate checks
-            logger.info("[4/6] DQ gate checks ...")
-            t0 = time.time()
-            gate = run_silver_dq_gate(cur, spec, batch_id)
-            conn.commit()
-            logger.info("       Pass rate: %s%% (%s passed, %s quarantined) (%s)",
-                        gate['pass_rate'], f"{gate.get('passed_count', 0):,}",
-                        f"{gate['quarantined']:,}", _elapsed(t0))
-            if not gate["passed"]:
-                logger.warning("Below min pass rate %s%%", gate['min_pass_rate'])
-
-            # Phase 4: Auto-fixes (optional)
-            fix_result = {"fixes_applied": 0}
-            if apply_fixes:
-                logger.info("[4b/6] Applying DQ auto-fixes ...")
-                t0 = time.time()
-                fix_result = apply_silver_fixes(cur, spec, batch_id)
-                conn.commit()
-                logger.info("       %d fixes applied (%s)", fix_result['fixes_applied'], _elapsed(t0))
-
-            # Phase 5: Gold promotion
-            logger.info("[5/6] Gold promotion: silver -> %s ...", spec.table)
-            t0 = time.time()
-            gold = promote_to_gold(cur, spec, batch_id)
-            conn.commit()
-            logger.info("       %s rows -> %s (%s)", f"{gold['gold_count']:,}", gold['gold_table'], _elapsed(t0))
-            if gold.get("original_count"):
-                logger.info("       %s rows -> fact_sales_monthly_original", f"{gold['original_count']:,}")
-
-            # Phase 6: Lineage
-            logger.info("[6/6] Writing lineage records ...")
-            t0 = time.time()
-            lineage_count = write_lineage(cur, spec, batch_id)
-            conn.commit()
-            logger.info("       %s lineage rows (%s)", f"{lineage_count:,}", _elapsed(t0))
-
-            # Complete batch
-            complete_batch(
-                cur, batch_id,
-                row_count_in=bronze_count,
-                row_count_out=gold["gold_count"],
-                quarantined=gate["quarantined"],
-            )
-            conn.commit()
-
-        except Exception as exc:
-            fail_batch(cur, batch_id, str(exc))
-            conn.commit()
-            raise
-
-    total = _elapsed(t_total)
-    logger.info("=" * 60)
-    logger.info("Medallion load complete: %s", spec.name)
-    logger.info("  Bronze: %s rows", f"{bronze_count:,}")
-    logger.info("  Silver: %s rows (gate: %s%%)", f"{silver_count:,}", gate['pass_rate'])
-    logger.info("  Gold:   %s rows", f"{gold['gold_count']:,}")
-    if fix_result["fixes_applied"]:
-        logger.info("  Fixes:  %d", fix_result['fixes_applied'])
-    logger.info("  Time:   %s", total)
-    logger.info("=" * 60)
-
-
-# ---------------------------------------------------------------------------
-# L1 / S1: Legacy (non-medallion) load extracted into its own function
-# ---------------------------------------------------------------------------
-
-def _run_legacy_load(
-    spec: DomainSpec,
-    csv_path: Path,
-    no_dedup: bool,
-    fast_mode: bool,
-    replace_mode: bool,
-    skip_archive: bool,
-) -> None:
-    """Run the legacy (pre-medallion) direct COPY load pipeline (L1)."""
-    from common.medallion import fail_batch, create_batch, complete_batch
-
-    csv_size_mb = csv_path.stat().st_size / (1024 ** 2) if csv_path.exists() else 0
-    db = get_db_params()
-
-    target_cols = [spec.ck_field, *spec.columns]
-    stg_table = f"stg_{spec.table}_{spec.name}"
-    src_alias = "s"
+    is_forecast = spec.name == "forecast"
+    stg_table = f"_stg_{spec.name}"
     stg_alias = "d"
+    src_alias = "s"
 
-    load_seq_col = "_load_seq"
-    create_stage_sql = (
+    # Build SQL for staging table and COPY
+    create_stg_sql = (
         f"CREATE TEMP TABLE {qident(stg_table)} ("
-        + f"{qident(load_seq_col)} bigserial, "
-        + ", ".join([f"{qident(c)} text" for c in spec.columns])
-        + ") ON COMMIT DROP;"
+        f"_load_seq bigserial, "
+        + ", ".join(f"{qident(c)} text" for c in spec.columns)
+        + ") ON COMMIT DROP"
     )
-
     copy_sql = (
         f"COPY {qident(stg_table)} ("
-        + ", ".join([qident(c) for c in spec.columns])
+        + ", ".join(qident(c) for c in spec.columns)
         + ") FROM STDIN WITH (FORMAT CSV, HEADER TRUE)"
     )
 
+    # Build INSERT SQL: type-cast + optional dedup
     key_col = "_ck"
+    target_cols = [spec.ck_field, *spec.columns]
     select_exprs = [
         f"{src_alias}.{qident(key_col)} AS {qident(spec.ck_field)}",
         *[
-            f"{typed_expr_sets(c, spec.int_fields, spec.float_fields, spec.date_fields, src_alias)} AS {qident(c)}"
+            f"{typed_expr_sets(c, spec.int_fields, spec.float_fields, spec.date_fields, src_alias, spec.bool_fields)} AS {qident(c)}"
             for c in spec.columns
         ],
     ]
 
-    truncate_sql = f"TRUNCATE TABLE {qident(spec.table)};"
+    # Domains with unique-by-design data (e.g. inventory: item_id+loc+date is unique
+    # in source) skip DISTINCT ON + ORDER BY for ~10x faster INSERT on large datasets.
+    _SKIP_DEDUP_DOMAINS = {"inventory"}
 
-    if no_dedup:
+    if spec.name in _SKIP_DEDUP_DOMAINS:
+        # Direct INSERT: no DISTINCT ON, no ORDER BY — much faster for large datasets
         insert_sql = (
             f"INSERT INTO {qident(spec.table)} ("
-            + ", ".join([qident(c) for c in target_cols])
+            + ", ".join(qident(c) for c in target_cols)
             + ") SELECT "
             + ", ".join(select_exprs)
             + " FROM (SELECT *, "
@@ -378,12 +477,14 @@ def _run_legacy_load(
             + qident(stg_table)
             + " "
             + stg_alias
-            + f") {src_alias};"
+            + ") "
+            + src_alias
         )
     else:
+        # Dedup INSERT: DISTINCT ON business key, keep latest row by _load_seq
         insert_sql = (
             f"INSERT INTO {qident(spec.table)} ("
-            + ", ".join([qident(c) for c in target_cols])
+            + ", ".join(qident(c) for c in target_cols)
             + ") SELECT "
             + ", ".join(select_exprs)
             + " FROM (SELECT DISTINCT ON ("
@@ -398,252 +499,335 @@ def _run_legacy_load(
             + stg_alias
             + ") x ORDER BY "
             + qident(key_col)
-            + ", "
-            + qident(load_seq_col)
-            + f" DESC) {src_alias};"
+            + ", _load_seq DESC) "
+            + src_alias
         )
 
-    # ---- Header ----
-    t_total = time.time()
-    mode_flags = []
-    if replace_mode:
-        mode_flags.append("replace external only")
-    if skip_archive:
-        mode_flags.append("skip-archive")
-    if no_dedup:
-        mode_flags.append("no-dedup")
-    if fast_mode:
-        mode_flags.append("fast")
-    mode_label = f" [{', '.join(mode_flags)}]" if mode_flags else ""
-    logger.info("=" * 60)
-    logger.info("Loading %s -> %s%s", spec.name, spec.table, mode_label)
-    logger.info("CSV: %s (%s MB)", csv_path.name, f"{csv_size_mb:,.0f}")
-    logger.info("=" * 60)
-
-    saved_indexes: list[tuple[str, str]] = []
-    saved_constraints: list[tuple[str, str, list[str]]] = []
-
-    is_forecast = spec.name == "forecast"
+    # Forecast: filter to execution-lag rows only (added after lag resolution)
+    forecast_filter = ""
 
     with psycopg.connect(**db) as conn, conn.cursor() as cur:
-        # E1: wrap entire legacy load in try/except
+        # Session tuning for bulk load
+        cur.execute(f"SET work_mem = '{_PG_WORK_MEM}'")
+        cur.execute(f"SET maintenance_work_mem = '{_PG_MAINTENANCE_WORK_MEM}'")
+        cur.execute("SET synchronous_commit = 'off'")
+        cur.execute("SET max_parallel_maintenance_workers = 4")
+        cur.execute("SET effective_io_concurrency = 200")
+
+        # Batch tracking (for change detection in incremental mode)
+        batch_id = create_batch(cur, spec.name, csv_path.name, src_hash)
+
         try:
-            # ---- Phase 1: Session tuning (fast mode) ----
-            if fast_mode:
-                logger.info("[1/6] Tuning session for bulk load ...")
-                cur.execute(f"SET work_mem = '{_PG_WORK_MEM}';")
-                cur.execute(f"SET maintenance_work_mem = '{_PG_MAINTENANCE_WORK_MEM}';")
-                cur.execute("SET synchronous_commit = 'off';")
-                logger.info("       work_mem=%s, maintenance_work_mem=%s, synchronous_commit=off",
-                            _PG_WORK_MEM, _PG_MAINTENANCE_WORK_MEM)
-            else:
-                logger.info("[1/6] Session defaults (use --fast for tuned bulk load)")
+            # Phase 1: COPY CSV into staging
+            with profiled_section("create_staging"):
+                logger.info("[1/4] COPY %s -> staging ...", csv_path.name)
+                t0 = time.time()
+                cur.execute(create_stg_sql)
 
-            # ---- Phase 2: Create staging table + COPY ----
-            logger.info("[2/6] COPY %s -> staging table ...", csv_path.name)
-            t0 = time.time()
-            cur.execute(create_stage_sql)
-            with cur.copy(copy_sql) as copy, csv_path.open("r", encoding="utf-8", newline="") as f:
-                bytes_read = 0
-                while chunk := f.read(HASH_CHUNK_SIZE):
-                    copy.write(chunk)
-                    bytes_read += len(chunk)
-                    if bytes_read % (100 * HASH_CHUNK_SIZE) < HASH_CHUNK_SIZE:
-                        pct = (bytes_read / (csv_size_mb * 1024 * 1024) * 100) if csv_size_mb > 0 else 0
-                        logger.info("       %s MB copied (%.0f%%) ...", f"{bytes_read / (1024**2):,.0f}", pct)
-            t_copy = time.time() - t0
-            rate_mb = (bytes_read / (1024 ** 2)) / t_copy if t_copy > 0 else 0
-            logger.info("       Done in %s (%s MB/s)", _elapsed(t0), f"{rate_mb:,.0f}")
+            with profiled_section("copy_csv"):
+                with cur.copy(copy_sql) as copy:
+                    with csv_path.open("r", encoding="utf-8", newline="") as f:
+                        while chunk := f.read(HASH_CHUNK_SIZE):
+                            copy.write(chunk)
+                cur.execute(f"SELECT count(*) FROM {qident(stg_table)}")
+                stg_rows = cur.fetchone()[0]
+                logger.info("  %s rows staged (%s)", f"{stg_rows:,}", _elapsed(t0))
 
-            # ---- Phase 3: Count staging rows ----
-            load_archive = is_forecast and not skip_archive
-            total_phases = 8 if is_forecast else 6
+                # Check once: is the target table partitioned?
+                is_partitioned = _is_partitioned(cur, spec.table)
 
-            logger.info("[3/%d] Counting staging rows ...", total_phases)
-            t0 = time.time()
-            cur.execute(f"SELECT count(*) FROM {qident(stg_table)};")
-            stg_rows = cur.fetchone()[0]
-            logger.info("       %s rows in staging (%s)", f"{stg_rows:,}", _elapsed(t0))
+                # For large datasets (>1M rows), create an index on the business key
+                # to speed up the DISTINCT ON dedup in the INSERT.
+                # Skip for partitioned targets (e.g. inventory) — these datasets
+                # have unique rows by design so the dedup index adds no value.
+                if stg_rows > 1_000_000 and not is_partitioned:
+                    t_idx = time.time()
+                    # Build key expression without table alias (CREATE INDEX has no FROM clause)
+                    key_cols = [f"trim({qident(f)})" for f in spec.key_fields]
+                    sep = (spec.business_key_separator or "-").replace("'", "''")
+                    bk_idx_expr = (
+                        key_cols[0] if len(key_cols) == 1
+                        else f" || '{sep}' || ".join(key_cols)
+                    )
+                    cur.execute(
+                        f"CREATE INDEX ON {qident(stg_table)} "
+                        f"(({bk_idx_expr}), _load_seq DESC)"
+                    )
+                    logger.info("  Staging index created (%s)", _elapsed(t_idx))
 
-            # ---- Phase 3b (forecast only): Load ALL lags into archive ----
+            # Phase 1b: DFU match filter — only load rows with a matching dim_sku entry
+            if spec.name in _DFU_MATCH_DOMAINS:
+                with profiled_section("filter_unmatched_dfus"):
+                    t0 = time.time()
+                    dfu_deleted = _filter_unmatched_dfus(cur, stg_table, spec.name)
+                    if dfu_deleted:
+                        logger.info("  DFU filter: kept %s, removed %s (%s)",
+                                    f"{stg_rows - dfu_deleted:,}",
+                                    f"{dfu_deleted:,}", _elapsed(t0))
+
+            # Phase 1c: Forecast-specific — 12-month filter + execution lag
             archive_count = 0
-            if load_archive:
-                logger.info("[3b/%d] Loading ALL lags -> backtest_lag_archive (before staging mutation) ...", total_phases)
-                t0 = time.time()
-                archive_count = _load_forecast_archive(cur, stg_table, stg_alias)
-                logger.info("       Inserted %s archive rows in %s", f"{archive_count:,}", _elapsed(t0))
-                logger.info("       Archive preserves each row's original lag as execution_lag")
-            elif is_forecast and skip_archive:
-                logger.info("[3b/%d] Skipping archive load (--skip-archive)", total_phases)
-
-            # ---- Phase 3c (forecast only): Resolve execution lag from dim_dfu ----
             if is_forecast:
-                logger.info("[3c/%d] Resolving execution lag from dim_dfu ...", total_phases)
-                t0 = time.time()
-                matched, unmatched = _resolve_forecast_execution_lag(cur, stg_table)
-                logger.info("       Matched %s rows from dim_dfu, defaulted %s rows to lag 0 (%s)",
-                            f"{matched:,}", f"{unmatched:,}", _elapsed(t0))
-                # Add WHERE clause to main INSERT: keep only execution-lag rows
-                insert_sql = insert_sql.rstrip(";") + (
-                    f" WHERE {src_alias}.\"lag\" = {src_alias}.\"execution_lag\";"
-                )
-                logger.info("       Main table will receive execution-lag rows only")
+                # Keep only the last 12 months of forecast data
+                planning_dt = get_planning_date()
+                cutoff = date(planning_dt.year - 1, planning_dt.month, 1)
+                cur.execute(f"""
+                    DELETE FROM {qident(stg_table)}
+                    WHERE lower(trim("startdate")) IN ({NULL_SQL})
+                       OR "startdate"::date < %s
+                """, [cutoff])
+                trimmed = cur.rowcount
+                if trimmed:
+                    logger.info("  Trimmed %s rows with startdate before %s",
+                                f"{trimmed:,}", cutoff.isoformat())
 
-            # ---- Phase 4: Clear target rows ----
-            if replace_mode:
-                logger.info("[4/%d] DELETE model_id='%s' from %s ...", total_phases, EXTERNAL_MODEL_ID, spec.table)
+                # External forecasts skip archive — archive is only for
+                # backtest models loaded via load_backtest_forecasts.py.
+
+                # Set lag and execution_lag from dim_sku.
+                logger.info("  Resolving execution lag from dim_sku ...")
                 t0 = time.time()
-                cur.execute(
-                    f"DELETE FROM {qident(spec.table)} WHERE model_id = %s",
-                    [EXTERNAL_MODEL_ID],
-                )
-                deleted = cur.rowcount
-                logger.info("       Deleted %s external rows (%s)", f"{deleted:,}", _elapsed(t0))
+                matched = _resolve_forecast_execution_lag(cur, stg_table)
+                logger.info("  Set execution lag for %s rows (%s)",
+                            f"{matched:,}", _elapsed(t0))
+                # No lag filter — all rows are at execution lag by assumption
+
+            # Phase 2: Clear target (partition-aware or traditional)
+            saved_indexes = []
+            saved_constraints = []
+
+            if is_partitioned:
+                with profiled_section("prepare_partitions"):
+                    logger.info("[2/4] Preparing %s (partitioned) ...", spec.table)
+                    t0 = time.time()
+                    if incremental_delete:
+                        cur.execute(f"DELETE FROM {qident(spec.table)} WHERE {incremental_delete}")
+                        logger.info("  Incremental delete (%s)", _elapsed(t0))
+                    else:
+                        # Full reload: drop ALL indexes/constraints from parent
+                        # (propagates to partitions), then TRUNCATE for fast INSERT
+                        saved_indexes = _get_all_indexes(cur, spec.table)
+                        saved_constraints = _get_unique_constraints(cur, spec.table)
+                        _drop_unique_constraints(cur, spec.table, saved_constraints)
+                        _drop_indexes(cur, saved_indexes)
+                        cur.execute(f"TRUNCATE TABLE {qident(spec.table)}")
+                        logger.info("  Truncated + dropped %d indexes (%s)",
+                                    len(saved_indexes) + len(saved_constraints), _elapsed(t0))
             else:
-                logger.info("[4/%d] TRUNCATE %s", total_phases, spec.table)
-                t0 = time.time()
-                cur.execute(truncate_sql)
-            if fast_mode:
-                logger.info("       + dropping indexes & constraints ...")
-                saved_constraints = _get_unique_constraints(cur, spec.table)
-                if saved_constraints:
+                with profiled_section("drop_indexes"):
+                    logger.info("[2/4] Preparing %s ...", spec.table)
+                    t0 = time.time()
+                    saved_indexes = _get_all_indexes(cur, spec.table)
+                    saved_constraints = _get_unique_constraints(cur, spec.table)
+                    # Drop UNIQUE constraints FIRST (they depend on backing indexes)
                     _drop_unique_constraints(cur, spec.table, saved_constraints)
-                    for con_name, _, cols in saved_constraints:
-                        logger.info("         - UNIQUE constraint %s (%s)", con_name, ', '.join(cols))
-                saved_indexes = _get_all_indexes(cur, spec.table)
-                if saved_indexes:
                     _drop_indexes(cur, saved_indexes)
-                    for idx_name, _ in saved_indexes:
-                        logger.info("         - index %s", idx_name)
-                total_dropped = len(saved_constraints) + len(saved_indexes)
-                if total_dropped:
-                    logger.info("       Truncated + dropped %d indexes/constraints (%s)", total_dropped, _elapsed(t0))
+
+                if replace_mode and is_forecast:
+                    cur.execute(
+                        f"DELETE FROM {qident(spec.table)} WHERE model_id = %s",
+                        [EXTERNAL_MODEL_ID],
+                    )
+                    logger.info("  Deleted external rows, dropped %d indexes (%s)",
+                                len(saved_indexes) + len(saved_constraints), _elapsed(t0))
+                elif incremental_delete:
+                    cur.execute(f"DELETE FROM {qident(spec.table)} WHERE {incremental_delete}")
+                    logger.info("  Incremental delete + dropped %d indexes (%s)",
+                                len(saved_indexes) + len(saved_constraints), _elapsed(t0))
                 else:
-                    logger.info("       Truncated (no indexes to drop) (%s)", _elapsed(t0))
-            elif not replace_mode:
-                logger.info("       (%s)", _elapsed(t0))
+                    cur.execute(f"TRUNCATE TABLE {qident(spec.table)}")
+                    logger.info("  Truncated + dropped %d indexes (%s)",
+                                len(saved_indexes) + len(saved_constraints), _elapsed(t0))
 
-            # ---- Phase 5: INSERT into bare table ----
-            logger.info("[5/%d] INSERT -> %s ...", total_phases, spec.table)
-            t0 = time.time()
-            dedup_label = "no dedup" if no_dedup else "with dedup sort"
-            extra_label = " (execution-lag only)" if is_forecast else ""
-            logger.info("       Inserting %s rows (%s%s) ...", f"{stg_rows:,}", dedup_label, extra_label)
-            cur.execute(insert_sql)
-            row_count = cur.rowcount
-            t_insert = time.time() - t0
-            rate_rows = row_count / t_insert if t_insert > 0 else 0
-            logger.info("       Inserted %s rows in %s (%s rows/s)", f"{row_count:,}", _elapsed(t0), f"{rate_rows:,.0f}")
+            # Phase 3: INSERT
+            if is_partitioned and not incremental_delete:
+                # Per-month parallel loading: promote staging to a real table visible
+                # to parallel connections, create fresh partitions, INSERT each month
+                # in a separate thread. No partition routing, no constraints during load.
+                with profiled_section("insert_per_partition"):
+                    logger.info("[3/4] INSERT per-month (parallel) -> %s ...", spec.table)
+                    t0 = time.time()
 
-            # ---- Phase 6: Recreate indexes + constraints (fast mode) ----
-            total_rebuild = len(saved_indexes) + len(saved_constraints)
-            if fast_mode and total_rebuild > 0:
-                logger.info("[6/%d] Recreating %d indexes/constraints ...", total_phases, total_rebuild)
-                t0 = time.time()
-                step = 0
-                for con_name, _, cols in saved_constraints:
-                    step += 1
-                    t_idx = time.time()
-                    _recreate_unique_constraints(cur, spec.table, [(con_name, 'u', cols)])
-                    logger.info("       [%d/%d] UNIQUE %s (%s)", step, total_rebuild, con_name, _elapsed(t_idx))
-                for idx_name, idx_def in saved_indexes:
-                    step += 1
-                    t_idx = time.time()
-                    cur.execute(idx_def + ";")
-                    logger.info("       [%d/%d] %s (%s)", step, total_rebuild, idx_name, _elapsed(t_idx))
-                logger.info("       All indexes rebuilt in %s", _elapsed(t0))
+                    # Promote temp staging to a real table so parallel connections can see it
+                    real_stg = f"_stg_{spec.name}_shared"
+                    cur.execute(f"DROP TABLE IF EXISTS {qident(real_stg)}")
+                    cur.execute(
+                        f"CREATE UNLOGGED TABLE {qident(real_stg)} AS "
+                        f"SELECT * FROM {qident(stg_table)}"
+                    )
+                    conn.commit()
+                    logger.info("  Promoted staging to shared table (%s)", _elapsed(t0))
+
+                    # Find distinct months
+                    date_col = spec.date_fields and next(iter(spec.date_fields)) or "snapshot_date"
+                    cur.execute(
+                        f"SELECT DISTINCT date_trunc('month', {stg_alias}.{qident(date_col)}::date)::date "
+                        f"FROM {qident(real_stg)} {stg_alias} ORDER BY 1"
+                    )
+                    months = [r[0] for r in cur.fetchall()]
+
+                    # Create all fresh partitions
+                    for m in months:
+                        m_str = m.strftime("%Y-%m-%d")
+                        y, mo = m.year, m.month
+                        end_str = f"{y + 1:04d}-01-01" if mo == 12 else f"{y:04d}-{mo + 1:02d}-01"
+                        part_name = f"{spec.table}_{y:04d}_{mo:02d}"
+
+                        cur.execute("""
+                            SELECT 1 FROM pg_class
+                            WHERE relname = %s AND relnamespace = 'public'::regnamespace
+                        """, (part_name,))
+                        if cur.fetchone():
+                            cur.execute(
+                                f"ALTER TABLE {qident(spec.table)} "
+                                f"DETACH PARTITION {qident(part_name)}"
+                            )
+                            cur.execute(f"DROP TABLE {qident(part_name)}")
+
+                        cur.execute(
+                            f"CREATE TABLE {qident(part_name)} PARTITION OF {qident(spec.table)} "
+                            f"FOR VALUES FROM ('{m_str}') TO ('{end_str}')"
+                        )
+                    conn.commit()
+                    logger.info("  Created %d partitions (%s)", len(months), _elapsed(t0))
+
+                    # Build INSERT SQL targeting the shared staging table
+                    # Replace the temp staging table name with the shared one
+                    parallel_insert_sql = insert_sql.replace(
+                        qident(stg_table), qident(real_stg)
+                    )
+
+                    def _insert_month(month_date):
+                        """Insert one month's data using a separate DB connection."""
+                        m_str = month_date.strftime("%Y-%m-%d")
+                        y, mo = month_date.year, month_date.month
+                        end_str = f"{y + 1:04d}-01-01" if mo == 12 else f"{y:04d}-{mo + 1:02d}-01"
+                        part_name = f"{spec.table}_{y:04d}_{mo:02d}"
+
+                        month_filter = (
+                            f" WHERE {src_alias}.{qident(date_col)}::date >= '{m_str}' "
+                            f"AND {src_alias}.{qident(date_col)}::date < '{end_str}'"
+                        )
+                        t_m = time.time()
+                        with psycopg.connect(**db) as m_conn, m_conn.cursor() as m_cur:
+                            m_cur.execute(f"SET work_mem = '{_PG_WORK_MEM}'")
+                            m_cur.execute("SET synchronous_commit = 'off'")
+                            m_cur.execute(parallel_insert_sql + month_filter)
+                            m_rows = m_cur.rowcount
+                            m_conn.commit()
+                        elapsed = _elapsed(t_m)
+                        logger.info("  %s: %s rows (%s)", part_name, f"{m_rows:,}", elapsed)
+                        return m_rows
+
+                    # Parallel INSERT — one thread per month (I/O-bound, not CPU)
+                    row_count = 0
+                    max_workers = min(len(months), 6)  # cap at 6 parallel connections
+                    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                        futures = {pool.submit(_insert_month, m): m for m in months}
+                        for fut in as_completed(futures):
+                            row_count += fut.result()
+
+                    # Clean up shared staging table
+                    cur.execute(f"DROP TABLE IF EXISTS {qident(real_stg)}")
+                    conn.commit()
+
+                    logger.info("  Total: %s rows (%s, %s rows/s)",
+                                f"{row_count:,}", _elapsed(t0),
+                                f"{row_count / max(time.time() - t0, 0.001):,.0f}")
             else:
-                logger.info("[6/%d] No index rebuild needed", total_phases)
+                with profiled_section("insert_from_staging"):
+                    logger.info("[3/4] INSERT -> %s ...", spec.table)
+                    t0 = time.time()
+                    cur.execute(insert_sql + forecast_filter)
+                    row_count = cur.rowcount
+                    rate = row_count / max(time.time() - t0, 0.001)
+                    logger.info("  %s rows inserted (%s, %s rows/s)",
+                                f"{row_count:,}", _elapsed(t0), f"{rate:,.0f}")
 
-            # ---- Commit ----
-            logger.info("Committing ...")
+            # Phase 3b: Post-load hooks
+            with profiled_section("post_load_hooks"):
+                if spec.name == "purchase_order":
+                    _post_load_purchase_order(cur)
+                elif spec.name == "sourcing":
+                    _post_load_sourcing(cur)
+
+            # Phase 4: Rebuild indexes
+            with profiled_section("recreate_indexes"):
+                if not saved_indexes and not saved_constraints:
+                    logger.info("[4/4] No indexes to rebuild")
+                else:
+                    logger.info("[4/4] Rebuilding %d indexes ...",
+                                len(saved_indexes) + len(saved_constraints))
+                    t0 = time.time()
+                    _recreate_unique_constraints(cur, spec.table, saved_constraints)
+                    _recreate_indexes(cur, saved_indexes)
+                    logger.info("  Indexes rebuilt (%s)", _elapsed(t0))
+
+            # Forecast: refresh archive views
+            with profiled_section("refresh_views"):
+                if is_forecast and not skip_archive:
+                    logger.info("  Refreshing archive views ...")
+                    for mv in MV_REFRESH_ARCHIVE:
+                        cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
+
+            # Complete batch + commit
+            complete_batch(cur, batch_id, stg_rows, row_count)
             conn.commit()
 
-            # ---- Phase 8 (forecast only): Refresh archive views (D5) ----
-            if load_archive:
-                logger.info("[8/%d] Refreshing archive accuracy views ...", total_phases)
-                t0 = time.time()
-                for mv in MV_REFRESH_ARCHIVE:
-                    cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
-                conn.commit()
-                logger.info("       %s refreshed (%s)", ' + '.join(MV_REFRESH_ARCHIVE), _elapsed(t0))
-            elif is_forecast and skip_archive:
-                logger.info("[8/%d] Skipping archive view refresh (--skip-archive)", total_phases)
-
         except Exception as exc:
-            # E1: fail gracefully on legacy load error
-            logger.error("Legacy load failed for %s: %s", spec.name, exc)
+            conn.rollback()
+            try:
+                with psycopg.connect(**db) as err_conn, err_conn.cursor() as err_cur:
+                    fail_batch(err_cur, batch_id, str(exc))
+                    err_conn.commit()
+            except psycopg.Error:
+                pass
             raise
 
-    # ---- Summary ----
-    entity_type = "fact" if spec.table.startswith("fact_") else "dimension"
     total = _elapsed(t_total)
-    logger.info("=" * 60)
-    logger.info("Done: loaded %s rows into %s table %s", f"{row_count:,}", entity_type, spec.table)
-    if is_forecast:
-        logger.info("  Main table (execution-lag): %s rows", f"{row_count:,}")
-        if skip_archive:
-            logger.info("  Archive: skipped (--skip-archive)")
-        else:
-            logger.info("  Archive (all lags):         %s rows", f"{archive_count:,}")
-    logger.info("Total time: %s", total)
+    logger.info("Done: %s rows -> %s (%s)", f"{row_count:,}", spec.table, total)
+    if is_forecast and not skip_archive:
+        logger.info("  Archive: %s rows", f"{archive_count:,}")
     logger.info("=" * 60)
 
+    return {
+        "domain": spec.name,
+        "rows_in": stg_rows,
+        "rows_loaded": row_count,
+        "elapsed": total,
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     allowed = ", ".join(sorted(DOMAIN_SPECS))
-    parser = argparse.ArgumentParser(description="Load normalized dataset CSV into Postgres")
+    parser = argparse.ArgumentParser(description="Load normalized CSV into Postgres")
     parser.add_argument("--dataset", required=True, help=allowed)
-    parser.add_argument("--no-dedup", action="store_true",
-                        help="Skip DISTINCT ON dedup (faster for large clean datasets)")
-    parser.add_argument("--fast", action="store_true",
-                        help="Optimize for large datasets: drop indexes during load, "
-                             "increase work_mem, implies --no-dedup")
     parser.add_argument("--replace", action="store_true",
-                        help="(forecast only) Replace only model_id='external' rows "
-                             "instead of truncating the whole table. Preserves backtest data.")
+                        help="(forecast only) Replace only model_id='external' rows")
     parser.add_argument("--skip-archive", action="store_true",
-                        help="(forecast only) Skip loading all lags into backtest_lag_archive. "
-                             "Loads only the execution-lag row into the main table.")
-    parser.add_argument("--medallion", action="store_true",
-                        help="Use medallion pipeline (Bronze -> Silver -> Gold) with DQ gating")
-    parser.add_argument("--apply-fixes", action="store_true",
-                        help="(medallion only) Apply auto-fix strategies during silver DQ")
+                        help="(forecast only) Skip loading all lags into backtest_lag_archive")
     args = parser.parse_args()
 
-    no_dedup = args.no_dedup or args.fast
-    fast_mode = args.fast
-    replace_mode = args.replace
-    skip_archive = args.skip_archive
-    medallion_mode = args.medallion
-    apply_fixes = args.apply_fixes
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
     spec = get_spec(args.dataset)
+    csv_path = ROOT / "data" / spec.clean_file
 
-    if replace_mode and spec.name != "forecast":
-        parser.error("--replace is only supported for --dataset forecast")
-    if skip_archive and spec.name != "forecast":
-        parser.error("--skip-archive is only supported for --dataset forecast")
-    if replace_mode and fast_mode:
-        parser.error("--replace and --fast are mutually exclusive")
-    if apply_fixes and not medallion_mode:
-        parser.error("--apply-fixes requires --medallion")
-    if medallion_mode and (fast_mode or replace_mode or skip_archive):
-        parser.error("--medallion cannot be combined with --fast, --replace, or --skip-archive")
-
-    root = Path(__file__).resolve().parents[1]
-    load_dotenv(root / ".env")
-    csv_path = root / "data" / spec.clean_file
-
-    # Medallion pipeline: use separate code path
-    if medallion_mode:
-        _run_medallion_pipeline(spec, csv_path, apply_fixes=apply_fixes)
-        return
-
-    # Legacy load (L1: extracted into _run_legacy_load)
-    _run_legacy_load(spec, csv_path, no_dedup, fast_mode, replace_mode, skip_archive)
+    load_domain(
+        spec, csv_path,
+        replace_mode=args.replace,
+        skip_archive=args.skip_archive,
+    )
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    load_dotenv()
     main()

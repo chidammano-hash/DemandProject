@@ -21,7 +21,7 @@ import { LeadTimeProfilePanel } from "./inventory/LeadTimeProfilePanel";
 const PAGE_SIZE = 50;
 
 type SortCol =
-  | "item_no"
+  | "item_id"
   | "loc"
   | "snapshot_date"
   | "qty_on_hand"
@@ -172,12 +172,12 @@ export function InventoryTab() {
   const handleRowClick = useCallback(
     (row: InventoryPosition) => {
       if (
-        selectedRow?.item === row.item_no &&
+        selectedRow?.item === row.item_id &&
         selectedRow?.location === row.loc
       ) {
         setSelectedRow(null);
       } else {
-        setSelectedRow({ item: row.item_no, location: row.loc });
+        setSelectedRow({ item: row.item_id, location: row.loc });
       }
     },
     [selectedRow],

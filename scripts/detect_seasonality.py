@@ -7,6 +7,8 @@ and classifies each DFU into a seasonality profile tier.
 """
 
 import argparse
+import logging
+import multiprocessing
 import sys
 from pathlib import Path
 from typing import Any
@@ -17,11 +19,30 @@ import psycopg
 import yaml
 from dotenv import load_dotenv
 
+logger = logging.getLogger(__name__)
+
+try:
+    from numba import njit
+    _NUMBA_AVAILABLE = True
+except ImportError:
+    _NUMBA_AVAILABLE = False
+
+    def njit(*args, **kwargs):
+        """No-op decorator fallback when numba is not installed."""
+        def decorator(func):
+            return func
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        return decorator
+
+logger.info("Seasonality JIT backend: %s", "numba" if _NUMBA_AVAILABLE else "numpy (no JIT)")
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 
 
 def load_config(config_path: str = "config/seasonality_config.yaml") -> dict:
@@ -31,17 +52,57 @@ def load_config(config_path: str = "config/seasonality_config.yaml") -> dict:
         return yaml.safe_load(f)["seasonality"]
 
 
+@njit(cache=True)
+def _acf_lag12_core(series: np.ndarray) -> float:
+    """Pure numerical ACF lag-12 computation (numba-accelerated when available)."""
+    n = len(series)
+    if n < 25:
+        return 0.0
+    total = 0.0
+    for i in range(n):
+        total += series[i]
+    mean = total / n
+
+    var_sum = 0.0
+    for i in range(n):
+        diff = series[i] - mean
+        var_sum += diff * diff
+    var = var_sum / n
+
+    if var == 0.0:
+        return 0.0
+
+    cov = 0.0
+    for i in range(n - 12):
+        cov += (series[i] - mean) * (series[i + 12] - mean)
+    cov = cov / n
+
+    return cov / var
+
+
+@njit(cache=True)
+def _cv_of_monthly_means(mm_values: np.ndarray) -> float:
+    """Compute coefficient of variation of monthly means (numba-accelerated)."""
+    n = len(mm_values)
+    if n == 0:
+        return 0.0
+    total = 0.0
+    for i in range(n):
+        total += mm_values[i]
+    mean = total / n
+    if mean <= 0.0:
+        return 0.0
+    var_sum = 0.0
+    for i in range(n):
+        diff = mm_values[i] - mean
+        var_sum += diff * diff
+    std = (var_sum / n) ** 0.5
+    return std / mean
+
+
 def compute_acf_lag12(series: np.ndarray) -> float:
     """Compute autocorrelation at lag 12."""
-    if len(series) < 25:  # Need at least 24 + 1 observations
-        return 0.0
-    mean = np.mean(series)
-    var = np.var(series)
-    if var == 0:
-        return 0.0
-    n = len(series)
-    cov = np.sum((series[:n - 12] - mean) * (series[12:] - mean)) / n
-    return float(cov / var)
+    return float(_acf_lag12_core(series))
 
 
 def compute_seasonality_metrics(
@@ -82,17 +143,14 @@ def compute_seasonality_metrics(
         }
 
     # Step 1: Monthly means
-    dfu_sales = dfu_sales.copy()
     dfu_sales["month"] = dfu_sales["startdate"].dt.month
     monthly_means = dfu_sales.groupby("month")["qty"].mean()
     # Fill missing months with 0
     monthly_means = monthly_means.reindex(range(1, 13), fill_value=0.0)
     mm_values = monthly_means.values.astype(np.float64)
 
-    # Step 2: Seasonality strength (CV of monthly means)
-    mm_mean = np.mean(mm_values)
-    mm_std = np.std(mm_values)
-    seasonality_strength = float(mm_std / mm_mean) if mm_mean > 0 else 0.0
+    # Step 2: Seasonality strength (CV of monthly means — numba-accelerated)
+    seasonality_strength = float(_cv_of_monthly_means(mm_values))
 
     # Step 3: Year-over-year correlation
     dfu_sales["year"] = dfu_sales["startdate"].dt.year
@@ -150,6 +208,18 @@ def compute_seasonality_metrics(
     }
 
 
+def _compute_seasonality_for_group(args: tuple) -> dict[str, Any]:
+    """Worker function for parallel seasonality detection."""
+    sku_ck, sales_data, config = args
+    import pandas as pd  # noqa: F811 — re-import needed in worker process
+
+    dfu_df = pd.DataFrame(sales_data)
+    dfu_df["startdate"] = pd.to_datetime(dfu_df["startdate"])
+    metrics = compute_seasonality_metrics(dfu_df.sort_values("startdate"), config)
+    metrics["sku_ck"] = sku_ck
+    return metrics
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Detect seasonality patterns in DFU sales")
     parser.add_argument("--config", type=str, default="config/seasonality_config.yaml", help="Config file path")
@@ -172,49 +242,67 @@ def main() -> None:
 
     db = get_db_params()
 
-    with psycopg.connect(**db) as conn:
-        print("Loading sales data...")
-        sales_df = pd.read_sql(
-            """
-            SELECT d.dfu_ck, s.startdate, s.qty
-            FROM fact_sales_monthly s
-            INNER JOIN dim_dfu d
-                ON d.dmdunit = s.dmdunit
-                AND d.dmdgroup = s.dmdgroup
-                AND d.loc = s.loc
-            WHERE s.qty IS NOT NULL
-            ORDER BY d.dfu_ck, s.startdate
-            """,
-            conn,
-        )
+    with profiled_section("load_sales_data"):
+        with psycopg.connect(**db) as conn:
+            print("Loading sales data...")
+            sales_df = pd.read_sql(
+                """
+                SELECT d.sku_ck, s.startdate, s.qty
+                FROM fact_sales_monthly s
+                INNER JOIN dim_sku d
+                    ON d.item_id = s.item_id
+                    AND d.customer_group = s.customer_group
+                    AND d.loc = s.loc
+                WHERE s.qty IS NOT NULL
+                ORDER BY d.sku_ck, s.startdate
+                """,
+                conn,
+            )
 
-    sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
-    print(f"Loaded {len(sales_df)} sales records for {sales_df['dfu_ck'].nunique()} DFUs")
+        sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
+        print(f"Loaded {len(sales_df)} sales records for {sales_df['sku_ck'].nunique()} DFUs")
 
     # Process each DFU
-    grouped = sales_df.groupby("dfu_ck", sort=False)
-    n_groups = grouped.ngroups
-    results = []
+    with profiled_section("compute_seasonality"):
+        grouped = sales_df.groupby("sku_ck", sort=False)
+        n_groups = grouped.ngroups
 
-    for idx, (dfu_ck, dfu_sales) in enumerate(grouped):
-        if (idx + 1) % 2000 == 0 or idx == 0:
-            print(f"  Processing DFU {idx + 1}/{n_groups}...")
+        n_workers = min(multiprocessing.cpu_count(), 8)
+        if n_groups > 500 and n_workers > 1 and not args.verbose:
+            print(f"  Parallel mode: {n_workers} workers for {n_groups} DFUs")
+            work_items = [
+                (sku_ck, {"startdate": g["startdate"].values, "qty": g["qty"].values}, config)
+                for sku_ck, g in grouped
+            ]
+            with multiprocessing.Pool(n_workers) as pool:
+                results = pool.map(
+                    _compute_seasonality_for_group,
+                    work_items,
+                    chunksize=max(1, n_groups // (n_workers * 4)),
+                )
+        else:
+            # Serial fallback (small datasets or verbose mode)
+            results = []
+            for idx, (sku_ck, dfu_sales) in enumerate(grouped):
+                if (idx + 1) % 2000 == 0 or idx == 0:
+                    print(f"  Processing DFU {idx + 1}/{n_groups}...")
 
-        metrics = compute_seasonality_metrics(dfu_sales.sort_values("startdate"), config)
-        metrics["dfu_ck"] = dfu_ck
-        results.append(metrics)
+                metrics = compute_seasonality_metrics(dfu_sales.sort_values("startdate"), config)
+                metrics["sku_ck"] = sku_ck
+                results.append(metrics)
 
-        if args.verbose and metrics["seasonality_profile"] in ("high", "medium"):
-            print(f"    {dfu_ck}: {metrics['seasonality_profile']} "
-                  f"(strength={metrics['seasonality_strength']}, "
-                  f"yoy={metrics['yoy_correlation']}, acf12={metrics['acf_lag12']})")
+                if args.verbose and metrics["seasonality_profile"] in ("high", "medium"):
+                    print(f"    {sku_ck}: {metrics['seasonality_profile']} "
+                          f"(strength={metrics['seasonality_strength']}, "
+                          f"yoy={metrics['yoy_correlation']}, acf12={metrics['acf_lag12']})")
 
-    results_df = pd.DataFrame(results)
+        results_df = pd.DataFrame(results)
 
     # Save results
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    results_df.to_csv(output_path, index=False)
-    print(f"\nSaved {len(results_df)} DFU seasonality profiles to {output_path}")
+    with profiled_section("write_results"):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        results_df.to_csv(output_path, index=False)
+        print(f"\nSaved {len(results_df)} DFU seasonality profiles to {output_path}")
 
     # Print summary
     print("\nProfile distribution:")
@@ -233,7 +321,7 @@ def main() -> None:
         top10 = ranked.nlargest(10, "seasonality_strength")
         print("\nTop 10 most seasonal DFUs:")
         for _, row in top10.iterrows():
-            print(f"  {row['dfu_ck']}: strength={row['seasonality_strength']}, "
+            print(f"  {row['sku_ck']}: strength={row['seasonality_strength']}, "
                   f"profile={row['seasonality_profile']}, "
                   f"peak={row['peak_month']}, trough={row['trough_month']}")
 

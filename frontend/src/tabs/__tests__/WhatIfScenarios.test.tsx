@@ -8,7 +8,7 @@ const mockPromote = vi.fn();
 
 vi.mock("@/api/queries", () => ({
   queryKeys: {
-    dfuClusters: (s: string) => ["dfu-clusters", s],
+    skuClusters: (s: string) => ["sku-clusters", s],
     clusterProfiles: () => ["cluster-profiles"],
     clusteringDefaults: () => ["clustering-defaults"],
     clusteringScenario: (id: string) => ["clustering-scenario", id],
@@ -18,8 +18,8 @@ vi.mock("@/api/queries", () => ({
     scenarioHistory: () => ["scenario-history"],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
-  fetchDfuClusters: vi.fn().mockResolvedValue({
-    domain: "dfu",
+  fetchSkuClusters: vi.fn().mockResolvedValue({
+    domain: "sku",
     total_assigned: 10,
     clusters: [
       { cluster_id: "1", label: "high_volume_steady", count: 5, pct_of_total: 50, avg_demand: 1000, cv_demand: 0.3 },
@@ -35,7 +35,7 @@ vi.mock("@/api/queries", () => ({
     label_params: { volume_high: 0.75, volume_low: 0.25, cv_steady: 0.3, cv_volatile: 0.8, seasonality_threshold: 0.5, zero_demand_threshold: 0.2 },
   }),
   fetchSeasonalityProfiles: vi.fn().mockResolvedValue({ profiles: [] }),
-  fetchScenarioEstimate: vi.fn().mockResolvedValue({ estimated_seconds: 45, dfu_count: 1200, k_range: 10, }),
+  fetchScenarioEstimate: vi.fn().mockResolvedValue({ estimated_seconds: 45, sku_count: 1200, k_range: 10, }),
   fetchScenarioStatus: vi.fn(),
   fetchScenarioHistory: vi.fn().mockResolvedValue([]),
   fetchJobDetail: vi.fn(),
@@ -92,7 +92,7 @@ const MOCK_SCENARIO_RESULT = {
     optimal_k: 5,
     silhouette_score: 0.45,
     inertia: 12345,
-    total_dfus: 500,
+    total_skus: 500,
     k_selection_results: {
       k_values: [3, 4, 5, 6, 7],
       inertias: [50000, 30000, 20000, 15000, 12000],
@@ -118,7 +118,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
+          <ClustersTab domain="sku" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -131,7 +131,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
+          <ClustersTab domain="sku" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -148,7 +148,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
+          <ClustersTab domain="sku" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -167,7 +167,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
+          <ClustersTab domain="sku" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -175,10 +175,10 @@ describe("WhatIfScenarios", () => {
     await waitFor(() => {
       // Data Scope descriptions
       expect(screen.getByText(/Longer windows capture more patterns/)).toBeDefined();
-      expect(screen.getByText(/DFUs with fewer months of data are excluded/)).toBeDefined();
+      expect(screen.getByText(/SKUs with fewer months of data are excluded/)).toBeDefined();
       // Model descriptions
       expect(screen.getByText(/Range of cluster counts to evaluate/)).toBeDefined();
-      expect(screen.getByText(/Minimum percentage of DFUs required/)).toBeDefined();
+      expect(screen.getByText(/Minimum percentage of SKUs required/)).toBeDefined();
       // Labeling Threshold descriptions
       expect(screen.getByText(/Percentile threshold for 'high volume'/)).toBeDefined();
       expect(screen.getByText(/Coefficient of Variation threshold below which/)).toBeDefined();
@@ -191,7 +191,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
+          <ClustersTab domain="sku" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -214,7 +214,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
+          <ClustersTab domain="sku" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -234,7 +234,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
+          <ClustersTab domain="sku" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -260,7 +260,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
+          <ClustersTab domain="sku" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );
@@ -288,7 +288,7 @@ describe("WhatIfScenarios", () => {
     render(
       <TestQueryWrapper>
         <ScenarioNotificationProvider>
-          <ClustersTab domain="dfu" onDomainChange={vi.fn()} />
+          <ClustersTab domain="sku" onDomainChange={vi.fn()} />
         </ScenarioNotificationProvider>
       </TestQueryWrapper>
     );

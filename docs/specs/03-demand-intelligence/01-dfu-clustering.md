@@ -56,7 +56,7 @@ Priority-ordered evaluation (first match wins):
 | 5 | Volatility | `volatile_erratic` |
 | 6 | Volume (5 tiers) | `steady_high_volume` |
 
-Labels are compound (e.g., `high_volume_seasonal_growing`). Stored in `dim_dfu.cluster_assignment`.
+Labels are compound (e.g., `high_volume_seasonal_growing`). Stored in `dim_sku.cluster_assignment`.
 
 ### What-If Scenarios
 
@@ -65,7 +65,7 @@ Planners submit custom parameters via `POST /clustering/scenario`. The system:
 1. Returns HTTP 202 immediately; runs KMeans in a background thread via JobManager
 2. Supports per-group concurrency -- new requests queue (FIFO) instead of being rejected
 3. `GET /clustering/scenario/{id}/status` polls progress
-4. `POST /clustering/scenario/{id}/promote` writes results to `dim_dfu.ml_cluster`
+4. `POST /clustering/scenario/{id}/promote` writes results to `dim_sku.ml_cluster`
 
 Enhanced charts: elbow with optimal-K marker, silhouette bar chart with quality zones, feature importance bars, cluster size pie, gap statistic line.
 
@@ -75,8 +75,8 @@ Enhanced charts: elbow with optimal-K marker, silhouette bar chart with quality 
 
 | Table / Column | Type | Purpose |
 |---|---|---|
-| `dim_dfu.cluster_assignment` | TEXT | Production cluster label |
-| `dim_dfu.ml_cluster` | INTEGER | Numeric cluster ID (used as ML feature) |
+| `dim_sku.cluster_assignment` | TEXT | Production cluster label |
+| `dim_sku.ml_cluster` | INTEGER | Numeric cluster ID (used as ML feature) |
 
 `ml_cluster` is always a hard feature in backtest models -- never stripped in either per-cluster or global training mode.
 
@@ -104,7 +104,7 @@ make cluster-all    # features -> train -> label -> update (full pipeline)
 | Feature engineering | `scripts/generate_clustering_features.py` | CSV feature matrix |
 | Train + select K | `scripts/train_clustering_model.py` | MLflow experiment `dfu_clustering` |
 | Label clusters | `scripts/label_clusters.py` | Labeled cluster assignments |
-| Write to DB | `scripts/update_cluster_assignments.py` | `dim_dfu.cluster_assignment` updated |
+| Write to DB | `scripts/update_cluster_assignments.py` | `dim_sku.cluster_assignment` updated |
 
 ---
 
@@ -124,7 +124,7 @@ labeling: priority_ordered # intermittency -> periodicity -> seasonality -> tren
 
 ## Dependencies
 
-- **Upstream:** `fact_sales_monthly`, `dim_dfu`, `dim_item`
+- **Upstream:** `fact_sales_monthly`, `dim_sku`, `dim_item`
 - **Downstream:** All backtest scripts (ml_cluster feature), safety stock (segment policies), ABC-XYZ classification
 - **Libraries:** scikit-learn, pandas, scipy, matplotlib, seaborn, MLflow
 

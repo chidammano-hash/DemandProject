@@ -20,7 +20,7 @@ vi.mock("@/api/queries", async () => {
   return {
     ...actual,
     projectionKeys: {
-      dfu: (p?: unknown) => ["projection-dfu", p],
+      sku: (p?: unknown) => ["projection-sku", p],
       atRisk: (days?: unknown) => ["projection-at-risk", days],
     },
     queryKeys: {
@@ -83,8 +83,8 @@ describe("ProjectionPanel", () => {
     (fetchProjectionAtRisk as any).mockResolvedValue({
       total: 2,
       items: [
-        { item_no: "100320", loc: "1401-BULK", days_until_stockout: 5 },
-        { item_no: "200450", loc: "2001-BULK", days_until_stockout: 12 },
+        { item_id: "100320", loc: "1401-BULK", days_until_stockout: 5 },
+        { item_id: "200450", loc: "2001-BULK", days_until_stockout: 12 },
       ],
     });
     render(
@@ -92,6 +92,6 @@ describe("ProjectionPanel", () => {
         <ProjectionPanel />
       </TestQueryWrapper>,
     );
-    expect(await screen.findByText("2 DFUs at stockout risk within 30 days")).toBeInTheDocument();
+    expect(await screen.findByText("2 SKUs at stockout risk within 30 days")).toBeInTheDocument();
   });
 });

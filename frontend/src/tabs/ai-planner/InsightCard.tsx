@@ -95,7 +95,7 @@ export function InsightCard({
             onChange={() => onSelect(insight.insight_id)}
             className="mt-1 h-3.5 w-3.5 flex-shrink-0 cursor-pointer accent-primary"
             onClick={(e) => e.stopPropagation()}
-            aria-label={`Select insight for ${insight.item_no}`}
+            aria-label={`Select insight for ${insight.item_id}`}
           />
         )}
         <div className="mt-0.5 flex-shrink-0">
@@ -122,7 +122,7 @@ export function InsightCard({
 
           {/* DFU identity */}
           <div className="mb-1 text-sm font-semibold text-foreground">
-            {insight.item_no} @ {insight.loc}
+            {insight.item_id} @ {insight.loc}
             {insight.abc_vol && (
               <span className="ml-2 text-xs font-normal text-muted-foreground">
                 ABC: {insight.abc_vol}

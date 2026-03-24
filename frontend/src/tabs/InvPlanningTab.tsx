@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
   Activity,
+  Package,
   Package2,
   Shield,
   TrendingUp,
@@ -84,6 +85,8 @@ import { PlanningScorecardPanel } from "./inv-planning/PlanningScorecardPanel";
 import { CashFlowPanel } from "./inv-planning/CashFlowPanel";
 import { ServiceLevelWaterfallPanel } from "./inv-planning/ServiceLevelWaterfallPanel";
 import { ConstrainedOptPanel } from "./inv-planning/ConstrainedOptPanel";
+import { SourcingPanel } from "./inv-planning/SourcingPanel";
+import { PurchaseOrdersPanel } from "./inv-planning/PurchaseOrdersPanel";
 
 // ---------------------------------------------------------------------------
 // Role-based view presets (Expert #13 — Rachel Kim)
@@ -229,6 +232,8 @@ const GROUPS = [
       { key: "overridequeue", label: "Override Queue", icon: Edit3 },
       { key: "procurement",   label: "Procurement",    icon: ShoppingCart },
       { key: "openpos",       label: "Open POs",       icon: FileText },
+      { key: "sourcing",      label: "Sourcing",       icon: Package },
+      { key: "purchaseorders", label: "PO History",    icon: FileText },
       { key: "projection",    label: "Projection",     icon: TrendingDown },
       { key: "plannedorders", label: "Planned Orders", icon: CheckSquare },
     ],
@@ -265,6 +270,8 @@ const PANEL_META: Record<SubTabKey, { title: string; description?: string }> = {
   overridequeue: { title: "Override Queue", description: "Planner demand overrides pending approval." },
   procurement:   { title: "Procurement Workflow", description: "Purchase order approval and release pipeline." },
   openpos:       { title: "Open Purchase Orders", description: "In-flight PO lines with delivery dates and risk flags." },
+  sourcing:      { title: "Sourcing Network", description: "Item-location supply source mapping with single-source risk analysis." },
+  purchaseorders: { title: "PO History", description: "Comprehensive purchase order history (open + closed) with on-time delivery and lead time analysis." },
   projection:    { title: "Forward Inventory Projection", description: "Day-by-day projected position: no orders, with POs, with planned orders." },
   plannedorders: { title: "Planned Orders", description: "System-generated replenishment proposals awaiting approval." },
   // Expert insight panels
@@ -446,6 +453,8 @@ export function InvPlanningTab() {
           {activePanel === "overridequeue" && <OverrideQueuePanel />}
           {activePanel === "procurement"   && <ProcurementPanel />}
           {activePanel === "openpos"       && <OpenPOPanel />}
+          {activePanel === "sourcing"      && <SourcingPanel />}
+          {activePanel === "purchaseorders" && <PurchaseOrdersPanel />}
           {activePanel === "projection"    && <ProjectionPanel />}
           {activePanel === "plannedorders" && <PlannedOrdersPanel />}
           {activePanel === "rebalancing"  && <RebalancingPanel />}

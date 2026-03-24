@@ -17,8 +17,14 @@ import argparse
 import yaml
 import math
 import psycopg
-from datetime import date
 from typing import Optional
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
 

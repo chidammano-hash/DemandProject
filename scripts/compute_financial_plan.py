@@ -21,8 +21,16 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 from typing import Optional
 
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 CONFIG_PATH = "config/financial_plan_config.yaml"
 
@@ -120,30 +128,30 @@ def fetch_inventory_with_costs(
     """
     Fetch current inventory on-hand joined with item costs.
 
-    Returns rows with item_no, loc, qty_on_hand, unit_cost, avg_daily_sales.
+    Returns rows with item_id, loc, qty_on_hand, unit_cost, avg_daily_sales.
     """
     sql = """
         SELECT
-            inv.item_no,
+            inv.item_id,
             inv.loc,
             inv.qty_on_hand,
             COALESCE(ic.unit_cost, 0)        AS unit_cost,
             COALESCE(inv.avg_daily_sales, 0) AS avg_daily_demand
         FROM (
-            SELECT DISTINCT ON (item_no, loc)
-                item_no, loc, qty_on_hand, avg_daily_sales
+            SELECT DISTINCT ON (item_id, loc)
+                item_id, loc, qty_on_hand, COALESCE(mtd_sales, 0) / GREATEST(EXTRACT(DAY FROM snapshot_date), 1) AS avg_daily_sales
             FROM fact_inventory_snapshot
             WHERE snapshot_date <= %s
-            ORDER BY item_no, loc, snapshot_date DESC
+            ORDER BY item_id, loc, snapshot_date DESC
         ) inv
         LEFT JOIN (
-            SELECT DISTINCT ON (item_no, loc)
-                item_no, loc, unit_cost
+            SELECT DISTINCT ON (item_id, loc)
+                item_id, loc, unit_cost
             FROM dim_item_cost
             WHERE effective_from <= %s
               AND (effective_to IS NULL OR effective_to >= %s)
-            ORDER BY item_no, loc, effective_from DESC
-        ) ic ON ic.item_no = inv.item_no AND ic.loc = inv.loc
+            ORDER BY item_id, loc, effective_from DESC
+        ) ic ON ic.item_id = inv.item_id AND ic.loc = inv.loc
         WHERE ic.unit_cost > 0
     """
     with conn.cursor() as cur:
@@ -151,7 +159,7 @@ def fetch_inventory_with_costs(
         rows = cur.fetchall()
     return [
         {
-            "item_no": r[0],
+            "item_id": r[0],
             "loc": r[1],
             "qty_on_hand": float(r[2]) if r[2] else 0.0,
             "unit_cost": float(r[3]),
@@ -168,26 +176,26 @@ def fetch_planned_order_spend(
 ) -> list[dict]:
     """
     Fetch committed planned order spend from fact_replenishment_exceptions.
-    Summarised by category (abc_vol from dim_dfu).
+    Summarised by category (abc_vol from dim_sku).
     """
     horizon_date = plan_date + relativedelta(months=months_ahead)
     sql = """
         SELECT
             COALESCE(d.abc_vol, 'X')     AS abc_class,
             COALESCE(d.ml_cluster, 'unknown') AS cluster,
-            e.item_no,
+            e.item_id,
             e.loc,
             e.recommended_order_qty,
             COALESCE(ic.unit_cost, 0)    AS unit_cost
         FROM fact_replenishment_exceptions e
-        LEFT JOIN dim_dfu d ON d.dmdunit = e.item_no AND d.loc = e.loc
+        LEFT JOIN dim_sku d ON d.item_id = e.item_id AND d.loc = e.loc
         LEFT JOIN (
-            SELECT DISTINCT ON (item_no, loc) item_no, loc, unit_cost
+            SELECT DISTINCT ON (item_id, loc) item_id, loc, unit_cost
             FROM dim_item_cost
             WHERE effective_to IS NULL OR effective_to >= %s
-            ORDER BY item_no, loc, effective_from DESC
-        ) ic ON ic.item_no = e.item_no AND ic.loc = e.loc
-        WHERE e.recommended_reorder_date <= %s
+            ORDER BY item_id, loc, effective_from DESC
+        ) ic ON ic.item_id = e.item_id AND ic.loc = e.loc
+        WHERE e.recommended_order_by <= %s
           AND e.status NOT IN ('rejected', 'closed')
     """
     with conn.cursor() as cur:
@@ -197,7 +205,7 @@ def fetch_planned_order_spend(
         {
             "abc_class": r[0],
             "cluster": r[1],
-            "item_no": r[2],
+            "item_id": r[2],
             "loc": r[3],
             "recommended_order_qty": float(r[4]) if r[4] else 0.0,
             "unit_cost": float(r[5]),
@@ -211,11 +219,10 @@ def fetch_budget_caps(conn: psycopg.Connection, plan_date: date) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT budget_id, budget_name, budget_period_start, budget_period_end,
-                   category_filter, budget_cap_value, currency
+            SELECT budget_id, scope_type, scope_value,
+                   budget_start, budget_end, budget_cap
             FROM fact_budget_periods
-            WHERE budget_period_start <= %s AND budget_period_end >= %s
-              AND active = TRUE
+            WHERE budget_start <= %s AND budget_end >= %s
             """,
             (plan_date, plan_date),
         )
@@ -223,12 +230,11 @@ def fetch_budget_caps(conn: psycopg.Connection, plan_date: date) -> list[dict]:
     return [
         {
             "budget_id": r[0],
-            "budget_name": r[1],
-            "period_start": r[2],
-            "period_end": r[3],
-            "category_filter": r[4],
+            "scope_type": r[1],
+            "scope_value": r[2],
+            "period_start": r[3],
+            "period_end": r[4],
             "budget_cap": float(r[5]) if r[5] else 0.0,
-            "currency": r[6],
         }
         for r in rows
     ]
@@ -237,31 +243,29 @@ def fetch_budget_caps(conn: psycopg.Connection, plan_date: date) -> list[dict]:
 def upsert_financial_plan(conn: psycopg.Connection, rows: list[dict]) -> int:
     sql = """
         INSERT INTO fact_financial_inventory_plan (
-            item_no, loc, plan_date, unit_cost,
-            on_hand_qty, on_hand_value, carrying_cost_monthly,
+            item_id, loc, plan_month, plan_version,
+            projected_inventory_value, planned_order_value,
+            carrying_cost_monthly,
             excess_qty, excess_value,
-            planned_order_qty, planned_order_value,
-            budget_utilization_pct, is_budget_breached
+            max_stock_target, budget_cap, within_budget
         ) VALUES (
-            %(item_no)s, %(loc)s, %(plan_date)s, %(unit_cost)s,
-            %(on_hand_qty)s, %(on_hand_value)s, %(carrying_cost_monthly)s,
+            %(item_id)s, %(loc)s, %(plan_month)s, %(plan_version)s,
+            %(projected_inventory_value)s, %(planned_order_value)s,
+            %(carrying_cost_monthly)s,
             %(excess_qty)s, %(excess_value)s,
-            %(planned_order_qty)s, %(planned_order_value)s,
-            %(budget_utilization_pct)s, %(is_budget_breached)s
+            %(max_stock_target)s, %(budget_cap)s, %(within_budget)s
         )
-        ON CONFLICT (item_no, loc, plan_date)
+        ON CONFLICT (item_id, loc, plan_month, plan_version)
         DO UPDATE SET
-            unit_cost               = EXCLUDED.unit_cost,
-            on_hand_qty             = EXCLUDED.on_hand_qty,
-            on_hand_value           = EXCLUDED.on_hand_value,
-            carrying_cost_monthly   = EXCLUDED.carrying_cost_monthly,
-            excess_qty              = EXCLUDED.excess_qty,
-            excess_value            = EXCLUDED.excess_value,
-            planned_order_qty       = EXCLUDED.planned_order_qty,
-            planned_order_value     = EXCLUDED.planned_order_value,
-            budget_utilization_pct  = EXCLUDED.budget_utilization_pct,
-            is_budget_breached      = EXCLUDED.is_budget_breached,
-            computed_at             = NOW()
+            projected_inventory_value = EXCLUDED.projected_inventory_value,
+            planned_order_value       = EXCLUDED.planned_order_value,
+            carrying_cost_monthly     = EXCLUDED.carrying_cost_monthly,
+            excess_qty                = EXCLUDED.excess_qty,
+            excess_value              = EXCLUDED.excess_value,
+            max_stock_target          = EXCLUDED.max_stock_target,
+            budget_cap                = EXCLUDED.budget_cap,
+            within_budget             = EXCLUDED.within_budget,
+            computed_at               = NOW()
     """
     with conn.cursor() as cur:
         cur.executemany(sql, rows)
@@ -284,14 +288,15 @@ def run(
     rows_to_write: list[dict] = []
 
     with psycopg.connect(**get_db_params()) as conn:
-        inventory_rows = fetch_inventory_with_costs(conn, plan_date)
-        planned_orders = fetch_planned_order_spend(conn, plan_date, months_ahead)
-        budgets = fetch_budget_caps(conn, plan_date)
+        with profiled_section("load_inventory_and_orders"):
+            inventory_rows = fetch_inventory_with_costs(conn, plan_date)
+            planned_orders = fetch_planned_order_spend(conn, plan_date, months_ahead)
+            budgets = fetch_budget_caps(conn, plan_date)
 
-        # Build planned order lookup: (item_no, loc) → qty
+        # Build planned order lookup: (item_id, loc) → qty
         po_lookup: dict = {}
         for po in planned_orders:
-            key = (po["item_no"], po["loc"])
+            key = (po["item_id"], po["loc"])
             if key not in po_lookup:
                 po_lookup[key] = {"qty": 0.0, "value": 0.0}
             po_lookup[key]["qty"] += po["recommended_order_qty"]
@@ -300,59 +305,72 @@ def run(
         total_on_hand_value = 0.0
         total_excess_value = 0.0
 
-        for row in inventory_rows:
-            item = row["item_no"]
-            loc = row["loc"]
-            qty = row["qty_on_hand"]
-            cost = row["unit_cost"]
-            daily_demand = row["avg_daily_demand"]
+        with profiled_section("compute_financial_metrics"):
+            for row in inventory_rows:
+                item = row["item_id"]
+                loc = row["loc"]
+                qty = row["qty_on_hand"]
+                cost = row["unit_cost"]
+                daily_demand = row["avg_daily_demand"]
 
-            on_hand_value = compute_inventory_value(qty, cost)
-            carrying_cost = compute_carrying_cost(on_hand_value, carrying_cost_pct)
-            excess_val = compute_excess_value(qty, daily_demand, cost, excess_dos_threshold)
+                on_hand_value = compute_inventory_value(qty, cost)
+                carrying_cost = compute_carrying_cost(on_hand_value, carrying_cost_pct)
+                excess_val = compute_excess_value(qty, daily_demand, cost, excess_dos_threshold)
 
-            excess_qty = 0.0
-            if daily_demand > 0 and cost > 0:
-                max_normal_qty = daily_demand * excess_dos_threshold
-                excess_qty = max(0.0, qty - max_normal_qty)
+                excess_qty = 0.0
+                if daily_demand > 0 and cost > 0:
+                    max_normal_qty = daily_demand * excess_dos_threshold
+                    excess_qty = max(0.0, qty - max_normal_qty)
 
-            po_data = po_lookup.get((item, loc), {"qty": 0.0, "value": 0.0})
-            po_qty = po_data["qty"]
-            po_value = po_data["value"]
+                po_data = po_lookup.get((item, loc), {"qty": 0.0, "value": 0.0})
+                po_qty = po_data["qty"]
+                po_value = po_data["value"]
 
-            # Budget utilization (simplified: check total planned spend vs first applicable budget)
-            budget_util = 0.0
-            is_breached = False
-            for budget in budgets:
-                if budget["budget_cap"] > 0:
-                    util, breached = compute_budget_utilization(po_value, budget["budget_cap"])
-                    budget_util = util
-                    is_breached = breached
-                    break
+                # Budget utilization (simplified: check total planned spend vs first applicable budget)
+                budget_util = 0.0
+                is_breached = False
+                for budget in budgets:
+                    if budget["budget_cap"] > 0:
+                        util, breached = compute_budget_utilization(po_value, budget["budget_cap"])
+                        budget_util = util
+                        is_breached = breached
+                        break
 
-            total_on_hand_value += on_hand_value
-            total_excess_value += excess_val
+                total_on_hand_value += on_hand_value
+                total_excess_value += excess_val
 
-            rows_to_write.append({
-                "item_no": item,
-                "loc": loc,
-                "plan_date": plan_date,
-                "unit_cost": round(cost, 4),
-                "on_hand_qty": round(qty, 2),
-                "on_hand_value": round(on_hand_value, 2),
-                "carrying_cost_monthly": round(carrying_cost, 2),
-                "excess_qty": round(excess_qty, 2),
-                "excess_value": round(excess_val, 2),
-                "planned_order_qty": round(po_qty, 2),
-                "planned_order_value": round(po_value, 2),
-                "budget_utilization_pct": budget_util,
-                "is_budget_breached": is_breached,
-            })
+                # max_stock_target: DOS threshold converted to qty
+                max_stock_target = daily_demand * excess_dos_threshold if daily_demand > 0 else 0.0
 
-        rows_written = 0
-        if not dry_run and rows_to_write:
-            rows_written = upsert_financial_plan(conn, rows_to_write)
-            conn.commit()
+                # Get budget cap for this row (simplified: first applicable budget)
+                budget_cap_val = 0.0
+                within_budget = True
+                for budget in budgets:
+                    if budget["budget_cap"] > 0:
+                        budget_cap_val = budget["budget_cap"]
+                        within_budget = not is_breached
+                        break
+
+                rows_to_write.append({
+                    "item_id": item,
+                    "loc": loc,
+                    "plan_month": plan_date,
+                    "plan_version": "latest",
+                    "projected_inventory_value": round(on_hand_value, 2),
+                    "planned_order_value": round(po_value, 2),
+                    "carrying_cost_monthly": round(carrying_cost, 2),
+                    "excess_qty": round(excess_qty, 2),
+                    "excess_value": round(excess_val, 2),
+                    "max_stock_target": round(max_stock_target, 2),
+                    "budget_cap": round(budget_cap_val, 2),
+                    "within_budget": within_budget,
+                })
+
+        with profiled_section("write_financial_plan"):
+            rows_written = 0
+            if not dry_run and rows_to_write:
+                rows_written = upsert_financial_plan(conn, rows_to_write)
+                conn.commit()
 
     return {
         "items_processed": len(rows_to_write),

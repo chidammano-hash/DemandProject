@@ -5,12 +5,10 @@ Multi-channel notification dispatch: Slack, Teams, Email, PagerDuty.
 from __future__ import annotations
 
 import json
-import os
 import smtplib
 import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Any
 
 from common.utils import load_config, reset_config
 

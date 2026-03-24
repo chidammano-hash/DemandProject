@@ -109,6 +109,14 @@ from api.routers import reports          # noqa: E402  # 08-08 Reporting
 from api.routers import webhooks         # noqa: E402  # 08-10 Webhooks
 from api.routers import config_manager   # noqa: E402  # Config management UI
 from api.routers import sql_runner       # noqa: E402  # SQL Runner
+from api.routers.inventory import sourcing as sourcing_router   # noqa: E402
+from api.routers.inventory import purchase_orders as po_router  # noqa: E402
+from api.routers.forecasting import accuracy_budget  # noqa: E402  # Accuracy budget
+from api.routers.forecasting import lgbm_tuning  # noqa: E402  # LGBM tuning
+from api.routers.forecasting import tuning_chat  # noqa: E402  # LGBM tuning chat
+from api.routers.forecasting import cluster_eda  # noqa: E402  # Cluster EDA
+from api.routers.forecasting import sampled_backtest  # noqa: E402  # Sampled backtest
+from api.routers.forecasting import feature_lab  # noqa: E402  # Feature Lab
 from api.routers import domains    # noqa: E402
 
 # Specific-path routers first
@@ -170,6 +178,15 @@ app.include_router(reports.router)
 app.include_router(webhooks.router)
 app.include_router(config_manager.router)
 app.include_router(sql_runner.router)
+app.include_router(sourcing_router.router)
+app.include_router(po_router.router)
+
+app.include_router(accuracy_budget.router)
+app.include_router(lgbm_tuning.router)
+app.include_router(tuning_chat.router)
+app.include_router(cluster_eda.router)
+app.include_router(sampled_backtest.router)
+app.include_router(feature_lab.router)
 
 # domains.py has catch-all /domains/{domain}/* — mount last
 app.include_router(domains.router)

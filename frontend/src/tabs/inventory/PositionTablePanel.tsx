@@ -25,7 +25,7 @@ import { ItemDetailPanel } from "./ItemDetailPanel";
 const PAGE_SIZE = 50;
 
 type SortCol =
-  | "item_no"
+  | "item_id"
   | "loc"
   | "snapshot_date"
   | "qty_on_hand"
@@ -73,7 +73,7 @@ interface PositionTablePanelProps {
 }
 
 // Default visible columns (5 primary + 3 optional)
-const DEFAULT_VISIBLE = new Set<SortCol>(["item_no", "loc", "qty_on_hand", "lead_time_days", "mtd_sales"]);
+const DEFAULT_VISIBLE = new Set<SortCol>(["item_id", "loc", "qty_on_hand", "lead_time_days", "mtd_sales"]);
 
 export function PositionTablePanel({
   positions,
@@ -118,7 +118,7 @@ export function PositionTablePanel({
   );
 
   const COLUMNS: { col: SortCol; label: string; tooltip?: string }[] = [
-    { col: "item_no", label: "Item" },
+    { col: "item_id", label: "Item" },
     { col: "loc", label: "Location" },
     { col: "snapshot_date", label: "Snapshot Date" },
     { col: "qty_on_hand", label: "On Hand", tooltip: "Quantity on hand at end of month" },
@@ -217,7 +217,7 @@ export function PositionTablePanel({
                         key={col}
                         className={cn(
                           "text-xs cursor-pointer select-none hover:bg-muted/50 hover:text-foreground",
-                          col !== "item_no" && col !== "loc" ? "text-right" : "",
+                          col !== "item_id" && col !== "loc" ? "text-right" : "",
                           tooltip ? "cursor-help" : "",
                         )}
                         title={tooltip}
@@ -242,7 +242,7 @@ export function PositionTablePanel({
                   ) : (
                     positions.map((row, idx) => {
                       const isSelected =
-                        selectedRow?.item === row.item_no &&
+                        selectedRow?.item === row.item_id &&
                         selectedRow?.location === row.loc;
                       // PL-016: compute approximate DOS and apply threshold color
                       const avgDailySales = row.mtd_sales > 0 ? row.mtd_sales / 30 : null;
@@ -254,7 +254,7 @@ export function PositionTablePanel({
                         "";
                       return (
                         <TableRow
-                          key={`${row.item_no}-${row.loc}-${row.snapshot_date}-${idx}`}
+                          key={`${row.item_id}-${row.loc}-${row.snapshot_date}-${idx}`}
                           className={cn(
                             "cursor-pointer",
                             isSelected
@@ -263,8 +263,8 @@ export function PositionTablePanel({
                           )}
                           onClick={() => onRowClick(row)}
                         >
-                          {visibleCols.has("item_no") && (
-                            <TableCell className="text-sm font-medium">{row.item_no}</TableCell>
+                          {visibleCols.has("item_id") && (
+                            <TableCell className="text-sm font-medium">{row.item_id}</TableCell>
                           )}
                           {visibleCols.has("loc") && (
                             <TableCell className="text-sm">{row.loc}</TableCell>

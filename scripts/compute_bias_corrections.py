@@ -23,8 +23,16 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 from typing import Optional
 
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 CONFIG_PATH = "config/bias_correction_config.yaml"
 
@@ -108,14 +116,14 @@ def load_historical_bias_cluster(
             d.ml_cluster::TEXT AS segment_value,
             f.startdate        AS plan_month,
             SUM(f.basefcst_pref) AS forecast_sum,
-            SUM(f.qty)           AS actual_sum
+            SUM(f.tothist_dmd)   AS actual_sum
         FROM fact_external_forecast_monthly f
-        JOIN dim_dfu d ON d.dmdunit = f.dmdunit AND d.loc = f.loc
+        JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
         WHERE f.startdate = ANY(%s)
           AND f.lag = 0
           AND f.model_id = 'champion'
         GROUP BY d.ml_cluster, f.startdate
-        HAVING SUM(f.qty) > 0
+        HAVING SUM(f.tothist_dmd) > 0
     """
     with conn.cursor() as cur:
         cur.execute(sql, (reference_months,))
@@ -139,24 +147,24 @@ def load_historical_bias_dfu(
     """Load per-DFU bias from champion model forecasts for reference months."""
     sql = """
         SELECT
-            f.dmdunit AS item_no,
+            f.item_id AS item_id,
             f.loc,
             f.startdate AS plan_month,
             SUM(f.basefcst_pref) AS forecast_sum,
-            SUM(f.qty)           AS actual_sum
+            SUM(f.tothist_dmd)   AS actual_sum
         FROM fact_external_forecast_monthly f
         WHERE f.startdate = ANY(%s)
           AND f.lag = 0
           AND f.model_id = 'champion'
-        GROUP BY f.dmdunit, f.loc, f.startdate
-        HAVING SUM(f.qty) > 0
+        GROUP BY f.item_id, f.loc, f.startdate
+        HAVING SUM(f.tothist_dmd) > 0
     """
     with conn.cursor() as cur:
         cur.execute(sql, (reference_months,))
         rows = cur.fetchall()
     return [
         {
-            "item_no": r[0],
+            "item_id": r[0],
             "loc": r[1],
             "plan_month": r[2],
             "bias": (float(r[3]) / float(r[4]) - 1) if r[4] and float(r[4]) > 0 else None,
@@ -176,19 +184,19 @@ def write_bias_corrections(
 
     sql = """
         INSERT INTO fact_bias_corrections (
-            item_no, loc, plan_month, segment_type, segment_value,
+            item_id, loc, plan_month, segment_type, segment_value,
             rolling_bias_3m, bias_month1, bias_month2, bias_month3,
             correction_factor_raw, correction_factor, correction_was_clipped,
             raw_forecast_qty, corrected_forecast_qty, correction_pct,
             flagged_for_review, months_of_data
         ) VALUES (
-            %(item_no)s, %(loc)s, %(plan_month)s, %(segment_type)s, %(segment_value)s,
+            %(item_id)s, %(loc)s, %(plan_month)s, %(segment_type)s, %(segment_value)s,
             %(rolling_bias_3m)s, %(bias_month1)s, %(bias_month2)s, %(bias_month3)s,
             %(correction_factor_raw)s, %(correction_factor)s, %(correction_was_clipped)s,
             %(raw_forecast_qty)s, %(corrected_forecast_qty)s, %(correction_pct)s,
             %(flagged_for_review)s, %(months_of_data)s
         )
-        ON CONFLICT (item_no, loc, plan_month, segment_type)
+        ON CONFLICT (item_id, loc, plan_month, segment_type)
         DO UPDATE SET
             rolling_bias_3m       = EXCLUDED.rolling_bias_3m,
             correction_factor_raw = EXCLUDED.correction_factor_raw,
@@ -229,44 +237,70 @@ def run(
 
     corrections = []
     with psycopg.connect(**get_db_params()) as conn:
-        if segment == "cluster":
-            rows = load_historical_bias_cluster(reference_months, conn)
-        else:
-            rows = load_historical_bias_dfu(reference_months, conn)
-
-        # Group by segment_value and compute rolling bias
-        from collections import defaultdict
-        grouped: dict[str, list] = defaultdict(list)
-        for r in rows:
-            key = r.get("segment_value") or f"{r.get('item_no')}@{r.get('loc')}"
-            grouped[key].append(r)
-
-        for seg_val, seg_rows in grouped.items():
-            seg_rows.sort(key=lambda x: x["plan_month"], reverse=True)
-            bias_vals = [r["bias"] for r in seg_rows if r.get("bias") is not None]
-            if not bias_vals:
-                continue
-            n = min(len(bias_vals), len(weights))
-            rolling = compute_rolling_bias(bias_vals[:n], weights)
-            raw_cf, cf, was_clipped, flagged = derive_correction_factor(
-                rolling, clip_min, clip_max, review_threshold
-            )
-
-            # For cluster segment, emit one row per DFU in the cluster
+        with profiled_section("load_historical_bias"):
             if segment == "cluster":
-                # Determine DFUs in this cluster
+                rows = load_historical_bias_cluster(reference_months, conn)
+            else:
+                rows = load_historical_bias_dfu(reference_months, conn)
+
+            # Group by segment_value and compute rolling bias
+            from collections import defaultdict
+            grouped: dict[str, list] = defaultdict(list)
+            for r in rows:
+                key = r.get("segment_value") or f"{r.get('item_id')}@{r.get('loc')}"
+                grouped[key].append(r)
+
+            # Pre-load all cluster → DFU mappings to avoid N+1 queries
+            cluster_dfu_map: dict[str, list[tuple]] = {}
+            if segment == "cluster":
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT dmdunit, loc FROM dim_dfu WHERE ml_cluster = %s",
-                        (seg_val,),
-                    )
-                    dfus = cur.fetchall()
-                for dmdunit, loc in dfus:
+                    cur.execute("SELECT ml_cluster, item_id, loc FROM dim_sku WHERE ml_cluster IS NOT NULL")
+                    for row in cur.fetchall():
+                        cluster_dfu_map.setdefault(str(row[0]), []).append((row[1], row[2]))
+
+        with profiled_section("compute_corrections"):
+            for seg_val, seg_rows in grouped.items():
+                seg_rows.sort(key=lambda x: x["plan_month"], reverse=True)
+                bias_vals = [r["bias"] for r in seg_rows if r.get("bias") is not None]
+                if not bias_vals:
+                    continue
+                n = min(len(bias_vals), len(weights))
+                rolling = compute_rolling_bias(bias_vals[:n], weights)
+                raw_cf, cf, was_clipped, flagged = derive_correction_factor(
+                    rolling, clip_min, clip_max, review_threshold
+                )
+
+                # For cluster segment, emit one row per DFU in the cluster
+                if segment == "cluster":
+                    dfus = cluster_dfu_map.get(seg_val, [])
+                    for item_id, loc in dfus:
+                        corrections.append({
+                            "item_id": item_id,
+                            "loc": loc,
+                            "plan_month": plan_month,
+                            "segment_type": "cluster",
+                            "segment_value": seg_val,
+                            "rolling_bias_3m": rolling,
+                            "bias_month1": bias_vals[0] if len(bias_vals) > 0 else None,
+                            "bias_month2": bias_vals[1] if len(bias_vals) > 1 else None,
+                            "bias_month3": bias_vals[2] if len(bias_vals) > 2 else None,
+                            "correction_factor_raw": raw_cf,
+                            "correction_factor": cf,
+                            "correction_was_clipped": was_clipped,
+                            "raw_forecast_qty": None,
+                            "corrected_forecast_qty": None,
+                            "correction_pct": round((cf - 1.0) * 100, 2),
+                            "flagged_for_review": flagged,
+                            "months_of_data": n,
+                        })
+                else:
+                    parts = seg_val.split("@", 1)
+                    item_id, loc = parts[0], parts[1] if len(parts) > 1 else ""
                     corrections.append({
-                        "item_no": dmdunit,
+                        "item_id": item_id,
                         "loc": loc,
                         "plan_month": plan_month,
-                        "segment_type": "cluster",
+                        "segment_type": "sku",
                         "segment_value": seg_val,
                         "rolling_bias_3m": rolling,
                         "bias_month1": bias_vals[0] if len(bias_vals) > 0 else None,
@@ -281,30 +315,9 @@ def run(
                         "flagged_for_review": flagged,
                         "months_of_data": n,
                     })
-            else:
-                parts = seg_val.split("@", 1)
-                item_no, loc = parts[0], parts[1] if len(parts) > 1 else ""
-                corrections.append({
-                    "item_no": item_no,
-                    "loc": loc,
-                    "plan_month": plan_month,
-                    "segment_type": "dfu",
-                    "segment_value": seg_val,
-                    "rolling_bias_3m": rolling,
-                    "bias_month1": bias_vals[0] if len(bias_vals) > 0 else None,
-                    "bias_month2": bias_vals[1] if len(bias_vals) > 1 else None,
-                    "bias_month3": bias_vals[2] if len(bias_vals) > 2 else None,
-                    "correction_factor_raw": raw_cf,
-                    "correction_factor": cf,
-                    "correction_was_clipped": was_clipped,
-                    "raw_forecast_qty": None,
-                    "corrected_forecast_qty": None,
-                    "correction_pct": round((cf - 1.0) * 100, 2),
-                    "flagged_for_review": flagged,
-                    "months_of_data": n,
-                })
 
-        n_written = write_bias_corrections(corrections, conn, dry_run=dry_run)
+        with profiled_section("write_bias_corrections"):
+            n_written = write_bias_corrections(corrections, conn, dry_run=dry_run)
 
     return {
         "plan_month": str(plan_month),
@@ -321,7 +334,7 @@ if __name__ == "__main__":
     parser.add_argument("--plan-version", default="latest")
     parser.add_argument("--apply-to-plan", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--segment", choices=["dfu", "cluster", "abc_seasonality"], default="cluster")
+    parser.add_argument("--segment", choices=["sku", "cluster", "abc_seasonality"], default="cluster")
     args = parser.parse_args()
 
     result = run(

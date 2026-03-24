@@ -36,7 +36,7 @@ import { PortfolioHealthPanel } from "@/tabs/inv-planning/PortfolioHealthPanel";
 beforeEach(() => {
   vi.clearAllMocks();
   (fetchHealthSummary as any).mockResolvedValue({
-    total_dfus: 1000,
+    total_skus: 1000,
     avg_health_score: 72.5,
     by_tier: { healthy: 400, monitor: 300, at_risk: 200, critical: 100 },
     component_avgs: {
@@ -50,7 +50,7 @@ beforeEach(() => {
     total: 1,
     rows: [
       {
-        item_no: "100320",
+        item_id: "100320",
         loc: "1401-BULK",
         health_score: 45,
         health_tier: "at_risk",

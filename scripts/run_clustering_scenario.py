@@ -7,7 +7,6 @@ What-If Scenarios UI.
 """
 
 import json
-import os
 import re
 import sys
 import time
@@ -27,6 +26,7 @@ import yaml
 
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 from scripts.generate_clustering_features import compute_time_series_features
 from scripts.train_clustering_model import (
     CORE_FEATURES,
@@ -253,7 +253,7 @@ def _run_full_pipeline(
 ) -> dict[str, Any]:
     """Run the full clustering pipeline: features → training → labeling."""
     import psycopg
-    from datetime import date, timedelta
+    from datetime import timedelta
     from sklearn.preprocessing import StandardScaler
     from sklearn.decomposition import PCA
     from sklearn.metrics import silhouette_score as sk_silhouette
@@ -261,133 +261,137 @@ def _run_full_pipeline(
     db = get_db_params()
 
     # Step 1: Load sales data
-    time_window = fp["time_window_months"]
-    if isinstance(time_window, str) and time_window.lower() == "all":
-        cutoff_date = None
-    else:
-        cutoff_date = get_planning_date() - timedelta(days=int(time_window) * 30)
+    with profiled_section("load_sales_data"):
+        time_window = fp["time_window_months"]
+        if isinstance(time_window, str) and time_window.lower() == "all":
+            cutoff_date = None
+        else:
+            cutoff_date = get_planning_date() - timedelta(days=int(time_window) * 30)
 
-    with psycopg.connect(**db) as conn:
-        sales_query = """
-            SELECT d.dfu_ck, s.startdate, s.qty
-            FROM fact_sales_monthly s
-            INNER JOIN dim_dfu d
-                ON d.dmdunit = s.dmdunit AND d.dmdgroup = s.dmdgroup AND d.loc = s.loc
-            WHERE s.qty IS NOT NULL
-        """
-        params: dict[str, object] = {}
-        if cutoff_date:
-            sales_query += " AND s.startdate >= %(cutoff)s"
-            params["cutoff"] = cutoff_date
-        # Cap at planning date — exclude any data beyond current planning horizon
-        planning_upper = get_planning_date().replace(day=1)
-        sales_query += " AND s.startdate <= %(planning_upper)s"
-        params["planning_upper"] = planning_upper
-        sales_query += " ORDER BY d.dfu_ck, s.startdate"
+        with psycopg.connect(**db) as conn:
+            sales_query = """
+                SELECT d.sku_ck, s.startdate, s.qty
+                FROM fact_sales_monthly s
+                INNER JOIN dim_sku d
+                    ON d.item_id = s.item_id AND d.customer_group = s.customer_group AND d.loc = s.loc
+                WHERE s.qty IS NOT NULL
+            """
+            params: dict[str, object] = {}
+            if cutoff_date:
+                sales_query += " AND s.startdate >= %(cutoff)s"
+                params["cutoff"] = cutoff_date
+            # Cap at planning date — exclude any data beyond current planning horizon
+            planning_upper = get_planning_date().replace(day=1)
+            sales_query += " AND s.startdate <= %(planning_upper)s"
+            params["planning_upper"] = planning_upper
+            sales_query += " ORDER BY d.sku_ck, s.startdate"
 
-        sales_df = pd.read_sql(sales_query, conn, params=params if params else None)
-    sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
+            sales_df = pd.read_sql(sales_query, conn, params=params if params else None)
+        sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
 
     # Step 2: Compute time series features
-    grouped = sales_df.groupby("dfu_ck", sort=False)
-    ts_features_list = []
-    for dfu_ck, dfu_sales in grouped:
-        if len(dfu_sales) < fp["min_months_history"]:
-            continue
-        ts = compute_time_series_features(dfu_sales)
-        ts["dfu_ck"] = dfu_ck
-        ts_features_list.append(ts)
+    with profiled_section("compute_ts_features"):
+        grouped = sales_df.groupby("sku_ck", sort=False)
+        ts_features_list = []
+        for sku_ck, dfu_sales in grouped:
+            if len(dfu_sales) < fp["min_months_history"]:
+                continue
+            ts = compute_time_series_features(dfu_sales)
+            ts["sku_ck"] = sku_ck
+            ts_features_list.append(ts)
 
-    if not ts_features_list:
-        raise ValueError("No DFUs met minimum history requirement")
+        if not ts_features_list:
+            raise ValueError("No DFUs met minimum history requirement")
 
-    feature_df = pd.DataFrame(ts_features_list)
-    feature_df.to_csv(scenario_dir / "clustering_features.csv", index=False)
+        feature_df = pd.DataFrame(ts_features_list)
+        feature_df.to_csv(scenario_dir / "clustering_features.csv", index=False)
 
     # Step 3: Prepare features for clustering
-    if mp["all_features"]:
-        metadata_cols = ["dfu_ck"]
-        numeric_cols = [c for c in feature_df.select_dtypes(include=[np.number]).columns
-                        if c not in metadata_cols]
-    else:
-        numeric_cols = [c for c in CORE_FEATURES if c in feature_df.columns]
+    with profiled_section("prepare_features"):
+        if mp["all_features"]:
+            metadata_cols = ["sku_ck"]
+            numeric_cols = [c for c in feature_df.select_dtypes(include=[np.number]).columns
+                            if c not in metadata_cols]
+        else:
+            numeric_cols = [c for c in CORE_FEATURES if c in feature_df.columns]
 
-    X_df = feature_df[numeric_cols].copy().fillna(0)
+        X_df = feature_df[numeric_cols].copy().fillna(0)
 
-    # Log-transform skewed features
-    for col in numeric_cols:
-        if col in LOG_TRANSFORM_FEATURES and col in X_df.columns:
-            col_min = X_df[col].min()
-            if col_min >= 0:
-                X_df[col] = np.log1p(X_df[col])
-            else:
-                X_df[col] = np.log1p(X_df[col] - col_min)
-    if "trend_slope_norm" in X_df.columns:
-        X_df["trend_slope_norm"] = np.sign(X_df["trend_slope_norm"]) * np.log1p(np.abs(X_df["trend_slope_norm"]))
+        # Log-transform skewed features
+        for col in numeric_cols:
+            if col in LOG_TRANSFORM_FEATURES and col in X_df.columns:
+                col_min = X_df[col].min()
+                if col_min >= 0:
+                    X_df[col] = np.log1p(X_df[col])
+                else:
+                    X_df[col] = np.log1p(X_df[col] - col_min)
+        if "trend_slope_norm" in X_df.columns:
+            X_df["trend_slope_norm"] = np.sign(X_df["trend_slope_norm"]) * np.log1p(np.abs(X_df["trend_slope_norm"]))
 
-    X = X_df.values
-    feature_names = list(numeric_cols)
+        X = X_df.values
+        feature_names = list(numeric_cols)
 
-    # Remove low-variance features
-    variances = np.var(X, axis=0)
-    high_var_mask = variances > 0.001
-    X = X[:, high_var_mask]
-    feature_names = [feature_names[i] for i in range(len(feature_names)) if high_var_mask[i]]
+        # Remove low-variance features
+        variances = np.var(X, axis=0)
+        high_var_mask = variances > 0.001
+        X = X[:, high_var_mask]
+        feature_names = [feature_names[i] for i in range(len(feature_names)) if high_var_mask[i]]
 
-    # Scale
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+        # Scale
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
 
-    # Optional PCA
-    pca = None
-    if mp["use_pca"]:
-        n_comp = mp["pca_components"] or min(50, X_scaled.shape[1])
-        pca = PCA(n_components=n_comp, random_state=42)
-        X_scaled = pca.fit_transform(X_scaled)
+        # Optional PCA
+        pca = None
+        if mp["use_pca"]:
+            n_comp = mp["pca_components"] or min(50, X_scaled.shape[1])
+            pca = PCA(n_components=n_comp, random_state=42)
+            X_scaled = pca.fit_transform(X_scaled)
 
-    n_total = len(X_scaled)
-    sampled = n_total > MAX_DFUS_FOR_TRAINING
+        n_total = len(X_scaled)
+        sampled = n_total > MAX_DFUS_FOR_TRAINING
 
-    # Sample for training if dataset is large
-    if sampled:
-        rng = np.random.RandomState(42)
-        sample_idx = rng.choice(n_total, MAX_DFUS_FOR_TRAINING, replace=False)
-        X_train = X_scaled[sample_idx]
-    else:
-        X_train = X_scaled
+        # Sample for training if dataset is large
+        if sampled:
+            rng = np.random.RandomState(42)
+            sample_idx = rng.choice(n_total, MAX_DFUS_FOR_TRAINING, replace=False)
+            X_train = X_scaled[sample_idx]
+        else:
+            X_train = X_scaled
 
     # Step 4: Find optimal K (on sample if large)
-    k_range = tuple(mp["k_range"])
-    k_results = find_optimal_k(
-        X_train, k_range, mp["min_cluster_size_pct"]
-    )
-    optimal_k = k_results["optimal_k"]
-
-    # Train final model on sample, then predict all
-    from sklearn.cluster import KMeans
-    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
-    kmeans.fit(X_train)
-    labels = kmeans.predict(X_scaled)  # Assign ALL DFUs
-
-    # Merge small clusters
-    n_samples = n_total
-    min_cluster_size = int(n_samples * mp["min_cluster_size_pct"] / 100)
-    unique_pre, counts_pre = np.unique(labels, return_counts=True)
-    if any(c < min_cluster_size for c in counts_pre):
-        labels, centroids_scaled = merge_small_clusters(
-            X_scaled, labels, kmeans.cluster_centers_, min_cluster_size
+    with profiled_section("find_optimal_k_and_train"):
+        k_range = tuple(mp["k_range"])
+        k_results = find_optimal_k(
+            X_train, k_range, mp["min_cluster_size_pct"]
         )
-        optimal_k = len(set(labels))
-    else:
-        centroids_scaled = kmeans.cluster_centers_
+        optimal_k = k_results["optimal_k"]
 
-    # Metrics (use sample for silhouette to avoid O(n^2) on full dataset)
-    if sampled:
-        sil_sample_idx = np.random.RandomState(42).choice(n_total, min(10000, n_total), replace=False)
-        silhouette = float(sk_silhouette(X_scaled[sil_sample_idx], labels[sil_sample_idx]))
-    else:
-        silhouette = float(sk_silhouette(X_scaled, labels))
-    inertia = float(kmeans.inertia_)
+        # Train final model on sample, then predict all
+        from sklearn.cluster import KMeans
+        kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
+        kmeans.fit(X_train)
+        labels = kmeans.predict(X_scaled)  # Assign ALL DFUs
+
+        # Merge small clusters
+        n_samples = n_total
+        min_cluster_size = int(n_samples * mp["min_cluster_size_pct"] / 100)
+        unique_pre, counts_pre = np.unique(labels, return_counts=True)
+        if any(c < min_cluster_size for c in counts_pre):
+            labels, centroids_scaled = merge_small_clusters(
+                X_scaled, labels, kmeans.cluster_centers_, min_cluster_size
+            )
+            optimal_k = len(set(labels))
+        else:
+            centroids_scaled = kmeans.cluster_centers_
+
+        # Metrics (use sample for silhouette to avoid O(n^2) on full dataset)
+        if sampled:
+            sil_sample_idx = np.random.RandomState(42).choice(n_total, min(10000, n_total), replace=False)
+            silhouette = float(sk_silhouette(X_scaled[sil_sample_idx], labels[sil_sample_idx]))
+        else:
+            silhouette = float(sk_silhouette(X_scaled, labels))
+        inertia = float(kmeans.inertia_)
 
     # Inverse transform centroids
     if pca is None:
@@ -405,21 +409,22 @@ def _run_full_pipeline(
     centroids_df["cluster_id"] = range(optimal_k)
 
     # Step 5: Label clusters
-    if "mean_demand" not in centroids_df.columns:
-        raise ValueError("Centroids CSV missing required column 'mean_demand'")
-    volume_thresholds, cv_thresholds, labeling_config = _build_thresholds(
-        lp, centroids_df["mean_demand"].values
-    )
+    with profiled_section("label_clusters_and_save"):
+        if "mean_demand" not in centroids_df.columns:
+            raise ValueError("Centroids CSV missing required column 'mean_demand'")
+        volume_thresholds, cv_thresholds, labeling_config = _build_thresholds(
+            lp, centroids_df["mean_demand"].values
+        )
 
-    cluster_labels = assign_cluster_labels(
-        centroids_df, volume_thresholds, cv_thresholds, labeling_config
-    )
+        cluster_labels = assign_cluster_labels(
+            centroids_df, volume_thresholds, cv_thresholds, labeling_config
+        )
 
-    # Save artifacts
-    assignments_df = pd.DataFrame({"dfu_ck": feature_df["dfu_ck"].values[:n_samples], "cluster_id": labels})
-    assignments_df["cluster_label"] = assignments_df["cluster_id"].map(cluster_labels)
-    assignments_df.to_csv(scenario_dir / "cluster_labels.csv", index=False)
-    centroids_df.to_csv(scenario_dir / "cluster_centroids.csv", index=False)
+        # Save artifacts
+        assignments_df = pd.DataFrame({"sku_ck": feature_df["sku_ck"].values[:n_samples], "cluster_id": labels})
+        assignments_df["cluster_label"] = assignments_df["cluster_id"].map(cluster_labels)
+        assignments_df.to_csv(scenario_dir / "cluster_labels.csv", index=False)
+        centroids_df.to_csv(scenario_dir / "cluster_centroids.csv", index=False)
 
     # Build profiles
     unique_labels, counts = np.unique(labels, return_counts=True)
@@ -551,7 +556,7 @@ def get_scenario_result(scenario_id: str) -> dict[str, Any] | None:
 
 
 def promote_scenario(scenario_id: str) -> dict[str, Any]:
-    """Promote a scenario to production by updating dim_dfu.ml_cluster."""
+    """Promote a scenario to production by updating dim_sku.ml_cluster."""
     import shutil
     import psycopg
 
@@ -562,59 +567,61 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
         raise FileNotFoundError(f"Scenario labels not found: {labels_path}")
 
     # Copy labels to production location
-    prod_dir = ROOT / "data" / "clustering"
-    prod_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(labels_path, prod_dir / "cluster_labels.csv")
+    with profiled_section("copy_artifacts_to_production"):
+        prod_dir = ROOT / "data" / "clustering"
+        prod_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(labels_path, prod_dir / "cluster_labels.csv")
 
-    # Also copy centroids and profiles
-    for fname in ["cluster_centroids.csv", "scenario_result.json"]:
-        src = scenario_dir / fname
-        if src.exists():
-            shutil.copy2(src, prod_dir / fname)
+        # Also copy centroids and profiles
+        for fname in ["cluster_centroids.csv", "scenario_result.json"]:
+            src = scenario_dir / fname
+            if src.exists():
+                shutil.copy2(src, prod_dir / fname)
 
-    # Update cluster_metadata.json so the overview panel shows correct metrics
-    result_path = scenario_dir / "scenario_result.json"
-    if result_path.exists():
-        with open(result_path) as f:
-            scenario_data = json.load(f)
-        scenario_result = scenario_data.get("result", {})
-        metadata = {
-            "optimal_k": scenario_result.get("optimal_k"),
-            "silhouette_score": scenario_result.get("silhouette_score"),
-            "inertia": scenario_result.get("inertia"),
-            "total_dfus": scenario_result.get("total_dfus"),
-            "k_selection_results": scenario_result.get("k_selection_results"),
-        }
-        with open(prod_dir / "cluster_metadata.json", "w") as f:
-            json.dump(metadata, f, indent=2)
+        # Update cluster_metadata.json so the overview panel shows correct metrics
+        result_path = scenario_dir / "scenario_result.json"
+        if result_path.exists():
+            with open(result_path) as f:
+                scenario_data = json.load(f)
+            scenario_result = scenario_data.get("result", {})
+            metadata = {
+                "optimal_k": scenario_result.get("optimal_k"),
+                "silhouette_score": scenario_result.get("silhouette_score"),
+                "inertia": scenario_result.get("inertia"),
+                "total_dfus": scenario_result.get("total_dfus"),
+                "k_selection_results": scenario_result.get("k_selection_results"),
+            }
+            with open(prod_dir / "cluster_metadata.json", "w") as f:
+                json.dump(metadata, f, indent=2)
 
     # Update database
-    df = pd.read_csv(labels_path)
-    db = get_db_params()
+    with profiled_section("update_database"):
+        df = pd.read_csv(labels_path)
+        db = get_db_params()
 
-    with psycopg.connect(**db) as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TEMP TABLE _cluster_updates (
-                    dfu_ck TEXT PRIMARY KEY,
-                    cluster_label TEXT NOT NULL
-                ) ON COMMIT DROP
-            """)
+        with psycopg.connect(**db) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TEMP TABLE _cluster_updates (
+                        sku_ck TEXT PRIMARY KEY,
+                        cluster_label TEXT NOT NULL
+                    ) ON COMMIT DROP
+                """)
 
-            valid = df.dropna(subset=["cluster_label"])
-            with cur.copy("COPY _cluster_updates (dfu_ck, cluster_label) FROM STDIN") as copy:
-                for _, r in valid.iterrows():
-                    copy.write_row((str(r["dfu_ck"]), str(r["cluster_label"])))
+                valid = df.dropna(subset=["cluster_label"])
+                with cur.copy("COPY _cluster_updates (sku_ck, cluster_label) FROM STDIN") as copy:
+                    for _, r in valid.iterrows():
+                        copy.write_row((str(r["sku_ck"]), str(r["cluster_label"])))
 
-            cur.execute("""
-                UPDATE dim_dfu d
-                SET ml_cluster = u.cluster_label,
-                    modified_ts = NOW()
-                FROM _cluster_updates u
-                WHERE d.dfu_ck = u.dfu_ck
-            """)
-            updated_count = cur.rowcount
-            conn.commit()
+                cur.execute("""
+                    UPDATE dim_sku d
+                    SET ml_cluster = u.cluster_label,
+                        modified_ts = NOW()
+                    FROM _cluster_updates u
+                    WHERE d.sku_ck = u.sku_ck
+                """)
+                updated_count = cur.rowcount
+                conn.commit()
 
     # Build distribution
     distribution = {}

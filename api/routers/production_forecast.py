@@ -30,7 +30,7 @@ router = APIRouter(tags=["production-forecast"])
 
 @router.get("/forecast/production")
 async def get_production_forecast(
-    item_no: str,
+    item_id: str,
     loc: str,
     horizon: int = 18,
     plan_version: str | None = None,
@@ -38,7 +38,7 @@ async def get_production_forecast(
     """Return production forecast series for a specific DFU.
 
     Args:
-        item_no: Item number (exact match).
+        item_id: Item number (exact match).
         loc: Location code (exact match).
         horizon: Max months ahead to return (1–18).
         plan_version: Specific plan version (e.g. '2026-02'). Defaults to latest.
@@ -55,15 +55,15 @@ async def get_production_forecast(
                 cur.execute("""
                     SELECT plan_version
                     FROM fact_production_forecast
-                    WHERE item_no = %s AND loc = %s
+                    WHERE item_id = %s AND loc = %s
                     ORDER BY generated_at DESC
                     LIMIT 1
-                """, [item_no, loc])
+                """, [item_id, loc])
                 row = cur.fetchone()
                 if not row:
                     raise HTTPException(
                         status_code=404,
-                        detail=f"No production forecast found for {item_no}/{loc}. "
+                        detail=f"No production forecast found for {item_id}/{loc}. "
                                f"Run 'make forecast-generate' to generate forecasts."
                     )
                 plan_version = row[0]
@@ -81,25 +81,25 @@ async def get_production_forecast(
                     lag_source,
                     generated_at
                 FROM fact_production_forecast
-                WHERE item_no = %s
+                WHERE item_id = %s
                   AND loc = %s
                   AND plan_version = %s
                   AND horizon_months <= %s
                 ORDER BY forecast_month
-            """, [item_no, loc, plan_version, horizon])
+            """, [item_id, loc, plan_version, horizon])
             rows = cur.fetchall()
 
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail=f"No forecast rows found for {item_no}/{loc} in version {plan_version}."
+            detail=f"No forecast rows found for {item_id}/{loc} in version {plan_version}."
         )
 
     model_id = rows[0][4]
     generated_at = rows[-1][9]  # use last row's generated_at for display
 
     return {
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "plan_version": plan_version,
         "model_id": model_id,
@@ -178,7 +178,7 @@ async def get_production_forecast_summary(
             params: list = [plan_version, horizon_months]
 
             if brand or category:
-                join_clause = "JOIN dim_dfu d ON d.dmdunit = f.item_no AND d.loc = f.loc"
+                join_clause = "JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc"
                 if brand:
                     where_extra += " AND d.brand = %s"
                     params.append(brand)
@@ -189,7 +189,7 @@ async def get_production_forecast_summary(
             # Summary query
             cur.execute(f"""
                 SELECT
-                    COUNT(DISTINCT (f.item_no, f.loc))  AS total_dfu_count,
+                    COUNT(DISTINCT (f.item_id, f.loc))  AS total_dfu_count,
                     SUM(f.forecast_qty)                 AS total_forecast_qty,
                     MIN(f.generated_at)                 AS generated_at
                 FROM fact_production_forecast f
@@ -204,10 +204,10 @@ async def get_production_forecast_summary(
             cur.execute(f"""
                 SELECT
                     COALESCE(d.abc_vol, 'Unknown')  AS abc_class,
-                    COUNT(DISTINCT (f.item_no, f.loc)) AS dfu_count,
+                    COUNT(DISTINCT (f.item_id, f.loc)) AS dfu_count,
                     SUM(f.forecast_qty)             AS forecast_qty
                 FROM fact_production_forecast f
-                JOIN dim_dfu d ON d.dmdunit = f.item_no AND d.loc = f.loc
+                JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
                 WHERE f.plan_version = %s
                   AND f.horizon_months <= %s
                   {where_extra}
@@ -264,7 +264,7 @@ async def get_production_forecast_versions():
             cur.execute("""
                 SELECT
                     plan_version,
-                    COUNT(DISTINCT (item_no, loc))  AS dfu_count,
+                    COUNT(DISTINCT (item_id, loc))  AS dfu_count,
                     COUNT(*)                        AS total_rows,
                     MIN(generated_at)               AS generated_at
                 FROM fact_production_forecast
@@ -334,7 +334,7 @@ async def get_demand_plan_versions():
 async def get_demand_plan_comparison(
     v1: str,
     v2: str,
-    item_no: str,
+    item_id: str,
     loc: str,
 ):
     """Compare P10/P50/P90 between two demand plan versions for a DFU."""
@@ -347,11 +347,11 @@ async def get_demand_plan_comparison(
                     quantile,
                     forecast_qty
                 FROM fact_demand_plan
-                WHERE item_no = %s AND loc = %s
+                WHERE item_id = %s AND loc = %s
                   AND plan_version IN (%s, %s)
                   AND quantile IN (0.10, 0.50, 0.90)
                 ORDER BY plan_month, plan_version, quantile
-            """, [item_no, loc, v1, v2])
+            """, [item_id, loc, v1, v2])
             rows = cur.fetchall()
 
     from collections import defaultdict
@@ -380,7 +380,7 @@ async def get_demand_plan_comparison(
         })
 
     return {
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "v1": v1,
         "v2": v2,
@@ -394,7 +394,7 @@ async def get_demand_plan_comparison(
 
 @router.get("/forecast/demand-plan/weekly")
 async def get_demand_plan_weekly(
-    item_no: str,
+    item_id: str,
     loc: str,
     plan_version: str | None = None,
     weeks_ahead: int = 8,
@@ -407,14 +407,14 @@ async def get_demand_plan_weekly(
             if not plan_version:
                 cur.execute("""
                     SELECT plan_version FROM fact_demand_plan_weekly
-                    WHERE item_no = %s AND loc = %s
+                    WHERE item_id = %s AND loc = %s
                     ORDER BY generated_at DESC LIMIT 1
-                """, [item_no, loc])
+                """, [item_id, loc])
                 row = cur.fetchone()
                 if not row:
                     raise HTTPException(
                         status_code=404,
-                        detail=f"No weekly demand plan found for {item_no}/{loc}."
+                        detail=f"No weekly demand plan found for {item_id}/{loc}."
                     )
                 plan_version = row[0]
 
@@ -424,11 +424,11 @@ async def get_demand_plan_weekly(
                     plan_week, iso_week, iso_year, plan_month,
                     quantile, forecast_qty, weekly_weight
                 FROM fact_demand_plan_weekly
-                WHERE item_no = %s AND loc = %s AND plan_version = %s
+                WHERE item_id = %s AND loc = %s AND plan_version = %s
                   AND plan_week >= %s
                 ORDER BY plan_week, quantile
                 LIMIT %s
-            """, [item_no, loc, plan_version, planning_dt, weeks_ahead * 3])  # 3 quantiles per week
+            """, [item_id, loc, plan_version, planning_dt, weeks_ahead * 3])  # 3 quantiles per week
             rows = cur.fetchall()
 
     # Group by week
@@ -452,7 +452,7 @@ async def get_demand_plan_weekly(
     sorted_weeks = sorted(by_week.values(), key=lambda x: x["plan_week"])[:weeks_ahead]
 
     return {
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "plan_version": plan_version,
         "weeks": sorted_weeks,
@@ -465,7 +465,7 @@ async def get_demand_plan_weekly(
 
 @router.get("/forecast/demand-plan")
 async def get_demand_plan(
-    item_no: str,
+    item_id: str,
     loc: str,
     plan_version: str | None = None,
     quantile: float | None = None,
@@ -490,18 +490,18 @@ async def get_demand_plan(
                     # Fall back to any version
                     cur.execute("""
                         SELECT plan_version FROM fact_demand_plan
-                        WHERE item_no = %s AND loc = %s
+                        WHERE item_id = %s AND loc = %s
                         ORDER BY generated_at DESC LIMIT 1
-                    """, [item_no, loc])
+                    """, [item_id, loc])
                     row = cur.fetchone()
                 if not row:
                     raise HTTPException(
                         status_code=404,
-                        detail=f"No demand plan found for {item_no}/{loc}."
+                        detail=f"No demand plan found for {item_id}/{loc}."
                     )
                 plan_version = row[0]
 
-            params = [item_no, loc, plan_version, horizon]
+            params = [item_id, loc, plan_version, horizon]
             quantile_filter = ""
             if quantile is not None:
                 quantile_filter = " AND quantile = %s"
@@ -519,7 +519,7 @@ async def get_demand_plan(
                     sigma_combined,
                     horizon_months
                 FROM fact_demand_plan
-                WHERE item_no = %s AND loc = %s
+                WHERE item_id = %s AND loc = %s
                   AND plan_version = %s
                   AND horizon_months <= %s
                   {quantile_filter}
@@ -537,7 +537,7 @@ async def get_demand_plan(
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail=f"No demand plan rows found for {item_no}/{loc} version {plan_version}."
+            detail=f"No demand plan rows found for {item_id}/{loc} version {plan_version}."
         )
 
     # Pivot by plan_month
@@ -561,7 +561,7 @@ async def get_demand_plan(
     sorted_months = sorted(by_month.values(), key=lambda x: x["plan_month"])
 
     return {
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "plan_version": plan_version,
         "generated_at": ver_row[0].isoformat() if ver_row and ver_row[0] else None,

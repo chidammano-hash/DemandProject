@@ -157,7 +157,7 @@ async def test_get_excess_value_200():
     assert "excess_items" in data
     assert len(data["excess_items"]) == 1
     item = data["excess_items"][0]
-    assert item["item_no"] == "ITEM001"
+    assert item["item_id"] == "ITEM001"
     assert item["excess_qty"] == pytest.approx(500.0)
     assert item["excess_value"] == pytest.approx(25000.0)
     assert item["plan_month"] == "2025-03-01"

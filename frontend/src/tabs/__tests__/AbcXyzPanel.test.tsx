@@ -14,12 +14,12 @@ vi.mock("@/api/queries", async () => {
     fetchAbcXyzMatrix: vi.fn().mockResolvedValue({
       total_classified: 500,
       cells: [
-        { segment: "AX", dfu_count: 120, avg_service_level: 0.98 },
-        { segment: "BZ", dfu_count: 30, avg_service_level: 0.85 },
+        { segment: "AX", sku_count: 120, avg_service_level: 0.98 },
+        { segment: "BZ", sku_count: 30, avg_service_level: 0.85 },
       ],
     }),
     fetchAbcXyzSummary: vi.fn().mockResolvedValue({
-      total_dfus: 600,
+      total_skus: 600,
       z_count: 45,
     }),
   };
@@ -34,7 +34,7 @@ describe("AbcXyzPanel", () => {
         <AbcXyzPanel />
       </TestQueryWrapper>,
     );
-    expect(await screen.findByText("Total DFUs")).toBeDefined();
+    expect(await screen.findByText("Total SKUs")).toBeDefined();
     expect(await screen.findByText("Classified")).toBeDefined();
     expect(await screen.findByText("Z-Class (High Variability)")).toBeDefined();
   });

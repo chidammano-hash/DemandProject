@@ -8,7 +8,7 @@ WITH lt_by_supplier AS (
     SELECT
         i.supplier_no,
         i.supplier_name,
-        ltp.item_no,
+        ltp.item_id,
         ltp.loc,
         ltp.lt_mean_days,
         ltp.lt_std_days,
@@ -16,7 +16,7 @@ WITH lt_by_supplier AS (
         ltp.lt_variability_class,
         ltp.observation_months
     FROM dim_item_lead_time_profile ltp
-    INNER JOIN dim_item i ON ltp.item_no = i.item_no
+    INNER JOIN dim_item i ON ltp.item_id = i.item_id
     WHERE i.supplier_no IS NOT NULL
 ),
 ss_by_supplier AS (
@@ -29,15 +29,15 @@ ss_by_supplier AS (
         SUM(CASE WHEN s.is_below_ss THEN 1 ELSE 0 END)      AS below_ss_count,
         SUM(s.ss_combined)                                   AS total_ss_value
     FROM fact_safety_stock_targets s
-    INNER JOIN dim_item i ON s.item_no = i.item_no
+    INNER JOIN dim_item i ON s.item_id = i.item_id
     WHERE s.policy_version = 'v1'
     GROUP BY i.supplier_no
 )
 SELECT
     l.supplier_no,
     MAX(l.supplier_name)                       AS supplier_name,
-    COUNT(DISTINCT l.item_no || '_' || l.loc)  AS sku_loc_count,
-    COUNT(DISTINCT l.item_no)                  AS distinct_items,
+    COUNT(DISTINCT l.item_id || '_' || l.loc)  AS sku_loc_count,
+    COUNT(DISTINCT l.item_id)                  AS distinct_items,
     AVG(l.lt_mean_days)                        AS avg_lt_mean_days,
     STDDEV(l.lt_mean_days)                     AS stddev_lt_mean_cross_skus,
     AVG(l.lt_std_days)                         AS avg_lt_std_days,

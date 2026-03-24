@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 
-const VALID_TABS = ["commandCenter", "aggregateAnalysis", "overview", "explorer", "clusters", "itemAnalysis", "dfuAnalysis", "accuracy", "inventory", "invBacktest", "intel", "jobs", "chat", "settings", "aiPlanner", "controlTower", "invPlanning", "storyboard", "exceptions", "sop", "customerMap", "fva", "dataQuality"];
+const VALID_TABS = ["commandCenter", "aggregateAnalysis", "overview", "explorer", "clusters", "itemAnalysis", "skuAnalysis", "accuracy", "inventory", "invBacktest", "intel", "jobs", "chat", "settings", "aiPlanner", "controlTower", "invPlanning", "storyboard", "exceptions", "sop", "customerMap", "fva", "dataQuality", "lgbmTuning", "sqlRunner"];
 const ANALYTICS_TAB_DOMAINS = new Set(["sales", "forecast"]);
-const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "dfu", "sales", "forecast"];
+const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "sku", "sales", "forecast"];
 
 export function getInitialDomain(): string {
   const queryDomain = new URLSearchParams(window.location.search).get("domain");
@@ -10,7 +10,7 @@ export function getInitialDomain(): string {
 }
 
 const TAB_REDIRECTS: Record<string, string> = {
-  dfuAnalysis: "itemAnalysis",
+  skuAnalysis: "itemAnalysis",
   inventory: "itemAnalysis",
   overview: "aggregateAnalysis",
   accuracy: "aggregateAnalysis",

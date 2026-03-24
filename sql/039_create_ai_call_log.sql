@@ -5,7 +5,7 @@
 CREATE TABLE IF NOT EXISTS ai_call_log (
     log_id              BIGSERIAL PRIMARY KEY,
     scan_run_id         TEXT NOT NULL,
-    dfu_key             TEXT,                          -- "item_no@loc" or NULL for portfolio turn
+    dfu_key             TEXT,                          -- "item_id@loc" or NULL for portfolio turn
     provider            TEXT NOT NULL,                 -- "openai" | "anthropic"
     model               TEXT NOT NULL,
     turn_number         INTEGER NOT NULL,

@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS fact_external_signal (
     signal_id       BIGSERIAL       PRIMARY KEY,
     source_id       INT             REFERENCES dim_external_signal_source(source_id),
     signal_date     DATE,
-    item_no         TEXT,
+    item_id         TEXT,
     loc             TEXT,
     signal_type     TEXT,
     signal_value    NUMERIC,
@@ -32,14 +32,14 @@ CREATE TABLE IF NOT EXISTS fact_external_signal (
 CREATE INDEX IF NOT EXISTS idx_ext_signal_date
     ON fact_external_signal (signal_date);
 CREATE INDEX IF NOT EXISTS idx_ext_signal_item_loc
-    ON fact_external_signal (item_no, loc);
+    ON fact_external_signal (item_id, loc);
 CREATE INDEX IF NOT EXISTS idx_ext_signal_source
     ON fact_external_signal (source_id);
 
 -- Demand decomposition placeholder table
 -- Will be converted to a materialized view once the decomposition query is finalized
 CREATE TABLE IF NOT EXISTS mv_demand_decomposition (
-    item_no                 TEXT,
+    item_id                 TEXT,
     loc                     TEXT,
     month                   DATE,
     base_demand             NUMERIC,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS mv_demand_decomposition (
 );
 
 CREATE INDEX IF NOT EXISTS idx_demand_decomp_item_loc
-    ON mv_demand_decomposition (item_no, loc);
+    ON mv_demand_decomposition (item_id, loc);
 CREATE INDEX IF NOT EXISTS idx_demand_decomp_month
     ON mv_demand_decomposition (month);
 

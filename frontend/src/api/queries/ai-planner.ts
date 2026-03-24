@@ -16,7 +16,7 @@ export interface AiInsightParams {
   severity?: InsightSeverity;
   status?: InsightStatus;
   insight_type?: InsightType;
-  item_no?: string;
+  item_id?: string;
   loc?: string;
   brand?: string;
   category?: string;
@@ -31,7 +31,7 @@ export async function fetchAiInsights(params: AiInsightParams = {}): Promise<Ins
     severity: params.severity,
     status: params.status,
     insight_type: params.insight_type,
-    item_no: params.item_no,
+    item_id: params.item_id,
     loc: params.loc,
     brand: params.brand,
     category: params.category,
@@ -55,11 +55,11 @@ export async function triggerPortfolioScan(): Promise<{ job_id: string; status: 
   return submitJob("generate_ai_insights", {}, "AI Portfolio Scan");
 }
 
-export async function triggerDfuAnalyze(item_no: string, loc: string): Promise<AnalyzeResponse> {
+export async function triggerDfuAnalyze(item_id: string, loc: string): Promise<AnalyzeResponse> {
   return fetchJson("/ai-planner/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ item_no, loc }),
+    body: JSON.stringify({ item_id, loc }),
   });
 }
 

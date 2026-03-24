@@ -52,6 +52,7 @@ const CustomerMapTab = lazy(() => import("./tabs/CustomerMapTab").then((m) => ({
 const CommandCenterTab = lazy(() => import("./tabs/CommandCenterTab"));
 const SqlRunnerTab = lazy(() => import("./tabs/SqlRunnerTab").then((m) => ({ default: m.SqlRunnerTab })));
 const SettingsTab = lazy(() => import("./tabs/SettingsTab"));
+const LgbmTuningTab = lazy(() => import("./tabs/LgbmTuningTab"));
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -122,7 +123,7 @@ export default function App() {
     (tab: string) => {
       setActiveTab(tab);
       if (tab === "explorer" && (ANALYTICS_TAB_DOMAINS.has(domain) || !DIMENSION_DOMAINS.includes(domain))) setDomain("item");
-      if (tab === "clusters" && domain !== "dfu") setDomain("dfu");
+      if (tab === "clusters" && domain !== "sku") setDomain("sku");
     },
     [domain],
   );
@@ -217,7 +218,7 @@ export default function App() {
                     <ClustersTab domain={domain} onDomainChange={setDomain} />
                   </TabPanel>
                 )}
-                {(activeTab === "itemAnalysis" || activeTab === "dfuAnalysis" || activeTab === "inventory") && (
+                {(activeTab === "itemAnalysis" || activeTab === "skuAnalysis" || activeTab === "inventory") && (
                   <TabPanel tabKey="itemAnalysis" resetKeys={[activeTab]}>
                     <ItemAnalysisTab />
                   </TabPanel>
@@ -287,11 +288,16 @@ export default function App() {
                     <SettingsTab />
                   </TabPanel>
                 )}
+                {activeTab === "lgbmTuning" && (
+                  <TabPanel tabKey="lgbmTuning" resetKeys={[activeTab]}>
+                    <LgbmTuningTab />
+                  </TabPanel>
+                )}
               </div>
             </div>
 
-            {/* Chat panel (always mounted) */}
-            <ChatPanel domain={domain} />
+            {/* Chat panel (hidden on lgbmTuning — has its own AI Tuning Advisor) */}
+            {activeTab !== "lgbmTuning" && <ChatPanel domain={domain} />}
           </div>
         </div>
         </JobNotificationProvider>

@@ -21,7 +21,7 @@ Algorithm:
         1. Load the cluster's .pkl model artifact
         2. Build an inference grid (feature matrix for T+1 through T+horizon)
         3. Generate predictions recursively: lag_1 for T+2 = model's T+1 prediction
-        4. Write to fact_production_forecast with upsert on (plan_version, item_no, loc, forecast_month)
+        4. Write to fact_production_forecast with upsert on (plan_version, item_id, loc, forecast_month)
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from collections import defaultdict
@@ -48,9 +48,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
-from common.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
+from common.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS, TS_PROFILE_FEATURES
 from common.forecast_ci import build_sigma_lookup, compute_ci_bounds
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 import psycopg
 
@@ -137,23 +138,23 @@ def load_active_models(model_id: str, config: dict) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 
-def get_champion_assignments(conn, item_no: str | None = None, loc: str | None = None) -> pd.DataFrame:
+def get_champion_assignments(conn, item_id: str | None = None, loc: str | None = None) -> pd.DataFrame:
     """Return the most recent champion model assignment per DFU.
 
     Returns `source_model_id` — the underlying algorithm (e.g. lgbm_cluster) whose
     artifacts are used for production inference.  Populated by champion selection
-    via the source_model_id column (added in F1.1 via sql/041_add_source_model_id.sql).
+    via the source_model_id column (added in F1.1 via sql/007_create_fact_external_forecast_monthly.sql).
     When NULL (champion rows from before this column was added), the caller falls
     back to `fallback_model_id` from config.
 
-    Returns DataFrame with columns: item_no, loc, source_model_id, cluster_id, dmdgroup.
+    Returns DataFrame with columns: item_id, loc, source_model_id, cluster_id, customer_group.
     """
     where_clauses = ["f.model_id = 'champion'"]
     params: list = []
 
-    if item_no:
-        where_clauses.append("f.dmdunit = %s")
-        params.append(item_no)
+    if item_id:
+        where_clauses.append("f.item_id = %s")
+        params.append(item_id)
     if loc:
         where_clauses.append("f.loc = %s")
         params.append(loc)
@@ -161,16 +162,16 @@ def get_champion_assignments(conn, item_no: str | None = None, loc: str | None =
     where_sql = " AND ".join(where_clauses)
 
     sql = f"""
-        SELECT DISTINCT ON (f.dmdunit, f.loc)
-            f.dmdunit                   AS item_no,
+        SELECT DISTINCT ON (f.item_id, f.loc)
+            f.item_id                   AS item_id,
             f.loc,
             f.source_model_id,
             d.ml_cluster                AS cluster_id,
-            d.dmdgroup
+            d.customer_group
         FROM fact_external_forecast_monthly f
-        JOIN dim_dfu d ON d.dmdunit = f.dmdunit AND d.loc = f.loc
+        JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
         WHERE {where_sql}
-        ORDER BY f.dmdunit, f.loc, f.startdate DESC
+        ORDER BY f.item_id, f.loc, f.startdate DESC
     """
 
     df = pd.read_sql(sql, conn, params=params)
@@ -185,11 +186,11 @@ def get_champion_assignments(conn, item_no: str | None = None, loc: str | None =
 # ---------------------------------------------------------------------------
 
 
-def load_recent_sales(conn, item_no: str | None = None, loc: str | None = None,
+def load_recent_sales(conn, item_id: str | None = None, loc: str | None = None,
                       lookback_months: int = 24) -> pd.DataFrame:
     """Load the last N months of sales for all DFUs (or a specific DFU).
 
-    Returns DataFrame with columns: item_no, loc, startdate, qty.
+    Returns DataFrame with columns: item_id, loc, startdate, qty.
     """
     planning_dt = pd.Timestamp(get_planning_date())
     planning_upper = planning_dt.normalize().replace(day=1)
@@ -198,34 +199,34 @@ def load_recent_sales(conn, item_no: str | None = None, loc: str | None = None,
     where_clauses = ["s.startdate >= %s", "s.startdate <= %s", "s.type = 1"]
     params: list = [cutoff.date(), planning_upper.date()]
 
-    if item_no:
-        where_clauses.append("s.dmdunit = %s")
-        params.append(item_no)
+    if item_id:
+        where_clauses.append("s.item_id = %s")
+        params.append(item_id)
     if loc:
         where_clauses.append("s.loc = %s")
         params.append(loc)
 
     where_sql = " AND ".join(where_clauses)
 
-    # Join dim_dfu to filter by dmdgroup — backtest training joined on dmdunit+dmdgroup+loc,
+    # Join dim_sku to filter by customer_group — backtest training joined on item_id+customer_group+loc,
     # so inference must use the same single customer group to get matching lag features.
-    # Without the dmdgroup filter, multiple customer-group rows per month would cause
+    # Without the customer_group filter, multiple customer-group rows per month would cause
     # wrong lag values (lag_1 = one customer group's qty, not the DFU-level qty).
     sql = f"""
-        SELECT s.dmdunit AS item_no, s.loc, s.startdate,
+        SELECT s.item_id AS item_id, s.loc, s.startdate,
                SUM(COALESCE(s.qty, 0)) AS qty
         FROM fact_sales_monthly s
-        INNER JOIN dim_dfu d ON d.dmdunit = s.dmdunit AND d.dmdgroup = s.dmdgroup AND d.loc = s.loc
+        INNER JOIN dim_sku d ON d.item_id = s.item_id AND d.customer_group = s.customer_group AND d.loc = s.loc
         WHERE {where_sql}
-        GROUP BY s.dmdunit, s.loc, s.startdate
-        ORDER BY s.dmdunit, s.loc, s.startdate
+        GROUP BY s.item_id, s.loc, s.startdate
+        ORDER BY s.item_id, s.loc, s.startdate
     """
 
     df = pd.read_sql(sql, conn, params=params)
     df["startdate"] = pd.to_datetime(df["startdate"])
     df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
     logger.info("Recent sales loaded: %s rows, %s DFUs",
-                f"{len(df):,}", f"{df.groupby(['item_no','loc']).ngroups:,}")
+                f"{len(df):,}", f"{df.groupby(['item_id','loc']).ngroups:,}")
     return df
 
 
@@ -234,14 +235,14 @@ def load_recent_sales(conn, item_no: str | None = None, loc: str | None = None,
 # ---------------------------------------------------------------------------
 
 
-def load_dfu_attrs(conn, item_no: str | None = None, loc: str | None = None) -> pd.DataFrame:
+def load_dfu_attrs(conn, item_id: str | None = None, loc: str | None = None) -> pd.DataFrame:
     """Load DFU attributes needed for feature construction."""
     where_clauses = []
     params: list = []
 
-    if item_no:
-        where_clauses.append("dmdunit = %s")
-        params.append(item_no)
+    if item_id:
+        where_clauses.append("item_id = %s")
+        params.append(item_id)
     if loc:
         where_clauses.append("loc = %s")
         params.append(loc)
@@ -249,9 +250,9 @@ def load_dfu_attrs(conn, item_no: str | None = None, loc: str | None = None) -> 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
     sql = f"""
-        SELECT dmdunit AS item_no, dmdgroup, loc, ml_cluster,
+        SELECT item_id AS item_id, customer_group, loc, ml_cluster,
                execution_lag, total_lt, brand, region, abc_vol
-        FROM dim_dfu
+        FROM dim_sku
         {where_sql}
     """
 
@@ -260,12 +261,12 @@ def load_dfu_attrs(conn, item_no: str | None = None, loc: str | None = None) -> 
     return df
 
 
-def load_item_attrs(conn, item_no: str | None = None) -> pd.DataFrame:
+def load_item_attrs(conn, item_id: str | None = None) -> pd.DataFrame:
     """Load item-level attributes (bpc, item_proof, case_weight) from dim_item."""
-    where_sql = "WHERE item_no = %s" if item_no else ""
-    params = [item_no] if item_no else []
+    where_sql = "WHERE item_id = %s" if item_id else ""
+    params = [item_id] if item_id else []
     sql = f"""
-        SELECT item_no, bpc, item_proof, case_weight
+        SELECT item_id, bpc, item_proof, case_weight
         FROM dim_item
         {where_sql}
     """
@@ -278,8 +279,8 @@ def load_item_attrs(conn, item_no: str | None = None) -> pd.DataFrame:
 
 
 def build_item_index(item_attrs: pd.DataFrame) -> dict[str, dict]:
-    """Pre-index item attributes by item_no → {bpc, item_proof, case_weight}."""
-    return item_attrs.set_index("item_no")[["bpc", "item_proof", "case_weight"]].to_dict("index")
+    """Pre-index item attributes by item_id → {bpc, item_proof, case_weight}."""
+    return item_attrs.set_index("item_id")[["bpc", "item_proof", "case_weight"]].to_dict("index")
 
 
 # ---------------------------------------------------------------------------
@@ -288,16 +289,16 @@ def build_item_index(item_attrs: pd.DataFrame) -> dict[str, dict]:
 
 
 def build_sales_index(sales_df: pd.DataFrame) -> dict[tuple, tuple]:
-    """Pre-index sales by (item_no, loc) → (sorted_dates, sorted_qty_list).
+    """Pre-index sales by (item_id, loc) → (sorted_dates, sorted_qty_list).
 
     Replaces O(N) pandas boolean-filter scan in build_inference_grid with an
     O(1) dict lookup. Call once before the DFU loop.
     """
     index: dict[tuple, tuple] = {}
-    for (item_no, loc), grp in sales_df.sort_values("startdate").groupby(
-        ["item_no", "loc"], sort=False
+    for (item_id, loc), grp in sales_df.sort_values("startdate").groupby(
+        ["item_id", "loc"], sort=False
     ):
-        index[(item_no, loc)] = (
+        index[(item_id, loc)] = (
             list(grp["startdate"].values),
             list(grp["qty"].values),
         )
@@ -305,11 +306,11 @@ def build_sales_index(sales_df: pd.DataFrame) -> dict[tuple, tuple]:
 
 
 def build_attrs_index(dfu_attrs: pd.DataFrame) -> dict[tuple, dict]:
-    """Pre-index DFU attributes by (item_no, loc) → attr dict.
+    """Pre-index DFU attributes by (item_id, loc) → attr dict.
 
     Replaces O(N) pandas boolean-filter scan with O(1) dict lookup.
     """
-    records = dfu_attrs.set_index(["item_no", "loc"]).to_dict("index")
+    records = dfu_attrs.set_index(["item_id", "loc"]).to_dict("index")
     return records
 
 
@@ -318,7 +319,7 @@ def build_cat_encoders(dfu_attrs: pd.DataFrame) -> dict[str, dict]:
 
     Training used pandas category codes (sorted unique values → 0-based int).
     Inference must apply the same encoding so models receive integers, not strings.
-    Returns {col: {str_value: int_code}} covering all values present in dim_dfu.
+    Returns {col: {str_value: int_code}} covering all values present in dim_sku.
     """
     encoders: dict[str, dict] = {}
     for col in CAT_FEATURES:
@@ -335,8 +336,88 @@ def build_cat_encoders(dfu_attrs: pd.DataFrame) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 
 
+def _compute_ts_profile_from_history(qty_series: list[float]) -> dict[str, float]:
+    """Compute TS profile features from a DFU's historical qty series.
+
+    Mirrors the features from feature_engineering._compute_ts_profile_features
+    but operates on a plain list instead of a DataFrame group.
+    """
+    arr = np.array(qty_series, dtype=np.float64)
+    n = len(arr)
+    mean_val = float(np.mean(arr)) if n > 0 else 0.0
+    std_val = float(np.std(arr, ddof=1)) if n > 1 else 0.0
+
+    # cv_demand
+    cv = std_val / (abs(mean_val) + 1e-9) if n > 1 else 0.0
+
+    # zero_demand_pct
+    zero_pct = float(np.sum(arr == 0)) / n if n > 0 else 0.0
+
+    # trend_slope_norm
+    if n >= 3 and abs(mean_val) > 1e-9:
+        x = np.arange(n, dtype=np.float64)
+        slope = float(np.polyfit(x, arr, 1)[0])
+        trend_slope = slope / abs(mean_val)
+    else:
+        trend_slope = 0.0
+
+    # recency_ratio
+    if n >= 12:
+        recent = float(np.mean(arr[-6:]))
+        prior = float(np.mean(arr[:-6]))
+        recency = recent / (prior + 1e-9) if prior > 1e-9 else 1.0
+    else:
+        recency = 1.0
+
+    # seasonal_amplitude
+    if n >= 24:
+        monthly_avg = np.zeros(12)
+        monthly_cnt = np.zeros(12)
+        for i, v in enumerate(arr):
+            monthly_avg[i % 12] += v
+            monthly_cnt[i % 12] += 1
+        mask = monthly_cnt > 0
+        monthly_avg[mask] /= monthly_cnt[mask]
+        seasonal_amp = float(np.max(monthly_avg) - np.min(monthly_avg)) / (abs(mean_val) + 1e-9) if abs(mean_val) > 1e-9 else 0.0
+    else:
+        seasonal_amp = 0.0
+
+    # adi (average demand interval)
+    nz_idx = np.where(arr > 0)[0]
+    if len(nz_idx) >= 2:
+        adi_val = float(np.mean(np.diff(nz_idx)))
+    elif len(nz_idx) == 1:
+        adi_val = float(n)
+    else:
+        adi_val = float(n)
+
+    # yoy_correlation
+    if n >= 24:
+        recent_12 = arr[-12:]
+        prior_12 = arr[-24:-12]
+        if np.std(recent_12) > 1e-9 and np.std(prior_12) > 1e-9:
+            yoy_corr = float(np.corrcoef(recent_12, prior_12)[0, 1])
+            if np.isnan(yoy_corr):
+                yoy_corr = 0.0
+        else:
+            yoy_corr = 0.0
+    else:
+        yoy_corr = 0.0
+
+    return {
+        "cv_demand": cv,
+        "zero_demand_pct": zero_pct,
+        "trend_slope_norm": trend_slope,
+        "recency_ratio": recency,
+        "seasonal_amplitude": seasonal_amp,
+        "adi": adi_val,
+        "mean_demand": mean_val,
+        "yoy_correlation": yoy_corr,
+    }
+
+
 def build_inference_grid(
-    item_no: str,
+    item_id: str,
     loc: str,
     cluster_id: int | str,
     sales_history: pd.DataFrame | None = None,
@@ -360,7 +441,7 @@ def build_inference_grid(
 
     if sales_index is not None:
         # Fast O(1) path — used by production main loop
-        entry = sales_index.get((item_no, loc))
+        entry = sales_index.get((item_id, loc))
         if entry is None:
             return None
         dates_arr, qty_arr = entry
@@ -371,7 +452,7 @@ def build_inference_grid(
     else:
         # Legacy DataFrame path — used by tests
         dfu_sales = sales_history[
-            (sales_history["item_no"] == item_no) & (sales_history["loc"] == loc)
+            (sales_history["item_id"] == item_id) & (sales_history["loc"] == loc)
         ].sort_values("startdate").copy()
         if len(dfu_sales) < max_lag:
             return None
@@ -386,15 +467,18 @@ def build_inference_grid(
 
     # DFU attributes for categorical features
     if attrs_index is not None:
-        attrs = attrs_index.get((item_no, loc), {})
+        attrs = attrs_index.get((item_id, loc), {})
     else:
         dfu_row = dfu_attrs[
-            (dfu_attrs["item_no"] == item_no) & (dfu_attrs["loc"] == loc)
+            (dfu_attrs["item_id"] == item_id) & (dfu_attrs["loc"] == loc)
         ]
         attrs = dfu_row.iloc[0].to_dict() if len(dfu_row) > 0 else {}
 
     # Item-level attributes (bpc, item_proof, case_weight from dim_item)
-    item_attrs = (item_index or {}).get(item_no, {})
+    item_attrs = (item_index or {}).get(item_id, {})
+
+    # TS profile features (static per-DFU, computed from full history)
+    _ts_profile = _compute_ts_profile_from_history(qty_series)
 
     for h, fmonth in enumerate(future_months):
         # At step h=0 (T+1), qty_series contains all actuals
@@ -441,12 +525,25 @@ def build_inference_grid(
         # Derived demand features (same as feature_engineering._recompute_derived_features)
         lag1 = row.get("qty_lag_1", 0.0)
         lag2 = row.get("qty_lag_2", 0.0)
+        lag12 = row.get("qty_lag_12", 0.0)
         row["mom_growth"] = max(-2.0, min(2.0, (lag1 - lag2) / (abs(lag2) + 1.0)))
         rm3 = row.get("rolling_mean_3m", 0.0)
         rm6 = row.get("rolling_mean_6m", 0.0)
+        rm12 = row.get("rolling_mean_12m", 0.0)
         row["demand_accel"] = rm3 - rm6
         rs3 = row.get("rolling_std_3m", 0.0)
         row["volatility_ratio"] = rs3 / (abs(rm3) + 1.0)
+
+        # Lag ratio features
+        row["lag_ratio_yoy"] = max(-10.0, min(10.0, lag1 / (abs(lag12) + 1.0)))
+        row["lag_ratio_mom"] = max(-10.0, min(10.0, lag1 / (abs(lag2) + 1.0)))
+        row["lag_ratio_3v12"] = max(-10.0, min(10.0, rm3 / (abs(rm12) + 1.0)))
+
+        # Zero-demand count (last 6 lags)
+        row["n_zero_last_6m"] = sum(1.0 for i in range(1, 7) if row.get(f"qty_lag_{i}", 0.0) == 0.0)
+
+        # TS profile features (static per-DFU)
+        row.update(_ts_profile)
 
         row["_forecast_month"] = fmonth
         row["_horizon"] = h + 1
@@ -472,7 +569,7 @@ def generate_forecast_recursive(
     feature_cols: list[str],
     grid: pd.DataFrame,
     horizon: int,
-    item_no: str,
+    item_id: str,
     loc: str,
     plan_version: str,
     run_id: str,
@@ -540,7 +637,7 @@ def generate_forecast_recursive(
 
         rows.append({
             "plan_version": plan_version,
-            "item_no": item_no,
+            "item_id": item_id,
             "loc": loc,
             "forecast_month": forecast_month_date,
             "forecast_qty": pred,
@@ -595,7 +692,6 @@ def generate_forecasts_batch(
     if not valid_pairs:
         return []
 
-    valid_orig_idx = [t[0] for t in valid_pairs]
     valid_champs = [t[1] for t in valid_pairs]
     valid_grids = [t[2] for t in valid_pairs]
 
@@ -721,13 +817,13 @@ def generate_forecasts_batch(
     ts_now = datetime.now(timezone.utc)
     all_rows: list[dict] = []
     for j, champ in enumerate(valid_champs):
-        item_no = champ["item_no"]
+        item_id = champ["item_id"]
         loc = champ["loc"]
         cluster_id = _to_cluster_id(champ["cluster_id"])
         months = forecast_months[j]
 
         # Resolve per-DFU sigma for CI bands (None when CI disabled or no backtest history)
-        sigma = sigma_lookup.get((item_no, loc)) if sigma_lookup else None
+        sigma = sigma_lookup.get((item_id, loc)) if sigma_lookup else None
 
         for h in range(min(len(months), horizon)):
             pred = round(float(all_preds[j, h]), 2)
@@ -747,7 +843,7 @@ def generate_forecasts_batch(
 
             all_rows.append({
                 "plan_version": plan_version,
-                "item_no": item_no,
+                "item_id": item_id,
                 "loc": loc,
                 "forecast_month": months[h],
                 "forecast_qty": pred,
@@ -785,14 +881,14 @@ def write_forecast(rows: list[dict], conn, dry_run: bool = False) -> int:
 
     sql = """
         INSERT INTO fact_production_forecast
-            (plan_version, item_no, loc, forecast_month, forecast_qty,
+            (plan_version, item_id, loc, forecast_month, forecast_qty,
              forecast_qty_lower, forecast_qty_upper, model_id, cluster_id,
              horizon_months, is_recursive, lag_source, run_id, generated_at)
         VALUES
-            (%(plan_version)s, %(item_no)s, %(loc)s, %(forecast_month)s, %(forecast_qty)s,
+            (%(plan_version)s, %(item_id)s, %(loc)s, %(forecast_month)s, %(forecast_qty)s,
              %(forecast_qty_lower)s, %(forecast_qty_upper)s, %(model_id)s, %(cluster_id)s,
              %(horizon_months)s, %(is_recursive)s, %(lag_source)s, %(run_id)s, %(generated_at)s)
-        ON CONFLICT (plan_version, item_no, loc, forecast_month)
+        ON CONFLICT (plan_version, item_id, loc, forecast_month)
         DO UPDATE SET
             forecast_qty        = EXCLUDED.forecast_qty,
             forecast_qty_lower  = EXCLUDED.forecast_qty_lower,
@@ -886,22 +982,23 @@ def main() -> None:
     with psycopg.connect(**db) as conn:
         # Load data
         logger.info("Step 1: Loading data...")
-        champion_df = get_champion_assignments(conn, item_filter, loc_filter)
-        if len(champion_df) == 0:
-            logger.info("No champion assignments found. Run 'make champion-select' first.")
-            return
+        with profiled_section("load_data"):
+            champion_df = get_champion_assignments(conn, item_filter, loc_filter)
+            if len(champion_df) == 0:
+                logger.info("No champion assignments found. Run 'make champion-select' first.")
+                return
 
-        if args.max_dfus and len(champion_df) > args.max_dfus:
-            champion_df = champion_df.head(args.max_dfus)
-            logger.info("Sampling limited to %s DFUs (--max-dfus)", f"{args.max_dfus:,}")
+            if args.max_dfus and len(champion_df) > args.max_dfus:
+                champion_df = champion_df.head(args.max_dfus)
+                logger.info("Sampling limited to %s DFUs (--max-dfus)", f"{args.max_dfus:,}")
 
-        sales_df = load_recent_sales(conn, item_filter, loc_filter)
-        dfu_attrs = load_dfu_attrs(conn, item_filter, loc_filter)
-        item_attrs_df = load_item_attrs(conn, item_filter)
+            sales_df = load_recent_sales(conn, item_filter, loc_filter)
+            dfu_attrs = load_dfu_attrs(conn, item_filter, loc_filter)
+            item_attrs_df = load_item_attrs(conn, item_filter)
 
         # Determine which model_ids we need to load.
         # source_model_id = the underlying algorithm that won per DFU (e.g. lgbm_cluster).
-        # Populated by champion selection after sql/041_add_source_model_id.sql is applied.
+        # Populated by champion selection after sql/007_create_fact_external_forecast_monthly.sql is applied.
         # Always include fallback_model_id so every DFU has at least one model to use.
         if args.model_id:
             model_ids_needed = {args.model_id}
@@ -911,12 +1008,13 @@ def main() -> None:
 
         # Load model artifacts
         logger.info("Step 2: Loading model artifacts for: %s", model_ids_needed)
-        loaded_models: dict[str, dict] = {}
-        for mid in model_ids_needed:
-            try:
-                loaded_models[mid] = load_active_models(mid, config)
-            except FileNotFoundError as e:
-                logger.warning("%s", e)
+        with profiled_section("load_models"):
+            loaded_models: dict[str, dict] = {}
+            for mid in model_ids_needed:
+                try:
+                    loaded_models[mid] = load_active_models(mid, config)
+                except FileNotFoundError as e:
+                    logger.warning("%s", e)
 
         if not loaded_models:
             logger.info("No model artifacts found for: %s", model_ids_needed)
@@ -926,10 +1024,11 @@ def main() -> None:
 
         # Pre-index data structures for O(1) per-DFU lookups
         logger.info("Step 2b: Pre-indexing data structures...")
-        sales_index = build_sales_index(sales_df)
-        attrs_index = build_attrs_index(dfu_attrs)
-        item_index = build_item_index(item_attrs_df)
-        cat_encoders = build_cat_encoders(dfu_attrs)
+        with profiled_section("pre_index"):
+            sales_index = build_sales_index(sales_df)
+            attrs_index = build_attrs_index(dfu_attrs)
+            item_index = build_item_index(item_attrs_df)
+            cat_encoders = build_cat_encoders(dfu_attrs)
         logger.info("Indexed %s DFUs (sales), %s DFUs (attrs), %s items, %d cat encoders",
                     f"{len(sales_index):,}", f"{len(attrs_index):,}",
                     f"{len(item_index):,}", len(cat_encoders))
@@ -939,59 +1038,61 @@ def main() -> None:
         sigma_lookup: dict = {}
         if ci_cfg.get("enabled", False):
             logger.info("Step 2c: Building forecast uncertainty (CI bands)...")
-            cluster_map: dict[tuple, str] = {
-                (r["item_no"], r["loc"]): str(r.get("ml_cluster") or "unknown")
-                for r in dfu_attrs[["item_no", "loc", "ml_cluster"]].to_dict("records")
-            }
-            sigma_lookup = build_sigma_lookup(conn, config, cluster_map)
+            with profiled_section("build_ci_sigma"):
+                cluster_map: dict[tuple, str] = {
+                    (r["item_id"], r["loc"]): str(r.get("ml_cluster") or "unknown")
+                    for r in dfu_attrs[["item_id", "loc", "ml_cluster"]].to_dict("records")
+                }
+                sigma_lookup = build_sigma_lookup(conn, config, cluster_map)
             logger.info("CI sigma lookup: %s DFUs mapped", f"{len(sigma_lookup):,}")
 
         # Group DFUs by (model_id, cluster_id) for batched inference
         logger.info("Step 3: Building cluster groups for %s DFUs...", f"{len(champion_df):,}")
-        cluster_groups: dict[tuple, list] = defaultdict(list)
-        skipped = 0
+        with profiled_section("build_cluster_groups"):
+            cluster_groups: dict[tuple, list] = defaultdict(list)
+            skipped = 0
 
-        def _resolve_artifact(model_id: str, cluster_id) -> dict | None:
-            cluster_models = loaded_models.get(model_id) or loaded_models.get(fallback_model_id)
-            if cluster_models is None:
-                return None
-            art = cluster_models.get(cluster_id)
-            if art is None:
-                try:
-                    art = cluster_models.get(int(cluster_id))
-                except (ValueError, TypeError):
-                    pass
-            if art is None:
-                art = next(iter(cluster_models.values()), None)
-            return art
+            def _resolve_artifact(model_id: str, cluster_id) -> dict | None:
+                cluster_models = loaded_models.get(model_id) or loaded_models.get(fallback_model_id)
+                if cluster_models is None:
+                    return None
+                art = cluster_models.get(cluster_id)
+                if art is None:
+                    try:
+                        art = cluster_models.get(int(cluster_id))
+                    except (ValueError, TypeError):
+                        pass
+                if art is None:
+                    art = next(iter(cluster_models.values()), None)
+                return art
 
-        for _, champ in champion_df.iterrows():
-            item_no = champ["item_no"]
-            loc = champ["loc"]
-            model_id = args.model_id or champ["source_model_id"] or fallback_model_id
-            cluster_id = champ["cluster_id"]
+            for _, champ in champion_df.iterrows():
+                item_id = champ["item_id"]
+                loc = champ["loc"]
+                model_id = args.model_id or champ["source_model_id"] or fallback_model_id
+                cluster_id = champ["cluster_id"]
 
-            artifact = _resolve_artifact(model_id, cluster_id)
-            if artifact is None:
-                skipped += 1
-                continue
+                artifact = _resolve_artifact(model_id, cluster_id)
+                if artifact is None:
+                    skipped += 1
+                    continue
 
-            grid = build_inference_grid(
-                item_no=item_no,
-                loc=loc,
-                cluster_id=cluster_id,
-                horizon=horizon,
-                sales_index=sales_index,
-                attrs_index=attrs_index,
-                item_index=item_index,
-            )
-            if grid is None:
-                skipped += 1
-                continue
+                grid = build_inference_grid(
+                    item_id=item_id,
+                    loc=loc,
+                    cluster_id=cluster_id,
+                    horizon=horizon,
+                    sales_index=sales_index,
+                    attrs_index=attrs_index,
+                    item_index=item_index,
+                )
+                if grid is None:
+                    skipped += 1
+                    continue
 
-            cluster_groups[(model_id, cluster_id)].append(
-                ({"item_no": item_no, "loc": loc, "cluster_id": cluster_id}, grid, artifact)
-            )
+                cluster_groups[(model_id, cluster_id)].append(
+                    ({"item_id": item_id, "loc": loc, "cluster_id": cluster_id}, grid, artifact)
+                )
 
         logger.info("%s DFUs in %d cluster groups, %s skipped (no history/model)",
                     f"{sum(len(v) for v in cluster_groups.values()):,}",
@@ -1020,24 +1121,27 @@ def main() -> None:
             )
             return (mid, cid, len(dfu_lst), rows)
 
-        with ThreadPoolExecutor(max_workers=n_workers) as executor:
-            futures = {executor.submit(_run_group, item): item for item in cluster_groups.items()}
-            for future in as_completed(futures):
-                mid, cid, n_dfus, batch_rows = future.result()
-                all_rows.extend(batch_rows)
-                logger.info("(%s, cluster %s): %s DFUs -> %s rows",
-                            mid, cid, f"{n_dfus:,}", f"{len(batch_rows):,}")
+        with profiled_section("batched_inference"):
+            with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                futures = {executor.submit(_run_group, item): item for item in cluster_groups.items()}
+                for future in as_completed(futures):
+                    mid, cid, n_dfus, batch_rows = future.result()
+                    all_rows.extend(batch_rows)
+                    logger.info("(%s, cluster %s): %s DFUs -> %s rows",
+                                mid, cid, f"{n_dfus:,}", f"{len(batch_rows):,}")
 
         logger.info("Step 3 complete: %s rows, %s skipped", f"{len(all_rows):,}", f"{skipped:,}")
 
         # Write to DB
         logger.info("Step 4: Writing to fact_production_forecast...")
-        written = write_forecast(all_rows, conn, dry_run=args.dry_run)
+        with profiled_section("write_forecast"):
+            written = write_forecast(all_rows, conn, dry_run=args.dry_run)
         logger.info("Written: %s rows", f"{written:,}")
 
         # Purge old plan versions
         if not args.dry_run:
-            purge_old_versions(conn, keep_n=keep_n, dry_run=args.dry_run)
+            with profiled_section("purge_old_versions"):
+                purge_old_versions(conn, keep_n=keep_n, dry_run=args.dry_run)
 
     elapsed = time.time() - t_start
     logger.info("Production forecast complete in %.0fs (%.1fm)", elapsed, elapsed / 60)

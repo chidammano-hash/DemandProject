@@ -40,7 +40,7 @@ export interface TransferLane {
 }
 
 export interface Imbalance {
-  item_no: string;
+  item_id: string;
   location_count: number;
   avg_on_hand: number | null;
   avg_dos: number | null;
@@ -67,7 +67,7 @@ export interface RebalancingPlan {
 
 export interface RebalancingTransfer {
   transfer_id: string;
-  item_no: string;
+  item_id: string;
   source_loc: string;
   dest_loc: string;
   transfer_mode: string;

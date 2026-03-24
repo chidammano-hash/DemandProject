@@ -15,10 +15,10 @@ vi.mock("@/api/queries/evolution", () => ({
   sopKeys: { cycles: () => ["sop-cycles"], gaps: () => ["sop-gaps"], approvedPlan: () => ["sop-plan"] },
   biasKeys: { summary: () => ["bias-summary"], flagged: () => ["bias-flagged"] },
   STALE_EVO: { FIVE_MIN: 300000, ONE_MIN: 60000 },
-  fetchBiasCorrectionSummary: vi.fn().mockResolvedValue({ dfu_count: 0, avg_correction_factor: null, flagged_count: 0, clipped_count: 0, avg_rolling_bias: null, last_computed_at: null }),
+  fetchBiasCorrectionSummary: vi.fn().mockResolvedValue({ sku_count: 0, avg_correction_factor: null, flagged_count: 0, clipped_count: 0, avg_rolling_bias: null, last_computed_at: null }),
   fetchFlaggedBiasCorrections: vi.fn().mockResolvedValue({ total: 0, flagged: [] }),
   fetchBlendedForecast: vi.fn().mockResolvedValue({ total: 0, page: 1, rows: [] }),
-  fetchBlendedSummary: vi.fn().mockResolvedValue({ total_dfus: 0, total_weeks: 0, avg_alpha: null, capped_count: 0 }),
+  fetchBlendedSummary: vi.fn().mockResolvedValue({ total_skus: 0, total_weeks: 0, avg_alpha: null, capped_count: 0 }),
   fetchEchelonTargets: vi.fn().mockResolvedValue({ total: 0, page: 1, rows: [] }),
   fetchEchelonSummary: vi.fn().mockResolvedValue({ total_nodes: 0, critical_count: 0, high_count: 0, avg_coverage_days: null }),
   fetchBudgetStatus: vi.fn().mockResolvedValue({ total: 0, budgets: [] }),
@@ -45,7 +45,7 @@ vi.mock("@/api/queries/inv-planning-insights", () => ({
   STALE_INSIGHTS: { ONE_MIN: 60000, FIVE_MIN: 300000 },
   fetchActionFeed: vi.fn().mockResolvedValue({ items: [], total: 0 }),
   fetchRootCause: vi.fn().mockResolvedValue({ causes: [] }),
-  fetchSegmentDashboard: vi.fn().mockResolvedValue({ segment: "AX", dfu_count: 0, kpis: {}, exceptions: [], policy_distribution: {} }),
+  fetchSegmentDashboard: vi.fn().mockResolvedValue({ segment: "AX", sku_count: 0, kpis: {}, exceptions: [], policy_distribution: {} }),
   fetchSsCostBenefit: vi.fn().mockResolvedValue({ items: [], total: 0, summary: { total_holding_cost: 0, total_stockout_risk: 0, over_stocked_count: 0, under_stocked_count: 0 } }),
   fetchServiceLevelWaterfall: vi.fn().mockResolvedValue({ steps: [], achieved_csl: 0 }),
   fetchNetworkHeatmap: vi.fn().mockResolvedValue({ locations: [], categories: [], cells: [] }),
@@ -106,7 +106,7 @@ vi.mock("@/api/queries", () => ({
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchEoqSummary: vi.fn().mockResolvedValue({
-    total_dfus: 150,
+    total_skus: 150,
     avg_effective_eoq: 219.09,
     total_cycle_stock: 15000,
     avg_order_frequency: 5.5,
@@ -122,7 +122,7 @@ vi.mock("@/api/queries", () => ({
     offset: 0,
     rows: [
       {
-        item_no: "ITEM001", loc: "LOC1", abc_vol: "A",
+        item_id: "ITEM001", loc: "LOC1", abc_vol: "A",
         demand_mean_monthly: 100, annual_demand: 1200,
         ordering_cost: 50, holding_cost_pct: 0.25, unit_cost: 10, moq: 1,
         eoq: 219.09, effective_eoq: 219.09, eoq_cycle_stock: 109.54,
@@ -133,7 +133,7 @@ vi.mock("@/api/queries", () => ({
     ],
   }),
   fetchEoqSensitivity: vi.fn().mockResolvedValue({
-    item_no: null,
+    item_id: null,
     loc: null,
     avg_demand_monthly: 100.0,
     curve: [
@@ -153,7 +153,7 @@ vi.mock("@/api/queries", () => ({
         use_eoq: true,
         use_safety_stock: true,
         active: true,
-        dfu_count: 150,
+        sku_count: 150,
       },
       {
         policy_id: "lumpy_manual_v1",
@@ -165,12 +165,12 @@ vi.mock("@/api/queries", () => ({
         use_eoq: false,
         use_safety_stock: false,
         active: true,
-        dfu_count: 30,
+        sku_count: 30,
       },
     ],
   }),
   fetchPolicyCompliance: vi.fn().mockResolvedValue({
-    total_dfus: 500,
+    total_skus: 500,
     assigned_count: 420,
     unassigned_count: 80,
     assignment_pct: 84.0,
@@ -178,7 +178,7 @@ vi.mock("@/api/queries", () => ({
       A_continuous_v1: {
         policy_name: "A-Class Continuous Review (ROP/EOQ)",
         policy_type: "continuous_rop",
-        dfu_count: 150,
+        sku_count: 150,
         below_ss_pct: null,
         avg_ss_coverage: null,
         avg_dos: 32.5,
@@ -196,10 +196,10 @@ vi.mock("@/api/queries", () => ({
     use_eoq: true,
     use_safety_stock: true,
     active: true,
-    dfu_count: 150,
+    sku_count: 150,
   }),
   fetchHealthSummary: vi.fn().mockResolvedValue({
-    total_dfus: 500,
+    total_skus: 500,
     by_tier: { healthy: 200, monitor: 150, at_risk: 100, critical: 50 },
     avg_health_score: 68.5,
     component_avgs: { ss_coverage: 17.0, dos_target: 18.5, stockout_risk: 21.0, forecast_accuracy: 16.5 },
@@ -213,14 +213,14 @@ vi.mock("@/api/queries", () => ({
     total: 2,
     rows: [
       {
-        item_no: "ITEM001", loc: "LOC1", abc_vol: "A", variability_class: "low", cluster_assignment: "c1",
+        item_id: "ITEM001", loc: "LOC1", abc_vol: "A", variability_class: "low", cluster_assignment: "c1",
         health_score: 82, health_tier: "healthy",
         score_ss_coverage: 25, score_dos_target: 25, score_stockout_risk: 25, score_forecast_accuracy: 20,
         ss_coverage: 1.8, current_dos: 22.5, target_dos_min: 15.0, target_dos_max: 30.0,
         is_below_ss: false, recent_wape: 0.12, stockout_count_3m: 0,
       },
       {
-        item_no: "ITEM002", loc: "LOC2", abc_vol: "C", variability_class: "high", cluster_assignment: "c3",
+        item_id: "ITEM002", loc: "LOC2", abc_vol: "C", variability_class: "high", cluster_assignment: "c3",
         health_score: 35, health_tier: "critical",
         score_ss_coverage: 0, score_dos_target: 5, score_stockout_risk: 8, score_forecast_accuracy: 8,
         ss_coverage: 0.2, current_dos: 5.0, target_dos_min: 15.0, target_dos_max: 30.0,
@@ -242,7 +242,7 @@ vi.mock("@/api/queries", () => ({
     offset: 0,
     rows: [
       {
-        exception_id: "exc-001", item_no: "ITEM001", loc: "LOC1",
+        exception_id: "exc-001", item_id: "ITEM001", loc: "LOC1",
         exception_date: "2026-03-04", exception_type: "below_rop", severity: "high",
         current_qty_on_hand: 150, current_dos: 30, ss_combined: 200, reorder_point: 180,
         recommended_order_qty: 100, recommended_order_by: "2026-03-11",
@@ -251,7 +251,7 @@ vi.mock("@/api/queries", () => ({
         acknowledged_by: null, notes: null,
       },
       {
-        exception_id: "exc-002", item_no: "ITEM002", loc: "LOC2",
+        exception_id: "exc-002", item_id: "ITEM002", loc: "LOC2",
         exception_date: "2026-03-04", exception_type: "stockout", severity: "critical",
         current_qty_on_hand: 0, current_dos: 0, ss_combined: 100, reorder_point: 120,
         recommended_order_qty: 200, recommended_order_by: "2026-03-04",
@@ -277,7 +277,7 @@ vi.mock("@/api/queries", () => ({
     detail: (p?: Record<string, unknown>) => ["fill-rate-detail", p ?? {}],
   },
   fetchFillRateSummary: vi.fn().mockResolvedValue({
-    total_dfus: 500, avg_fill_rate_3m: 0.93, fill_rate_ytd: 0.91,
+    total_skus: 500, avg_fill_rate_3m: 0.93, fill_rate_ytd: 0.91,
     below_threshold_count: 25, critical_fill_rate_count: 10,
     by_abc: [{ abc_vol: "A", count: 100, avg_fill_rate: 0.97, shortage_qty: 500 }],
   }),
@@ -339,14 +339,14 @@ vi.mock("@/api/queries", () => ({
     config: () => ["safety-stock", "config"],
   },
   fetchSafetyStockSummary: vi.fn().mockResolvedValue({
-    total_dfus: 300, below_ss_count: 45, avg_ss_coverage: 1.8, avg_ss_days: 21,
+    total_skus: 300, below_ss_count: 45, avg_ss_coverage: 1.8, avg_ss_days: 21,
     by_abc: [{ abc_vol: "A", count: 100, below_ss_count: 10, avg_coverage: 2.1 }],
   }),
   fetchSafetyStockDetail: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
   fetchSafetyStockWaterfall: vi.fn().mockResolvedValue(null),
   fetchSafetyStockConfig: vi.fn().mockResolvedValue({}),
   fetchVariabilitySummary: vi.fn().mockResolvedValue({
-    total_dfus: 400, avg_cv: 0.35,
+    total_skus: 400, avg_cv: 0.35,
     by_class: { low: 150, medium: 180, high: 50, lumpy: 20 },
     cv_percentiles: { p25: 0.15, p50: 0.30, p75: 0.55, p95: 0.90 },
     avg_intermittency_ratio: 0.12, top_volatile: [],
@@ -388,22 +388,22 @@ vi.mock("@/api/queries", () => ({
   // Production Forecast (F1.1)
   fetchProductionForecastVersions: vi.fn().mockResolvedValue({
     versions: [
-      { plan_version: "2026-03", dfu_count: 1000, total_rows: 12000, generated_at: "2026-03-01T06:00:00Z" },
+      { plan_version: "2026-03", sku_count: 1000, total_rows: 12000, generated_at: "2026-03-01T06:00:00Z" },
     ],
   }),
   fetchProductionForecastSummary: vi.fn().mockResolvedValue({
     plan_version: "2026-03",
     horizon_months: 3,
-    total_dfu_count: 1000,
+    total_sku_count: 1000,
     total_forecast_qty: 55000.0,
     generated_at: "2026-03-01T06:00:00Z",
     by_abc_class: [
-      { abc_class: "A", dfu_count: 200, forecast_qty: 20000.0 },
-      { abc_class: "B", dfu_count: 500, forecast_qty: 25000.0 },
+      { abc_class: "A", sku_count: 200, forecast_qty: 20000.0 },
+      { abc_class: "B", sku_count: 500, forecast_qty: 25000.0 },
     ],
   }),
   fetchProductionForecast: vi.fn().mockResolvedValue({
-    item_no: "ITEM001", loc: "LOC1",
+    item_id: "ITEM001", loc: "LOC1",
     plan_version: "2026-03", model_id: "lgbm_cluster",
     generated_at: "2026-03-01T06:00:00Z", horizon_months: 3, is_recursive: true,
     forecasts: [
@@ -413,7 +413,7 @@ vi.mock("@/api/queries", () => ({
   }),
   // Open PO Integration (F1.3) + Projection (F1.2)
   projectionKeys: {
-    dfu: (p: Record<string, unknown>) => ["projection", "dfu", p],
+    sku: (p: Record<string, unknown>) => ["projection", "sku", p],
     atRisk: (h: number) => ["projection", "at-risk", h],
   },
   fetchOpenPOSummary: vi.fn().mockResolvedValue({
@@ -434,7 +434,7 @@ vi.mock("@/api/queries", () => ({
     page_size: 50,
     items: [
       {
-        po_number: "PO-4521", po_line_number: 1, item_no: "100320", loc: "1401-BULK",
+        po_number: "PO-4521", po_line_number: 1, item_id: "100320", loc: "1401-BULK",
         supplier_id: "VENDOR-0042", supplier_name: "Acme Supply Co.",
         po_date: "2026-02-15", ordered_qty: 150, confirmed_qty: 150, received_qty: 0,
         open_qty: 150, unit_cost: 12.50, line_value: 1875.0,
@@ -467,7 +467,7 @@ vi.mock("@/api/queries", () => ({
     page_size: 50,
     items: [
       {
-        id: 1001, item_no: "100320", loc: "1401-BULK",
+        id: 1001, item_id: "100320", loc: "1401-BULK",
         supplier_id: "VENDOR-0042", supplier_name: "Acme Supply Co.",
         net_requirement_qty: 233.4, recommended_qty: 300.0, moq: 100.0,
         unit_cost: 12.5, order_value: 3750.0, currency: "USD",
@@ -487,9 +487,9 @@ vi.mock("@/api/queries", () => ({
   generatePlannedOrders: vi.fn().mockResolvedValue({ status: "accepted", job_id: "test-job-id" }),
   // Demand Plan (F2.2)
   fetchDemandPlanVersions: vi.fn().mockResolvedValue({ versions: [] }),
-  fetchDemandPlan: vi.fn().mockResolvedValue({ item_no: "", loc: "", plan_version: "", generated_at: null, horizon_months: 12, rows: [] }),
-  fetchDemandPlanWeekly: vi.fn().mockResolvedValue({ item_no: "", loc: "", plan_version: "", weeks: [] }),
-  fetchDemandPlanComparison: vi.fn().mockResolvedValue({ item_no: "", loc: "", v1: "", v2: "", months: [] }),
+  fetchDemandPlan: vi.fn().mockResolvedValue({ item_id: "", loc: "", plan_version: "", generated_at: null, horizon_months: 12, rows: [] }),
+  fetchDemandPlanWeekly: vi.fn().mockResolvedValue({ item_id: "", loc: "", plan_version: "", weeks: [] }),
+  fetchDemandPlanComparison: vi.fn().mockResolvedValue({ item_id: "", loc: "", v1: "", v2: "", months: [] }),
   // Procurement Workflow (F2.4)
   fetchPurchaseOrders: vi.fn().mockResolvedValue({ total: 0, total_value: 0, page: 1, orders: [] }),
   approvePurchaseOrder: vi.fn().mockResolvedValue({ po_number: "DS-2026-04-001", status: "planner_approved", approved_by: "planner1" }),
@@ -513,7 +513,7 @@ vi.mock("@/api/queries", () => ({
   STALE_INSIGHTS: { ONE_MIN: 60000, FIVE_MIN: 300000 },
   fetchActionFeed: vi.fn().mockResolvedValue({ items: [], total: 0 }),
   fetchRootCause: vi.fn().mockResolvedValue({ causes: [] }),
-  fetchSegmentDashboard: vi.fn().mockResolvedValue({ segment: "AX", dfu_count: 0, kpis: {}, exceptions: [], policy_distribution: {} }),
+  fetchSegmentDashboard: vi.fn().mockResolvedValue({ segment: "AX", sku_count: 0, kpis: {}, exceptions: [], policy_distribution: {} }),
   fetchSsCostBenefit: vi.fn().mockResolvedValue({ items: [], total: 0, summary: { total_holding_cost: 0, total_stockout_risk: 0, over_stocked_count: 0, under_stocked_count: 0 } }),
   fetchServiceLevelWaterfall: vi.fn().mockResolvedValue({ steps: [], achieved_csl: 0 }),
   fetchNetworkHeatmap: vi.fn().mockResolvedValue({ locations: [], categories: [], cells: [] }),
@@ -524,7 +524,7 @@ vi.mock("@/api/queries", () => ({
   // Override Queue (F2.3)
   fetchOverrideSummary: vi.fn().mockResolvedValue({
     by_status: { pending_approval: 2, approved: 5, rejected: 1, expired: 0, superseded: 0 },
-    dfu_count_overridden: 3,
+    sku_count_overridden: 3,
     total_uplift_units: 1200,
     total_uplift_value: 6000,
     by_type: { PROMO: 4, MANUAL: 4 },
@@ -533,7 +533,27 @@ vi.mock("@/api/queries", () => ({
   submitOverride: vi.fn().mockResolvedValue({ override_id: 1, status: "pending_approval", requires_approval: true, message: "ok" }),
   approveOverride: vi.fn().mockResolvedValue({ override_id: 1, status: "approved", approved_by: "manager", approved_at: "2026-03-07T00:00:00Z" }),
   rejectOverride: vi.fn().mockResolvedValue({ override_id: 1, status: "rejected" }),
-  fetchConsensusPlan: vi.fn().mockResolvedValue({ plan_version: "", item_no: "", loc: "", months: [] }),
+  fetchConsensusPlan: vi.fn().mockResolvedValue({ plan_version: "", item_id: "", loc: "", months: [] }),
+  // Sourcing
+  fetchSourcingRows: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  fetchSourcingSearch: vi.fn().mockResolvedValue({ rows: [] }),
+  fetchSourcingByItem: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  fetchSourcingBySupplier: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  fetchSourcingNetwork: vi.fn().mockResolvedValue({
+    total_rows: 0, supplier_count: 0, item_location_count: 0,
+    single_source_count: 0, multi_source_count: 0, transit_modes: [],
+  }),
+  // Purchase Orders (full domain)
+  fetchPORows: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  fetchPOSearch: vi.fn().mockResolvedValue({ rows: [] }),
+  fetchPOByNumber: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  fetchPOSummary: vi.fn().mockResolvedValue({
+    total_lines: 0, closed_lines: 0, open_lines: 0,
+    distinct_pos: 0, distinct_suppliers: 0, distinct_items: 0,
+    total_value: 0, open_value: 0, closed_value: 0,
+  }),
+  fetchPOAging: vi.fn().mockResolvedValue({ buckets: [] }),
+  fetchPOOnTimeDelivery: vi.fn().mockResolvedValue({ suppliers: [] }),
 }));
 
 const { InvPlanningTab } = await import("@/tabs/InvPlanningTab");
@@ -785,7 +805,7 @@ describe("InvPlanningTab", () => {
     );
     navigateTo("Daily Ops", "Health");
     await waitFor(() => {
-      // item_no appears in both EOQ and health detail tables
+      // item_id appears in both EOQ and health detail tables
       const items = screen.getAllByText("ITEM001");
       expect(items.length).toBeGreaterThan(0);
     });

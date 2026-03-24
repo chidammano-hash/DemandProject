@@ -17,11 +17,19 @@ from __future__ import annotations
 import argparse
 import yaml
 import psycopg
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Optional
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 CONFIG_PATH = "config/quantile_forecast_config.yaml"
 SENSING_HORIZON_WEEKS = 4
@@ -112,15 +120,15 @@ def apply_dow_factor(weekly_qty: float, dow_factor: float = 1.0) -> float:
 def upsert_blend_rows(conn: psycopg.Connection, rows: list[dict]) -> int:
     sql = """
         INSERT INTO fact_blended_demand_plan (
-            item_no, loc, week_start, plan_version, alpha_weight,
+            item_id, loc, week_start, plan_version, alpha_weight,
             sensing_signal_qty, statistical_forecast_qty, blended_qty,
             velocity_spike_ratio, is_outlier_capped
         ) VALUES (
-            %(item_no)s, %(loc)s, %(week_start)s, %(plan_version)s, %(alpha_weight)s,
+            %(item_id)s, %(loc)s, %(week_start)s, %(plan_version)s, %(alpha_weight)s,
             %(sensing_signal_qty)s, %(statistical_forecast_qty)s, %(blended_qty)s,
             %(velocity_spike_ratio)s, %(is_outlier_capped)s
         )
-        ON CONFLICT (item_no, loc, week_start, plan_version)
+        ON CONFLICT (item_id, loc, week_start, plan_version)
         DO UPDATE SET
             alpha_weight             = EXCLUDED.alpha_weight,
             sensing_signal_qty       = EXCLUDED.sensing_signal_qty,
@@ -137,22 +145,24 @@ def upsert_blend_rows(conn: psycopg.Connection, rows: list[dict]) -> int:
 
 def fetch_sensing_data(
     conn: psycopg.Connection,
-    item_no: Optional[str],
+    item_id: Optional[str],
     loc: Optional[str],
 ) -> list[dict]:
     """Fetch latest demand signals from fact_demand_signals."""
     conditions = ["signal_date >= CURRENT_DATE - INTERVAL '7 days'"]
     params: list = []
-    if item_no:
-        conditions.append("item_no = %s"); params.append(item_no)
+    if item_id:
+        conditions.append("item_id = %s")
+        params.append(item_id)
     if loc:
-        conditions.append("loc = %s"); params.append(loc)
+        conditions.append("loc = %s")
+        params.append(loc)
     where = " AND ".join(conditions)
 
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            SELECT item_no, loc, mtd_sales, avg_daily_sales_hist, signal_date
+            SELECT item_id, loc, mtd_actual, historical_avg_monthly, signal_date
             FROM fact_demand_signals
             WHERE {where}
             ORDER BY signal_date DESC
@@ -162,7 +172,7 @@ def fetch_sensing_data(
         rows = cur.fetchall()
     return [
         {
-            "item_no": r[0], "loc": r[1],
+            "item_id": r[0], "loc": r[1],
             "mtd_sales": float(r[2]) if r[2] else 0,
             "daily_avg": float(r[3]) if r[3] else 0,
         }
@@ -172,7 +182,7 @@ def fetch_sensing_data(
 
 def fetch_statistical_forecast(
     conn: psycopg.Connection,
-    item_no: Optional[str],
+    item_id: Optional[str],
     loc: Optional[str],
     months_ahead: int = 2,
 ) -> list[dict]:
@@ -180,29 +190,31 @@ def fetch_statistical_forecast(
     conditions = [
         "model_id = 'champion'",
         "startdate >= CURRENT_DATE",
-        f"startdate <= CURRENT_DATE + INTERVAL '1 month' * %s",
+        "startdate <= CURRENT_DATE + INTERVAL '1 month' * %s",
     ]
     params: list = [months_ahead]
-    if item_no:
-        conditions.append("dmdunit = %s"); params.append(item_no)
+    if item_id:
+        conditions.append("item_id = %s")
+        params.append(item_id)
     if loc:
-        conditions.append("loc = %s"); params.append(loc)
+        conditions.append("loc = %s")
+        params.append(loc)
     where = " AND ".join(conditions)
 
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            SELECT dmdunit, loc, startdate, basefcst_pref
+            SELECT item_id, loc, startdate, basefcst_pref
             FROM fact_external_forecast_monthly
             WHERE {where}
-            ORDER BY dmdunit, loc, startdate
+            ORDER BY item_id, loc, startdate
             """,
             params,
         )
         rows = cur.fetchall()
     return [
         {
-            "item_no": r[0], "loc": r[1],
+            "item_id": r[0], "loc": r[1],
             "month": r[2], "stat_qty": float(r[3]) if r[3] else 0,
         }
         for r in rows
@@ -210,12 +222,13 @@ def fetch_statistical_forecast(
 
 
 def run(
-    item_no: Optional[str] = None,
+    item_id: Optional[str] = None,
     loc: Optional[str] = None,
     dry_run: bool = False,
     plan_version: str = "latest",
 ) -> dict:
-    cfg = load_config()
+    with profiled_section("load_config"):
+        cfg = load_config()
     horizon_weeks = cfg.get("sensing_horizon_weeks", SENSING_HORIZON_WEEKS)
     outlier_threshold = cfg.get("outlier_threshold", OUTLIER_THRESHOLD)
 
@@ -226,64 +239,72 @@ def run(
     rows_to_write: list[dict] = []
 
     with psycopg.connect(**get_db_params()) as conn:
-        signals = fetch_sensing_data(conn, item_no, loc)
-        forecasts = fetch_statistical_forecast(conn, item_no, loc)
+        with profiled_section("fetch_demand_signals"):
+            signals = fetch_sensing_data(conn, item_id, loc)
 
-        # Build lookup: (item_no, loc) → signal
-        signal_lookup = {(s["item_no"], s["loc"]): s for s in signals}
+        with profiled_section("fetch_statistical_forecast"):
+            forecasts = fetch_statistical_forecast(conn, item_id, loc)
 
-        # Build lookup: (item_no, loc) → list of monthly forecast
+        # Build lookup: (item_id, loc) → signal
+        signal_lookup = {(s["item_id"], s["loc"]): s for s in signals}
+
+        # Build lookup: (item_id, loc) → list of monthly forecast
         from collections import defaultdict
         stat_lookup: dict = defaultdict(list)
         for f in forecasts:
-            stat_lookup[(f["item_no"], f["loc"])].append(f)
+            stat_lookup[(f["item_id"], f["loc"])].append(f)
 
         # Generate blended forecast for each DFU × week
         all_dfus = set(signal_lookup.keys()) | set(stat_lookup.keys())
-        for dfu_key in all_dfus:
-            item, location = dfu_key
-            signal = signal_lookup.get(dfu_key, {})
-            stat_months = stat_lookup.get(dfu_key, [])
 
-            if not stat_months:
-                continue
+        # Pre-compute constants that are the same for every DFU
+        from calendar import monthrange
+        days_elapsed = (today - today.replace(day=1)).days + 1
+        days_in_month = monthrange(today.year, today.month)[1]
 
-            stat_weekly = sum(f["stat_qty"] for f in stat_months) / max(len(stat_months), 1)
-            stat_weekly_wk = monthly_to_weekly(stat_weekly)
+        with profiled_section("compute_blend"):
+            for dfu_key in all_dfus:
+                item, location = dfu_key
+                signal = signal_lookup.get(dfu_key, {})
+                stat_months = stat_lookup.get(dfu_key, [])
 
-            daily_avg = signal.get("daily_avg", stat_weekly / 7)
-            mtd_sales = signal.get("mtd_sales", 0)
-            days_elapsed = (today - today.replace(day=1)).days + 1
-            import calendar
-            days_in_month = calendar.monthrange(today.year, today.month)[1]
+                if not stat_months:
+                    continue
 
-            proj_monthly, _, spike_ratio, is_capped = compute_velocity_signal(
-                mtd_sales, days_elapsed, days_in_month, daily_avg, outlier_threshold
-            )
-            sensing_weekly = monthly_to_weekly(proj_monthly)
+                stat_weekly = sum(f["stat_qty"] for f in stat_months) / max(len(stat_months), 1)
+                stat_weekly_wk = monthly_to_weekly(stat_weekly)
 
-            for week_offset in range(horizon_weeks + 4):
-                wk_start = week_start_base + timedelta(weeks=week_offset)
-                alpha = compute_alpha(week_offset, horizon_weeks)
-                blended = alpha * sensing_weekly + (1.0 - alpha) * stat_weekly_wk
+                daily_avg = signal.get("daily_avg", stat_weekly / 7)
+                mtd_sales = signal.get("mtd_sales", 0)
 
-                rows_to_write.append({
-                    "item_no": item,
-                    "loc": location,
-                    "week_start": wk_start,
-                    "plan_version": plan_version,
-                    "alpha_weight": round(alpha, 3),
-                    "sensing_signal_qty": round(sensing_weekly, 2),
-                    "statistical_forecast_qty": round(stat_weekly_wk, 2),
-                    "blended_qty": round(max(0.0, blended), 2),
-                    "velocity_spike_ratio": round(spike_ratio, 3),
-                    "is_outlier_capped": is_capped,
-                })
+                proj_monthly, _, spike_ratio, is_capped = compute_velocity_signal(
+                    mtd_sales, days_elapsed, days_in_month, daily_avg, outlier_threshold
+                )
+                sensing_weekly = monthly_to_weekly(proj_monthly)
+
+                for week_offset in range(horizon_weeks + 4):
+                    wk_start = week_start_base + timedelta(weeks=week_offset)
+                    alpha = compute_alpha(week_offset, horizon_weeks)
+                    blended = alpha * sensing_weekly + (1.0 - alpha) * stat_weekly_wk
+
+                    rows_to_write.append({
+                        "item_id": item,
+                        "loc": location,
+                        "week_start": wk_start,
+                        "plan_version": plan_version,
+                        "alpha_weight": round(alpha, 3),
+                        "sensing_signal_qty": round(sensing_weekly, 2),
+                        "statistical_forecast_qty": round(stat_weekly_wk, 2),
+                        "blended_qty": round(max(0.0, blended), 2),
+                        "velocity_spike_ratio": round(spike_ratio, 3),
+                        "is_outlier_capped": is_capped,
+                    })
 
         rows_written = 0
         if not dry_run and rows_to_write:
-            rows_written = upsert_blend_rows(conn, rows_to_write)
-            conn.commit()
+            with profiled_section("upsert_blended"):
+                rows_written = upsert_blend_rows(conn, rows_to_write)
+                conn.commit()
 
     return {
         "dfus_processed": len(all_dfus) if 'all_dfus' in locals() else 0,

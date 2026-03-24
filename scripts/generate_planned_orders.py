@@ -22,12 +22,20 @@ import argparse
 import math
 import uuid
 import yaml
-from datetime import date, timedelta
+from datetime import timedelta
 
 import psycopg
 
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 CONFIG_PATH = "config/order_recommendation_config.yaml"
 
@@ -76,7 +84,7 @@ def compute_net_requirements(inputs: dict, config: dict) -> list:
     8. Continue until max_orders or end of horizon
     """
     horizon_days = config["recommendation"]["horizon_days"]
-    max_orders = config["recommendation"]["max_orders_per_dfu"]
+    max_orders = config["recommendation"]["max_orders_per_sku"]
     moq_strategy = config["moq_handling"]["rounding_strategy"]
 
     qty = float(inputs["current_qty_on_hand"])
@@ -119,7 +127,7 @@ def compute_net_requirements(inputs: dict, config: dict) -> list:
             )
 
             orders.append({
-                "item_no": inputs["item_no"],
+                "item_id": inputs["item_id"],
                 "loc": inputs["loc"],
                 "supplier_id": inputs.get("supplier_id"),
                 "policy_id": inputs.get("policy_id"),
@@ -183,31 +191,184 @@ def compute_confidence_score(inputs: dict, orders: list, config: dict) -> tuple:
 
 
 def get_active_dfus_for_recommendation(conn) -> list:
-    """Returns list of (item_no, loc) tuples that have inventory projection data."""
+    """Returns list of (item_id, loc) tuples that have inventory projection data."""
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT DISTINCT item_no, loc
+            SELECT DISTINCT item_id, loc
             FROM fact_inventory_projection
             WHERE scenario = 'no_order'
-            ORDER BY item_no, loc
+            ORDER BY item_id, loc
         """)
         return cur.fetchall()
 
 
-def get_dfu_inputs(item_no: str, loc: str, run_id: str, conn) -> dict:
+def _batch_load_all_dfu_inputs(conn) -> dict:
+    """
+    Batch-load all inputs for all DFUs in single queries.
+
+    Returns a dict keyed by (item_id, loc) with sub-dicts for each data source.
+    This replaces the per-DFU get_dfu_inputs() to eliminate N+1 query problems.
+    """
+    inv_map: dict = {}
+    ss_map: dict = {}
+    policy_map: dict = {}
+    demand_map: dict = {}
+    receipts_map: dict = {}
+
+    with conn.cursor() as cur:
+        # 1. Current inventory — latest snapshot per (item_id, loc)
+        cur.execute("""
+            SELECT DISTINCT ON (item_id, loc)
+                   item_id, loc, qty_on_hand
+            FROM fact_inventory_snapshot
+            ORDER BY item_id, loc, snapshot_date DESC
+        """)
+        for row in cur.fetchall():
+            inv_map[(row[0], row[1])] = float(row[2]) if row[2] else 0.0
+
+        # 2. Safety stock + reorder point — latest per (item_id, loc)
+        cur.execute("""
+            SELECT DISTINCT ON (item_id, loc)
+                   item_id, loc, ss_combined, COALESCE(reorder_point, ss_combined)
+            FROM fact_safety_stock_targets
+            ORDER BY item_id, loc, computed_at DESC
+        """)
+        for row in cur.fetchall():
+            ss_map[(row[0], row[1])] = {
+                "safety_stock": float(row[2] or 0),
+                "reorder_point": float(row[3] or 0),
+            }
+
+        # 3. Policy, MOQ, lead time, unit cost, supplier
+        cur.execute("""
+            SELECT DISTINCT ON (pa.item_id, pa.loc)
+                   pa.item_id, pa.loc,
+                   p.policy_id, p.review_cycle_days, COALESCE(s.moq, 1),
+                   COALESCE(s.lead_time_days, 14), s.price_per_unit, s.supplier_id
+            FROM fact_dfu_policy_assignment pa
+            JOIN dim_replenishment_policy p ON p.policy_id = pa.policy_id
+            LEFT JOIN dim_item_supplier s ON s.item_id = pa.item_id
+                                         AND s.loc = pa.loc
+                                         AND s.is_preferred = TRUE
+            ORDER BY pa.item_id, pa.loc
+        """)
+        for row in cur.fetchall():
+            policy_map[(row[0], row[1])] = {
+                "policy_id": row[2],
+                "review_cycle_days": row[3],
+                "moq": float(row[4] or 1),
+                "lead_time_days": int(row[5] or 14),
+                "unit_cost": float(row[6]) if row[6] else 0.0,
+                "supplier_id": row[7],
+            }
+
+        # 4. Daily demand rates from inventory projection (no_order scenario)
+        cur.execute("""
+            SELECT item_id, loc, projection_date, daily_demand_rate,
+                   forecast_source, plan_version
+            FROM fact_inventory_projection
+            WHERE scenario = 'no_order'
+            ORDER BY item_id, loc, projection_date
+        """)
+        for row in cur.fetchall():
+            key = (row[0], row[1])
+            if key not in demand_map:
+                demand_map[key] = {
+                    "daily_demand_by_date": {},
+                    "forecast_source": "fallback_avg",
+                    "plan_version": None,
+                }
+            demand_map[key]["daily_demand_by_date"][row[2]] = float(row[3] or 0)
+            demand_map[key]["forecast_source"] = row[4] or "fallback_avg"
+            demand_map[key]["plan_version"] = row[5]
+
+        # 5. Confirmed receipts from open POs
+        cur.execute("""
+            SELECT item_id, loc, effective_delivery_date, SUM(open_qty) AS expected_qty
+            FROM fact_open_purchase_orders
+            WHERE line_status NOT IN ('closed', 'cancelled')
+              AND effective_delivery_date >= CURRENT_DATE
+            GROUP BY item_id, loc, effective_delivery_date
+        """)
+        for row in cur.fetchall():
+            key = (row[0], row[1])
+            if key not in receipts_map:
+                receipts_map[key] = {}
+            receipts_map[key][row[2]] = float(row[3] or 0)
+
+    return {
+        "inv": inv_map,
+        "ss": ss_map,
+        "policy": policy_map,
+        "demand": demand_map,
+        "receipts": receipts_map,
+    }
+
+
+def get_dfu_inputs(item_id: str, loc: str, run_id: str, conn, *, batch_data: dict | None = None) -> dict:
     """
     Assembles all inputs needed for net requirement calculation for one DFU.
-    """
-    result: dict = {"item_no": item_no, "loc": loc, "run_id": run_id}
 
+    When batch_data is provided (from _batch_load_all_dfu_inputs), uses dict lookups
+    instead of per-DFU SQL queries — eliminating N+1 query problems.
+    Falls back to individual queries when batch_data is None (single-DFU mode).
+    """
+    result: dict = {"item_id": item_id, "loc": loc, "run_id": run_id}
+    key = (item_id, loc)
+
+    if batch_data is not None:
+        # --- Batch mode: dict lookups only, zero SQL queries ---
+        result["current_qty_on_hand"] = batch_data["inv"].get(key, 0.0)
+
+        ss_data = batch_data["ss"].get(key)
+        if ss_data:
+            result["safety_stock"] = ss_data["safety_stock"]
+            result["reorder_point"] = ss_data["reorder_point"]
+        else:
+            result["safety_stock"] = 0.0
+            result["reorder_point"] = 0.0
+
+        pol = batch_data["policy"].get(key)
+        if pol:
+            result["policy_id"] = pol["policy_id"]
+            result["review_cycle_days"] = pol["review_cycle_days"]
+            result["moq"] = pol["moq"]
+            result["lead_time_days"] = pol["lead_time_days"]
+            result["unit_cost"] = pol["unit_cost"]
+            result["supplier_id"] = pol["supplier_id"]
+        else:
+            result["policy_id"] = None
+            result["review_cycle_days"] = None
+            result["moq"] = 1.0
+            result["lead_time_days"] = 14
+            result["unit_cost"] = 0.0
+            result["supplier_id"] = None
+
+        dem = batch_data["demand"].get(key)
+        if dem:
+            result["daily_demand_by_date"] = dem["daily_demand_by_date"]
+            result["forecast_source"] = dem["forecast_source"]
+            result["plan_version"] = dem["plan_version"]
+        else:
+            result["daily_demand_by_date"] = {}
+            result["forecast_source"] = "fallback_avg"
+            result["plan_version"] = None
+
+        receipts = batch_data["receipts"].get(key, {})
+        result["confirmed_receipts_by_date"] = receipts
+        result["open_po_data_available"] = len(receipts) > 0
+
+        return result
+
+    # --- Single-DFU fallback: individual SQL queries (used with --dfu flag) ---
     with conn.cursor() as cur:
         # 1. Current inventory
         cur.execute("""
             SELECT qty_on_hand
             FROM fact_inventory_snapshot
-            WHERE item_no = %s AND loc = %s
+            WHERE item_id = %s AND loc = %s
             ORDER BY snapshot_date DESC LIMIT 1
-        """, (item_no, loc))
+        """, (item_id, loc))
         row = cur.fetchone()
         result["current_qty_on_hand"] = float(row[0]) if row else 0.0
 
@@ -215,9 +376,9 @@ def get_dfu_inputs(item_no: str, loc: str, run_id: str, conn) -> dict:
         cur.execute("""
             SELECT ss_combined, COALESCE(reorder_point, ss_combined)
             FROM fact_safety_stock_targets
-            WHERE item_no = %s AND loc = %s
+            WHERE item_id = %s AND loc = %s
             ORDER BY computed_at DESC LIMIT 1
-        """, (item_no, loc))
+        """, (item_id, loc))
         row = cur.fetchone()
         if row:
             result["safety_stock"] = float(row[0] or 0)
@@ -232,12 +393,12 @@ def get_dfu_inputs(item_no: str, loc: str, run_id: str, conn) -> dict:
                    COALESCE(s.lead_time_days, 14), s.price_per_unit, s.supplier_id
             FROM fact_dfu_policy_assignment pa
             JOIN dim_replenishment_policy p ON p.id = pa.policy_id
-            LEFT JOIN dim_item_supplier s ON s.item_no = pa.item_no
+            LEFT JOIN dim_item_supplier s ON s.item_id = pa.item_id
                                          AND s.loc = pa.loc
                                          AND s.is_preferred = TRUE
-            WHERE pa.item_no = %s AND pa.loc = %s
+            WHERE pa.item_id = %s AND pa.loc = %s
             LIMIT 1
-        """, (item_no, loc))
+        """, (item_id, loc))
         row = cur.fetchone()
         if row:
             result["policy_id"] = row[0]
@@ -258,9 +419,9 @@ def get_dfu_inputs(item_no: str, loc: str, run_id: str, conn) -> dict:
         cur.execute("""
             SELECT projection_date, daily_demand_rate, forecast_source, plan_version
             FROM fact_inventory_projection
-            WHERE item_no = %s AND loc = %s AND scenario = 'no_order'
+            WHERE item_id = %s AND loc = %s AND scenario = 'no_order'
             ORDER BY projection_date
-        """, (item_no, loc))
+        """, (item_id, loc))
         rows = cur.fetchall()
         demand_by_day = {}
         forecast_source = "fallback_avg"
@@ -277,11 +438,11 @@ def get_dfu_inputs(item_no: str, loc: str, run_id: str, conn) -> dict:
         cur.execute("""
             SELECT effective_delivery_date, SUM(open_qty) AS expected_qty
             FROM fact_open_purchase_orders
-            WHERE item_no = %s AND loc = %s
+            WHERE item_id = %s AND loc = %s
               AND line_status NOT IN ('closed', 'cancelled')
               AND effective_delivery_date >= CURRENT_DATE
             GROUP BY effective_delivery_date
-        """, (item_no, loc))
+        """, (item_id, loc))
         rows = cur.fetchall()
         confirmed_receipts = {r[0]: float(r[1] or 0) for r in rows}
         result["confirmed_receipts_by_date"] = confirmed_receipts
@@ -297,7 +458,7 @@ def write_planned_orders(orders: list, dry_run: bool, conn) -> int:
 
     sql = """
         INSERT INTO fact_planned_orders (
-            item_no, loc, supplier_id, policy_id,
+            item_id, loc, supplier_id, policy_id,
             net_requirement_qty, recommended_qty, moq, unit_cost, currency,
             trigger_date, trigger_reason, order_by_date, expected_receipt_date,
             lead_time_days, review_cycle_days,
@@ -305,7 +466,7 @@ def write_planned_orders(orders: list, dry_run: bool, conn) -> int:
             confirmed_inbound_qty, lt_forecast_demand, plan_version,
             confidence_score, confidence_reason, status, run_id
         ) VALUES (
-            %(item_no)s, %(loc)s, %(supplier_id)s, %(policy_id)s,
+            %(item_id)s, %(loc)s, %(supplier_id)s, %(policy_id)s,
             %(net_requirement_qty)s, %(recommended_qty)s, %(moq)s, %(unit_cost)s, %(currency)s,
             %(trigger_date)s, %(trigger_reason)s, %(order_by_date)s, %(expected_receipt_date)s,
             %(lead_time_days)s, %(review_cycle_days)s,
@@ -334,34 +495,38 @@ def main():
     total_written = 0
 
     with psycopg.connect(**get_db_params()) as conn:
-        if args.dfu:
-            dfus = [(args.dfu[0], args.dfu[1])]
-        else:
-            dfus = get_active_dfus_for_recommendation(conn)
+        with profiled_section("load_dfu_inputs"):
+            if args.dfu:
+                dfus = [(args.dfu[0], args.dfu[1])]
+                batch_data = None  # single-DFU mode: use per-DFU queries
+            else:
+                dfus = get_active_dfus_for_recommendation(conn)
+                batch_data = _batch_load_all_dfu_inputs(conn)  # 5 queries total
 
         print(f"Generating planned orders for {len(dfus)} DFU(s) | run_id={run_id}")
 
-        for item_no, loc in dfus:
-            try:
-                inputs = get_dfu_inputs(item_no, loc, run_id, conn)
-                inputs["run_id"] = run_id
-                orders = compute_net_requirements(inputs, config)
+        with profiled_section("compute_and_write_orders"):
+            for item_id, loc in dfus:
+                try:
+                    inputs = get_dfu_inputs(item_id, loc, run_id, conn, batch_data=batch_data)
+                    inputs["run_id"] = run_id
+                    orders = compute_net_requirements(inputs, config)
 
-                confidence, confidence_reason = compute_confidence_score(
-                    inputs, orders, config
-                )
-                for order in orders:
-                    order["confidence_score"] = confidence
-                    order["confidence_reason"] = confidence_reason
+                    confidence, confidence_reason = compute_confidence_score(
+                        inputs, orders, config
+                    )
+                    for order in orders:
+                        order["confidence_score"] = confidence
+                        order["confidence_reason"] = confidence_reason
 
-                written = write_planned_orders(orders, args.dry_run, conn)
-                total_written += written
+                    written = write_planned_orders(orders, args.dry_run, conn)
+                    total_written += written
 
-                if orders:
-                    print(f"  {item_no} @ {loc}: {len(orders)} order(s) | "
-                          f"confidence={confidence:.3f}")
-            except Exception as e:
-                print(f"  ERROR {item_no} @ {loc}: {e}")
+                    if orders:
+                        print(f"  {item_id} @ {loc}: {len(orders)} order(s) | "
+                              f"confidence={confidence:.3f}")
+                except Exception as e:
+                    print(f"  ERROR {item_id} @ {loc}: {e}")
 
     suffix = " (dry-run)" if args.dry_run else ""
     print(f"Done. Total orders generated: {total_written}{suffix}")

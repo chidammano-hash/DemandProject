@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS fact_bias_corrections (
     id                      BIGSERIAL       PRIMARY KEY,
-    item_no                 VARCHAR(50)     NOT NULL,
+    item_id                 VARCHAR(50)     NOT NULL,
     loc                     VARCHAR(50)     NOT NULL,
     plan_month              DATE            NOT NULL,
     segment_type            VARCHAR(30)     NOT NULL,
@@ -28,11 +28,11 @@ CREATE TABLE IF NOT EXISTS fact_bias_corrections (
     applied_to_version      VARCHAR(50),
     computed_at             TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     months_of_data          INTEGER,
-    CONSTRAINT uq_bias_correction UNIQUE (item_no, loc, plan_month, segment_type)
+    CONSTRAINT uq_bias_correction UNIQUE (item_id, loc, plan_month, segment_type)
 );
 
 CREATE INDEX IF NOT EXISTS idx_bias_correction_item_loc_month
-    ON fact_bias_corrections (item_no, loc, plan_month);
+    ON fact_bias_corrections (item_id, loc, plan_month);
 
 CREATE INDEX IF NOT EXISTS idx_bias_correction_segment
     ON fact_bias_corrections (segment_type, segment_value, plan_month);

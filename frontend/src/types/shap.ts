@@ -7,6 +7,7 @@ export interface ShapFilterParams {
   brand?: string;
   category?: string;
   market?: string;
+  cluster?: string;
 }
 
 export interface ShapFeatureSummary {
@@ -59,21 +60,21 @@ export interface ShapTimeframeDetailPayload {
 }
 
 // Per-DFU on-demand SHAP types (new endpoint)
-export interface DfuShapFeatureContribution {
+export interface SkuShapFeatureContribution {
   name: string;
   value: number; // signed: positive = feature pushes forecast up
 }
 
-export interface DfuShapPoint {
+export interface SkuShapPoint {
   month: string; // "2024-03-01"
   is_future: boolean;
   base_value: number; // model's expected value (base prediction)
   other_shap: number; // sum of contributions from non-top-N features
-  features: DfuShapFeatureContribution[];
+  features: SkuShapFeatureContribution[];
 }
 
-export interface DfuShapPayload {
-  item_no: string;
+export interface SkuShapPayload {
+  item_id: string;
   loc: string;
   model_id: string;
   cluster_id: string;
@@ -83,5 +84,5 @@ export interface DfuShapPayload {
    *  Differs from model_id when the requested model is not the production champion.
    *  Future-month SHAP is approximate in that case. */
   future_lag_model_id: string | null;
-  points: DfuShapPoint[];
+  points: SkuShapPoint[];
 }

@@ -6,7 +6,7 @@ import { fetchJson } from "./core";
 
 export interface ReplenishmentSummary {
   plan_version: string;
-  total_dfus: number;
+  total_skus: number;
   below_ss_count: number;
   below_ss_pct: number;
   avg_ss: number | null;
@@ -17,14 +17,14 @@ export interface ReplenishmentSummary {
 
 export interface ReplenishmentPolicyBreakdown {
   policy_type: string;
-  dfu_count: number;
+  sku_count: number;
   avg_ss: number | null;
   avg_eoq: number | null;
   total_order_qty: number | null;
 }
 
 export interface ReplenishmentDetailRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   plan_month: string;
   abc_vol: string | null;
@@ -51,7 +51,7 @@ export interface ReplenishmentDetailPayload {
 
 export interface ReplenishmentAbcBreakdown {
   abc_vol: string;
-  dfu_count: number;
+  sku_count: number;
   avg_forecast_ss: number | null;
   avg_historical_ss: number | null;
   avg_ss_delta: number | null;
@@ -88,7 +88,7 @@ export interface ReplenishmentDfuPoint {
 }
 
 export interface ReplenishmentDfuPayload {
-  item_no: string;
+  item_id: string;
   loc: string;
   plan_version: string;
   series: ReplenishmentDfuPoint[];
@@ -102,8 +102,8 @@ export const replenishmentKeys = {
   detail: (params: object) => ["replenishment", "detail", params] as const,
   comparison: (planVersion?: string, abcVol?: string, policyType?: string) =>
     ["replenishment", "comparison", planVersion, abcVol, policyType] as const,
-  dfu: (itemNo: string, loc: string, planVersion?: string) =>
-    ["replenishment", "dfu", itemNo, loc, planVersion] as const,
+  sku: (itemNo: string, loc: string, planVersion?: string) =>
+    ["replenishment", "sku", itemNo, loc, planVersion] as const,
 };
 
 // ---- Fetch functions ----
@@ -160,12 +160,12 @@ export async function fetchReplenishmentComparison(params?: {
   return fetchJson(`/inv-planning/replenishment/comparison?${qs}`);
 }
 
-export async function fetchReplenishmentDfu(params: {
-  item_no: string;
+export async function fetchReplenishmentSku(params: {
+  item_id: string;
   loc: string;
   plan_version?: string;
 }): Promise<ReplenishmentDfuPayload> {
-  const qs = new URLSearchParams({ item_no: params.item_no, loc: params.loc });
+  const qs = new URLSearchParams({ item_id: params.item_id, loc: params.loc });
   if (params.plan_version) qs.set("plan_version", params.plan_version);
-  return fetchJson(`/inv-planning/replenishment/dfu?${qs}`);
+  return fetchJson(`/inv-planning/replenishment/sku?${qs}`);
 }

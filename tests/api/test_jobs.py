@@ -409,3 +409,61 @@ async def test_pipeline_with_inventory_steps(mock_pool, mock_manager):
     data = response.json()
     assert data["pipeline_id"] == "pipe_inv_001"
     assert data["steps"] == 3
+
+
+# ---------------------------------------------------------------------------
+# GET /jobs/{job_id}/logs
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_job_logs(mock_pool, mock_manager):
+    """GET /jobs/{job_id}/logs returns persistent execution log."""
+    pool, _, _ = mock_pool
+    mock_manager.get_status.return_value = {"job_id": "j1", "status": "completed"}
+    mock_manager.get_job_logs.return_value = "line1\nline2\nline3\n"
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/jobs/j1/logs")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["job_id"] == "j1"
+    assert "line1" in data["log"]
+    assert data["total_length"] == len("line1\nline2\nline3\n")
+    assert data["offset"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_job_logs_with_offset(mock_pool, mock_manager):
+    """GET /jobs/{job_id}/logs?offset=N returns partial log."""
+    pool, _, _ = mock_pool
+    full_log = "line1\nline2\nline3\n"
+    mock_manager.get_status.return_value = {"job_id": "j1", "status": "running"}
+    mock_manager.get_job_logs.return_value = full_log
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/jobs/j1/logs?offset=6")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["log"] == full_log[6:]
+    assert data["offset"] == 6
+    assert data["total_length"] == len(full_log)
+
+
+@pytest.mark.asyncio
+async def test_get_job_logs_not_found(mock_pool, mock_manager):
+    """GET /jobs/{job_id}/logs returns 404 for missing job."""
+    pool, _, _ = mock_pool
+    mock_manager.get_status.return_value = None
+    with patch("api.core._get_pool", return_value=pool), \
+         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/jobs/nonexistent/logs")
+    assert response.status_code == 404

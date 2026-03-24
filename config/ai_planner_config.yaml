@@ -7,7 +7,7 @@ model: "gpt-4o-mini"
 max_tokens: 4096
 temperature: 0.2
 
-# How many top-exception DFUs to scan per portfolio run
+# How many top-exception SKUs to scan per portfolio run
 portfolio_scan_limit: 20
 
 # How many months of forecast history to consider

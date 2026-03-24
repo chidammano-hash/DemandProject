@@ -141,7 +141,7 @@ export function RebalancingPanel() {
       label: `${t.source_loc}→${t.dest_loc}`,
       qty: t.recommended_qty ?? 0,
       urgency: t.urgency,
-      item: t.item_no,
+      item: t.item_id,
     }));
 
   // Scatter data for cost-benefit
@@ -152,7 +152,7 @@ export function RebalancingPanel() {
       benefit: t.net_benefit ?? 0,
       qty: t.recommended_qty ?? 1,
       urgency: t.urgency,
-      item: t.item_no,
+      item: t.item_id,
     }));
 
   // Proactive rebalancing opportunities
@@ -165,7 +165,7 @@ export function RebalancingPanel() {
   const proactive = proactiveData as {
     total_opportunities?: number;
     opportunities?: {
-      item_no: string;
+      item_id: string;
       source_loc: string;
       dest_loc: string;
       source_dos: number;
@@ -189,8 +189,8 @@ export function RebalancingPanel() {
             </p>
           </div>
           {(proactive.opportunities ?? []).slice(0, 5).map((opp, i) => (
-            <div key={`${opp.item_no}-${i}`} className="flex items-center gap-2 text-xs border rounded p-2 bg-background">
-              <span className="font-mono font-medium">{opp.item_no}</span>
+            <div key={`${opp.item_id}-${i}`} className="flex items-center gap-2 text-xs border rounded p-2 bg-background">
+              <span className="font-mono font-medium">{opp.item_id}</span>
               <span className="text-muted-foreground">at</span>
               <span className="text-red-600">{opp.dest_loc} (DOS: {opp.dest_dos.toFixed(0)}d)</span>
               <span className="text-muted-foreground">&larr;</span>
@@ -344,7 +344,7 @@ export function RebalancingPanel() {
                 ) : (
                   (transfers?.rows ?? []).map((t: RebalancingTransfer) => (
                     <tr key={t.transfer_id} className={`border-b last:border-0 hover:bg-muted/30 ${URGENCY_ROW_BG[t.urgency] ?? ""}`}>
-                      <td className="py-1 pr-2 font-mono">{t.item_no}</td>
+                      <td className="py-1 pr-2 font-mono">{t.item_id}</td>
                       <td className="py-1 pr-2">{t.source_loc}</td>
                       <td className="py-1 pr-2">{t.dest_loc}</td>
                       <td className="py-1 pr-2 text-right">{formatFixed(t.recommended_qty, 0)}</td>

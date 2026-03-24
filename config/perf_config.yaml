@@ -1,0 +1,90 @@
+# Performance Profiler Configuration
+# Used by common/services/perf_profiler.py and scripts/ops/run_perf_analysis.py
+
+# Thresholds for suggestion engine
+thresholds:
+  query_slow_ms: 5000          # Warn if any single query exceeds this
+  function_slow_s: 10          # Warn if any profiled function exceeds this
+  memory_spike_mb: 1024        # Warn if peak memory exceeds this
+  memory_delta_mb: 200         # Warn if a single section allocates more than this
+  n_plus_1_min_count: 10       # Min repeated queries to flag N+1 pattern
+  unbatched_insert_min: 5      # Min individual INSERTs before suggesting executemany
+  sequential_child_min_s: 2    # Min child section duration to flag as parallelizable
+  total_query_time_pct: 0.5    # Warn if >50% of wall time is DB queries
+
+# Output
+output:
+  json_dir: data/perf_reports  # Where JSON reports are written (gitignored)
+  console_summary: true        # Print summary to console
+  max_sql_preview_chars: 200   # Truncate SQL in reports
+
+# Isolation (production safety)
+isolation:
+  readonly: true               # SET default_transaction_read_only = true
+  rollback_only: true          # Always ROLLBACK, never COMMIT
+
+# Script profiling presets (used by run_perf_analysis.py --script)
+# - args: passed to run()/main()
+# - callable: alternative entry point name (when no run()/main() exists)
+# - callable_kwargs: keyword args for the callable
+script_presets:
+  compute_safety_stock:
+    args: []
+  compute_demand_variability:
+    args: []
+  compute_eoq:
+    args: []
+  compute_replenishment_plan:
+    args: []
+  compute_inventory_projection:
+    args: []
+  compute_demand_signals:
+    args: []
+  compute_blended_forecast:
+    args: []
+  compute_investment_plan:
+    args: []
+  compute_rebalancing:
+    args: []
+  compute_echelon_targets:
+    args: []
+  compute_lead_time_variability:
+    args: []
+  assign_replenishment_policies:
+    args: []
+  classify_abc_xyz:
+    args: []
+  compute_bias_corrections:
+    args: []
+  compute_service_level_actuals:
+    args: []
+  compute_financial_plan:
+    args: []
+  generate_planned_orders:
+    args: []
+  generate_replenishment_exceptions:
+    args: []
+  generate_production_forecasts:
+    args: []
+  generate_storyboard_exceptions:
+    args: []
+  generate_consensus_plan:
+    args: []
+  apply_event_adjustments:
+    args: []
+  detect_seasonality:
+    args: []
+  run_backtest:
+    args: ["--model", "lgbm", "--n-timeframes", "1"]
+  run_backtest_catboost:
+    args: ["--n-timeframes", "1"]
+  run_backtest_xgboost:
+    args: ["--n-timeframes", "1"]
+  run_ss_simulation:
+    args: []
+  run_sop_cycle:
+    args: []
+  populate_dq_checks:
+    args: []
+  fix_dq_issues:
+    args: []

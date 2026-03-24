@@ -106,8 +106,8 @@ export default function SopTab() {
   });
 
   const { data: planData, isLoading: planLoading } = useQuery({
-    queryKey: sopKeys.approvedPlan({ plan_month: planMonth || undefined, item_no: planItem || undefined }),
-    queryFn: () => fetchApprovedPlan({ plan_month: planMonth || undefined, item_no: planItem || undefined }),
+    queryKey: sopKeys.approvedPlan({ plan_month: planMonth || undefined, item_id: planItem || undefined }),
+    queryFn: () => fetchApprovedPlan({ plan_month: planMonth || undefined, item_id: planItem || undefined }),
     staleTime: STALE_EVO.FIVE_MIN,
   });
 
@@ -379,7 +379,7 @@ export default function SopTab() {
                 <tbody>
                   {planRows.map((r, i) => (
                     <tr key={i} className="border-t hover:bg-muted/30">
-                      <td className="px-3 py-2 font-mono text-xs">{r.item_no}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{r.item_id}</td>
                       <td className="px-3 py-2 text-xs">{r.loc}</td>
                       <td className="px-3 py-2 text-xs">{r.plan_month}</td>
                       <td className="px-3 py-2 font-medium">{r.approved_qty.toLocaleString()}</td>

@@ -22,7 +22,7 @@ import {
   fetchReplenishmentSummary,
   fetchReplenishmentDetail,
   fetchReplenishmentComparison,
-  fetchReplenishmentDfu,
+  fetchReplenishmentSku,
   type ReplenishmentDetailRow,
 } from "@/api/queries";
 
@@ -34,7 +34,7 @@ export function ReplenishmentPlanPanel() {
   const [policyType, setPolicyType] = useState("");
   const [abcVol, setAbcVol] = useState("");
   const [page, setPage] = useState(0);
-  const [selectedDfu, setSelectedDfu] = useState<{ item_no: string; loc: string } | null>(null);
+  const [selectedSku, setSelectedSku] = useState<{ item_id: string; loc: string } | null>(null);
 
   const { chartColors } = useChartColors();
 
@@ -81,26 +81,26 @@ export function ReplenishmentPlanPanel() {
     staleTime: 10 * 60 * 1000,
   });
 
-  const dfuQ = useQuery({
-    queryKey: replenishmentKeys.dfu(
-      selectedDfu?.item_no ?? "",
-      selectedDfu?.loc ?? "",
+  const skuQ = useQuery({
+    queryKey: replenishmentKeys.sku(
+      selectedSku?.item_id ?? "",
+      selectedSku?.loc ?? "",
       planVersion || undefined
     ),
     queryFn: () =>
-      fetchReplenishmentDfu({
-        item_no: selectedDfu!.item_no,
-        loc: selectedDfu!.loc,
+      fetchReplenishmentSku({
+        item_id: selectedSku!.item_id,
+        loc: selectedSku!.loc,
         plan_version: planVersion || undefined,
       }),
-    enabled: selectedDfu != null,
+    enabled: selectedSku != null,
     staleTime: 5 * 60 * 1000,
   });
 
   const summary = summaryQ.data;
   const detail = detailQ.data;
   const comparison = comparisonQ.data;
-  const dfu = dfuQ.data;
+  const sku = skuQ.data;
 
   const totalPages = detail ? Math.ceil(detail.total / PAGE_SIZE) : 0;
 
@@ -167,12 +167,12 @@ export function ReplenishmentPlanPanel() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard
           className={PANEL_KPI}
-          label="Total DFUs"
+          label="Total SKUs"
           value={
             summaryQ.isLoading
               ? "..."
-              : summary?.total_dfus != null
-              ? summary.total_dfus.toLocaleString()
+              : summary?.total_skus != null
+              ? summary.total_skus.toLocaleString()
               : "—"
           }
         />
@@ -292,18 +292,18 @@ export function ReplenishmentPlanPanel() {
                   {(detail?.rows ?? []).map(
                     (row: ReplenishmentDetailRow, i: number) => (
                         <tr
-                          key={`${row.item_no}-${row.loc}-${i}`}
+                          key={`${row.item_id}-${row.loc}-${i}`}
                           className={`cursor-pointer border-b last:border-0 hover:bg-muted/50 ${
-                            selectedDfu?.item_no === row.item_no &&
-                            selectedDfu.loc === row.loc
+                            selectedSku?.item_id === row.item_id &&
+                            selectedSku.loc === row.loc
                               ? "bg-muted"
                               : ""
                           }`}
                           onClick={() =>
-                            setSelectedDfu({ item_no: row.item_no, loc: row.loc })
+                            setSelectedSku({ item_id: row.item_id, loc: row.loc })
                           }
                         >
-                          <td className="py-1 pr-3 font-mono">{row.item_no}</td>
+                          <td className="py-1 pr-3 font-mono">{row.item_id}</td>
                           <td className="py-1 pr-3">{row.loc}</td>
                           <td className="py-1 pr-3">{row.abc_vol ?? "—"}</td>
                           <td className="py-1 pr-3">{row.policy_type?.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) ?? "—"}</td>
@@ -380,28 +380,28 @@ export function ReplenishmentPlanPanel() {
         )}
       </div>
 
-      {/* DFU drill-down chart */}
-      {selectedDfu && (
+      {/* SKU drill-down chart */}
+      {selectedSku && (
         <div className="rounded-lg border bg-card p-4">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-foreground">
-              DFU Drill-Down: {selectedDfu.item_no} @ {selectedDfu.loc}
+              SKU Drill-Down: {selectedSku.item_id} @ {selectedSku.loc}
             </h3>
             <button
               className="text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => setSelectedDfu(null)}
+              onClick={() => setSelectedSku(null)}
             >
               ✕ close
             </button>
           </div>
 
-          {dfuQ.isLoading ? (
+          {skuQ.isLoading ? (
             <p className="text-xs text-muted-foreground">Loading…</p>
-          ) : (dfu?.series?.length ?? 0) > 0 && dfu ? (
+          ) : (sku?.series?.length ?? 0) > 0 && sku ? (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
-                  data={dfu.series}
+                  data={sku.series}
                   margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
                 >
                   <CartesianGrid

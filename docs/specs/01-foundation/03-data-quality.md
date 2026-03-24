@@ -125,4 +125,4 @@ Key parameters:
 ## See Also
 
 - [Storyboard](../05-ai/04-storyboard.md) — exception-based planner workflow that depends on data quality
-- [Medallion Pipeline](../07-integration/01-medallion.md) — bronze/silver/gold ETL with DQ gates at layer boundaries
+- [Pipeline Orchestrator](../../../docs/RUNBOOK.md) — unified ETL pipeline with DQ checks after each load phase

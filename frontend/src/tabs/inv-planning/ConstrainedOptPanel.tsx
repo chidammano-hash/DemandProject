@@ -156,10 +156,10 @@ export function ConstrainedOptPanel() {
                         : null;
                     return (
                       <tr
-                        key={`${item.item_no}-${item.loc}-${idx}`}
+                        key={`${item.item_id}-${item.loc}-${idx}`}
                         className="border-b last:border-0 hover:bg-muted/40"
                       >
-                        <td className="py-1 pr-2 font-mono">{item.item_no}</td>
+                        <td className="py-1 pr-2 font-mono">{item.item_id}</td>
                         <td className="py-1 pr-2">{item.loc}</td>
                         <td className="py-1 pr-2 text-right font-mono tabular-nums">
                           {formatFixed(item.current_ss)}

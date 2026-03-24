@@ -253,7 +253,7 @@ def get_imbalances(
     wheres = ["excess_loc_count > 0", "shortage_loc_count > 0"]
     params: list = []
     if item:
-        wheres.append("item_no ILIKE %s")
+        wheres.append("item_id ILIKE %s")
         params.append(f"%{item}%")
 
     where = " AND ".join(wheres)
@@ -263,7 +263,7 @@ def get_imbalances(
             cur.execute(f"SELECT COUNT(*) FROM mv_network_balance WHERE {where}", params)
             total = (cur.fetchone() or (0,))[0]
             cur.execute(f"""
-                SELECT item_no, location_count, avg_on_hand, avg_dos, dos_cv,
+                SELECT item_id, location_count, avg_on_hand, avg_dos, dos_cv,
                        excess_loc_count, shortage_loc_count
                 FROM mv_network_balance
                 WHERE {where}
@@ -276,7 +276,7 @@ def get_imbalances(
         "total": int(total),
         "rows": [
             {
-                "item_no": r[0], "location_count": int(r[1]),
+                "item_id": r[0], "location_count": int(r[1]),
                 "avg_on_hand": _f(r[2]), "avg_dos": _f(r[3]),
                 "dos_cv": _f(r[4]),
                 "excess_loc_count": int(r[5] or 0),
@@ -437,12 +437,12 @@ def list_plan_transfers(
         wheres.append("status = %s")
         params.append(status)
     if item:
-        wheres.append("item_no ILIKE %s")
+        wheres.append("item_id ILIKE %s")
         params.append(f"%{item}%")
 
     where = " AND ".join(wheres)
 
-    valid_sort = {"priority_score", "recommended_qty", "transfer_cost", "net_benefit", "roi", "urgency", "item_no"}
+    valid_sort = {"priority_score", "recommended_qty", "transfer_cost", "net_benefit", "roi", "urgency", "item_id"}
     col = sort_by if sort_by in valid_sort else "priority_score"
     direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
     if col == "urgency":
@@ -455,7 +455,7 @@ def list_plan_transfers(
             cur.execute(f"SELECT COUNT(*) FROM fact_rebalancing_transfer WHERE {where}", params)
             total = (cur.fetchone() or (0,))[0]
             cur.execute(f"""
-                SELECT transfer_id, item_no, source_loc, dest_loc, transfer_mode,
+                SELECT transfer_id, item_id, source_loc, dest_loc, transfer_mode,
                        recommended_qty, approved_qty,
                        source_on_hand, source_dos, source_ss_target, source_excess_qty,
                        dest_on_hand, dest_dos, dest_ss_target, dest_shortage_qty,
@@ -475,7 +475,7 @@ def list_plan_transfers(
         "total": int(total),
         "rows": [
             {
-                "transfer_id": r[0], "item_no": r[1],
+                "transfer_id": r[0], "item_id": r[1],
                 "source_loc": r[2], "dest_loc": r[3],
                 "transfer_mode": r[4],
                 "recommended_qty": _f(r[5]), "approved_qty": _f(r[6]),
@@ -521,7 +521,7 @@ def approve_transfer(
             notes = COALESCE(%s, notes),
             modified_ts = %s
         WHERE transfer_id = %s AND status = 'recommended'
-        RETURNING transfer_id, item_no, source_loc, dest_loc, approved_qty, status
+        RETURNING transfer_id, item_id, source_loc, dest_loc, approved_qty, status
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -533,7 +533,7 @@ def approve_transfer(
         raise HTTPException(status_code=404, detail="Transfer not found or already processed")
 
     return {
-        "transfer_id": row[0], "item_no": row[1],
+        "transfer_id": row[0], "item_id": row[1],
         "source_loc": row[2], "dest_loc": row[3],
         "approved_qty": _f(row[4]), "status": row[5],
     }
@@ -559,7 +559,7 @@ def reject_transfer(
             notes = COALESCE(%s, notes),
             modified_ts = %s
         WHERE transfer_id = %s AND status IN ('recommended', 'hold')
-        RETURNING transfer_id, item_no, source_loc, dest_loc, status
+        RETURNING transfer_id, item_id, source_loc, dest_loc, status
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -571,7 +571,7 @@ def reject_transfer(
         raise HTTPException(status_code=404, detail="Transfer not found or already processed")
 
     return {
-        "transfer_id": row[0], "item_no": row[1],
+        "transfer_id": row[0], "item_id": row[1],
         "source_loc": row[2], "dest_loc": row[3], "status": row[4],
     }
 

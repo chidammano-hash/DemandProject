@@ -262,7 +262,7 @@ export default function InvBacktestTab() {
           />
           <KpiCard
             label="DFU-Months"
-            value={formatCompactNumber(bestModel.metrics.dfu_months)}
+            value={formatCompactNumber(bestModel.metrics.sku_months)}
           />
         </div>
       ) : null}

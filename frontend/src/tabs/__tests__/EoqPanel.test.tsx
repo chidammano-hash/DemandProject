@@ -37,7 +37,7 @@ vi.mock("@/api/queries", async () => {
       total: 1,
       rows: [
         {
-          item_no: "100320",
+          item_id: "100320",
           loc: "1401-BULK",
           abc_vol: "A",
           eoq: 1500.5,

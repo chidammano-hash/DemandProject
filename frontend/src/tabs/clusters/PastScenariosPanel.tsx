@@ -41,7 +41,7 @@ export default function PastScenariosPanel({
           const jr = pj.result as Record<string, unknown> | null;
           const inner = jr ? ((jr.result ?? jr) as Record<string, unknown>) : null;
           const optK = inner?.optimal_k as number | undefined;
-          const totalDfus = inner?.total_dfus as number | undefined;
+          const totalSkus = inner?.total_skus as number | undefined;
           const runtimeSec = (jr?.runtime_seconds as number) ?? 0;
           const scenId = (jr?.scenario_id as string) || pj.job_id;
           const isExpanded = expandedHistoryId === pj.job_id;
@@ -77,7 +77,7 @@ export default function PastScenariosPanel({
                   <span className="text-sm font-medium">
                     {pj.job_label || "Scenario"}
                     {optK != null && <span className="text-muted-foreground font-normal"> &mdash; K={optK}</span>}
-                    {totalDfus != null && <span className="text-muted-foreground font-normal">, {formatCompactNumber(totalDfus)} DFUs</span>}
+                    {totalSkus != null && <span className="text-muted-foreground font-normal">, {formatCompactNumber(totalSkus)} SKUs</span>}
                     {runtimeSec > 0 && <span className="text-muted-foreground font-normal">, {runtimeSec.toFixed(1)}s</span>}
                   </span>
                 </div>
@@ -115,7 +115,7 @@ export default function PastScenariosPanel({
                       <TableHeader>
                         <TableRow className="border-muted bg-muted/30">
                           <TableHead className="text-xs">Cluster</TableHead>
-                          <TableHead className="text-xs text-right">DFUs</TableHead>
+                          <TableHead className="text-xs text-right">SKUs</TableHead>
                           <TableHead className="text-xs text-right">%</TableHead>
                           <TableHead className="text-xs text-right">Avg demand</TableHead>
                           <TableHead className="text-xs text-right">CV</TableHead>

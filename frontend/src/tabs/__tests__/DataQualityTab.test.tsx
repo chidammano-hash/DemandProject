@@ -7,7 +7,7 @@ const mockFetchDQFixPreview = vi.fn().mockResolvedValue({
   items: [
     { id: 0, fix_type: "range", description: "Clamp fact_sales.qty to [0, 10000000]", affected_rows: 500, recommendation: null, status: "pending" },
     { id: 1, fix_type: "completeness", description: "Impute dim_item.brand_name NULLs with median", affected_rows: 120, recommendation: null, status: "pending" },
-    { id: 2, fix_type: "orphans", description: "Orphan keys: fact_sales(dmdunit,loc) → dim_dfu", affected_rows: 42, recommendation: "Reload dimension: make normalize-all && make load-all", status: "pending" },
+    { id: 2, fix_type: "orphans", description: "Orphan keys: fact_sales(item_id,loc) → dim_sku", affected_rows: 42, recommendation: "Reload dimension: make normalize-all && make load-all", status: "pending" },
   ],
   total: 3,
 });
@@ -27,7 +27,7 @@ const mockDomains = [
 const mockChecks = [
   { check_id: 1, check_name: "Null check", check_type: "completeness", domain: "sales", table_name: "fact_sales_monthly", severity: "critical", enabled: true, last_status: "pass", last_value: 0.0, last_run: "2026-03-17T10:00:00" },
   { check_id: 2, check_name: "Range check", check_type: "validity", domain: "forecast", table_name: "fact_external_forecast_monthly", severity: "warning", enabled: true, last_status: "fail", last_value: 12.5, last_run: "2026-03-17T09:00:00" },
-  { check_id: 3, check_name: "Freshness check", check_type: "timeliness", domain: "forecast", table_name: "fact_external_forecast_monthly", severity: "high", enabled: true, last_status: null, last_value: null, last_run: null },
+  { check_id: 3, check_name: "Volume delta check", check_type: "volume_delta", domain: "forecast", table_name: "fact_external_forecast_monthly", severity: "high", enabled: true, last_status: null, last_value: null, last_run: null },
 ];
 
 const mockHistoryEntries = [
@@ -39,7 +39,6 @@ const mockHistoryEntries = [
 vi.mock("@/api/queries", () => ({
   fetchDQDashboard: vi.fn().mockResolvedValue({ domains: [] }),
   fetchDQChecks: vi.fn().mockResolvedValue({ checks: [] }),
-  fetchDQFreshness: vi.fn().mockResolvedValue({ tables: [] }),
   fetchDQHistory: vi.fn().mockResolvedValue({ entries: [] }),
   runDQChecks: mockRunDQChecks,
   fetchDQFixPreview: mockFetchDQFixPreview,
@@ -47,20 +46,22 @@ vi.mock("@/api/queries", () => ({
   dqKeys: {
     dashboard: ["dq", "dashboard"],
     checks: ["dq", "checks"],
-    freshness: ["dq", "freshness"],
     history: (domain?: string) => ["dq", "history", domain ?? ""],
     fixPreview: ["dq", "fix", "preview"],
   },
   STALE_PLATFORM: 300000,
-  // Medallion lineage mocks
+  // Pipeline lineage mocks
   fetchBatches: vi.fn().mockResolvedValue({ batches: [], total: 0 }),
   fetchCorrections: vi.fn().mockResolvedValue({ corrections: [], total: 0 }),
-  fetchQuarantine: vi.fn().mockResolvedValue({ quarantine: [], total: 0 }),
-  resolveQuarantine: vi.fn().mockResolvedValue({ quarantine_id: 1, resolved: true }),
+  fetchCorrectionsByItem: vi.fn().mockResolvedValue({ corrections: [], total: 0 }),
+  fetchCorrectionsSummary: vi.fn().mockResolvedValue({ skus: [], total: 0 }),
   lineageKeys: {
     batches: ["lineage", "batches"],
     corrections: ["lineage", "corrections"],
-    quarantine: ["lineage", "quarantine"],
+  },
+  correctionKeys: {
+    byItem: (i: string, l: string) => ["dq", "corrections", i, l],
+    summary: (d?: string, f?: string) => ["dq", "corrections", "summary", d ?? "", f ?? ""],
   },
   STALE_LINEAGE: 30000,
 }));
@@ -88,16 +89,6 @@ describe("DataQualityTab", () => {
       </TestQueryWrapper>
     );
     expect(screen.getByText(/No data quality checks have been run yet/)).toBeInTheDocument();
-  });
-
-  it("renders pipeline freshness section", async () => {
-    const { default: DataQualityTab } = await import("../DataQualityTab");
-    render(
-      <TestQueryWrapper>
-        <DataQualityTab />
-      </TestQueryWrapper>
-    );
-    expect(screen.getByText("Pipeline Freshness")).toBeInTheDocument();
   });
 
   it("renders check catalog section", async () => {
@@ -200,7 +191,6 @@ describe("DataQualityTab", () => {
     const queries = await import("@/api/queries");
     const fetchDashboardSpy = queries.fetchDQDashboard as ReturnType<typeof vi.fn>;
     const fetchChecksSpy = queries.fetchDQChecks as ReturnType<typeof vi.fn>;
-    const fetchFreshnessSpy = queries.fetchDQFreshness as ReturnType<typeof vi.fn>;
 
     render(
       <TestQueryWrapper>
@@ -214,7 +204,6 @@ describe("DataQualityTab", () => {
 
     fetchDashboardSpy.mockClear();
     fetchChecksSpy.mockClear();
-    fetchFreshnessSpy.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: /Run Checks Now/ }));
 
@@ -225,7 +214,6 @@ describe("DataQualityTab", () => {
     await waitFor(() => {
       expect(fetchDashboardSpy).toHaveBeenCalled();
       expect(fetchChecksSpy).toHaveBeenCalled();
-      expect(fetchFreshnessSpy).toHaveBeenCalled();
     });
   });
 
@@ -330,7 +318,7 @@ describe("DataQualityTab", () => {
     const queries = await import("@/api/queries");
     (queries.fetchDQHistory as ReturnType<typeof vi.fn>).mockResolvedValue({
       entries: [
-        { check_id: 1, check_name: "freshness_sales", check_type: "freshness", domain: "sales", table_name: "fact_sales_monthly", severity: "critical", status: "fail", metric_value: 100, details: { hours_since_load: 100 }, run_ts: "2026-03-17T10:00:00" },
+        { check_id: 1, check_name: "completeness_sales_qty", check_type: "completeness", domain: "sales", table_name: "fact_sales_monthly", severity: "critical", status: "fail", metric_value: 5.0, details: { total: 1000, nulls: 50, null_pct: 5.0 }, run_ts: "2026-03-17T10:00:00" },
         { check_id: 2, check_name: "range_sales_qty", check_type: "range", domain: "sales", table_name: "fact_sales_monthly", severity: "warning", status: "fail", metric_value: 5, details: { outliers: 5, outlier_pct: 0.01, min: 0, max: 10000000 }, run_ts: "2026-03-17T09:00:00" },
       ],
     });
@@ -344,7 +332,7 @@ describe("DataQualityTab", () => {
 
     // Both issues visible initially
     await waitFor(() => {
-      expect(screen.getByText("freshness_sales")).toBeInTheDocument();
+      expect(screen.getByText("completeness_sales_qty")).toBeInTheDocument();
       expect(screen.getByText("range_sales_qty")).toBeInTheDocument();
     });
 
@@ -353,7 +341,7 @@ describe("DataQualityTab", () => {
     fireEvent.change(select, { target: { value: "critical" } });
 
     await waitFor(() => {
-      expect(screen.getByText("freshness_sales")).toBeInTheDocument();
+      expect(screen.getByText("completeness_sales_qty")).toBeInTheDocument();
       expect(screen.queryByText("range_sales_qty")).not.toBeInTheDocument();
     });
   });
@@ -372,7 +360,7 @@ describe("DataQualityTab", () => {
     await waitFor(() => {
       expect(screen.getByText("Null check")).toBeInTheDocument();
       expect(screen.getByText("Range check")).toBeInTheDocument();
-      expect(screen.getByText("Freshness check")).toBeInTheDocument();
+      expect(screen.getByText("Volume delta check")).toBeInTheDocument();
     });
   });
 
@@ -399,8 +387,8 @@ describe("DataQualityTab", () => {
     await waitFor(() => {
       // Forecast checks should still be visible
       expect(screen.getByText("Range check")).toBeInTheDocument();
-      expect(screen.getByText("Freshness check")).toBeInTheDocument();
-      // The "1 of 3" count in catalog header
+      expect(screen.getByText("Volume delta check")).toBeInTheDocument();
+      // The "2 of 3" count in catalog header
       expect(screen.getByText(/2 of 3/)).toBeInTheDocument();
     });
   });
@@ -513,7 +501,7 @@ describe("DataQualityTab", () => {
       items: [
         { id: 0, fix_type: "range", description: "Clamp fact_sales.qty to [0, 10000000]", affected_rows: 500, recommendation: null, status: "pending" },
         { id: 1, fix_type: "completeness", description: "Impute dim_item.brand_name NULLs with median", affected_rows: 120, recommendation: null, status: "pending" },
-        { id: 2, fix_type: "orphans", description: "Orphan keys: fact_sales(dmdunit,loc) → dim_dfu", affected_rows: 42, recommendation: "Reload dimension", status: "pending" },
+        { id: 2, fix_type: "orphans", description: "Orphan keys: fact_sales(item_id,loc) → dim_sku", affected_rows: 42, recommendation: "Reload dimension", status: "pending" },
       ],
       total: 3,
     });
@@ -550,24 +538,24 @@ describe("DataQualityTab", () => {
 });
 
 /* ========================================================================== */
-/*  Medallion sections — Pipeline Lineage, Corrections, Quarantine            */
+/*  Pipeline Lineage & Corrections sections                                   */
 /* ========================================================================== */
 
-describe("DataQualityTab — Medallion Sections", () => {
+describe("DataQualityTab — Pipeline Lineage & Corrections", () => {
   it("renders empty pipeline lineage section", async () => {
     const { default: DataQualityTab } = await import("../DataQualityTab");
     render(<TestQueryWrapper><DataQualityTab /></TestQueryWrapper>);
     await waitFor(() => {
       expect(screen.getByText("Pipeline Lineage")).toBeInTheDocument();
     });
-    expect(screen.getByText(/No medallion batches yet/)).toBeInTheDocument();
+    expect(screen.getByText(/No pipeline batches yet/)).toBeInTheDocument();
   });
 
   it("renders batches when available", async () => {
     const queries = await import("@/api/queries");
     (queries.fetchBatches as ReturnType<typeof vi.fn>).mockResolvedValue({
       batches: [
-        { batch_id: 1, domain: "sales", layer: "bronze", source_file: "sales_clean.csv", row_count_in: 1000, row_count_out: 950, row_count_quarantined: 50, status: "completed", started_at: "2026-03-17T12:00:00", completed_at: "2026-03-17T12:01:00", error_message: null },
+        { batch_id: 1, domain: "sales", source_file: "sales_clean.csv", row_count_in: 1000, row_count_out: 950, status: "completed", started_at: "2026-03-17T12:00:00", completed_at: "2026-03-17T12:01:00", error_message: null },
       ],
       total: 1,
     });
@@ -584,48 +572,70 @@ describe("DataQualityTab — Medallion Sections", () => {
     const { default: DataQualityTab } = await import("../DataQualityTab");
     render(<TestQueryWrapper><DataQualityTab /></TestQueryWrapper>);
     await waitFor(() => {
-      expect(screen.getByText("Corrections Audit Log")).toBeInTheDocument();
+      expect(screen.getByText(/DQ Corrections — Corrected SKUs/)).toBeInTheDocument();
     });
-    expect(screen.getByText(/No DQ corrections recorded/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/No DQ corrections recorded/)).toBeInTheDocument();
+    });
   });
 
-  it("renders corrections when available", async () => {
+  it("renders corrections summary when available", async () => {
     const queries = await import("@/api/queries");
-    (queries.fetchCorrections as ReturnType<typeof vi.fn>).mockResolvedValue({
-      corrections: [
-        { correction_id: 1, domain: "sales", table_name: "silver_sales", row_key: "k1", column_name: "qty", old_value: "100", new_value: "50", fix_type: "clamp", fix_strategy: "range", applied_by: "system", applied_at: "2026-03-17T12:00:00", load_batch_id: 42 },
+    (queries.fetchCorrectionsSummary as ReturnType<typeof vi.fn>).mockResolvedValue({
+      skus: [
+        {
+          item_id: "1401-BULK", loc: "101", correction_count: 5,
+          domains: ["sales"], tables: ["fact_sales_monthly"],
+          columns: ["qty", "qty_shipped"], fix_types: ["outliers"],
+          strategies: ["iqr_per_sku"],
+          earliest_period: "2024-01-01", latest_period: "2024-06-01",
+          latest_at: "2026-03-22T10:00:00",
+        },
       ],
       total: 1,
     });
     const { default: DataQualityTab } = await import("../DataQualityTab");
     render(<TestQueryWrapper><DataQualityTab /></TestQueryWrapper>);
     await waitFor(() => {
-      expect(screen.getByText("clamp")).toBeInTheDocument();
+      expect(screen.getByText("1401-BULK")).toBeInTheDocument();
     });
+    expect(screen.getByText("101")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
+    expect(screen.getByText("outliers")).toBeInTheDocument();
   });
 
-  it("renders empty quarantine section", async () => {
-    const { default: DataQualityTab } = await import("../DataQualityTab");
-    render(<TestQueryWrapper><DataQualityTab /></TestQueryWrapper>);
-    await waitFor(() => {
-      expect(screen.getByText("Quarantine Queue")).toBeInTheDocument();
-    });
-    expect(screen.getByText(/No quarantined rows/)).toBeInTheDocument();
-  });
-
-  it("renders quarantine items with dismiss button", async () => {
+  it("navigates to Item Analysis on SKU row click", async () => {
     const queries = await import("@/api/queries");
-    (queries.fetchQuarantine as ReturnType<typeof vi.fn>).mockResolvedValue({
-      quarantine: [
-        { quarantine_id: 1, domain: "sales", bronze_id: 100, load_batch_id: 42, rejection_reason: "null_pk", rejection_details: null, raw_row: null, resolved: false, resolved_by: null, created_at: "2026-03-17T12:00:00" },
+    (queries.fetchCorrectionsSummary as ReturnType<typeof vi.fn>).mockResolvedValue({
+      skus: [
+        {
+          item_id: "1401-BULK", loc: "101", correction_count: 1,
+          domains: ["sales"], tables: ["fact_sales_monthly"],
+          columns: ["qty"], fix_types: ["outliers"], strategies: ["iqr_per_sku"],
+          earliest_period: "2024-06-01", latest_period: "2024-06-01",
+          latest_at: "2026-03-22T10:00:00",
+        },
       ],
       total: 1,
     });
+    // Spy on window.location.href setter
+    const hrefSetter = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, set href(v: string) { hrefSetter(v); }, get href() { return "http://localhost:3000"; } },
+      writable: true,
+    });
     const { default: DataQualityTab } = await import("../DataQualityTab");
     render(<TestQueryWrapper><DataQualityTab /></TestQueryWrapper>);
     await waitFor(() => {
-      expect(screen.getByText("null_pk")).toBeInTheDocument();
+      expect(screen.getByText("1401-BULK")).toBeInTheDocument();
     });
-    expect(screen.getByText("Dismiss")).toBeInTheDocument();
+    // Click the SKU row — should navigate
+    fireEvent.click(screen.getByText("1401-BULK"));
+    expect(hrefSetter).toHaveBeenCalledWith(
+      expect.stringContaining("tab=itemAnalysis"),
+    );
+    expect(hrefSetter).toHaveBeenCalledWith(
+      expect.stringContaining("item=1401-BULK"),
+    );
   });
 });

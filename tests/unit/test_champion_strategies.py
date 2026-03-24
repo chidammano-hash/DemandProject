@@ -50,8 +50,8 @@ def _make_monthly_errors(
             startdate = pd.Timestamp(month)
             fcstdate = startdate - pd.DateOffset(months=execution_lag)
             rows.append({
-                "dmdunit": dfu[0],
-                "dmdgroup": dfu[1],
+                "item_id": dfu[0],
+                "customer_group": dfu[1],
                 "loc": dfu[2],
                 "startdate": startdate,
                 "fcstdate": fcstdate,
@@ -127,7 +127,7 @@ class TestComputeStrategyAccuracy:
 # ---------------------------------------------------------------------------
 
 class TestComputeCeiling:
-    def test_picks_lowest_error_per_dfu_month(self):
+    def test_picks_lowest_error_per_sku_month(self):
         df = _make_monthly_errors(
             models=["A", "B"],
             months=[date(2024, 1, 1)],
@@ -517,7 +517,7 @@ class TestEnsembleStrategy:
 # ---------------------------------------------------------------------------
 
 class TestMultipleDFUs:
-    def test_independent_selection_per_dfu(self):
+    def test_independent_selection_per_sku(self):
         """Each DFU should have an independent winner selection."""
         dfu1_values = {
             "A": [(105, 100)] * 6,  # A better for DFU1
@@ -539,15 +539,15 @@ class TestMultipleDFUs:
 
         winners = strategy_expanding(df, min_prior_months=3)
 
-        dfu1_winners = winners[winners["dmdunit"] == "ITEM1"]
-        dfu2_winners = winners[winners["dmdunit"] == "ITEM2"]
+        dfu1_winners = winners[winners["item_id"] == "ITEM1"]
+        dfu2_winners = winners[winners["item_id"] == "ITEM2"]
 
         assert len(dfu1_winners) > 0
         assert len(dfu2_winners) > 0
         assert (dfu1_winners["model_id"] == "A").all()
         assert (dfu2_winners["model_id"] == "B").all()
 
-    def test_different_exec_lags_per_dfu(self):
+    def test_different_exec_lags_per_sku(self):
         """DFUs with different execution_lags should use independent prior windows."""
         # DFU1: exec_lag=0 (6 qualifying months possible with min_prior=3)
         # DFU2: exec_lag=2 (fewer qualifying months)
@@ -565,8 +565,8 @@ class TestMultipleDFUs:
         df = pd.concat([df1, df2], ignore_index=True)
         winners = strategy_expanding(df, min_prior_months=3)
 
-        dfu1_w = winners[winners["dmdunit"] == "ITEM1"]
-        dfu2_w = winners[winners["dmdunit"] == "ITEM2"]
+        dfu1_w = winners[winners["item_id"] == "ITEM1"]
+        dfu2_w = winners[winners["item_id"] == "ITEM2"]
 
         # DFU1 (exec_lag=0): first qualifying month = April (index 3)
         # DFU2 (exec_lag=2): first qualifying month = June (index 5)
@@ -599,7 +599,7 @@ class TestOutputSchema:
             winners = fn(df, min_prior_months=3)
             if len(winners) > 0:
                 expected_cols = {
-                    "dmdunit", "dmdgroup", "loc", "startdate",
+                    "item_id", "customer_group", "loc", "startdate",
                     "model_id", "prior_wape", "basefcst_pref", "tothist_dmd",
                 }
                 assert expected_cols.issubset(set(winners.columns)), (
@@ -609,7 +609,7 @@ class TestOutputSchema:
 
     def test_empty_input_returns_empty_df(self):
         df = pd.DataFrame(columns=[
-            "dmdunit", "dmdgroup", "loc", "startdate",
+            "item_id", "customer_group", "loc", "startdate",
             "model_id", "basefcst_pref", "tothist_dmd", "abs_err",
         ])
         for strategy_name in ["expanding", "rolling", "decay", "ensemble"]:

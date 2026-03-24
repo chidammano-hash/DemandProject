@@ -21,11 +21,12 @@ import logging
 import os
 import sys
 import uuid
-from datetime import date
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import yaml
+
+from common.services.perf_profiler import profiled_section
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,11 +74,13 @@ def run_portfolio(config: dict, dry_run: bool) -> None:
         log.info("[DRY RUN] Config: %s", json.dumps(config, indent=2))
         return
 
-    pool = _build_pool()
+    with profiled_section("build_pool"):
+        pool = _build_pool()
     from common.ai_planner import AIPlannerAgent
 
     agent = AIPlannerAgent(pool, config)
-    result = agent.run_portfolio_scan(scan_run_id)
+    with profiled_section("portfolio_scan"):
+        result = agent.run_portfolio_scan(scan_run_id)
 
     log.info(
         "Portfolio scan complete  scan_run_id=%s  total_insights=%d",
@@ -88,20 +91,22 @@ def run_portfolio(config: dict, dry_run: bool) -> None:
     pool.close()
 
 
-def run_dfu(item_no: str, loc: str, config: dict, dry_run: bool) -> None:
+def run_dfu(item_id: str, loc: str, config: dict, dry_run: bool) -> None:
     """Run single-DFU analysis."""
     scan_run_id = str(uuid.uuid4())
-    log.info("DFU analysis: %s @ %s  scan_run_id=%s  dry_run=%s", item_no, loc, scan_run_id, dry_run)
+    log.info("DFU analysis: %s @ %s  scan_run_id=%s  dry_run=%s", item_id, loc, scan_run_id, dry_run)
 
     if dry_run:
-        log.info("[DRY RUN] Would call AIPlannerAgent.run_dfu_analysis('%s', '%s')", item_no, loc)
+        log.info("[DRY RUN] Would call AIPlannerAgent.run_sku_analysis('%s', '%s')", item_id, loc)
         return
 
-    pool = _build_pool()
+    with profiled_section("build_pool"):
+        pool = _build_pool()
     from common.ai_planner import AIPlannerAgent
 
     agent = AIPlannerAgent(pool, config)
-    insights = agent.run_dfu_analysis(item_no, loc, scan_run_id)
+    with profiled_section("sku_analysis"):
+        insights = agent.run_sku_analysis(item_id, loc, scan_run_id)
 
     log.info("DFU analysis complete  insights_created=%d", len(insights))
     for ins in insights:

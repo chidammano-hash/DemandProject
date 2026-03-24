@@ -12,7 +12,7 @@ export interface FillRateSummaryPayload {
   total_shortage_qty: number;
   partial_fulfillment_events: number;
   by_abc: Record<string, { avg_fill_rate: number | null; total_shortage_qty: number; events: number }>;
-  worst_items: Array<{ item_no: string; loc: string; fill_rate: number | null; shortage_qty: number | null; abc_vol: string | null }>;
+  worst_items: Array<{ item_id: string; loc: string; fill_rate: number | null; shortage_qty: number | null; abc_vol: string | null }>;
   trend: Array<{ month_start: string; portfolio_fill_rate: number | null; total_shortage_qty: number }>;
 }
 
@@ -25,7 +25,7 @@ export interface FillRateTrendRow {
 }
 
 export interface FillRateDetailRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   month_start: string;
   total_ordered: number | null;

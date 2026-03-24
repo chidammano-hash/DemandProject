@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS dim_item (
   item_sk BIGSERIAL PRIMARY KEY,
   item_ck TEXT UNIQUE NOT NULL,
-  item_no TEXT NOT NULL,
+  item_id TEXT NOT NULL,
   item_desc TEXT NOT NULL,
   item_status TEXT NOT NULL,
   brand_name TEXT NOT NULL,

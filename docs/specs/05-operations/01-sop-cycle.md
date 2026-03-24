@@ -57,10 +57,10 @@ Gaps are computed as the difference between demand forecast totals, supply-const
 | Table | Purpose | Key Columns |
 |---|---|---|
 | `fact_sop_cycles` | Cycle header | `cycle_id`, `period`, `current_stage`, `created_at`, `closed_at` |
-| `fact_sop_demand_review` | Demand inputs per DFU (Demand Forecast Unit -- item + location) | `cycle_id`, `item_no`, `loc`, `statistical_qty`, `override_qty`, `final_qty` |
-| `fact_sop_supply_constraints` | Supply flags per item-location | `cycle_id`, `item_no`, `loc`, `constraint_type`, `constrained_qty`, `notes` |
-| `fact_sop_gaps` | Identified gaps | `cycle_id`, `gap_type`, `item_no`, `loc`, `gap_qty`, `resolution`, `status` |
-| `fact_sop_approved_plan` | Locked consensus plan | `cycle_id`, `item_no`, `loc`, `approved_qty`, `approved_by`, `approved_at` |
+| `fact_sop_demand_review` | Demand inputs per DFU (Demand Forecast Unit -- item + location) | `cycle_id`, `item_id`, `loc`, `statistical_qty`, `override_qty`, `final_qty` |
+| `fact_sop_supply_constraints` | Supply flags per item-location | `cycle_id`, `item_id`, `loc`, `constraint_type`, `constrained_qty`, `notes` |
+| `fact_sop_gaps` | Identified gaps | `cycle_id`, `gap_type`, `item_id`, `loc`, `gap_qty`, `resolution`, `status` |
+| `fact_sop_approved_plan` | Locked consensus plan | `cycle_id`, `item_id`, `loc`, `approved_qty`, `approved_by`, `approved_at` |
 
 All five tables share `cycle_id` as the join key.
 

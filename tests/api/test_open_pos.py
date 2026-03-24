@@ -148,7 +148,7 @@ async def test_open_pos_with_rows():
     assert len(data["items"]) == 2
     item = data["items"][0]
     assert item["po_number"] == "PO-4521"
-    assert item["item_no"] == "100320"
+    assert item["item_id"] == "100320"
     assert item["open_qty"] == 150.0
     assert item["line_value"] == 1875.0
     assert item["days_past_due"] == 0

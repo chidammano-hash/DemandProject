@@ -43,16 +43,13 @@ export interface DQHistoryEntry { check_id: number; check_name: string; check_ty
 export interface DQFixItem { id: number; fix_type: string; description: string; affected_rows: number; recommendation: string | null; status: string; }
 export interface DQFixApplyResult { applied: DQFixItem[]; skipped: DQFixItem[]; total_applied: number; total_skipped: number; total_rows_fixed: number; }
 
-export const dqKeys = { dashboard: ["dq", "dashboard"], checks: ["dq", "checks"], freshness: ["dq", "freshness"], history: (domain?: string) => ["dq", "history", domain ?? ""], fixPreview: ["dq", "fix", "preview"] } as const;
+export const dqKeys = { dashboard: ["dq", "dashboard"], checks: ["dq", "checks"], history: (domain?: string) => ["dq", "history", domain ?? ""], fixPreview: ["dq", "fix", "preview"] } as const;
 
 export const fetchDQDashboard = async (): Promise<{ domains: DQDomainScore[] }> =>
   fetchJson("/data-quality/dashboard");
 
 export const fetchDQChecks = async (): Promise<{ checks: DQCheck[] }> =>
   fetchJson("/data-quality/checks");
-
-export const fetchDQFreshness = async () =>
-  fetchJson("/data-quality/freshness");
 
 export const fetchDQHistory = async (domain?: string, days = 7, limit = 200): Promise<{ entries: DQHistoryEntry[] }> => {
   const params = new URLSearchParams();
@@ -74,40 +71,46 @@ export const applyDQFixes = async (fixIds: number[]): Promise<DQFixApplyResult> 
   fetchJson("/data-quality/fix/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fix_ids: fixIds }) });
 
 // ---------------------------------------------------------------------------
-// Medallion Pipeline Lineage
+// Pipeline Lineage
 // ---------------------------------------------------------------------------
 export interface LoadBatch {
-  batch_id: number; domain: string; layer: string;
+  batch_id: number; domain: string;
   source_file: string | null; source_hash: string | null;
   row_count_in: number | null; row_count_out: number | null;
-  row_count_quarantined: number | null;
   status: string; started_at: string | null; completed_at: string | null;
   error_message: string | null;
-  layer_counts?: Record<string, number>;
 }
 export interface DQCorrection {
   correction_id: number; domain: string; table_name: string;
-  row_key: string; column_name: string;
-  old_value: string | null; new_value: string | null;
-  fix_type: string; fix_strategy: string;
-  applied_by: string; applied_at: string | null;
-  load_batch_id: number;
+  item_id: string | null; loc: string | null;
+  period: string | null; column_name: string;
+  old_value: number | null; new_value: number | null;
+  fix_type: string; fix_strategy: string | null;
+  threshold: number | null;
+  lower_bound: number | null; upper_bound: number | null;
+  applied_at: string | null;
 }
-export interface QuarantineEntry {
-  quarantine_id: number; domain: string;
-  bronze_id: number; load_batch_id: number;
-  rejection_reason: string;
-  rejection_details: unknown; raw_row: unknown;
-  resolved: boolean; resolved_by: string | null;
-  created_at: string | null;
-}
-
 export const lineageKeys = {
   batches: ["lineage", "batches"],
   batchDetail: (id: number) => ["lineage", "batch", id],
   row: (domain: string, key: string) => ["lineage", "row", domain, key],
   corrections: ["lineage", "corrections"],
-  quarantine: ["lineage", "quarantine"],
+} as const;
+
+export interface DQCorrectionSummary {
+  item_id: string; loc: string;
+  correction_count: number;
+  domains: string[]; tables: string[];
+  columns: string[]; fix_types: string[];
+  strategies: string[];
+  earliest_period: string | null;
+  latest_period: string | null;
+  latest_at: string | null;
+}
+
+export const correctionKeys = {
+  byItem: (item_id: string, loc: string) => ["dq", "corrections", item_id, loc],
+  summary: (domain?: string, fixType?: string) => ["dq", "corrections", "summary", domain ?? "", fixType ?? ""],
 } as const;
 
 export const STALE_LINEAGE = 30_000;
@@ -135,16 +138,28 @@ export const fetchCorrections = async (domain?: string, fixType?: string, batchI
   return fetchJson(`/data-quality/lineage/corrections?${params}`);
 };
 
-export const fetchQuarantine = async (domain?: string, resolved?: boolean, limit = 50): Promise<{ quarantine: QuarantineEntry[]; total: number }> => {
-  const params = new URLSearchParams();
-  if (domain) params.set("domain", domain);
-  if (resolved !== undefined) params.set("resolved", String(resolved));
-  params.set("limit", String(limit));
-  return fetchJson(`/data-quality/quarantine?${params}`);
+export const fetchCorrectionsByItem = async (
+  item_id: string,
+  loc: string,
+  limit = 500,
+): Promise<{ corrections: DQCorrection[]; total: number }> => {
+  const params = new URLSearchParams({ item_id, loc, limit: String(limit) });
+  return fetchJson(`/data-quality/corrections?${params}`);
 };
 
-export const resolveQuarantine = async (quarantineId: number): Promise<{ quarantine_id: number; resolved: boolean }> =>
-  fetchJson(`/data-quality/quarantine/${quarantineId}/resolve`, { method: "POST" });
+export const fetchCorrectionsSummary = async (
+  domain?: string,
+  fixType?: string,
+  limit = 200,
+  offset = 0,
+): Promise<{ skus: DQCorrectionSummary[]; total: number }> => {
+  const params = new URLSearchParams();
+  if (domain) params.set("domain", domain);
+  if (fixType) params.set("fix_type", fixType);
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+  return fetchJson(`/data-quality/corrections/summary?${params}`);
+};
 
 // ---------------------------------------------------------------------------
 // Notifications (08-04)
@@ -214,7 +229,7 @@ export const fetchSignalSources = async () =>
   fetchJson("/demand-signals/external/sources");
 
 export const fetchDemandDecomposition = async (itemNo: string, loc: string) =>
-  fetchJson(`/demand-signals/external/decomposition?item_no=${itemNo}&loc=${loc}`);
+  fetchJson(`/demand-signals/external/decomposition?item_id=${itemNo}&loc=${loc}`);
 
 // Stale times
 export const STALE_PLATFORM = 5 * 60 * 1000; // 5 min

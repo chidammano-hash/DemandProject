@@ -65,7 +65,7 @@ async def test_get_bias_corrections_200():
     assert "corrections" in data
     assert len(data["corrections"]) == 1
     item = data["corrections"][0]
-    assert item["item_no"] == "ITEM001"
+    assert item["item_id"] == "ITEM001"
     assert item["loc"] == "LOC001"
     assert item["segment_type"] == "cluster"
     assert item["plan_month"] == "2025-03-01"
@@ -100,7 +100,7 @@ async def test_get_bias_corrections_with_filters():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/bias-corrections",
-                params={"item_no": "ITEM001", "loc": "LOC001", "segment_type": "cluster"},
+                params={"item_id": "ITEM001", "loc": "LOC001", "segment_type": "cluster"},
             )
 
     assert resp.status_code == 200
@@ -182,7 +182,7 @@ async def test_get_flagged_bias_corrections_200():
     assert "flagged" in data
     assert len(data["flagged"]) == 1
     item = data["flagged"][0]
-    assert item["item_no"] == "ITEM002"
+    assert item["item_id"] == "ITEM002"
     assert item["correction_was_clipped"] is True
 
 

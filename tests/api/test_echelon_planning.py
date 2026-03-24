@@ -95,7 +95,7 @@ async def test_get_echelon_targets_200():
     assert "targets" in data
     assert len(data["targets"]) == 1
     target = data["targets"][0]
-    assert target["item_no"] == "ITEM001"
+    assert target["item_id"] == "ITEM001"
     assert target["loc"] == "DC001"
     assert target["echelon_level"] == 1
     assert target["echelon_ss_qty"] == pytest.approx(85.0)
@@ -130,7 +130,7 @@ async def test_get_echelon_targets_with_filters():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/supply/echelon/targets",
-                params={"item_no": "ITEM001", "loc": "DC001", "echelon_level": 1},
+                params={"item_id": "ITEM001", "loc": "DC001", "echelon_level": 1},
             )
 
     assert resp.status_code == 200
@@ -192,7 +192,7 @@ async def test_get_echelon_reorder_points_200():
     assert "reorder_points" in data
     assert len(data["reorder_points"]) == 1
     rp = data["reorder_points"][0]
-    assert rp["item_no"] == "ITEM001"
+    assert rp["item_id"] == "ITEM001"
     assert rp["reorder_point_qty"] == pytest.approx(210.0)
     assert rp["cascade_risk_flag"] is False
     assert rp["computed_at"] is not None

@@ -58,7 +58,7 @@ Planners move exceptions through states as they take action. Resolved exceptions
 
 | Table | Grain | Key Columns |
 |---|---|---|
-| `fact_replenishment_exceptions` | exception_id | item_no, loc, exception_type, severity, severity_score, status, recommendation, detected_at |
+| `fact_replenishment_exceptions` | exception_id | item_id, loc, exception_type, severity, severity_score, status, recommendation, detected_at |
 
 6 indexes cover: status filtering, severity ranking, DFU lookup, type grouping, date range, and composite queries.
 

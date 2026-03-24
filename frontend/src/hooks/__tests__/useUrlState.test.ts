@@ -103,8 +103,8 @@ describe("useUrlState", () => {
   });
 
   describe("exported constants", () => {
-    it("VALID_TABS has 23 entries including commandCenter, aggregateAnalysis, itemAnalysis, invBacktest, jobs, aiPlanner, sop, and customerMap", () => {
-      expect(VALID_TABS).toHaveLength(23);
+    it("VALID_TABS has 25 entries including commandCenter, aggregateAnalysis, itemAnalysis, invBacktest, jobs, aiPlanner, sop, lgbmTuning, and sqlRunner", () => {
+      expect(VALID_TABS).toHaveLength(25);
       expect(VALID_TABS).toContain("commandCenter");
       expect(VALID_TABS).toContain("aggregateAnalysis");
       expect(VALID_TABS).toContain("overview");
@@ -113,6 +113,8 @@ describe("useUrlState", () => {
       expect(VALID_TABS).toContain("inventory");
       expect(VALID_TABS).toContain("invBacktest");
       expect(VALID_TABS).toContain("jobs");
+      expect(VALID_TABS).toContain("lgbmTuning");
+      expect(VALID_TABS).toContain("sqlRunner");
     });
 
     it("DIMENSION_DOMAINS has 7 entries", () => {

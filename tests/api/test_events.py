@@ -194,7 +194,7 @@ async def test_get_event_impact_preview_200():
     assert "adjustments" in data
     assert len(data["adjustments"]) == 1
     adj = data["adjustments"][0]
-    assert adj["item_no"] == "ITEM001"
+    assert adj["item_id"] == "ITEM001"
     assert adj["base_forecast_qty"] == pytest.approx(1000.0)
     assert adj["event_adjustment_qty"] == pytest.approx(200.0)
     assert adj["adjusted_forecast_qty"] == pytest.approx(1150.0)

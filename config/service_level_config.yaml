@@ -9,7 +9,7 @@ service_level:
   # Minimum data points required for reliable service level calculation
   min_months_history: 3
 
-  # Chronic miss detection: flag DFU if misses in >= N of last M months
+  # Chronic miss detection: flag SKU if misses in >= N of last M months
   chronic_miss_count: 2
   chronic_miss_window_months: 3
 

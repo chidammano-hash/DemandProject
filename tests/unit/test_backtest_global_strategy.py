@@ -28,9 +28,9 @@ def _make_grid(n_rows: int = 200, include_cluster: bool = True) -> pd.DataFrame:
     """Build a minimal feature grid matching the backtest framework schema."""
     rng = np.random.default_rng(42)
     df = pd.DataFrame({
-        "dfu_ck": range(n_rows),
-        "dmdunit": [f"ITEM{i % 10}" for i in range(n_rows)],
-        "dmdgroup": ["GRP1"] * n_rows,
+        "sku_ck": range(n_rows),
+        "item_id": [f"ITEM{i % 10}" for i in range(n_rows)],
+        "customer_group": ["GRP1"] * n_rows,
         "loc": [f"LOC{i % 5}" for i in range(n_rows)],
         "startdate": pd.date_range("2024-01-01", periods=n_rows, freq="ME"),
         "qty": rng.integers(0, 100, n_rows).astype(float),
@@ -104,10 +104,10 @@ class TestGlobalModelsKey:
 class TestGlobalResultColumns:
     """Result DataFrame from global functions must have the expected columns."""
 
-    REQUIRED_COLS = {"dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate", "basefcst_pref"}
+    REQUIRED_COLS = {"sku_ck", "item_id", "customer_group", "loc", "startdate", "basefcst_pref"}
 
     def _make_result(self, predict_df: pd.DataFrame, preds: np.ndarray) -> pd.DataFrame:
-        result = predict_df[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
+        result = predict_df[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
         result["basefcst_pref"] = np.clip(preds, 0, None)
         return result
 
@@ -194,8 +194,8 @@ class TestCatBoostGlobalCatIndices:
         assert cat_indices == [2]
 
     def test_cat_indices_with_other_cat_cols(self):
-        feature_cols = ["dmdgroup", "qty_lag_1", "ml_cluster", "qty_rolling_3"]
-        cat_cols = ["dmdgroup", "ml_cluster"]
+        feature_cols = ["customer_group", "qty_lag_1", "ml_cluster", "qty_rolling_3"]
+        cat_cols = ["customer_group", "ml_cluster"]
         cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
         assert cat_indices == [0, 2]
 

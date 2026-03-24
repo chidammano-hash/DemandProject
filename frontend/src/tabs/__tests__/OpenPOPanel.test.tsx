@@ -41,7 +41,7 @@ beforeEach(() => {
       {
         po_number: "PO-001",
         po_line_number: 1,
-        item_no: "100320",
+        item_id: "100320",
         loc: "1401-BULK",
         supplier_name: "Acme Corp",
         supplier_id: "S001",

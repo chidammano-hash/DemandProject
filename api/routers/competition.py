@@ -57,7 +57,7 @@ def _load_monthly_errors(
         params.append(int(lag_mode))
 
     sql = f"""
-        SELECT dmdunit, dmdgroup, loc, startdate, model_id,
+        SELECT item_id, customer_group, loc, startdate, model_id,
                basefcst_pref, tothist_dmd,
                ABS(basefcst_pref - tothist_dmd) AS abs_err
         FROM fact_external_forecast_monthly
@@ -65,7 +65,7 @@ def _load_monthly_errors(
           AND {lag_cond}
           AND basefcst_pref IS NOT NULL
           AND tothist_dmd IS NOT NULL
-        ORDER BY dmdunit, dmdgroup, loc, model_id, startdate
+        ORDER BY item_id, customer_group, loc, model_id, startdate
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -198,8 +198,8 @@ def run_competition():
             # Ensemble: insert blended forecasts directly
             cur.execute("""
                 CREATE TEMP TABLE _champion_ensemble (
-                    dmdunit TEXT NOT NULL,
-                    dmdgroup TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    customer_group TEXT NOT NULL,
                     loc TEXT NOT NULL,
                     startdate DATE NOT NULL,
                     basefcst_pref DOUBLE PRECISION NOT NULL,
@@ -210,7 +210,7 @@ def run_competition():
             buf = io.StringIO()
             for _, r in winners_df.iterrows():
                 buf.write(
-                    f"{r['dmdunit']}\t{r['dmdgroup']}\t{r['loc']}\t"
+                    f"{r['item_id']}\t{r['customer_group']}\t{r['loc']}\t"
                     f"{r['startdate'].date()}\t{r['basefcst_pref']}\t"
                     f"{r['tothist_dmd']}\n"
                 )
@@ -223,28 +223,28 @@ def run_competition():
             # basefcst_pref with the blended value.
             cur.execute(f"""
                 INSERT INTO fact_external_forecast_monthly
-                    (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+                    (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
                      lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
-                SELECT DISTINCT ON (e.dmdunit, e.dmdgroup, e.loc, e.startdate)
-                    f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate,
+                SELECT DISTINCT ON (e.item_id, e.customer_group, e.loc, e.startdate)
+                    f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate,
                     f.startdate, f.lag, f.execution_lag,
                     e.basefcst_pref, e.tothist_dmd,
                     %s
                 FROM _champion_ensemble e
                 INNER JOIN fact_external_forecast_monthly f
-                    ON f.dmdunit = e.dmdunit
-                   AND f.dmdgroup = e.dmdgroup
+                    ON f.item_id = e.item_id
+                   AND f.customer_group = e.customer_group
                    AND f.loc = e.loc
                    AND f.startdate = e.startdate
                    AND f.model_id IN ({",".join(["%s"] * len(models))})
-                ORDER BY e.dmdunit, e.dmdgroup, e.loc, e.startdate, f.model_id
+                ORDER BY e.item_id, e.customer_group, e.loc, e.startdate, f.model_id
             """, [champion_id] + models)
         else:
             # Pick-one: copy winning model's rows per DFU per month
             cur.execute("""
                 CREATE TEMP TABLE _champion_winners (
-                    dmdunit TEXT NOT NULL,
-                    dmdgroup TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    customer_group TEXT NOT NULL,
                     loc TEXT NOT NULL,
                     startdate DATE NOT NULL,
                     winning_model_id TEXT NOT NULL
@@ -254,7 +254,7 @@ def run_competition():
             buf = io.StringIO()
             for _, r in winners_df.iterrows():
                 buf.write(
-                    f"{r['dmdunit']}\t{r['dmdgroup']}\t{r['loc']}\t"
+                    f"{r['item_id']}\t{r['customer_group']}\t{r['loc']}\t"
                     f"{r['startdate'].date()}\t{r['model_id']}\n"
                 )
             buf.seek(0)
@@ -264,16 +264,16 @@ def run_competition():
             cur.execute(
                 """
                 INSERT INTO fact_external_forecast_monthly
-                    (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+                    (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
                      lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
                 SELECT
-                    f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate,
+                    f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate,
                     f.startdate, f.lag, f.execution_lag, f.basefcst_pref,
                     f.tothist_dmd, %s
                 FROM fact_external_forecast_monthly f
                 INNER JOIN _champion_winners w
-                    ON f.dmdunit = w.dmdunit
-                   AND f.dmdgroup = w.dmdgroup
+                    ON f.item_id = w.item_id
+                   AND f.customer_group = w.customer_group
                    AND f.loc = w.loc
                    AND f.startdate = w.startdate
                    AND f.model_id = w.winning_model_id
@@ -297,8 +297,8 @@ def run_competition():
             )
             cur.execute("""
                 CREATE TEMP TABLE _ceiling_winners (
-                    dmdunit TEXT NOT NULL,
-                    dmdgroup TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    customer_group TEXT NOT NULL,
                     loc TEXT NOT NULL,
                     startdate DATE NOT NULL,
                     winning_model_id TEXT NOT NULL
@@ -308,7 +308,7 @@ def run_competition():
             buf2 = io.StringIO()
             for _, r in ceiling_df.iterrows():
                 buf2.write(
-                    f"{r['dmdunit']}\t{r['dmdgroup']}\t{r['loc']}\t"
+                    f"{r['item_id']}\t{r['customer_group']}\t{r['loc']}\t"
                     f"{r['startdate'].date()}\t{r['model_id']}\n"
                 )
             buf2.seek(0)
@@ -318,16 +318,16 @@ def run_competition():
             cur.execute(
                 """
                 INSERT INTO fact_external_forecast_monthly
-                    (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+                    (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
                      lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
                 SELECT
-                    f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate,
+                    f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate,
                     f.startdate, f.lag, f.execution_lag, f.basefcst_pref,
                     f.tothist_dmd, %s
                 FROM fact_external_forecast_monthly f
                 INNER JOIN _ceiling_winners w
-                    ON f.dmdunit = w.dmdunit
-                   AND f.dmdgroup = w.dmdgroup
+                    ON f.item_id = w.item_id
+                   AND f.customer_group = w.customer_group
                    AND f.loc = w.loc
                    AND f.startdate = w.startdate
                    AND f.model_id = w.winning_model_id
@@ -350,9 +350,8 @@ def run_competition():
     for mid in winners_df["model_id"]:
         model_wins[mid] = model_wins.get(mid, 0) + 1
 
-    n_unique_dfus = winners_df[["dmdunit", "dmdgroup", "loc"]].drop_duplicates().shape[0]
+    n_unique_dfus = winners_df[["item_id", "customer_group", "loc"]].drop_duplicates().shape[0]
 
-    from datetime import datetime, timezone
 
     summary: dict[str, Any] = {
         "config": {

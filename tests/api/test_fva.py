@@ -78,7 +78,7 @@ async def test_fva_interventions():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (5,)
     cursor.fetchall.return_value = [
-        (1, None, "policy_change", "dfu", "100320-1401", None, None,
+        (1, None, "policy_change", "sku", "100320-1401", None, None,
          5000.0, None, None, None, "pending", now),
     ]
     with patch("api.core._get_pool", return_value=pool):
@@ -93,7 +93,7 @@ async def test_fva_interventions():
     inv = data["interventions"][0]
     assert inv["intervention_id"] == 1
     assert inv["intervention_type"] == "policy_change"
-    assert inv["resource_type"] == "dfu"
+    assert inv["resource_type"] == "sku"
     assert inv["financial_impact_estimate"] == 5000.0
     assert inv["status"] == "pending"
 

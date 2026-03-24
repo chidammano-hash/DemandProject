@@ -31,9 +31,11 @@ async def get_supplier_lead_times(
     conditions = ["1=1"]
     params: list = []
     if supplier_id:
-        conditions.append("supplier_id = %s"); params.append(supplier_id)
+        conditions.append("supplier_id = %s")
+        params.append(supplier_id)
     if item_category:
-        conditions.append("item_category = %s"); params.append(item_category)
+        conditions.append("item_category = %s")
+        params.append(item_category)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:

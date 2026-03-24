@@ -9,7 +9,7 @@ costs:
 
 constraints:
   max_eoq_months_supply: 6           # cap EOQ at this many months of avg demand
-  min_annual_demand: 0.001           # skip DFUs with effectively zero demand
+  min_annual_demand: 0.001           # skip SKUs with effectively zero demand
 
 sensitivity:
   ordering_cost_min: 5.0

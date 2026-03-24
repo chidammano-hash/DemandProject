@@ -8,7 +8,7 @@
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_intramonth_stockout AS
 WITH daily_with_lag AS (
     SELECT
-        item_no,
+        item_id,
         loc,
         DATE_TRUNC('month', snapshot_date)::DATE AS month_start,
         snapshot_date,
@@ -18,7 +18,7 @@ WITH daily_with_lag AS (
         GREATEST(
             mtd_sales
             - LAG(mtd_sales, 1, 0::NUMERIC) OVER (
-                PARTITION BY item_no, loc, DATE_TRUNC('month', snapshot_date)
+                PARTITION BY item_id, loc, DATE_TRUNC('month', snapshot_date)
                 ORDER BY snapshot_date
             ),
             0
@@ -27,7 +27,7 @@ WITH daily_with_lag AS (
 ),
 monthly_agg AS (
     SELECT
-        item_no,
+        item_id,
         loc,
         month_start,
         COUNT(*)                                          AS snapshot_days,
@@ -42,10 +42,10 @@ monthly_agg AS (
         (COUNT(*) FILTER (WHERE qty_on_hand <= 0)) >= 1  AS had_full_stockout,
         (COUNT(*) FILTER (WHERE qty_on_hand <= 0)) >= 7  AS had_extended_stockout
     FROM daily_with_lag
-    GROUP BY item_no, loc, month_start
+    GROUP BY item_id, loc, month_start
 )
 SELECT
-    m.item_no,
+    m.item_id,
     m.loc,
     m.month_start,
     m.snapshot_days,
@@ -63,13 +63,13 @@ SELECT
     COALESCE(d.cluster_assignment, '(unassigned)') AS cluster_assignment,
     d.variability_class
 FROM monthly_agg m
-LEFT JOIN dim_dfu d
-    ON m.item_no = d.dmdunit
+LEFT JOIN dim_sku d
+    ON m.item_id = d.item_id
     AND m.loc = d.loc
 WITH NO DATA;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_intramonth_pk
-    ON mv_intramonth_stockout (item_no, loc, month_start);
+    ON mv_intramonth_stockout (item_id, loc, month_start);
 CREATE INDEX IF NOT EXISTS idx_intramonth_month
     ON mv_intramonth_stockout (month_start DESC);
 CREATE INDEX IF NOT EXISTS idx_intramonth_abc

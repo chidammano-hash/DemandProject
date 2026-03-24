@@ -20,7 +20,7 @@ vi.mock("@/api/queries", async () => {
     fetchLtProfile: vi.fn().mockResolvedValue({
       rows: [
         {
-          item_no: "100320",
+          item_id: "100320",
           loc: "1401-BULK",
           lt_mean_days: 21.3,
           lt_std_days: 9.5,

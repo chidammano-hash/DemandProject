@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import calendar
 import sys
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import psycopg
 from common.db import get_db_params  # noqa: E402
 from common.planning_date import get_planning_date  # noqa: E402
+from common.services.perf_profiler import profiled_section
 
 # Minimum day of month before computing signals (insufficient data before day 5)
 MIN_DAY_OF_MONTH = 5
@@ -120,91 +121,95 @@ def run(signal_date: date | None = None, dry_run: bool = False) -> dict:
                 return {"inserted": 0, "skipped": 0, "reason": "insufficient_days"}
 
             # Load MTD snapshot data for this month
-            cur.execute("""
-                SELECT
-                    item_no,
-                    loc,
-                    MAX(mtd_sales)   AS mtd_actual,
-                    MAX(qty_on_hand) FILTER (WHERE snapshot_date = %s) AS current_on_hand
-                FROM fact_inventory_snapshot
-                WHERE snapshot_date >= %s
-                  AND snapshot_date <= %s
-                GROUP BY item_no, loc
-            """, [signal_date, month_start, signal_date])
-            snapshot_rows = cur.fetchall()
+            with profiled_section("load_snapshots"):
+                cur.execute("""
+                    SELECT
+                        item_id,
+                        loc,
+                        MAX(mtd_sales)   AS mtd_actual,
+                        MAX(qty_on_hand) FILTER (WHERE snapshot_date = %s) AS current_on_hand
+                    FROM fact_inventory_snapshot
+                    WHERE snapshot_date >= %s
+                      AND snapshot_date <= %s
+                    GROUP BY item_id, loc
+                """, [signal_date, month_start, signal_date])
+                snapshot_rows = cur.fetchall()
             print(f"  Loaded {len(snapshot_rows)} item-loc snapshots")
 
             # Load champion forecast for this month
-            cur.execute("""
-                SELECT dmdunit AS item_no, loc, SUM(basefcst_pref) AS forecast_monthly
-                FROM fact_external_forecast_monthly
-                WHERE startdate = %s
-                  AND model_id = 'champion'
-                GROUP BY dmdunit, loc
-            """, [month_start])
-            forecast_map: dict[tuple, float] = {
-                (r[0], r[1]): float(r[2]) for r in cur.fetchall()
-            }
+            with profiled_section("load_forecasts"):
+                cur.execute("""
+                    SELECT item_id AS item_id, loc, SUM(basefcst_pref) AS forecast_monthly
+                    FROM fact_external_forecast_monthly
+                    WHERE startdate = %s
+                      AND model_id = 'champion'
+                    GROUP BY item_id, loc
+                """, [month_start])
+                forecast_map: dict[tuple, float] = {
+                    (r[0], r[1]): float(r[2]) for r in cur.fetchall()
+                }
 
             # Load safety stock data
-            cur.execute("""
-                SELECT item_no, loc, ss_combined, is_below_ss
-                FROM fact_safety_stock_targets
-                WHERE policy_version = 'v1'
-            """)
-            ss_map: dict[tuple, tuple] = {
-                (r[0], r[1]): (float(r[2]) if r[2] is not None else 0.0, bool(r[3]))
-                for r in cur.fetchall()
-            }
+            with profiled_section("load_safety_stock"):
+                cur.execute("""
+                    SELECT item_id, loc, ss_combined, is_below_ss
+                    FROM fact_safety_stock_targets
+                    WHERE policy_version = 'v1'
+                """)
+                ss_map: dict[tuple, tuple] = {
+                    (r[0], r[1]): (float(r[2]) if r[2] is not None else 0.0, bool(r[3]))
+                    for r in cur.fetchall()
+                }
 
         # Compute signals
         signals = []
         skipped = 0
 
-        for row in snapshot_rows:
-            item_no, loc, mtd_actual_raw, current_on_hand_raw = row
-            if mtd_actual_raw is None:
-                skipped += 1
-                continue
+        with profiled_section("compute_signals"):
+            for row in snapshot_rows:
+                item_id, loc, mtd_actual_raw, current_on_hand_raw = row
+                if mtd_actual_raw is None:
+                    skipped += 1
+                    continue
 
-            mtd_actual = float(mtd_actual_raw)
-            current_on_hand = float(current_on_hand_raw) if current_on_hand_raw is not None else 0.0
+                mtd_actual = float(mtd_actual_raw)
+                current_on_hand = float(current_on_hand_raw) if current_on_hand_raw is not None else 0.0
 
-            projected_monthly = compute_projected_monthly(mtd_actual, day_of_month, days_in_month)
-            if projected_monthly is None:
-                skipped += 1
-                continue
+                projected_monthly = compute_projected_monthly(mtd_actual, day_of_month, days_in_month)
+                if projected_monthly is None:
+                    skipped += 1
+                    continue
 
-            key = (item_no, loc)
-            forecast_monthly = forecast_map.get(key)
-            ss_combined, is_below_ss = ss_map.get(key, (0.0, False))
+                key = (item_id, loc)
+                forecast_monthly = forecast_map.get(key)
+                ss_combined, is_below_ss = ss_map.get(key, (0.0, False))
 
-            demand_vs_forecast_pct = compute_demand_vs_forecast_pct(projected_monthly, forecast_monthly)
-            signal_type = classify_signal_type(demand_vs_forecast_pct)
-            signal_strength = compute_signal_strength(demand_vs_forecast_pct)
+                demand_vs_forecast_pct = compute_demand_vs_forecast_pct(projected_monthly, forecast_monthly)
+                signal_type = classify_signal_type(demand_vs_forecast_pct)
+                signal_strength = compute_signal_strength(demand_vs_forecast_pct)
 
-            projected_daily_demand = mtd_actual / day_of_month if day_of_month > 0 else 0.0
-            proj_stockout = compute_projected_stockout(projected_daily_demand, days_remaining, current_on_hand)
-            proj_excess = projected_monthly is not None and forecast_monthly is not None and projected_monthly < 0.5 * forecast_monthly
+                projected_daily_demand = mtd_actual / day_of_month if day_of_month > 0 else 0.0
+                proj_stockout = compute_projected_stockout(projected_daily_demand, days_remaining, current_on_hand)
+                proj_excess = projected_monthly is not None and forecast_monthly is not None and projected_monthly < 0.5 * forecast_monthly
 
-            alert_priority = classify_alert_priority(proj_stockout, is_below_ss, demand_vs_forecast_pct)
+                alert_priority = classify_alert_priority(proj_stockout, is_below_ss, demand_vs_forecast_pct)
 
-            # mtd_expected = forecast_monthly / days_in_month * days_elapsed
-            mtd_expected = (
-                (float(forecast_monthly) / days_in_month) * day_of_month
-                if forecast_monthly is not None else None
-            )
+                # mtd_expected = forecast_monthly / days_in_month * days_elapsed
+                mtd_expected = (
+                    (float(forecast_monthly) / days_in_month) * day_of_month
+                    if forecast_monthly is not None else None
+                )
 
-            signals.append((
-                item_no, loc,
-                signal_date, month_start,
-                day_of_month, day_of_month, days_remaining,
-                mtd_actual, mtd_expected, projected_monthly, None, forecast_monthly,
-                demand_vs_forecast_pct, None,
-                signal_type, signal_strength,
-                current_on_hand, ss_combined, is_below_ss,
-                proj_stockout, proj_excess, alert_priority,
-            ))
+                signals.append((
+                    item_id, loc,
+                    signal_date, month_start,
+                    day_of_month, day_of_month, days_remaining,
+                    mtd_actual, mtd_expected, projected_monthly, None, forecast_monthly,
+                    demand_vs_forecast_pct, None,
+                    signal_type, signal_strength,
+                    current_on_hand, ss_combined, is_below_ss,
+                    proj_stockout, proj_excess, alert_priority,
+                ))
 
         print(f"  Computed {len(signals)} signals, skipped {skipped}")
 
@@ -214,7 +219,7 @@ def run(signal_date: date | None = None, dry_run: bool = False) -> dict:
 
         upsert_sql = """
             INSERT INTO fact_demand_signals (
-                item_no, loc,
+                item_id, loc,
                 signal_date, month_start,
                 day_of_month, days_elapsed, days_remaining,
                 mtd_actual, mtd_expected, projected_monthly, historical_avg_monthly, forecast_monthly,
@@ -226,7 +231,7 @@ def run(signal_date: date | None = None, dry_run: bool = False) -> dict:
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
-            ON CONFLICT (item_no, loc, signal_date)
+            ON CONFLICT (item_id, loc, signal_date)
             DO UPDATE SET
                 mtd_actual             = EXCLUDED.mtd_actual,
                 mtd_expected           = EXCLUDED.mtd_expected,
@@ -243,11 +248,14 @@ def run(signal_date: date | None = None, dry_run: bool = False) -> dict:
                 load_ts                = NOW()
         """
 
-        with psycopg.connect(**get_db_params()) as conn:
-            with conn.cursor() as cur:
-                for sig in signals:
-                    cur.execute(upsert_sql, list(sig))
-            conn.commit()
+        with profiled_section("upsert_signals"):
+            with psycopg.connect(**get_db_params()) as conn:
+                with conn.cursor() as cur:
+                    if signals:
+                        batch_size = 10_000
+                        for i in range(0, len(signals), batch_size):
+                            cur.executemany(upsert_sql, signals[i:i + batch_size])
+                conn.commit()
 
         print(f"  Upserted {len(signals)} signals for {signal_date}.")
         return {"inserted": len(signals), "skipped": skipped}

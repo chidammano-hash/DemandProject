@@ -77,7 +77,7 @@ An `AIPlannerAgent` class uses Claude's tool_use API to autonomously query the d
 
 | Table | Purpose | Key Columns |
 |---|---|---|
-| `ai_insights` | Generated insights | `id`, `scan_run_id`, `insight_type`, `item_no`, `loc`, `severity`, `summary`, `recommendation`, `financial_impact_estimate`, `status`, `created_at` |
+| `ai_insights` | Generated insights | `id`, `scan_run_id`, `insight_type`, `item_id`, `loc`, `severity`, `summary`, `recommendation`, `financial_impact_estimate`, `status`, `created_at` |
 | `ai_planning_memos` | Portfolio narrative summaries | `id`, `scan_run_id`, `period`, `memo_text`, `model_version`, `created_at` |
 | `ai_call_log` | Per-turn observability | `id`, `scan_run_id`, `turn`, `model`, `prompt_tokens`, `completion_tokens`, `tool_name`, `tool_latency_ms`, `created_at` |
 | `ai_recommendation_outcomes` | Planner decision tracking | `id`, `insight_id`, `action_taken`, `metric_before_wape`, `metric_before_dos`, `outcome_check_due_at`, `outcome_label` |
@@ -105,7 +105,7 @@ Portfolio scan runs in a background thread via `_executor.submit()`. The fronten
 |---|---|---|
 | Schema | `make ai-insights-schema` | Creates all 4 tables (insights, memos, call_log, outcomes) |
 | Scan | `make ai-insights-scan` | Run full portfolio AI scan |
-| Single DFU | `make ai-insights-dfu ITEM=100320 LOC=1401-BULK` | Analyze one DFU |
+| Single DFU | `make ai-insights-sku ITEM=100320 LOC=1401-BULK` | Analyze one DFU |
 | Full | `make ai-insights-all` | Schema + scan |
 
 ---
@@ -135,7 +135,7 @@ File: `config/ai_planner_config.yaml`
 | Inventory data (`agg_inventory_monthly`) | DOS, on-hand, trend analysis |
 | Safety stock targets (03-03) | Excess/shortage detection |
 | Storyboard exceptions (06-04) | Portfolio exception context |
-| Cluster assignments (`dim_dfu.cluster_assignment`) | Similar DFU lookup |
+| Cluster assignments (`dim_sku.cluster_assignment`) | Similar DFU lookup |
 
 ---
 

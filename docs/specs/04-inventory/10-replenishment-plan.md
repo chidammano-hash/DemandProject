@@ -39,7 +39,7 @@ For each DFU, for each planning month in the horizon:
 
 | Column | Type | Purpose |
 |---|---|---|
-| `item_no`, `loc` | TEXT | DFU identity |
+| `item_id`, `loc` | TEXT | DFU identity |
 | `plan_month` | DATE | Planning period |
 | `forecast_qty` | NUMERIC | Expected demand (point forecast) |
 | `forecast_upper_ci` | NUMERIC | Upper confidence bound |
@@ -55,7 +55,7 @@ For each DFU, for each planning month in the horizon:
 
 | Table | Grain | Purpose |
 |---|---|---|
-| `fact_replenishment_plan` | item_no + loc + plan_month | Forward order schedule |
+| `fact_replenishment_plan` | item_id + loc + plan_month | Forward order schedule |
 
 ---
 

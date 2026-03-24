@@ -19,7 +19,7 @@ export interface DemandSignalSummary {
 }
 
 export interface DemandSignalRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   signal_date: string;
   signal_type: string;
@@ -63,7 +63,7 @@ export async function fetchDemandSignals(params?: {
 
 export async function fetchDemandSignalItem(itemNo: string, loc: string): Promise<DemandSignalRow> {
   const res = await fetch(
-    `/inv-planning/demand-signals/item?item_no=${encodeURIComponent(itemNo)}&loc=${encodeURIComponent(loc)}`,
+    `/inv-planning/demand-signals/item?item_id=${encodeURIComponent(itemNo)}&loc=${encodeURIComponent(loc)}`,
   );
   if (!res.ok) throw new Error("Failed to fetch demand signal item");
   return res.json();
@@ -81,7 +81,7 @@ export const simulationKeys = {
 
 export interface SimulationResult {
   sim_run_id: string;
-  item_no: string;
+  item_id: string;
   loc: string;
   simulation_date: string;
   n_simulations: number;
@@ -111,14 +111,14 @@ export async function fetchSimulationResults(params?: {
 
 export async function fetchSimulationCompare(itemNo: string, loc: string): Promise<SimulationResult[]> {
   const res = await fetch(
-    `/inv-planning/simulation/compare?item_no=${encodeURIComponent(itemNo)}&loc=${encodeURIComponent(loc)}`,
+    `/inv-planning/simulation/compare?item_id=${encodeURIComponent(itemNo)}&loc=${encodeURIComponent(loc)}`,
   );
   if (!res.ok) throw new Error("Failed to fetch simulation compare");
   return res.json();
 }
 
 export async function runSimulation(body: {
-  item_no: string;
+  item_id: string;
   loc: string;
   n_simulations?: number;
   target_csl?: number;
@@ -154,7 +154,7 @@ export interface InvestmentSummary {
 }
 
 export interface InvestmentRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   abc_vol: string;
   abc_xyz_segment: string;

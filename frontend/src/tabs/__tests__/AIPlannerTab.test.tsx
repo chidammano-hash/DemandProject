@@ -93,7 +93,7 @@ const sampleInsight = {
   insight_id: 1,
   insight_type: "stockout_risk" as const,
   severity: "critical" as const,
-  item_no: "100320",
+  item_id: "100320",
   loc: "1401-BULK",
   abc_vol: "A",
   cluster_assignment: "high_volume_steady",

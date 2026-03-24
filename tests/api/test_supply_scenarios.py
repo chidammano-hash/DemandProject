@@ -228,7 +228,7 @@ async def test_get_scenario_results_200():
     assert "results" in data
     assert len(data["results"]) == 1
     res = data["results"][0]
-    assert res["item_no"] == "ITEM001"
+    assert res["item_id"] == "ITEM001"
     assert res["baseline_qty"] == pytest.approx(1000.0)
     assert res["scenario_qty"] == pytest.approx(600.0)
     assert res["impact_qty"] == pytest.approx(-400.0)

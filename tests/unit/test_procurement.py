@@ -26,7 +26,7 @@ class TestMapFields:
     def _po_tuple(self):
         return (
             "DS-2026-04-001",  # po_number
-            "100320",           # item_no
+            "100320",           # item_id
             "1401-BULK",        # loc
             "SUP-4821",         # supplier_id
             316.0,              # ordered_qty
@@ -44,13 +44,13 @@ class TestMapFields:
         """No field_mapping → DS field names preserved."""
         result = rpo._map_fields(self._po_tuple(), {})
         assert result["po_number"] == "DS-2026-04-001"
-        assert result["item_no"] == "100320"
+        assert result["item_id"] == "100320"
         assert result["ordered_qty"] == 316.0
 
     def test_sap_field_mapping(self):
         """SAP BAPI field names applied correctly."""
         mapping = {
-            "item_no": "MATNR",
+            "item_id": "MATNR",
             "loc": "WERKS",
             "supplier_id": "LIFNR",
             "ordered_qty": "MENGE",
@@ -85,10 +85,10 @@ class TestMapFields:
 
     def test_partial_mapping(self):
         """Only mapped fields are renamed; unmapped fields keep DS names."""
-        mapping = {"item_no": "MATNR"}
+        mapping = {"item_id": "MATNR"}
         result = rpo._map_fields(self._po_tuple(), mapping)
         assert "MATNR" in result
-        assert "item_no" not in result
+        assert "item_id" not in result
         assert "loc" in result  # unmapped field kept
 
 

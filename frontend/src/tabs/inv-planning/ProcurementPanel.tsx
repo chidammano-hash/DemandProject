@@ -185,7 +185,7 @@ export function ProcurementPanel() {
                   </div>
                   <div className="mt-1.5 flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">
-                      {po.item_no} · {po.loc}
+                      {po.item_id} · {po.loc}
                     </span>
                     <span className="text-xs font-medium">{fmt(po.total_value)}</span>
                   </div>
@@ -242,7 +242,7 @@ export function ProcurementPanel() {
             <div>
               <p className="font-mono text-sm font-semibold">{selectedOrder.po_number}</p>
               <p className="text-xs text-muted-foreground">
-                {selectedOrder.item_description || selectedOrder.item_no} · {selectedOrder.loc}
+                {selectedOrder.item_description || selectedOrder.item_id} · {selectedOrder.loc}
               </p>
             </div>
 
@@ -316,7 +316,7 @@ export function ProcurementPanel() {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Item</span>
-                <span className="font-mono text-xs">{releaseModalPO.item_no}</span>
+                <span className="font-mono text-xs">{releaseModalPO.item_id}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Ordered Qty</span>

@@ -60,7 +60,7 @@ async def test_get_demand_plan_returns_pivoted_months():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/demand-plan",
-                params={"item_no": "100320", "loc": "1401-BULK"},
+                params={"item_id": "100320", "loc": "1401-BULK"},
             )
 
     assert resp.status_code == 200
@@ -89,7 +89,7 @@ async def test_get_demand_plan_404_when_no_rows():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/demand-plan",
-                params={"item_no": "UNKNOWN", "loc": "X"},
+                params={"item_id": "UNKNOWN", "loc": "X"},
             )
 
     assert resp.status_code == 404
@@ -165,7 +165,7 @@ async def test_get_demand_plan_comparison_delta():
                 "/forecast/demand-plan/comparison",
                 params={
                     "v1": "v1", "v2": "v2",
-                    "item_no": "100320", "loc": "1401-BULK",
+                    "item_id": "100320", "loc": "1401-BULK",
                 },
             )
 
@@ -215,7 +215,7 @@ async def test_get_demand_plan_weekly_8_weeks():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/demand-plan/weekly",
-                params={"item_no": "100320", "loc": "1401-BULK", "weeks_ahead": 8},
+                params={"item_id": "100320", "loc": "1401-BULK", "weeks_ahead": 8},
             )
 
     assert resp.status_code == 200
@@ -239,7 +239,7 @@ async def test_get_demand_plan_weekly_404_no_data():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/demand-plan/weekly",
-                params={"item_no": "UNKNOWN", "loc": "X"},
+                params={"item_id": "UNKNOWN", "loc": "X"},
             )
 
     assert resp.status_code == 404
@@ -265,7 +265,7 @@ async def test_get_demand_plan_quantile_filter():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/demand-plan",
-                params={"item_no": "100320", "loc": "1401-BULK", "quantile": 0.50},
+                params={"item_id": "100320", "loc": "1401-BULK", "quantile": 0.50},
             )
 
     assert resp.status_code == 200
@@ -289,7 +289,7 @@ async def test_get_demand_plan_no_rows_raises_404():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/demand-plan",
-                params={"item_no": "100320", "loc": "1401-BULK", "plan_version": "v1"},
+                params={"item_id": "100320", "loc": "1401-BULK", "plan_version": "v1"},
             )
 
     assert resp.status_code == 404

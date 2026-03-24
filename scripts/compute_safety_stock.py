@@ -42,6 +42,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -327,19 +328,19 @@ def compute_position_metrics(
 # ---------------------------------------------------------------------------
 
 def _load_dfu_data(cur) -> list[dict]:
-    """Load DFU demand stats and ABC classification from dim_dfu."""
+    """Load DFU demand stats and ABC classification from dim_sku."""
     sql = """
         SELECT
-            dmdunit                     AS item_no,
+            item_id                     AS item_id,
             loc,
             abc_vol,
             demand_mean,
             demand_std,
             demand_cv
-        FROM dim_dfu
+        FROM dim_sku
         WHERE demand_mean IS NOT NULL
            OR demand_std  IS NOT NULL
-        ORDER BY dmdunit, loc
+        ORDER BY item_id, loc
     """
     cur.execute(sql)
     cols = [d[0] for d in cur.description]
@@ -349,13 +350,14 @@ def _load_dfu_data(cur) -> list[dict]:
 def _load_lead_time_data(cur) -> dict[tuple[str, str], dict]:
     """Load lead time profiles from dim_item_lead_time_profile (IPfeature2).
 
-    Returns dict keyed by (item_no, loc).
+    Returns dict keyed by (item_id, loc).
     Falls back to empty dict if table does not exist — script applies defaults.
     """
     try:
+        cur.execute("SAVEPOINT lt_load")
         sql = """
             SELECT
-                item_no,
+                item_id,
                 loc,
                 lt_mean_days,
                 lt_std_days
@@ -366,31 +368,34 @@ def _load_lead_time_data(cur) -> dict[tuple[str, str], dict]:
         result: dict[tuple[str, str], dict] = {}
         for row in cur.fetchall():
             rec = dict(zip(cols, row))
-            result[(rec["item_no"], rec["loc"])] = rec
+            result[(rec["item_id"], rec["loc"])] = rec
         return result
     except Exception:
+        cur.execute("ROLLBACK TO SAVEPOINT lt_load")
         log.warning("dim_item_lead_time_profile not found — using default LT values")
         return {}
 
 
 def _load_inventory_data(cur) -> dict[tuple[str, str], float]:
-    """Load latest EOM on-hand per item_no + loc from agg_inventory_monthly."""
+    """Load latest EOM on-hand per item_id + loc from agg_inventory_monthly."""
     try:
+        cur.execute("SAVEPOINT inv_load")
         sql = """
-            SELECT DISTINCT ON (item_no, loc)
-                item_no,
+            SELECT DISTINCT ON (item_id, loc)
+                item_id,
                 loc,
                 eom_qty_on_hand
             FROM agg_inventory_monthly
-            ORDER BY item_no, loc, month_start DESC
+            ORDER BY item_id, loc, month_start DESC
         """
         cur.execute(sql)
         result: dict[tuple[str, str], float] = {}
         for row in cur.fetchall():
-            item_no, loc, qty = row[0], row[1], row[2]
-            result[(item_no, loc)] = float(qty) if qty is not None else 0.0
+            item_id, loc, qty = row[0], row[1], row[2]
+            result[(item_id, loc)] = float(qty) if qty is not None else 0.0
         return result
     except Exception:
+        cur.execute("ROLLBACK TO SAVEPOINT inv_load")
         log.warning("agg_inventory_monthly not found — current_qty_on_hand defaults to 0")
         return {}
 
@@ -402,7 +407,7 @@ def _load_inventory_data(cur) -> dict[tuple[str, str], float]:
 UPSERT_SQL = """
     INSERT INTO fact_safety_stock_targets (
         ss_ck,
-        item_no, loc, policy_version, effective_date,
+        item_id, loc, policy_version, effective_date,
         service_level_target, z_score,
         demand_mean_monthly, demand_std_monthly,
         lead_time_mean_days, lead_time_std_days,
@@ -429,7 +434,7 @@ UPSERT_SQL = """
         %s, %s, %s,
         %s, %s, %s
     )
-    ON CONFLICT (item_no, loc, policy_version) DO UPDATE SET
+    ON CONFLICT (item_id, loc, policy_version) DO UPDATE SET
         ss_ck                = EXCLUDED.ss_ck,
         effective_date       = EXCLUDED.effective_date,
         service_level_target = EXCLUDED.service_level_target,
@@ -490,17 +495,18 @@ def run(
         dict with inserted_count, skipped_count, zero_demand_count.
     """
     # -- Load config ----------------------------------------------------------
-    with open(config_path) as fh:
-        cfg = yaml.safe_load(fh)
-    ss_cfg = cfg["safety_stock"]
+    with profiled_section("load_config"):
+        with open(config_path) as fh:
+            cfg = yaml.safe_load(fh)
+        ss_cfg = cfg["safety_stock"]
 
-    pv = policy_version or ss_cfg.get("policy_version", "v1")
-    service_levels: dict[str, float] = ss_cfg["service_levels"]
-    z_table: dict[float, float] = {float(k): float(v) for k, v in ss_cfg["z_table"].items()}
-    min_ss_days: float = float(ss_cfg.get("min_ss_days", 3))
-    max_ss_days: float = float(ss_cfg.get("max_ss_days", 120))
-    lt_std_fallback_pct: float = float(ss_cfg.get("lt_std_fallback_pct", 0.20))
-    batch_size: int = int(ss_cfg.get("batch_size", 1000))
+        pv = policy_version or ss_cfg.get("policy_version", "v1")
+        service_levels: dict[str, float] = ss_cfg["service_levels"]
+        z_table: dict[float, float] = {float(k): float(v) for k, v in ss_cfg["z_table"].items()}
+        min_ss_days: float = float(ss_cfg.get("min_ss_days", 3))
+        max_ss_days: float = float(ss_cfg.get("max_ss_days", 120))
+        lt_std_fallback_pct: float = float(ss_cfg.get("lt_std_fallback_pct", 0.20))
+        batch_size: int = int(ss_cfg.get("batch_size", 1000))
 
     log.info("Safety Stock Engine — IPfeature3 (policy_version=%s, dry_run=%s)", pv, dry_run)
 
@@ -509,16 +515,19 @@ def run(
     conn.autocommit = False
 
     with conn.cursor() as cur:
-        log.info("Loading DFU demand data from dim_dfu …")
-        dfu_rows = _load_dfu_data(cur)
+        log.info("Loading DFU demand data from dim_sku …")
+        with profiled_section("load_dfu_data"):
+            dfu_rows = _load_dfu_data(cur)
         log.info("  %d DFUs loaded", len(dfu_rows))
 
         log.info("Loading lead time profiles from dim_item_lead_time_profile …")
-        lt_map = _load_lead_time_data(cur)
+        with profiled_section("load_lead_times"):
+            lt_map = _load_lead_time_data(cur)
         log.info("  %d LT profiles loaded", len(lt_map))
 
         log.info("Loading latest on-hand from agg_inventory_monthly …")
-        inv_map = _load_inventory_data(cur)
+        with profiled_section("load_inventory"):
+            inv_map = _load_inventory_data(cur)
         log.info("  %d inventory records loaded", len(inv_map))
 
     # -- Compute SS per DFU --------------------------------------------------
@@ -530,98 +539,99 @@ def run(
     zero_demand_count = 0
     skipped_count = 0
 
-    for dfu in dfu_rows:
-        item_no: str = dfu["item_no"]
-        loc: str = dfu["loc"]
-        abc_vol: str | None = dfu.get("abc_vol")
-        demand_mean: float = float(dfu.get("demand_mean") or 0.0)
-        demand_std: float = float(dfu.get("demand_std") or 0.0)
-        demand_cv_raw = dfu.get("demand_cv")
-        demand_cv: float | None = float(demand_cv_raw) if demand_cv_raw is not None else None
+    with profiled_section("compute_safety_stock"):
+        for dfu in dfu_rows:
+            item_id: str = dfu["item_id"]
+            loc: str = dfu["loc"]
+            abc_vol: str | None = dfu.get("abc_vol")
+            demand_mean: float = float(dfu.get("demand_mean") or 0.0)
+            demand_std: float = float(dfu.get("demand_std") or 0.0)
+            demand_cv_raw = dfu.get("demand_cv")
+            demand_cv: float | None = float(demand_cv_raw) if demand_cv_raw is not None else None
 
-        # -- Lead time from profile table or fallback -----------------------
-        lt_rec = lt_map.get((item_no, loc), {})
-        lt_mean_raw = lt_rec.get("lt_mean_days")
-        lt_std_raw = lt_rec.get("lt_std_days")
+            # -- Lead time from profile table or fallback -----------------------
+            lt_rec = lt_map.get((item_id, loc), {})
+            lt_mean_raw = lt_rec.get("lt_mean_days")
+            lt_std_raw = lt_rec.get("lt_std_days")
 
-        if lt_mean_raw is None:
-            lt_mean_days = 14.0          # no profile → assume 14-day lead time
-        else:
-            lt_mean_days = float(lt_mean_raw)
+            if lt_mean_raw is None:
+                lt_mean_days = 14.0          # no profile → assume 14-day lead time
+            else:
+                lt_mean_days = float(lt_mean_raw)
 
-        if lt_mean_days <= 0:
-            log.warning("Skipping %s/%s: lt_mean_days=0 (invalid)", item_no, loc)
-            skipped_lt_zero += 1
-            skipped_count += 1
-            continue
+            if lt_mean_days <= 0:
+                log.warning("Skipping %s/%s: lt_mean_days=0 (invalid)", item_id, loc)
+                skipped_lt_zero += 1
+                skipped_count += 1
+                continue
 
-        if lt_std_raw is None:
-            lt_std_days = lt_mean_days * lt_std_fallback_pct
-        else:
-            lt_std_days = float(lt_std_raw)
+            if lt_std_raw is None:
+                lt_std_days = lt_mean_days * lt_std_fallback_pct
+            else:
+                lt_std_days = float(lt_std_raw)
 
-        # -- Service level & Z-score ----------------------------------------
-        sl = get_service_level(abc_vol, service_levels)
-        z = get_z_score(sl, z_table)
+            # -- Service level & Z-score ----------------------------------------
+            sl = get_service_level(abc_vol, service_levels)
+            z = get_z_score(sl, z_table)
 
-        # -- SS formula -------------------------------------------------------
-        result = compute_ss_components(
-            z=z,
-            demand_mean_monthly=demand_mean,
-            demand_std_monthly=demand_std,
-            lt_mean_days=lt_mean_days,
-            lt_std_days=lt_std_days,
-        )
+            # -- SS formula -------------------------------------------------------
+            result = compute_ss_components(
+                z=z,
+                demand_mean_monthly=demand_mean,
+                demand_std_monthly=demand_std,
+                lt_mean_days=lt_mean_days,
+                lt_std_days=lt_std_days,
+            )
 
-        avg_daily: float = result["avg_daily_demand"]
-        ss_combined: float = result["ss_combined"]
-        ss_method: str = result["ss_method"]
+            avg_daily: float = result["avg_daily_demand"]
+            ss_combined: float = result["ss_combined"]
+            ss_method: str = result["ss_method"]
 
-        if demand_mean == 0.0 and demand_std == 0.0:
-            zero_demand_count += 1
+            if demand_mean == 0.0 and demand_std == 0.0:
+                zero_demand_count += 1
 
-        # -- Guard rails ------------------------------------------------------
-        ss_combined = apply_guard_rails(ss_combined, avg_daily, min_ss_days, max_ss_days)
+            # -- Guard rails ------------------------------------------------------
+            ss_combined = apply_guard_rails(ss_combined, avg_daily, min_ss_days, max_ss_days)
 
-        # -- Current inventory position ---------------------------------------
-        current_qty = inv_map.get((item_no, loc), 0.0)
+            # -- Current inventory position ---------------------------------------
+            current_qty = inv_map.get((item_id, loc), 0.0)
 
-        pos = compute_position_metrics(
-            ss_combined=ss_combined,
-            avg_daily_demand=avg_daily,
-            lt_mean_days=lt_mean_days,
-            current_qty_on_hand=current_qty,
-        )
+            pos = compute_position_metrics(
+                ss_combined=ss_combined,
+                avg_daily_demand=avg_daily,
+                lt_mean_days=lt_mean_days,
+                current_qty_on_hand=current_qty,
+            )
 
-        # -- Build composite key & row tuple ----------------------------------
-        ss_ck = f"{item_no}_{loc}_{pv}"
+            # -- Build composite key & row tuple ----------------------------------
+            ss_ck = f"{item_id}_{loc}_{pv}"
 
-        row: tuple = (
-            ss_ck,
-            item_no, loc, pv, today,
-            sl, z,
-            demand_mean, demand_std,
-            lt_mean_days, lt_std_days,
-            abc_vol,
-            result["ss_demand_only"],
-            result["ss_lt_only"],
-            ss_combined,
-            ss_method,
-            avg_daily,
-            demand_cv,
-            lt_mean_days,
-            lt_std_days,
-            pos["reorder_point"],
-            ss_combined,             # target_min_qty = ss_combined
-            pos["target_dos_min"],
-            current_qty,
-            pos["current_dos"],
-            pos["ss_coverage"],
-            pos["ss_gap"],
-            pos["is_below_ss"],
-            now, now, now,           # computed_at, load_ts, modified_ts
-        )
-        upsert_rows.append(row)
+            row: tuple = (
+                ss_ck,
+                item_id, loc, pv, today,
+                sl, z,
+                demand_mean, demand_std,
+                lt_mean_days, lt_std_days,
+                abc_vol,
+                result["ss_demand_only"],
+                result["ss_lt_only"],
+                ss_combined,
+                ss_method,
+                avg_daily,
+                demand_cv,
+                lt_mean_days,
+                lt_std_days,
+                pos["reorder_point"],
+                ss_combined,             # target_min_qty = ss_combined
+                pos["target_dos_min"],
+                current_qty,
+                pos["current_dos"],
+                pos["ss_coverage"],
+                pos["ss_gap"],
+                pos["is_below_ss"],
+                now, now, now,           # computed_at, load_ts, modified_ts
+            )
+            upsert_rows.append(row)
 
     log.info(
         "Computation complete: %d rows to upsert, %d zero-demand, %d skipped",
@@ -648,10 +658,11 @@ def run(
         }
 
     # -- Upsert into DB -------------------------------------------------------
-    with conn.cursor() as cur:
-        inserted = _batch_upsert(cur, upsert_rows, batch_size)
+    with profiled_section("batch_upsert"):
+        with conn.cursor() as cur:
+            inserted = _batch_upsert(cur, upsert_rows, batch_size)
 
-    conn.commit()
+        conn.commit()
     conn.close()
 
     log.info("Upserted %d rows into fact_safety_stock_targets (policy_version=%s)", inserted, pv)

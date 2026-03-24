@@ -26,13 +26,13 @@ def mock_pool():
 
 @pytest.mark.asyncio
 async def test_dfu_meta_includes_seasonality_columns(mock_pool):
-    """Verify /domains/dfu/meta returns the new seasonality columns."""
+    """Verify /domains/sku/meta returns the new seasonality columns."""
     pool, _, _ = mock_pool
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/domains/dfu/meta")
+            response = await client.get("/domains/sku/meta")
             assert response.status_code == 200
             data = response.json()
             columns = data["columns"]
@@ -55,7 +55,7 @@ async def test_dfu_meta_seasonality_in_numeric_fields(mock_pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/domains/dfu/meta")
+            response = await client.get("/domains/sku/meta")
             assert response.status_code == 200
             data = response.json()
             numeric = data["numeric_fields"]
@@ -72,7 +72,7 @@ async def test_dfu_suggest_seasonality_profile(mock_pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/domains/dfu/suggest?field=seasonality_profile")
+            response = await client.get("/domains/sku/suggest?field=seasonality_profile")
             assert response.status_code == 200
             data = response.json()
             assert "values" in data
@@ -90,7 +90,7 @@ async def test_dfu_page_with_seasonality_filter(mock_pool):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             # Exact match filter (=prefix convention)
             response = await client.get(
-                '/domains/dfu/page?filters={"seasonality_profile":"=high"}'
+                '/domains/sku/page?filters={"seasonality_profile":"=high"}'
             )
             assert response.status_code == 200
 
@@ -106,14 +106,14 @@ async def test_dfu_page_sort_by_seasonality_strength(mock_pool):
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
-                "/domains/dfu/page?sort_by=seasonality_strength&sort_dir=desc"
+                "/domains/sku/page?sort_by=seasonality_strength&sort_dir=desc"
             )
             assert response.status_code == 200
 
 
 @pytest.mark.asyncio
 async def test_seasonality_profiles_endpoint(mock_pool):
-    """Verify /domains/dfu/seasonality-profiles returns profile list."""
+    """Verify /domains/sku/seasonality-profiles returns profile list."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [
         ("high_seasonal", 1200),
@@ -124,7 +124,7 @@ async def test_seasonality_profiles_endpoint(mock_pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/domains/dfu/seasonality-profiles")
+            response = await client.get("/domains/sku/seasonality-profiles")
             assert response.status_code == 200
             data = response.json()
             assert "profiles" in data
@@ -142,7 +142,7 @@ async def test_seasonality_profiles_empty(mock_pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/domains/dfu/seasonality-profiles")
+            response = await client.get("/domains/sku/seasonality-profiles")
             assert response.status_code == 200
             data = response.json()
             assert data["profiles"] == []

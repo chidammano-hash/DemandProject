@@ -195,8 +195,8 @@ export function DemandVariabilityPanel() {
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium">
                   {classFilter
-                    ? `${classFilter.charAt(0).toUpperCase() + classFilter.slice(1)} variability DFUs`
-                    : "Top volatile DFUs"}{" "}
+                    ? `${classFilter.charAt(0).toUpperCase() + classFilter.slice(1)} variability SKUs`
+                    : "Top volatile SKUs"}{" "}
                   <span className="text-muted-foreground">
                     ({varDetail?.total ?? 0} total)
                   </span>
@@ -227,11 +227,11 @@ export function DemandVariabilityPanel() {
                   <TableBody>
                     {varRows.map((r: VariabilityDetailRow) => (
                       <TableRow
-                        key={`${r.item_no}-${r.loc}`}
+                        key={`${r.item_id}-${r.loc}`}
                         className={ROW_COLORS[r.variability_class ?? ""] ?? ""}
                       >
                         <TableCell className="font-mono text-xs">
-                          {r.item_no}
+                          {r.item_id}
                         </TableCell>
                         <TableCell className="text-xs">{r.loc}</TableCell>
                         <TableCell className="text-xs">

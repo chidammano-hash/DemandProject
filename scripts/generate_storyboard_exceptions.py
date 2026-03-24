@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.db import get_db_params
 from common.planning_date import get_planning_date
 from common.exception_engine import run_exception_detection
+from common.services.perf_profiler import profiled_section
 
 
 def _load_config() -> dict:
@@ -62,7 +63,8 @@ def run(
     """Entry point called by CLI and API POST /storyboard/generate."""
     import psycopg
 
-    config = _load_config()
+    with profiled_section("load_config"):
+        config = _load_config()
 
     # Filter to a single type if requested
     if exception_type:
@@ -80,12 +82,13 @@ def run(
 
     conn = psycopg.connect(**params, autocommit=False)
     try:
-        result = run_exception_detection(
-            conn=conn,
-            config=config,
-            month_start=month_start,
-            dry_run=dry_run,
-        )
+        with profiled_section("run_exception_detection"):
+            result = run_exception_detection(
+                conn=conn,
+                config=config,
+                month_start=month_start,
+                dry_run=dry_run,
+            )
     finally:
         conn.close()
 
@@ -130,7 +133,7 @@ def main() -> None:
                 print(
                     f"  [{exc['exception_type']:20s}] "
                     f"sev={exc['severity']:.3f}  "
-                    f"{exc['item_no']} @ {exc['loc']}"
+                    f"{exc['item_id']} @ {exc['loc']}"
                 )
                 print(f"    {exc['headline']}")
     else:

@@ -19,7 +19,7 @@ CREATE INDEX IF NOT EXISTS idx_echelon_network_parent
 
 CREATE TABLE IF NOT EXISTS fact_echelon_ss_targets (
     id                      BIGSERIAL       PRIMARY KEY,
-    item_no                 VARCHAR(50)     NOT NULL,
+    item_id                 VARCHAR(50)     NOT NULL,
     loc                     VARCHAR(50)     NOT NULL,
     echelon_level           INTEGER         NOT NULL,
     echelon_ss_qty          NUMERIC(12,2)   NOT NULL,
@@ -27,17 +27,17 @@ CREATE TABLE IF NOT EXISTS fact_echelon_ss_targets (
     pooling_benefit_pct     NUMERIC(6,3),   -- (standalone-echelon)/standalone * 100
     service_level_target    NUMERIC(5,4),
     computed_at             TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_echelon_ss UNIQUE (item_no, loc, echelon_level)
+    CONSTRAINT uq_echelon_ss UNIQUE (item_id, loc, echelon_level)
 );
 
 CREATE INDEX IF NOT EXISTS idx_echelon_ss_item_loc
-    ON fact_echelon_ss_targets (item_no, loc);
+    ON fact_echelon_ss_targets (item_id, loc);
 
 -- -----------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS fact_echelon_reorder_points (
     id                      BIGSERIAL       PRIMARY KEY,
-    item_no                 VARCHAR(50)     NOT NULL,
+    item_id                 VARCHAR(50)     NOT NULL,
     loc                     VARCHAR(50)     NOT NULL,
     echelon_level           INTEGER         NOT NULL,
     reorder_point_qty       NUMERIC(12,2)   NOT NULL,
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS fact_echelon_reorder_points (
     demand_during_lt_qty    NUMERIC(12,2),
     cascade_risk_flag       BOOLEAN         NOT NULL DEFAULT FALSE,
     computed_at             TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_echelon_rop UNIQUE (item_no, loc, echelon_level)
+    CONSTRAINT uq_echelon_rop UNIQUE (item_id, loc, echelon_level)
 );
 
 CREATE INDEX IF NOT EXISTS idx_echelon_rop_cascade

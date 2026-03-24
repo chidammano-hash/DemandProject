@@ -3,11 +3,11 @@
 
 CREATE TABLE IF NOT EXISTS fact_eoq_targets (
     id                   SERIAL          PRIMARY KEY,
-    item_no              TEXT            NOT NULL,
+    item_id              TEXT            NOT NULL,
     loc                  TEXT            NOT NULL,
     abc_vol              TEXT,
 
-    -- Demand inputs (derived from dim_dfu.demand_mean)
+    -- Demand inputs (derived from dim_sku.demand_mean)
     demand_mean_monthly  NUMERIC(15, 4),
     annual_demand        NUMERIC(15, 4),
 
@@ -29,11 +29,11 @@ CREATE TABLE IF NOT EXISTS fact_eoq_targets (
     total_annual_cost    NUMERIC(15, 4),
 
     computed_at          TIMESTAMPTZ     DEFAULT NOW(),
-    UNIQUE (item_no, loc)
+    UNIQUE (item_id, loc)
 );
 
 CREATE INDEX IF NOT EXISTS idx_fact_eoq_targets_abc_vol
     ON fact_eoq_targets (abc_vol);
 
-CREATE INDEX IF NOT EXISTS idx_fact_eoq_targets_item_no
-    ON fact_eoq_targets (item_no);
+CREATE INDEX IF NOT EXISTS idx_fact_eoq_targets_item_id
+    ON fact_eoq_targets (item_id);

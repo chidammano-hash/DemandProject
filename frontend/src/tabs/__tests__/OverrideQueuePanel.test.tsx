@@ -10,7 +10,7 @@ import { TestQueryWrapper } from "./test-utils";
 vi.mock("../../api/queries", () => ({
   fetchOverrideSummary: vi.fn().mockResolvedValue({
     by_status: { pending_approval: 3, approved: 5, rejected: 1, expired: 0, superseded: 0 },
-    dfu_count_overridden: 4,
+    sku_count_overridden: 4,
     total_uplift_units: 2400,
     total_uplift_value: 12000,
     by_type: { PROMO: 5, MANUAL: 4 },
@@ -21,7 +21,7 @@ vi.mock("../../api/queries", () => ({
     overrides: [
       {
         override_id: 42,
-        item_no: "100320",
+        item_id: "100320",
         loc: "1401-BULK",
         override_month: "2026-05-01",
         override_type: "PROMO",

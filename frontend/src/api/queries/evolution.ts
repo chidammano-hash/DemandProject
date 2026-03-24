@@ -16,7 +16,7 @@ export const STALE_EVO = { FIVE_MIN: 5 * 60 * 1000, ONE_MIN: 60 * 1000 };
 
 export interface BiasCorrectionSummary {
   total_corrections: number;
-  dfu_count: number;
+  sku_count: number;
   flagged_count: number;
   clipped_count: number;
   avg_rolling_bias: number | null;
@@ -26,7 +26,7 @@ export interface BiasCorrectionSummary {
 }
 
 export interface BiasCorrectionRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   plan_month: string | null;
   segment_type: string;
@@ -42,7 +42,7 @@ export interface BiasCorrectionRow {
 }
 
 export interface FlaggedBiasRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   plan_month: string | null;
   segment_type: string;
@@ -65,7 +65,7 @@ export async function fetchBiasCorrectionSummary(plan_month?: string): Promise<B
 }
 
 export async function fetchBiasCorrections(params: {
-  plan_month?: string; item_no?: string; loc?: string; page?: number; page_size?: number;
+  plan_month?: string; item_id?: string; loc?: string; page?: number; page_size?: number;
 }): Promise<{ total: number; page: number; corrections: BiasCorrectionRow[] }> {
   const qs = buildSearchParams(params as Record<string, string | number | undefined>);
   return fetchJson(`/forecast/bias-corrections?${qs}`);
@@ -80,7 +80,7 @@ export async function fetchFlaggedBiasCorrections(plan_month?: string): Promise<
 // ---------------------------------------------------------------------------
 
 export interface ServiceLevelSummary {
-  total_dfus: number;
+  total_skus: number;
   meeting_target: number;
   below_target: number;
   chronic_misses: number;
@@ -89,7 +89,7 @@ export interface ServiceLevelSummary {
 }
 
 export interface ServiceLevelRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   abc_class: string;
   target_service_level: number;
@@ -101,7 +101,7 @@ export interface ServiceLevelRow {
 }
 
 export interface ChronicMissRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   abc_class: string;
   miss_count: number;
@@ -116,11 +116,11 @@ export const serviceLevelKeys = {
   chronicMisses: (params?: object) => ["service-level", "chronic-misses", params] as const,
 };
 
-export async function fetchServiceLevelSummary(params?: { item_no?: string; loc?: string }): Promise<ServiceLevelSummary> {
+export async function fetchServiceLevelSummary(params?: { item_id?: string; loc?: string }): Promise<ServiceLevelSummary> {
   return fetchJson(`/analytics/service-level/summary${buildQuerySuffix(params ?? {})}`);
 }
 
-export async function fetchServiceLevelDetail(params: { item_no?: string; loc?: string; abc_class?: string; flagged_only?: boolean; page?: number; page_size?: number }): Promise<{ total: number; page: number; items: ServiceLevelRow[] }> {
+export async function fetchServiceLevelDetail(params: { item_id?: string; loc?: string; abc_class?: string; flagged_only?: boolean; page?: number; page_size?: number }): Promise<{ total: number; page: number; items: ServiceLevelRow[] }> {
   const qs = buildSearchParams(params as Record<string, string | number | boolean | undefined>);
   return fetchJson(`/analytics/service-level/detail?${qs}`);
 }
@@ -134,7 +134,7 @@ export async function fetchChronicMisses(params?: { abc_class?: string; min_miss
 // ---------------------------------------------------------------------------
 
 export interface LeadTimeRow {
-  item_no: string;
+  item_id: string;
   supplier_id: string | null;
   loc: string;
   quoted_lt_days: number;
@@ -156,7 +156,7 @@ export interface LeadTimeSummary {
 
 export interface LeadTimeAlert {
   trigger_id: string;
-  item_no: string;
+  item_id: string;
   loc: string;
   alert_type: string;
   severity: string;
@@ -171,7 +171,7 @@ export const leadTimeKeys = {
   alerts: (params?: object) => ["lead-time", "alerts", params] as const,
 };
 
-export async function fetchLeadTimeLearning(params: { item_no?: string; loc?: string; supplier_id?: string; page?: number; page_size?: number }): Promise<{ total: number; page: number; items: LeadTimeRow[] }> {
+export async function fetchLeadTimeLearning(params: { item_id?: string; loc?: string; supplier_id?: string; page?: number; page_size?: number }): Promise<{ total: number; page: number; items: LeadTimeRow[] }> {
   const qs = buildSearchParams(params as Record<string, string | number | undefined>);
   return fetchJson(`/supply/supplier-lead-times?${qs}`);
 }
@@ -189,7 +189,7 @@ export async function fetchLeadTimeAlerts(params?: { severity?: string; page?: n
 // ---------------------------------------------------------------------------
 
 export interface BlendedForecastRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   week_start: string;
   plan_version: string;
@@ -202,7 +202,7 @@ export interface BlendedForecastRow {
 }
 
 export interface BlendedSummary {
-  total_dfus: number;
+  total_skus: number;
   total_weeks: number;
   avg_alpha: number | null;
   capped_count: number;
@@ -211,7 +211,7 @@ export interface BlendedSummary {
 }
 
 export interface SensingActive {
-  item_no: string;
+  item_id: string;
   loc: string;
   is_active: boolean;
   alpha_current_week: number | null;
@@ -224,7 +224,7 @@ export const blendedKeys = {
   sensingActive: (params: object) => ["sensing-active", params] as const,
 };
 
-export async function fetchBlendedForecast(params: { item_no?: string; loc?: string; weeks_ahead?: number; plan_version?: string; page?: number; page_size?: number }): Promise<{ total: number; page: number; rows: BlendedForecastRow[] }> {
+export async function fetchBlendedForecast(params: { item_id?: string; loc?: string; weeks_ahead?: number; plan_version?: string; page?: number; page_size?: number }): Promise<{ total: number; page: number; rows: BlendedForecastRow[] }> {
   const qs = buildSearchParams(params as Record<string, string | number | undefined>);
   return fetchJson(`/forecast/blended?${qs}`);
 }
@@ -244,7 +244,7 @@ export interface EchelonNetworkNode {
 }
 
 export interface EchelonTargetRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   node_type: string;
   pooled_sigma: number | null;
@@ -275,12 +275,12 @@ export async function fetchEchelonNetwork(): Promise<{ nodes: EchelonNetworkNode
   return fetchJson("/supply/echelon/network");
 }
 
-export async function fetchEchelonTargets(params: { item_no?: string; node_type?: string; severity?: string; page?: number; page_size?: number }): Promise<{ total: number; page: number; rows: EchelonTargetRow[] }> {
+export async function fetchEchelonTargets(params: { item_id?: string; node_type?: string; severity?: string; page?: number; page_size?: number }): Promise<{ total: number; page: number; rows: EchelonTargetRow[] }> {
   const qs = buildSearchParams(params as Record<string, string | number | undefined>);
   return fetchJson(`/supply/echelon/targets?${qs}`);
 }
 
-export async function fetchEchelonSummary(params?: { item_no?: string }): Promise<EchelonSummary> {
+export async function fetchEchelonSummary(params?: { item_id?: string }): Promise<EchelonSummary> {
   return fetchJson(`/supply/echelon/summary${buildQuerySuffix(params ?? {})}`);
 }
 
@@ -289,7 +289,7 @@ export async function fetchEchelonSummary(params?: { item_no?: string }): Promis
 // ---------------------------------------------------------------------------
 
 export interface InventoryPlanRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   abc_class: string | null;
   qty_on_hand: number | null;
@@ -366,7 +366,7 @@ export interface SopGap {
 }
 
 export interface ApprovedPlanRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   plan_month: string;
   approved_qty: number;
@@ -393,7 +393,7 @@ export async function fetchSopGaps(cycle_id: string): Promise<{ gaps: SopGap[]; 
   return fetchJson(`/sop/cycles/${cycle_id}/gaps`);
 }
 
-export async function fetchApprovedPlan(params?: { plan_month?: string; item_no?: string; loc?: string; page?: number }): Promise<{ total: number; page: number; rows: ApprovedPlanRow[] }> {
+export async function fetchApprovedPlan(params?: { plan_month?: string; item_id?: string; loc?: string; page?: number }): Promise<{ total: number; page: number; rows: ApprovedPlanRow[] }> {
   return fetchJson(`/sop/approved-plan${buildQuerySuffix(params ?? {})}`);
 }
 
@@ -407,7 +407,7 @@ export interface CalendarEvent {
   event_type: string;
   start_date: string;
   end_date: string;
-  item_no: string | null;
+  item_id: string | null;
   loc: string | null;
   uplift_multiplier: number;
   additive_qty: number;
@@ -420,7 +420,7 @@ export interface CalendarEvent {
 
 export interface EventImpactPreview {
   event_id: string | null;
-  item_no: string;
+  item_id: string;
   loc: string;
   week_start: string;
   base_qty: number;
@@ -442,7 +442,7 @@ export async function fetchEventCalendar(params: { year?: number; month?: number
   return fetchJson(`/events/calendar?${qs}`);
 }
 
-export async function fetchEventImpactPreview(params: { item_no: string; loc: string; uplift_multiplier?: number; additive_qty?: number }): Promise<{ rows: EventImpactPreview[]; total_impact_value: number }> {
+export async function fetchEventImpactPreview(params: { item_id: string; loc: string; uplift_multiplier?: number; additive_qty?: number }): Promise<{ rows: EventImpactPreview[]; total_impact_value: number }> {
   const qs = buildSearchParams(params as Record<string, string | number | undefined>);
   return fetchJson(`/events/impact-preview?${qs}`);
 }
@@ -455,7 +455,7 @@ export interface SupplyScenario {
   scenario_id: string;
   scenario_name: string;
   disruption_type: string;
-  item_no: string | null;
+  item_id: string | null;
   loc: string | null;
   impact_pct: number;
   duration_weeks: number;
@@ -465,7 +465,7 @@ export interface SupplyScenario {
 
 export interface ScenarioResult {
   scenario_id: string;
-  item_no: string;
+  item_id: string;
   loc: string;
   adjusted_lt_days: number | null;
   lt_increase_days: number | null;

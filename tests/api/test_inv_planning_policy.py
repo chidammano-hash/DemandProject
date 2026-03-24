@@ -175,7 +175,7 @@ async def test_get_policy_assignments_200():
          "continuous_rop", None, "system", None),
     ]
     cursor.description = [
-        ("item_no",), ("loc",), ("policy_id",), ("policy_name",),
+        ("item_id",), ("loc",), ("policy_id",), ("policy_name",),
         ("policy_type",), ("override_reason",), ("assigned_by",), ("effective_date",),
     ]
 
@@ -199,7 +199,7 @@ async def test_get_policy_assignments_filter_params():
     cursor.fetchone.return_value = (0,)
     cursor.fetchall.return_value = []
     cursor.description = [
-        ("item_no",), ("loc",), ("policy_id",), ("policy_name",),
+        ("item_id",), ("loc",), ("policy_id",), ("policy_name",),
         ("policy_type",), ("override_reason",), ("assigned_by",), ("effective_date",),
     ]
 
@@ -230,7 +230,7 @@ async def test_assign_individual_returns_assigned_count():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/inv-planning/policy-assignments/assign", json={
-                "item_no": "ITEM001",
+                "item_id": "ITEM001",
                 "loc": "LOC1",
                 "policy_id": "A_continuous_v1",
             })

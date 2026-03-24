@@ -24,7 +24,7 @@ def get_abc_xyz_matrix(
             AVG(abc_xyz_service_level)   AS avg_service_level,
             AVG(abc_xyz_dos_min)         AS avg_dos_min,
             AVG(abc_xyz_dos_max)         AS avg_dos_max
-        FROM dim_dfu
+        FROM dim_sku
         WHERE abc_vol IS NOT NULL AND xyz_class IS NOT NULL
         GROUP BY abc_vol, xyz_class
         ORDER BY abc_vol, xyz_class
@@ -64,7 +64,7 @@ def get_abc_xyz_summary(
             COUNT(*) FILTER (WHERE xyz_class = 'Z')   AS z_count,
             AVG(demand_cv)                            AS avg_demand_cv,
             AVG(intermittency_ratio)                  AS avg_intermittency_ratio
-        FROM dim_dfu
+        FROM dim_sku
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -108,26 +108,26 @@ def get_abc_xyz_detail(
         where_clauses.append("abc_xyz_segment = %s")
     if item:
         params.append(f"%{item}%")
-        where_clauses.append("dmdunit ILIKE %s")
+        where_clauses.append("item_id ILIKE %s")
     if location:
         params.append(f"%{location}%")
         where_clauses.append("loc ILIKE %s")
     add_cross_dim_filters(where_clauses, params, brand=brand, category=category, market=market,
-                          item_col="t.dmdunit")
+                          item_col="t.item_id")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
-    count_sql = f"SELECT COUNT(*) FROM dim_dfu t {where_sql}"
+    count_sql = f"SELECT COUNT(*) FROM dim_sku t {where_sql}"
     params.append(limit)
     params.append(offset)
     data_sql = f"""
-        SELECT dmdunit, dmdgroup, loc,
+        SELECT item_id, customer_group, loc,
                abc_vol, xyz_class, abc_xyz_segment,
                demand_cv, intermittency_ratio,
                abc_xyz_dos_min, abc_xyz_dos_max, abc_xyz_service_level
-        FROM dim_dfu t
+        FROM dim_sku t
         {where_sql}
-        ORDER BY abc_xyz_segment NULLS LAST, dmdunit
+        ORDER BY abc_xyz_segment NULLS LAST, item_id
         LIMIT %s OFFSET %s
     """
 
@@ -142,8 +142,8 @@ def get_abc_xyz_detail(
         "total": int(total),
         "rows": [
             {
-                "dmdunit":               r[0],
-                "dmdgroup":              r[1],
+                "item_id":               r[0],
+                "customer_group":              r[1],
                 "loc":                   r[2],
                 "abc_vol":               r[3],
                 "xyz_class":             r[4],

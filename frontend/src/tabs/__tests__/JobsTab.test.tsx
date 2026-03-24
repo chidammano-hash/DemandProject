@@ -11,6 +11,7 @@ vi.mock("@/api/queries", () => ({
     activeJobs: () => ["active-jobs"],
     jobStats: () => ["job-stats"],
     jobSchedules: () => ["job-schedules"],
+    jobLogs: (id: string) => ["job-logs", id],
     competitionConfig: () => ["competition-config"],
     competitionSummary: () => ["competition-summary"],
     clusteringDefaults: () => ["clustering-defaults"],
@@ -37,8 +38,9 @@ vi.mock("@/api/queries", () => ({
   createSchedule: vi.fn(),
   deleteSchedule: vi.fn(),
   submitPipeline: vi.fn(),
+  fetchJobLogs: vi.fn().mockResolvedValue({ job_id: "test", log: "", total_length: 0, offset: 0 }),
   fetchCompetitionConfig: vi.fn().mockResolvedValue({
-    config: { models: ["lgbm_cluster", "catboost_cluster"], metric: "wape", lag: "execution", min_dfu_rows: 3, champion_model_id: "champion", strategy: "expanding", strategy_params: {} },
+    config: { models: ["lgbm_cluster", "catboost_cluster"], metric: "wape", lag: "execution", min_sku_rows: 3, champion_model_id: "champion", strategy: "expanding", strategy_params: {} },
     available_models: ["lgbm_cluster", "catboost_cluster", "xgboost_cluster", "external"],
   }),
   saveCompetitionConfig: vi.fn().mockResolvedValue(undefined),
@@ -60,7 +62,7 @@ vi.mock("lucide-react", () => {
     BarChart2: Stub, Zap: Stub, Trophy: Stub, Activity: Stub,
     Network: Stub, TrendingUp: Stub, Calendar: Stub, Timer: Stub,
     Repeat: Stub, X: Stub, Sparkles: Stub, Package: Stub, Boxes: Stub,
-    Play: Stub, Plus: Stub, ArrowRight: Stub,
+    Play: Stub, Plus: Stub, ArrowRight: Stub, ScrollText: Stub,
   };
 });
 

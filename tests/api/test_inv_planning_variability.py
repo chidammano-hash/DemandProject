@@ -129,7 +129,7 @@ async def test_variability_detail_200():
     ]
     cursor.fetchall.return_value = detail_rows
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("cluster_assignment",),
+        ("item_id",), ("loc",), ("abc_vol",), ("cluster_assignment",),
         ("demand_mean",), ("demand_std",), ("demand_cv",), ("demand_mad",),
         ("demand_p50",), ("demand_p90",), ("demand_skewness",), ("demand_kurtosis",),
         ("zero_demand_months",), ("total_demand_months",), ("intermittency_ratio",),

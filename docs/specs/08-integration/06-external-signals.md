@@ -50,20 +50,20 @@ A signal ingestion framework stores external data (weather, economic indices, pr
 | `source_id` | `INTEGER FK` | References dim_signal_source |
 | `signal_name` | `TEXT` | e.g., "temperature_avg", "cpi_index", "promo_discount_pct" |
 | `signal_date` | `DATE` | Aligned to month-start for monthly signals |
-| `item_no` | `TEXT` | Item (nullable -- NULL means global signal) |
+| `item_id` | `TEXT` | Item (nullable -- NULL means global signal) |
 | `loc` | `TEXT` | Location (nullable -- NULL means global signal) |
 | `value` | `NUMERIC` | Signal value |
 | `unit` | `TEXT` | e.g., "fahrenheit", "index", "percent" |
 | `metadata` | `JSONB` | Additional signal context |
 
-Unique constraint on `(source_id, signal_name, signal_date, item_no, loc)`.
+Unique constraint on `(source_id, signal_name, signal_date, item_id, loc)`.
 
 ### `fact_signal_decomposition`
 
 | Column | Type | Description |
 |---|---|---|
 | `decomp_id` | `BIGSERIAL PK` | Auto-increment ID |
-| `item_no` | `TEXT` | DFU item |
+| `item_id` | `TEXT` | DFU item |
 | `loc` | `TEXT` | DFU location |
 | `month_start` | `DATE` | Month of the decomposition |
 | `signal_name` | `TEXT` | Which signal was analyzed |

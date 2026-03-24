@@ -87,7 +87,7 @@ No additional tables are created for market intelligence -- it is a stateless pa
 
 | Field | Type | Description |
 |---|---|---|
-| `item_no` (request) | string | Item number |
+| `item_id` (request) | string | Item number |
 | `loc` (request) | string | Location code |
 | `briefing` (response) | string | GPT-4o narrative synthesis |
 | `sources` (response) | array | Web search result URLs |

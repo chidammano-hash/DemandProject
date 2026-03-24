@@ -67,8 +67,8 @@ Only events with `approved` status are applied by the adjustment pipeline.
 | Table | Purpose | Key Columns |
 |---|---|---|
 | `dim_event` | Event definitions | `event_id`, `event_type`, `name`, `start_date`, `end_date`, `status` |
-| `fact_event_scope` | Items and locations affected | `event_id`, `item_no`, `loc`, `multiplier` |
-| `fact_event_adjusted_forecast` | Adjusted forecast output | `item_no`, `loc`, `month`, `base_qty`, `adjusted_qty`, `event_ids` |
+| `fact_event_scope` | Items and locations affected | `event_id`, `item_id`, `loc`, `multiplier` |
+| `fact_event_adjusted_forecast` | Adjusted forecast output | `item_id`, `loc`, `month`, `base_qty`, `adjusted_qty`, `event_ids` |
 | `fact_event_audit` | Change history | `event_id`, `changed_by`, `old_status`, `new_status`, `changed_at` |
 
 ---

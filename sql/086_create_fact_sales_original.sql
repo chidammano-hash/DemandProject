@@ -5,8 +5,8 @@
 CREATE TABLE IF NOT EXISTS fact_sales_monthly_original (
     sales_sk        BIGSERIAL PRIMARY KEY,
     sales_ck        TEXT UNIQUE NOT NULL,
-    dmdunit         TEXT NOT NULL,
-    dmdgroup        TEXT NOT NULL,
+    item_id         TEXT NOT NULL,
+    customer_group        TEXT NOT NULL,
     loc             TEXT NOT NULL,
     startdate       DATE NOT NULL,
     type            INTEGER NOT NULL,
@@ -23,6 +23,6 @@ CREATE TABLE IF NOT EXISTS fact_sales_monthly_original (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fact_sales_orig_item_loc_date
-    ON fact_sales_monthly_original (dmdunit, loc, startdate);
+    ON fact_sales_monthly_original (item_id, loc, startdate);
 CREATE INDEX IF NOT EXISTS idx_fact_sales_orig_startdate
     ON fact_sales_monthly_original (startdate);

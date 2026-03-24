@@ -5,5 +5,5 @@ simulation:
   ss_levels_to_test: 20               # test 20 SS levels from 0 to 2×analytical_SS
   random_seed: 42
   min_demand_days: 90                 # need 90+ days of demand obs to use empirical
-  max_dfus_per_batch: 500             # process in batches to manage memory
-  target_csl: null                    # null = use per-DFU from safety_stock_config
+  max_skus_per_batch: 500             # process in batches to manage memory
+  target_csl: null                    # null = use per-SKU from safety_stock_config

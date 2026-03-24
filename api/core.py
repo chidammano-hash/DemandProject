@@ -11,13 +11,10 @@ from __future__ import annotations
 from typing import Any
 from datetime import date
 import json
-import os
 
-import psycopg
-from psycopg_pool import ConnectionPool
 from fastapi import HTTPException
 
-from common.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
+from common.domain_specs import DomainSpec, get_spec
 
 # ---------------------------------------------------------------------------
 # Re-exports from sub-modules (backward compatibility)
@@ -33,11 +30,6 @@ def get_conn():
     in tests correctly intercepts the pool used by this function.
     """
     return _get_pool().connection()
-
-
-def _require_env(name: str) -> str:
-    """Raise a clear error when a required env var is missing."""
-    raise RuntimeError(f"Required environment variable '{name}' is not set.")
 
 
 # ---------------------------------------------------------------------------
@@ -109,32 +101,43 @@ def dotted_qident(*parts: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Spec field introspection
+# Spec field introspection (cached by spec.name)
 # ---------------------------------------------------------------------------
 def ordered_subset(cols: list[str], subset: set[str]) -> list[str]:
     return [c for c in cols if c in subset]
 
 
+_field_cache: dict[str, dict[str, list[str]]] = {}
+
+
+def _get_field_cache(spec: DomainSpec) -> dict[str, list[str]]:
+    if spec.name not in _field_cache:
+        float_fields = ordered_subset(spec.columns, spec.float_fields)
+        int_fields = ordered_subset(spec.columns, spec.int_fields)
+        numeric = [*float_fields, *[c for c in int_fields if c not in float_fields]]
+        dates = ordered_subset(spec.columns, spec.date_fields)
+        numeric_set = set(numeric)
+        date_set = set(dates)
+        category = [c for c in spec.columns if c not in numeric_set and c not in date_set]
+        _field_cache[spec.name] = {"numeric": numeric, "date": dates, "category": category}
+    return _field_cache[spec.name]
+
+
 def numeric_fields_for_spec(spec: DomainSpec) -> list[str]:
-    float_fields = ordered_subset(spec.columns, spec.float_fields)
-    int_fields = ordered_subset(spec.columns, spec.int_fields)
-    return [*float_fields, *[c for c in int_fields if c not in float_fields]]
+    return _get_field_cache(spec)["numeric"]
 
 
 def date_fields_for_spec(spec: DomainSpec) -> list[str]:
-    return ordered_subset(spec.columns, spec.date_fields)
+    return _get_field_cache(spec)["date"]
 
 
 def category_fields_for_spec(spec: DomainSpec) -> list[str]:
-    numeric = set(numeric_fields_for_spec(spec))
-    dates = set(date_fields_for_spec(spec))
-    return [c for c in spec.columns if c not in numeric and c not in dates]
+    return _get_field_cache(spec)["category"]
 
 
 def item_field_for_spec(spec: DomainSpec) -> str:
-    for candidate in ("dmdunit", "item_no"):
-        if candidate in spec.columns_with_ck:
-            return candidate
+    if "item_id" in spec.columns_with_ck:
+        return "item_id"
     return ""
 
 
@@ -339,6 +342,7 @@ def compute_kpis(sum_forecast: float, sum_actual: float, sum_abs_error: float, d
         "sum_forecast": round(sum_forecast, 2),
         "sum_actual": round(sum_actual, 2),
         "dfu_count": dfu_count,
+        "sku_count": dfu_count,
     }
 
 
@@ -358,7 +362,7 @@ def build_agg_trend_source(spec: DomainSpec, trend_metrics: list[str], filters: 
         return None
 
     parsed = parse_filters_safe(filters)
-    allowed_filter_cols = {"dmdunit", "loc", "startdate", "model_id"}
+    allowed_filter_cols = {"item_id", "loc", "startdate", "model_id"}
     agg_col_types = {"month_start": "date"}
     where: list[str] = []
     params: list[Any] = []
@@ -411,7 +415,7 @@ def add_cross_dim_filters(
     brand: str | None = None,
     category: str | None = None,
     market: str | None = None,
-    item_col: str = "t.item_no",
+    item_col: str = "t.item_id",
     loc_col: str = "t.loc",
 ) -> None:
     """Append brand/category/market EXISTS subquery filters to WHERE parts.
@@ -428,7 +432,7 @@ def add_cross_dim_filters(
         category: Comma-separated class_ values (dim_item).
         market: Comma-separated state_id values (dim_location).
         item_col: Qualified column expression for the item identifier in the outer
-            query (e.g. ``"t.item_no"``, ``"s.item_no"``, ``"f.dmdunit"``).
+            query (e.g. ``"t.item_id"``, ``"s.item_id"``, ``"f.item_id"``).
         loc_col: Qualified column expression for the location identifier in the
             outer query (e.g. ``"t.loc"``, ``"f.loc"``).
     """
@@ -437,14 +441,14 @@ def add_cross_dim_filters(
         if values:
             params.append(values)
             where.append(
-                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = {item_col} AND di.brand_name = ANY(%s))"
+                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = {item_col} AND di.brand_name = ANY(%s))"
             )
     if category:
         values = [v.strip() for v in category.split(",") if v.strip()]
         if values:
             params.append(values)
             where.append(
-                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = {item_col} AND di.class_ = ANY(%s))"
+                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = {item_col} AND di.class_ = ANY(%s))"
             )
     if market:
         values = [v.strip() for v in market.split(",") if v.strip()]
@@ -462,7 +466,7 @@ def add_item_loc_filters(
     loc: str | None,
     *,
     table_alias: str = "",
-    item_col: str = "item_no",
+    item_col: str = "item_id",
     loc_col: str = "loc",
 ) -> None:
     """Append ILIKE filter clauses for item and location to an in-progress WHERE parts list.
@@ -472,8 +476,8 @@ def add_item_loc_filters(
         params: Mutable list of query parameters, appended in tandem with *where*.
         item: Optional item filter value; adds ``ILIKE '%value%'`` clause when non-empty.
         loc: Optional location filter value; adds ``ILIKE '%value%'`` clause when non-empty.
-        table_alias: Optional table alias prefix, e.g. ``"s"`` produces ``s.item_no``.
-        item_col: Column name for the item identifier (default ``"item_no"``).
+        table_alias: Optional table alias prefix, e.g. ``"s"`` produces ``s.item_id``.
+        item_col: Column name for the item identifier (default ``"item_id"``).
         loc_col: Column name for the location identifier (default ``"loc"``).
     """
     prefix = f"{table_alias}." if table_alias else ""

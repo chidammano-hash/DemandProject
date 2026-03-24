@@ -36,7 +36,7 @@ vi.mock("@/api/queries", () => ({
     excess_dos_threshold: 90,
     by_model: {
       external: {
-        dfu_months: 5000,
+        sku_months: 5000,
         stockout_count: 150,
         stockout_rate: 3.0,
         excess_count: 400,
@@ -47,7 +47,7 @@ vi.mock("@/api/queries", () => ({
         bias: 3.2,
       },
       lgbm_cluster: {
-        dfu_months: 5000,
+        sku_months: 5000,
         stockout_count: 100,
         stockout_rate: 2.0,
         excess_count: 350,
@@ -87,7 +87,7 @@ vi.mock("@/api/queries", () => ({
     offset: 0,
     rows: [
       {
-        item_no: "100320",
+        item_id: "100320",
         loc: "1401-BULK",
         month: "2025-06-01",
         model_id: "lgbm_cluster",

@@ -22,7 +22,7 @@ vi.mock("recharts", () => ({
 }));
 
 vi.mock("@/api/queries/core", () => ({
-  fetchDfuShap: vi.fn().mockResolvedValue(null),
+  fetchSkuShap: vi.fn().mockResolvedValue(null),
   fetchShapSummary: vi.fn().mockResolvedValue({ model_id: "lgbm_cluster", total_features: 0, features: [] }),
 }));
 
@@ -33,7 +33,7 @@ vi.mock("@/api/queries/production-forecast", () => ({
 vi.mock("@/api/queries", () => ({
   queryKeys: {
     samplePair: (d: string) => ["sample-pair", d],
-    dfuAnalysis: (p: unknown) => ["dfu-analysis", p],
+    skuAnalysis: (p: unknown) => ["sku-analysis", p],
     forecastModels: () => ["forecast-models"],
     inventoryPosition: (p: Record<string, unknown>) => ["inventory-position", p],
     inventoryKpis: (p: Record<string, unknown>) => ["inventory-kpis", p],
@@ -46,7 +46,7 @@ vi.mock("@/api/queries", () => ({
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchSamplePair: vi.fn().mockResolvedValue({ item: "100320", location: "1401-BULK" }),
-  fetchDfuAnalysis: vi.fn().mockResolvedValue({
+  fetchSkuAnalysis: vi.fn().mockResolvedValue({
     mode: "item_location",
     item: "100320",
     location: "1401-BULK",
@@ -63,7 +63,7 @@ vi.mock("@/api/queries", () => ({
     limit: 50,
     offset: 0,
     positions: [
-      { item_no: "100320", loc: "1401-BULK", snapshot_date: "2025-06-15", lead_time_days: 30, qty_on_hand: 100, qty_on_hand_on_order: 150, qty_on_order: 50, mtd_sales: 25 },
+      { item_id: "100320", loc: "1401-BULK", snapshot_date: "2025-06-15", lead_time_days: 30, qty_on_hand: 100, qty_on_hand_on_order: 150, qty_on_order: 50, mtd_sales: 25 },
     ],
   }),
   fetchInventoryKpis: vi.fn().mockResolvedValue({
@@ -88,10 +88,12 @@ vi.mock("@/api/queries", () => ({
     location: "1401-BULK",
     snapshots: [],
   }),
-  fetchVariabilitySummary: vi.fn().mockResolvedValue({ total_dfus: 0, by_class: {}, cv_percentiles: {}, avg_cv: 0, avg_intermittency_ratio: 0, top_volatile: [] }),
+  fetchVariabilitySummary: vi.fn().mockResolvedValue({ total_skus: 0, by_class: {}, cv_percentiles: {}, avg_cv: 0, avg_intermittency_ratio: 0, top_volatile: [] }),
   fetchVariabilityDetail: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
   fetchLtSummary: vi.fn().mockResolvedValue({ total_profiles: 0, by_class: {}, avg_lt_cv: 0, avg_lt_mean_days: 0, lt_cv_p50: 0, lt_cv_p95: 0, top_volatile: [] }),
   fetchLtProfile: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
+  correctionKeys: { byItem: (i: string, l: string) => ["dq", "corrections", i, l] },
+  fetchCorrectionsByItem: vi.fn().mockResolvedValue({ corrections: [], total: 0 }),
 }));
 
 vi.mock("@/components/EChartContainer", () => ({
@@ -178,7 +180,14 @@ describe("ItemAnalysisTab", () => {
     renderTab();
     const user = userEvent.setup();
 
-    // All panels default ON, so button starts as "Deselect All"
+    // DQ Corrections defaults to OFF so button starts as "Select All"
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /select all/i })).toBeDefined();
+    });
+
+    // Click "Select All" to turn all on
+    await user.click(screen.getByRole("button", { name: /select all/i }));
+
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /deselect all/i })).toBeDefined();
     });
@@ -216,6 +225,13 @@ describe("ItemAnalysisTab", () => {
     renderTab();
     await waitFor(() => {
       expect(document.body.textContent).toContain("Points");
+    });
+  });
+
+  it("renders DQ Corrections toggle checkbox", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByLabelText("Toggle DQ Corrections")).toBeDefined();
     });
   });
 });

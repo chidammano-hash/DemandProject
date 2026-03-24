@@ -35,7 +35,7 @@ Classification into `variability_class`:
 | `high` | 0.6 <= CV < 1.0 |
 | `erratic` | CV >= 1.0 |
 
-13 columns written to `dim_dfu` including: `demand_cv`, `demand_mad`, `demand_skewness`, `demand_iqr`, `zero_month_pct`, `variability_class`, and additional stats.
+13 columns written to `dim_sku` including: `demand_cv`, `demand_mad`, `demand_skewness`, `demand_iqr`, `zero_month_pct`, `variability_class`, and additional stats.
 
 ### Lead Time Variability (IPfeature2)
 
@@ -60,7 +60,7 @@ Written to `dim_item_lead_time_profile` table.
 
 ## Data Model
 
-Demand variability -- 13 columns on `dim_dfu`:
+Demand variability -- 13 columns on `dim_sku`:
 
 | Column | Type | Example |
 |---|---|---|
@@ -74,7 +74,7 @@ Lead time variability:
 
 | Table | Grain | Key Columns |
 |---|---|---|
-| `dim_item_lead_time_profile` | item_no + loc | lt_mean, lt_cv, lt_reliability, reliability_band |
+| `dim_item_lead_time_profile` | item_id + loc | lt_mean, lt_cv, lt_reliability, reliability_band |
 
 DDL: `sql/023_create_lead_time_profile.sql`
 
@@ -97,7 +97,7 @@ Routers: `inv_planning_variability.py`, `inv_planning_lead_time.py`
 
 | Step | Script | Output |
 |---|---|---|
-| Demand variability | `scripts/compute_demand_variability.py` | `dim_dfu` columns updated |
+| Demand variability | `scripts/compute_demand_variability.py` | `dim_sku` columns updated |
 | Lead time variability | `scripts/compute_lead_time_variability.py` | `dim_item_lead_time_profile` rows |
 
 ---

@@ -165,7 +165,7 @@ async def test_detail_default():
     cursor.fetchone.return_value = (172276,)  # COUNT(*)
     cursor.fetchall.return_value = [
         (
-            "100320",                          # item_no
+            "100320",                          # item_id
             "1401-BULK",                       # loc
             datetime.date(2026, 3, 1),         # plan_month
             "A",                               # abc_vol
@@ -225,7 +225,7 @@ async def test_detail_row_keys():
     assert resp.status_code == 200
     row = resp.json()["rows"][0]
     for key in (
-        "item_no", "loc", "plan_month", "abc_vol", "policy_type",
+        "item_id", "loc", "plan_month", "abc_vol", "policy_type",
         "forecast_qty", "ss_combined", "historical_ss",
         "ss_delta", "ss_delta_pct",
         "eoq", "cycle_stock", "reorder_point", "order_qty",
@@ -360,7 +360,7 @@ async def test_comparison_empty():
 
 @pytest.mark.asyncio
 async def test_dfu_series_found():
-    """GET /inv-planning/replenishment/dfu with valid item_no+loc returns series."""
+    """GET /inv-planning/replenishment/dfu with valid item_id+loc returns series."""
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = ("2026-02",)   # version lookup
     cursor.fetchall.return_value = [
@@ -393,12 +393,12 @@ async def test_dfu_series_found():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/inv-planning/replenishment/dfu?item_no=100320&loc=1401-BULK"
+                "/inv-planning/replenishment/dfu?item_id=100320&loc=1401-BULK"
             )
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["item_no"] == "100320"
+    assert data["item_id"] == "100320"
     assert data["loc"] == "1401-BULK"
     assert "plan_version" in data
     assert "series" in data
@@ -427,7 +427,7 @@ async def test_dfu_series_entry_keys():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/inv-planning/replenishment/dfu?item_no=100320&loc=1401-BULK"
+                "/inv-planning/replenishment/dfu?item_id=100320&loc=1401-BULK"
             )
 
     assert resp.status_code == 200
@@ -456,7 +456,7 @@ async def test_dfu_series_not_found():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/inv-planning/replenishment/dfu?item_no=UNKNOWN&loc=UNKNOWN_LOC"
+                "/inv-planning/replenishment/dfu?item_id=UNKNOWN&loc=UNKNOWN_LOC"
             )
 
     assert resp.status_code == 404
@@ -474,15 +474,15 @@ async def test_dfu_series_no_version_found_returns_404():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/inv-planning/replenishment/dfu?item_no=RARE&loc=NOLOC"
+                "/inv-planning/replenishment/dfu?item_id=RARE&loc=NOLOC"
             )
 
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_dfu_series_requires_item_no():
-    """GET /inv-planning/replenishment/dfu without item_no → 422."""
+async def test_dfu_series_requires_item_id():
+    """GET /inv-planning/replenishment/dfu without item_id → 422."""
     pool, conn, cursor = _make_pool()
 
     with patch("api.core._get_pool", return_value=pool):
@@ -506,7 +506,7 @@ async def test_dfu_series_requires_loc():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/inv-planning/replenishment/dfu?item_no=100320"
+                "/inv-planning/replenishment/dfu?item_id=100320"
             )
 
     assert resp.status_code == 422
@@ -535,7 +535,7 @@ async def test_dfu_series_explicit_plan_version():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/inv-planning/replenishment/dfu"
-                "?item_no=100320&loc=1401-BULK&plan_version=2026-01"
+                "?item_id=100320&loc=1401-BULK&plan_version=2026-01"
             )
 
     assert resp.status_code == 200

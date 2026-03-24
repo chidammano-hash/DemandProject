@@ -44,7 +44,7 @@ Based on demand CV (coefficient of variation):
 | **B** (medium value) | Fixed Qty, moderate SS | Periodic Review | Periodic Review, buffer |
 | **C** (low value) | Periodic Review | Periodic Review, longer interval | MTO or minimal stock |
 
-The combined segment (e.g., `AX`, `BZ`) is written to `dim_dfu` and drives auto-assignment of replenishment policies, service level targets, and review frequencies.
+The combined segment (e.g., `AX`, `BZ`) is written to `dim_sku` and drives auto-assignment of replenishment policies, service level targets, and review frequencies.
 
 ### Supplier Performance (IPfeature12)
 
@@ -64,7 +64,7 @@ Supports trending over time to detect supplier deterioration.
 
 ## Data Model
 
-ABC-XYZ -- columns on `dim_dfu`:
+ABC-XYZ -- columns on `dim_sku`:
 
 | Column | Type | Example |
 |---|---|---|
@@ -72,7 +72,7 @@ ABC-XYZ -- columns on `dim_dfu`:
 | `xyz_class` | TEXT | `X` |
 | `abc_xyz_segment` | TEXT | `AX` |
 
-DDL: `sql/031_add_xyz_classification.sql`
+DDL: `sql/005_create_dim_dfu.sql`
 
 Supplier performance:
 
@@ -115,7 +115,7 @@ make supplier-perf-all     # supplier-perf-schema + supplier-perf-refresh
 
 | Step | Script | Output |
 |---|---|---|
-| Classify | `scripts/classify_abc_xyz.py` | `dim_dfu` columns updated |
+| Classify | `scripts/classify_abc_xyz.py` | `dim_sku` columns updated |
 | Refresh | MV refresh | `mv_supplier_performance` |
 
 ---
@@ -128,7 +128,7 @@ ABC thresholds are embedded in the classification script (80/95 percentile cutof
 
 ## Dependencies
 
-- **Upstream:** `fact_sales_monthly` (revenue for ABC), `dim_dfu` (demand_cv for XYZ), `fact_inventory_snapshot` (supplier receipts)
+- **Upstream:** `fact_sales_monthly` (revenue for ABC), `dim_sku` (demand_cv for XYZ), `fact_inventory_snapshot` (supplier receipts)
 - **Downstream:** Policy auto-assignment, safety stock service levels, investment optimization prioritization
 
 ---

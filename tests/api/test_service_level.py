@@ -118,7 +118,7 @@ async def test_get_sl_detail_200():
     assert "performance" in data
     assert len(data["performance"]) == 1
     item = data["performance"][0]
-    assert item["item_no"] == "ITEM001"
+    assert item["item_id"] == "ITEM001"
     assert item["abc_class"] == "A"
     assert item["actual_fill_rate"] == pytest.approx(0.94)
     assert item["perf_month"] == "2025-03-01"
@@ -152,7 +152,7 @@ async def test_get_sl_detail_with_filters():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/analytics/service-level/detail",
-                params={"item_no": "ITEM001", "loc": "LOC001", "abc_class": "A"},
+                params={"item_id": "ITEM001", "loc": "LOC001", "abc_class": "A"},
             )
 
     assert resp.status_code == 200
@@ -177,7 +177,7 @@ async def test_get_chronic_misses_200():
     assert "chronic_misses" in data
     assert len(data["chronic_misses"]) == 1
     item = data["chronic_misses"][0]
-    assert item["item_no"] == "ITEM002"
+    assert item["item_id"] == "ITEM002"
     assert item["miss_streak_months"] == 4
     assert item["primary_miss_reason"] == "forecast_error"
     assert item["perf_month"] == "2025-03-01"

@@ -8,11 +8,13 @@ Provides common logic for all backtest scripts:
 - Output saving (CSV + metadata JSON)
 - Accuracy computation
 - MLflow logging
+- Per-cluster adaptive hyperparameter profiles
 
 Model-specific scripts implement only the training/prediction functions.
 """
 
 import json
+import logging
 import sys
 import time
 from pathlib import Path
@@ -34,7 +36,145 @@ from common.db import get_db_params
 from common.metrics import compute_accuracy_metrics
 from common.mlflow_utils import log_backtest_run
 from common.planning_date import get_planning_date
-from common.utils import _ts
+from common.utils import _ts, load_config
+
+logger = logging.getLogger(__name__)
+
+# ── Per-cluster adaptive hyperparameter profiles ─────────────────────────────
+
+# Profile priority order — first match wins
+_PROFILE_PRIORITY = [
+    "sparse_intermittent",
+    "low_volume_volatile",
+    "high_volume_stable",
+    "seasonal_dominant",
+    "default",
+]
+
+
+def compute_cluster_demand_stats(
+    train_df: pd.DataFrame,
+    cluster_id: Any,
+) -> dict[str, float]:
+    """Compute demand characteristics for a single cluster from training data.
+
+    Returns a dict with:
+    - mean_demand: mean of non-zero qty values
+    - cv_demand: coefficient of variation (std / mean) of qty
+    - zero_demand_pct: fraction of rows with qty == 0
+    - seasonal_amplitude: std of monthly means / overall mean (proxy for seasonality)
+    """
+    cluster_data = train_df[train_df["ml_cluster"] == cluster_id]
+    qty = cluster_data["qty"] if "qty" in cluster_data.columns else pd.Series(dtype=float)
+
+    if len(qty) == 0:
+        return {
+            "mean_demand": 0.0,
+            "cv_demand": 0.0,
+            "zero_demand_pct": 1.0,
+            "seasonal_amplitude": 0.0,
+        }
+
+    nonzero_qty = qty[qty > 0]
+    mean_demand = float(nonzero_qty.mean()) if len(nonzero_qty) > 0 else 0.0
+
+    overall_mean = float(qty.mean())
+    overall_std = float(qty.std()) if len(qty) > 1 else 0.0
+    cv_demand = (overall_std / overall_mean) if overall_mean > 0 else 0.0
+
+    zero_demand_pct = float((qty == 0).sum()) / len(qty)
+
+    # Seasonal amplitude: variability of monthly means relative to overall mean
+    seasonal_amplitude = 0.0
+    if "startdate" in cluster_data.columns and overall_mean > 0:
+        monthly_means = cluster_data.groupby(
+            cluster_data["startdate"].dt.month
+        )["qty"].mean()
+        if len(monthly_means) > 1:
+            seasonal_amplitude = float(monthly_means.std()) / overall_mean
+
+    return {
+        "mean_demand": mean_demand,
+        "cv_demand": cv_demand,
+        "zero_demand_pct": zero_demand_pct,
+        "seasonal_amplitude": seasonal_amplitude,
+    }
+
+
+def _matches_profile(
+    stats: dict[str, float],
+    criteria: dict[str, float],
+) -> bool:
+    """Check if cluster stats satisfy all match criteria for a profile."""
+    if not criteria:
+        return True  # empty criteria = always matches (used by default profile)
+
+    for key, threshold in criteria.items():
+        if key.endswith("_min"):
+            stat_key = key[:-4]  # strip _min suffix
+            if stats.get(stat_key, 0.0) < threshold:
+                return False
+        elif key.endswith("_max"):
+            stat_key = key[:-4]  # strip _max suffix
+            if stats.get(stat_key, 0.0) > threshold:
+                return False
+
+    return True
+
+
+def resolve_cluster_params(
+    cluster_id: Any,
+    cluster_stats: dict[str, float],
+    base_params: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    """Resolve hyperparameters for a cluster based on its demand characteristics.
+
+    Loads cluster_tuning_profiles.yaml, matches against profiles in priority
+    order, and returns base_params merged with the matching profile's overrides.
+
+    Args:
+        cluster_id: Cluster label (for logging).
+        cluster_stats: Output from ``compute_cluster_demand_stats()``.
+        base_params: Default model hyperparameters.
+
+    Returns:
+        Tuple of (resolved_params, matched_profile_name).
+        Falls back to (base_params, "none") if profiles are disabled or no match.
+    """
+    cfg = load_config("cluster_tuning_profiles.yaml")
+
+    if not cfg.get("enabled", False):
+        return base_params, "none"
+
+    profiles = cfg.get("cluster_profiles", {})
+    if not profiles:
+        return base_params, "none"
+
+    for profile_name in _PROFILE_PRIORITY:
+        profile = profiles.get(profile_name)
+        if profile is None:
+            continue
+
+        criteria = profile.get("match_criteria", {})
+        overrides = profile.get("overrides", {})
+
+        if _matches_profile(cluster_stats, criteria):
+            if not overrides:
+                # default profile or profile with no overrides
+                logger.debug(
+                    "Cluster '%s' matched profile '%s' (no overrides)",
+                    cluster_id, profile_name,
+                )
+                return base_params, profile_name
+
+            resolved = {**base_params, **overrides}
+            logger.info(
+                "Cluster '%s' matched profile '%s': overrides=%s",
+                cluster_id, profile_name, overrides,
+            )
+            return resolved, profile_name
+
+    return base_params, "none"
 
 
 # ── Timeframe generation ─────────────────────────────────────────────────────
@@ -88,46 +228,38 @@ def load_backtest_data(
         # Prefer uncorrected sales for accuracy (medallion dual-track)
         sales_table = "fact_sales_monthly"
         try:
-            _check = pd.read_sql(
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE table_name = 'fact_sales_monthly_original' "
-                "AND table_schema = 'public' LIMIT 1",
+            _cnt = pd.read_sql(
+                "SELECT count(*) AS n FROM fact_sales_monthly_original LIMIT 1",
                 conn,
             )
-            if not _check.empty:
-                # Verify the table has data
-                _cnt = pd.read_sql(
-                    "SELECT count(*) AS n FROM fact_sales_monthly_original LIMIT 1",
-                    conn,
-                )
-                if _cnt.iloc[0]["n"] > 0:
-                    sales_table = "fact_sales_monthly_original"
+            if _cnt.iloc[0]["n"] > 0:
+                sales_table = "fact_sales_monthly_original"
         except Exception:
-            pass  # fallback to corrected table
+            pass  # Table doesn't exist or is empty, use default
 
         sales_df = pd.read_sql(f"""
-            SELECT d.dfu_ck, s.dmdunit, s.dmdgroup, s.loc, s.startdate, s.qty
+            SELECT d.sku_ck, s.item_id, s.customer_group, s.loc, s.startdate, s.qty
             FROM {sales_table} s
-            INNER JOIN dim_dfu d
-                ON d.dmdunit = s.dmdunit AND d.dmdgroup = s.dmdgroup AND d.loc = s.loc
+            INNER JOIN dim_sku d
+                ON d.item_id = s.item_id AND d.customer_group = s.customer_group AND d.loc = s.loc
             WHERE s.qty IS NOT NULL
               AND s.startdate <= %(planning_cutoff)s
-            ORDER BY d.dfu_ck, s.startdate
+            ORDER BY d.sku_ck, s.startdate
         """, conn, params={"planning_cutoff": planning_cutoff})
 
         dfu_attrs = pd.read_sql("""
-            SELECT dfu_ck, dmdunit, dmdgroup, loc,
+            SELECT sku_ck, item_id, customer_group, loc,
                    execution_lag, total_lt, ml_cluster,
                    brand, region, abc_vol
-            FROM dim_dfu
+            FROM dim_sku
         """, conn)
 
         if include_item_attrs:
             item_attrs = pd.read_sql("""
-                SELECT DISTINCT i.item_no AS dmdunit,
+                SELECT DISTINCT i.item_id AS item_id,
                        i.case_weight, i.item_proof, i.bpc
                 FROM dim_item i
-                INNER JOIN dim_dfu d ON i.item_no = d.dmdunit
+                INNER JOIN dim_sku d ON i.item_id = d.item_id
             """, conn)
         else:
             item_attrs = pd.DataFrame()
@@ -136,8 +268,8 @@ def load_backtest_data(
     sales_df["qty"] = pd.to_numeric(sales_df["qty"], errors="coerce").fillna(0)
 
     # Only keep DFUs that have sales
-    dfus_with_sales = set(sales_df["dfu_ck"].unique())
-    dfu_attrs = dfu_attrs[dfu_attrs["dfu_ck"].isin(dfus_with_sales)].copy()
+    dfus_with_sales = set(sales_df["sku_ck"].unique())
+    dfu_attrs = dfu_attrs[dfu_attrs["sku_ck"].isin(dfus_with_sales)]
 
     print(f"  [{_ts()}] Sales: {len(sales_df):,} rows, {len(dfus_with_sales):,} DFUs ({time.time() - t1:.1f}s)")
     print(f"  [{_ts()}] DFU attrs: {len(dfu_attrs):,}, Item attrs: {len(item_attrs):,}")
@@ -161,19 +293,21 @@ def assign_execution_lag(
     result = pred_df.copy()
 
     # Execution lag from DFU dimension
-    result["execution_lag"] = result["dfu_ck"].map(execution_lag_map).fillna(0).astype(int)
+    result["execution_lag"] = result["sku_ck"].map(execution_lag_map).fillna(0).astype(int)
     result["lag"] = result["execution_lag"]
-    result["fcstdate"] = result.apply(
-        lambda r: r["startdate"] - pd.DateOffset(months=int(r["lag"])), axis=1
-    )
+    # Group by unique lag values to minimize DateOffset calls
+    for lag_val in result["lag"].unique():
+        mask = result["lag"] == lag_val
+        result.loc[mask, "fcstdate"] = result.loc[mask, "startdate"] - pd.DateOffset(months=int(lag_val))
 
-    # Build forecast_ck (vectorized string concat)
+    # Build forecast_ck (vectorized string concat via str.cat)
     result["forecast_ck"] = (
-        result["dmdunit"].astype(str) + "_"
-        + result["dmdgroup"].astype(str) + "_"
-        + result["loc"].astype(str) + "_"
-        + result["fcstdate"].dt.strftime("%Y-%m-%d") + "_"
-        + result["startdate"].dt.strftime("%Y-%m-%d")
+        result["item_id"].astype(str).str.cat([
+            result["customer_group"].astype(str),
+            result["loc"].astype(str),
+            result["fcstdate"].dt.strftime("%Y-%m-%d"),
+            result["startdate"].dt.strftime("%Y-%m-%d"),
+        ], sep="_")
     )
 
     print(f"  [{_ts()}] Execution-lag assignment done ({time.time() - t0:.1f}s)")
@@ -201,15 +335,16 @@ def expand_to_all_lags(
         dfs.append(df)
 
     result = pd.concat(dfs, ignore_index=True)
-    result["execution_lag"] = result["dfu_ck"].map(execution_lag_map).fillna(0).astype(int)
+    result["execution_lag"] = result["sku_ck"].map(execution_lag_map).fillna(0).astype(int)
 
-    # Build forecast_ck
+    # Build forecast_ck (vectorized string concat via str.cat)
     result["forecast_ck"] = (
-        result["dmdunit"].astype(str) + "_"
-        + result["dmdgroup"].astype(str) + "_"
-        + result["loc"].astype(str) + "_"
-        + result["fcstdate"].dt.strftime("%Y-%m-%d") + "_"
-        + result["startdate"].dt.strftime("%Y-%m-%d")
+        result["item_id"].astype(str).str.cat([
+            result["customer_group"].astype(str),
+            result["loc"].astype(str),
+            result["fcstdate"].dt.strftime("%Y-%m-%d"),
+            result["startdate"].dt.strftime("%Y-%m-%d"),
+        ], sep="_")
     )
 
     print(f"  [{_ts()}] All-lag expansion (0-{max_lag}) done: {len(result):,} rows ({time.time() - t0:.1f}s)")
@@ -247,10 +382,10 @@ def postprocess_predictions(
     # Attach actuals via merge (vectorized — not row-by-row apply)
     print(f"  [{_ts()}] Attaching actuals...")
     t1 = time.time()
-    actuals = sales_df.drop_duplicates(subset=["dfu_ck", "startdate"])[["dfu_ck", "startdate", "qty"]].rename(
+    actuals = sales_df.drop_duplicates(subset=["sku_ck", "startdate"])[["sku_ck", "startdate", "qty"]].rename(
         columns={"qty": "tothist_dmd"}
     )
-    expanded = expanded.merge(actuals, on=["dfu_ck", "startdate"], how="left")
+    expanded = expanded.merge(actuals, on=["sku_ck", "startdate"], how="left")
     print(f"  [{_ts()}] Actuals attached ({time.time() - t1:.1f}s)")
 
     # ── All-lags archive ──────────────────────────────────────────────────
@@ -265,7 +400,7 @@ def postprocess_predictions(
     print(f"  [{_ts()}] Archive after dedup: {len(archive_expanded):,}")
 
     # Attach actuals
-    archive_expanded = archive_expanded.merge(actuals, on=["dfu_ck", "startdate"], how="left")
+    archive_expanded = archive_expanded.merge(actuals, on=["sku_ck", "startdate"], how="left")
 
     return expanded, archive_expanded, combined
 
@@ -324,7 +459,7 @@ def save_backtest_output(
         model_params_key: {k: v for k, v in model_params.items()},
         **(extra_metadata or {}),
         "n_predictions": len(out),
-        "n_dfus": int(output_df["dmdunit"].nunique()),
+        "n_dfus": int(output_df["item_id"].nunique()),
         "date_range": {
             "earliest": str(earliest_month.date()),
             "latest": str(latest_month.date()),
@@ -398,7 +533,7 @@ TrainFn = Callable[
     tuple[pd.DataFrame, Any],
 ]
 
-_PREDICT_META_COLS = ["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]
+_PREDICT_META_COLS = ["sku_ck", "item_id", "customer_group", "loc", "startdate"]
 
 
 def _fill_predict_nans(
@@ -474,6 +609,7 @@ def run_tree_backtest(
         build_feature_matrix,
         get_feature_columns,
         mask_future_sales,
+        update_grid_incremental,
         update_grid_with_predictions,
     )
 
@@ -489,7 +625,7 @@ def run_tree_backtest(
     sales_df, dfu_attrs, item_attrs = load_backtest_data(db)
 
     # Execution lag lookup
-    exec_lag_map = dfu_attrs.set_index("dfu_ck")["execution_lag"].fillna(0).astype(int).to_dict()
+    exec_lag_map = dfu_attrs.set_index("sku_ck")["execution_lag"].fillna(0).astype(int).to_dict()
 
     # ── Step 2: Generate timeframes ──────────────────────────────────────────
     planning_dt = pd.Timestamp(get_planning_date())
@@ -609,7 +745,10 @@ def run_tree_backtest(
             shap_timeframe_reports.append(shap_df)
             print(f"  [{_ts()}] SHAP done ({time.time() - t_shap:.1f}s)")
 
-            if set(selected_features) != set(feature_cols) and len(selected_features) < len(feature_cols):
+            # Only retrain if SHAP dropped >= 10% of features (otherwise marginal gain not worth cost)
+            features_dropped = len(feature_cols) - len(selected_features)
+            drop_pct = features_dropped / len(feature_cols) if feature_cols else 0
+            if drop_pct >= 0.10 and set(selected_features) != set(feature_cols):
                 print(
                     f"  [{_ts()}] Retraining with {len(selected_features)} SHAP-selected features "
                     f"(was {len(feature_cols)})..."
@@ -643,8 +782,12 @@ def run_tree_backtest(
         # ── Complete recursive loop for months 2+ ─────────────────────────────
         if recursive:
             all_month_preds = [preds_first]
+            # Single copy of masked_grid; all subsequent updates are in-place
+            # to avoid O(months) full-grid copies (~9.8M rows each).
             current_grid = masked_grid.copy()
-            current_grid = update_grid_with_predictions(current_grid, sorted_months[0], preds_first)
+            # Use incremental update (only touches affected months, ~10x faster)
+            # Pass all_months (full grid months), not sorted_months (predict-only)
+            update_grid_incremental(current_grid, sorted_months[0], preds_first, all_months)
 
             for month in sorted_months[1:]:
                 month_data = _fill_predict_nans(
@@ -653,7 +796,7 @@ def run_tree_backtest(
                 )
                 preds_month = _predict_single_month(models, month_data, effective_feature_cols)
                 all_month_preds.append(preds_month)
-                current_grid = update_grid_with_predictions(current_grid, month, preds_month)
+                update_grid_incremental(current_grid, month, preds_month, all_months)
                 print(f"    [{_ts()}] Recursive month {month.date()}: {len(preds_month):,} predictions")
 
             preds = pd.concat(all_month_preds, ignore_index=True)
@@ -728,7 +871,7 @@ def run_tree_backtest(
         hyperparams=mlflow_params,
         metrics={
             "n_predictions": len(expanded),
-            "n_dfus": int(expanded["dmdunit"].nunique()),
+            "n_dfus": int(expanded["item_id"].nunique()),
         },
         metadata=metadata,
         artifact_paths=[str(output_path), str(archive_path), str(meta_path)] + extra_artifact_paths,

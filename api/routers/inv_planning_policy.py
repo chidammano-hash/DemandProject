@@ -40,7 +40,7 @@ class PolicyUpdateBody(BaseModel):
 
 class PolicyAssignBody(BaseModel):
     # Individual assignment
-    item_no: str | None = None
+    item_id: str | None = None
     loc: str | None = None
     policy_id: str | None = None
     override_reason: str | None = None
@@ -70,7 +70,7 @@ def get_policies(response: FastAPIResponse) -> dict:
             p.use_eoq,
             p.use_safety_stock,
             p.active,
-            COUNT(a.item_no) AS dfu_count
+            COUNT(a.item_id) AS dfu_count
         FROM dim_replenishment_policy p
         LEFT JOIN fact_dfu_policy_assignment a ON a.policy_id = p.policy_id
         GROUP BY p.policy_sk, p.policy_id, p.policy_name, p.policy_type,
@@ -157,25 +157,34 @@ def update_policy(policy_id: str, body: PolicyUpdateBody) -> dict:
     params: list[Any] = []
 
     if body.policy_name is not None:
-        updates.append("policy_name = %s"); params.append(body.policy_name)
+        updates.append("policy_name = %s")
+        params.append(body.policy_name)
     if body.policy_type is not None:
         if body.policy_type not in _VALID_POLICY_TYPES:
             raise HTTPException(status_code=422, detail=f"policy_type must be one of {sorted(_VALID_POLICY_TYPES)}")
-        updates.append("policy_type = %s"); params.append(body.policy_type)
+        updates.append("policy_type = %s")
+        params.append(body.policy_type)
     if body.segment is not None:
-        updates.append("segment = %s"); params.append(body.segment)
+        updates.append("segment = %s")
+        params.append(body.segment)
     if body.review_cycle_days is not None:
-        updates.append("review_cycle_days = %s"); params.append(body.review_cycle_days)
+        updates.append("review_cycle_days = %s")
+        params.append(body.review_cycle_days)
     if body.service_level is not None:
-        updates.append("service_level = %s"); params.append(body.service_level)
+        updates.append("service_level = %s")
+        params.append(body.service_level)
     if body.use_eoq is not None:
-        updates.append("use_eoq = %s"); params.append(body.use_eoq)
+        updates.append("use_eoq = %s")
+        params.append(body.use_eoq)
     if body.use_safety_stock is not None:
-        updates.append("use_safety_stock = %s"); params.append(body.use_safety_stock)
+        updates.append("use_safety_stock = %s")
+        params.append(body.use_safety_stock)
     if body.active is not None:
-        updates.append("active = %s"); params.append(body.active)
+        updates.append("active = %s")
+        params.append(body.active)
     if body.notes is not None:
-        updates.append("notes = %s"); params.append(body.notes)
+        updates.append("notes = %s")
+        params.append(body.notes)
 
     params.append(policy_id)
     sql = f"""
@@ -237,7 +246,7 @@ def get_policy_assignments(
     params: list[Any] = []
 
     if item.strip():
-        where_parts.append("a.item_no ILIKE %s")
+        where_parts.append("a.item_id ILIKE %s")
         params.append(f"%{item.strip()}%")
     if location.strip():
         where_parts.append("a.loc ILIKE %s")
@@ -254,7 +263,7 @@ def get_policy_assignments(
     count_sql = f"SELECT COUNT(*) FROM fact_dfu_policy_assignment a {where_clause}"
     data_sql = f"""
         SELECT
-            a.item_no,
+            a.item_id,
             a.loc,
             a.policy_id,
             p.policy_name,
@@ -265,7 +274,7 @@ def get_policy_assignments(
         FROM fact_dfu_policy_assignment a
         JOIN dim_replenishment_policy p ON p.policy_id = a.policy_id
         {where_clause}
-        ORDER BY a.item_no, a.loc
+        ORDER BY a.item_id, a.loc
         LIMIT %s OFFSET %s
     """
 
@@ -276,13 +285,13 @@ def get_policy_assignments(
 
             cur.execute(data_sql, [*params, limit, offset])
             rows = cur.fetchall()
-            cols = [d[0] for d in cur.description]
+            [d[0] for d in cur.description]
 
     return {
         "total": int(total),
         "rows": [
             {
-                "item_no":         r[0],
+                "item_id":         r[0],
                 "loc":             r[1],
                 "policy_id":       r[2],
                 "policy_name":     r[3],
@@ -300,7 +309,7 @@ def get_policy_assignments(
 def assign_policy(body: PolicyAssignBody) -> dict:
     """Assign a policy to one DFU (individual) or all DFUs in a segment (bulk).
 
-    Individual: { item_no, loc, policy_id, override_reason }
+    Individual: { item_id, loc, policy_id, override_reason }
     Bulk:       { segment, policy_id }
     Auth required.
     """
@@ -317,13 +326,13 @@ def assign_policy(body: PolicyAssignBody) -> dict:
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail=f"Policy '{body.policy_id}' not found")
 
-            if body.item_no and body.loc and body.policy_id:
+            if body.item_id and body.loc and body.policy_id:
                 # Individual assignment
                 upsert_sql = """
                     INSERT INTO fact_dfu_policy_assignment
-                        (item_no, loc, policy_id, override_reason, assigned_by, effective_date)
+                        (item_id, loc, policy_id, override_reason, assigned_by, effective_date)
                     VALUES (%s, %s, %s, %s, 'manual', %s)
-                    ON CONFLICT (item_no, loc) DO UPDATE SET
+                    ON CONFLICT (item_id, loc) DO UPDATE SET
                         policy_id      = EXCLUDED.policy_id,
                         override_reason= EXCLUDED.override_reason,
                         assigned_by    = 'manual',
@@ -332,7 +341,7 @@ def assign_policy(body: PolicyAssignBody) -> dict:
                 """
                 try:
                     cur.execute(upsert_sql, (
-                        body.item_no, body.loc, body.policy_id,
+                        body.item_id, body.loc, body.policy_id,
                         body.override_reason, effective_date,
                     ))
                     assigned_count = 1
@@ -344,16 +353,16 @@ def assign_policy(body: PolicyAssignBody) -> dict:
                 # or variability_class matching the segment
                 bulk_sql = """
                     INSERT INTO fact_dfu_policy_assignment
-                        (item_no, loc, policy_id, assigned_by, effective_date)
+                        (item_id, loc, policy_id, assigned_by, effective_date)
                     SELECT
-                        d.dmdunit,
+                        d.item_id,
                         d.loc,
                         %s,
                         'system',
                         %s
-                    FROM dim_dfu d
+                    FROM dim_sku d
                     WHERE d.abc_vol = %s OR d.variability_class = %s
-                    ON CONFLICT (item_no, loc) DO UPDATE SET
+                    ON CONFLICT (item_id, loc) DO UPDATE SET
                         policy_id      = EXCLUDED.policy_id,
                         assigned_by    = 'system',
                         effective_date = EXCLUDED.effective_date,
@@ -371,7 +380,7 @@ def assign_policy(body: PolicyAssignBody) -> dict:
             else:
                 raise HTTPException(
                     status_code=422,
-                    detail="Provide either (item_no + loc + policy_id) or (segment + policy_id)",
+                    detail="Provide either (item_id + loc + policy_id) or (segment + policy_id)",
                 )
 
         conn.commit()
@@ -397,11 +406,11 @@ def get_policy_compliance(response: FastAPIResponse) -> dict:
     with get_conn() as conn:
         with conn.cursor() as cur:
             # Total DFUs
-            cur.execute("SELECT COUNT(*) FROM dim_dfu")
+            cur.execute("SELECT COUNT(*) FROM dim_sku")
             total_dfus = cur.fetchone()[0] or 0
 
             # Assigned DFUs
-            cur.execute("SELECT COUNT(DISTINCT item_no || '|' || loc) FROM fact_dfu_policy_assignment")
+            cur.execute("SELECT COUNT(DISTINCT item_id || '|' || loc) FROM fact_dfu_policy_assignment")
             assigned_count = cur.fetchone()[0] or 0
 
             # Per-policy breakdown
@@ -410,19 +419,19 @@ def get_policy_compliance(response: FastAPIResponse) -> dict:
                     p.policy_id,
                     p.policy_name,
                     p.policy_type,
-                    COUNT(a.item_no)       AS dfu_count,
+                    COUNT(a.item_id)       AS dfu_count,
                     AVG(inv.dos)           AS avg_dos
                 FROM dim_replenishment_policy p
                 LEFT JOIN fact_dfu_policy_assignment a ON a.policy_id = p.policy_id
                 LEFT JOIN (
-                    SELECT item_no, loc,
+                    SELECT item_id, loc,
                            CASE WHEN AVG(daily_sales) > 0
                                 THEN AVG(eom_on_hand) / AVG(daily_sales)
                                 ELSE NULL
                            END AS dos
                     FROM agg_inventory_monthly
-                    GROUP BY item_no, loc
-                ) inv ON inv.item_no = a.item_no AND inv.loc = a.loc
+                    GROUP BY item_id, loc
+                ) inv ON inv.item_id = a.item_id AND inv.loc = a.loc
                 GROUP BY p.policy_id, p.policy_name, p.policy_type
                 ORDER BY p.policy_id
             """
@@ -437,7 +446,7 @@ def get_policy_compliance(response: FastAPIResponse) -> dict:
                         p.policy_id,
                         p.policy_name,
                         p.policy_type,
-                        COUNT(a.item_no) AS dfu_count,
+                        COUNT(a.item_id) AS dfu_count,
                         NULL             AS avg_dos
                     FROM dim_replenishment_policy p
                     LEFT JOIN fact_dfu_policy_assignment a ON a.policy_id = p.policy_id

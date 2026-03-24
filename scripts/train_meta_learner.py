@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -35,6 +34,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 
 
 def _load_monthly_errors(
@@ -49,7 +49,7 @@ def _load_monthly_errors(
         params.append(int(lag_mode))
 
     sql = f"""
-        SELECT dmdunit, dmdgroup, loc, startdate, model_id,
+        SELECT item_id, customer_group, loc, startdate, model_id,
                basefcst_pref, tothist_dmd,
                ABS(basefcst_pref - tothist_dmd) AS abs_err
         FROM fact_external_forecast_monthly
@@ -57,7 +57,7 @@ def _load_monthly_errors(
           AND {lag_cond}
           AND basefcst_pref IS NOT NULL
           AND tothist_dmd IS NOT NULL
-        ORDER BY dmdunit, dmdgroup, loc, model_id, startdate
+        ORDER BY item_id, customer_group, loc, model_id, startdate
     """
     with psycopg.connect(**db) as conn:
         df = pd.read_sql(sql, conn, params=params)
@@ -69,13 +69,13 @@ def _load_monthly_errors(
 
 def _load_dfu_features(db: dict[str, Any]) -> pd.DataFrame:
     sql = """
-        SELECT dmdunit, dmdgroup, loc,
+        SELECT item_id, customer_group, loc,
                ml_cluster, abc_vol, execution_lag, total_lt,
                brand, region,
                seasonality_profile, seasonality_strength,
                is_yearly_seasonal, peak_month, trough_month,
                peak_trough_ratio
-        FROM dim_dfu
+        FROM dim_sku
     """
     with psycopg.connect(**db) as conn:
         df = pd.read_sql(sql, conn)
@@ -89,9 +89,9 @@ def _load_dfu_features(db: dict[str, Any]) -> pd.DataFrame:
 # Training data construction
 # ---------------------------------------------------------------------------
 
-_DFU_COLS = ["dmdunit", "dmdgroup", "loc"]
-_DFU_MONTH_COLS = ["dmdunit", "dmdgroup", "loc", "startdate"]
-_DFU_MODEL_COLS = ["dmdunit", "dmdgroup", "loc", "model_id"]
+_DFU_COLS = ["item_id", "customer_group", "loc"]
+_DFU_MONTH_COLS = ["item_id", "customer_group", "loc", "startdate"]
+_DFU_MODEL_COLS = ["item_id", "customer_group", "loc", "model_id"]
 
 
 def build_training_data(
@@ -196,8 +196,7 @@ def train_classifier(
 
         le = LabelEncoder()
         y_train_enc = le.fit_transform(y_train)
-        y_test_enc = le.transform(y_test)
-
+        # y_test encoding not needed — evaluation uses string labels
         clf = XGBClassifier(
             n_estimators=kwargs.get("n_estimators", 200),
             max_depth=kwargs.get("max_depth", 8),
@@ -272,22 +271,25 @@ def main() -> None:
     # Load data
     print("Loading monthly errors...")
     t0 = time.time()
-    monthly_errors = _load_monthly_errors(db, models, lag_mode)
+    with profiled_section("load_monthly_errors"):
+        monthly_errors = _load_monthly_errors(db, models, lag_mode)
     print(f"  {len(monthly_errors):,} rows ({time.time() - t0:.1f}s)")
 
     print("Loading DFU features...")
-    dfu_features = _load_dfu_features(db)
+    with profiled_section("load_dfu_features"):
+        dfu_features = _load_dfu_features(db)
     print(f"  {len(dfu_features):,} DFUs")
     print()
 
     # Build training data
     print("Building training data (ceiling labels + features)...")
     t1 = time.time()
-    features_df, target, feature_cols = build_training_data(
-        monthly_errors, dfu_features, models,
-        performance_window=performance_window,
-        min_prior_months=min_rows,
-    )
+    with profiled_section("build_training_data"):
+        features_df, target, feature_cols = build_training_data(
+            monthly_errors, dfu_features, models,
+            performance_window=performance_window,
+            min_prior_months=min_rows,
+        )
     print(f"  {len(features_df):,} samples, {len(feature_cols)} features ({time.time() - t1:.1f}s)")
     print(f"  Feature columns: {feature_cols}")
     print()
@@ -313,7 +315,7 @@ def main() -> None:
 
     print(f"Train: {len(X_train):,} samples (months < {cutoff.date()})")
     print(f"Test:  {len(X_test):,} samples (months >= {cutoff.date()})")
-    print(f"Target distribution (train):")
+    print("Target distribution (train):")
     for model_id, count in y_train.value_counts().items():
         print(f"  {model_id}: {count} ({100.0 * count / len(y_train):.1f}%)")
     print()
@@ -324,13 +326,14 @@ def main() -> None:
     # Only pass classifier-relevant hyperparams (not config keys like test_months)
     clf_keys = {"n_estimators", "max_depth", "min_samples_leaf", "learning_rate"}
     clf_params = {k: v for k, v in meta_cfg.items() if k in clf_keys}
-    clf, accuracy, report = train_classifier(
-        X_train, y_train, X_test, y_test,
-        model_type=model_type,
-        **clf_params,
-    )
+    with profiled_section("train_classifier"):
+        clf, accuracy, report = train_classifier(
+            X_train, y_train, X_test, y_test,
+            model_type=model_type,
+            **clf_params,
+        )
     print(f"  Test accuracy: {accuracy:.4f} ({time.time() - t2:.1f}s)")
-    print(f"  Per-class F1:")
+    print("  Per-class F1:")
     for cls, metrics in report.items():
         if isinstance(metrics, dict) and "f1-score" in metrics:
             print(f"    {cls}: F1={metrics['f1-score']:.3f}, "
@@ -353,45 +356,46 @@ def main() -> None:
     import joblib
     from sklearn.preprocessing import LabelEncoder
 
-    le = LabelEncoder()
-    le.fit(target)  # fit on all labels
+    with profiled_section("save_model_and_report"):
+        le = LabelEncoder()
+        le.fit(target)  # fit on all labels
 
-    output_path = ROOT / args.output
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path = ROOT / args.output
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    meta_artifact = {
-        "model": clf,
-        "feature_columns": feature_cols,
-        "label_encoder": le,
-        "training_metadata": {
-            "model_type": model_type,
-            "test_accuracy": round(accuracy, 4),
-            "n_train": len(X_train),
-            "n_test": len(X_test),
-            "n_features": len(feature_cols),
-            "test_months": test_months,
-            "performance_window": performance_window,
-            "train_cutoff": str(cutoff.date()),
-            "trained_at": datetime.now(timezone.utc).isoformat(),
-            "models": models,
-        },
-    }
-    joblib.dump(meta_artifact, output_path)
-    print(f"Model saved to {output_path}")
+        meta_artifact = {
+            "model": clf,
+            "feature_columns": feature_cols,
+            "label_encoder": le,
+            "training_metadata": {
+                "model_type": model_type,
+                "test_accuracy": round(accuracy, 4),
+                "n_train": len(X_train),
+                "n_test": len(X_test),
+                "n_features": len(feature_cols),
+                "test_months": test_months,
+                "performance_window": performance_window,
+                "train_cutoff": str(cutoff.date()),
+                "trained_at": datetime.now(timezone.utc).isoformat(),
+                "models": models,
+            },
+        }
+        joblib.dump(meta_artifact, output_path)
+        print(f"Model saved to {output_path}")
 
-    # Save report
-    report_path = output_path.parent / "meta_learner_report.json"
-    with open(report_path, "w") as f:
-        json.dump({
-            "accuracy": round(accuracy, 4),
-            "classification_report": report,
-            "feature_importance": (
-                {feat: round(float(imp), 6) for feat, imp in importance[:30]}
-                if hasattr(clf, "feature_importances_") else {}
-            ),
-            **meta_artifact["training_metadata"],
-        }, f, indent=2, default=str)
-    print(f"Report saved to {report_path}")
+        # Save report
+        report_path = output_path.parent / "meta_learner_report.json"
+        with open(report_path, "w") as f:
+            json.dump({
+                "accuracy": round(accuracy, 4),
+                "classification_report": report,
+                "feature_importance": (
+                    {feat: round(float(imp), 6) for feat, imp in importance[:30]}
+                    if hasattr(clf, "feature_importances_") else {}
+                ),
+                **meta_artifact["training_metadata"],
+            }, f, indent=2, default=str)
+        print(f"Report saved to {report_path}")
     print("\nDone.")
 
 

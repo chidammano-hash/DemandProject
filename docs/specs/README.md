@@ -46,6 +46,7 @@ The data layer everything else depends on.
 | 02 | [Data Models](01-foundation/02-data-models.md) | 5 dimension + 4 fact tables, materialized views, ERD |
 | 03 | [Data Quality](01-foundation/03-data-quality.md) | 12 check types, Self-Heal auto-fix, scoring dashboard |
 | 04 | [Planning Date](01-foundation/04-planning-date.md) | Configurable date replacing `date.today()` for reproducibility |
+| 05 | [Performance Profiling](01-foundation/05-performance-profiling.md) | Centralized profiling, suggestion engine, production-safe |
 
 ---
 

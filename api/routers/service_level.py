@@ -9,7 +9,7 @@ Endpoints:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from api.core import get_conn
@@ -20,7 +20,7 @@ router = APIRouter(tags=["service-level"])
 
 class _TargetUpsert(BaseModel):
     abc_class: str
-    item_no: str | None = None
+    item_id: str | None = None
     loc: str | None = None
     target_fill_rate: float
     effective_from: str | None = None
@@ -68,7 +68,7 @@ async def get_sl_summary(period: str | None = None):
 
 @router.get("/analytics/service-level/detail")
 async def get_sl_detail(
-    item_no: str | None = None,
+    item_id: str | None = None,
     loc: str | None = None,
     abc_class: str | None = None,
     page: int = 1,
@@ -80,12 +80,15 @@ async def get_sl_detail(
 
     conditions = ["1=1"]
     params: list = []
-    if item_no:
-        conditions.append("item_no = %s"); params.append(item_no)
+    if item_id:
+        conditions.append("item_id = %s")
+        params.append(item_id)
     if loc:
-        conditions.append("loc = %s"); params.append(loc)
+        conditions.append("loc = %s")
+        params.append(loc)
     if abc_class:
-        conditions.append("abc_class = %s"); params.append(abc_class)
+        conditions.append("abc_class = %s")
+        params.append(abc_class)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -97,7 +100,7 @@ async def get_sl_detail(
             total = cur.fetchone()[0]
             cur.execute(
                 f"""
-                SELECT item_no, loc, perf_month, abc_class,
+                SELECT item_id, loc, perf_month, abc_class,
                        actual_fill_rate, target_fill_rate, gap, gap_direction,
                        stockout_events, miss_streak_months, primary_miss_reason,
                        flagged_for_review
@@ -111,7 +114,7 @@ async def get_sl_detail(
             rows = cur.fetchall()
 
     cols = [
-        "item_no", "loc", "perf_month", "abc_class",
+        "item_id", "loc", "perf_month", "abc_class",
         "actual_fill_rate", "target_fill_rate", "gap", "gap_direction",
         "stockout_events", "miss_streak_months", "primary_miss_reason",
         "flagged_for_review",
@@ -137,22 +140,23 @@ async def get_chronic_misses(
     page_size = max(1, min(page_size, 200))
     offset = (max(1, page) - 1) * page_size
 
-    conditions = [f"miss_streak_months >= %s"]
+    conditions = ["miss_streak_months >= %s"]
     params: list = [min_streak]
     if abc_class:
-        conditions.append("abc_class = %s"); params.append(abc_class)
+        conditions.append("abc_class = %s")
+        params.append(abc_class)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT COUNT(DISTINCT item_no || '@' || loc) FROM fact_service_level_performance WHERE {where}",
+                f"SELECT COUNT(DISTINCT item_id || '@' || loc) FROM fact_service_level_performance WHERE {where}",
                 params,
             )
             total = cur.fetchone()[0]
             cur.execute(
                 f"""
-                SELECT item_no, loc, perf_month, abc_class,
+                SELECT item_id, loc, perf_month, abc_class,
                        actual_fill_rate, target_fill_rate, gap,
                        miss_streak_months, primary_miss_reason
                 FROM fact_service_level_performance
@@ -165,7 +169,7 @@ async def get_chronic_misses(
             rows = cur.fetchall()
 
     cols = [
-        "item_no", "loc", "perf_month", "abc_class",
+        "item_id", "loc", "perf_month", "abc_class",
         "actual_fill_rate", "target_fill_rate", "gap",
         "miss_streak_months", "primary_miss_reason",
     ]
@@ -189,16 +193,16 @@ async def upsert_sl_target(body: _TargetUpsert, request: Request):
             cur.execute(
                 """
                 INSERT INTO fact_service_level_targets
-                    (abc_class, item_no, loc, target_fill_rate, effective_from)
+                    (abc_class, item_id, loc, target_fill_rate, effective_from)
                 VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (abc_class, COALESCE(item_no, ''), COALESCE(loc, ''))
+                ON CONFLICT (abc_class, COALESCE(item_id, ''), COALESCE(loc, ''))
                 DO UPDATE SET
                     target_fill_rate = EXCLUDED.target_fill_rate,
                     effective_from   = EXCLUDED.effective_from
                 """,
                 (
                     body.abc_class,
-                    body.item_no,
+                    body.item_id,
                     body.loc,
                     body.target_fill_rate,
                     body.effective_from,
@@ -209,7 +213,7 @@ async def upsert_sl_target(body: _TargetUpsert, request: Request):
     return {
         "status": "ok",
         "abc_class": body.abc_class,
-        "item_no": body.item_no,
+        "item_id": body.item_id,
         "loc": body.loc,
         "target_fill_rate": body.target_fill_rate,
     }

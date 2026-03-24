@@ -21,7 +21,7 @@ Supply chain teams track units; finance tracks dollars. Without a bridge, invent
 
 ## Solution
 
-A computation pipeline joins on-hand inventory, safety stock targets, production forecasts, and item-level unit costs to produce a monthly financial plan. The plan projects inventory value, carrying cost (holding cost as a percentage of inventory value), and budget utilization for each item-location over a configurable horizon. A materialized view (`mv_financial_summary`) rolls up to location, category, and total levels for dashboard display.
+A computation pipeline joins on-hand inventory, safety stock targets, production forecasts, and item-level unit costs to produce a monthly financial plan. The plan projects inventory value, carrying cost (holding cost as a percentage of inventory value), and budget utilization for each item-location over a configurable horizon. The API aggregates data from `fact_financial_inventory_plan` directly for dashboard display.
 
 ---
 
@@ -35,7 +35,7 @@ A computation pipeline joins on-hand inventory, safety stock targets, production
 4. Join `fact_production_forecast` for expected future demand.
 5. For each month in the horizon, compute: projected ending inventory, inventory value (units x unit cost), carrying cost (inventory value x annual holding cost rate / 12), and cumulative budget consumption.
 6. Write results to `fact_financial_inventory_plan`.
-7. Refresh `mv_financial_summary` for aggregated views.
+7. Data available for API queries.
 
 ### Key Formulas
 
@@ -52,10 +52,9 @@ A computation pipeline joins on-hand inventory, safety stock targets, production
 
 | Table | Purpose | Key Columns |
 |---|---|---|
-| `dim_item_cost` | Unit cost per item | `item_no`, `unit_cost`, `cost_type`, `effective_date` |
-| `fact_financial_inventory_plan` | Monthly projections per DFU | `item_no`, `loc`, `month`, `ending_qty`, `inventory_value`, `carrying_cost`, `budget_utilization_pct` |
+| `dim_item_cost` | Unit cost per item | `item_id`, `unit_cost`, `cost_type`, `effective_date` |
+| `fact_financial_inventory_plan` | Monthly projections per DFU | `item_id`, `loc`, `month`, `ending_qty`, `inventory_value`, `carrying_cost`, `budget_utilization_pct` |
 | `fact_budget_periods` | Budget allocations by location and period | `loc`, `period_start`, `period_end`, `budget_amount` |
-| `mv_financial_summary` | Aggregated view for dashboard | `loc`, `category`, `month`, `total_value`, `total_carrying_cost`, `avg_utilization_pct` |
 
 ---
 
@@ -76,7 +75,7 @@ A computation pipeline joins on-hand inventory, safety stock targets, production
 
 | Step | Command | What It Does |
 |---|---|---|
-| Schema | `make financial-schema` | Creates `dim_item_cost`, `fact_financial_inventory_plan`, `fact_budget_periods`, `mv_financial_summary` |
+| Schema | `make financial-schema` | Creates `dim_item_cost`, `fact_financial_inventory_plan`, `fact_budget_periods` |
 | Compute | `make financial-compute` | Runs the full financial plan computation |
 | Full | `make financial-all` | Schema + compute |
 

@@ -28,8 +28,8 @@ type ClustersTabProps = {
 };
 
 export default function ClustersTab({ domain, onDomainChange }: ClustersTabProps) {
-  // Ensure dfu domain
-  if (domain !== "dfu") onDomainChange("dfu");
+  // Ensure sku domain
+  if (domain !== "sku") onDomainChange("sku");
 
   // What-If state
   const [showWhatIf, setShowWhatIf] = useState(false);
@@ -184,7 +184,7 @@ export default function ClustersTab({ domain, onDomainChange }: ClustersTabProps
       <div className="mb-4">
         <h2 className="text-lg font-semibold">DFU Clustering</h2>
         <p className="text-sm text-muted-foreground max-w-3xl mt-0.5 leading-relaxed">
-          Group item-location pairs (DFUs) into clusters based on demand patterns using machine learning
+          Group item-location pairs (SKUs) into clusters based on demand patterns using machine learning
           (KMeans). Clusters are labeled by dominant traits: volume level, trend direction, seasonality,
           intermittency, and variability. Use the <strong>Overview</strong> to see current cluster assignments.
           Run scenario experiments to test different parameters (K range, feature window, thresholds)

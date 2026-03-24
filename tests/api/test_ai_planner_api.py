@@ -39,7 +39,7 @@ async def test_get_insights_empty():
         fetchone_return=(0,),
         fetchall_return=[],
         description=[("insight_id",), ("insight_type",), ("severity",),
-                     ("item_no",), ("loc",), ("summary",)],
+                     ("item_id",), ("loc",), ("summary",)],
     )
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -64,7 +64,7 @@ async def test_get_insights_with_data():
         ],
         description=[
             ("insight_id",), ("insight_type",), ("severity",),
-            ("item_no",), ("loc",), ("summary",),
+            ("item_id",), ("loc",), ("summary",),
         ],
     )
     with patch("api.core._get_pool", return_value=pool):
@@ -87,7 +87,7 @@ async def test_get_insights_severity_filter():
         fetchall_return=[(1, "stockout_risk", "critical", "100320", "LOC", "summary")],
         description=[
             ("insight_id",), ("insight_type",), ("severity",),
-            ("item_no",), ("loc",), ("summary",),
+            ("item_id",), ("loc",), ("summary",),
         ],
     )
     with patch("api.core._get_pool", return_value=pool):
@@ -124,7 +124,7 @@ async def test_get_insights_invalid_severity_ignored():
 
 @pytest.mark.asyncio
 async def test_update_insight_status_acknowledge():
-    # RETURNING has 11 cols: id, status, type, item_no, loc, abc_vol,
+    # RETURNING has 11 cols: id, status, type, item_id, loc, abc_vol,
     #   financial_impact_est, dos, total_lt_days, champion_wape, forecast_bias_pct
     pool, conn, cursor = _make_pool(fetchone_return=(
         1, "acknowledged", "stockout_risk", "100320", "1401-BULK", "A",

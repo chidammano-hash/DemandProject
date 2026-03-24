@@ -22,8 +22,8 @@ from common.forecast_ci import (
 # ---------------------------------------------------------------------------
 
 def _make_residuals(rows: list[tuple]) -> pd.DataFrame:
-    """Build a residuals DataFrame from (dmdunit, loc, basefcst_pref, tothist_dmd) tuples."""
-    return pd.DataFrame(rows, columns=["dmdunit", "loc", "basefcst_pref", "tothist_dmd"])
+    """Build a residuals DataFrame from (item_id, loc, basefcst_pref, tothist_dmd) tuples."""
+    return pd.DataFrame(rows, columns=["item_id", "loc", "basefcst_pref", "tothist_dmd"])
 
 
 # ---------------------------------------------------------------------------
@@ -46,18 +46,18 @@ def test_compute_dfu_sigma_basic():
     df = _make_residuals(rows)
     result = compute_dfu_sigma(df)
 
-    assert set(result.columns) >= {"dmdunit", "loc", "sigma", "n_months"}
+    assert set(result.columns) >= {"item_id", "loc", "sigma", "n_months"}
     assert len(result) == 3
 
-    a_row = result[result["dmdunit"] == "A001"].iloc[0]
+    a_row = result[result["item_id"] == "A001"].iloc[0]
     assert a_row["n_months"] == 2
     assert pytest.approx(a_row["sigma"], abs=1e-6) == 3.0
 
-    b_row = result[result["dmdunit"] == "B001"].iloc[0]
+    b_row = result[result["item_id"] == "B001"].iloc[0]
     assert b_row["n_months"] == 1
     assert pytest.approx(b_row["sigma"], abs=1e-6) == 4.0
 
-    c_row = result[result["dmdunit"] == "C001"].iloc[0]
+    c_row = result[result["item_id"] == "C001"].iloc[0]
     assert c_row["n_months"] == 3
     assert pytest.approx(c_row["sigma"], abs=1e-6) == math.sqrt(12)
 
@@ -89,7 +89,7 @@ def test_compute_dfu_sigma_perfect_forecast():
 
 def test_compute_dfu_sigma_empty():
     """Empty DataFrame input returns an empty DataFrame with correct columns."""
-    empty = pd.DataFrame(columns=["dmdunit", "loc", "basefcst_pref", "tothist_dmd"])
+    empty = pd.DataFrame(columns=["item_id", "loc", "basefcst_pref", "tothist_dmd"])
     result = compute_dfu_sigma(empty)
 
     assert result.empty
@@ -106,9 +106,9 @@ def test_compute_cluster_sigma_weighted():
     # Cluster alpha: DFU A (sigma=10, n=8), DFU B (sigma=20, n=2) → (10*8 + 20*2)/(8+2) = 12.0
     # Cluster beta:  DFU C (sigma=5, n=4) → 5.0
     dfu_sigma = pd.DataFrame([
-        {"dmdunit": "A", "loc": "L1", "sigma": 10.0, "n_months": 8},
-        {"dmdunit": "B", "loc": "L1", "sigma": 20.0, "n_months": 2},
-        {"dmdunit": "C", "loc": "L1", "sigma": 5.0,  "n_months": 4},
+        {"item_id": "A", "loc": "L1", "sigma": 10.0, "n_months": 8},
+        {"item_id": "B", "loc": "L1", "sigma": 20.0, "n_months": 2},
+        {"item_id": "C", "loc": "L1", "sigma": 5.0,  "n_months": 4},
     ])
     cluster_map = {
         ("A", "L1"): "alpha",
@@ -125,7 +125,7 @@ def test_compute_cluster_sigma_weighted():
 
 def test_compute_cluster_sigma_empty_input():
     """Empty dfu_sigma DataFrame returns empty dict."""
-    empty = pd.DataFrame(columns=["dmdunit", "loc", "sigma", "n_months"])
+    empty = pd.DataFrame(columns=["item_id", "loc", "sigma", "n_months"])
     result = compute_cluster_sigma(empty, {("A", "L1"): "alpha"})
     assert result == {}
 
@@ -133,8 +133,8 @@ def test_compute_cluster_sigma_empty_input():
 def test_compute_cluster_sigma_unknown_dfus_excluded():
     """DFUs not present in cluster_map are labelled 'unknown' and excluded."""
     dfu_sigma = pd.DataFrame([
-        {"dmdunit": "KNOWN", "loc": "L1", "sigma": 8.0, "n_months": 6},
-        {"dmdunit": "GHOST", "loc": "L1", "sigma": 99.0, "n_months": 6},
+        {"item_id": "KNOWN", "loc": "L1", "sigma": 8.0, "n_months": 6},
+        {"item_id": "GHOST", "loc": "L1", "sigma": 99.0, "n_months": 6},
     ])
     cluster_map = {("KNOWN", "L1"): "clusterA"}
 
@@ -229,7 +229,7 @@ def test_load_champion_residuals_empty_model_ids():
 
     mock_conn.cursor.assert_not_called()
     assert result.empty
-    assert list(result.columns) == ["dmdunit", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"]
+    assert list(result.columns) == ["item_id", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"]
 
 
 def test_load_champion_residuals_returns_dataframe():
@@ -246,8 +246,8 @@ def test_load_champion_residuals_returns_dataframe():
     result = load_champion_residuals(mock_conn, source_model_ids=["lgbm_cluster"], lag=0)
 
     assert len(result) == 2
-    assert list(result.columns) == ["dmdunit", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"]
-    assert result.iloc[0]["dmdunit"] == "SKU1"
+    assert list(result.columns) == ["item_id", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"]
+    assert result.iloc[0]["item_id"] == "SKU1"
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +257,7 @@ def test_load_champion_residuals_returns_dataframe():
 def _make_mock_conn_with_sigma_rows(sigma_rows: list) -> MagicMock:
     """Return a mock psycopg3 connection whose cursor returns pre-aggregated sigma rows.
 
-    Each row should be (dmdunit, loc, sigma, n_months) — the format returned by
+    Each row should be (item_id, loc, sigma, n_months) — the format returned by
     _load_dfu_sigma_aggregated (SQL GROUP BY aggregation).
     """
     mock_conn = MagicMock()
@@ -375,7 +375,7 @@ def test_load_champion_residuals_empty_db_rows():
     result = load_champion_residuals(mock_conn, source_model_ids=["lgbm_cluster"], lag=0)
 
     assert result.empty
-    assert list(result.columns) == ["dmdunit", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"]
+    assert list(result.columns) == ["item_id", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"]
 
 
 def test_build_sigma_lookup_empty_residuals_uses_absolute_fallback():
@@ -448,7 +448,7 @@ def test_load_dfu_sigma_aggregated_empty_model_ids():
 
     mock_conn.cursor.assert_not_called()
     assert result.empty
-    assert list(result.columns) == ["dmdunit", "loc", "sigma", "n_months"]
+    assert list(result.columns) == ["item_id", "loc", "sigma", "n_months"]
 
 
 def test_load_dfu_sigma_aggregated_returns_dataframe():
@@ -463,8 +463,8 @@ def test_load_dfu_sigma_aggregated_returns_dataframe():
     result = _load_dfu_sigma_aggregated(mock_conn, source_model_ids=["lgbm_cluster"], lag=0)
 
     assert len(result) == 2
-    assert list(result.columns) == ["dmdunit", "loc", "sigma", "n_months"]
-    assert result.iloc[0]["dmdunit"] == "SKU1"
+    assert list(result.columns) == ["item_id", "loc", "sigma", "n_months"]
+    assert result.iloc[0]["item_id"] == "SKU1"
     assert result.iloc[0]["sigma"] == pytest.approx(8.5)
     assert result.iloc[0]["n_months"] == 10
 
@@ -478,4 +478,4 @@ def test_load_dfu_sigma_aggregated_empty_db_rows():
     result = _load_dfu_sigma_aggregated(mock_conn, source_model_ids=["lgbm_cluster"], lag=0)
 
     assert result.empty
-    assert list(result.columns) == ["dmdunit", "loc", "sigma", "n_months"]
+    assert list(result.columns) == ["item_id", "loc", "sigma", "n_months"]

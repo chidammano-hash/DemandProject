@@ -30,7 +30,7 @@ CREATE INDEX IF NOT EXISTS idx_supplier_name
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS dim_item_supplier (
     id              BIGSERIAL PRIMARY KEY,
-    item_no         VARCHAR(50)     NOT NULL,
+    item_id         VARCHAR(50)     NOT NULL,
     loc             VARCHAR(50)     NOT NULL,
     supplier_id     VARCHAR(50)     NOT NULL REFERENCES dim_supplier(supplier_id),
     is_preferred    BOOLEAN         NOT NULL DEFAULT FALSE,
@@ -44,11 +44,11 @@ CREATE TABLE IF NOT EXISTS dim_item_supplier (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_item_supplier
-    ON dim_item_supplier (item_no, loc, supplier_id);
+    ON dim_item_supplier (item_id, loc, supplier_id);
 
 CREATE INDEX IF NOT EXISTS idx_item_supplier_item_loc
-    ON dim_item_supplier (item_no, loc);
+    ON dim_item_supplier (item_id, loc);
 
 CREATE INDEX IF NOT EXISTS idx_item_supplier_preferred
-    ON dim_item_supplier (item_no, loc, is_preferred)
+    ON dim_item_supplier (item_id, loc, is_preferred)
     WHERE is_preferred = TRUE;

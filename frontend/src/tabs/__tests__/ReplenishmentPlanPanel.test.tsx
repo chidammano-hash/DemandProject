@@ -32,14 +32,14 @@ vi.mock("recharts", () => ({
 
 const mockSummary = {
   plan_version: "2026-03-01",
-  total_dfus: 1200,
+  total_skus: 1200,
   below_ss_count: 45,
   below_ss_pct: 3.75,
   avg_ss: 220.5,
   avg_eoq: 310.0,
   avg_ss_delta_pct: 8.2,
   by_policy_type: [
-    { policy_type: "continuous_rop", dfu_count: 800, avg_ss: 250.0, avg_eoq: 320.0, total_order_qty: 180000 },
+    { policy_type: "continuous_rop", sku_count: 800, avg_ss: 250.0, avg_eoq: 320.0, total_order_qty: 180000 },
   ],
 };
 
@@ -49,7 +49,7 @@ const mockDetail = {
   offset: 0,
   rows: [
     {
-      item_no: "100320",
+      item_id: "100320",
       loc: "1401-BULK",
       plan_month: "2026-03-01",
       abc_vol: "A",
@@ -67,7 +67,7 @@ const mockDetail = {
       is_below_ss: false,
     },
     {
-      item_no: "200450",
+      item_id: "200450",
       loc: "2002-DC",
       plan_month: "2026-03-01",
       abc_vol: "C",
@@ -94,7 +94,7 @@ const mockComparison = {
   by_abc: [
     {
       abc_vol: "A",
-      dfu_count: 300,
+      sku_count: 300,
       avg_forecast_ss: 250.0,
       avg_historical_ss: 230.0,
       avg_ss_delta: 20.0,
@@ -105,7 +105,7 @@ const mockComparison = {
     },
     {
       abc_vol: "B",
-      dfu_count: 600,
+      sku_count: 600,
       avg_forecast_ss: 210.0,
       avg_historical_ss: 195.0,
       avg_ss_delta: 15.0,
@@ -118,7 +118,7 @@ const mockComparison = {
 };
 
 const mockDfu = {
-  item_no: "100320",
+  item_id: "100320",
   loc: "1401-BULK",
   plan_version: "2026-03-01",
   series: [
@@ -153,13 +153,13 @@ vi.mock("@/api/queries", async (importOriginal) => {
       detail: (params: object) => ["replenishment", "detail", params] as const,
       comparison: (pv?: string, av?: string, pt?: string) =>
         ["replenishment", "comparison", pv, av, pt] as const,
-      dfu: (itemNo: string, loc: string, pv?: string) =>
-        ["replenishment", "dfu", itemNo, loc, pv] as const,
+      sku: (itemNo: string, loc: string, pv?: string) =>
+        ["replenishment", "sku", itemNo, loc, pv] as const,
     },
     fetchReplenishmentSummary: mockFetchSummary,
     fetchReplenishmentDetail: mockFetchDetail,
     fetchReplenishmentComparison: mockFetchComparison,
-    fetchReplenishmentDfu: mockFetchDfu,
+    fetchReplenishmentSku: mockFetchDfu,
   };
 });
 
@@ -180,7 +180,7 @@ describe("ReplenishmentPlanPanel", () => {
         <ReplenishmentPlanPanel />
       </TestQueryWrapper>
     );
-    expect(await screen.findByText("Total DFUs")).toBeDefined();
+    expect(await screen.findByText("Total SKUs")).toBeDefined();
     expect(await screen.findByText("Avg Forward SS")).toBeDefined();
     expect(await screen.findByText("Avg EOQ")).toBeDefined();
     // "Below SS" appears in both KPI card and table header
@@ -241,7 +241,7 @@ describe("ReplenishmentPlanPanel", () => {
     expect(await screen.findByText(/Page 1/)).toBeDefined();
   });
 
-  it("renders DFU drill-down when a row is clicked", async () => {
+  it("renders SKU drill-down when a row is clicked", async () => {
     render(
       <TestQueryWrapper>
         <ReplenishmentPlanPanel />
@@ -253,11 +253,11 @@ describe("ReplenishmentPlanPanel", () => {
     fireEvent.click(itemCell.closest("tr")!);
     // Drill-down header should appear
     expect(
-      await screen.findByText(/DFU Drill-Down: 100320 @ 1401-BULK/)
+      await screen.findByText(/SKU Drill-Down: 100320 @ 1401-BULK/)
     ).toBeDefined();
   });
 
-  it("closes DFU drill-down on close button click", async () => {
+  it("closes SKU drill-down on close button click", async () => {
     render(
       <TestQueryWrapper>
         <ReplenishmentPlanPanel />
@@ -270,7 +270,7 @@ describe("ReplenishmentPlanPanel", () => {
     fireEvent.click(closeBtn);
     // Drill-down header should be gone
     expect(
-      screen.queryByText(/DFU Drill-Down: 100320 @ 1401-BULK/)
+      screen.queryByText(/SKU Drill-Down: 100320 @ 1401-BULK/)
     ).toBeNull();
   });
 

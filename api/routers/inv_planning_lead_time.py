@@ -6,7 +6,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
+from api.core import _f, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -36,12 +36,12 @@ def lt_summary(
         where_parts.append("d.abc_vol = %s")
         params.append(abc_vol.strip().upper())
     add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market,
-                          item_col="p.item_no", loc_col="p.loc")
+                          item_col="p.item_id", loc_col="p.loc")
 
     if needs_dfu_join:
         from_clause = (
             "dim_item_lead_time_profile p "
-            "LEFT JOIN dim_dfu d ON d.dmdunit = p.item_no AND d.loc = p.loc"
+            "LEFT JOIN dim_sku d ON d.item_id = p.item_id AND d.loc = p.loc"
         )
     else:
         from_clause = "dim_item_lead_time_profile p"
@@ -64,7 +64,7 @@ def lt_summary(
 
     top_sql = f"""
         SELECT
-            p.item_no,
+            p.item_id,
             p.loc,
             p.lt_mean_days,
             p.lt_std_days,
@@ -134,7 +134,7 @@ def lt_profile(
     params: list[Any] = []
 
     if item.strip():
-        where_parts.append("item_no ILIKE %s")
+        where_parts.append("item_id ILIKE %s")
         params.append(f"%{item.strip()}%")
     if location.strip():
         where_parts.append("loc ILIKE %s")
@@ -149,7 +149,7 @@ def lt_profile(
     count_sql = f"SELECT COUNT(*) FROM dim_item_lead_time_profile t {where_clause}"
     data_sql = f"""
         SELECT
-            item_no, loc,
+            item_id, loc,
             lt_mean_days, lt_std_days, lt_cv,
             lt_min_days, lt_max_days,
             lt_p25_days, lt_p50_days, lt_p75_days, lt_p95_days,

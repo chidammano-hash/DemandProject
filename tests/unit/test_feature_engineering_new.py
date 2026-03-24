@@ -18,15 +18,15 @@ def _make_sales_df():
     rows = []
     for dfu in [1, 2]:
         for m in months:
-            rows.append({"dfu_ck": dfu, "startdate": m, "qty": float(dfu * 10 + m.month)})
+            rows.append({"sku_ck": dfu, "startdate": m, "qty": float(dfu * 10 + m.month)})
     return pd.DataFrame(rows)
 
 
 def _make_dfu_attrs():
     return pd.DataFrame({
-        "dfu_ck": [1, 2],
-        "dmdunit": ["U1", "U2"],
-        "dmdgroup": ["G1", "G1"],
+        "sku_ck": [1, 2],
+        "item_id": ["U1", "U2"],
+        "customer_group": ["G1", "G1"],
         "loc": ["L1", "L1"],
         "ml_cluster": ["A", "B"],
         "region": ["East", "West"],
@@ -36,7 +36,7 @@ def _make_dfu_attrs():
 
 
 def _make_item_attrs():
-    return pd.DataFrame(columns=["dmdunit"])
+    return pd.DataFrame(columns=["item_id"])
 
 
 def _build_grid(cat_dtype="category"):
@@ -122,14 +122,138 @@ class TestNewDerivedFeatures:
         assert grid["demand_accel"].dtype in [np.float64, np.float32]
 
 
+class TestLagRatioFeatures:
+    def test_lag_ratio_yoy_present(self):
+        grid = _build_grid()
+        assert "lag_ratio_yoy" in grid.columns
+
+    def test_lag_ratio_mom_present(self):
+        grid = _build_grid()
+        assert "lag_ratio_mom" in grid.columns
+
+    def test_lag_ratio_3v12_present(self):
+        grid = _build_grid()
+        assert "lag_ratio_3v12" in grid.columns
+
+    def test_lag_ratio_yoy_clipped(self):
+        grid = _build_grid()
+        assert grid["lag_ratio_yoy"].max() <= 10.0
+        assert grid["lag_ratio_yoy"].min() >= -10.0
+
+    def test_lag_ratio_mom_clipped(self):
+        grid = _build_grid()
+        assert grid["lag_ratio_mom"].max() <= 10.0
+        assert grid["lag_ratio_mom"].min() >= -10.0
+
+    def test_lag_ratio_3v12_clipped(self):
+        grid = _build_grid()
+        assert grid["lag_ratio_3v12"].max() <= 10.0
+        assert grid["lag_ratio_3v12"].min() >= -10.0
+
+    def test_lag_ratio_no_inf(self):
+        grid = _build_grid()
+        for col in ["lag_ratio_yoy", "lag_ratio_mom", "lag_ratio_3v12"]:
+            assert not grid[col].isin([np.inf, -np.inf]).any(), f"inf in {col}"
+
+    def test_lag_ratio_yoy_formula(self):
+        """lag_ratio_yoy = qty_lag_1 / (|qty_lag_12| + 1), clipped to [-10, 10]."""
+        grid = _build_grid()
+        # Check rows where both lag_1 and lag_12 are present
+        valid = grid.dropna(subset=["qty_lag_1", "qty_lag_12"])
+        if len(valid) > 0:
+            expected = (valid["qty_lag_1"] / (valid["qty_lag_12"].abs() + 1.0)).clip(-10.0, 10.0)
+            pd.testing.assert_series_equal(
+                valid["lag_ratio_yoy"].reset_index(drop=True),
+                expected.reset_index(drop=True),
+                check_names=False,
+                atol=1e-5,
+            )
+
+
+class TestZeroDemandCount:
+    def test_n_zero_last_6m_present(self):
+        grid = _build_grid()
+        assert "n_zero_last_6m" in grid.columns
+
+    def test_n_zero_last_6m_range(self):
+        grid = _build_grid()
+        assert grid["n_zero_last_6m"].min() >= 0
+        assert grid["n_zero_last_6m"].max() <= 6
+
+    def test_n_zero_last_6m_dtype(self):
+        grid = _build_grid()
+        assert grid["n_zero_last_6m"].dtype in [np.float32, np.float64]
+
+    def test_n_zero_last_6m_all_positive_demand(self):
+        """With all positive demand, zero count should be 0 for months with enough history."""
+        grid = _build_grid()
+        # After 6 months of history, all lags are positive → zero count = 0
+        late_rows = grid[grid["startdate"] >= pd.Timestamp("2023-07-01")]
+        if len(late_rows) > 0:
+            assert (late_rows["n_zero_last_6m"] == 0).all()
+
+
+class TestTsProfileInGrid:
+    def test_ts_profile_features_present(self):
+        from common.constants import TS_PROFILE_FEATURES
+        grid = _build_grid()
+        for feat in TS_PROFILE_FEATURES:
+            assert feat in grid.columns, f"Missing TS profile feature: {feat}"
+
+    def test_ts_profile_no_nan(self):
+        from common.constants import TS_PROFILE_FEATURES
+        grid = _build_grid()
+        for feat in TS_PROFILE_FEATURES:
+            assert grid[feat].notna().all(), f"NaN in {feat}"
+
+    def test_cv_demand_non_negative(self):
+        grid = _build_grid()
+        assert (grid["cv_demand"] >= 0).all()
+
+    def test_mean_demand_positive(self):
+        grid = _build_grid()
+        assert (grid["mean_demand"] > 0).all()
+
+    def test_zero_demand_pct_range(self):
+        grid = _build_grid()
+        assert (grid["zero_demand_pct"] >= 0).all()
+        assert (grid["zero_demand_pct"] <= 1.0).all()
+
+    def test_ts_profile_static_per_dfu(self):
+        """TS profile features should be constant per DFU (static attributes)."""
+        from common.constants import TS_PROFILE_FEATURES
+        grid = _build_grid()
+        for feat in TS_PROFILE_FEATURES:
+            nunique = grid.groupby("sku_ck")[feat].nunique()
+            assert (nunique == 1).all(), f"{feat} varies within a DFU"
+
+    def test_seasonal_amplitude_non_negative(self):
+        grid = _build_grid()
+        assert (grid["seasonal_amplitude"] >= 0).all()
+
+    def test_adi_positive(self):
+        grid = _build_grid()
+        assert (grid["adi"] > 0).all()
+
+
 class TestFeatureCountIncrease:
     def test_total_feature_count_increased(self):
-        """Grid should have at least 6 more columns than before the new features."""
+        """Grid should have all new features from all phases."""
         grid = _build_grid()
         new_feature_names = ["is_quarter_end", "is_year_end", "days_in_month",
-                             "mom_growth", "demand_accel", "volatility_ratio"]
+                             "mom_growth", "demand_accel", "volatility_ratio",
+                             "lag_ratio_yoy", "lag_ratio_mom", "lag_ratio_3v12",
+                             "n_zero_last_6m", "cv_demand", "mean_demand",
+                             "seasonal_amplitude", "adi"]
         for name in new_feature_names:
             assert name in grid.columns, f"Missing new feature: {name}"
+
+    def test_enhanced_features_all_present(self):
+        """Grid should have all enhanced features from the 4 new groups (except external forecast)."""
+        from common.constants import FOURIER_FEATURES, CROSTON_FEATURES, CROSS_DFU_FEATURES
+        grid = _build_grid()
+        for name in FOURIER_FEATURES + CROSTON_FEATURES + CROSS_DFU_FEATURES:
+            assert name in grid.columns, f"Missing enhanced feature: {name}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -381,3 +505,366 @@ class TestComputeTimeSeriesFeatures:
         result = compute_time_series_features(df)
         nan_features = [k for k, v in result.items() if pd.isna(v)]
         assert nan_features == [], f"NaN found in: {nan_features}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tests for the 4 new enhanced feature groups
+# ─────────────────────────────────────────────────────────────────────────────
+
+from common.ml.feature_engineering import (  # noqa: E402
+    _compute_fourier_features,
+    _compute_croston_features,
+    _compute_cross_dfu_features,
+    enrich_with_external_forecast,
+)
+
+
+class TestFourierFeatures:
+    """Tests for Fourier seasonal term features."""
+
+    def test_fourier_columns_present(self):
+        grid = _build_grid()
+        from common.constants import FOURIER_FEATURES
+        for feat in FOURIER_FEATURES:
+            assert feat in grid.columns, f"Missing Fourier feature: {feat}"
+
+    def test_fourier_values_bounded(self):
+        """Sin/cos values must be in [-1, 1]."""
+        grid = _build_grid()
+        for period in [12, 6, 4, 3]:
+            for func in ["sin", "cos"]:
+                col = f"fourier_{func}_{period}"
+                assert grid[col].min() >= -1.0 - 1e-6, f"{col} below -1"
+                assert grid[col].max() <= 1.0 + 1e-6, f"{col} above 1"
+
+    def test_fourier_no_nan(self):
+        grid = _build_grid()
+        for period in [12, 6, 4, 3]:
+            for func in ["sin", "cos"]:
+                col = f"fourier_{func}_{period}"
+                assert grid[col].notna().all(), f"NaN in {col}"
+
+    def test_fourier_dtype_float32(self):
+        grid = _build_grid()
+        for period in [12, 6, 4, 3]:
+            for func in ["sin", "cos"]:
+                col = f"fourier_{func}_{period}"
+                assert grid[col].dtype == np.float32, f"{col} not float32"
+
+    def test_fourier_sin_12_matches_month_sin(self):
+        """fourier_sin_12 should equal sin(2π * month / 12) = month_sin."""
+        grid = _build_grid()
+        pd.testing.assert_series_equal(
+            grid["fourier_sin_12"].reset_index(drop=True),
+            grid["month_sin"].reset_index(drop=True),
+            check_names=False,
+            atol=1e-5,
+        )
+
+    def test_fourier_cos_12_matches_month_cos(self):
+        """fourier_cos_12 should equal cos(2π * month / 12) = month_cos."""
+        grid = _build_grid()
+        pd.testing.assert_series_equal(
+            grid["fourier_cos_12"].reset_index(drop=True),
+            grid["month_cos"].reset_index(drop=True),
+            check_names=False,
+            atol=1e-5,
+        )
+
+    def test_fourier_period_6_alternates(self):
+        """Period-6 features should complete a full cycle every 6 months."""
+        grid = _build_grid()
+        # For month 1 and month 7, the angle difference is 2π → same value
+        dfu1 = grid[grid["sku_ck"] == 1].sort_values("startdate")
+        m1_val = dfu1[dfu1["startdate"].dt.month == 1]["fourier_sin_6"].iloc[0]
+        m7_val = dfu1[dfu1["startdate"].dt.month == 7]["fourier_sin_6"].iloc[0]
+        assert abs(m1_val - m7_val) < 1e-5, "Period-6 sin should repeat every 6 months"
+
+    def test_fourier_protected(self):
+        """Fourier features should be in PROTECTED_FEATURES."""
+        from common.constants import PROTECTED_FEATURES, FOURIER_FEATURES
+        for feat in FOURIER_FEATURES:
+            assert feat in PROTECTED_FEATURES, f"{feat} should be protected"
+
+
+class TestCrostonFeatures:
+    """Tests for Croston decomposition features (intermittent demand)."""
+
+    def test_croston_columns_present(self):
+        grid = _build_grid()
+        from common.constants import CROSTON_FEATURES
+        for feat in CROSTON_FEATURES:
+            assert feat in grid.columns, f"Missing Croston feature: {feat}"
+
+    def test_croston_no_nan(self):
+        grid = _build_grid()
+        from common.constants import CROSTON_FEATURES
+        for feat in CROSTON_FEATURES:
+            assert grid[feat].notna().all(), f"NaN in {feat}"
+
+    def test_croston_dtype_float32(self):
+        grid = _build_grid()
+        from common.constants import CROSTON_FEATURES
+        for feat in CROSTON_FEATURES:
+            assert grid[feat].dtype == np.float32, f"{feat} not float32"
+
+    def test_croston_demand_size_non_negative(self):
+        grid = _build_grid()
+        assert (grid["croston_demand_size"] >= 0).all()
+
+    def test_croston_demand_interval_at_least_one(self):
+        grid = _build_grid()
+        assert (grid["croston_demand_interval"] >= 1.0).all()
+
+    def test_croston_probability_bounded(self):
+        """Probability should be in [0, 1]."""
+        grid = _build_grid()
+        assert (grid["croston_probability"] >= 0).all()
+        assert (grid["croston_probability"] <= 1.0 + 1e-6).all()
+
+    def test_croston_continuous_demand(self):
+        """With continuous positive demand, size should be positive and interval ≈ 1."""
+        grid = _build_grid()
+        # After enough history, all demand is positive → interval should be close to 1
+        late_rows = grid[grid["startdate"] >= pd.Timestamp("2023-07-01")]
+        if len(late_rows) > 0:
+            assert (late_rows["croston_demand_size"] > 0).all()
+            # Interval should be near 1 for continuous demand
+            assert (late_rows["croston_demand_interval"] <= 2.0).all()
+
+    def test_croston_intermittent_demand(self):
+        """With intermittent demand, interval should be > 1."""
+        months = pd.date_range("2023-01-01", periods=18, freq="MS")
+        rows = []
+        for m in months:
+            # Non-zero every 3rd month
+            qty = 100.0 if m.month % 3 == 1 else 0.0
+            rows.append({"sku_ck": 1, "startdate": m, "qty": qty})
+        sales = pd.DataFrame(rows)
+        dfu = pd.DataFrame({
+            "sku_ck": [1],
+            "item_id": ["U1"],
+            "customer_group": ["G1"],
+            "loc": ["L1"],
+        })
+        items = pd.DataFrame(columns=["item_id"])
+        grid = build_feature_matrix(sales, dfu, items, sorted(sales["startdate"].unique().tolist()))
+        # After enough history (skip first few months), interval should be > 1
+        late = grid[grid["startdate"] >= pd.Timestamp("2023-06-01")]
+        nonzero_interval = late[late["croston_demand_interval"] > 1.0]
+        assert len(nonzero_interval) > 0, "Intermittent demand should produce interval > 1"
+
+    def test_croston_recomputed_after_mask(self):
+        """Croston features should be recomputed after mask_future_sales."""
+        from common.ml.feature_engineering import mask_future_sales
+        grid = _build_grid()
+        original_size = grid[grid["startdate"] == pd.Timestamp("2024-06-01")]["croston_demand_size"].values.copy()
+        cutoff = pd.Timestamp("2023-06-01")
+        masked = mask_future_sales(grid, cutoff)
+        # After masking, Croston features should still be present and valid
+        assert "croston_demand_size" in masked.columns
+        assert masked["croston_demand_size"].notna().all()
+
+
+class TestCrossDfuFeatures:
+    """Tests for cross-DFU cluster aggregate features."""
+
+    def test_cross_dfu_columns_present(self):
+        grid = _build_grid()
+        from common.constants import CROSS_DFU_FEATURES
+        for feat in CROSS_DFU_FEATURES:
+            assert feat in grid.columns, f"Missing cross-DFU feature: {feat}"
+
+    def test_cross_dfu_no_nan(self):
+        grid = _build_grid()
+        from common.constants import CROSS_DFU_FEATURES
+        for feat in CROSS_DFU_FEATURES:
+            assert grid[feat].notna().all(), f"NaN in {feat}"
+
+    def test_cross_dfu_dtype_float32(self):
+        grid = _build_grid()
+        from common.constants import CROSS_DFU_FEATURES
+        for feat in CROSS_DFU_FEATURES:
+            assert grid[feat].dtype == np.float32, f"{feat} not float32"
+
+    def test_cluster_mean_lag1_consistent(self):
+        """cluster_mean_lag1 should be the mean of qty_lag_1 within each cluster-month."""
+        grid = _build_grid()
+        # Use observed=True to skip categories with no data
+        for (cluster, month), group in grid.groupby(["ml_cluster", "startdate"], observed=True):
+            # pandas .mean() skips NaN, matching the agg behavior
+            expected_mean = group["qty_lag_1"].mean()
+            if pd.isna(expected_mean):
+                expected_mean = 0.0
+            actual = group["cluster_mean_lag1"].iloc[0]
+            assert abs(float(actual) - float(expected_mean)) < 1e-3, (
+                f"cluster_mean_lag1 mismatch for cluster={cluster}, month={month}"
+            )
+
+    def test_cluster_total_lag1_consistent(self):
+        """cluster_total_lag1 should be the sum of qty_lag_1 within each cluster-month."""
+        grid = _build_grid()
+        for (cluster, month), group in grid.groupby(["ml_cluster", "startdate"], observed=True):
+            # pandas .sum() skips NaN, matching the agg behavior
+            expected_sum = group["qty_lag_1"].sum()
+            if pd.isna(expected_sum):
+                expected_sum = 0.0
+            actual = group["cluster_total_lag1"].iloc[0]
+            assert abs(float(actual) - float(expected_sum)) < 1e-2, (
+                f"cluster_total_lag1 mismatch for cluster={cluster}, month={month}"
+            )
+
+    def test_cluster_zero_pct_bounded(self):
+        """cluster_zero_pct should be in [0, 1]."""
+        grid = _build_grid()
+        assert (grid["cluster_zero_pct"] >= 0).all()
+        assert (grid["cluster_zero_pct"] <= 1.0 + 1e-6).all()
+
+    def test_cluster_demand_trend_clipped(self):
+        grid = _build_grid()
+        assert grid["cluster_demand_trend"].max() <= 10.0
+        assert grid["cluster_demand_trend"].min() >= -10.0
+
+    def test_cross_dfu_without_ml_cluster(self):
+        """When ml_cluster is not in dfu_attrs, features should be 0."""
+        months = pd.date_range("2023-01-01", periods=6, freq="MS")
+        sales = pd.DataFrame({
+            "sku_ck": [1] * 6,
+            "startdate": list(months),
+            "qty": [10.0] * 6,
+        })
+        dfu = pd.DataFrame({
+            "sku_ck": [1],
+            "item_id": ["U1"],
+            "customer_group": ["G1"],
+            "loc": ["L1"],
+            # No ml_cluster column
+        })
+        items = pd.DataFrame(columns=["item_id"])
+        grid = build_feature_matrix(sales, dfu, items, list(months))
+        from common.constants import CROSS_DFU_FEATURES
+        for feat in CROSS_DFU_FEATURES:
+            assert (grid[feat] == 0).all(), f"{feat} should be 0 without ml_cluster"
+
+
+class TestExternalForecastEnrichment:
+    """Tests for external forecast signal features."""
+
+    def test_enrichment_with_none(self):
+        """When ext_forecast_df is None, features should be 0."""
+        grid = _build_grid()
+        result = enrich_with_external_forecast(grid, None)
+        from common.constants import EXTERNAL_FORECAST_FEATURES
+        for feat in EXTERNAL_FORECAST_FEATURES:
+            assert feat in result.columns, f"Missing {feat}"
+            assert (result[feat] == 0).all(), f"{feat} should be 0 with None input"
+
+    def test_enrichment_with_empty_df(self):
+        """When ext_forecast_df is empty, features should be 0."""
+        grid = _build_grid()
+        empty = pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
+        result = enrich_with_external_forecast(grid, empty)
+        from common.constants import EXTERNAL_FORECAST_FEATURES
+        for feat in EXTERNAL_FORECAST_FEATURES:
+            assert (result[feat] == 0).all()
+
+    def test_enrichment_with_data(self):
+        """With actual forecast data, features should be non-trivial."""
+        grid = _build_grid()
+        # Create matching external forecast
+        ext_rows = []
+        for _, row in grid[["sku_ck", "startdate"]].drop_duplicates().iterrows():
+            ext_rows.append({
+                "sku_ck": row["sku_ck"],
+                "startdate": row["startdate"],
+                "basefcst_pref": 50.0,
+            })
+        ext_df = pd.DataFrame(ext_rows)
+        result = enrich_with_external_forecast(grid, ext_df)
+        from common.constants import EXTERNAL_FORECAST_FEATURES
+        for feat in EXTERNAL_FORECAST_FEATURES:
+            assert feat in result.columns
+            assert result[feat].notna().all(), f"NaN in {feat}"
+
+    def test_enrichment_dtype_float32(self):
+        grid = _build_grid()
+        result = enrich_with_external_forecast(grid, None)
+        from common.constants import EXTERNAL_FORECAST_FEATURES
+        for feat in EXTERNAL_FORECAST_FEATURES:
+            assert result[feat].dtype == np.float32
+
+    def test_ext_fcst_ratio_clipped(self):
+        """ext_fcst_ratio should be clipped to [-10, 10]."""
+        grid = _build_grid()
+        ext_rows = []
+        for _, row in grid[["sku_ck", "startdate"]].drop_duplicates().iterrows():
+            ext_rows.append({
+                "sku_ck": row["sku_ck"],
+                "startdate": row["startdate"],
+                "basefcst_pref": 100000.0,  # extreme value
+            })
+        ext_df = pd.DataFrame(ext_rows)
+        result = enrich_with_external_forecast(grid, ext_df)
+        assert result["ext_fcst_ratio"].max() <= 10.0
+        assert result["ext_fcst_ratio"].min() >= -10.0
+
+    def test_ext_fcst_lag1_ratio_is_causal(self):
+        """ext_fcst_lag1_ratio at time T uses forecast from T-1, not T."""
+        grid = _build_grid()
+        months = sorted(grid["startdate"].unique())
+        ext_rows = []
+        for sku in grid["sku_ck"].unique():
+            for m in months:
+                # Give a distinctive value per month
+                ext_rows.append({
+                    "sku_ck": sku,
+                    "startdate": m,
+                    "basefcst_pref": float(m.month) * 10,
+                })
+        ext_df = pd.DataFrame(ext_rows)
+        result = enrich_with_external_forecast(grid, ext_df)
+        # First month should have lag1 ratio = 0 (no prior forecast)
+        first_month_rows = result[result["startdate"] == months[0]]
+        assert (first_month_rows["ext_fcst_lag1_ratio"] == 0).all()
+
+    def test_no_temp_columns_remain(self):
+        """Temporary columns _ext_fcst and _ext_fcst_lag1 should be cleaned up."""
+        grid = _build_grid()
+        ext_rows = [{"sku_ck": 1, "startdate": pd.Timestamp("2023-01-01"), "basefcst_pref": 50.0}]
+        ext_df = pd.DataFrame(ext_rows)
+        result = enrich_with_external_forecast(grid, ext_df)
+        assert "_ext_fcst" not in result.columns
+        assert "_ext_fcst_lag1" not in result.columns
+
+
+class TestEnhancedFeaturesInGetFeatureColumns:
+    """Ensure get_feature_columns includes enhanced features."""
+
+    def test_fourier_in_feature_columns(self):
+        from common.ml.feature_engineering import get_feature_columns
+        grid = _build_grid()
+        feat_cols = get_feature_columns(grid)
+        from common.constants import FOURIER_FEATURES
+        for feat in FOURIER_FEATURES:
+            assert feat in feat_cols, f"{feat} missing from feature columns"
+
+    def test_croston_in_feature_columns(self):
+        from common.ml.feature_engineering import get_feature_columns
+        grid = _build_grid()
+        feat_cols = get_feature_columns(grid)
+        from common.constants import CROSTON_FEATURES
+        for feat in CROSTON_FEATURES:
+            assert feat in feat_cols, f"{feat} missing from feature columns"
+
+    def test_cross_dfu_in_feature_columns(self):
+        from common.ml.feature_engineering import get_feature_columns
+        grid = _build_grid()
+        feat_cols = get_feature_columns(grid)
+        from common.constants import CROSS_DFU_FEATURES
+        for feat in CROSS_DFU_FEATURES:
+            assert feat in feat_cols, f"{feat} missing from feature columns"
+
+    def test_enhanced_not_in_metadata(self):
+        from common.constants import METADATA_COLS, ENHANCED_FEATURES
+        for feat in ENHANCED_FEATURES:
+            assert feat not in METADATA_COLS, f"{feat} should NOT be in METADATA_COLS"

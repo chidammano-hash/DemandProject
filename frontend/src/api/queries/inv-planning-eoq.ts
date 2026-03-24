@@ -14,7 +14,7 @@ export interface EoqAbcEntry {
 }
 
 export interface EoqSummaryPayload {
-  total_dfus: number;
+  total_skus: number;
   avg_effective_eoq: number | null;
   total_cycle_stock: number | null;
   avg_order_frequency: number | null;
@@ -23,7 +23,7 @@ export interface EoqSummaryPayload {
 }
 
 export interface EoqDetailRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   abc_vol: string | null;
   demand_mean_monthly: number | null;
@@ -57,7 +57,7 @@ export interface EoqSensitivityPoint {
 }
 
 export interface EoqSensitivityPayload {
-  item_no: string | null;
+  item_id: string | null;
   loc: string | null;
   avg_demand_monthly: number;
   curve: EoqSensitivityPoint[];

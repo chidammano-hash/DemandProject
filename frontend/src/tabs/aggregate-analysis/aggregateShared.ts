@@ -42,11 +42,11 @@ export interface FilterConfig {
 export const FILTERS: FilterConfig[] = [
   { key: "brand", label: "Brand", domain: "item", column: "brand_name" },
   { key: "category", label: "Category", domain: "item", column: "class_" },
-  { key: "item", label: "Item", domain: "item", column: "item_no", searchable: true },
+  { key: "item", label: "Item", domain: "item", column: "item_id", searchable: true },
   { key: "location", label: "Location", domain: "location", column: "location_id", searchable: true },
   { key: "market", label: "Market", domain: "location", column: "state_id" },
   { key: "channel", label: "Channel", domain: "customer", column: "rpt_channel_desc" },
-  { key: "cluster", label: "Cluster", domain: "dfu", column: "cluster_assignment" },
+  { key: "cluster", label: "Cluster", domain: "sku", column: "cluster_assignment" },
 ];
 
 export interface LocalFilters {

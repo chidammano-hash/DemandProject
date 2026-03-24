@@ -35,22 +35,22 @@ class TestInventoryDomainSpec:
 
     def test_inventory_business_key_field(self):
         spec = DOMAIN_SPECS["inventory"]
-        assert spec.business_key_field == "item_no"
+        assert spec.business_key_field == "item_id"
 
     def test_inventory_business_key_fields(self):
         spec = DOMAIN_SPECS["inventory"]
-        assert "item_no" in spec.business_key_fields
+        assert "item_id" in spec.business_key_fields
         assert "loc" in spec.business_key_fields
         assert "snapshot_date" in spec.business_key_fields
         assert len(spec.business_key_fields) == 3
 
     def test_inventory_key_fields_property(self):
         spec = DOMAIN_SPECS["inventory"]
-        assert spec.key_fields == ("item_no", "loc", "snapshot_date")
+        assert spec.key_fields == ("item_id", "loc", "snapshot_date")
 
     def test_inventory_columns(self):
         spec = DOMAIN_SPECS["inventory"]
-        assert "item_no" in spec.columns
+        assert "item_id" in spec.columns
         assert "loc" in spec.columns
         assert "snapshot_date" in spec.columns
         assert "lead_time_days" in spec.columns
@@ -84,7 +84,7 @@ class TestInventoryDomainSpec:
 
     def test_inventory_search_fields(self):
         spec = DOMAIN_SPECS["inventory"]
-        assert spec.search_fields == ["item_no", "loc"]
+        assert spec.search_fields == ["item_id", "loc"]
 
     def test_inventory_search_fields_subset_of_columns(self):
         spec = DOMAIN_SPECS["inventory"]
@@ -115,7 +115,7 @@ class TestInventoryDomainSpec:
     def test_inventory_source_columns_mapping(self):
         spec = DOMAIN_SPECS["inventory"]
         assert spec.source_columns is not None
-        assert spec.source_columns.get("item_no") == "item"
+        assert spec.source_columns.get("item_id") == "item"
         assert spec.source_columns.get("snapshot_date") == "exec_date"
         assert spec.source_columns.get("lead_time_days") == "lead_time"
         assert spec.source_columns.get("qty_on_hand") == "tot_oh"
@@ -124,7 +124,7 @@ class TestInventoryDomainSpec:
 
     def test_inventory_source_col_for_with_mapping(self):
         spec = DOMAIN_SPECS["inventory"]
-        assert spec.source_col_for("item_no") == "item"
+        assert spec.source_col_for("item_id") == "item"
         assert spec.source_col_for("snapshot_date") == "exec_date"
         assert spec.source_col_for("qty_on_hand") == "tot_oh"
 

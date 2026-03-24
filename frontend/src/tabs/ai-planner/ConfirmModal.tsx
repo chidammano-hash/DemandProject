@@ -28,7 +28,7 @@ export function ConfirmModal({
           <div>
             <p className="text-sm font-semibold text-foreground">{label}</p>
             <p className="text-xs text-muted-foreground">
-              {insight.item_no} @ {insight.loc}
+              {insight.item_id} @ {insight.loc}
             </p>
           </div>
           <button

@@ -34,21 +34,10 @@ export type ClusterInfo = {
   cv_demand: number;
 };
 
-export type DfuClustersPayload = {
+export type SkuClustersPayload = {
   domain: string;
   total_assigned: number;
   clusters: ClusterInfo[];
-};
-
-export type ClusterProfile = {
-  cluster_id: number;
-  label: string;
-  mean_demand: number;
-  cv_demand: number;
-  seasonality_strength: number;
-  trend_slope: number;
-  growth_rate: number;
-  zero_demand_pct: number;
 };
 
 export type ClusterProfilesPayload = {
@@ -76,7 +65,7 @@ export type AccuracyKpis = {
   bias: number | null;
   sum_forecast: number;
   sum_actual: number;
-  dfu_count: number;
+  sku_count: number;
 };
 
 export type AccuracySliceRow = {
@@ -88,8 +77,8 @@ export type AccuracySliceRow = {
 export type AccuracySlicePayload = {
   group_by: string;
   rows: AccuracySliceRow[];
-  common_dfu_count?: number;
-  dfu_counts?: Record<string, number>;
+  common_sku_count?: number;
+  sku_counts?: Record<string, number>;
 };
 
 export type LagPoint = {
@@ -101,14 +90,8 @@ export type LagCurvePayload = {
   by_lag: LagPoint[];
 };
 
-export type MarketIntelSearchResult = {
-  title: string;
-  link: string;
-  snippet: string;
-};
-
 export type MarketIntelPayload = {
-  item_no: string;
+  item_id: string;
   location_id: string;
   item_desc: string | null;
   brand_name: string | null;
@@ -120,9 +103,9 @@ export type MarketIntelPayload = {
   generated_at: string;
 };
 
-export type DfuAnalysisMode = "item_location" | "all_items_at_location" | "item_at_all_locations";
+export type SkuAnalysisMode = "item_location" | "all_items_at_location" | "item_at_all_locations";
 
-export type DfuAnalysisKpis = {
+export type SkuAnalysisKpis = {
   accuracy_pct: number | null;
   wape: number | null;
   bias: number | null;
@@ -131,26 +114,20 @@ export type DfuAnalysisKpis = {
   months_covered: number;
 };
 
-export type DfuModelMonthly = {
-  month: string;
-  forecast: number;
-  actual: number;
-};
-
-export type DfuAnalysisPayload = {
-  mode: DfuAnalysisMode;
+export type SkuAnalysisPayload = {
+  mode: SkuAnalysisMode;
   item: string;
   location: string;
   points: number;
   models: string[];
   series: Record<string, number | string>[];
-  model_monthly: Record<string, DfuModelMonthly[]>;
+  model_monthly: Record<string, SkuModelMonthly[]>;
   dfu_attributes: Record<string, string | null>[];
   scope_count?: number;
 };
 
 export type InventoryPosition = {
-  item_no: string;
+  item_id: string;
   loc: string;
   snapshot_date: string;
   lead_time_days: number | null;
@@ -219,19 +196,10 @@ export type InventoryItemDetailPayload = {
 
 export type Theme = "light" | "soft" | "dark";
 
-export type ElementConfig = {
-  symbol: string;
-  number: number;
-  name: string;
-  color: string;
-  activeColor: string;
-  glow: string;
-};
-
 // Feature 37: Inventory Backtest types
 
 export type InvBacktestModelMetrics = {
-  dfu_months: number;
+  sku_months: number;
   stockout_count: number;
   stockout_rate: number;
   excess_count: number;
@@ -278,7 +246,7 @@ export type InvBacktestRootCausePayload = {
 };
 
 export type InvBacktestDetailRow = {
-  item_no: string;
+  item_id: string;
   loc: string;
   month: string;
   model_id: string;

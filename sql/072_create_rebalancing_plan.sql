@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS fact_rebalancing_transfer (
     transfer_sk                BIGSERIAL PRIMARY KEY,
     transfer_id                TEXT UNIQUE NOT NULL DEFAULT gen_random_uuid()::TEXT,
     plan_id                    TEXT NOT NULL REFERENCES fact_rebalancing_plan(plan_id),
-    item_no                    TEXT NOT NULL,
+    item_id                    TEXT NOT NULL,
     source_loc                 TEXT NOT NULL,
     dest_loc                   TEXT NOT NULL,
     lane_id                    TEXT,
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS fact_rebalancing_transfer (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rebal_transfer_plan    ON fact_rebalancing_transfer (plan_id);
-CREATE INDEX IF NOT EXISTS idx_rebal_transfer_item    ON fact_rebalancing_transfer (item_no);
+CREATE INDEX IF NOT EXISTS idx_rebal_transfer_item    ON fact_rebalancing_transfer (item_id);
 CREATE INDEX IF NOT EXISTS idx_rebal_transfer_source  ON fact_rebalancing_transfer (source_loc);
 CREATE INDEX IF NOT EXISTS idx_rebal_transfer_dest    ON fact_rebalancing_transfer (dest_loc);
 CREATE INDEX IF NOT EXISTS idx_rebal_transfer_status  ON fact_rebalancing_transfer (status);

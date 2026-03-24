@@ -5,8 +5,8 @@
 CREATE TABLE IF NOT EXISTS backtest_lag_archive (
   archive_sk    BIGSERIAL PRIMARY KEY,
   forecast_ck   TEXT NOT NULL,
-  dmdunit       TEXT NOT NULL,
-  dmdgroup      TEXT NOT NULL,
+  item_id       TEXT NOT NULL,
+  customer_group      TEXT NOT NULL,
   loc           TEXT NOT NULL,
   fcstdate      DATE NOT NULL,
   startdate     DATE NOT NULL,
@@ -32,6 +32,6 @@ CREATE TABLE IF NOT EXISTS backtest_lag_archive (
 );
 
 CREATE INDEX IF NOT EXISTS idx_backtest_lag_archive_model_id ON backtest_lag_archive (model_id);
-CREATE INDEX IF NOT EXISTS idx_backtest_lag_archive_dmdunit ON backtest_lag_archive (dmdunit);
+CREATE INDEX IF NOT EXISTS idx_backtest_lag_archive_item_id ON backtest_lag_archive (item_id);
 CREATE INDEX IF NOT EXISTS idx_backtest_lag_archive_startdate ON backtest_lag_archive (startdate);
 CREATE INDEX IF NOT EXISTS idx_backtest_lag_archive_lag ON backtest_lag_archive (lag);

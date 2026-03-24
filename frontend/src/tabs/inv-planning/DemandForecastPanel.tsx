@@ -54,9 +54,9 @@ function KpiCard({
 }
 
 // ---------------------------------------------------------------------------
-// DFU drill-down chart
+// SKU drill-down chart
 // ---------------------------------------------------------------------------
-function DfuForecastChart({
+function SkuForecastChart({
   item,
   loc,
   planVersion,
@@ -68,7 +68,7 @@ function DfuForecastChart({
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.productionForecast({ item, loc, planVersion: planVersion ?? "" }),
     queryFn: () =>
-      fetchProductionForecast({ item_no: item, loc, plan_version: planVersion }),
+      fetchProductionForecast({ item_id: item, loc, plan_version: planVersion }),
     staleTime: STALE.FIVE_MIN,
     enabled: item.trim().length > 0 && loc.trim().length > 0,
   });
@@ -168,15 +168,15 @@ function DfuForecastChart({
 export function DemandForecastPanel() {
   const { filters: globalFilters } = useGlobalFilterContext();
   const [horizonMonths, setHorizonMonths] = useState(18);
-  const [dfuItem, setDfuItem] = useState("");
-  const [dfuLoc, setDfuLoc] = useState("");
+  const [skuItem, setSkuItem] = useState("");
+  const [skuLoc, setDfuLoc] = useState("");
 
   const syncedGlobalRef = useRef<string>("");
   useEffect(() => {
     const key = `${globalFilters.item.join(",")}_${globalFilters.location.join(",")}`;
     if (key === syncedGlobalRef.current) return;
     syncedGlobalRef.current = key;
-    if (globalFilters.item.length === 1) setDfuItem(globalFilters.item[0]);
+    if (globalFilters.item.length === 1) setSkuItem(globalFilters.item[0]);
     if (globalFilters.location.length === 1) setDfuLoc(globalFilters.location[0]);
   }, [globalFilters.item, globalFilters.location]);
 
@@ -208,7 +208,7 @@ export function DemandForecastPanel() {
     summary?.by_abc_class.map((r: ProductionForecastAbcRow) => ({
       abc: r.abc_class,
       qty: r.forecast_qty,
-      dfus: r.dfu_count,
+      skus: r.sku_count,
     })) ?? [];
 
   return (
@@ -239,7 +239,7 @@ export function DemandForecastPanel() {
             >
               {versions?.versions?.map((v, idx) => (
                 <option key={v.plan_version} value={v.plan_version}>
-                  {idx === 0 ? `▶ Latest — ${v.plan_version}` : v.plan_version} ({v.dfu_count.toLocaleString()} DFUs)
+                  {idx === 0 ? `▶ Latest — ${v.plan_version}` : v.plan_version} ({v.sku_count.toLocaleString()} SKUs)
                 </option>
               ))}
             </select>
@@ -274,7 +274,7 @@ export function DemandForecastPanel() {
           />
           <KpiCard
             label="SKU-Locations Planned"
-            value={formatFixed(summary.total_dfu_count)}
+            value={formatFixed(summary.total_sku_count)}
             sub="item-location pairs"
           />
           <KpiCard
@@ -308,25 +308,25 @@ export function DemandForecastPanel() {
         </div>
       )}
 
-      {/* DFU drill-down */}
+      {/* SKU drill-down */}
       <div className="rounded-lg border bg-card p-4 space-y-3">
         <h4 className="text-sm font-semibold">DFU Forecast Series</h4>
         <div className="flex flex-wrap gap-2">
           <input
             placeholder="e.g. 100320"
-            value={dfuItem}
-            onChange={(e) => setDfuItem(e.target.value)}
+            value={skuItem}
+            onChange={(e) => setSkuItem(e.target.value)}
             className="rounded border bg-background px-3 py-1.5 text-sm w-36"
           />
           <input
             placeholder="e.g. 1401-BULK"
-            value={dfuLoc}
+            value={skuLoc}
             onChange={(e) => setDfuLoc(e.target.value)}
             className="rounded border bg-background px-3 py-1.5 text-sm w-36"
           />
         </div>
         <p className="text-xs text-muted-foreground mt-1">Enter exact item and location codes from master data.</p>
-        <DfuForecastChart item={dfuItem} loc={dfuLoc} planVersion={effectiveVersion} />
+        <SkuForecastChart item={skuItem} loc={skuLoc} planVersion={effectiveVersion} />
       </div>
     </div>
   );

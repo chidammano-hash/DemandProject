@@ -7,6 +7,7 @@ mocked so no running database is needed.
 from __future__ import annotations
 
 import json
+import signal
 import threading
 from datetime import datetime, timezone
 from typing import Any
@@ -102,7 +103,7 @@ class TestJobTypeRegistry:
             "compute_variability", "compute_demand_signals",
             "compute_investment", "refresh_health_scores",
             "refresh_intramonth", "run_ss_simulation",
-            "data_quality",
+            "data_quality", "tuning_backtest",
         }
         assert expected.issubset(set(JOB_TYPE_REGISTRY.keys()))
 
@@ -178,6 +179,24 @@ class TestRowToDict:
         row = ({"key": "val"},)
         result = _row_to_dict(cols, row)
         assert result["params"] == {"key": "val"}
+
+    def test_logs_string_parsed(self):
+        cols = ("logs",)
+        row = ('[{"ts": "12:00:00", "pct": 50, "msg": "test"}]',)
+        result = _row_to_dict(cols, row)
+        assert result["logs"] == [{"ts": "12:00:00", "pct": 50, "msg": "test"}]
+
+    def test_logs_list_passthrough(self):
+        cols = ("logs",)
+        row = ([{"ts": "12:00:00", "pct": 50, "msg": "test"}],)
+        result = _row_to_dict(cols, row)
+        assert result["logs"] == [{"ts": "12:00:00", "pct": 50, "msg": "test"}]
+
+    def test_logs_null_returns_empty_list(self):
+        cols = ("logs",)
+        row = (None,)
+        result = _row_to_dict(cols, row)
+        assert result["logs"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -260,23 +279,40 @@ class TestCancelJob:
         mgr = JobManager()
         mgr._ensure_init()
 
-        # Mock DB to return a running job
+        # Mock DB to return a running job (14 cols including pid)
         mock_db.execute.return_value.fetchone.return_value = (
             "job_123", "cluster_pipeline", "Test", "running", "{}", None,
-            None, None, None, None, 0, ""
+            None, None, None, None, 0, "", "[]", None
         )
-        result = mgr.cancel_job("job_123")
+        with patch("common.job_registry.get_job_pid", return_value=None):
+            result = mgr.cancel_job("job_123")
         assert result is True
+
+    def test_cancel_running_job_kills_pid(self, mock_db, mock_scheduler):
+        """Cancel should send SIGTERM to the process group by PID."""
+        from common.job_registry import JobManager
+        mgr = JobManager()
+        mgr._ensure_init()
+
+        mock_db.execute.return_value.fetchone.return_value = (
+            "job_123", "cluster_pipeline", "Test", "running", "{}", None,
+            None, None, None, None, 0, "", "[]", 5555
+        )
+        with patch("common.job_registry.get_job_pid", return_value=5555), \
+             patch("common.job_registry.os.killpg") as m_killpg, \
+             patch("common.job_registry.os.getpgid", return_value=5555):
+            mgr.cancel_job("job_123")
+        m_killpg.assert_called_once_with(5555, signal.SIGTERM)
 
     def test_cancel_completed_job_fails(self, mock_db, mock_scheduler):
         from common.job_registry import JobManager
         mgr = JobManager()
         mgr._ensure_init()
 
-        # Mock DB to return a completed job
+        # Mock DB to return a completed job (14 cols including pid)
         mock_db.execute.return_value.fetchone.return_value = (
             "job_123", "cluster_pipeline", "Test", "completed", "{}", None,
-            None, None, None, None, 100, "Done"
+            None, None, None, None, 100, "Done", "[]", None
         )
         result = mgr.cancel_job("job_123")
         assert result is False

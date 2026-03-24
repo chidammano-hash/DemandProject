@@ -16,7 +16,7 @@ Planners cannot visually inspect thousands of DFUs for seasonal patterns. Withou
 
 ## Solution
 
-A three-metric detection pipeline computes seasonality strength, yearly periodicity, and peak/trough timing per DFU, then classifies each into a named profile. Six columns are written to `dim_dfu` and joined into accuracy materialized views for cross-dimensional slicing.
+A three-metric detection pipeline computes seasonality strength, yearly periodicity, and peak/trough timing per DFU, then classifies each into a named profile. Six columns are written to `dim_sku` and joined into accuracy materialized views for cross-dimensional slicing.
 
 ---
 
@@ -46,13 +46,13 @@ A three-metric detection pipeline computes seasonality strength, yearly periodic
 
 ### Accuracy View Integration (Feature 32)
 
-The accuracy materialized views (`agg_accuracy_by_dim`) join `dim_dfu` seasonality columns, enabling planners to slice forecast accuracy by seasonality profile (e.g., "How accurate are our forecasts for strong-seasonal items?").
+The accuracy materialized views (`agg_accuracy_by_dim`) join `dim_sku` seasonality columns, enabling planners to slice forecast accuracy by seasonality profile (e.g., "How accurate are our forecasts for strong-seasonal items?").
 
 ---
 
 ## Data Model
 
-Six columns added to `dim_dfu`:
+Six columns added to `dim_sku`:
 
 | Column | Type | Example |
 |---|---|---|
@@ -63,13 +63,13 @@ Six columns added to `dim_dfu`:
 | `trough_month` | INTEGER | 2 (February) |
 | `peak_trough_ratio` | NUMERIC | 3.4 |
 
-DDL: `sql/015_add_seasonality_columns.sql`, `sql/016_add_seasonality_to_accuracy_views.sql`
+DDL: `sql/005_create_dim_dfu.sql (seasonality columns), sql/011_create_accuracy_slice_views.sql (seasonality in accuracy MVs)
 
 ---
 
 ## API
 
-Seasonality columns are exposed through the generic Data Explorer endpoints (`GET /domains/dfu/rows`) and as filter dimensions in accuracy endpoints. No dedicated seasonality API router.
+Seasonality columns are exposed through the generic Data Explorer endpoints (`GET /domains/sku/rows`) and as filter dimensions in accuracy endpoints. No dedicated seasonality API router.
 
 ---
 
@@ -81,9 +81,9 @@ make seasonality-all    # schema + detect + update
 
 | Step | Script | Output |
 |---|---|---|
-| Apply DDL | `sql/015_add_seasonality_columns.sql` | 6 columns on `dim_dfu` |
+| Apply DDL | `sql/005_create_dim_dfu.sql` | 6 columns on `dim_sku` |
 | Detect patterns | `scripts/detect_seasonality.py` | CSV with per-DFU metrics |
-| Write profiles | `scripts/update_seasonality_profiles.py` | `dim_dfu` updated |
+| Write profiles | `scripts/update_seasonality_profiles.py` | `dim_sku` updated |
 
 ---
 
@@ -111,7 +111,7 @@ yearly_seasonal_criteria:
 
 ## Dependencies
 
-- **Upstream:** `fact_sales_monthly`, `dim_dfu`
+- **Upstream:** `fact_sales_monthly`, `dim_sku`
 - **Downstream:** Accuracy views (filter dimension), DFU Analysis tab (profile filter), safety stock (seasonal pre-build)
 - **Libraries:** pandas, scipy (ACF), numpy
 
@@ -119,6 +119,6 @@ yearly_seasonal_criteria:
 
 ## See Also
 
-- [01-dfu-clustering](01-dfu-clustering.md) -- Clustering uses `cv_monthly` and `yoy_corr` as features
+- [01-sku-clustering](01-sku-clustering.md) -- Clustering uses `cv_monthly` and `yoy_corr` as features
 - [../02-forecasting/02-01-accuracy-kpis](../02-forecasting/02-01-accuracy-kpis.md) -- Accuracy slicing by seasonality profile
 - [../04-inventory/03-safety-stock](../04-inventory/03-safety-stock.md) -- Seasonal items may need different service levels

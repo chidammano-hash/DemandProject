@@ -35,8 +35,8 @@ vi.mock("@/api/queries", () => ({
     limit: 50,
     offset: 0,
     positions: [
-      { item_no: "12345", loc: "LOC1", snapshot_date: "2025-06-15", lead_time_days: 30, qty_on_hand: 100, qty_on_hand_on_order: 150, qty_on_order: 50, mtd_sales: 25 },
-      { item_no: "67890", loc: "LOC2", snapshot_date: "2025-06-15", lead_time_days: 45, qty_on_hand: 200, qty_on_hand_on_order: 250, qty_on_order: 50, mtd_sales: 40 },
+      { item_id: "12345", loc: "LOC1", snapshot_date: "2025-06-15", lead_time_days: 30, qty_on_hand: 100, qty_on_hand_on_order: 150, qty_on_order: 50, mtd_sales: 25 },
+      { item_id: "67890", loc: "LOC2", snapshot_date: "2025-06-15", lead_time_days: 45, qty_on_hand: 200, qty_on_hand_on_order: 250, qty_on_order: 50, mtd_sales: 40 },
     ],
   }),
   fetchInventoryKpis: vi.fn().mockResolvedValue({
@@ -62,11 +62,11 @@ vi.mock("@/api/queries", () => ({
     item: "12345",
     location: "LOC1",
     snapshots: [
-      { item_no: "12345", loc: "LOC1", snapshot_date: "2025-06-15", lead_time_days: 30, qty_on_hand: 100, qty_on_hand_on_order: 150, qty_on_order: 50, mtd_sales: 25 },
+      { item_id: "12345", loc: "LOC1", snapshot_date: "2025-06-15", lead_time_days: 30, qty_on_hand: 100, qty_on_hand_on_order: 150, qty_on_order: 50, mtd_sales: 25 },
     ],
   }),
   fetchVariabilitySummary: vi.fn().mockResolvedValue({
-    total_dfus: 100,
+    total_skus: 100,
     by_class: { low: 40, medium: 30, high: 20, lumpy: 10 },
     cv_percentiles: { p25: 0.15, p50: 0.35, p75: 0.70, p95: 1.20 },
     avg_cv: 0.45,

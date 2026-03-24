@@ -12,7 +12,7 @@ vi.mock("@/api/queries", () => ({
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchSamplePair: vi.fn().mockResolvedValue({ item: "100320", location: "1401-BULK" }),
   fetchMarketIntel: vi.fn().mockResolvedValue({
-    item_no: "100320",
+    item_id: "100320",
     location_id: "1401-BULK",
     item_desc: "Test",
     brand_name: null,

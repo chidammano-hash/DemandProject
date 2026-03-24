@@ -34,7 +34,7 @@ export function BlendedDemandPanel() {
   }, [globalFilters.item, globalFilters.location]);
 
   const params = {
-    item_no: itemNo || undefined,
+    item_id: itemNo || undefined,
     loc: loc || undefined,
     page,
     page_size: PAGE,
@@ -67,7 +67,7 @@ export function BlendedDemandPanel() {
       {/* KPI summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: "DFUs Active", value: sumLoading ? "…" : (summary?.total_dfus ?? 0).toLocaleString(), icon: <Activity size={16} /> },
+          { label: "SKUs Active", value: sumLoading ? "…" : (summary?.total_skus ?? 0).toLocaleString(), icon: <Activity size={16} /> },
           { label: "Weeks Computed", value: sumLoading ? "…" : (summary?.total_weeks ?? 0).toLocaleString(), icon: <Radio size={16} /> },
           { label: "Avg Alpha (Current)", value: sumLoading ? "…" : summary?.avg_alpha != null ? summary.avg_alpha.toFixed(3) : "—", icon: <Activity size={16} /> },
           { label: "Capped Outliers", value: sumLoading ? "…" : (summary?.capped_count ?? 0).toLocaleString(), icon: <AlertCircle size={16} />, warn: (summary?.capped_count ?? 0) > 0 },
@@ -148,7 +148,7 @@ export function BlendedDemandPanel() {
                 <tbody>
                   {rows.map((r, i) => (
                     <tr key={i} className="border-t hover:bg-muted/30 transition-colors">
-                      <td className="px-3 py-2 font-mono text-xs">{r.item_no}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{r.item_id}</td>
                       <td className="px-3 py-2 text-xs">{r.loc}</td>
                       <td className="px-3 py-2 text-xs">{r.week_start}</td>
                       <td className="px-3 py-2 text-xs">

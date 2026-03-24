@@ -78,21 +78,21 @@ class TestComputeFeaturesForGroup:
             "DFU_TEST",
             {"startdate": dates.values, "qty": qty},
         ))
-        assert result["dfu_ck"] == "DFU_TEST"
+        assert result["sku_ck"] == "DFU_TEST"
         assert "mean_demand" in result
         assert "cv_demand" in result
         assert "seasonal_r2" in result
         assert "periodicity_strength" in result
         assert "adi" in result
 
-    def test_empty_group_returns_dfu_ck(self):
+    def test_empty_group_returns_sku_ck(self):
         from scripts.generate_clustering_features import _compute_features_for_group
 
         result = _compute_features_for_group((
             "DFU_EMPTY",
             {"startdate": np.array([], dtype="datetime64[ns]"), "qty": np.array([], dtype=float)},
         ))
-        assert result["dfu_ck"] == "DFU_EMPTY"
+        assert result["sku_ck"] == "DFU_EMPTY"
 
     def test_single_month(self):
         from scripts.generate_clustering_features import _compute_features_for_group
@@ -104,7 +104,7 @@ class TestComputeFeaturesForGroup:
                 "qty": np.array([100.0]),
             },
         ))
-        assert result["dfu_ck"] == "DFU_ONE"
+        assert result["sku_ck"] == "DFU_ONE"
         assert result["mean_demand"] == 100.0
         assert result["months_available"] == 1
 
@@ -125,8 +125,8 @@ class TestComputeFeaturesForGroup:
             {"startdate": dates.values, "qty": qty},
         ))
 
-        # Remove dfu_ck from parallel result for comparison
-        parallel_features = {k: v for k, v in parallel.items() if k != "dfu_ck"}
+        # Remove sku_ck from parallel result for comparison
+        parallel_features = {k: v for k, v in parallel.items() if k != "sku_ck"}
         for key in direct:
             assert key in parallel_features, f"Missing key: {key}"
             assert np.isclose(direct[key], parallel_features[key], atol=1e-10), (

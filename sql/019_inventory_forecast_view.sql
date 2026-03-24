@@ -1,6 +1,6 @@
 -- Feature 37: Inventory-Forecast bridge materialized view
 -- Joins monthly inventory aggregates with forecast predictions at execution lag.
--- Grain: item_no + loc + month_start + model_id
+-- Grain: item_id + loc + month_start + model_id
 -- Purpose: connects forecast accuracy to inventory outcomes (stockout / excess).
 
 DROP MATERIALIZED VIEW IF EXISTS mv_inventory_forecast_monthly CASCADE;
@@ -8,7 +8,7 @@ DROP MATERIALIZED VIEW IF EXISTS mv_inventory_forecast_monthly CASCADE;
 CREATE MATERIALIZED VIEW mv_inventory_forecast_monthly AS
 SELECT
     i.month_start,
-    i.item_no,
+    i.item_id,
     i.loc,
     -- Inventory position
     i.eom_qty_on_hand,
@@ -53,11 +53,11 @@ SELECT
     (i.avg_daily_sls = 0 AND i.eom_qty_on_hand > 0) AS zero_velocity_flag
 FROM agg_inventory_monthly i
 INNER JOIN fact_external_forecast_monthly f
-    ON i.item_no = f.dmdunit
+    ON i.item_id = f.item_id
    AND i.loc    = f.loc
    AND i.month_start = f.startdate
-LEFT JOIN dim_dfu d
-    ON f.dmdunit = d.dmdunit
+LEFT JOIN dim_sku d
+    ON f.item_id = d.item_id
    AND f.loc     = d.loc
 WHERE f.lag = COALESCE(d.execution_lag, 0)
   AND f.tothist_dmd  IS NOT NULL
@@ -66,7 +66,7 @@ WITH NO DATA;
 
 -- Primary key index
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_inv_fcst_pk
-    ON mv_inventory_forecast_monthly (item_no, loc, month_start, model_id);
+    ON mv_inventory_forecast_monthly (item_id, loc, month_start, model_id);
 
 -- Query-path indexes
 CREATE INDEX IF NOT EXISTS idx_mv_inv_fcst_model

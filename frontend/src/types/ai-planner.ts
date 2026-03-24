@@ -13,7 +13,7 @@ export interface AiInsight {
   insight_id: number;
   insight_type: InsightType;
   severity: InsightSeverity;
-  item_no: string;
+  item_id: string;
   loc: string;
   abc_vol: string | null;
   cluster_assignment: string | null;
@@ -39,8 +39,8 @@ export interface AiInsight {
 export interface AiPlanningMemo {
   memo_id: number;
   period: string;
-  scope: "portfolio" | "dfu";
-  item_no: string | null;
+  scope: "portfolio" | "sku";
+  item_id: string | null;
   loc: string | null;
   narrative_text: string;
   content_json: Record<string, unknown>;

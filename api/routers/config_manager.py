@@ -401,7 +401,7 @@ CONFIG_REGISTRY: dict[str, dict[str, Any]] = {
         "description": "Automated purchase order recommendation engine.",
         "fields": {
             "recommendation.horizon_days": {"label": "Order Horizon", "description": "Days ahead to evaluate for potential order recommendations.", "type": "integer", "min": 14, "max": 365, "unit": "days"},
-            "recommendation.max_orders_per_dfu": {"label": "Max Orders per DFU", "description": "Maximum recommended orders per DFU in the planning horizon.", "type": "integer", "min": 1, "max": 10},
+            "recommendation.max_orders_per_sku": {"label": "Max Orders per DFU", "description": "Maximum recommended orders per DFU in the planning horizon.", "type": "integer", "min": 1, "max": 10},
             "recommendation.confidence.high_threshold": {"label": "High Confidence Threshold", "description": "Minimum confidence score for auto-approval.", "type": "number", "min": 0.5, "max": 1.0, "step": 0.05},
             "recommendation.confidence.low_threshold": {"label": "Low Confidence Threshold", "description": "Below this confidence, recommendations require manual review.", "type": "number", "min": 0.1, "max": 0.9, "step": 0.05},
             "recommendation.confidence.penalty_no_open_po_data": {"label": "No PO Data Penalty", "description": "Confidence penalty when no historical PO data exists.", "type": "number", "min": 0, "max": 0.5, "step": 0.05},
@@ -468,18 +468,6 @@ CONFIG_REGISTRY: dict[str, dict[str, Any]] = {
     # ═══════════════════════════════════════════════════════════════════════
     # DATA PIPELINE
     # ═══════════════════════════════════════════════════════════════════════
-    "medallion_config": {
-        "label": "Medallion Pipeline",
-        "category": "pipeline",
-        "description": "Bronze → Silver → Gold ETL pipeline configuration.",
-        "fields": {
-            "layers.bronze.retention_days": {"label": "Bronze Retention", "description": "Days to retain raw bronze-layer data before purging.", "type": "integer", "min": 7, "max": 365, "unit": "days"},
-            "layers.silver.retention_days": {"label": "Silver Retention", "description": "Days to retain cleaned silver-layer data.", "type": "integer", "min": 7, "max": 365, "unit": "days"},
-            "promotion_gates.blocking_checks": {"label": "Blocking Gates", "description": "Data quality checks that MUST pass before promotion.", "type": "array"},
-            "promotion_gates.advisory_checks": {"label": "Advisory Gates", "description": "Data quality checks that generate warnings but don't block.", "type": "array"},
-            "promotion_gates.min_pass_rate": {"label": "Min Pass Rate", "description": "Minimum percentage of blocking checks that must pass.", "type": "number", "min": 0.5, "max": 100.0, "step": 1, "unit": "%"},
-        },
-    },
     "data_quality_config": {
         "label": "Data Quality",
         "category": "pipeline",

@@ -73,8 +73,8 @@ def _dashboard_filter_clause(
 
     Note: channel filter is skipped for forecast-based queries because
     fact_external_forecast_monthly has no customer dimension join key.
-    Item/location filter on f.dmdunit/f.loc directly (no extra JOINs needed).
-    Cluster filter uses EXISTS subquery against dim_dfu.
+    Item/location filter on f.item_id/f.loc directly (no extra JOINs needed).
+    Cluster filter uses EXISTS subquery against dim_sku.
     """
     clauses: list[str] = []
     params: list[Any] = []
@@ -96,7 +96,7 @@ def _dashboard_filter_clause(
     if item.strip():
         items = _split(item)
         if items:
-            clauses.append("f.dmdunit = ANY(%s)")
+            clauses.append("f.item_id = ANY(%s)")
             params.append(items)
     if location.strip():
         locs = _split(location)
@@ -107,7 +107,7 @@ def _dashboard_filter_clause(
         clusters = _split(cluster_assignment)
         if clusters:
             clauses.append(
-                "EXISTS (SELECT 1 FROM dim_dfu _d WHERE _d.dmdunit = f.dmdunit AND _d.loc = f.loc AND _d.cluster_assignment = ANY(%s))"
+                "EXISTS (SELECT 1 FROM dim_sku _d WHERE _d.item_id = f.item_id AND _d.loc = f.loc AND _d.cluster_assignment = ANY(%s))"
             )
             params.append(clusters)
     frag = " AND ".join(clauses) if clauses else ""
@@ -139,7 +139,7 @@ def dashboard_kpis(
 
     join_clause = ""
     if brand.strip() or category.strip():
-        join_clause += " JOIN dim_item i ON f.dmdunit = i.item_no"
+        join_clause += " JOIN dim_item i ON f.item_id = i.item_id"
     if market.strip():
         join_clause += " JOIN dim_location lo ON f.loc = lo.location_id"
 
@@ -250,7 +250,7 @@ def dashboard_alerts(
     if item.strip():
         items = [it.strip() for it in item.split(",") if it.strip()]
         if items:
-            _alert_where_parts.append("dmdunit = ANY(%s)")
+            _alert_where_parts.append("item_id = ANY(%s)")
             _alert_params.append(items)
     if location.strip():
         locs = [lc.strip() for lc in location.split(",") if lc.strip()]
@@ -261,7 +261,7 @@ def dashboard_alerts(
         clusters = [c.strip() for c in cluster_assignment.split(",") if c.strip()]
         if clusters:
             _alert_where_parts.append(
-                "EXISTS (SELECT 1 FROM dim_dfu _d WHERE _d.dmdunit = dmdunit AND _d.loc = loc AND _d.cluster_assignment = ANY(%s))"
+                "EXISTS (SELECT 1 FROM dim_sku _d WHERE _d.item_id = item_id AND _d.loc = loc AND _d.cluster_assignment = ANY(%s))"
             )
             _alert_params.append(clusters)
     _alert_extra = (" AND " + " AND ".join(_alert_where_parts)) if _alert_where_parts else ""
@@ -300,7 +300,7 @@ def dashboard_alerts(
     if item.strip():
         items = [it.strip() for it in item.split(",") if it.strip()]
         if items:
-            _bias_extra_parts.append("f.dmdunit = ANY(%s)")
+            _bias_extra_parts.append("f.item_id = ANY(%s)")
             _bias_params.append(items)
     if location.strip():
         locs = [lc.strip() for lc in location.split(",") if lc.strip()]
@@ -311,7 +311,7 @@ def dashboard_alerts(
         clusters = [c.strip() for c in cluster_assignment.split(",") if c.strip()]
         if clusters:
             _bias_extra_parts.append(
-                "EXISTS (SELECT 1 FROM dim_dfu _d WHERE _d.dmdunit = f.dmdunit AND _d.loc = f.loc AND _d.cluster_assignment = ANY(%s))"
+                "EXISTS (SELECT 1 FROM dim_sku _d WHERE _d.item_id = f.item_id AND _d.loc = f.loc AND _d.cluster_assignment = ANY(%s))"
             )
             _bias_params.append(clusters)
     _bias_extra = (" AND " + " AND ".join(_bias_extra_parts)) if _bias_extra_parts else ""
@@ -319,7 +319,7 @@ def dashboard_alerts(
         sql = f"""
             SELECT i.class, 100.0 * (SUM(f.basefcst_pref) / NULLIF(ABS(SUM(f.tothist_dmd)), 0) - 1) AS bias
             FROM fact_external_forecast_monthly f
-            JOIN dim_item i ON f.dmdunit = i.item_no
+            JOIN dim_item i ON f.item_id = i.item_id
             WHERE f.model_id = 'external'
               AND f.tothist_dmd IS NOT NULL AND f.tothist_dmd != 0
               AND f.basefcst_pref IS NOT NULL
@@ -349,7 +349,7 @@ def dashboard_alerts(
     if item.strip():
         items = [it.strip() for it in item.split(",") if it.strip()]
         if items:
-            _spike_extra_parts.append("dmdunit = ANY(%s)")
+            _spike_extra_parts.append("item_id = ANY(%s)")
             _spike_params.append(items)
     if location.strip():
         locs = [lc.strip() for lc in location.split(",") if lc.strip()]
@@ -360,13 +360,13 @@ def dashboard_alerts(
     try:
         sql = f"""
             SELECT COUNT(*) FROM (
-                SELECT dmdunit,
+                SELECT item_id,
                     SUM(CASE WHEN startdate >= ('{pd}'::date - INTERVAL '1 month') THEN qty END) AS curr,
                     SUM(CASE WHEN startdate >= ('{pd}'::date - INTERVAL '2 months')
                               AND startdate < ('{pd}'::date - INTERVAL '1 month') THEN qty END) AS prev
                 FROM fact_sales_monthly
                 {_spike_where}
-                GROUP BY dmdunit
+                GROUP BY item_id
                 HAVING SUM(CASE WHEN startdate >= ('{pd}'::date - INTERVAL '2 months')
                                   AND startdate < ('{pd}'::date - INTERVAL '1 month') THEN qty END) > 0
                    AND ABS(
@@ -422,7 +422,7 @@ def dashboard_top_movers(
     if item.strip():
         items = [it.strip() for it in item.split(",") if it.strip()]
         if items:
-            _tm_where_parts.append("s.dmdunit = ANY(%s)")
+            _tm_where_parts.append("s.item_id = ANY(%s)")
             _tm_params.append(items)
     if location.strip():
         locs = [lc.strip() for lc in location.split(",") if lc.strip()]
@@ -433,22 +433,22 @@ def dashboard_top_movers(
         clusters = [c.strip() for c in cluster_assignment.split(",") if c.strip()]
         if clusters:
             _tm_where_parts.append(
-                "EXISTS (SELECT 1 FROM dim_dfu _d WHERE _d.dmdunit = s.dmdunit AND _d.loc = s.loc AND _d.cluster_assignment = ANY(%s))"
+                "EXISTS (SELECT 1 FROM dim_sku _d WHERE _d.item_id = s.item_id AND _d.loc = s.loc AND _d.cluster_assignment = ANY(%s))"
             )
             _tm_params.append(clusters)
     _tm_where = ("WHERE " + " AND ".join(_tm_where_parts)) if _tm_where_parts else ""
 
     sql = f"""
         SELECT
-            s.dmdunit,
+            s.item_id,
             i.item_desc,
             COALESCE(SUM(CASE WHEN s.startdate >= ('{pd}'::date - INTERVAL '1 month') THEN s.qty END), 0) AS curr,
             COALESCE(SUM(CASE WHEN s.startdate >= ('{pd}'::date - INTERVAL '2 months')
                               AND s.startdate < ('{pd}'::date - INTERVAL '1 month') THEN s.qty END), 0) AS prev
         FROM fact_sales_monthly s
-        JOIN dim_item i ON s.dmdunit = i.item_no
+        JOIN dim_item i ON s.item_id = i.item_id
         {_tm_where}
-        GROUP BY s.dmdunit, i.item_desc
+        GROUP BY s.item_id, i.item_desc
         HAVING COALESCE(SUM(CASE WHEN s.startdate >= ('{pd}'::date - INTERVAL '2 months')
                                   AND s.startdate < ('{pd}'::date - INTERVAL '1 month') THEN s.qty END), 0) > 0
         ORDER BY ABS(
@@ -537,7 +537,7 @@ def dashboard_heatmap(
         item=item, location=location, cluster_assignment=cluster_assignment,
     )
     filter_where = f" AND {filter_frag}" if filter_frag else ""
-    join_clause = "JOIN dim_item i ON f.dmdunit = i.item_no"
+    join_clause = "JOIN dim_item i ON f.item_id = i.item_id"
     if market.strip() or row_grain == "location" or col_grain == "location":
         join_clause += " LEFT JOIN dim_location lo ON f.loc = lo.location_id"
 
@@ -546,7 +546,7 @@ def dashboard_heatmap(
     # Filter basefcst_pref != 0 to exclude rows where no forecast was issued.
     sql = f"""
         WITH src AS (
-            SELECT dmdunit, dmdgroup, loc, model_id, lag, startdate,
+            SELECT item_id, customer_group, loc, model_id, lag, startdate,
                    basefcst_pref, tothist_dmd
             FROM fact_external_forecast_monthly
             WHERE model_id = %s
@@ -554,7 +554,7 @@ def dashboard_heatmap(
               AND basefcst_pref IS NOT NULL AND basefcst_pref != 0
               AND startdate >= ('{pd}'::date - (%s || ' months')::interval)
             UNION ALL
-            SELECT dmdunit, dmdgroup, loc, model_id, lag, startdate,
+            SELECT item_id, customer_group, loc, model_id, lag, startdate,
                    basefcst_pref, tothist_dmd
             FROM backtest_lag_archive
             WHERE model_id = %s
@@ -564,7 +564,7 @@ def dashboard_heatmap(
               AND NOT EXISTS (
                   SELECT 1 FROM fact_external_forecast_monthly m
                   WHERE m.model_id = %s
-                    AND m.dmdunit = backtest_lag_archive.dmdunit
+                    AND m.item_id = backtest_lag_archive.item_id
                     AND m.loc = backtest_lag_archive.loc
                     AND m.startdate = backtest_lag_archive.startdate
                     AND m.lag = backtest_lag_archive.lag
@@ -576,7 +576,7 @@ def dashboard_heatmap(
             CASE WHEN ABS(SUM(f.tothist_dmd)) > 0
                  THEN 100.0 - 100.0 * SUM(ABS(f.basefcst_pref - f.tothist_dmd)) / ABS(SUM(f.tothist_dmd))
                  ELSE NULL END AS accuracy_pct,
-            COUNT(DISTINCT (f.dmdunit, f.loc)) AS dfu_count
+            COUNT(DISTINCT (f.item_id, f.loc)) AS dfu_count
         FROM src f
         {join_clause}
         WHERE 1=1
@@ -649,7 +649,7 @@ def dashboard_trend(
 
     join_clause = ""
     if brand.strip() or category.strip():
-        join_clause += " JOIN dim_item i ON f.dmdunit = i.item_no"
+        join_clause += " JOIN dim_item i ON f.item_id = i.item_id"
     if market.strip():
         join_clause += " JOIN dim_location lo ON f.loc = lo.location_id"
 
@@ -657,13 +657,13 @@ def dashboard_trend(
 
     sql = f"""
         WITH src AS (
-            SELECT dmdunit, loc, model_id, startdate, basefcst_pref, tothist_dmd
+            SELECT item_id, loc, model_id, startdate, basefcst_pref, tothist_dmd
             FROM fact_external_forecast_monthly
             WHERE model_id = %s
               AND tothist_dmd IS NOT NULL
               AND startdate >= ('{pd}'::date - (%s || ' months')::interval)
             UNION ALL
-            SELECT dmdunit, loc, model_id, startdate, basefcst_pref, tothist_dmd
+            SELECT item_id, loc, model_id, startdate, basefcst_pref, tothist_dmd
             FROM backtest_lag_archive
             WHERE model_id = %s
               AND tothist_dmd IS NOT NULL
@@ -671,7 +671,7 @@ def dashboard_trend(
               AND NOT EXISTS (
                   SELECT 1 FROM fact_external_forecast_monthly m
                   WHERE m.model_id = %s
-                    AND m.dmdunit = backtest_lag_archive.dmdunit
+                    AND m.item_id = backtest_lag_archive.item_id
                     AND m.loc = backtest_lag_archive.loc
                     AND m.startdate = backtest_lag_archive.startdate
                     AND m.lag = backtest_lag_archive.lag

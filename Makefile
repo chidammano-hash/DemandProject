@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all medallion-schema medallion-load-sales medallion-load-sales-fix medallion-load-all medallion-load-all-fix medallion-prune medallion-all
+.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list
 
 help:
 	@echo "Targets:"
@@ -92,6 +92,10 @@ help:
 	@echo "  replplan-compute     - compute forward replenishment plan from production forecast CI bands"
 	@echo "  replplan-compute-dry - preview replenishment plan without writing to DB"
 	@echo "  replplan-all         - replplan-schema + replplan-compute (full pipeline)"
+	@echo "  lgbm-auto-tune       - auto-tune LGBM with N strategies (RUNS=3 default, max 10)"
+	@echo "  lgbm-auto-tune-promote - auto-tune + promote best params to algorithm_config.yaml"
+	@echo "  lgbm-auto-tune-dry-run - preview all strategies without running backtests"
+	@echo "  lgbm-auto-tune-list  - list available auto-tune strategies"
 	@echo "  test                 - run all Python tests"
 	@echo "  test-unit            - run Python unit tests only"
 	@echo "  test-api             - run Python API tests only"
@@ -103,6 +107,16 @@ help:
 	@echo "  e2e-headed           - run E2E tests with visible browser"
 	@echo "  e2e-report           - open last HTML test report"
 	@echo "  check-all            - run DB/API/Trino checks"
+	@echo ""
+	@echo "  === Full Pipeline (input CSVs -> ready app) ==="
+	@echo "  setup-all            - EVERYTHING: data + ML + planning + ops (~4-6 hours)"
+	@echo "  setup-data           - data only: normalize + load all 10 domains (~30 min)"
+	@echo "  setup-planning       - data + inventory planning, no ML (~1 hour)"
+	@echo "  setup-features       - data + clustering + seasonality + variability"
+	@echo "  setup-backtest       - features + 3 backtests + champion selection"
+	@echo "  setup-inv-planning   - inventory planning (SS, EOQ, policies, exceptions)"
+	@echo "  setup-demand-planning - forecasts + projections + orders + replenishment"
+	@echo "  setup-ops            - S&OP + events + financial + storyboard + DQ"
 
 init:
 	@if [ ! -f .env ]; then cp .env.example .env; fi
@@ -131,18 +145,11 @@ db-apply-sql:
 			sleep 1; \
 		done \
 	'
-	cat sql/001_create_dim_item.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/002_create_dim_location.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/003_create_dim_customer.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/004_create_dim_time.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/005_create_dim_dfu.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/006_create_fact_sales_monthly.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/007_create_fact_external_forecast_monthly.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/008_perf_indexes_and_agg.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/009_create_chat_embeddings.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/010_create_backtest_lag_archive.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/011_create_accuracy_slice_views.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+	@for f in $$(ls sql/*.sql | sort); do \
+		cat "$$f" | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null; \
+	done
 	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 -c "ALTER TABLE IF EXISTS dim_customer ALTER COLUMN customer_name DROP NOT NULL;" >/dev/null
+	@echo "Applied $$(ls sql/*.sql | wc -l | tr -d ' ') SQL migration files"
 
 down:
 	$(DC) down
@@ -163,7 +170,7 @@ normalize-time:
 	$(UV) python scripts/normalize_dataset_csv.py --dataset time
 
 normalize-dfu:
-	$(UV) python scripts/normalize_dataset_csv.py --dataset dfu
+	$(UV) python scripts/normalize_dataset_csv.py --dataset sku
 
 normalize-sales:
 	$(UV) python scripts/normalize_dataset_csv.py --dataset sales
@@ -174,7 +181,13 @@ normalize-forecast:
 normalize-inventory:
 	$(UV) python scripts/normalize_inventory_csv.py
 
-normalize-all: normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory
+normalize-sourcing:
+	$(UV) python scripts/normalize_dataset_csv.py --dataset sourcing
+
+normalize-purchase-order:
+	$(UV) python scripts/normalize_dataset_csv.py --dataset purchase_order
+
+normalize-all: normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-sourcing normalize-purchase-order
 
 load-item:
 	$(UV) python scripts/load_dataset_postgres.py --dataset item
@@ -189,7 +202,7 @@ load-time:
 	$(UV) python scripts/load_dataset_postgres.py --dataset time
 
 load-dfu:
-	$(UV) python scripts/load_dataset_postgres.py --dataset dfu
+	$(UV) python scripts/load_dataset_postgres.py --dataset sku
 
 load-sales:
 	$(UV) python scripts/load_dataset_postgres.py --dataset sales
@@ -208,18 +221,26 @@ load-forecast-replace-no-archive:
 	$(MAKE) refresh-agg-forecast
 
 load-inventory:
-	$(UV) python scripts/load_dataset_postgres.py --dataset inventory --fast
+	$(UV) python scripts/load_dataset_postgres.py --dataset inventory
 	$(MAKE) refresh-agg-inventory
+
+load-sourcing:
+	$(UV) python scripts/load_dataset_postgres.py --dataset sourcing
+
+load-purchase-order:
+	$(UV) python scripts/load_dataset_postgres.py --dataset purchase_order
 
 load-all:
 	$(UV) python scripts/load_dataset_postgres.py --dataset item
 	$(UV) python scripts/load_dataset_postgres.py --dataset location
 	$(UV) python scripts/load_dataset_postgres.py --dataset customer
 	$(UV) python scripts/load_dataset_postgres.py --dataset time
-	$(UV) python scripts/load_dataset_postgres.py --dataset dfu
+	$(UV) python scripts/load_dataset_postgres.py --dataset sku
 	$(UV) python scripts/load_dataset_postgres.py --dataset sales
 	$(UV) python scripts/load_dataset_postgres.py --dataset forecast
-	$(UV) python scripts/load_dataset_postgres.py --dataset inventory --fast
+	$(UV) python scripts/load_dataset_postgres.py --dataset inventory
+	$(UV) python scripts/load_dataset_postgres.py --dataset sourcing
+	$(UV) python scripts/load_dataset_postgres.py --dataset purchase_order
 	$(MAKE) refresh-agg
 
 refresh-agg-sales:
@@ -503,6 +524,32 @@ tune-xgboost:
 	$(UV) python scripts/tune_hyperparams.py --model xgboost
 
 tune-all: tune-lgbm tune-catboost tune-xgboost
+
+# ── LGBM Tuning ──────────────────────────────────────────────────────────────
+lgbm-tuning-list:
+	$(UV) python scripts/ml/compare_backtest_runs.py --list
+
+lgbm-tuning-compare:
+	$(UV) python scripts/ml/compare_backtest_runs.py --baseline $(BASELINE) --candidate $(CANDIDATE)
+
+lgbm-tuning-backup:
+	$(UV) python scripts/ml/compare_backtest_runs.py --backup $(RUN)
+
+lgbm-tuning-run:
+	$(UV) python scripts/run_backtest.py --model lgbm
+	$(UV) python scripts/ml/compare_backtest_runs.py --register-latest --auto-compare
+
+lgbm-auto-tune:
+	$(UV) python scripts/ml/auto_tune.py --runs $(or $(RUNS),3)
+
+lgbm-auto-tune-promote:
+	$(UV) python scripts/ml/auto_tune.py --runs $(or $(RUNS),3) --promote
+
+lgbm-auto-tune-dry-run:
+	$(UV) python scripts/ml/auto_tune.py --runs $(or $(RUNS),10) --dry-run
+
+lgbm-auto-tune-list:
+	$(UV) python scripts/ml/auto_tune.py --list-strategies
 
 commit:
 	@if [ -z "$(MSG)" ]; then echo "Usage: make commit MSG=\"your message\""; exit 1; fi
@@ -942,37 +989,70 @@ dq-run:
 
 dq-all: dq-schema dq-populate dq-run
 
-# ---------------------------------------------------------------------------
-# Medallion Pipeline (Bronze → Silver → Gold)
-# ---------------------------------------------------------------------------
-medallion-schema:
-	@echo "Applying medallion DDL (080-086) ..."
-	cat sql/080_create_medallion_infrastructure.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/081_create_bronze_tables.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/082_create_silver_tables.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/083_create_silver_quarantine.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/084_create_dq_corrections_audit.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/085_create_row_lineage.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	cat sql/086_create_fact_sales_original.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
-	@echo "Medallion schema applied (7 DDL files)"
+# ── Unified Pipeline Orchestrator ──────────────────────────────
 
-medallion-load-sales:
-	$(UV) python scripts/load_dataset_postgres.py --dataset sales --medallion
+pipeline-full:
+	$(UV) python scripts/etl/run_pipeline.py --mode full --parallel
 
-medallion-load-sales-fix:
-	$(UV) python scripts/load_dataset_postgres.py --dataset sales --medallion --apply-fixes
+pipeline-refresh:
+	$(UV) python scripts/etl/run_pipeline.py --mode refresh
 
-medallion-load-all:
-	@for ds in item location customer time dfu sales forecast inventory; do \
-		$(UV) python scripts/load_dataset_postgres.py --dataset $$ds --medallion; \
-	done
+pipeline-inventory:
+	$(UV) python scripts/etl/run_pipeline.py --mode full --domains inventory
 
-medallion-load-all-fix:
-	@for ds in item location customer time dfu sales forecast inventory; do \
-		$(UV) python scripts/load_dataset_postgres.py --dataset $$ds --medallion --apply-fixes; \
-	done
+pipeline-inventory-refresh:
+	$(UV) python scripts/etl/run_pipeline.py --mode refresh --domains inventory
 
-medallion-prune:
-	$(UV) python -c "import psycopg; from common.db import get_db_params; from common.medallion import prune_old_batches; conn=psycopg.connect(**get_db_params()); cur=conn.cursor(); r=prune_old_batches(cur); conn.commit(); conn.close(); print(f'Pruned: bronze={r[\"bronze_deleted\"]}, silver={r[\"silver_deleted\"]}')"
+# ── Full Application Setup (input CSVs → ready-to-use app) ────
+# Usage: make setup-all        (everything including ML, ~4-6 hours)
+#        make setup-data        (data only, no ML, ~30 min)
+#        make setup-planning    (data + inv planning, no ML, ~1 hour)
 
-medallion-all: medallion-schema medallion-load-all-fix refresh-agg
+setup-data:
+	$(UV) python scripts/etl/run_pipeline.py --mode full --parallel
+	@echo "✓ Phase 1 complete: all data loaded into Postgres (parallel pipeline)"
+
+setup-features: setup-data cluster-all seasonality-all variability-all lt-profile-all abc-xyz-all demand-signals-all
+	@echo "✓ Phase 2 complete: clustering, seasonality, variability, lead time, ABC-XYZ, demand signals"
+
+setup-backtest: setup-features backtest-all backtest-load-all accuracy-slice-refresh champion-all
+	@echo "✓ Phase 3 complete: backtests, champion selection"
+
+setup-inv-planning: eoq-all policy-all ss-all exceptions-generate fill-rate-all health-all supplier-perf-all investment-all intramonth-all control-tower-all rebalancing-all
+	@echo "✓ Phase 4 complete: inventory planning (safety stock, EOQ, policies, exceptions, health)"
+
+setup-demand-planning: forecast-prod-all projection-all po-all quantile-all consensus-all planned-orders-all replplan-all bias-all blended-all service-level-all lead-time-all echelon-all
+	@echo "✓ Phase 5 complete: demand planning (forecasts, projections, orders, replenishment)"
+
+setup-ops: sop-all events-all financial-plan-all storyboard-all scenarios-all dq-all
+	@echo "✓ Phase 6 complete: operations (S&OP, events, financial plan, storyboard, DQ)"
+
+setup-planning: setup-data setup-inv-planning
+	@echo "✓ Data + Inventory Planning complete (no ML)"
+
+setup-all: setup-backtest setup-inv-planning setup-demand-planning setup-ops
+	@echo ""
+	@echo "============================================================"
+	@echo "  Setup complete. Start the application:"
+	@echo "    make api    # FastAPI on :8000"
+	@echo "    make ui     # React UI on :5173"
+	@echo "============================================================"
+
+# ── Performance Profiling ────────────────────────────────────────────────────
+perf-report:                           ## Full system perf report (read-only, safe for prod)
+	$(UV) python scripts/ops/run_perf_analysis.py --mode report
+
+perf-script:                           ## Profile a script: make perf-script SCRIPT=compute_safety_stock (read-only)
+	$(UV) python scripts/ops/run_perf_analysis.py --mode script --script $(SCRIPT)
+
+perf-script-full:                      ## Profile with REAL writes (use on staging only): make perf-script-full SCRIPT=X
+	$(UV) python scripts/ops/run_perf_analysis.py --mode script --script $(SCRIPT) --no-readonly
+
+perf-api:                              ## API endpoint performance analysis (read-only)
+	$(UV) python scripts/ops/run_perf_analysis.py --mode api
+
+perf-pipeline:                         ## ETL pipeline performance analysis (read-only)
+	$(UV) python scripts/ops/run_perf_analysis.py --mode pipeline
+
+perf-clean:                            ## Truncate all perf profiling history from DB
+	psql "$(DATABASE_URL)" -c "TRUNCATE perf_suggestion, perf_query, perf_section, perf_run CASCADE;"

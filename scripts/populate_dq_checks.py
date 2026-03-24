@@ -1,6 +1,6 @@
 """Populate dim_dq_check_catalog from data_quality_config.yaml.
 
-Reads all check definitions (freshness, completeness, uniqueness, range,
+Reads all check definitions (completeness, uniqueness, range,
 volume_delta, referential_integrity) from config/data_quality_config.yaml,
 generates a unique check_name per check, builds a SQL template string, and
 UPSERTs into dim_dq_check_catalog (ON CONFLICT on check_name DO UPDATE).
@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 from common.utils import _ts, load_config
 
 CONFIG_NAME = "data_quality_config.yaml"
@@ -28,14 +29,6 @@ CONFIG_NAME = "data_quality_config.yaml"
 # ---------------------------------------------------------------------------
 # SQL template builders — one per check type
 # ---------------------------------------------------------------------------
-
-def _freshness_template(table: str) -> str:
-    """SQL that returns hours since the latest load_ts in a table."""
-    return (
-        f"SELECT EXTRACT(EPOCH FROM (NOW() - MAX(load_ts))) / 3600.0 "
-        f"AS hours_since_load FROM {table}"
-    )
-
 
 def _completeness_template(table: str, column: str) -> str:
     """SQL that returns the null percentage for a column."""
@@ -76,7 +69,6 @@ def _referential_integrity_template(
     target_columns: list[str],
 ) -> str:
     """SQL that returns orphan count (source rows not in target)."""
-    src_cols = ", ".join(f"s.{c}" for c in source_columns)
     join_cond = " AND ".join(
         f"s.{sc} = t.{tc}" for sc, tc in zip(source_columns, target_columns)
     )
@@ -104,20 +96,6 @@ def parse_checks(config: dict) -> list[dict]:
     default_enabled = defaults.get("enabled", True)
 
     rows: list[dict] = []
-
-    # ── Freshness ──────────────────────────────────────────────
-    for domain, spec in checks_cfg.get("freshness", {}).items():
-        table = spec["table"]
-        rows.append({
-            "check_name": f"freshness_{domain}",
-            "check_type": "freshness",
-            "domain": domain,
-            "table_name": table,
-            "sql_template": _freshness_template(table),
-            "threshold": spec["max_hours_since_load"],
-            "severity": spec.get("severity", default_severity),
-            "enabled": spec.get("enabled", default_enabled),
-        })
 
     # ── Completeness ───────────────────────────────────────────
     for domain, spec in checks_cfg.get("completeness", {}).items():
@@ -184,7 +162,7 @@ def parse_checks(config: dict) -> list[dict]:
 
     # ── Referential integrity ──────────────────────────────────
     for check_key, spec in checks_cfg.get("referential_integrity", {}).items():
-        # Domain inferred from the source table (fact_sales → sales, dim_dfu → dfu)
+        # Domain inferred from the source table (fact_sales → sales, dim_sku → dfu)
         source_table = spec["source_table"]
         domain = _domain_from_table(source_table)
         rows.append({
@@ -211,7 +189,7 @@ def _domain_from_table(table_name: str) -> str:
 
     Examples:
         fact_sales_monthly -> sales
-        dim_dfu -> dfu
+        dim_sku -> dfu
         fact_inventory_snapshot -> inventory
         fact_external_forecast_monthly -> forecast
     """
@@ -247,24 +225,26 @@ UPSERT_SQL = """
 
 def upsert_checks(conn, checks: list[dict], dry_run: bool = False) -> int:
     """Upsert parsed checks into dim_dq_check_catalog. Returns count."""
-    count = 0
-    with conn.cursor() as cur:
-        for chk in checks:
-            if not dry_run:
-                cur.execute(UPSERT_SQL, (
-                    chk["check_name"],
-                    chk["check_type"],
-                    chk["domain"],
-                    chk.get("table_name"),
-                    chk["sql_template"],
-                    chk["threshold"],
-                    chk["severity"],
-                    chk["enabled"],
-                ))
-            count += 1
+    if not checks:
+        return 0
     if not dry_run:
+        params = [
+            (
+                chk["check_name"],
+                chk["check_type"],
+                chk["domain"],
+                chk.get("table_name"),
+                chk["sql_template"],
+                chk["threshold"],
+                chk["severity"],
+                chk["enabled"],
+            )
+            for chk in checks
+        ]
+        with conn.cursor() as cur:
+            cur.executemany(UPSERT_SQL, params)
         conn.commit()
-    return count
+    return len(checks)
 
 
 # ---------------------------------------------------------------------------
@@ -283,8 +263,9 @@ def run(dry_run: bool = False) -> dict:
     from dotenv import load_dotenv
     load_dotenv()
 
-    config = load_config(CONFIG_NAME)
-    checks = parse_checks(config)
+    with profiled_section("load_and_parse_config"):
+        config = load_config(CONFIG_NAME)
+        checks = parse_checks(config)
 
     # Summary by type
     by_type: dict[str, int] = {}
@@ -296,8 +277,9 @@ def run(dry_run: bool = False) -> dict:
     for ctype, cnt in sorted(by_type.items()):
         print(f"  {ctype}: {cnt}")
 
-    with psycopg.connect(**get_db_params()) as conn:
-        upserted = upsert_checks(conn, checks, dry_run=dry_run)
+    with profiled_section("upsert_checks"):
+        with psycopg.connect(**get_db_params()) as conn:
+            upserted = upsert_checks(conn, checks, dry_run=dry_run)
 
     verb = "Would upsert" if dry_run else "Upserted"
     print(f"[{_ts()}] {verb} {upserted} checks into dim_dq_check_catalog")

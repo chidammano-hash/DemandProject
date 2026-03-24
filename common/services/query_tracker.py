@@ -5,8 +5,6 @@ Logs slow API responses to fact_query_performance for monitoring.
 from __future__ import annotations
 
 import threading
-import time
-from typing import Any
 
 
 class QueryTracker:

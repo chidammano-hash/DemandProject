@@ -33,7 +33,7 @@ async def test_exceptions_list_200():
     cursor.fetchone.return_value = (5,)
     cursor.fetchall.return_value = [_EXCEPTION_ROW]
     cursor.description = [
-        ("exception_id",), ("item_no",), ("loc",), ("exception_date",), ("exception_type",), ("severity",),
+        ("exception_id",), ("item_id",), ("loc",), ("exception_date",), ("exception_type",), ("severity",),
         ("current_qty_on_hand",), ("current_dos",), ("ss_combined",), ("reorder_point",),
         ("recommended_order_qty",), ("recommended_order_by",), ("expected_receipt_date",),
         ("estimated_order_value",), ("policy_id",), ("status",), ("acknowledged_by",), ("notes",),
@@ -59,7 +59,7 @@ async def test_exceptions_list_row_keys():
     cursor.fetchone.return_value = (1,)
     cursor.fetchall.return_value = [_EXCEPTION_ROW]
     cursor.description = [
-        ("exception_id",), ("item_no",), ("loc",), ("exception_date",), ("exception_type",), ("severity",),
+        ("exception_id",), ("item_id",), ("loc",), ("exception_date",), ("exception_type",), ("severity",),
         ("current_qty_on_hand",), ("current_dos",), ("ss_combined",), ("reorder_point",),
         ("recommended_order_qty",), ("recommended_order_by",), ("expected_receipt_date",),
         ("estimated_order_value",), ("policy_id",), ("status",), ("acknowledged_by",), ("notes",),
@@ -72,7 +72,7 @@ async def test_exceptions_list_row_keys():
             resp = await client.get("/inv-planning/exceptions")
 
     row = resp.json()["rows"][0]
-    for key in ("exception_id", "item_no", "loc", "exception_type", "severity",
+    for key in ("exception_id", "item_id", "loc", "exception_type", "severity",
                 "recommended_order_qty", "status"):
         assert key in row
 
@@ -84,7 +84,7 @@ async def test_exceptions_list_severity_filter():
     cursor.fetchone.return_value = (3,)
     cursor.fetchall.return_value = []
     cursor.description = [
-        ("exception_id",), ("item_no",), ("loc",), ("exception_date",), ("exception_type",), ("severity",),
+        ("exception_id",), ("item_id",), ("loc",), ("exception_date",), ("exception_type",), ("severity",),
         ("current_qty_on_hand",), ("current_dos",), ("ss_combined",), ("reorder_point",),
         ("recommended_order_qty",), ("recommended_order_by",), ("expected_receipt_date",),
         ("estimated_order_value",), ("policy_id",), ("status",), ("acknowledged_by",), ("notes",),
@@ -106,7 +106,7 @@ async def test_exceptions_list_pagination():
     cursor.fetchone.return_value = (100,)
     cursor.fetchall.return_value = []
     cursor.description = [
-        ("exception_id",), ("item_no",), ("loc",), ("exception_date",), ("exception_type",), ("severity",),
+        ("exception_id",), ("item_id",), ("loc",), ("exception_date",), ("exception_type",), ("severity",),
         ("current_qty_on_hand",), ("current_dos",), ("ss_combined",), ("reorder_point",),
         ("recommended_order_qty",), ("recommended_order_by",), ("expected_receipt_date",),
         ("estimated_order_value",), ("policy_id",), ("status",), ("acknowledged_by",), ("notes",),

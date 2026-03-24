@@ -19,7 +19,7 @@ import { Edit3 } from "lucide-react";
 
 type OverrideRow = {
   override_id: number;
-  item_no: string;
+  item_id: string;
   loc: string;
   override_month: string;
   override_type: string;
@@ -200,7 +200,7 @@ export function OverrideQueuePanel() {
             <tbody className="divide-y">
               {overrides.overrides.map((ov: OverrideRow) => (
                 <tr key={ov.override_id} className="hover:bg-muted/30">
-                  <td className="px-3 py-2 font-mono">{ov.item_no}</td>
+                  <td className="px-3 py-2 font-mono">{ov.item_id}</td>
                   <td className="px-3 py-2">{ov.loc}</td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     {ov.override_month

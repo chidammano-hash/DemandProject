@@ -26,7 +26,7 @@ export interface ProjectionRow {
 }
 
 export interface ProjectionPayload {
-  item_no: string;
+  item_id: string;
   loc: string;
   current_qty_on_hand: number;
   safety_stock: number;
@@ -40,7 +40,7 @@ export interface ProjectionPayload {
 }
 
 export interface AtRiskItem {
-  item_no: string;
+  item_id: string;
   loc: string;
   stockout_date: string | null;
   days_until_stockout: number | null;
@@ -59,18 +59,18 @@ export interface AtRiskPayload {
 }
 
 export const projectionKeys = {
-  dfu: (params: Record<string, unknown>) => ["projection", "dfu", params] as const,
+  sku: (params: Record<string, unknown>) => ["projection", "sku", params] as const,
   atRisk: (horizon_days: number) => ["projection", "at-risk", horizon_days] as const,
 };
 
 export async function fetchProjection(params: {
-  item_no: string;
+  item_id: string;
   loc: string;
   horizon_days?: number;
   scenario?: string;
 }): Promise<ProjectionPayload> {
   const qs = new URLSearchParams({
-    item_no: params.item_no,
+    item_id: params.item_id,
     loc: params.loc,
     horizon_days: String(params.horizon_days ?? 90),
   });
@@ -92,7 +92,7 @@ export async function fetchProjectionAtRisk(params: {
 }
 
 export async function refreshProjection(params: {
-  item_no: string;
+  item_id: string;
   loc: string;
   horizon_days?: number;
 }): Promise<{ status: string; rows_written: number; run_id: string }> {
@@ -100,7 +100,7 @@ export async function refreshProjection(params: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      item_no: params.item_no,
+      item_id: params.item_id,
       loc: params.loc,
       horizon_days: params.horizon_days ?? 90,
     }),

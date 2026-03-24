@@ -2,32 +2,127 @@
 
 Applies statistical remediation strategies for known DQ issues:
   1. Range outliers → clamp to percentile bounds (Winsorization)
-  2. Lead time outliers → replace with item-level median
-  3. NULL completeness → impute with median (numeric) or mode (categorical)
-  4. Orphan RI keys → quarantine to staging table for review
-  5. Statistical outliers → Winsorise to IQR/Z-score bounds
+  2. NULL completeness → impute with median (numeric) or mode (categorical)
+  3. Orphan RI keys → report for review
 
 Usage:
     uv run python scripts/fix_dq_issues.py                    # Preview all fixes (dry-run)
     uv run python scripts/fix_dq_issues.py --apply             # Apply all fixes
     uv run python scripts/fix_dq_issues.py --fix range         # Fix only range issues
-    uv run python scripts/fix_dq_issues.py --fix lead_time     # Fix only lead time
     uv run python scripts/fix_dq_issues.py --fix completeness  # Fix only NULLs
     uv run python scripts/fix_dq_issues.py --fix orphans       # Quarantine orphan keys
-    uv run python scripts/fix_dq_issues.py --fix outliers      # Winsorise statistical outliers
 """
 from __future__ import annotations
 
 import argparse
-import json
-from datetime import datetime, timezone
 
 import psycopg
 
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 from common.utils import _ts, load_config
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 _CONFIG = load_config("data_quality_config.yaml")
+
+# Map table -> (date column, domain key) for corrections audit
+_TABLE_META: dict[str, dict[str, str]] = {
+    "fact_sales_monthly": {"date_col": "startdate", "domain": "sales"},
+    "fact_inventory_snapshot": {"date_col": "snapshot_date", "domain": "inventory"},
+    "fact_external_forecast_monthly": {"date_col": "startdate", "domain": "forecast"},
+    "fact_purchase_orders": {"date_col": "delivery_date", "domain": "purchase_order"},
+}
+
+
+def _log_corrections(
+    conn,
+    table: str,
+    col: str,
+    fix_type: str,
+    fix_strategy: str,
+    threshold: float | None,
+    lower_bound: float | None,
+    upper_bound: float | None,
+    where_clause: str,
+    params: tuple = (),
+    group_bounds_sql: str | None = None,
+    group_join: str | None = None,
+    group_params: tuple = (),
+) -> int:
+    """Log corrections to fact_dq_corrections before applying the fix.
+
+    For grouped fixes, uses a subquery with per-group bounds.
+    For global fixes, uses scalar lower/upper bounds.
+    Returns the number of correction rows inserted.
+    """
+    meta = _TABLE_META.get(table, {"date_col": "NULL", "domain": "unknown"})
+    date_col = meta["date_col"]
+    domain = meta["domain"]
+
+    try:
+        with conn.cursor() as cur:
+            if group_bounds_sql and group_join:
+                # Per-group: join with bounds CTE to get per-row bounds
+                cur.execute(
+                    f"INSERT INTO fact_dq_corrections "
+                    f"(domain, table_name, item_id, loc, period, column_name, "
+                    f" old_value, new_value, fix_type, fix_strategy, threshold, "
+                    f" lower_bound, upper_bound) "
+                    f"SELECT %s, %s, t.item_id, t.loc, t.{date_col}, %s, "
+                    f"  t.{col}, "
+                    f"  CASE WHEN t.{col} < b.lower THEN b.lower "
+                    f"       WHEN t.{col} > b.upper THEN b.upper END, "
+                    f"  %s, %s, %s, b.lower, b.upper "
+                    f"FROM {table} t "
+                    f"JOIN ({group_bounds_sql}) b ON {group_join} "
+                    f"WHERE t.{col} IS NOT NULL "
+                    f"AND (t.{col} < b.lower OR t.{col} > b.upper)",
+                    (domain, table, col, fix_type, fix_strategy, threshold,
+                     *group_params),
+                )
+            else:
+                # Global: use scalar bounds
+                cur.execute(
+                    f"INSERT INTO fact_dq_corrections "
+                    f"(domain, table_name, item_id, loc, period, column_name, "
+                    f" old_value, new_value, fix_type, fix_strategy, threshold, "
+                    f" lower_bound, upper_bound) "
+                    f"SELECT %s, %s, "
+                    f"  CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns "
+                    f"    WHERE table_name = %s AND column_name = 'item_id') "
+                    f"    THEN item_id END, "
+                    f"  CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns "
+                    f"    WHERE table_name = %s AND column_name = 'loc') "
+                    f"    THEN loc END, "
+                    f"  {date_col}, %s, "
+                    f"  {col}, "
+                    f"  CASE WHEN {col} < %s THEN %s "
+                    f"       WHEN {col} > %s THEN %s END, "
+                    f"  %s, %s, %s, %s, %s "
+                    f"FROM {table} "
+                    f"WHERE {col} IS NOT NULL AND ({where_clause})",
+                    (domain, table, table, table, col,
+                     lower_bound, lower_bound, upper_bound, upper_bound,
+                     fix_type, fix_strategy, threshold, lower_bound, upper_bound,
+                     *params),
+                )
+            logged = cur.rowcount
+            if logged > 0:
+                logger.info("  Logged %d corrections to audit trail", logged)
+            return logged
+    except Exception:
+        logger.warning("  Could not log corrections (table may not exist)", exc_info=True)
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +163,16 @@ def fix_range_outliers(conn, dry_run: bool = True) -> list[dict]:
                 results.append({"fix": fix_desc, "affected_rows": outlier_count, "applied": False})
                 print(f"  [DRY-RUN] {fix_desc}: {outlier_count:,} rows")
             else:
+                # Log corrections audit trail before applying
+                _log_corrections(
+                    conn, table, col,
+                    fix_type="range", fix_strategy="clamp",
+                    threshold=None,
+                    lower_bound=float(lo) if lo is not None else None,
+                    upper_bound=float(hi) if hi is not None else None,
+                    where_clause=where,
+                )
+
                 updates = []
                 if lo is not None:
                     updates.append(f"UPDATE {table} SET {col} = {lo} WHERE {col} IS NOT NULL AND {col} < {lo}")
@@ -84,61 +189,6 @@ def fix_range_outliers(conn, dry_run: bool = True) -> list[dict]:
     return results
 
 
-def fix_lead_time_outliers(conn, dry_run: bool = True) -> list[dict]:
-    """Replace extreme lead_time_days with per-item median.
-
-    Strategy: For each item_no, compute median lead_time from valid rows (0-730).
-    Replace outliers (< 0 or > 730) with that median. If no valid rows exist
-    for an item, use the global median.
-    """
-    results = []
-    table = "fact_inventory_snapshot"
-    col = "lead_time_days"
-    lo, hi = 0, 730
-
-    with conn.cursor() as cur:
-        cur.execute(
-            f"SELECT count(*) FROM {table} "
-            f"WHERE {col} IS NOT NULL AND ({col} < {lo} OR {col} > {hi})"
-        )
-        outlier_count = cur.fetchone()[0]
-
-    if outlier_count == 0:
-        print(f"  No lead time outliers found")
-        return results
-
-    fix_desc = f"Replace {table}.{col} outliers with per-item median"
-
-    if dry_run:
-        results.append({"fix": fix_desc, "affected_rows": outlier_count, "applied": False})
-        print(f"  [DRY-RUN] {fix_desc}: {outlier_count:,} rows")
-    else:
-        with conn.cursor() as cur:
-            # Compute per-item median for valid values
-            cur.execute(f"""
-                WITH item_medians AS (
-                    SELECT item_no,
-                           percentile_cont(0.5) WITHIN GROUP (ORDER BY {col}) AS med_lt
-                    FROM {table}
-                    WHERE {col} IS NOT NULL AND {col} >= {lo} AND {col} <= {hi}
-                    GROUP BY item_no
-                ),
-                global_median AS (
-                    SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY {col}) AS gmed
-                    FROM {table}
-                    WHERE {col} IS NOT NULL AND {col} >= {lo} AND {col} <= {hi}
-                )
-                UPDATE {table} t
-                SET {col} = COALESCE(im.med_lt, gm.gmed, 7)
-                FROM global_median gm
-                LEFT JOIN item_medians im ON im.item_no = t.item_no
-                WHERE t.{col} IS NOT NULL AND (t.{col} < {lo} OR t.{col} > {hi})
-            """)
-            fixed = cur.rowcount
-        results.append({"fix": fix_desc, "affected_rows": fixed, "applied": True})
-        print(f"  [APPLIED] {fix_desc}: {fixed:,} rows fixed")
-
-    return results
 
 
 def fix_null_completeness(conn, dry_run: bool = True) -> list[dict]:
@@ -146,48 +196,64 @@ def fix_null_completeness(conn, dry_run: bool = True) -> list[dict]:
     results = []
     completeness_checks = _CONFIG.get("checks", {}).get("completeness", {})
 
+    # Pre-load column types for all tables to avoid per-column information_schema queries
+    col_types_cache: dict[str, dict[str, str]] = {}
+
     for domain_key, spec in completeness_checks.items():
         table = spec.get("table", "")
-        for col_spec in spec.get("columns", []):
-            col = col_spec["column"]
-            threshold = col_spec.get("null_pct_threshold", 0.0)
 
-            # Only impute columns with threshold > 0 (those that allow some NULLs)
-            # and skip PK columns (threshold == 0 means PK, can't impute)
-            if threshold == 0.0:
-                continue
-
-            with conn.cursor() as cur:
-                cur.execute(f"SELECT count(*) FROM {table} WHERE {col} IS NULL")
-                null_count = cur.fetchone()[0]
-
-            if null_count == 0:
-                continue
-
-            # Determine column type to pick strategy
+        # Batch-load all column types for this table once
+        if table and table not in col_types_cache:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT data_type FROM information_schema.columns "
-                    "WHERE table_name = %s AND column_name = %s",
-                    (table, col),
+                    "SELECT column_name, data_type FROM information_schema.columns "
+                    "WHERE table_name = %s",
+                    (table,),
                 )
-                row = cur.fetchone()
+                col_types_cache[table] = {row[0]: row[1] for row in cur.fetchall()}
 
-            if not row:
+        # Collect imputable columns (threshold > 0) for this table
+        imputable_cols = [
+            col_spec["column"]
+            for col_spec in spec.get("columns", [])
+            if col_spec.get("null_pct_threshold", 0.0) > 0.0
+        ]
+        if not imputable_cols or not table:
+            continue
+
+        # Batch null-count + median query for all numeric imputable columns in one pass
+        # First, determine which are numeric vs categorical
+        numeric_cols = []
+        text_cols = []
+        numeric_types = {"integer", "bigint", "numeric", "real", "double precision", "smallint"}
+        for col in imputable_cols:
+            dtype = col_types_cache.get(table, {}).get(col)
+            if not dtype:
                 continue
+            if dtype in numeric_types:
+                numeric_cols.append(col)
+            else:
+                text_cols.append(col)
 
-            dtype = row[0]
-            is_numeric = dtype in ("integer", "bigint", "numeric", "real", "double precision", "smallint")
+        # Batch: get null_count + median for all numeric columns in a single query
+        if numeric_cols:
+            agg_parts = []
+            for col in numeric_cols:
+                agg_parts.append(
+                    f"count(*) FILTER (WHERE {col} IS NULL)"
+                )
+                agg_parts.append(
+                    f"percentile_cont(0.5) WITHIN GROUP (ORDER BY {col}) "
+                    f"FILTER (WHERE {col} IS NOT NULL)"
+                )
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT {', '.join(agg_parts)} FROM {table}")
+                agg_row = cur.fetchone()
 
-            if is_numeric:
-                # Impute with median
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY {col}) "
-                        f"FROM {table} WHERE {col} IS NOT NULL"
-                    )
-                    median_val = cur.fetchone()[0]
-                if median_val is None:
+            for i, col in enumerate(numeric_cols):
+                null_count = agg_row[i * 2] or 0
+                median_val = agg_row[i * 2 + 1]
+                if null_count == 0 or median_val is None:
                     continue
                 fix_desc = f"Impute {table}.{col} NULLs with median ({median_val})"
                 if dry_run:
@@ -199,27 +265,35 @@ def fix_null_completeness(conn, dry_run: bool = True) -> list[dict]:
                         fixed = cur.rowcount
                     results.append({"fix": fix_desc, "affected_rows": fixed, "applied": True})
                     print(f"  [APPLIED] {fix_desc}: {fixed:,} rows imputed")
+
+        # Categorical columns: get null_count + mode (still per-column since mode requires GROUP BY)
+        for col in text_cols:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT count(*) FROM {table} WHERE {col} IS NULL")
+                null_count = cur.fetchone()[0]
+
+            if null_count == 0:
+                continue
+
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {col}, count(*) AS cnt FROM {table} "
+                    f"WHERE {col} IS NOT NULL GROUP BY {col} ORDER BY cnt DESC LIMIT 1"
+                )
+                mode_row = cur.fetchone()
+            if not mode_row:
+                continue
+            mode_val = mode_row[0]
+            fix_desc = f"Impute {table}.{col} NULLs with mode ('{mode_val}')"
+            if dry_run:
+                results.append({"fix": fix_desc, "affected_rows": null_count, "applied": False})
+                print(f"  [DRY-RUN] {fix_desc}: {null_count:,} rows")
             else:
-                # Impute with mode (most frequent value)
                 with conn.cursor() as cur:
-                    cur.execute(
-                        f"SELECT {col}, count(*) AS cnt FROM {table} "
-                        f"WHERE {col} IS NOT NULL GROUP BY {col} ORDER BY cnt DESC LIMIT 1"
-                    )
-                    mode_row = cur.fetchone()
-                if not mode_row:
-                    continue
-                mode_val = mode_row[0]
-                fix_desc = f"Impute {table}.{col} NULLs with mode ('{mode_val}')"
-                if dry_run:
-                    results.append({"fix": fix_desc, "affected_rows": null_count, "applied": False})
-                    print(f"  [DRY-RUN] {fix_desc}: {null_count:,} rows")
-                else:
-                    with conn.cursor() as cur:
-                        cur.execute(f"UPDATE {table} SET {col} = %s WHERE {col} IS NULL", (mode_val,))
-                        fixed = cur.rowcount
-                    results.append({"fix": fix_desc, "affected_rows": fixed, "applied": True})
-                    print(f"  [APPLIED] {fix_desc}: {fixed:,} rows imputed")
+                    cur.execute(f"UPDATE {table} SET {col} = %s WHERE {col} IS NULL", (mode_val,))
+                    fixed = cur.rowcount
+                results.append({"fix": fix_desc, "affected_rows": fixed, "applied": True})
+                print(f"  [APPLIED] {fix_desc}: {fixed:,} rows imputed")
 
     return results
 
@@ -264,7 +338,7 @@ def fix_orphan_keys(conn, dry_run: bool = True) -> list[dict]:
             continue
 
         fix_desc = f"Orphan keys: {src_table}({','.join(src_cols)}) → {tgt_table}: {orphan_count:,} orphans"
-        recommendation = f"Reload dimension: make normalize-all && make load-all"
+        recommendation = "Reload dimension: make normalize-all && make load-all"
         results.append({
             "fix": fix_desc,
             "affected_rows": orphan_count,
@@ -277,73 +351,6 @@ def fix_orphan_keys(conn, dry_run: bool = True) -> list[dict]:
     return results
 
 
-def fix_statistical_outliers(conn, dry_run: bool = True) -> list[dict]:
-    """Winsorise statistical outliers detected by IQR/Z-score to computed bounds."""
-    results = []
-    stat_checks = _CONFIG.get("checks", {}).get("statistical_outlier", {})
-
-    for domain_key, spec in stat_checks.items():
-        table = spec.get("table", "")
-        for col_spec in spec.get("columns", []):
-            col = col_spec["column"]
-            method = col_spec.get("method", "iqr")
-            threshold = col_spec.get("threshold", 1.5)
-
-            # Compute bounds
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"SELECT avg({col}), stddev_pop({col}), "
-                    f"percentile_cont(0.25) WITHIN GROUP (ORDER BY {col}), "
-                    f"percentile_cont(0.75) WITHIN GROUP (ORDER BY {col}) "
-                    f"FROM {table} WHERE {col} IS NOT NULL"
-                )
-                row = cur.fetchone()
-
-            if not row or row[0] is None:
-                continue
-
-            mean, stddev = float(row[0]), float(row[1] or 0)
-            q1, q3 = float(row[2] or 0), float(row[3] or 0)
-            iqr = q3 - q1
-
-            if method == "zscore":
-                lower = mean - threshold * stddev if stddev > 0 else q1
-                upper = mean + threshold * stddev if stddev > 0 else q3
-            else:
-                lower = q1 - threshold * iqr
-                upper = q3 + threshold * iqr
-
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"SELECT count(*) FROM {table} "
-                    f"WHERE {col} IS NOT NULL AND ({col} < %s OR {col} > %s)",
-                    (lower, upper),
-                )
-                outlier_count = cur.fetchone()[0]
-
-            if outlier_count == 0:
-                continue
-
-            fix_desc = f"Winsorise {table}.{col} ({method}, threshold={threshold}) to [{lower:.2f}, {upper:.2f}]"
-            if dry_run:
-                results.append({"fix": fix_desc, "affected_rows": outlier_count, "applied": False})
-                print(f"  [DRY-RUN] {fix_desc}: {outlier_count:,} rows")
-            else:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"UPDATE {table} SET {col} = %s WHERE {col} IS NOT NULL AND {col} < %s",
-                        (lower, lower),
-                    )
-                    lo_fixed = cur.rowcount
-                    cur.execute(
-                        f"UPDATE {table} SET {col} = %s WHERE {col} IS NOT NULL AND {col} > %s",
-                        (upper, upper),
-                    )
-                    hi_fixed = cur.rowcount
-                results.append({"fix": fix_desc, "affected_rows": lo_fixed + hi_fixed, "applied": True})
-                print(f"  [APPLIED] {fix_desc}: {lo_fixed + hi_fixed:,} rows clamped")
-
-    return results
 
 
 # ---------------------------------------------------------------------------
@@ -352,10 +359,8 @@ def fix_statistical_outliers(conn, dry_run: bool = True) -> list[dict]:
 
 FIX_REGISTRY = {
     "range": fix_range_outliers,
-    "lead_time": fix_lead_time_outliers,
     "completeness": fix_null_completeness,
     "orphans": fix_orphan_keys,
-    "outliers": fix_statistical_outliers,
 }
 
 
@@ -417,6 +422,13 @@ def apply_selected_fixes(fix_ids: list[int]) -> dict:
                         })
                         break
         conn.commit()
+        # Refresh MVs so charts reflect corrected data
+        with conn.cursor() as cur:
+            for mv in ("agg_sales_monthly", "agg_forecast_monthly"):
+                try:
+                    cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
+                except Exception:
+                    logger.warning("Could not refresh %s", mv, exc_info=True)
 
     return {
         "applied": applied,
@@ -435,10 +447,20 @@ def run_all_fixes(fix_type: str | None = None, dry_run: bool = True) -> dict:
             if fix_type and name != fix_type:
                 continue
             print(f"\n{_ts()} ── {name.upper()} fixes ──")
-            all_results[name] = fn(conn, dry_run=dry_run)
+            with profiled_section(f"fix_{name}"):
+                all_results[name] = fn(conn, dry_run=dry_run)
 
         if not dry_run:
             conn.commit()
+            # Refresh materialized views so charts reflect corrected data
+            logger.info("Refreshing materialized views after DQ fixes…")
+            with conn.cursor() as cur:
+                for mv in ("agg_sales_monthly", "agg_forecast_monthly"):
+                    try:
+                        cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
+                        logger.info("  Refreshed %s", mv)
+                    except Exception:
+                        logger.warning("  Could not refresh %s", mv, exc_info=True)
 
     total_affected = sum(r["affected_rows"] for fixes in all_results.values() for r in fixes)
     total_applied = sum(1 for fixes in all_results.values() for r in fixes if r.get("applied"))

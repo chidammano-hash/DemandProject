@@ -1,12 +1,12 @@
 """Inventory Planning — IPfeature9: Demand Sensing endpoints."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _f, _s, get_conn, set_cache
+from api.core import _f, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -92,7 +92,7 @@ def get_demand_signals(
         where_clauses.append("s.alert_priority = %s")
     if item:
         params.append(f"%{item}%")
-        where_clauses.append("s.item_no ILIKE %s")
+        where_clauses.append("s.item_id ILIKE %s")
     if location:
         params.append(f"%{location}%")
         where_clauses.append("s.loc ILIKE %s")
@@ -103,20 +103,20 @@ def get_demand_signals(
     where_sql = "WHERE " + " AND ".join(where_clauses)
     count_sql = f"""
         SELECT COUNT(*) FROM fact_demand_signals s
-        LEFT JOIN dim_dfu d ON s.item_no = d.dmdunit AND s.loc = d.loc
+        LEFT JOIN dim_sku d ON s.item_id = d.item_id AND s.loc = d.loc
         {where_sql}
     """
 
     params.append(limit)
     params.append(offset)
     data_sql = f"""
-        SELECT s.item_no, s.loc, s.signal_date, s.signal_type, s.alert_priority,
+        SELECT s.item_id, s.loc, s.signal_date, s.signal_type, s.alert_priority,
                s.mtd_actual, s.projected_monthly, s.forecast_monthly,
                s.demand_vs_forecast_pct, s.projected_stockout, s.projected_excess,
                s.current_on_hand, s.is_below_ss, s.days_remaining,
                d.abc_vol
         FROM fact_demand_signals s
-        LEFT JOIN dim_dfu d ON s.item_no = d.dmdunit AND s.loc = d.loc
+        LEFT JOIN dim_sku d ON s.item_id = d.item_id AND s.loc = d.loc
         {where_sql}
         ORDER BY {order_col} {order_dir} NULLS LAST
         LIMIT %s OFFSET %s
@@ -135,7 +135,7 @@ def get_demand_signals(
         "total": int(total),
         "rows": [
             {
-                "item_no":                r[0],
+                "item_id":                r[0],
                 "loc":                    r[1],
                 "signal_date":            str(r[2]),
                 "signal_type":            r[3],
@@ -166,12 +166,12 @@ def get_demand_signal_item(
     set_cache(response, max_age=3600)
 
     sql = """
-        SELECT item_no, loc, signal_date, signal_type, alert_priority,
+        SELECT item_id, loc, signal_date, signal_type, alert_priority,
                mtd_actual, projected_monthly, forecast_monthly,
                demand_vs_forecast_pct, days_elapsed, days_remaining,
                current_on_hand, is_below_ss
         FROM fact_demand_signals
-        WHERE item_no = %s AND loc = %s
+        WHERE item_id = %s AND loc = %s
         ORDER BY signal_date DESC
         LIMIT 1
     """
@@ -181,7 +181,7 @@ def get_demand_signal_item(
                mtd_sales / NULLIF(EXTRACT(day FROM snapshot_date), 0) *
                EXTRACT(days IN month FROM snapshot_date) AS mtd_expected_pace
         FROM fact_inventory_snapshot
-        WHERE item_no = %s AND loc = %s
+        WHERE item_id = %s AND loc = %s
           AND snapshot_date >= DATE_TRUNC('month', CURRENT_DATE)
         ORDER BY snapshot_date
     """
@@ -197,7 +197,7 @@ def get_demand_signal_item(
             daily_rows = cur.fetchall()
 
     return {
-        "item_no":                row[0],
+        "item_id":                row[0],
         "loc":                    row[1],
         "signal_date":            str(row[2]),
         "signal_type":            row[3],

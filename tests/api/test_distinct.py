@@ -216,7 +216,7 @@ async def test_distinct_other_allowed_domains(mock_pool):
 
             # dfu domain, cluster_assignment column
             cursor.fetchall.return_value = [("high_volume_steady",)]
-            resp = await client.get("/domains/dfu/distinct?column=cluster_assignment")
+            resp = await client.get("/domains/sku/distinct?column=cluster_assignment")
             assert resp.status_code == 200
             data = resp.json()
             assert data["column"] == "cluster_assignment"
@@ -239,22 +239,22 @@ async def test_distinct_values_are_strings(mock_pool):
 
 
 # ---------------------------------------------------------------------------
-# item_no and location_id are now allowed
+# item_id and location_id are now allowed
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_distinct_allows_item_no(mock_pool):
-    """GET /domains/item/distinct?column=item_no returns 200 — now in allowed list."""
+async def test_distinct_allows_item_id(mock_pool):
+    """GET /domains/item/distinct?column=item_id returns 200 — now in allowed list."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("100320",), ("100321",)]
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/domains/item/distinct?column=item_no&search=100")
+            resp = await client.get("/domains/item/distinct?column=item_id&search=100")
             assert resp.status_code == 200
             data = resp.json()
-            assert data["column"] == "item_no"
+            assert data["column"] == "item_id"
             assert data["values"] == ["100320", "100321"]
 
 
@@ -291,9 +291,9 @@ async def test_distinct_cascade_brand_filtered_by_location(mock_pool):
             assert resp.status_code == 200
             data = resp.json()
             assert data["values"] == ["BrandX"]
-            # Verify the SQL used dim_dfu-based cascading (not plain dim_item table)
+            # Verify the SQL used dim_sku-based cascading (not plain dim_item table)
             executed_sql = cursor.execute.call_args[0][0]
-            assert "dim_dfu" in executed_sql
+            assert "dim_sku" in executed_sql
             assert "dim_item" in executed_sql
 
 
@@ -311,7 +311,7 @@ async def test_distinct_cascade_location_filtered_by_brand(mock_pool):
             data = resp.json()
             assert data["values"] == ["LOC1", "LOC2"]
             executed_sql = cursor.execute.call_args[0][0]
-            assert "dim_dfu" in executed_sql
+            assert "dim_sku" in executed_sql
 
 
 @pytest.mark.asyncio
@@ -323,12 +323,12 @@ async def test_distinct_cascade_item_filtered_by_brand_and_location(mock_pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/domains/item/distinct?column=item_no&brand=Nike&location=1401-BULK&search=100")
+            resp = await client.get("/domains/item/distinct?column=item_id&brand=Nike&location=1401-BULK&search=100")
             assert resp.status_code == 200
             data = resp.json()
             assert data["values"] == ["100320"]
             executed_sql = cursor.execute.call_args[0][0]
-            assert "dim_dfu" in executed_sql
+            assert "dim_sku" in executed_sql
             assert "ILIKE" in executed_sql
 
 
@@ -346,13 +346,13 @@ async def test_distinct_cascade_market_filtered_by_brand(mock_pool):
             data = resp.json()
             assert data["values"] == ["CA", "TX"]
             executed_sql = cursor.execute.call_args[0][0]
-            assert "dim_dfu" in executed_sql
+            assert "dim_sku" in executed_sql
             assert "dim_location" in executed_sql
 
 
 @pytest.mark.asyncio
 async def test_distinct_no_cascade_still_uses_dfu_for_mapped_columns(mock_pool):
-    """Even without cascade params, mapped columns query through dim_dfu to exclude zero-DFU items."""
+    """Even without cascade params, mapped columns query through dim_sku to exclude zero-DFU items."""
     pool, _, cursor = mock_pool
     cursor.fetchall.return_value = [("A",), ("B",)]
     with patch("api.core._get_pool", return_value=pool):
@@ -362,7 +362,7 @@ async def test_distinct_no_cascade_still_uses_dfu_for_mapped_columns(mock_pool):
             resp = await client.get("/domains/item/distinct?column=brand_name")
             assert resp.status_code == 200
             executed_sql = cursor.execute.call_args[0][0]
-            assert "dim_dfu" in executed_sql
+            assert "dim_sku" in executed_sql
             assert "dim_item" in executed_sql
 
 
@@ -378,7 +378,7 @@ async def test_distinct_cascade_multiple_values(mock_pool):
             resp = await client.get("/domains/item/distinct?column=brand_name&location=1401-BULK,1402-BULK")
             assert resp.status_code == 200
             executed_sql = cursor.execute.call_args[0][0]
-            assert "dim_dfu" in executed_sql
+            assert "dim_sku" in executed_sql
             # Verify multi-value was passed as array
             executed_params = cursor.execute.call_args[0][1]
             assert ["1401-BULK", "1402-BULK"] in executed_params

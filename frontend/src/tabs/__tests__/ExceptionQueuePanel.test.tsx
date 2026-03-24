@@ -33,7 +33,7 @@ const mockSummary = {
 
 const mockException = {
   exception_id: "exc-001",
-  item_no: "100320",
+  item_id: "100320",
   loc: "1401-BULK",
   exception_type: "below_rop",
   severity: "critical",

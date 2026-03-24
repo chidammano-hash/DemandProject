@@ -11,7 +11,7 @@ from api.core import _f, get_conn, set_cache
 router = APIRouter(tags=["inv-planning"])
 
 _DETAIL_SORT_COLS = {
-    "item_no", "loc", "abc_vol", "policy_type",
+    "item_id", "loc", "abc_vol", "policy_type",
     "forecast_qty", "ss_combined", "historical_ss", "ss_delta", "ss_delta_pct",
     "eoq", "cycle_stock", "reorder_point", "order_qty", "is_below_ss", "plan_month",
 }
@@ -78,8 +78,8 @@ def get_replenishment_summary(
 
             summary_sql = f"""
                 SELECT
-                    COUNT(DISTINCT (item_no, loc))                                    AS total_dfus,
-                    COUNT(DISTINCT (item_no, loc)) FILTER (WHERE is_below_ss = TRUE)  AS below_ss_count,
+                    COUNT(DISTINCT (item_id, loc))                                    AS total_dfus,
+                    COUNT(DISTINCT (item_id, loc)) FILTER (WHERE is_below_ss = TRUE)  AS below_ss_count,
                     AVG(ss_combined)                                                   AS avg_ss,
                     AVG(effective_eoq)                                                 AS avg_eoq,
                     AVG(ss_delta_pct)                                                  AS avg_ss_delta_pct
@@ -95,7 +95,7 @@ def get_replenishment_summary(
             # Breakdown by policy_type (no policy_type or abc_vol filter applied here)
             policy_sql = """
                 SELECT policy_type,
-                       COUNT(DISTINCT (item_no, loc)) AS dfu_count,
+                       COUNT(DISTINCT (item_id, loc)) AS dfu_count,
                        AVG(ss_combined)               AS avg_ss,
                        AVG(effective_eoq)             AS avg_eoq,
                        SUM(order_qty)                 AS total_order_qty
@@ -156,7 +156,7 @@ def get_replenishment_detail(
     plan_month: Optional[str] = Query(None, max_length=20),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    sort_by: str = Query("item_no", max_length=40),
+    sort_by: str = Query("item_id", max_length=40),
     sort_dir: str = Query("asc", max_length=4),
 ) -> dict:
     """Paginated replenishment plan detail table.
@@ -165,7 +165,7 @@ def get_replenishment_detail(
     """
     set_cache(response, max_age=120)
 
-    order_col = sort_by if sort_by in _DETAIL_SORT_COLS else "item_no"
+    order_col = sort_by if sort_by in _DETAIL_SORT_COLS else "item_id"
     order_dir = "DESC" if sort_dir.lower() == "desc" else "ASC"
 
     where_parts: list[str] = []
@@ -175,7 +175,7 @@ def get_replenishment_detail(
         where_parts.append("plan_version = %s")
         params.append(plan_version)
     if item:
-        where_parts.append("item_no ILIKE %s")
+        where_parts.append("item_id ILIKE %s")
         params.append(f"%{item}%")
     if location:
         where_parts.append("loc ILIKE %s")
@@ -200,7 +200,7 @@ def get_replenishment_detail(
     data_params = params + [limit, offset]
     data_sql = f"""
         SELECT
-            item_no, loc, plan_month, abc_vol, policy_type,
+            item_id, loc, plan_month, abc_vol, policy_type,
             forecast_qty, ss_combined, historical_ss,
             ss_delta, ss_delta_pct,
             eoq, cycle_stock, reorder_point, order_qty, order_up_to_level,
@@ -210,7 +210,7 @@ def get_replenishment_detail(
         ORDER BY "{order_col}" {order_dir} NULLS LAST
         LIMIT %s OFFSET %s
     """
-    # Column order: 0: item_no, 1: loc, 2: plan_month, 3: abc_vol, 4: policy_type,
+    # Column order: 0: item_id, 1: loc, 2: plan_month, 3: abc_vol, 4: policy_type,
     #               5: forecast_qty, 6: ss_combined, 7: historical_ss,
     #               8: ss_delta, 9: ss_delta_pct,
     #               10: eoq, 11: cycle_stock, 12: reorder_point,
@@ -229,7 +229,7 @@ def get_replenishment_detail(
         "offset": offset,
         "rows": [
             {
-                "item_no":           r[0],
+                "item_id":           r[0],
                 "loc":               r[1],
                 "plan_month":        r[2].isoformat() if r[2] else None,
                 "abc_vol":           r[3],
@@ -302,7 +302,7 @@ def get_replenishment_comparison(
 
             comparison_sql = f"""
                 SELECT abc_vol,
-                       COUNT(DISTINCT (item_no, loc))              AS dfu_count,
+                       COUNT(DISTINCT (item_id, loc))              AS dfu_count,
                        AVG(ss_combined)                            AS avg_forecast_ss,
                        AVG(historical_ss)                          AS avg_historical_ss,
                        AVG(ss_delta)                               AS avg_ss_delta,
@@ -359,7 +359,7 @@ def get_replenishment_comparison(
 @router.get("/inv-planning/replenishment/dfu")
 def get_replenishment_dfu(
     response: FastAPIResponse,
-    item_no: str = Query(..., max_length=120),
+    item_id: str = Query(..., max_length=120),
     loc: str = Query(..., max_length=120),
     plan_version: Optional[str] = Query(None, max_length=40),
 ) -> dict:
@@ -376,9 +376,9 @@ def get_replenishment_dfu(
             if not plan_version:
                 cur.execute(
                     "SELECT DISTINCT plan_version FROM fact_replenishment_plan "
-                    "WHERE item_no = %s AND loc = %s "
+                    "WHERE item_id = %s AND loc = %s "
                     "ORDER BY plan_version DESC LIMIT 1",
-                    [item_no, loc],
+                    [item_id, loc],
                 )
                 ver_row = cur.fetchone()
                 resolved_version = ver_row[0] if ver_row else ""
@@ -388,7 +388,7 @@ def get_replenishment_dfu(
             if not resolved_version:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"No replenishment plan found for item_no={item_no} loc={loc}",
+                    detail=f"No replenishment plan found for item_id={item_id} loc={loc}",
                 )
 
             series_sql = """
@@ -399,7 +399,7 @@ def get_replenishment_dfu(
                        reorder_point, order_qty, order_up_to_level,
                        avg_daily_demand, is_below_ss, sigma_method
                 FROM fact_replenishment_plan
-                WHERE plan_version = %s AND item_no = %s AND loc = %s
+                WHERE plan_version = %s AND item_id = %s AND loc = %s
                 ORDER BY plan_month
             """
             # Column order:  0: plan_month, 1: horizon_months,
@@ -409,13 +409,13 @@ def get_replenishment_dfu(
             #                10: reorder_point, 11: order_qty, 12: order_up_to_level,
             #                13: avg_daily_demand, 14: is_below_ss, 15: sigma_method
 
-            cur.execute(series_sql, [resolved_version, item_no, loc])
+            cur.execute(series_sql, [resolved_version, item_id, loc])
             rows = cur.fetchall()
 
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail=f"No replenishment plan found for item_no={item_no} loc={loc} plan_version={resolved_version}",
+            detail=f"No replenishment plan found for item_id={item_id} loc={loc} plan_version={resolved_version}",
         )
 
     series = [
@@ -441,7 +441,7 @@ def get_replenishment_dfu(
     ]
 
     return {
-        "item_no":      item_no,
+        "item_id":      item_id,
         "loc":          loc,
         "plan_version": resolved_version,
         "series":       series,

@@ -17,20 +17,21 @@ router = APIRouter(tags=["blended-forecast"])
 
 @router.get("/forecast/blended")
 async def get_blended_forecast(
-    item_no: str | None = None,
+    item_id: str | None = None,
     loc: str | None = None,
     weeks: int = 8,
     plan_version: str | None = None,
 ):
     """Weekly blended forecast combining demand sensing signal + statistical model."""
-    if not item_no or not loc:
-        raise HTTPException(400, "item_no and loc are required")
+    if not item_id or not loc:
+        raise HTTPException(400, "item_id and loc are required")
 
     weeks = max(1, min(weeks, 52))
-    conditions = ["item_no = %s", "loc = %s"]
-    params: list = [item_no, loc]
+    conditions = ["item_id = %s", "loc = %s"]
+    params: list = [item_id, loc]
     if plan_version:
-        conditions.append("plan_version = %s"); params.append(plan_version)
+        conditions.append("plan_version = %s")
+        params.append(plan_version)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -65,7 +66,7 @@ async def get_blended_forecast(
         float(d.get("blended_qty") or 0) for d in weeks_data
     )
     return {
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "weeks": weeks,
         "plan_version": plan_version,
@@ -81,7 +82,7 @@ async def get_blended_summary():
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
-                    COUNT(DISTINCT item_no || '@' || loc)          AS total_dfus,
+                    COUNT(DISTINCT item_id || '@' || loc)          AS total_dfus,
                     SUM(CASE WHEN alpha_weight > 0.3 THEN 1 ELSE 0 END) AS sensing_active_count,
                     AVG(velocity_spike_ratio)                      AS avg_spike_ratio,
                     COUNT(CASE WHEN is_outlier_capped THEN 1 END)  AS capped_count
@@ -116,7 +117,7 @@ async def get_sensing_active(page: int = 1, page_size: int = 50):
             total = total_row[0] if total_row else 0
             cur.execute(
                 """
-                SELECT item_no, loc, week_start, alpha_weight,
+                SELECT item_id, loc, week_start, alpha_weight,
                        sensing_signal_qty, statistical_forecast_qty, blended_qty,
                        velocity_spike_ratio
                 FROM mv_sensing_overrides_active
@@ -128,7 +129,7 @@ async def get_sensing_active(page: int = 1, page_size: int = 50):
             rows = cur.fetchall()
 
     cols = [
-        "item_no", "loc", "week_start", "alpha_weight",
+        "item_id", "loc", "week_start", "alpha_weight",
         "sensing_signal_qty", "statistical_forecast_qty", "blended_qty",
         "velocity_spike_ratio",
     ]

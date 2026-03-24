@@ -52,6 +52,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 _cfg = yaml.safe_load(open("config/procurement_config.yaml"))
 _LT_FALLBACK = _cfg["procurement"]["lead_time_fallback_days"]
@@ -107,25 +108,26 @@ def create_po_from_exception(
     Returns:
         po_number of the created PO
     """
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT e.item_no, e.loc, e.recommended_order_qty,
-                   e.recommended_reorder_date,
-                   i.item_description,
-                   s.supplier_id, s.default_lead_time_days, s.currency
-            FROM fact_replenishment_exceptions e
-            LEFT JOIN dim_item i ON i.item_no = e.item_no
-            LEFT JOIN dim_item_supplier ims ON ims.item_no = e.item_no
-                AND ims.loc = e.loc AND ims.is_primary = TRUE
-            LEFT JOIN dim_supplier s ON s.supplier_id = ims.supplier_id
-            WHERE e.id = %s
-        """, (exception_id,))
-        row = cur.fetchone()
+    with profiled_section("fetch_exception_data"):
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT e.item_id, e.loc, e.recommended_order_qty,
+                       e.recommended_reorder_date,
+                       i.item_description,
+                       s.supplier_id, s.default_lead_time_days, s.currency
+                FROM fact_replenishment_exceptions e
+                LEFT JOIN dim_item i ON i.item_id = e.item_id
+                LEFT JOIN dim_item_supplier ims ON ims.item_id = e.item_id
+                    AND ims.loc = e.loc AND ims.is_primary = TRUE
+                LEFT JOIN dim_supplier s ON s.supplier_id = ims.supplier_id
+                WHERE e.id = %s
+            """, (exception_id,))
+            row = cur.fetchone()
 
     if not row:
         raise ValueError(f"Exception {exception_id} not found")
 
-    item_no, loc, rec_qty, reorder_date, item_desc, supplier_id, lead_time, currency = row
+    item_id, loc, rec_qty, reorder_date, item_desc, supplier_id, lead_time, currency = row
 
     ordered_qty = override_qty if override_qty is not None else float(rec_qty or 0)
     lt_days = lead_time or _LT_FALLBACK
@@ -137,39 +139,40 @@ def create_po_from_exception(
 
     po_number = generate_po_number(conn)
 
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO fact_purchase_orders (
-                po_number, line_number, item_no, item_description, loc,
-                supplier_id, ordered_qty, unit_of_measure, currency,
-                po_date, requested_delivery_date, status,
-                source_exception_id, created_by, notes
-            ) VALUES (
-                %s, 1, %s, %s, %s,
-                %s, %s, %s, %s,
-                CURRENT_DATE, %s, 'proposed',
-                %s, %s, %s
-            )
-            RETURNING po_line_id
-        """, (
-            po_number, item_no, item_desc, loc,
-            supplier_id, ordered_qty,
-            _cfg["procurement"]["default_unit_of_measure"], currency,
-            delivery_date, exception_id, performed_by, notes,
-        ))
-        po_line_id = cur.fetchone()[0]
+    with profiled_section("insert_po_and_audit_log"):
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO fact_purchase_orders (
+                    po_number, line_number, item_id, item_description, loc,
+                    supplier_id, ordered_qty, unit_of_measure, currency,
+                    po_date, requested_delivery_date, status,
+                    source_exception_id, created_by, notes
+                ) VALUES (
+                    %s, 1, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    CURRENT_DATE, %s, 'proposed',
+                    %s, %s, %s
+                )
+                RETURNING po_line_id
+            """, (
+                po_number, item_id, item_desc, loc,
+                supplier_id, ordered_qty,
+                _cfg["procurement"]["default_unit_of_measure"], currency,
+                delivery_date, exception_id, performed_by, notes,
+            ))
+            po_line_id = cur.fetchone()[0]
 
-        # Audit log entry
-        cur.execute("""
-            INSERT INTO fact_po_approval_log
-                (po_line_id, po_number, action, performed_by,
-                 new_status, new_qty, system_note)
-            VALUES (%s, %s, 'proposed', %s,
-                    'proposed', %s, %s)
-        """, (
-            po_line_id, po_number, performed_by, ordered_qty,
-            f"Auto-created from exception EXC-{exception_id}",
-        ))
+            # Audit log entry
+            cur.execute("""
+                INSERT INTO fact_po_approval_log
+                    (po_line_id, po_number, action, performed_by,
+                     new_status, new_qty, system_note)
+                VALUES (%s, %s, 'proposed', %s,
+                        'proposed', %s, %s)
+            """, (
+                po_line_id, po_number, performed_by, ordered_qty,
+                f"Auto-created from exception EXC-{exception_id}",
+            ))
 
     conn.commit()
     print(f"[PO CREATED] {po_number} from exception {exception_id}")
@@ -190,29 +193,30 @@ def approve_po(
     Planner approves a proposed PO (optionally adjusting quantity).
     proposed → planner_approved
     """
-    with conn.cursor() as cur:
-        cur.execute("""
-            UPDATE fact_purchase_orders
-            SET status = 'planner_approved',
-                planner_approved_by = %s,
-                planner_approved_at = NOW(),
-                ordered_qty = COALESCE(%s, ordered_qty)
-            WHERE po_number = %s AND status = 'proposed'
-            RETURNING po_line_id, ordered_qty
-        """, (approved_by, new_qty, po_number))
-        rows = cur.fetchall()
-
-        if not rows:
-            raise ValueError(f"PO {po_number} not found or not in 'proposed' state")
-
-        for po_line_id, qty in rows:
+    with profiled_section("approve_po"):
+        with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO fact_po_approval_log
-                    (po_line_id, po_number, action, performed_by,
-                     old_status, new_status, new_qty)
-                VALUES (%s, %s, 'planner_approved', %s,
-                        'proposed', 'planner_approved', %s)
-            """, (po_line_id, po_number, approved_by, qty))
+                UPDATE fact_purchase_orders
+                SET status = 'planner_approved',
+                    planner_approved_by = %s,
+                    planner_approved_at = NOW(),
+                    ordered_qty = COALESCE(%s, ordered_qty)
+                WHERE po_number = %s AND status = 'proposed'
+                RETURNING po_line_id, ordered_qty
+            """, (approved_by, new_qty, po_number))
+            rows = cur.fetchall()
+
+            if not rows:
+                raise ValueError(f"PO {po_number} not found or not in 'proposed' state")
+
+            for po_line_id, qty in rows:
+                cur.execute("""
+                    INSERT INTO fact_po_approval_log
+                        (po_line_id, po_number, action, performed_by,
+                         old_status, new_status, new_qty)
+                    VALUES (%s, %s, 'planner_approved', %s,
+                            'proposed', 'planner_approved', %s)
+                """, (po_line_id, po_number, approved_by, qty))
 
     conn.commit()
     print(f"[PO APPROVED] {po_number} by {approved_by}")
@@ -233,32 +237,33 @@ def release_po(
     Buyer releases a planner-approved PO.
     planner_approved → buyer_released
     """
-    with conn.cursor() as cur:
-        cur.execute("""
-            UPDATE fact_purchase_orders
-            SET status = 'buyer_released',
-                buyer_released_by = %s,
-                buyer_released_at = NOW(),
-                confirmed_delivery_date = COALESCE(%s, confirmed_delivery_date),
-                notes = COALESCE(%s, notes)
-            WHERE po_number = %s AND status = 'planner_approved'
-            RETURNING po_line_id
-        """, (released_by, confirmed_delivery_date, notes, po_number))
-        rows = cur.fetchall()
-
-        if not rows:
-            raise ValueError(
-                f"PO {po_number} not found or not in 'planner_approved' state"
-            )
-
-        for (po_line_id,) in rows:
+    with profiled_section("release_po"):
+        with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO fact_po_approval_log
-                    (po_line_id, po_number, action, performed_by,
-                     old_status, new_status)
-                VALUES (%s, %s, 'buyer_released', %s,
-                        'planner_approved', 'buyer_released')
-            """, (po_line_id, po_number, released_by))
+                UPDATE fact_purchase_orders
+                SET status = 'buyer_released',
+                    buyer_released_by = %s,
+                    buyer_released_at = NOW(),
+                    confirmed_delivery_date = COALESCE(%s, confirmed_delivery_date),
+                    notes = COALESCE(%s, notes)
+                WHERE po_number = %s AND status = 'planner_approved'
+                RETURNING po_line_id
+            """, (released_by, confirmed_delivery_date, notes, po_number))
+            rows = cur.fetchall()
+
+            if not rows:
+                raise ValueError(
+                    f"PO {po_number} not found or not in 'planner_approved' state"
+                )
+
+            for (po_line_id,) in rows:
+                cur.execute("""
+                    INSERT INTO fact_po_approval_log
+                        (po_line_id, po_number, action, performed_by,
+                         old_status, new_status)
+                    VALUES (%s, %s, 'buyer_released', %s,
+                            'planner_approved', 'buyer_released')
+                """, (po_line_id, po_number, released_by))
 
     conn.commit()
     print(f"[PO RELEASED] {po_number} by {released_by}")
@@ -288,30 +293,32 @@ def export_pos_to_csv(
     Returns:
         Number of lines written to CSV
     """
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT
-                po.po_number, po.line_number, po.item_no, po.item_description,
-                po.loc, po.supplier_id, s.supplier_name, po.ordered_qty,
-                po.unit_of_measure, po.unit_cost, po.total_value, po.currency,
-                po.requested_delivery_date, po.po_date, po.buyer_code,
-                po.company_code, po.plant_code, po.source_exception_id, po.notes
-            FROM fact_purchase_orders po
-            LEFT JOIN dim_supplier s ON s.supplier_id = po.supplier_id
-            WHERE po.po_number = ANY(%s)
-              AND po.status IN ('buyer_released', 'po_sent')
-            ORDER BY po.po_number, po.line_number
-        """, (po_numbers,))
-        rows = cur.fetchall()
+    with profiled_section("fetch_po_data_for_export"):
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    po.po_number, po.line_number, po.item_id, po.item_description,
+                    po.loc, po.supplier_id, s.supplier_name, po.ordered_qty,
+                    po.unit_of_measure, po.unit_cost, po.total_value, po.currency,
+                    po.requested_delivery_date, po.po_date, po.buyer_code,
+                    po.company_code, po.plant_code, po.source_exception_id, po.notes
+                FROM fact_purchase_orders po
+                LEFT JOIN dim_supplier s ON s.supplier_id = po.supplier_id
+                WHERE po.po_number = ANY(%s)
+                  AND po.status IN ('buyer_released', 'po_sent')
+                ORDER BY po.po_number, po.line_number
+            """, (po_numbers,))
+            rows = cur.fetchall()
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(dict(zip(FIELDNAMES, [
-                str(v) if v is not None else "" for v in row
-            ])))
+    with profiled_section("write_csv_export"):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(dict(zip(FIELDNAMES, [
+                    str(v) if v is not None else "" for v in row
+                ])))
 
     return len(rows)
 
@@ -323,7 +330,7 @@ def export_pos_to_csv(
 def _map_fields(po_data: tuple, field_mapping: dict | None) -> dict:
     """Apply ERP field mapping from dim_erp_integration.field_mapping JSONB."""
     ds_fields = [
-        "po_number", "item_no", "loc", "supplier_id", "ordered_qty",
+        "po_number", "item_id", "loc", "supplier_id", "ordered_qty",
         "unit_of_measure", "unit_cost", "currency",
         "requested_delivery_date", "po_date", "buyer_code",
         "company_code", "plant_code",
@@ -354,12 +361,13 @@ def send_po_to_erp(
     """
     import httpx  # import here to keep it optional
 
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT erp_type, endpoint_url, auth_method, field_mapping, auth_credential_ref
-            FROM dim_erp_integration WHERE integration_id = %s AND active = TRUE
-        """, (integration_id,))
-        integration = cur.fetchone()
+    with profiled_section("fetch_erp_integration"):
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT erp_type, endpoint_url, auth_method, field_mapping, auth_credential_ref
+                FROM dim_erp_integration WHERE integration_id = %s AND active = TRUE
+            """, (integration_id,))
+            integration = cur.fetchone()
 
     if not integration:
         return {"success": False, "erp_po_number": None, "error": "Integration not found"}
@@ -370,59 +378,61 @@ def send_po_to_erp(
         return {"success": False, "erp_po_number": None,
                 "error": "Use export_csv action for CSV export integration"}
 
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT po_number, item_no, loc, supplier_id, ordered_qty,
-                   unit_of_measure, unit_cost, currency,
-                   requested_delivery_date, po_date, buyer_code,
-                   company_code, plant_code
-            FROM fact_purchase_orders WHERE po_number = %s
-        """, (po_number,))
-        po_data = cur.fetchone()
+    with profiled_section("fetch_po_for_erp_send"):
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT po_number, item_id, loc, supplier_id, ordered_qty,
+                       unit_of_measure, unit_cost, currency,
+                       requested_delivery_date, po_date, buyer_code,
+                       company_code, plant_code
+                FROM fact_purchase_orders WHERE po_number = %s
+            """, (po_number,))
+            po_data = cur.fetchone()
 
     if not po_data:
         return {"success": False, "erp_po_number": None, "error": "PO not found"}
 
     payload = _map_fields(po_data, field_mapping)
 
-    try:
-        timeout = _cfg["procurement"]["erp_integration"]["timeout_seconds"]
-        response = httpx.post(
-            endpoint_url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=float(timeout),
-        )
-        resp_json = response.json()
-        erp_po_number = resp_json.get("po_number") or resp_json.get("EBELN")
-        success = response.status_code in (200, 201)
+    with profiled_section("send_to_erp_api"):
+        try:
+            timeout = _cfg["procurement"]["erp_integration"]["timeout_seconds"]
+            response = httpx.post(
+                endpoint_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=float(timeout),
+            )
+            resp_json = response.json()
+            erp_po_number = resp_json.get("po_number") or resp_json.get("EBELN")
+            success = response.status_code in (200, 201)
 
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE fact_purchase_orders
-                SET status = 'po_sent',
-                    erp_po_number = %s,
-                    erp_sent_at = NOW(),
-                    erp_response_code = %s,
-                    erp_response_payload = %s::jsonb,
-                    erp_integration_type = %s
-                WHERE po_number = %s
-            """, (erp_po_number, str(response.status_code),
-                  json.dumps(resp_json), erp_type, po_number))
-        conn.commit()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE fact_purchase_orders
+                    SET status = 'po_sent',
+                        erp_po_number = %s,
+                        erp_sent_at = NOW(),
+                        erp_response_code = %s,
+                        erp_response_payload = %s::jsonb,
+                        erp_integration_type = %s
+                    WHERE po_number = %s
+                """, (erp_po_number, str(response.status_code),
+                      json.dumps(resp_json), erp_type, po_number))
+            conn.commit()
 
-        return {"success": success, "erp_po_number": erp_po_number, "error": None}
+            return {"success": success, "erp_po_number": erp_po_number, "error": None}
 
-    except Exception as e:
-        error_msg = str(e)
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE fact_purchase_orders
-                SET erp_response_payload = %s::jsonb
-                WHERE po_number = %s
-            """, (json.dumps({"error": error_msg}), po_number))
-        conn.commit()
-        return {"success": False, "erp_po_number": None, "error": error_msg}
+        except Exception as e:
+            error_msg = str(e)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE fact_purchase_orders
+                    SET erp_response_payload = %s::jsonb
+                    WHERE po_number = %s
+                """, (json.dumps({"error": error_msg}), po_number))
+            conn.commit()
+            return {"success": False, "erp_po_number": None, "error": error_msg}
 
 
 # ---------------------------------------------------------------------------

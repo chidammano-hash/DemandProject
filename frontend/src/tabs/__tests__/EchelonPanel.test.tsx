@@ -15,7 +15,7 @@ vi.mock("@/api/queries/evolution", () => ({
     page: 1,
     rows: [
       {
-        item_no: "100320",
+        item_id: "100320",
         loc: "DC-MAIN",
         node_type: "dc",
         pooled_sigma: 45.2,

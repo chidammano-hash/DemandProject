@@ -79,7 +79,7 @@ Feature importance shifts over time. Seasonality features matter more in certain
 | GET | `/forecast/shap/{model_id}/summary` | Cross-timeframe feature importance |
 | GET | `/forecast/shap/{model_id}/timeframes` | Available timeframes with labels |
 | GET | `/forecast/shap/{model_id}/timeframe/{idx}` | Per-timeframe feature detail |
-| GET | `/forecast/shap/{model_id}/dfu` | Per-DFU signed SHAP values for Item Analysis tab |
+| GET | `/forecast/shap/{model_id}/sku` | Per-DFU signed SHAP values for Item Analysis tab |
 
 The SHAP panel in the Accuracy tab shows a horizontal bar chart with indigo bars for selected features and gray bars for dropped features.
 

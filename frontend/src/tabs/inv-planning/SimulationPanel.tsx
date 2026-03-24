@@ -49,7 +49,7 @@ export function SimulationPanel() {
   });
 
   const runMutation = useMutation({
-    mutationFn: (body: { item_no: string; loc: string; target_csl?: number }) => runSimulation(body),
+    mutationFn: (body: { item_id: string; loc: string; target_csl?: number }) => runSimulation(body),
     onSuccess: (result) => {
       setSimResult(result);
       queryClient.invalidateQueries({ queryKey: simulationKeys.results() });
@@ -88,7 +88,7 @@ export function SimulationPanel() {
         <button
           className="h-8 px-4 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           disabled={runMutation.isPending || !simItemNo || !simLoc}
-          onClick={() => runMutation.mutate({ item_no: simItemNo, loc: simLoc, target_csl: targetCsl / 100 })}
+          onClick={() => runMutation.mutate({ item_id: simItemNo, loc: simLoc, target_csl: targetCsl / 100 })}
         >
           {runMutation.isPending ? "Simulating (~20s)..." : "Run Simulation"}
         </button>
@@ -172,7 +172,7 @@ export function SimulationPanel() {
               <tbody>
                 {(recentRuns?.rows ?? []).map((r: SimulationResult) => (
                   <tr key={r.sim_run_id} className="border-b last:border-0 hover:bg-muted/30">
-                    <td className="py-1 pr-2 font-mono">{r.item_no}</td>
+                    <td className="py-1 pr-2 font-mono">{r.item_id}</td>
                     <td className="py-1 pr-2">{r.loc}</td>
                     <td className="py-1 pr-2">{r.simulation_date?.slice(0, 10) ?? "-"}</td>
                     <td className="py-1 pr-2 text-right">{formatFixed(r.recommended_ss, 0)}</td>

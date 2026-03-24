@@ -65,7 +65,7 @@ async def test_investment_summary_200():
 
 @pytest.mark.asyncio
 async def test_investment_detail_200():
-    # 16 columns: item_no, loc, abc_vol, abc_xyz_segment, current_ss_qty, current_ss_value,
+    # 16 columns: item_id, loc, abc_vol, abc_xyz_segment, current_ss_qty, current_ss_value,
     # current_csl, recommended_ss_qty, recommended_ss_value, recommended_csl,
     # ss_increment_qty, investment_increment, csl_increment, marginal_roi,
     # investment_rank, cumulative_investment

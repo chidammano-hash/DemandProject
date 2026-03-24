@@ -65,7 +65,7 @@ Output is written to the blended demand forecast table, consumed by downstream r
 
 | Column | Type | Purpose |
 |---|---|---|
-| `item_no` | TEXT | Item identifier |
+| `item_id` | TEXT | Item identifier |
 | `loc` | TEXT | Location identifier |
 | `month_start` | DATE | Planning month |
 | `statistical_qty` | NUMERIC | Champion model forecast |
@@ -119,7 +119,7 @@ segment_overrides:
 
 ## Dependencies
 
-- **Upstream:** `fact_external_forecast_monthly` (champion model), `fact_demand_signals` (sensing), `dim_dfu` (ABC class)
+- **Upstream:** `fact_external_forecast_monthly` (champion model), `fact_demand_signals` (sensing), `dim_sku` (ABC class)
 - **Downstream:** Replenishment planning, financial planning, S&OP demand review
 - **Libraries:** pandas, numpy
 
@@ -129,7 +129,7 @@ segment_overrides:
 
 - [../04-inventory/06-analytics](../04-inventory/06-analytics.md) -- Demand signals (sensing input)
 - [../02-forecasting/02-05-champion-selection](../02-forecasting/02-05-champion-selection.md) -- Statistical forecast source
-- [01-dfu-clustering](01-dfu-clustering.md) -- Cluster-level alpha defaults possible via segment mapping
+- [01-sku-clustering](01-sku-clustering.md) -- Cluster-level alpha defaults possible via segment mapping
 
 ## Frontend
 

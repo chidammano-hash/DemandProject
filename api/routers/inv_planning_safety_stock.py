@@ -1,20 +1,20 @@
 """Inventory Planning — IPfeature3: Safety Stock Engine endpoints."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
 
 from api.auth import require_api_key
-from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
+from api.core import _f, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
 
 class SafetyStockOverrideBody(BaseModel):
-    item_no: str
+    item_id: str
     loc: str
     ss_override_qty: float
     reason: str
@@ -44,7 +44,7 @@ def get_ss_summary(
     params: list = [policy_version]
 
     if item:
-        where_parts.append("s.item_no ILIKE %s")
+        where_parts.append("s.item_id ILIKE %s")
         params.append(f"%{item}%")
     if location:
         where_parts.append("s.loc ILIKE %s")
@@ -56,7 +56,7 @@ def get_ss_summary(
         where_parts.append("d.cluster_assignment ILIKE %s")
         params.append(f"%{cluster_assignment.strip()}%")
     add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market,
-                          item_col="s.item_no", loc_col="s.loc")
+                          item_col="s.item_id", loc_col="s.loc")
 
     where_sql = "WHERE " + " AND ".join(where_parts)
 
@@ -65,12 +65,12 @@ def get_ss_summary(
     combined_sql = f"""
         WITH filtered AS (
             SELECT
-                s.item_no, s.loc, s.abc_vol,
+                s.item_id, s.loc, s.abc_vol,
                 s.ss_combined, s.ss_coverage, s.ss_gap,
                 s.is_below_ss, s.target_dos_min, s.current_qty_on_hand
             FROM fact_safety_stock_targets s
-            LEFT JOIN dim_dfu d
-                   ON s.item_no = d.dmdunit AND s.loc = d.loc
+            LEFT JOIN dim_sku d
+                   ON s.item_id = d.item_id AND s.loc = d.loc
             {where_sql}
         ),
         summary AS (
@@ -95,7 +95,7 @@ def get_ss_summary(
         ),
         top_gaps AS (
             SELECT
-                item_no, loc, ss_combined, current_qty_on_hand,
+                item_id, loc, ss_combined, current_qty_on_hand,
                 ss_gap, ss_coverage
             FROM filtered
             WHERE ss_gap < 0
@@ -116,7 +116,7 @@ def get_ss_summary(
         FROM by_class
         UNION ALL
         SELECT 'G' AS _tag,
-               item_no, loc, ss_combined::TEXT,
+               item_id, loc, ss_combined::TEXT,
                current_qty_on_hand::TEXT, ss_gap::TEXT,
                ss_coverage::TEXT, NULL, NULL
         FROM top_gaps
@@ -152,7 +152,7 @@ def get_ss_summary(
             ))
         elif tag == "G":
             gap_rows.append((
-                row[1],                                    # item_no
+                row[1],                                    # item_id
                 row[2],                                    # loc
                 float(row[3]) if row[3] else None,         # ss_combined
                 float(row[4]) if row[4] else None,         # current_qty_on_hand
@@ -176,7 +176,7 @@ def get_ss_summary(
 
     top_gaps = [
         {
-            "item_no":       r[0],
+            "item_id":       r[0],
             "loc":           r[1],
             "ss_combined":   _f(r[2]),
             "current_qty":   _f(r[3]),
@@ -223,7 +223,7 @@ def get_ss_detail(
 
     allowed_sort = {
         "ss_gap", "ss_coverage", "ss_combined", "reorder_point", "target_dos_min",
-        "item_no", "loc", "abc_vol",
+        "item_id", "loc", "abc_vol",
     }
     order_col = sort_by if sort_by in allowed_sort else "ss_gap"
     order_dir = "DESC" if sort_dir.lower() == "desc" else "ASC"
@@ -232,7 +232,7 @@ def get_ss_detail(
     params: list = [policy_version]
 
     if item:
-        where_parts.append("s.item_no ILIKE %s")
+        where_parts.append("s.item_id ILIKE %s")
         params.append(f"%{item}%")
     if location:
         where_parts.append("s.loc ILIKE %s")
@@ -247,28 +247,28 @@ def get_ss_detail(
         where_parts.append("d.cluster_assignment ILIKE %s")
         params.append(f"%{cluster_assignment.strip()}%")
     add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market,
-                          item_col="s.item_no", loc_col="s.loc")
+                          item_col="s.item_id", loc_col="s.loc")
 
     where_sql = "WHERE " + " AND ".join(where_parts)
 
     count_sql = f"""
         SELECT COUNT(*)
         FROM fact_safety_stock_targets s
-        LEFT JOIN dim_dfu d ON s.item_no = d.dmdunit AND s.loc = d.loc
+        LEFT JOIN dim_sku d ON s.item_id = d.item_id AND s.loc = d.loc
         {where_sql}
     """
 
     data_params = params + [limit, offset]
     data_sql = f"""
         SELECT
-            s.item_no, s.loc, s.abc_vol,
+            s.item_id, s.loc, s.abc_vol,
             s.service_level_target, s.z_score,
             s.ss_combined, s.reorder_point,
             s.current_qty_on_hand, s.current_dos,
             s.ss_gap, s.ss_coverage, s.is_below_ss,
             s.target_dos_min
         FROM fact_safety_stock_targets s
-        LEFT JOIN dim_dfu d ON s.item_no = d.dmdunit AND s.loc = d.loc
+        LEFT JOIN dim_sku d ON s.item_id = d.item_id AND s.loc = d.loc
         {where_sql}
         ORDER BY {order_col} {order_dir} NULLS LAST
         LIMIT %s OFFSET %s
@@ -285,7 +285,7 @@ def get_ss_detail(
         "total": int(total),
         "rows": [
             {
-                "item_no":              r[0],
+                "item_id":              r[0],
                 "loc":                  r[1],
                 "abc_vol":              r[2],
                 "service_level_target": _f(r[3]),
@@ -320,7 +320,7 @@ def get_ss_waterfall(
 
     sql = """
         SELECT
-            item_no, loc,
+            item_id, loc,
             ss_demand_only, ss_lt_only, ss_combined,
             reorder_point,
             current_qty_on_hand,
@@ -329,7 +329,7 @@ def get_ss_waterfall(
             lead_time_mean_days, lead_time_std_days,
             demand_mean_monthly, demand_std_monthly
         FROM fact_safety_stock_targets
-        WHERE item_no = %s
+        WHERE item_id = %s
           AND loc = %s
           AND policy_version = %s
         LIMIT 1
@@ -347,7 +347,7 @@ def get_ss_waterfall(
         )
 
     return {
-        "item_no":               row[0],
+        "item_id":               row[0],
         "loc":                   row[1],
         "demand_component":      _f(row[2]),
         "lt_component":          _f(row[3]),
@@ -391,27 +391,27 @@ def override_safety_stock(
                                  ELSE NULL
                             END,
             modified_ts   = %s
-        WHERE item_no = %s
+        WHERE item_id = %s
           AND loc     = %s
         RETURNING
-            item_no, loc, ss_combined, ss_method, modified_ts
+            item_id, loc, ss_combined, ss_method, modified_ts
     """
 
     qty = body.ss_override_qty
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, [qty, qty, qty, qty, qty, now, body.item_no, body.loc])
+            cur.execute(sql, [qty, qty, qty, qty, qty, now, body.item_id, body.loc])
             row = cur.fetchone()
         conn.commit()
 
     if not row:
         raise HTTPException(
             status_code=404,
-            detail=f"No safety stock record found for item={body.item_no} loc={body.loc}",
+            detail=f"No safety stock record found for item={body.item_id} loc={body.loc}",
         )
 
     return {
-        "item_no":     row[0],
+        "item_id":     row[0],
         "loc":         row[1],
         "ss_combined": float(row[2]) if row[2] is not None else None,
         "ss_method":   row[3],

@@ -92,7 +92,7 @@ async def test_intramonth_daily_200():
     assert resp.status_code == 200
     data = resp.json()
     assert "daily" in data
-    assert "item_no" in data
+    assert "item_id" in data
 
 
 @pytest.mark.asyncio

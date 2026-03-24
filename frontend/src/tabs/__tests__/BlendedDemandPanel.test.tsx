@@ -14,7 +14,7 @@ vi.mock("@/api/queries/evolution", () => ({
     page: 1,
     rows: [
       {
-        item_no: "100320",
+        item_id: "100320",
         loc: "1401-BULK",
         week_start: "2026-03-09",
         plan_version: "latest",
@@ -28,7 +28,7 @@ vi.mock("@/api/queries/evolution", () => ({
     ],
   }),
   fetchBlendedSummary: vi.fn().mockResolvedValue({
-    total_dfus: 200,
+    total_skus: 200,
     total_weeks: 800,
     avg_alpha: 0.62,
     capped_count: 5,
@@ -46,7 +46,7 @@ describe("BlendedDemandPanel", () => {
         <BlendedDemandPanel />
       </TestQueryWrapper>
     );
-    expect(await screen.findByText("DFUs Active")).toBeDefined();
+    expect(await screen.findByText("SKUs Active")).toBeDefined();
     expect(await screen.findByText("Weeks Computed")).toBeDefined();
     expect(await screen.findByText("Avg Alpha (Current)")).toBeDefined();
     expect(await screen.findByText("Capped Outliers")).toBeDefined();

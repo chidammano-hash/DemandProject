@@ -41,7 +41,7 @@ const SCORE_COMPONENTS: Record<string, { label: string; max: number; description
   policy_compliance: {
     label: "Policy Compliance",
     max: 25,
-    description: "Percentage of DFUs following their assigned replenishment policy. Score 25 = ≥95% compliant.",
+    description: "Percentage of SKUs following their assigned replenishment policy. Score 25 = ≥95% compliant.",
   },
   // aliases used by the existing component_avgs keys
   dos_target: {
@@ -141,7 +141,7 @@ export function PortfolioHealthPanel() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         {(["healthy", "monitor", "at_risk", "critical"] as const).map((tier) => {
           const count = healthSummary?.by_tier[tier] ?? 0;
-          const total = healthSummary?.total_dfus ?? 0;
+          const total = healthSummary?.total_skus ?? 0;
           const pct = total > 0 ? ((count / total) * 100).toFixed(1) : "0.0";
           const colors: Record<string, string> = {
             healthy:  "border-green-200 bg-green-50 dark:bg-green-950",
@@ -202,7 +202,7 @@ export function PortfolioHealthPanel() {
                         <Cell key={entry.tier} fill={TIER_COLORS[entry.tier]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(v: number) => [v.toLocaleString(), "DFUs"]} />
+                    <Tooltip formatter={(v: number) => [v.toLocaleString(), "SKUs"]} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -408,8 +408,8 @@ export function PortfolioHealthPanel() {
                       critical: "bg-red-100 text-red-800",
                     };
                     return (
-                      <tr key={`${row.item_no}-${row.loc}`} className="border-b last:border-0">
-                        <td className="py-1 pr-3 font-mono">{row.item_no}</td>
+                      <tr key={`${row.item_id}-${row.loc}`} className="border-b last:border-0">
+                        <td className="py-1 pr-3 font-mono">{row.item_id}</td>
                         <td className="py-1 pr-3">{row.loc}</td>
                         <td className="text-center py-1 pr-3 font-bold">{row.health_score}</td>
                         <td className="text-center py-1 pr-3">

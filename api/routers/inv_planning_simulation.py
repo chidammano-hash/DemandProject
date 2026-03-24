@@ -1,13 +1,13 @@
 """Inventory Planning — IPfeature10: Monte Carlo Simulation endpoints."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.auth import require_api_key
-from api.core import _f, _s, get_conn, set_cache
+from api.core import _f, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -16,7 +16,7 @@ router = APIRouter(tags=["inv-planning"])
 
 @router.post("/inv-planning/simulation/run", status_code=201)
 def run_simulation(
-    item_no: str,
+    item_id: str,
     loc: str,
     n_simulations: int = 10000,
     target_csl: Optional[float] = None,
@@ -29,7 +29,7 @@ def run_simulation(
     try:
         from scripts.run_ss_simulation import run as _sim_run
         result = _sim_run(
-            item_no=item_no,
+            item_id=item_id,
             loc=loc,
             n_simulations=n_simulations,
             target_csl=target_csl,
@@ -50,14 +50,14 @@ def get_simulation_results(
     import json as _json
 
     sql = """
-        SELECT sim_run_id, item_no, loc, simulation_date, n_simulations,
+        SELECT sim_run_id, item_id, loc, simulation_date, n_simulations,
                demand_distribution, demand_mean, demand_std,
                lt_distribution, lt_mean_days, lt_std_days,
                results_by_ss_level,
                target_csl, recommended_ss, recommended_ss_days,
                analytical_ss, sim_vs_analytical_pct
         FROM fact_ss_simulation_results
-        WHERE item_no = %s AND loc = %s
+        WHERE item_id = %s AND loc = %s
         ORDER BY simulation_date DESC, load_ts DESC
         LIMIT 1
     """
@@ -72,7 +72,7 @@ def get_simulation_results(
     curve = _json.loads(row[11]) if isinstance(row[11], str) else (row[11] or [])
     return {
         "sim_run_id":           row[0],
-        "item_no":              row[1],
+        "item_id":              row[1],
         "loc":                  row[2],
         "simulation_date":      str(row[3]),
         "n_simulations":        int(row[4]),
@@ -105,13 +105,13 @@ def get_simulation_compare(
         SELECT recommended_ss, analytical_ss, sim_vs_analytical_pct,
                results_by_ss_level, target_csl
         FROM fact_ss_simulation_results
-        WHERE item_no = %s AND loc = %s
+        WHERE item_id = %s AND loc = %s
         ORDER BY simulation_date DESC
         LIMIT 1
     """
     eom_sql = """
         SELECT eom_qty_on_hand FROM agg_inventory_monthly
-        WHERE item_no = %s AND loc = %s
+        WHERE item_id = %s AND loc = %s
         ORDER BY month_start DESC LIMIT 1
     """
 
@@ -136,7 +136,7 @@ def get_simulation_compare(
                 break
 
     return {
-        "item_no":              item,
+        "item_id":              item,
         "loc":                  location,
         "analytical_ss":        _f(row[1]),
         "simulated_ss":         _f(row[0]),
@@ -153,7 +153,7 @@ def get_simulation_status(
 ) -> dict:
     """Get status of a simulation run."""
     sql = """
-        SELECT item_no, loc, simulation_date, load_ts
+        SELECT item_id, loc, simulation_date, load_ts
         FROM fact_ss_simulation_results
         WHERE sim_run_id = %s
         LIMIT 1
@@ -169,7 +169,7 @@ def get_simulation_status(
         "sim_run_id":    sim_run_id,
         "status":        "completed",
         "progress_pct":  100,
-        "item_no":       row[0],
+        "item_id":       row[0],
         "loc":           row[1],
         "started_at":    None,
         "completed_at":  str(row[3]) if row[3] else None,

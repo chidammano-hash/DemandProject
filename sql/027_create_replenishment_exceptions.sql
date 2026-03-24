@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS fact_replenishment_exceptions (
     exception_sk              BIGSERIAL PRIMARY KEY,
     exception_id              TEXT UNIQUE NOT NULL DEFAULT gen_random_uuid()::TEXT,
-    item_no                   TEXT NOT NULL,
+    item_id                   TEXT NOT NULL,
     loc                       TEXT NOT NULL,
     exception_date            DATE NOT NULL,
     exception_type            TEXT NOT NULL,
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS fact_replenishment_exceptions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_exceptions_item_loc
-    ON fact_replenishment_exceptions (item_no, loc);
+    ON fact_replenishment_exceptions (item_id, loc);
 CREATE INDEX IF NOT EXISTS idx_exceptions_type
     ON fact_replenishment_exceptions (exception_type);
 CREATE INDEX IF NOT EXISTS idx_exceptions_severity

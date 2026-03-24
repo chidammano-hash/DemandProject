@@ -16,14 +16,14 @@ vi.mock("../../api/queries", () => ({
         plan_label: "production",
         model_id: "lgbm_quantile_cluster",
         horizon_months: 12,
-        dfu_count: 4823,
+        sku_count: 4823,
         status: "active",
         generated_at: "2026-04-01T06:00:00Z",
       },
     ],
   }),
   fetchDemandPlan: vi.fn().mockResolvedValue({
-    item_no: "100320",
+    item_id: "100320",
     loc: "1401-BULK",
     plan_version: "2026-04-01_production",
     generated_at: "2026-04-01T06:00:00Z",
@@ -52,7 +52,7 @@ vi.mock("../../api/queries", () => ({
     ],
   }),
   fetchDemandPlanWeekly: vi.fn().mockResolvedValue({
-    item_no: "100320",
+    item_id: "100320",
     loc: "1401-BULK",
     plan_version: "2026-04-01_production",
     weeks: [

@@ -4,13 +4,13 @@
 Reads:
   - fact_production_forecast (CI bands + point forecasts)
   - fact_dfu_policy_assignment + dim_replenishment_policy (policy type per DFU)
-  - fact_inventory_snapshot (lead time data — avg/std per item_no + loc)
+  - fact_inventory_snapshot (lead time data — avg/std per item_id + loc)
   - fact_safety_stock_targets (historical SS for delta comparison)
   - agg_inventory_monthly (current on-hand position)
-  - dim_dfu (ABC class, demand_std fallback, ml_cluster)
+  - dim_sku (ABC class, demand_std fallback, ml_cluster)
 
 Writes:
-  - fact_replenishment_plan (upsert on plan_version + item_no + loc + plan_month)
+  - fact_replenishment_plan (upsert on plan_version + item_id + loc + plan_month)
 
 Usage:
     uv run python scripts/compute_replenishment_plan.py
@@ -39,6 +39,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -286,13 +287,13 @@ def get_latest_plan_version(conn: psycopg.Connection) -> str | None:
 def load_production_forecasts(
     conn: psycopg.Connection,
     plan_version: str,
-    item_no: str | None = None,
+    item_id: str | None = None,
     loc: str | None = None,
 ) -> pd.DataFrame:
     """Load per-DFU-month point forecasts + CI bands for the given plan_version."""
     sql = """
         SELECT
-            item_no, loc, plan_version,
+            item_id, loc, plan_version,
             forecast_month, forecast_qty,
             forecast_qty_lower, forecast_qty_upper,
             horizon_months, model_id
@@ -300,20 +301,20 @@ def load_production_forecasts(
         WHERE plan_version = %s
     """
     params: list[Any] = [plan_version]
-    if item_no:
-        sql += " AND item_no = %s"
-        params.append(item_no)
+    if item_id:
+        sql += " AND item_id = %s"
+        params.append(item_id)
     if loc:
         sql += " AND loc = %s"
         params.append(loc)
-    sql += " ORDER BY item_no, loc, forecast_month"
+    sql += " ORDER BY item_id, loc, forecast_month"
 
     with conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
 
     cols = [
-        "item_no", "loc", "plan_version", "forecast_month",
+        "item_id", "loc", "plan_version", "forecast_month",
         "forecast_qty", "forecast_qty_lower", "forecast_qty_upper",
         "horizon_months", "model_id",
     ]
@@ -324,7 +325,7 @@ def load_policy_assignments(conn: psycopg.Connection) -> pd.DataFrame:
     """Load active policy assignments with policy details per DFU."""
     sql = """
         SELECT
-            pa.item_no,
+            pa.item_id,
             pa.loc,
             pa.policy_id,
             rp.policy_type,
@@ -336,7 +337,7 @@ def load_policy_assignments(conn: psycopg.Connection) -> pd.DataFrame:
         cur.execute(sql)
         rows = cur.fetchall()
 
-    cols = ["item_no", "loc", "policy_id", "policy_type", "review_cycle_days"]
+    cols = ["item_id", "loc", "policy_id", "policy_type", "review_cycle_days"]
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
 
@@ -344,18 +345,18 @@ def load_dfu_attrs(conn: psycopg.Connection) -> pd.DataFrame:
     """Load DFU attributes: ABC class, demand_std fallback, ml_cluster."""
     sql = """
         SELECT
-            dmdunit                         AS item_no,
+            item_id                         AS item_id,
             loc,
             abc_vol,
             COALESCE(demand_std, 0.0)       AS demand_std,
             ml_cluster
-        FROM dim_dfu
+        FROM dim_sku
     """
     with conn.cursor() as cur:
         cur.execute(sql)
         rows = cur.fetchall()
 
-    cols = ["item_no", "loc", "abc_vol", "demand_std", "ml_cluster"]
+    cols = ["item_id", "loc", "abc_vol", "demand_std", "ml_cluster"]
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
 
@@ -368,14 +369,14 @@ def load_lead_times(conn: psycopg.Connection) -> pd.DataFrame:
     """
     sql = """
         SELECT
-            item_no,
+            item_id,
             loc,
             AVG(lead_time_days)    AS lt_mean_days,
             STDDEV(lead_time_days) AS lt_std_days
         FROM fact_inventory_snapshot
         WHERE lead_time_days IS NOT NULL
           AND lead_time_days > 0
-        GROUP BY item_no, loc
+        GROUP BY item_id, loc
     """
     try:
         with conn.cursor() as cur:
@@ -385,14 +386,14 @@ def load_lead_times(conn: psycopg.Connection) -> pd.DataFrame:
         log.warning("Could not load lead times from fact_inventory_snapshot — config defaults will apply.")
         rows = []
 
-    cols = ["item_no", "loc", "lt_mean_days", "lt_std_days"]
+    cols = ["item_id", "loc", "lt_mean_days", "lt_std_days"]
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
 
 def load_historical_ss(conn: psycopg.Connection) -> pd.DataFrame:
     """Load latest historical safety stock targets for delta comparison."""
     sql = """
-        SELECT item_no, loc, ss_combined
+        SELECT item_id, loc, ss_combined
         FROM fact_safety_stock_targets
     """
     try:
@@ -403,29 +404,29 @@ def load_historical_ss(conn: psycopg.Connection) -> pd.DataFrame:
         log.warning("fact_safety_stock_targets not available — ss_delta columns will be NULL.")
         rows = []
 
-    cols = ["item_no", "loc", "historical_ss"]
+    cols = ["item_id", "loc", "historical_ss"]
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
 
 def load_inventory_position(conn: psycopg.Connection) -> pd.DataFrame:
     """Load the most recent EOM on-hand quantity per DFU from agg_inventory_monthly."""
     sql = """
-        SELECT DISTINCT ON (item_no, loc)
-            item_no,
+        SELECT DISTINCT ON (item_id, loc)
+            item_id,
             loc,
             eom_qty_on_hand AS current_qty_on_hand
         FROM agg_inventory_monthly
-        ORDER BY item_no, loc, month_start DESC
+        ORDER BY item_id, loc, month_start DESC
     """
     try:
         with conn.cursor() as cur:
             cur.execute(sql)
             rows = cur.fetchall()
-    except Exception:
+    except psycopg.Error:
         log.warning("agg_inventory_monthly not available — current_qty_on_hand will default to 0.")
         rows = []
 
-    cols = ["item_no", "loc", "current_qty_on_hand"]
+    cols = ["item_id", "loc", "current_qty_on_hand"]
     return pd.DataFrame(rows, columns=cols) if rows else pd.DataFrame(columns=cols)
 
 
@@ -438,7 +439,7 @@ def compute_plan(
     config: dict,
     conn: psycopg.Connection,
     plan_version: str,
-    item_no: str | None = None,
+    item_id: str | None = None,
     loc: str | None = None,
     dry_run: bool = False,
 ) -> int:
@@ -448,7 +449,7 @@ def compute_plan(
         config:       Full parsed YAML config (top-level key: replenishment_plan).
         conn:         Live psycopg connection (used for reads only — writes open a new conn).
         plan_version: Production forecast plan_version to base the plan on.
-        item_no:      Optional: restrict computation to a single item.
+        item_id:      Optional: restrict computation to a single item.
         loc:          Optional: restrict computation to a single location.
         dry_run:      If True, compute but skip all DB writes.
 
@@ -475,50 +476,52 @@ def compute_plan(
     fallback_to_historical: bool = bool(cfg.get("fallback_to_historical", True))
 
     # --- Load source data ---------------------------------------------------
-    log.info("Loading production forecasts (plan_version=%s)…", plan_version)
-    forecasts = load_production_forecasts(conn, plan_version, item_no, loc)
-    if forecasts.empty:
-        log.warning("No forecast rows found for plan_version=%s — nothing to compute.", plan_version)
-        return 0
-    log.info("  %d forecast rows loaded.", len(forecasts))
+    with profiled_section("load_source_data"):
+        log.info("Loading production forecasts (plan_version=%s)…", plan_version)
+        forecasts = load_production_forecasts(conn, plan_version, item_id, loc)
+        if forecasts.empty:
+            log.warning("No forecast rows found for plan_version=%s — nothing to compute.", plan_version)
+            return 0
+        log.info("  %d forecast rows loaded.", len(forecasts))
 
-    log.info("Loading policy assignments…")
-    policies = load_policy_assignments(conn)
-    log.info("  %d policy assignments loaded.", len(policies))
+        log.info("Loading policy assignments…")
+        policies = load_policy_assignments(conn)
+        log.info("  %d policy assignments loaded.", len(policies))
 
-    log.info("Loading DFU attributes…")
-    dfu_attrs = load_dfu_attrs(conn)
-    log.info("  %d DFU attribute rows loaded.", len(dfu_attrs))
+        log.info("Loading DFU attributes…")
+        dfu_attrs = load_dfu_attrs(conn)
+        log.info("  %d DFU attribute rows loaded.", len(dfu_attrs))
 
-    log.info("Loading lead times from fact_inventory_snapshot…")
-    lead_times = load_lead_times(conn)
-    log.info("  %d lead time records loaded.", len(lead_times))
+        log.info("Loading lead times from fact_inventory_snapshot…")
+        lead_times = load_lead_times(conn)
+        log.info("  %d lead time records loaded.", len(lead_times))
 
-    log.info("Loading historical safety stock targets…")
-    hist_ss = load_historical_ss(conn)
-    log.info("  %d historical SS records loaded.", len(hist_ss))
+        log.info("Loading historical safety stock targets…")
+        hist_ss = load_historical_ss(conn)
+        log.info("  %d historical SS records loaded.", len(hist_ss))
 
-    log.info("Loading inventory positions from agg_inventory_monthly…")
-    inv_pos = load_inventory_position(conn)
-    log.info("  %d inventory position records loaded.", len(inv_pos))
+        log.info("Loading inventory positions from agg_inventory_monthly…")
+        inv_pos = load_inventory_position(conn)
+        log.info("  %d inventory position records loaded.", len(inv_pos))
 
     # --- Build lookup dicts for O(1) access ---------------------------------
-    policy_map: dict[tuple, Any] = {
-        (r.item_no, r.loc): r for r in policies.itertuples(index=False)
+    with profiled_section("compute_plan_rows"):
+        policy_map: dict[tuple, Any] = {
+        (r.item_id, r.loc): r for r in policies.itertuples(index=False)
     }
     dfu_map: dict[tuple, Any] = {
-        (r.item_no, r.loc): r for r in dfu_attrs.itertuples(index=False)
+        (r.item_id, r.loc): r for r in dfu_attrs.itertuples(index=False)
     }
     lt_map: dict[tuple, Any] = {
-        (r.item_no, r.loc): r for r in lead_times.itertuples(index=False)
+        (r.item_id, r.loc): r for r in lead_times.itertuples(index=False)
     }
     hist_ss_map: dict[tuple, float] = {
-        (r.item_no, r.loc): float(r.historical_ss)
+        (r.item_id, r.loc): float(r.historical_ss)
         for r in hist_ss.itertuples(index=False)
         if r.historical_ss is not None
     }
     inv_map: dict[tuple, float] = {
-        (r.item_no, r.loc): float(r.current_qty_on_hand)
+        (r.item_id, r.loc): float(r.current_qty_on_hand)
         for r in inv_pos.itertuples(index=False)
         if r.current_qty_on_hand is not None
     }
@@ -527,7 +530,7 @@ def compute_plan(
     rows_to_write: list[dict] = []
     computed_at = datetime.now(timezone.utc)
 
-    for (item, loc_val), grp in forecasts.groupby(["item_no", "loc"], sort=False):
+    for (item, loc_val), grp in forecasts.groupby(["item_id", "loc"], sort=False):
         grp = grp.sort_values("forecast_month").head(horizon_months)
 
         # -- DFU attributes --------------------------------------------------
@@ -568,13 +571,13 @@ def compute_plan(
         current_oh: float = inv_map.get((item, loc_val), 0.0)
 
         # -- Per-month rows ---------------------------------------------------
-        for _, frow in grp.iterrows():
-            fqty: float = float(frow["forecast_qty"]) if frow["forecast_qty"] is not None else 0.0
-            flower_raw = frow["forecast_qty_lower"]
-            fupper_raw = frow["forecast_qty_upper"]
+        for frow in grp.itertuples(index=False):
+            fqty: float = float(frow.forecast_qty) if frow.forecast_qty is not None else 0.0
+            flower_raw = frow.forecast_qty_lower
+            fupper_raw = frow.forecast_qty_upper
             flower: float | None = float(flower_raw) if flower_raw is not None else None
             fupper: float | None = float(fupper_raw) if fupper_raw is not None else None
-            horizon_h: int = int(frow["horizon_months"]) if frow["horizon_months"] is not None else 1
+            horizon_h: int = int(frow.horizon_months) if frow.horizon_months is not None else 1
 
             # Demand variability from CI bands
             sigma: float | None = compute_sigma_from_ci(flower, fupper, ci_z_score)
@@ -626,9 +629,9 @@ def compute_plan(
 
             rows_to_write.append({
                 "plan_version":            plan_version,
-                "item_no":                 item,
+                "item_id":                 item,
                 "loc":                     loc_val,
-                "plan_month":              frow["forecast_month"],
+                "plan_month":              frow.forecast_month,
                 "horizon_months":          horizon_h,
                 "policy_id":               pol_id,
                 "policy_type":             pol_type,
@@ -665,7 +668,7 @@ def compute_plan(
                 "computed_at":             computed_at,
             })
 
-    log.info("Computed %d plan rows across %d DFUs.", len(rows_to_write), forecasts.groupby(["item_no", "loc"]).ngroups)
+        log.info("Computed %d plan rows across %d DFUs.", len(rows_to_write), forecasts.groupby(["item_id", "loc"]).ngroups)
 
     if dry_run:
         log.info("[DRY RUN] Would write %d rows to fact_replenishment_plan.", len(rows_to_write))
@@ -673,16 +676,17 @@ def compute_plan(
             sample = rows_to_write[0]
             log.info(
                 "  Sample: item=%s loc=%s plan_month=%s ss=%.2f eoq=%.2f rop=%s",
-                sample["item_no"], sample["loc"], sample["plan_month"],
+                sample["item_id"], sample["loc"], sample["plan_month"],
                 sample["ss_combined"], sample["effective_eoq"],
                 sample["reorder_point"],
             )
         return len(rows_to_write)
 
     # --- Upsert in batches --------------------------------------------------
-    upsert_sql = """
+    with profiled_section("write_replenishment_plan"):
+        upsert_sql = """
         INSERT INTO fact_replenishment_plan (
-            plan_version, item_no, loc, plan_month, horizon_months,
+            plan_version, item_id, loc, plan_month, horizon_months,
             policy_id, policy_type, abc_vol, review_cycle_days,
             forecast_qty, forecast_qty_lower, forecast_qty_upper,
             forecast_annual_demand,
@@ -697,7 +701,7 @@ def compute_plan(
             current_qty_on_hand, ss_gap, is_below_ss,
             computed_at
         ) VALUES (
-            %(plan_version)s, %(item_no)s, %(loc)s, %(plan_month)s, %(horizon_months)s,
+            %(plan_version)s, %(item_id)s, %(loc)s, %(plan_month)s, %(horizon_months)s,
             %(policy_id)s, %(policy_type)s, %(abc_vol)s, %(review_cycle_days)s,
             %(forecast_qty)s, %(forecast_qty_lower)s, %(forecast_qty_upper)s,
             %(forecast_annual_demand)s,
@@ -712,7 +716,7 @@ def compute_plan(
             %(current_qty_on_hand)s, %(ss_gap)s, %(is_below_ss)s,
             %(computed_at)s
         )
-        ON CONFLICT (plan_version, item_no, loc, plan_month) DO UPDATE SET
+        ON CONFLICT (plan_version, item_id, loc, plan_month) DO UPDATE SET
             horizon_months        = EXCLUDED.horizon_months,
             policy_id             = EXCLUDED.policy_id,
             policy_type           = EXCLUDED.policy_type,
@@ -749,17 +753,17 @@ def compute_plan(
             computed_at           = EXCLUDED.computed_at
     """
 
-    total_written = 0
-    with psycopg.connect(**get_db_params()) as write_conn:
-        with write_conn.cursor() as cur:
-            for i in range(0, len(rows_to_write), batch_size):
-                batch = rows_to_write[i : i + batch_size]
-                cur.executemany(upsert_sql, batch)
-                total_written += len(batch)
-                log.info("  Batch %d–%d written.", i + 1, i + len(batch))
-        write_conn.commit()
+        total_written = 0
+        with psycopg.connect(**get_db_params()) as write_conn:
+            with write_conn.cursor() as cur:
+                for i in range(0, len(rows_to_write), batch_size):
+                    batch = rows_to_write[i : i + batch_size]
+                    cur.executemany(upsert_sql, batch)
+                    total_written += len(batch)
+                    log.info("  Batch %d–%d written.", i + 1, i + len(batch))
+            write_conn.commit()
 
-    log.info("Upserted %d rows into fact_replenishment_plan (plan_version=%s).", total_written, plan_version)
+        log.info("Upserted %d rows into fact_replenishment_plan (plan_version=%s).", total_written, plan_version)
     return total_written
 
 
@@ -785,7 +789,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--item",
         default=None,
-        help="Restrict computation to a single item_no (useful for testing).",
+        help="Restrict computation to a single item_id (useful for testing).",
     )
     parser.add_argument(
         "--loc",
@@ -798,6 +802,32 @@ def _parse_args() -> argparse.Namespace:
         help="Compute plan but do not write to the database.",
     )
     return parser.parse_args()
+
+
+def run(dry_run: bool = False) -> int:
+    """Entry point for profiler and CLI usage."""
+    with open(CONFIG_PATH) as fh:
+        config = yaml.safe_load(fh)
+
+    with psycopg.connect(**get_db_params()) as conn:
+        plan_version = get_latest_plan_version(conn)
+        if not plan_version:
+            log.error(
+                "No plan_version found in fact_production_forecast. "
+                "Run 'make forecast-generate' first."
+            )
+            return 0
+        log.info("Using plan_version: %s", plan_version)
+
+        n = compute_plan(
+            config=config,
+            conn=conn,
+            plan_version=plan_version,
+            dry_run=dry_run,
+        )
+
+    log.info("Done. %d rows processed.", n)
+    return n
 
 
 if __name__ == "__main__":
@@ -820,7 +850,7 @@ if __name__ == "__main__":
             config=config,
             conn=conn,
             plan_version=plan_version,
-            item_no=args.item,
+            item_id=args.item,
             loc=args.loc,
             dry_run=args.dry_run,
         )

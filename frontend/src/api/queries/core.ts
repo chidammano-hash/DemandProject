@@ -4,12 +4,12 @@ import type {
   DomainPage,
   SuggestPayload,
   SamplePairPayload,
-  DfuClustersPayload,
+  SkuClustersPayload,
   ClusterProfilesPayload,
   AccuracySlicePayload,
   LagCurvePayload,
-  DfuAnalysisPayload,
-  DfuAnalysisMode,
+  SkuAnalysisPayload,
+  SkuAnalysisMode,
   MarketIntelPayload,
   InventoryPositionPayload,
   InventoryKpis,
@@ -26,7 +26,7 @@ import type {
   ShapTimeframesPayload,
   ShapTimeframeDetailPayload,
   ShapFilterParams,
-  DfuShapPayload,
+  SkuShapPayload,
 } from "@/types/shap";
 import type {
   DashboardKpis,
@@ -37,12 +37,12 @@ import type {
 } from "@/types/theme";
 import type {
   Job, JobType, JobListPayload, JobTypesPayload, ActiveJobsPayload,
-  JobStats, JobSchedule, JobSchedulesPayload,
+  JobStats, JobSchedule, JobSchedulesPayload, JobLogsPayload,
 } from "@/types/jobs";
 
 export type {
   Job, JobType, JobListPayload, JobTypesPayload, ActiveJobsPayload,
-  JobStats, JobSchedule, JobSchedulesPayload,
+  JobStats, JobSchedule, JobSchedulesPayload, JobLogsPayload,
 };
 
 // ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ export const queryKeys = {
   domainPage: (domain: string, params: Record<string, unknown>) => ["domain-page", domain, params] as const,
   domainSuggest: (domain: string, field: string, q: string, filters?: string) => ["domain-suggest", domain, field, q, filters] as const,
   forecastModels: () => ["forecast-models"] as const,
-  dfuClusters: (source: string) => ["dfu-clusters", source] as const,
+  skuClusters: (source: string) => ["sku-clusters", source] as const,
   clusterProfiles: () => ["cluster-profiles"] as const,
   clusteringDefaults: () => ["clustering-defaults"] as const,
   clusteringScenario: (id: string) => ["clustering-scenario", id] as const,
@@ -65,7 +65,7 @@ export const queryKeys = {
   lagCurve: (params: Record<string, unknown>) => ["lag-curve", params] as const,
   competitionConfig: () => ["competition-config"] as const,
   competitionSummary: () => ["competition-summary"] as const,
-  dfuAnalysis: (params: Record<string, unknown>) => ["dfu-analysis", params] as const,
+  skuAnalysis: (params: Record<string, unknown>) => ["sku-analysis", params] as const,
   inventoryPosition: (params: Record<string, unknown>) => ["inventory-position", params] as const,
   inventoryKpis: (params: Record<string, unknown>) => ["inventory-kpis", params] as const,
   inventoryTrend: (params: Record<string, unknown>) => ["inventory-trend", params] as const,
@@ -90,6 +90,7 @@ export const queryKeys = {
   jobDetail: (id: string) => ["job-detail", id] as const,
   activeJobs: () => ["active-jobs"] as const,
   jobStats: () => ["job-stats"] as const,
+  jobLogs: (id: string) => ["job-logs", id] as const,
   jobSchedules: () => ["job-schedules"] as const,
   scenarioHistory: () => ["scenario-history"] as const,
   // Inventory Planning keys (IPfeature1+)
@@ -110,7 +111,7 @@ export const queryKeys = {
   shapTimeframes: (modelId: string) => ["shap-timeframes", modelId] as const,
   shapTimeframeDetail: (modelId: string, idx: number, topN: number, cluster?: string, filters?: ShapFilterParams) => ["shap-timeframe-detail", modelId, idx, topN, cluster ?? "all", filters ?? {}] as const,
   shapClusters: (modelId: string) => ["shap-clusters", modelId] as const,
-  dfuShap: (modelId: string, itemNo: string, loc: string, topN: number) => ["dfu-shap", modelId, itemNo, loc, topN] as const,
+  skuShap: (modelId: string, itemNo: string, loc: string, topN: number) => ["sku-shap", modelId, itemNo, loc, topN] as const,
   // AI Planner keys (IPAIfeature1)
   aiInsights: (params: Record<string, unknown>) => ["ai-insights", params] as const,
   aiMemos: (params: Record<string, unknown>) => ["ai-memos", params] as const,
@@ -216,12 +217,12 @@ export async function fetchForecastModels(): Promise<string[]> {
 // ---------------------------------------------------------------------------
 // Clustering queries
 // ---------------------------------------------------------------------------
-export async function fetchDfuClusters(source: string): Promise<DfuClustersPayload> {
-  return fetchJson(`/domains/dfu/clusters?source=${source}`);
+export async function fetchSkuClusters(source: string): Promise<SkuClustersPayload> {
+  return fetchJson(`/domains/sku/clusters?source=${source}`);
 }
 
 export async function fetchClusterProfiles(): Promise<ClusterProfilesPayload> {
-  return fetchJson("/domains/dfu/clusters/profiles");
+  return fetchJson("/domains/sku/clusters/profiles");
 }
 
 export interface ClusteringDefaultsPayload {
@@ -276,7 +277,7 @@ export interface ClusteringScenarioResult {
     optimal_k: number;
     silhouette_score: number;
     inertia: number;
-    total_dfus: number;
+    total_skus: number;
     k_selection_results: {
       k_values: number[];
       inertias: number[];
@@ -293,7 +294,7 @@ export interface ClusteringScenarioResult {
 
 export interface ScenarioEstimate {
   estimated_seconds: number;
-  dfu_count: number;
+  sku_count: number;
   training_sample: number;
   sampled: boolean;
   k_range: number;
@@ -347,8 +348,8 @@ export interface SliceParams {
   lag: number;
   models: string;
   month_from: string;
-  common_dfus: boolean;
-  include_dfu_count: boolean;
+  common_skus: boolean;
+  include_sku_count: boolean;
   item?: string;
   location?: string;
   seasonality_profile?: string;
@@ -365,8 +366,8 @@ export async function fetchAccuracySlice(params: SliceParams): Promise<AccuracyS
     lag: params.lag,
     models: params.models.trim() || undefined,
     month_from: params.month_from,
-    common_dfus: params.common_dfus ? "true" : undefined,
-    include_dfu_count: params.include_dfu_count ? "true" : undefined,
+    common_dfus: params.common_skus ? "true" : undefined,
+    include_dfu_count: params.include_sku_count ? "true" : undefined,
     item: params.item,
     location: params.location,
     seasonality_profile: params.seasonality_profile,
@@ -382,8 +383,8 @@ export async function fetchAccuracySlice(params: SliceParams): Promise<AccuracyS
 export interface LagCurveParams {
   models: string;
   month_from: string;
-  common_dfus: boolean;
-  include_dfu_count: boolean;
+  common_skus: boolean;
+  include_sku_count: boolean;
   item?: string;
   location?: string;
   seasonality_profile?: string;
@@ -398,8 +399,8 @@ export async function fetchLagCurve(params: LagCurveParams): Promise<LagCurvePay
   const qs = buildSearchParams({
     models: params.models.trim() || undefined,
     month_from: params.month_from,
-    common_dfus: params.common_dfus ? "true" : undefined,
-    include_dfu_count: params.include_dfu_count ? "true" : undefined,
+    common_dfus: params.common_skus ? "true" : undefined,
+    include_dfu_count: params.include_sku_count ? "true" : undefined,
     item: params.item,
     location: params.location,
     seasonality_profile: params.seasonality_profile,
@@ -418,7 +419,7 @@ export async function fetchLagCurve(params: LagCurveParams): Promise<LagCurvePay
 export interface CompetitionConfig {
   metric: string;
   lag: string;
-  min_dfu_rows: number;
+  min_sku_rows: number;
   champion_model_id: string;
   models: string[];
   strategy?: string;
@@ -426,8 +427,8 @@ export interface CompetitionConfig {
 }
 
 export interface ChampionSummary {
-  total_dfus: number;
-  total_dfu_months?: number;
+  total_skus: number;
+  total_sku_months?: number;
   total_champion_rows: number;
   model_wins: Record<string, number>;
   overall_champion_wape: number | null;
@@ -464,23 +465,23 @@ export async function runCompetition(): Promise<ChampionSummary> {
 }
 
 // ---------------------------------------------------------------------------
-// DFU Analysis queries
+// SKU Analysis queries
 // ---------------------------------------------------------------------------
-export interface DfuAnalysisParams {
-  mode: DfuAnalysisMode;
+export interface SkuAnalysisParams {
+  mode: SkuAnalysisMode;
   item: string;
   location: string;
   points: number;
 }
 
-export async function fetchDfuAnalysis(params: DfuAnalysisParams): Promise<DfuAnalysisPayload> {
+export async function fetchSkuAnalysis(params: SkuAnalysisParams): Promise<SkuAnalysisPayload> {
   const qs = new URLSearchParams({
     mode: params.mode,
     item: params.item.trim(),
     location: params.location.trim(),
     points: String(params.points),
   });
-  return fetchJson(`/dfu/analysis?${qs}`);
+  return fetchJson(`/sku/analysis?${qs}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -490,7 +491,7 @@ export async function fetchMarketIntel(item: string, location: string): Promise<
   return fetchJson("/market-intelligence", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ item_no: item.trim(), location_id: location.trim() }),
+    body: JSON.stringify({ item_id: item.trim(), location_id: location.trim() }),
   });
 }
 
@@ -786,7 +787,7 @@ export interface SeasonalityProfilesPayload {
 }
 
 export async function fetchSeasonalityProfiles(): Promise<SeasonalityProfilesPayload> {
-  return fetchJson("/domains/dfu/seasonality-profiles");
+  return fetchJson("/domains/sku/seasonality-profiles");
 }
 
 // ---------------------------------------------------------------------------
@@ -842,6 +843,13 @@ export async function deleteJob(jobId: string): Promise<{ deleted: boolean }> {
 export async function fetchScenarioHistory(limit = 10): Promise<Job[]> {
   const data = await fetchJson<JobListPayload>(`/jobs?job_type=cluster_scenario&status=completed&limit=${limit}`);
   return data.jobs;
+}
+
+export async function fetchJobLogs(
+  jobId: string,
+  offset = 0,
+): Promise<JobLogsPayload> {
+  return fetchJson(`/jobs/${encodeURIComponent(jobId)}/logs?offset=${offset}`);
 }
 
 export async function fetchJobStats(): Promise<JobStats> {
@@ -933,18 +941,18 @@ export async function fetchShapClusters(modelId: string): Promise<ShapClustersPa
   return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/clusters`);
 }
 
-export async function fetchDfuShap(
+export async function fetchSkuShap(
   modelId: string,
   itemNo: string,
   loc: string,
   topN = 10,
-): Promise<DfuShapPayload> {
+): Promise<SkuShapPayload> {
   const qs = new URLSearchParams({
-    item_no: itemNo,
+    item_id: itemNo,
     loc,
     top_n: String(topN),
   });
-  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/dfu?${qs}`);
+  return fetchJson(`/forecast/shap/${encodeURIComponent(modelId)}/sku?${qs}`);
 }
 
 // ---------------------------------------------------------------------------

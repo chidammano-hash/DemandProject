@@ -42,7 +42,3 @@ def _get_pool() -> ConnectionPool:
             reconnect_timeout=5,
         )
     return _pool
-
-
-def get_conn():
-    return _get_pool().connection()

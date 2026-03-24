@@ -56,7 +56,7 @@ def _base_config():
     return {
         "recommendation": {
             "horizon_days": 90,
-            "max_orders_per_dfu": 3,
+            "max_orders_per_sku": 3,
             "include_past_due": True,
             "confidence": {
                 "high_threshold": 0.80,
@@ -77,7 +77,7 @@ def _base_inputs(qty=120.0, ss=60.0, rp=60.0, lt=14, daily_rate=16.3, moq=100.0)
     """Build a standard inputs dict with uniform daily demand."""
     demand = {TODAY + timedelta(days=i): daily_rate for i in range(1, 91)}
     return {
-        "item_no": "100320",
+        "item_id": "100320",
         "loc": "1401-BULK",
         "current_qty_on_hand": qty,
         "safety_stock": ss,

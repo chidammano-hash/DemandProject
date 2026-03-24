@@ -19,9 +19,9 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 
 import { useChartColors } from "@/hooks/useChartColors";
-import { DFU_SALES_COLORS, dfuModelColor } from "@/constants/colors";
+import { SKU_SALES_COLORS, skuModelColor } from "@/constants/colors";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
-import type { DfuAnalysisPayload } from "@/types";
+import type { SkuAnalysisPayload } from "@/types";
 import type { ProductionForecastPayload } from "@/api/queries/production-forecast";
 
 const PROD_FORECAST_COLOR = "#7c3aed"; // violet-700
@@ -100,16 +100,16 @@ const DESELECT_OPACITY = 0.25;
 // Props
 // ---------------------------------------------------------------------------
 export interface OverlayChartPanelProps {
-  dfuData: DfuAnalysisPayload;
-  dfuFilteredSeries: Record<string, unknown>[];
-  dfuMonths: string[];
-  dfuTimeStart: string;
-  setDfuTimeStart: (v: string) => void;
-  dfuTimeEnd: string;
-  setDfuTimeEnd: (v: string) => void;
-  dfuDefaultStart: string;
-  dfuVisibleSeries: Set<string>;
-  setDfuVisibleSeries: (updater: (prev: Set<string>) => Set<string>) => void;
+  skuData: SkuAnalysisPayload;
+  skuFilteredSeries: Record<string, unknown>[];
+  skuMonths: string[];
+  skuTimeStart: string;
+  setSkuTimeStart: (v: string) => void;
+  skuTimeEnd: string;
+  setSkuTimeEnd: (v: string) => void;
+  skuDefaultStart: string;
+  skuVisibleSeries: Set<string>;
+  setSkuVisibleSeries: (updater: (prev: Set<string>) => Set<string>) => void;
   prodForecastData?: ProductionForecastPayload | null;
   /** Currently selected model for SHAP exploration (raw model_id, e.g. "lgbm_cluster") */
   selectedModel?: string | null;
@@ -121,16 +121,16 @@ export interface OverlayChartPanelProps {
 // Component
 // ---------------------------------------------------------------------------
 export function OverlayChartPanel({
-  dfuData,
-  dfuFilteredSeries,
-  dfuMonths,
-  dfuTimeStart,
-  setDfuTimeStart,
-  dfuTimeEnd,
-  setDfuTimeEnd,
-  dfuDefaultStart,
-  dfuVisibleSeries,
-  setDfuVisibleSeries,
+  skuData,
+  skuFilteredSeries,
+  skuMonths,
+  skuTimeStart,
+  setSkuTimeStart,
+  skuTimeEnd,
+  setSkuTimeEnd,
+  skuDefaultStart,
+  skuVisibleSeries,
+  setSkuVisibleSeries,
   prodForecastData,
   selectedModel = null,
   onModelSelect,
@@ -147,30 +147,30 @@ export function OverlayChartPanel({
     "qty_shipped",
     "qty_ordered",
     ...(hasProdForecast ? ["production_forecast"] : []),
-    ...dfuData.models.map((m) => `forecast_${m}`),
+    ...skuData.models.map((m) => `forecast_${m}`),
   ]);
-  const allSelected = [...allKeys].every((k) => dfuVisibleSeries.has(k));
+  const allSelected = [...allKeys].every((k) => skuVisibleSeries.has(k));
 
   const salesMeasures: { key: string; label: string; color: string }[] = [
     {
       key: "tothist_dmd",
       label: "Sale Qty (external)",
-      color: DFU_SALES_COLORS.tothist_dmd,
+      color: SKU_SALES_COLORS.tothist_dmd,
     },
     {
       key: "qty_shipped",
       label: "Qty Shipped",
-      color: DFU_SALES_COLORS.qty_shipped,
+      color: SKU_SALES_COLORS.qty_shipped,
     },
     {
       key: "qty_ordered",
       label: "Qty Ordered",
-      color: DFU_SALES_COLORS.qty_ordered,
+      color: SKU_SALES_COLORS.qty_ordered,
     },
   ];
 
   function toggleSeries(key: string, checked: boolean | string) {
-    setDfuVisibleSeries((prev) => {
+    setSkuVisibleSeries((prev) => {
       const next = new Set(prev);
       if (checked) next.add(key);
       else next.delete(key);
@@ -192,7 +192,7 @@ export function OverlayChartPanel({
           <button
             className="text-xs font-medium text-primary hover:underline"
             onClick={() =>
-              setDfuVisibleSeries(() => (allSelected ? new Set() : allKeys))
+              setSkuVisibleSeries(() => (allSelected ? new Set() : allKeys))
             }
           >
             {allSelected ? "Deselect All" : "Select All"}
@@ -205,7 +205,7 @@ export function OverlayChartPanel({
               className="flex items-center gap-2 text-xs font-medium"
             >
               <Checkbox
-                checked={dfuVisibleSeries.has(key)}
+                checked={skuVisibleSeries.has(key)}
                 onCheckedChange={(v) => toggleSeries(key, v)}
               />
               <span className="flex items-center gap-1">
@@ -217,7 +217,7 @@ export function OverlayChartPanel({
               </span>
             </label>
           ))}
-          {dfuData.models.map((model, idx) => {
+          {skuData.models.map((model, idx) => {
             const seriesKey = `forecast_${model}`;
             return (
               <label
@@ -225,13 +225,13 @@ export function OverlayChartPanel({
                 className="flex items-center gap-2 text-xs font-medium"
               >
                 <Checkbox
-                  checked={dfuVisibleSeries.has(seriesKey)}
+                  checked={skuVisibleSeries.has(seriesKey)}
                   onCheckedChange={(v) => toggleSeries(seriesKey, v)}
                 />
                 <span className="flex items-center gap-1">
                   <span
                     className="inline-block h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: dfuModelColor(model, idx) }}
+                    style={{ backgroundColor: skuModelColor(model, idx) }}
                   />
                   {model}
                 </span>
@@ -241,7 +241,7 @@ export function OverlayChartPanel({
           {hasProdForecast && (
             <label className="flex items-center gap-2 text-xs font-medium">
               <Checkbox
-                checked={dfuVisibleSeries.has("production_forecast")}
+                checked={skuVisibleSeries.has("production_forecast")}
                 onCheckedChange={(v) => toggleSeries("production_forecast", v)}
               />
               <span className="flex items-center gap-1">
@@ -262,10 +262,10 @@ export function OverlayChartPanel({
           From
           <select
             className="h-8 w-36 rounded-md border border-input bg-background px-2 text-sm"
-            value={dfuTimeStart || dfuMonths[0] || ""}
-            onChange={(e) => setDfuTimeStart(e.target.value)}
+            value={skuTimeStart || skuMonths[0] || ""}
+            onChange={(e) => setSkuTimeStart(e.target.value)}
           >
-            {dfuMonths.map((m) => (
+            {skuMonths.map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>
@@ -276,10 +276,10 @@ export function OverlayChartPanel({
           To
           <select
             className="h-8 w-36 rounded-md border border-input bg-background px-2 text-sm"
-            value={dfuTimeEnd || dfuMonths[dfuMonths.length - 1] || ""}
-            onChange={(e) => setDfuTimeEnd(e.target.value)}
+            value={skuTimeEnd || skuMonths[skuMonths.length - 1] || ""}
+            onChange={(e) => setSkuTimeEnd(e.target.value)}
           >
-            {dfuMonths.map((m) => (
+            {skuMonths.map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>
@@ -289,8 +289,8 @@ export function OverlayChartPanel({
         <button
           className="h-8 rounded-md border border-input bg-background px-3 text-xs font-medium text-muted-foreground hover:text-foreground"
           onClick={() => {
-            setDfuTimeStart("");
-            setDfuTimeEnd("");
+            setSkuTimeStart("");
+            setSkuTimeEnd("");
           }}
         >
           Show All
@@ -298,8 +298,8 @@ export function OverlayChartPanel({
         <button
           className="h-8 rounded-md border border-input bg-background px-3 text-xs font-medium text-muted-foreground hover:text-foreground"
           onClick={() => {
-            setDfuTimeStart(dfuDefaultStart);
-            setDfuTimeEnd("");
+            setSkuTimeStart(skuDefaultStart);
+            setSkuTimeEnd("");
           }}
         >
           Default
@@ -311,11 +311,11 @@ export function OverlayChartPanel({
         <CardHeader className="pb-0">
           <CardTitle className="flex items-center gap-2 text-sm">
             <ChartColumn className="h-4 w-4" /> Sales vs Forecast Overlay
-            {dfuData.scope_count != null && (
+            {skuData.scope_count != null && (
               <span className="ml-2 rounded bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
-                {dfuData.mode === "item_at_all_locations"
-                  ? `${dfuData.scope_count} locations aggregated`
-                  : `${dfuData.scope_count} items aggregated`}
+                {skuData.mode === "item_at_all_locations"
+                  ? `${skuData.scope_count} locations aggregated`
+                  : `${skuData.scope_count} items aggregated`}
               </span>
             )}
             {selectedModel && (
@@ -330,11 +330,11 @@ export function OverlayChartPanel({
             <div
               className="h-full"
               style={{
-                minWidth: `${Math.max(1200, dfuFilteredSeries.length * 100)}px`,
+                minWidth: `${Math.max(1200, skuFilteredSeries.length * 100)}px`,
               }}
             >
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={dfuFilteredSeries} margin={DFU_CHART_MARGIN}>
+                <LineChart data={skuFilteredSeries} margin={DFU_CHART_MARGIN}>
                   <CartesianGrid
                     strokeDasharray="3 3"
                     stroke={chartColors.grid}
@@ -366,50 +366,50 @@ export function OverlayChartPanel({
                     content={(props) =>
                       renderCustomLegend(
                         props as { payload?: LegendPayloadItem[] },
-                        dfuData.models,
+                        skuData.models,
                         selectedModel,
                         onModelSelect,
                       )
                     }
                   />
-                  {dfuVisibleSeries.has("tothist_dmd") ? (
+                  {skuVisibleSeries.has("tothist_dmd") ? (
                     <Line
                       type="monotone"
                       dataKey="tothist_dmd"
                       yAxisId="left"
                       name="Sale Qty (external)"
-                      stroke={DFU_SALES_COLORS.tothist_dmd}
+                      stroke={SKU_SALES_COLORS.tothist_dmd}
                       strokeWidth={2.5}
                       dot={false}
                       activeDot={ACTIVE_DOT_MD}
                     />
                   ) : null}
-                  {dfuVisibleSeries.has("qty_shipped") ? (
+                  {skuVisibleSeries.has("qty_shipped") ? (
                     <Line
                       type="monotone"
                       dataKey="qty_shipped"
                       yAxisId="left"
                       name="Qty Shipped"
-                      stroke={DFU_SALES_COLORS.qty_shipped}
+                      stroke={SKU_SALES_COLORS.qty_shipped}
                       strokeWidth={2}
                       dot={false}
                       activeDot={ACTIVE_DOT_SM}
                     />
                   ) : null}
-                  {dfuVisibleSeries.has("qty_ordered") ? (
+                  {skuVisibleSeries.has("qty_ordered") ? (
                     <Line
                       type="monotone"
                       dataKey="qty_ordered"
                       yAxisId="left"
                       name="Qty Ordered"
-                      stroke={DFU_SALES_COLORS.qty_ordered}
+                      stroke={SKU_SALES_COLORS.qty_ordered}
                       strokeWidth={2}
                       dot={false}
                       activeDot={ACTIVE_DOT_SM}
                     />
                   ) : null}
-                  {dfuData.models
-                    .filter((m) => dfuVisibleSeries.has(`forecast_${m}`))
+                  {skuData.models
+                    .filter((m) => skuVisibleSeries.has(`forecast_${m}`))
                     .map((model, idx) => {
                       const isSelected = selectedModel === model;
                       const isOtherSelected = selectedModel !== null && selectedModel !== model;
@@ -420,7 +420,7 @@ export function OverlayChartPanel({
                           dataKey={`forecast_${model}`}
                           yAxisId="left"
                           name={model}
-                          stroke={dfuModelColor(model, idx)}
+                          stroke={skuModelColor(model, idx)}
                           strokeWidth={isSelected ? 3 : model === "champion" ? 2.5 : 1.5}
                           strokeDasharray={
                             model === "champion" ? undefined : "5 3"
@@ -431,7 +431,7 @@ export function OverlayChartPanel({
                         />
                       );
                     })}
-                  {hasProdForecast && dfuVisibleSeries.has("production_forecast") ? (
+                  {hasProdForecast && skuVisibleSeries.has("production_forecast") ? (
                     <Line
                       type="monotone"
                       dataKey="production_forecast"

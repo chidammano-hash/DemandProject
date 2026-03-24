@@ -40,7 +40,7 @@ function EventRow({ ev }: { ev: CalendarEvent }) {
       </td>
       <td className="px-3 py-2 text-xs">{ev.start_date}</td>
       <td className="px-3 py-2 text-xs">{ev.end_date}</td>
-      <td className="px-3 py-2 text-xs font-mono">{ev.item_no ?? "All"}</td>
+      <td className="px-3 py-2 text-xs font-mono">{ev.item_id ?? "All"}</td>
       <td className="px-3 py-2 text-xs">{ev.loc ?? "All"}</td>
       <td className="px-3 py-2 text-xs">
         {ev.is_hard_override ? (

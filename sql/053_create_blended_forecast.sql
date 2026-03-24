@@ -2,7 +2,7 @@
 
 CREATE TABLE IF NOT EXISTS fact_blended_demand_plan (
     id                      BIGSERIAL       PRIMARY KEY,
-    item_no                 VARCHAR(50)     NOT NULL,
+    item_id                 VARCHAR(50)     NOT NULL,
     loc                     VARCHAR(50)     NOT NULL,
     week_start              DATE            NOT NULL,
     plan_version            VARCHAR(50)     NOT NULL DEFAULT 'latest',
@@ -13,11 +13,11 @@ CREATE TABLE IF NOT EXISTS fact_blended_demand_plan (
     velocity_spike_ratio    NUMERIC(6,3),
     is_outlier_capped       BOOLEAN         NOT NULL DEFAULT FALSE,
     computed_at             TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_blended_plan UNIQUE (item_no, loc, week_start, plan_version)
+    CONSTRAINT uq_blended_plan UNIQUE (item_id, loc, week_start, plan_version)
 );
 
 CREATE INDEX IF NOT EXISTS idx_blended_item_loc
-    ON fact_blended_demand_plan (item_no, loc, week_start);
+    ON fact_blended_demand_plan (item_id, loc, week_start);
 
 CREATE INDEX IF NOT EXISTS idx_blended_sensing_active
     ON fact_blended_demand_plan (alpha_weight, week_start)
@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_blended_sensing_active
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_sensing_overrides_active AS
 SELECT
-    item_no, loc, week_start, alpha_weight,
+    item_id, loc, week_start, alpha_weight,
     sensing_signal_qty, statistical_forecast_qty, blended_qty,
     velocity_spike_ratio
 FROM fact_blended_demand_plan
@@ -41,4 +41,4 @@ WHERE week_start = (
 WITH NO DATA;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_mv_sensing_active
-    ON mv_sensing_overrides_active (item_no, loc);
+    ON mv_sensing_overrides_active (item_id, loc);

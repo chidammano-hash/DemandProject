@@ -8,15 +8,15 @@ export interface AbcXyzCell {
   abc_vol: string;
   xyz_class: string;
   segment: string;
-  dfu_count: number;
+  sku_count: number;
   avg_service_level: number | null;
   avg_dos_min: number | null;
   avg_dos_max: number | null;
 }
 
 export interface AbcXyzDetailRow {
-  dmdunit: string;
-  dmdgroup: string;
+  item_id: string;
+  customer_group: string;
   loc: string;
   abc_vol: string | null;
   xyz_class: string | null;

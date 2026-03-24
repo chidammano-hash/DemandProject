@@ -135,7 +135,7 @@ class TestDetectForecastBias:
         history = self._bias_history(forecast_sum=145, actual_sum=100, months=3)
         result = detect_forecast_bias("ITEM1", "LOC1", history, base_config)
         assert result is not None
-        for key in ("exception_type", "item_no", "loc", "severity", "financial_impact",
+        for key in ("exception_type", "item_id", "loc", "severity", "financial_impact",
                     "headline", "supporting_data", "month_start"):
             assert key in result
 
@@ -178,7 +178,7 @@ class TestDetectStockoutRisk:
     def test_output_has_required_keys(self, base_config):
         result = detect_stockout_risk("ITEM1", "LOC1", dos=5.0, is_below_ss=True, config=base_config)
         assert result is not None
-        for key in ("exception_type", "item_no", "loc", "severity", "headline", "supporting_data"):
+        for key in ("exception_type", "item_id", "loc", "severity", "headline", "supporting_data"):
             assert key in result
 
 
@@ -216,7 +216,7 @@ class TestDetectAccuracyDrop:
     def test_output_has_required_keys(self, base_config):
         result = detect_accuracy_drop("ITEM1", "LOC1", recent_wape=42.0, baseline_wape=24.0, config=base_config)
         assert result is not None
-        for key in ("exception_type", "item_no", "loc", "severity", "headline", "supporting_data"):
+        for key in ("exception_type", "item_id", "loc", "severity", "headline", "supporting_data"):
             assert key in result
 
     def test_supporting_data_has_wape_fields(self, base_config):
@@ -267,7 +267,7 @@ class TestDetectExcessRisk:
     def test_output_has_required_keys(self, base_config):
         result = detect_excess_risk("ITEM1", "LOC1", dos=120.0, config=base_config)
         assert result is not None
-        for key in ("exception_type", "item_no", "loc", "severity", "headline", "supporting_data"):
+        for key in ("exception_type", "item_id", "loc", "severity", "headline", "supporting_data"):
             assert key in result
 
 
@@ -318,7 +318,7 @@ class TestScoreException:
 class TestGenerateHeadline:
     def test_forecast_bias_headline(self):
         data = {
-            "item_no": "100320",
+            "item_id": "100320",
             "loc": "LOC1",
             "supporting_data": {
                 "bias_pct": 38.5,
@@ -332,7 +332,7 @@ class TestGenerateHeadline:
 
     def test_stockout_risk_headline(self):
         data = {
-            "item_no": "ITEM2",
+            "item_id": "ITEM2",
             "loc": "LOC2",
             "supporting_data": {"dos": 6.5},
         }
@@ -343,7 +343,7 @@ class TestGenerateHeadline:
 
     def test_accuracy_drop_headline(self):
         data = {
-            "item_no": "ITEM3",
+            "item_id": "ITEM3",
             "loc": "LOC3",
             "supporting_data": {"wape_delta_pp": 18.3, "recent_wape": 42.0},
         }
@@ -353,7 +353,7 @@ class TestGenerateHeadline:
 
     def test_excess_risk_headline(self):
         data = {
-            "item_no": "ITEM4",
+            "item_id": "ITEM4",
             "loc": "LOC4",
             "supporting_data": {"dos": 130.0},
         }
@@ -362,14 +362,14 @@ class TestGenerateHeadline:
         assert "130" in headline
 
     def test_model_drift_headline(self):
-        data = {"item_no": "ITEM5", "loc": "LOC5", "supporting_data": {}}
+        data = {"item_id": "ITEM5", "loc": "LOC5", "supporting_data": {}}
         headline = generate_headline("model_drift", data)
         assert "ITEM5" in headline
         assert "Model Drift" in headline or "model" in headline.lower()
 
     def test_new_item_headline(self):
         data = {
-            "item_no": "ITEM6",
+            "item_id": "ITEM6",
             "loc": "LOC6",
             "supporting_data": {"history_months": 1},
         }
@@ -377,14 +377,14 @@ class TestGenerateHeadline:
         assert "ITEM6" in headline
 
     def test_unknown_type_returns_fallback(self):
-        data = {"item_no": "ITEM7", "loc": "LOC7", "supporting_data": {}}
+        data = {"item_id": "ITEM7", "loc": "LOC7", "supporting_data": {}}
         headline = generate_headline("unknown_type", data)
         assert "ITEM7" in headline
         assert "LOC7" in headline
 
     def test_headline_is_string(self, base_config):
         data = {
-            "item_no": "X",
+            "item_id": "X",
             "loc": "Y",
             "supporting_data": {"bias_pct": 25.0, "months_evaluated": 3},
         }

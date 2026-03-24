@@ -11,7 +11,7 @@ Endpoints:
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from typing import Optional
 
 import yaml
@@ -38,7 +38,7 @@ _THRESH_UNITS = _cfg["consensus_plan"]["approval_required_threshold_units"]
 # ---------------------------------------------------------------------------
 
 class OverrideSubmitRequest(BaseModel):
-    item_no: str
+    item_id: str
     loc: str
     override_month: date
     override_type: str
@@ -143,7 +143,7 @@ async def get_override_summary():
                     COUNT(*) FILTER (WHERE status = 'rejected')         AS rejected,
                     COUNT(*) FILTER (WHERE status = 'expired')          AS expired,
                     COUNT(*) FILTER (WHERE status = 'superseded')       AS superseded,
-                    COUNT(DISTINCT item_no || '|' || loc)
+                    COUNT(DISTINCT item_id || '|' || loc)
                         FILTER (WHERE status = 'approved')              AS dfu_count_overridden,
                     COALESCE(SUM(estimated_impact_units)
                         FILTER (WHERE status = 'approved'), 0)          AS total_uplift_units,
@@ -183,7 +183,7 @@ async def get_override_summary():
 
 @router.get("/forecast/overrides")
 async def list_overrides(
-    item_no: str | None = None,
+    item_id: str | None = None,
     loc: str | None = None,
     status: str | None = None,
     override_type: str | None = None,
@@ -197,18 +197,24 @@ async def list_overrides(
     offset = (page - 1) * page_size
 
     clauses, params = [], []
-    if item_no:
-        clauses.append("item_no = %s"); params.append(item_no)
+    if item_id:
+        clauses.append("item_id = %s")
+        params.append(item_id)
     if loc:
-        clauses.append("loc = %s"); params.append(loc)
+        clauses.append("loc = %s")
+        params.append(loc)
     if status:
-        clauses.append("status = %s"); params.append(status)
+        clauses.append("status = %s")
+        params.append(status)
     if override_type:
-        clauses.append("override_type = %s"); params.append(override_type)
+        clauses.append("override_type = %s")
+        params.append(override_type)
     if month_from:
-        clauses.append("override_month >= %s"); params.append(month_from)
+        clauses.append("override_month >= %s")
+        params.append(month_from)
     if month_to:
-        clauses.append("override_month <= %s"); params.append(month_to)
+        clauses.append("override_month <= %s")
+        params.append(month_to)
 
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
@@ -219,7 +225,7 @@ async def list_overrides(
 
             cur.execute(f"""
                 SELECT
-                    override_id, item_no, loc, override_month,
+                    override_id, item_id, loc, override_month,
                     override_type, override_qty, override_multiplier,
                     override_additive_qty, is_hard_override,
                     override_reason, override_note, created_by, created_at,
@@ -238,7 +244,7 @@ async def list_overrides(
     def _fmt(r):
         return {
             "override_id": r[0],
-            "item_no": r[1],
+            "item_id": r[1],
             "loc": r[2],
             "override_month": r[3].isoformat() if r[3] else None,
             "override_type": r[4],
@@ -297,7 +303,7 @@ async def submit_override(body: OverrideSubmitRequest, request: Request):
 
     sql = """
         INSERT INTO fact_forecast_overrides
-            (item_no, loc, override_month, override_type,
+            (item_id, loc, override_month, override_type,
              override_qty, override_multiplier, override_additive_qty,
              is_hard_override, override_reason, override_note,
              created_by, valid_from, valid_to, priority_rank,
@@ -311,7 +317,7 @@ async def submit_override(body: OverrideSubmitRequest, request: Request):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, (
-                body.item_no, body.loc, body.override_month, body.override_type,
+                body.item_id, body.loc, body.override_month, body.override_type,
                 body.override_qty, body.override_multiplier, body.override_additive_qty,
                 body.is_hard_override, body.override_reason, body.override_note,
                 body.created_by, body.valid_from, body.valid_to, body.priority_rank,
@@ -433,7 +439,7 @@ async def delete_override(override_id: int, request: Request):
 
 @router.get("/forecast/consensus-plan")
 async def get_consensus_plan(
-    item_no: str,
+    item_id: str,
     loc: str,
     plan_version: str | None = None,
     month_from: str | None = None,
@@ -445,23 +451,25 @@ async def get_consensus_plan(
             if not plan_version:
                 cur.execute("""
                     SELECT plan_version FROM fact_consensus_plan
-                    WHERE item_no = %s AND loc = %s
+                    WHERE item_id = %s AND loc = %s
                     ORDER BY generated_at DESC LIMIT 1
-                """, [item_no, loc])
+                """, [item_id, loc])
                 row = cur.fetchone()
                 if not row:
                     raise HTTPException(
                         status_code=404,
-                        detail=f"No consensus plan found for {item_no}/{loc}."
+                        detail=f"No consensus plan found for {item_id}/{loc}."
                     )
                 plan_version = row[0]
 
-            params = [item_no, loc, plan_version]
+            params = [item_id, loc, plan_version]
             date_filters = ""
             if month_from:
-                date_filters += " AND plan_month >= %s"; params.append(month_from)
+                date_filters += " AND plan_month >= %s"
+                params.append(month_from)
             if month_to:
-                date_filters += " AND plan_month <= %s"; params.append(month_to)
+                date_filters += " AND plan_month <= %s"
+                params.append(month_to)
 
             cur.execute(f"""
                 SELECT
@@ -470,7 +478,7 @@ async def get_consensus_plan(
                     override_applied, override_type, override_multiplier,
                     is_hard_override, overrider, approver, uplift_pct
                 FROM fact_consensus_plan
-                WHERE item_no = %s AND loc = %s AND plan_version = %s
+                WHERE item_id = %s AND loc = %s AND plan_version = %s
                 {date_filters}
                 ORDER BY plan_month
             """, params)
@@ -479,12 +487,12 @@ async def get_consensus_plan(
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail=f"No consensus plan rows for {item_no}/{loc} version {plan_version}."
+            detail=f"No consensus plan rows for {item_id}/{loc} version {plan_version}."
         )
 
     return {
         "plan_version": plan_version,
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "months": [
             {

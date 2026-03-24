@@ -8,7 +8,7 @@ import { buildSearchParams } from "./helpers";
 export interface ControlTowerKpis {
   computed_at: string | null;
   health: {
-    total_dfus: number; healthy_count: number; monitor_count: number;
+    total_skus: number; healthy_count: number; monitor_count: number;
     at_risk_count: number; critical_count: number;
     avg_health_score: number | null; avg_ss_coverage: number | null;
     below_ss_count: number; below_ss_pct: number | null; avg_portfolio_dos: number | null;
@@ -26,7 +26,7 @@ export interface ControlTowerAlert {
   alert_id: string;
   source: string;
   severity: string;
-  item_no: string;
+  item_id: string;
   loc: string;
   alert_type: string;
   description: string;
@@ -36,7 +36,7 @@ export interface ControlTowerAlert {
 }
 
 export interface ControlTowerCriticalItem {
-  item_no: string; loc: string; abc_vol: string | null; abc_xyz_segment: string | null;
+  item_id: string; loc: string; abc_vol: string | null; abc_xyz_segment: string | null;
   health_score: number | null; health_tier: string | null;
   ss_coverage: number | null; is_below_ss: boolean;
   current_dos: number | null; target_dos_min: number | null; target_dos_max: number | null;

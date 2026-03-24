@@ -26,12 +26,10 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend
 import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score, calinski_harabasz_score
-from scipy.spatial.distance import cdist
 import mlflow
 import mlflow.sklearn
 from dotenv import load_dotenv
@@ -39,6 +37,8 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from common.services.perf_profiler import profiled_section
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ def merge_small_clusters(
     # Re-number labels to be contiguous 0..K-1
     remaining = sorted(set(labels))
     remap = {old: new for new, old in enumerate(remaining)}
-    labels = np.array([remap[l] for l in labels])
+    labels = np.array([remap[lbl] for lbl in labels])
 
     # Recompute centroids from actual data
     new_k = len(remaining)
@@ -419,11 +419,12 @@ def main() -> None:
         sys.exit(1)
 
     logger.info("Loading feature matrix from %s...", input_path)
-    df = pd.read_csv(input_path)
+    with profiled_section("load_feature_matrix"):
+        df = pd.read_csv(input_path)
     logger.info("Loaded %d samples with %d features", len(df), len(df.columns))
 
     # ── Feature selection ───────────────────────────────────────────────────
-    metadata_cols = ["dfu_ck", "dmdunit", "dmdgroup", "loc"]
+    metadata_cols = ["sku_ck", "item_id", "customer_group", "loc"]
 
     if args.all_features:
         feature_cols = [c for c in df.columns if c not in metadata_cols]
@@ -490,7 +491,8 @@ def main() -> None:
     n_workers = max(1, n_workers)
 
     # Find optimal K using combined silhouette + CH score with min-size constraint
-    k_results = find_optimal_k(X_scaled, k_range, min_cluster_size_pct, n_workers=n_workers)
+    with profiled_section("find_optimal_k"):
+        k_results = find_optimal_k(X_scaled, k_range, min_cluster_size_pct, n_workers=n_workers)
     optimal_k = k_results["optimal_k"]
 
     logger.info("Optimal K selection:")
@@ -502,8 +504,9 @@ def main() -> None:
     # Train final model with n_init=30 for robustness with 14 features
     # algorithm="elkan" is faster than "lloyd" for dense low-dimensional data
     logger.info("Training final KMeans with K=%d, n_init=30, algorithm=elkan, max_iter=300...", optimal_k)
-    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=30, algorithm="elkan", max_iter=300)
-    labels = kmeans.fit_predict(X_scaled)
+    with profiled_section("train_final_kmeans"):
+        kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=30, algorithm="elkan", max_iter=300)
+        labels = kmeans.fit_predict(X_scaled)
 
     # ── Merge small clusters ────────────────────────────────────────────────
     n_samples = len(X_scaled)
@@ -511,16 +514,17 @@ def main() -> None:
     unique_pre, counts_pre = np.unique(labels, return_counts=True)
     small_count = sum(1 for c in counts_pre if c < min_cluster_size)
 
-    if small_count > 0:
-        labels, centroids_scaled = merge_small_clusters(
-            X_scaled, labels, kmeans.cluster_centers_, min_cluster_size
-        )
-        final_k = len(set(labels))
-        logger.info("After merging: %d clusters (was %d)", final_k, optimal_k)
-        optimal_k = final_k
-    else:
-        centroids_scaled = kmeans.cluster_centers_
-        logger.info("All clusters meet minimum size -- no merging needed.")
+    with profiled_section("merge_small_clusters"):
+        if small_count > 0:
+            labels, centroids_scaled = merge_small_clusters(
+                X_scaled, labels, kmeans.cluster_centers_, min_cluster_size
+            )
+            final_k = len(set(labels))
+            logger.info("After merging: %d clusters (was %d)", final_k, optimal_k)
+            optimal_k = final_k
+        else:
+            centroids_scaled = kmeans.cluster_centers_
+            logger.info("All clusters meet minimum size -- no merging needed.")
 
     # Compute final metrics
     silhouette = silhouette_score(X_scaled, labels)
@@ -546,28 +550,30 @@ def main() -> None:
 
     # Generate plots
     logger.info("Generating visualizations...")
-    plot_k_selection(
-        k_results["k_values"],
-        k_results["inertias"],
-        k_results["silhouette_scores"],
-        k_results["ch_scores"],
-        k_results["combined_scores"],
-        k_results["feasible_mask"],
-        optimal_k,
-        output_dir,
-    )
+    with profiled_section("generate_visualizations"):
+        plot_k_selection(
+            k_results["k_values"],
+            k_results["inertias"],
+            k_results["silhouette_scores"],
+            k_results["ch_scores"],
+            k_results["combined_scores"],
+            k_results["feasible_mask"],
+            optimal_k,
+            output_dir,
+        )
 
-    if X_scaled.shape[1] >= 2:
-        plot_cluster_visualization(X_scaled, labels, feature_names, output_dir)
+        if X_scaled.shape[1] >= 2:
+            plot_cluster_visualization(X_scaled, labels, feature_names, output_dir)
 
     # Save cluster assignments
-    assignments_df = pd.DataFrame({
-        "dfu_ck": df["dfu_ck"].values,
-        "cluster_id": labels
-    })
-    assignments_path = output_dir / "cluster_assignments.csv"
-    assignments_df.to_csv(assignments_path, index=False)
-    logger.info("Saved cluster assignments to %s", assignments_path)
+    with profiled_section("save_artifacts"):
+        assignments_df = pd.DataFrame({
+            "sku_ck": df["sku_ck"].values,
+            "cluster_id": labels
+        })
+        assignments_path = output_dir / "cluster_assignments.csv"
+        assignments_df.to_csv(assignments_path, index=False)
+        logger.info("Saved cluster assignments to %s", assignments_path)
 
     # Save cluster metadata
     cluster_metadata = {
@@ -622,55 +628,56 @@ def main() -> None:
     logger.info("Saved cluster centroids to %s", centroids_path)
 
     # MLflow logging (optional: skip if server unavailable)
-    try:
-        mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5003")
-        mlflow.set_tracking_uri(mlflow_uri)
-        mlflow.set_experiment("dfu_clustering")
+    with profiled_section("mlflow_logging"):
+        try:
+            mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5003")
+            mlflow.set_tracking_uri(mlflow_uri)
+            mlflow.set_experiment("dfu_clustering")
 
-        with mlflow.start_run():
-            mlflow.set_tag("model_type", "clustering")
-            mlflow.set_tag("feature_set", "core" if not args.all_features else "all")
-            mlflow.set_tag("version", "v3.0")
-            mlflow.set_tag("k_selection_method", "combined_silhouette_ch")
+            with mlflow.start_run():
+                mlflow.set_tag("model_type", "clustering")
+                mlflow.set_tag("feature_set", "core" if not args.all_features else "all")
+                mlflow.set_tag("version", "v3.0")
+                mlflow.set_tag("k_selection_method", "combined_silhouette_ch")
 
-            mlflow.log_params({
-                "k": int(optimal_k),
-                "k_min": int(k_range[0]),
-                "k_max": int(k_range[1]),
-                "min_cluster_size_pct": min_cluster_size_pct,
-                "use_pca": use_pca,
-                "n_features": len(feature_names),
-                "log_transform": True,
-                "feature_selection": "core" if not args.all_features else "all",
-                "n_init_final": 30,
-            })
+                mlflow.log_params({
+                    "k": int(optimal_k),
+                    "k_min": int(k_range[0]),
+                    "k_max": int(k_range[1]),
+                    "min_cluster_size_pct": min_cluster_size_pct,
+                    "use_pca": use_pca,
+                    "n_features": len(feature_names),
+                    "log_transform": True,
+                    "feature_selection": "core" if not args.all_features else "all",
+                    "n_init_final": 30,
+                })
 
-            mlflow.log_metrics({
-                "silhouette_score": float(silhouette),
-                "calinski_harabasz_score": float(ch_score_final),
-                "inertia": float(inertia),
-                "n_clusters": int(optimal_k),
-            })
+                mlflow.log_metrics({
+                    "silhouette_score": float(silhouette),
+                    "calinski_harabasz_score": float(ch_score_final),
+                    "inertia": float(inertia),
+                    "n_clusters": int(optimal_k),
+                })
 
-            for cluster_id, size in cluster_sizes.items():
-                mlflow.log_metric(f"cluster_{cluster_id}_size", int(size))
-                mlflow.log_metric(f"cluster_{cluster_id}_pct", float(size / n_samples * 100))
+                for cluster_id, size in cluster_sizes.items():
+                    mlflow.log_metric(f"cluster_{cluster_id}_size", int(size))
+                    mlflow.log_metric(f"cluster_{cluster_id}_pct", float(size / n_samples * 100))
 
-            mlflow.log_artifact(str(assignments_path), "cluster_assignments.csv")
-            mlflow.log_artifact(str(metadata_path), "cluster_metadata.json")
-            mlflow.log_artifact(str(centroids_path), "cluster_centroids.csv")
-            mlflow.log_artifact(str(output_dir / "k_selection_plots.png"), "k_selection_plots.png")
-            if (output_dir / "combined_score_plot.png").exists():
-                mlflow.log_artifact(str(output_dir / "combined_score_plot.png"), "combined_score_plot.png")
-            if (output_dir / "cluster_visualization.png").exists():
-                mlflow.log_artifact(str(output_dir / "cluster_visualization.png"), "cluster_visualization.png")
+                mlflow.log_artifact(str(assignments_path), "cluster_assignments.csv")
+                mlflow.log_artifact(str(metadata_path), "cluster_metadata.json")
+                mlflow.log_artifact(str(centroids_path), "cluster_centroids.csv")
+                mlflow.log_artifact(str(output_dir / "k_selection_plots.png"), "k_selection_plots.png")
+                if (output_dir / "combined_score_plot.png").exists():
+                    mlflow.log_artifact(str(output_dir / "combined_score_plot.png"), "combined_score_plot.png")
+                if (output_dir / "cluster_visualization.png").exists():
+                    mlflow.log_artifact(str(output_dir / "cluster_visualization.png"), "cluster_visualization.png")
 
-            mlflow.sklearn.log_model(kmeans, "model")
+                mlflow.sklearn.log_model(kmeans, "model")
 
-            logger.info("Logged to MLflow: %s", mlflow.get_artifact_uri())
-    except (ConnectionError, OSError, mlflow.exceptions.MlflowException) as e:
-        logger.warning("MLflow logging skipped (server unavailable or error): %s", e)
-        logger.info("Clustering outputs were saved to disk. Start MLflow (e.g. make up) to enable experiment tracking.")
+                logger.info("Logged to MLflow: %s", mlflow.get_artifact_uri())
+        except (ConnectionError, OSError, mlflow.exceptions.MlflowException) as e:
+            logger.warning("MLflow logging skipped (server unavailable or error): %s", e)
+            logger.info("Clustering outputs were saved to disk. Start MLflow (e.g. make up) to enable experiment tracking.")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ vi.mock("@/api/queries/evolution", () => ({
   STALE_EVO: { FIVE_MIN: 300000, ONE_MIN: 60000 },
   fetchBiasCorrectionSummary: vi.fn().mockResolvedValue({
     total_corrections: 120,
-    dfu_count: 95,
+    sku_count: 95,
     flagged_count: 8,
     clipped_count: 3,
     avg_rolling_bias: 0.12,
@@ -25,7 +25,7 @@ vi.mock("@/api/queries/evolution", () => ({
     page: 1,
     flagged: [
       {
-        item_no: "100320",
+        item_id: "100320",
         loc: "1401-BULK",
         plan_month: "2026-04-01",
         segment_type: "cluster",
@@ -48,7 +48,7 @@ describe("BiasCorrectionsPanel", () => {
         <BiasCorrectionsPanel />
       </TestQueryWrapper>
     );
-    expect(await screen.findByText("DFUs Corrected")).toBeDefined();
+    expect(await screen.findByText("SKUs Corrected")).toBeDefined();
     expect(await screen.findByText("Avg Correction Factor")).toBeDefined();
     expect(await screen.findByText("Flagged for Review")).toBeDefined();
     expect(await screen.findByText("Clipped (Guard Rail)")).toBeDefined();

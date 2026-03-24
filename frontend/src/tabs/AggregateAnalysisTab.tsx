@@ -42,7 +42,7 @@ import {
   saveCompetitionConfig,
   runCompetition,
   fetchPlanningDate,
-  fetchDfuCount,
+  fetchSkuCount,
   filterMetaKeys,
   type CompetitionConfig,
   type SliceParams,
@@ -190,9 +190,9 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
     enabled: visible.heatmap,
   });
 
-  const dfuCountQ = useQuery({
-    queryKey: filterMetaKeys.dfuCount(debouncedFilters),
-    queryFn: () => fetchDfuCount(debouncedFilters),
+  const skuCountQ = useQuery({
+    queryKey: filterMetaKeys.skuCount(debouncedFilters),
+    queryFn: () => fetchSkuCount(debouncedFilters),
     staleTime: STALE.THIRTY_SEC,
     enabled: hasActiveFilters(filters),
   });
@@ -204,7 +204,7 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   const categoryParam = debouncedFilters.category.length > 0 ? debouncedFilters.category.join(",") : undefined;
   const marketParam = debouncedFilters.market.length > 0 ? debouncedFilters.market.join(",") : undefined;
   const clusterParam = debouncedFilters.cluster.length > 0 ? debouncedFilters.cluster.join(",") : undefined;
-  const needDfuCount = sliceKpis.includes("dfu_count");
+  const needDfuCount = sliceKpis.includes("sku_count");
 
   const monthFrom = useMemo(() => {
     if (sliceGroupBy === "month_start") return "";
@@ -215,15 +215,15 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
 
   const sliceParams: SliceParams = useMemo(() => ({
     group_by: sliceGroupBy, lag: sliceLag, models: sliceModels, month_from: monthFrom,
-    common_dfus: commonDfus, include_dfu_count: needDfuCount,
+    common_skus: commonDfus, include_sku_count: needDfuCount,
     item: globalItem, location: globalLocation, seasonality_profile: seasonalityProfile || undefined,
     time_grain: debouncedFilters.timeGrain,
     brand: brandParam, category: categoryParam, market: marketParam, cluster_assignment: clusterParam,
   }), [sliceGroupBy, sliceLag, sliceModels, monthFrom, commonDfus, needDfuCount, globalItem, globalLocation, seasonalityProfile, debouncedFilters.timeGrain, brandParam, categoryParam, marketParam, clusterParam]);
 
   const lagCurveParams: LagCurveParams = useMemo(() => ({
-    models: sliceModels, month_from: monthFrom, common_dfus: commonDfus,
-    include_dfu_count: needDfuCount, item: globalItem, location: globalLocation,
+    models: sliceModels, month_from: monthFrom, common_skus: commonDfus,
+    include_sku_count: needDfuCount, item: globalItem, location: globalLocation,
     seasonality_profile: seasonalityProfile || undefined,
     time_grain: debouncedFilters.timeGrain,
     brand: brandParam, category: categoryParam, market: marketParam, cluster_assignment: clusterParam,
@@ -354,9 +354,9 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
               {planDate.planning_date}
             </span>
           )}
-          {hasActiveFilters(filters) && dfuCountQ.data && (
+          {hasActiveFilters(filters) && skuCountQ.data && (
             <span className="rounded bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">
-              {dfuCountQ.data.count?.toLocaleString() ?? "?"} DFUs
+              {skuCountQ.data.count?.toLocaleString() ?? "?"} SKUs
             </span>
           )}
         </div>
@@ -552,8 +552,8 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
                 sliceKpis={sliceKpis} sliceMonths={sliceMonths} commonDfus={commonDfus}
                 seasonalityProfile={seasonalityProfile} seasonalityProfiles={seasonalityProfiles}
                 loadingSlice={loadingSlice} sliceData={sliceData} allModels={allModels}
-                commonDfuCount={slicePayload?.common_dfu_count ?? null}
-                dfuCounts={slicePayload?.dfu_counts ?? null}
+                commonDfuCount={slicePayload?.common_sku_count ?? null}
+                skuCounts={slicePayload?.sku_counts ?? null}
                 onSliceGroupByChange={handleSliceGroupByChange}
                 onSliceLagChange={handleSliceLagChange}
                 onSliceModelsChange={handleSliceModelsChange}

@@ -23,7 +23,7 @@ _NOW = datetime.datetime(2026, 3, 1, 12, 0, 0)
 _EXCEPTION_ROW = (
     _EXC_ID,             # exception_id
     "stockout_risk",     # exception_type
-    "ITEM001",           # item_no
+    "ITEM001",           # item_id
     "LOC1",              # loc
     0.85,                # severity
     142000.0,            # financial_impact
@@ -37,7 +37,7 @@ _EXCEPTION_ROW = (
 )
 
 _EXCEPTION_COLS = [
-    ("exception_id",), ("exception_type",), ("item_no",), ("loc",),
+    ("exception_id",), ("exception_type",), ("item_id",), ("loc",),
     ("severity",), ("financial_impact",), ("headline",), ("supporting_data",),
     ("status",), ("assigned_to",), ("generated_at",), ("expires_at",),
     ("month_start",),
@@ -83,7 +83,7 @@ async def test_list_exceptions_row_keys():
 
     assert resp.status_code == 200
     row = resp.json()["rows"][0]
-    for key in ("exception_id", "exception_type", "item_no", "loc", "severity", "status", "headline"):
+    for key in ("exception_id", "exception_type", "item_id", "loc", "severity", "status", "headline"):
         assert key in row
 
 
@@ -509,7 +509,7 @@ async def test_decide_escalate_maps_to_investigating():
 _DECISION_ROW = (
     str(uuid.uuid4()),   # decision_id
     _EXC_ID,             # exception_id
-    "ITEM001",           # item_no
+    "ITEM001",           # item_id
     "LOC1",              # loc
     "accept_exception",  # decision_type
     {},                  # decision_value (jsonb → dict)
@@ -519,7 +519,7 @@ _DECISION_ROW = (
 )
 
 _DECISION_COLS = [
-    ("decision_id",), ("exception_id",), ("item_no",), ("loc",),
+    ("decision_id",), ("exception_id",), ("item_id",), ("loc",),
     ("decision_type",), ("decision_value",), ("rationale",), ("decided_by",),
     ("decided_at",),
 ]
@@ -558,7 +558,7 @@ async def test_list_decisions_row_keys():
             resp = await client.get("/storyboard/decisions")
 
     row = resp.json()["rows"][0]
-    for key in ("decision_id", "exception_id", "item_no", "loc", "decision_type", "decided_by"):
+    for key in ("decision_id", "exception_id", "item_id", "loc", "decision_type", "decided_by"):
         assert key in row
 
 

@@ -159,7 +159,7 @@ async def test_safety_stock_detail_200():
         ),
     ]
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
+        ("item_id",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
         ("ss_combined",), ("reorder_point",), ("current_qty_on_hand",), ("current_dos",),
         ("ss_gap",), ("ss_coverage",), ("is_below_ss",), ("target_dos_min",),
     ]
@@ -189,7 +189,7 @@ async def test_safety_stock_detail_row_keys():
         ),
     ]
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
+        ("item_id",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
         ("ss_combined",), ("reorder_point",), ("current_qty_on_hand",), ("current_dos",),
         ("ss_gap",), ("ss_coverage",), ("is_below_ss",), ("target_dos_min",),
     ]
@@ -202,7 +202,7 @@ async def test_safety_stock_detail_row_keys():
 
     row = resp.json()["rows"][0]
     for key in (
-        "item_no", "loc", "abc_vol", "service_level_target", "z_score",
+        "item_id", "loc", "abc_vol", "service_level_target", "z_score",
         "ss_combined", "reorder_point", "current_qty_on_hand",
         "ss_gap", "ss_coverage", "is_below_ss", "target_dos_min",
     ):
@@ -218,7 +218,7 @@ async def test_safety_stock_detail_is_below_ss_filter():
         ("ITEM002", "LOC2", "C", 0.90, 1.282, 60.0, 200.0, 40.0, 6.0, -20.0, 0.667, True, 12.0),
     ]
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
+        ("item_id",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
         ("ss_combined",), ("reorder_point",), ("current_qty_on_hand",), ("current_dos",),
         ("ss_gap",), ("ss_coverage",), ("is_below_ss",), ("target_dos_min",),
     ]
@@ -242,7 +242,7 @@ async def test_safety_stock_detail_item_loc_filter():
     cursor.fetchone.return_value = (1,)
     cursor.fetchall.return_value = []
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
+        ("item_id",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
         ("ss_combined",), ("reorder_point",), ("current_qty_on_hand",), ("current_dos",),
         ("ss_gap",), ("ss_coverage",), ("is_below_ss",), ("target_dos_min",),
     ]
@@ -263,7 +263,7 @@ async def test_safety_stock_detail_pagination():
     cursor.fetchone.return_value = (100,)
     cursor.fetchall.return_value = []
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
+        ("item_id",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
         ("ss_combined",), ("reorder_point",), ("current_qty_on_hand",), ("current_dos",),
         ("ss_gap",), ("ss_coverage",), ("is_below_ss",), ("target_dos_min",),
     ]
@@ -286,7 +286,7 @@ async def test_safety_stock_detail_sort_by_ss_gap():
     cursor.fetchone.return_value = (50,)
     cursor.fetchall.return_value = []
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
+        ("item_id",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
         ("ss_combined",), ("reorder_point",), ("current_qty_on_hand",), ("current_dos",),
         ("ss_gap",), ("ss_coverage",), ("is_below_ss",), ("target_dos_min",),
     ]
@@ -307,7 +307,7 @@ async def test_safety_stock_detail_invalid_sort_falls_back():
     cursor.fetchone.return_value = (0,)
     cursor.fetchall.return_value = []
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
+        ("item_id",), ("loc",), ("abc_vol",), ("service_level_target",), ("z_score",),
         ("ss_combined",), ("reorder_point",), ("current_qty_on_hand",), ("current_dos",),
         ("ss_gap",), ("ss_coverage",), ("is_below_ss",), ("target_dos_min",),
     ]
@@ -330,7 +330,7 @@ async def test_safety_stock_waterfall_200():
     """GET /inv-planning/safety-stock/waterfall with item+location returns 200."""
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (
-        "ITEM001",   # item_no
+        "ITEM001",   # item_id
         "LOC1",      # loc
         0.95,        # service_level_target
         1.645,       # z_score
@@ -346,7 +346,7 @@ async def test_safety_stock_waterfall_200():
         -30.87,      # ss_gap
     )
     cursor.description = [
-        ("item_no",), ("loc",), ("service_level_target",), ("z_score",),
+        ("item_id",), ("loc",), ("service_level_target",), ("z_score",),
         ("demand_mean_monthly",), ("demand_std_monthly",),
         ("lead_time_mean_days",), ("lead_time_std_days",),
         ("ss_demand_only",), ("ss_lt_only",), ("ss_combined",),
@@ -364,7 +364,7 @@ async def test_safety_stock_waterfall_200():
     assert resp.status_code == 200
     data = resp.json()
     # All required waterfall components must be present
-    assert "item_no" in data
+    assert "item_id" in data
     assert "loc" in data
     assert "demand_component" in data
     assert "lt_component" in data
@@ -435,7 +435,7 @@ async def test_safety_stock_waterfall_demand_lt_components():
         150.0, 141.5,
     )
     cursor.description = [
-        ("item_no",), ("loc",), ("service_level_target",), ("z_score",),
+        ("item_id",), ("loc",), ("service_level_target",), ("z_score",),
         ("demand_mean_monthly",), ("demand_std_monthly",),
         ("lead_time_mean_days",), ("lead_time_std_days",),
         ("ss_demand_only",), ("ss_lt_only",), ("ss_combined",),
@@ -472,7 +472,7 @@ async def test_safety_stock_override_without_auth_returns_401():
             resp = await client.post(
                 "/inv-planning/safety-stock/override",
                 json={
-                    "item_no": "ITEM001",
+                    "item_id": "ITEM001",
                     "loc": "LOC1",
                     "ss_override_qty": 150.0,
                     "reason": "Planner judgment",
@@ -501,7 +501,7 @@ async def test_safety_stock_override_with_auth_returns_200():
                 "/inv-planning/safety-stock/override",
                 headers={"X-API-Key": "secret-key"},
                 json={
-                    "item_no": "ITEM001",
+                    "item_id": "ITEM001",
                     "loc": "LOC1",
                     "ss_override_qty": 150.0,
                     "reason": "Planner judgment",
@@ -531,7 +531,7 @@ async def test_safety_stock_override_response_has_ss_method():
                 "/inv-planning/safety-stock/override",
                 headers={"X-API-Key": "secret-key"},
                 json={
-                    "item_no": "ITEM001",
+                    "item_id": "ITEM001",
                     "loc": "LOC1",
                     "ss_override_qty": 150.0,
                     "reason": "Planner judgment",

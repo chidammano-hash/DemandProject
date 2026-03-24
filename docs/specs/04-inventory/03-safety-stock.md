@@ -57,8 +57,8 @@ This validates whether the analytical SS actually achieves the target service le
 
 | Table | Grain | Key Columns |
 |---|---|---|
-| `fact_safety_stock_targets` | item_no + loc | ss_combined, rop, target_service_level, z_score, demand_std, lt_std, abc_class, computed_at |
-| `fact_ss_simulation_results` | simulation_id + item_no + loc | n_simulations, ss_levels_tested, achieved_service_levels, optimal_ss |
+| `fact_safety_stock_targets` | item_id + loc | ss_combined, rop, target_service_level, z_score, demand_std, lt_std, abc_class, computed_at |
+| `fact_ss_simulation_results` | simulation_id + item_id + loc | n_simulations, ss_levels_tested, achieved_service_levels, optimal_ss |
 
 DDL: `sql/037_create_safety_stock_targets.sql`, `sql/030_create_ss_simulation_results.sql`
 
@@ -129,7 +129,7 @@ random_seed: 42
 
 ## Dependencies
 
-- **Upstream:** `dim_dfu` (demand_cv, variability_class), `dim_item_lead_time_profile` (lt_mean, lt_cv), `fact_sales_monthly`, ABC classification
+- **Upstream:** `dim_sku` (demand_cv, variability_class), `dim_item_lead_time_profile` (lt_mean, lt_cv), `fact_sales_monthly`, ABC classification
 - **Downstream:** Health scores (SS coverage component), exception queue (below-SS alerts), rebalancing (excess/shortage detection), investment optimization
 - **Libraries:** pandas, numpy, scipy
 

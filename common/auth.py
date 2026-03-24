@@ -9,11 +9,10 @@ import hmac
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 import bcrypt
 import jwt
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from common.utils import load_config, reset_config

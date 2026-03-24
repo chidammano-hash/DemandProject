@@ -211,7 +211,7 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
                   <div className="flex-1 rounded-full bg-muted h-2">
                     <div
                       className={`${color} h-2 rounded-full`}
-                      style={{ width: `${h.total_dfus > 0 ? (count / h.total_dfus) * 100 : 0}%` }}
+                      style={{ width: `${h.total_skus > 0 ? (count / h.total_skus) * 100 : 0}%` }}
                     />
                   </div>
                   <span className="w-10 text-right">{count.toLocaleString()}</span>
@@ -219,7 +219,7 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
               ))}
               <p className="text-xs text-muted-foreground mt-2">
                 Avg health: {h.avg_health_score?.toFixed(1) ?? "—"} |
-                Below SS: {h.below_ss_count.toLocaleString()} DFUs
+                Below SS: {h.below_ss_count.toLocaleString()} SKUs
               </p>
             </div>
           )}
@@ -251,7 +251,7 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
                     <span className="font-mono font-bold text-[10px]">
                       {SOURCE_LABELS[alert.source] ?? alert.source}
                     </span>
-                    <span className="font-medium">{alert.item_no} @ {alert.loc}</span>
+                    <span className="font-medium">{alert.item_id} @ {alert.loc}</span>
                     <span className="ml-auto capitalize font-semibold">{alert.severity}</span>
                   </div>
                   <p className="mt-1 text-muted-foreground leading-tight">{alert.description}</p>
@@ -289,14 +289,14 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
           <div className="flex gap-3 overflow-x-auto pb-2">
             {topCritical.items.map((item: ControlTowerCriticalItem) => (
               <div
-                key={`${item.item_no}-${item.loc}`}
+                key={`${item.item_id}-${item.loc}`}
                 className={`min-w-[180px] rounded-lg border p-3 text-xs space-y-1 ${
                   item.health_tier === "critical" ? "border-red-400 bg-red-50 dark:bg-red-900/20" :
                   item.health_tier === "at_risk"  ? "border-orange-400 bg-orange-50 dark:bg-orange-900/20" :
                   "border-amber-300 bg-amber-50 dark:bg-amber-900/20"
                 }`}
               >
-                <p className="font-bold truncate">{item.item_no}</p>
+                <p className="font-bold truncate">{item.item_id}</p>
                 <p className="text-muted-foreground">{item.loc}</p>
                 <p>
                   Health:{" "}
@@ -320,7 +320,7 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
                 )}
                 {onNavigate && (
                   <button
-                    onClick={() => onNavigate("dfuAnalysis")}
+                    onClick={() => onNavigate("skuAnalysis")}
                     className="mt-1 w-full text-center rounded border border-current px-2 py-0.5 text-[10px] font-medium hover:opacity-80"
                   >
                     View Detail →
@@ -331,7 +331,7 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
           </div>
         ) : (
           <p className="text-xs text-green-600 dark:text-green-400">
-            ✓ No critical items — all DFUs within health thresholds.
+            ✓ No critical items — all SKUs within health thresholds.
           </p>
         )}
       </div>

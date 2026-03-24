@@ -6,8 +6,6 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AlertTriangle,
-  AlertCircle,
   ChevronDown,
   ChevronUp,
   ArrowRight,
@@ -176,7 +174,7 @@ function WorkQueueItem({
             {insight.severity}
           </span>
           <span className="text-xs font-medium text-foreground">
-            {insight.item_no} @ {insight.loc}
+            {insight.item_id} @ {insight.loc}
           </span>
           <TypeIcon className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0 mt-0.5" />
           <span className="text-xs text-muted-foreground truncate">{insight.summary}</span>
@@ -414,7 +412,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate?: (tab: string
               <Sparkles className="h-8 w-8 text-teal-500 mb-2" />
               <p className="text-sm font-medium text-teal-700 dark:text-teal-400">Portfolio looks healthy!</p>
               <p className="text-xs text-muted-foreground mt-1">
-                {lastScanText ? `${lastScanText}. No open exceptions.` : "No open AI insights — all DFUs within thresholds."}
+                {lastScanText ? `${lastScanText}. No open exceptions.` : "No open AI insights — all SKUs within thresholds."}
               </p>
             </div>
           )}

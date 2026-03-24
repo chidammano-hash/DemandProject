@@ -4,12 +4,12 @@ All strategies take a DataFrame of per-DFU per-month per-model errors
 and return per-DFU per-month winner selections.
 
 Input DataFrame schema (monthly_errors):
-    dmdunit, dmdgroup, loc, startdate, model_id,
+    item_id, customer_group, loc, startdate, model_id,
     basefcst_pref, tothist_dmd, abs_err
     [optional: execution_lag, fcstdate]
 
 Output DataFrame schema:
-    dmdunit, dmdgroup, loc, startdate, model_id,
+    item_id, customer_group, loc, startdate, model_id,
     basefcst_pref, tothist_dmd
     (+ strategy-specific columns like prior_wape)
 
@@ -53,12 +53,12 @@ def register_strategy(name: str):
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-_DFU_COLS = ["dmdunit", "dmdgroup", "loc"]
-_DFU_MONTH_COLS = ["dmdunit", "dmdgroup", "loc", "startdate"]
-_DFU_MODEL_COLS = ["dmdunit", "dmdgroup", "loc", "model_id"]
+_DFU_COLS = ["item_id", "customer_group", "loc"]
+_DFU_MONTH_COLS = ["item_id", "customer_group", "loc", "startdate"]
+_DFU_MODEL_COLS = ["item_id", "customer_group", "loc", "model_id"]
 
 _OUTPUT_COLS = [
-    "dmdunit", "dmdgroup", "loc", "startdate",
+    "item_id", "customer_group", "loc", "startdate",
     "model_id", "prior_wape", "basefcst_pref", "tothist_dmd",
 ]
 
@@ -241,7 +241,7 @@ def strategy_decay(
 
     results = []
     for dfu_key, dfu_df in df.groupby(_DFU_COLS, sort=False):
-        dmdunit, dmdgroup, loc = dfu_key
+        item_id, customer_group, loc = dfu_key
         exec_lag = _get_exec_lag(dfu_df)
         months = sorted(dfu_df["startdate"].unique())
 
@@ -259,16 +259,19 @@ def strategy_decay(
 
             current_rows = dfu_df[dfu_df["startdate"] == current_month]
 
+            # Pre-build O(1) lookup: month → position (sorted order)
+            month_to_pos = {m: idx for idx, m in enumerate(prior_months_available)}
+
             for model_id, model_df in dfu_df[
                 dfu_df["startdate"].isin(prior_months_available)
             ].groupby("model_id", sort=False):
                 if len(model_df) < min_prior_months:
                     continue
 
-                model_df = model_df.sort_values("startdate")
+                # No need to sort — parent dfu_df is already sorted by startdate
                 # Distance: 0 = most recent prior month, increasing toward the past
                 distances = [
-                    n_available - 1 - list(prior_months_available).index(m)
+                    len(month_to_pos) - 1 - month_to_pos[m]
                     for m in model_df["startdate"]
                 ]
                 weights = np.array([decay_factor ** d for d in distances])
@@ -287,8 +290,8 @@ def strategy_decay(
                 if len(row) > 0:
                     r = row.iloc[0]
                     results.append({
-                        "dmdunit": dmdunit,
-                        "dmdgroup": dmdgroup,
+                        "item_id": item_id,
+                        "customer_group": customer_group,
                         "loc": loc,
                         "startdate": current_month,
                         "model_id": best_model,
@@ -333,7 +336,7 @@ def strategy_ensemble(
 
     results = []
     for key, month_df in qualified.groupby(_DFU_MONTH_COLS, sort=False):
-        dmdunit, dmdgroup, loc, startdate = key
+        item_id, customer_group, loc, startdate = key
         top = month_df.nsmallest(top_k, "prior_wape")
         if len(top) == 0:
             continue
@@ -351,8 +354,8 @@ def strategy_ensemble(
         avg_wape = float((top["prior_wape"] * weights).sum())
 
         results.append({
-            "dmdunit": dmdunit,
-            "dmdgroup": dmdgroup,
+            "item_id": item_id,
+            "customer_group": customer_group,
             "loc": loc,
             "startdate": startdate,
             "model_id": "ensemble",
@@ -450,31 +453,32 @@ def _build_meta_features(
     """
     df = df.sort_values(_DFU_MODEL_COLS + ["startdate"]).copy()
 
-    # Compute per-model rolling stats with exec-lag-aware causal shift
-    def _apply_meta_rolling(group: pd.DataFrame) -> pd.DataFrame:
-        exec_lag = _get_exec_lag(group)
-        shift_n = exec_lag + 1
-        g = group.sort_values("startdate").copy()
-        shifted_err = g["abs_err"].shift(shift_n)
-        shifted_act = g["tothist_dmd"].shift(shift_n)
-        shifted_bias = (g["basefcst_pref"] - g["tothist_dmd"]).shift(shift_n)
-        g["_roll_abs_err"] = shifted_err.rolling(
-            window=performance_window, min_periods=1
-        ).sum()
-        g["_roll_actual"] = shifted_act.rolling(
-            window=performance_window, min_periods=1
-        ).sum()
-        g["_roll_bias_num"] = shifted_bias.rolling(
-            window=performance_window, min_periods=1
-        ).sum()
-        g["_prior_count"] = shifted_err.expanding(min_periods=1).count()
-        return g
+    # Compute per-model rolling stats with exec-lag-aware causal shift (in-place)
+    df["_roll_abs_err"] = np.nan
+    df["_roll_actual"] = np.nan
+    df["_roll_bias_num"] = np.nan
+    df["_prior_count"] = np.nan
+    df["_bias_raw"] = df["basefcst_pref"] - df["tothist_dmd"]
 
-    # Apply meta rolling stats per DFU-model group (explicit loop avoids FutureWarning)
-    meta_groups = []
-    for _, group in df.groupby(_DFU_MODEL_COLS, sort=False):
-        meta_groups.append(_apply_meta_rolling(group))
-    df = pd.concat(meta_groups, ignore_index=True)
+    for group_key, idx in df.groupby(_DFU_MODEL_COLS, sort=False).groups.items():
+        sub = df.loc[idx]
+        exec_lag = _get_exec_lag(sub)
+        shift_n = exec_lag + 1
+        shifted_err = sub["abs_err"].shift(shift_n)
+        shifted_act = sub["tothist_dmd"].shift(shift_n)
+        shifted_bias = sub["_bias_raw"].shift(shift_n)
+        df.loc[idx, "_roll_abs_err"] = shifted_err.rolling(
+            window=performance_window, min_periods=1
+        ).sum().values
+        df.loc[idx, "_roll_actual"] = shifted_act.rolling(
+            window=performance_window, min_periods=1
+        ).sum().values
+        df.loc[idx, "_roll_bias_num"] = shifted_bias.rolling(
+            window=performance_window, min_periods=1
+        ).sum().values
+        df.loc[idx, "_prior_count"] = shifted_err.expanding(min_periods=1).count().values
+
+    df = df.drop(columns=["_bias_raw"])
 
     df["_roll_wape"] = df["_roll_abs_err"] / df["_roll_actual"].abs().clip(lower=1e-6)
     df["_roll_bias"] = df["_roll_bias_num"] / df["_roll_actual"].abs().clip(lower=1e-6)
@@ -484,14 +488,14 @@ def _build_meta_features(
     ].drop_duplicates()
 
     pivoted = dfu_months.copy()
-    for model_id in models:
-        model_df = df[df["model_id"] == model_id][
-            _DFU_MONTH_COLS + ["_roll_wape", "_roll_bias"]
-        ].rename(columns={
-            "_roll_wape": f"roll_wape_{model_id}",
-            "_roll_bias": f"roll_bias_{model_id}",
-        })
-        pivoted = pivoted.merge(model_df, on=_DFU_MONTH_COLS, how="left")
+    # Single pivot instead of K sequential merges
+    pivot_src = df[_DFU_MONTH_COLS + ["model_id", "_roll_wape", "_roll_bias"]].copy()
+    for col, prefix in [("_roll_wape", "roll_wape"), ("_roll_bias", "roll_bias")]:
+        wide = pivot_src.pivot_table(
+            index=_DFU_MONTH_COLS, columns="model_id", values=col, aggfunc="first",
+        )
+        wide.columns = [f"{prefix}_{m}" for m in wide.columns]
+        pivoted = pivoted.merge(wide, on=_DFU_MONTH_COLS, how="left")
 
     demand = df.drop_duplicates(subset=_DFU_MONTH_COLS + ["model_id"]).copy()
     demand_agg = demand.groupby(_DFU_COLS + ["startdate"], sort=False).agg(
@@ -507,18 +511,20 @@ def _build_meta_features(
             for k, v in df.groupby(_DFU_COLS)["execution_lag"].first().items()
         }
 
-    # Apply demand stats per DFU group (explicit loop avoids FutureWarning)
-    demand_groups = []
-    for _, group in demand_agg.groupby(_DFU_COLS, sort=False):
-        g = group.sort_values("startdate").copy()
-        dfu_key = (g.iloc[0]["dmdunit"], g.iloc[0]["dmdgroup"], g.iloc[0]["loc"])
+    # Compute demand stats per DFU — in-place assignment avoids concat of many small frames
+    demand_agg = demand_agg.sort_values(_DFU_COLS + ["startdate"])
+    demand_agg["mean_qty"] = np.nan
+    demand_agg["cv_demand"] = np.nan
+
+    for dfu_key, idx in demand_agg.groupby(_DFU_COLS, sort=False).groups.items():
         exec_lag = exec_lag_map.get(dfu_key, 0)
         shift_n = exec_lag + 1
-        shifted = g["avg_demand"].shift(shift_n)
-        g["mean_qty"] = shifted.expanding(min_periods=1).mean()
-        g["cv_demand"] = shifted.expanding(min_periods=1).std() / g["mean_qty"].clip(lower=1e-6)
-        demand_groups.append(g)
-    demand_agg = pd.concat(demand_groups, ignore_index=True)
+        vals = demand_agg.loc[idx, "avg_demand"]
+        shifted = vals.shift(shift_n)
+        mean_vals = shifted.expanding(min_periods=1).mean()
+        std_vals = shifted.expanding(min_periods=1).std()
+        demand_agg.loc[idx, "mean_qty"] = mean_vals.values
+        demand_agg.loc[idx, "cv_demand"] = std_vals.values / mean_vals.clip(lower=1e-6).values
 
     pivoted = pivoted.merge(
         demand_agg[_DFU_MONTH_COLS + ["mean_qty", "cv_demand"]],

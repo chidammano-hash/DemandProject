@@ -5,14 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.auth import require_api_key
 from api.core import get_conn
-from common.auth import CurrentUser, get_current_user, require_role
+from common.auth import CurrentUser, require_role
 
 router = APIRouter(prefix="/demand-signals/external", tags=["demand-signals"])
 
 
 @router.get("")
 async def list_external_signals(
-    item_no: str = Query("", description="Filter by item"),
+    item_id: str = Query("", description="Filter by item"),
     loc: str = Query("", description="Filter by location"),
     days: int = Query(90, ge=1, le=365),
     limit: int = Query(100, ge=1, le=1000),
@@ -20,9 +20,9 @@ async def list_external_signals(
     """List external demand signals."""
     where = ["signal_date >= now() - interval '%s days'" % days]
     params: list = []
-    if item_no:
-        where.append("item_no ILIKE %s")
-        params.append(f"%{item_no}%")
+    if item_id:
+        where.append("item_id ILIKE %s")
+        params.append(f"%{item_id}%")
     if loc:
         where.append("loc ILIKE %s")
         params.append(f"%{loc}%")
@@ -32,7 +32,7 @@ async def list_external_signals(
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             f"""SELECT s.signal_id, src.name AS source_name, s.signal_date,
-                       s.item_no, s.loc, s.signal_type, s.signal_value,
+                       s.item_id, s.loc, s.signal_type, s.signal_value,
                        s.confidence, s.created_at
                 FROM fact_external_signal s
                 JOIN dim_external_signal_source src ON src.source_id = s.source_id
@@ -47,7 +47,7 @@ async def list_external_signals(
             {
                 "signal_id": r[0], "source_name": r[1],
                 "signal_date": r[2].isoformat() if r[2] else None,
-                "item_no": r[3], "loc": r[4],
+                "item_id": r[3], "loc": r[4],
                 "signal_type": r[5],
                 "signal_value": float(r[6]) if r[6] is not None else None,
                 "confidence": float(r[7]) if r[7] is not None else None,
@@ -105,7 +105,7 @@ async def refresh_source(
 
 @router.get("/decomposition")
 async def demand_decomposition(
-    item_no: str = Query(..., description="Item number"),
+    item_id: str = Query(..., description="Item number"),
     loc: str = Query(..., description="Location"),
 ):
     """Get demand decomposition (base, trend, seasonal, promotional, external)."""
@@ -114,9 +114,9 @@ async def demand_decomposition(
             """SELECT month, base_demand, trend_component, seasonal_component,
                       promotional_uplift, external_signal_effect, residual
                FROM mv_demand_decomposition
-               WHERE item_no = %s AND loc = %s
+               WHERE item_id = %s AND loc = %s
                ORDER BY month""",
-            (item_no, loc),
+            (item_id, loc),
         )
         rows = cur.fetchall()
 
@@ -124,7 +124,7 @@ async def demand_decomposition(
         raise HTTPException(status_code=404, detail="No decomposition data found")
 
     return {
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "decomposition": [
             {

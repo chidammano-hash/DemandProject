@@ -35,7 +35,7 @@ import {
   fetchDomainMeta,
   fetchDomainPage,
   fetchForecastModels,
-  fetchDfuClusters,
+  fetchSkuClusters,
   fetchSamplePair,
   fetchDomainSuggest,
 } from "@/api/queries";
@@ -56,7 +56,7 @@ const DIMENSION_DOMAINS = [
   "location",
   "customer",
   "time",
-  "dfu",
+  "sku",
   "sales",
   "forecast",
 ];
@@ -155,8 +155,8 @@ export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
   // -----------------------------------------------------------------------
   const itemField = useMemo(() => {
     if (!meta) return "";
-    if (meta.columns.includes("dmdunit")) return "dmdunit";
-    if (meta.columns.includes("item_no")) return "item_no";
+    if (meta.columns.includes("item_id")) return "item_id";
+    if (meta.columns.includes("item_id")) return "item_id";
     return "";
   }, [meta]);
 
@@ -195,7 +195,7 @@ export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
     if (domain === "forecast" && selectedModel.trim()) {
       out["model_id"] = `=${selectedModel.trim()}`;
     }
-    if (domain === "dfu" && selectedCluster.trim()) {
+    if (domain === "sku" && selectedCluster.trim()) {
       const filterCol = clusterSource === "ml" ? "ml_cluster" : "cluster_assignment";
       out[filterCol] = `=${selectedCluster.trim()}`;
     }
@@ -276,9 +276,9 @@ export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
   // 4. DFU clusters (useQuery)
   // -----------------------------------------------------------------------
   const { data: clustersPayload } = useQuery({
-    queryKey: queryKeys.dfuClusters(clusterSource),
-    queryFn: () => fetchDfuClusters(clusterSource),
-    enabled: domain === "dfu",
+    queryKey: queryKeys.skuClusters(clusterSource),
+    queryFn: () => fetchSkuClusters(clusterSource),
+    enabled: domain === "sku",
     staleTime: STALE.FIVE_MIN,
   });
   const clusterSummary: ClusterInfo[] = clustersPayload?.clusters ?? [];
@@ -565,8 +565,8 @@ export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
             </div>
           ) : null}
 
-          {/* Fact-domain filters: item/location for sales/forecast, model for forecast, cluster for dfu */}
-          {showFactFilters || domain === "forecast" || domain === "dfu" ? (
+          {/* Fact-domain filters: item/location for sales/forecast, model for forecast, cluster for sku */}
+          {showFactFilters || domain === "forecast" || domain === "sku" ? (
             <div className="flex flex-wrap items-end gap-3">
               {showFactFilters ? (
                 <>
@@ -616,7 +616,7 @@ export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
                   </select>
                 </label>
               ) : null}
-              {domain === "dfu" && clusterSummary.length > 0 ? (
+              {domain === "sku" && clusterSummary.length > 0 ? (
                 <>
                   <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Cluster Source
@@ -630,7 +630,7 @@ export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
                       }}
                     >
                       <option value="ml">ML Pipeline</option>
-                      <option value="source">Source (dfu.txt)</option>
+                      <option value="source">Source (sku.txt)</option>
                     </select>
                   </label>
                   <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">

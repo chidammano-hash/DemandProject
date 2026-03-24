@@ -12,7 +12,6 @@ Three-level sigma fallback:
 
 import math
 import logging
-from typing import Optional
 import pandas as pd
 import numpy as np
 
@@ -29,16 +28,16 @@ def load_champion_residuals(conn, source_model_ids: list[str], lag: int = 0) -> 
       - both basefcst_pref (forecast) and tothist_dmd (actual) are NOT NULL
 
     Returns DataFrame with columns:
-      dmdunit (str), loc (str), startdate, basefcst_pref (float), tothist_dmd (float), model_id (str)
+      item_id (str), loc (str), startdate, basefcst_pref (float), tothist_dmd (float), model_id (str)
 
     Uses psycopg3 %s placeholders.
     """
     if not source_model_ids:
-        return pd.DataFrame(columns=["dmdunit", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"])
+        return pd.DataFrame(columns=["item_id", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"])
 
     placeholders = ", ".join(["%s"] * len(source_model_ids))
     sql = f"""
-        SELECT dmdunit, loc, startdate, basefcst_pref, tothist_dmd, model_id
+        SELECT item_id, loc, startdate, basefcst_pref, tothist_dmd, model_id
         FROM backtest_lag_archive
         WHERE model_id IN ({placeholders})
           AND lag = %s
@@ -52,9 +51,9 @@ def load_champion_residuals(conn, source_model_ids: list[str], lag: int = 0) -> 
         rows = cur.fetchall()
 
     if not rows:
-        return pd.DataFrame(columns=["dmdunit", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"])
+        return pd.DataFrame(columns=["item_id", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"])
 
-    return pd.DataFrame(rows, columns=["dmdunit", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"])
+    return pd.DataFrame(rows, columns=["item_id", "loc", "startdate", "basefcst_pref", "tothist_dmd", "model_id"])
 
 
 def compute_dfu_sigma(residuals: pd.DataFrame) -> pd.DataFrame:
@@ -65,24 +64,24 @@ def compute_dfu_sigma(residuals: pd.DataFrame) -> pd.DataFrame:
     sigma_dfu = sqrt(mean(residual_i^2))
 
     Args:
-        residuals: DataFrame with [dmdunit, loc, basefcst_pref, tothist_dmd]
+        residuals: DataFrame with [item_id, loc, basefcst_pref, tothist_dmd]
 
     Returns:
-        DataFrame with [dmdunit, loc, sigma, n_months]
+        DataFrame with [item_id, loc, sigma, n_months]
     """
     if residuals.empty:
-        return pd.DataFrame(columns=["dmdunit", "loc", "sigma", "n_months"])
+        return pd.DataFrame(columns=["item_id", "loc", "sigma", "n_months"])
 
     df = residuals.copy()
     df["residual_sq"] = (df["basefcst_pref"] - df["tothist_dmd"]) ** 2
 
-    grouped = df.groupby(["dmdunit", "loc"]).agg(
+    grouped = df.groupby(["item_id", "loc"]).agg(
         rmse_sum=("residual_sq", "sum"),
         n_months=("residual_sq", "count"),
     ).reset_index()
 
     grouped["sigma"] = np.sqrt(grouped["rmse_sum"] / grouped["n_months"])
-    return grouped[["dmdunit", "loc", "sigma", "n_months"]]
+    return grouped[["item_id", "loc", "sigma", "n_months"]]
 
 
 def compute_cluster_sigma(dfu_sigma: pd.DataFrame, cluster_map: dict) -> dict[str, float]:
@@ -90,8 +89,8 @@ def compute_cluster_sigma(dfu_sigma: pd.DataFrame, cluster_map: dict) -> dict[st
     Compute pooled sigma per cluster as DFU-count-weighted mean.
 
     Args:
-        dfu_sigma: DataFrame with [dmdunit, loc, sigma, n_months]
-        cluster_map: {(item_no, loc): cluster_label}
+        dfu_sigma: DataFrame with [item_id, loc, sigma, n_months]
+        cluster_map: {(item_id, loc): cluster_label}
 
     Returns:
         {cluster_label: pooled_sigma}
@@ -100,7 +99,8 @@ def compute_cluster_sigma(dfu_sigma: pd.DataFrame, cluster_map: dict) -> dict[st
         return {}
 
     df = dfu_sigma.copy()
-    df["cluster"] = df.apply(lambda r: cluster_map.get((r["dmdunit"], r["loc"]), "unknown"), axis=1)
+    keys = list(zip(df["item_id"], df["loc"]))
+    df["cluster"] = pd.Series(keys).map(cluster_map).fillna("unknown").values
 
     result = {}
     for cluster, group in df.groupby("cluster"):
@@ -120,17 +120,17 @@ def _load_dfu_sigma_aggregated(conn, source_model_ids: list[str], lag: int = 0) 
     Compute per-DFU RMSE (sigma) and month count directly via SQL aggregation.
 
     Avoids loading millions of raw residual rows by pushing GROUP BY to the DB.
-    Returns DataFrame with columns: [dmdunit, loc, sigma, n_months].
+    Returns DataFrame with columns: [item_id, loc, sigma, n_months].
 
     Uses psycopg3 %s placeholders.
     """
     if not source_model_ids:
-        return pd.DataFrame(columns=["dmdunit", "loc", "sigma", "n_months"])
+        return pd.DataFrame(columns=["item_id", "loc", "sigma", "n_months"])
 
     placeholders = ", ".join(["%s"] * len(source_model_ids))
     sql = f"""
         SELECT
-            dmdunit,
+            item_id,
             loc,
             SQRT(SUM(POWER(basefcst_pref - tothist_dmd, 2.0)) / COUNT(*)) AS sigma,
             COUNT(*)::int AS n_months
@@ -140,7 +140,7 @@ def _load_dfu_sigma_aggregated(conn, source_model_ids: list[str], lag: int = 0) 
           AND basefcst_pref IS NOT NULL
           AND tothist_dmd IS NOT NULL
           AND tothist_dmd > 0
-        GROUP BY dmdunit, loc
+        GROUP BY item_id, loc
     """
     params = source_model_ids + [lag]
     with conn.cursor() as cur:
@@ -148,14 +148,14 @@ def _load_dfu_sigma_aggregated(conn, source_model_ids: list[str], lag: int = 0) 
         rows = cur.fetchall()
 
     if not rows:
-        return pd.DataFrame(columns=["dmdunit", "loc", "sigma", "n_months"])
+        return pd.DataFrame(columns=["item_id", "loc", "sigma", "n_months"])
 
-    return pd.DataFrame(rows, columns=["dmdunit", "loc", "sigma", "n_months"])
+    return pd.DataFrame(rows, columns=["item_id", "loc", "sigma", "n_months"])
 
 
 def build_sigma_lookup(conn, config: dict, cluster_map: dict) -> dict[tuple, float]:
     """
-    Build {(item_no, loc): sigma} lookup with three-level fallback.
+    Build {(item_id, loc): sigma} lookup with three-level fallback.
 
     Level 1: DFU-level RMSE (when n_months >= min_residual_months)
     Level 2: Cluster-level pooled sigma
@@ -168,10 +168,10 @@ def build_sigma_lookup(conn, config: dict, cluster_map: dict) -> dict[tuple, flo
     Args:
         conn: psycopg3 connection
         config: dict with key 'confidence_interval' containing all CI params
-        cluster_map: {(item_no, loc): cluster_label}
+        cluster_map: {(item_id, loc): cluster_label}
 
     Returns:
-        {(item_no, loc): capped_sigma}
+        {(item_id, loc): capped_sigma}
     """
     ci_cfg = config.get("confidence_interval", {})
     source_model_ids = ci_cfg.get("source_model_ids", ["lgbm_cluster", "catboost_cluster", "xgboost_cluster"])
@@ -201,8 +201,10 @@ def build_sigma_lookup(conn, config: dict, cluster_map: dict) -> dict[tuple, flo
     # Pre-index dfu_sigma_df for O(1) per-DFU lookup (avoids O(N²) DataFrame scans)
     sigma_index: dict[tuple, tuple] = {}
     if not dfu_sigma_df.empty:
-        for _, r in dfu_sigma_df.iterrows():
-            sigma_index[(r["dmdunit"], r["loc"])] = (float(r["sigma"]), int(r["n_months"]))
+        sigma_index = dict(zip(
+            zip(dfu_sigma_df["item_id"], dfu_sigma_df["loc"]),
+            zip(dfu_sigma_df["sigma"].astype(float), dfu_sigma_df["n_months"].astype(int)),
+        ))
 
     lookup: dict[tuple, float] = {}
     n_dfu_level = 0
@@ -210,9 +212,9 @@ def build_sigma_lookup(conn, config: dict, cluster_map: dict) -> dict[tuple, flo
     n_global_level = 0
 
     # All DFUs in cluster_map need a sigma
-    for (item_no, loc), cluster in cluster_map.items():
+    for (item_id, loc), cluster in cluster_map.items():
         # Check DFU-level sigma via O(1) index lookup
-        dfu_entry = sigma_index.get((item_no, loc))
+        dfu_entry = sigma_index.get((item_id, loc))
 
         if dfu_entry is not None and dfu_entry[1] >= min_months:
             sigma = _apply_guards(dfu_entry[0])
@@ -224,7 +226,7 @@ def build_sigma_lookup(conn, config: dict, cluster_map: dict) -> dict[tuple, flo
             sigma = _apply_guards(global_sigma)
             n_global_level += 1
 
-        lookup[(item_no, loc)] = sigma
+        lookup[(item_id, loc)] = sigma
 
     logger.info(
         "Sigma lookup built: %d DFUs (%d DFU-level, %d cluster-fallback, %d global-fallback)",

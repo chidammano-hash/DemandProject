@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS dim_replenishment_policy (
 
 CREATE TABLE IF NOT EXISTS fact_dfu_policy_assignment (
     assignment_sk      BIGSERIAL PRIMARY KEY,
-    item_no            TEXT NOT NULL,
+    item_id            TEXT NOT NULL,
     loc                TEXT NOT NULL,
     policy_id          TEXT NOT NULL REFERENCES dim_replenishment_policy(policy_id),
     override_reason    TEXT,
@@ -29,8 +29,8 @@ CREATE TABLE IF NOT EXISTS fact_dfu_policy_assignment (
     effective_date     DATE NOT NULL,
     created_ts         TIMESTAMPTZ DEFAULT NOW(),
     modified_ts        TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE (item_no, loc)
+    UNIQUE (item_id, loc)
 );
 
 CREATE INDEX IF NOT EXISTS idx_dfu_policy_policy_id ON fact_dfu_policy_assignment (policy_id);
-CREATE INDEX IF NOT EXISTS idx_dfu_policy_item_loc  ON fact_dfu_policy_assignment (item_no, loc);
+CREATE INDEX IF NOT EXISTS idx_dfu_policy_item_loc  ON fact_dfu_policy_assignment (item_id, loc);

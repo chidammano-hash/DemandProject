@@ -5,7 +5,7 @@
 
 CREATE TABLE IF NOT EXISTS fact_demand_signals (
     signal_sk               BIGSERIAL PRIMARY KEY,
-    item_no                 TEXT NOT NULL,
+    item_id                 TEXT NOT NULL,
     loc                     TEXT NOT NULL,
     signal_date             DATE NOT NULL,
     month_start             DATE NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS fact_demand_signals (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_demand_signals_pk
-    ON fact_demand_signals (item_no, loc, signal_date);
+    ON fact_demand_signals (item_id, loc, signal_date);
 CREATE INDEX IF NOT EXISTS idx_demand_signals_month
     ON fact_demand_signals (month_start);
 CREATE INDEX IF NOT EXISTS idx_demand_signals_type

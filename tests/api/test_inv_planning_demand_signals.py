@@ -104,7 +104,7 @@ async def test_demand_signals_item_missing_params():
 
 
 @pytest.mark.asyncio
-async def test_demand_signals_item_not_found():
+async def test_demand_signals_item_idt_found():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = None
     with patch("api.core._get_pool", return_value=pool):

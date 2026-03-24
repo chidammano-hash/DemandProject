@@ -26,7 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_supply_scenarios_type_status
 CREATE TABLE IF NOT EXISTS fact_scenario_results (
     id                  BIGSERIAL       PRIMARY KEY,
     scenario_id         BIGINT          NOT NULL REFERENCES fact_supply_scenarios(scenario_id),
-    item_no             VARCHAR(50)     NOT NULL,
+    item_id             VARCHAR(50)     NOT NULL,
     loc                 VARCHAR(50)     NOT NULL,
     plan_month          DATE            NOT NULL,
     baseline_qty        NUMERIC(12,2),
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS fact_scenario_results (
     excess_risk_qty     NUMERIC(12,2),
     mitigation_option   TEXT,
     computed_at         TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_scenario_result UNIQUE (scenario_id, item_no, loc, plan_month)
+    CONSTRAINT uq_scenario_result UNIQUE (scenario_id, item_id, loc, plan_month)
 );
 
 CREATE INDEX IF NOT EXISTS idx_scenario_results_scenario

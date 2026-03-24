@@ -46,7 +46,7 @@ export function DetailTablePanel({
   };
 
   const COLUMNS: { col: DetailSortCol; label: string }[] = [
-    { col: "item_no", label: "Item" },
+    { col: "item_id", label: "Item" },
     { col: "loc", label: "Location" },
     { col: "month_start", label: "Month" },
     { col: "model_id", label: "Model" },
@@ -87,7 +87,7 @@ export function DetailTablePanel({
                       key={col}
                       className={cn(
                         "text-xs cursor-pointer select-none hover:text-foreground",
-                        col !== "item_no" && col !== "loc" && col !== "model_id"
+                        col !== "item_id" && col !== "loc" && col !== "model_id"
                           ? "text-right"
                           : "",
                       )}
@@ -103,7 +103,7 @@ export function DetailTablePanel({
               <TableBody>
                 {(detailData?.rows ?? []).map((row: InvBacktestDetailRow, idx: number) => (
                   <TableRow
-                    key={`${row.item_no}-${row.loc}-${row.month}-${row.model_id}-${idx}`}
+                    key={`${row.item_id}-${row.loc}-${row.month}-${row.model_id}-${idx}`}
                     className={cn(
                       row.event_type === "stockout"
                         ? "bg-red-500/5"
@@ -112,7 +112,7 @@ export function DetailTablePanel({
                           : "hover:bg-muted/30",
                     )}
                   >
-                    <TableCell className="text-sm font-medium">{row.item_no}</TableCell>
+                    <TableCell className="text-sm font-medium">{row.item_id}</TableCell>
                     <TableCell className="text-sm">{row.loc}</TableCell>
                     <TableCell className="text-sm tabular-nums">{row.month}</TableCell>
                     <TableCell className="text-sm">{row.model_id}</TableCell>

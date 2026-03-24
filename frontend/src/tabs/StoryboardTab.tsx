@@ -415,7 +415,7 @@ export default function StoryboardTab() {
                           </span>
                         </div>
                         <h3 className="text-base font-semibold">
-                          {detailData.exception.item_no} @ {detailData.exception.loc}
+                          {detailData.exception.item_id} @ {detailData.exception.loc}
                         </h3>
                         {detailData.exception.headline && (
                           <p className="text-sm text-muted-foreground leading-snug">

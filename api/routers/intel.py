@@ -16,24 +16,24 @@ router = APIRouter(tags=["market-intelligence"])
 
 
 class MarketIntelRequest(BaseModel):
-    item_no: str
+    item_id: str
     location_id: str
 
 
 @router.post("/market-intelligence", dependencies=[Depends(require_api_key)])
 def market_intelligence(req: MarketIntelRequest):
     """Generate an AI-powered market briefing for a product at a location."""
-    item_no = req.item_no.strip()
+    item_id = req.item_id.strip()
     location_id = req.location_id.strip()
-    if not item_no or not location_id:
-        raise HTTPException(422, "Both item_no and location_id are required")
+    if not item_id or not location_id:
+        raise HTTPException(422, "Both item_id and location_id are required")
 
     # 1. Look up item metadata
     item_desc = brand_name = category = None
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            'SELECT item_desc, brand_name, category FROM dim_item WHERE item_no = %s LIMIT 1',
-            [item_no],
+            'SELECT item_desc, brand_name, category FROM dim_item WHERE item_id = %s LIMIT 1',
+            [item_id],
         )
         row = cur.fetchone()
         if row:
@@ -59,9 +59,9 @@ def market_intelligence(req: MarketIntelRequest):
         cur.execute(
             """SELECT month_start, SUM(qty)::double precision AS qty
                FROM agg_sales_monthly
-               WHERE dmdunit = %s AND loc = %s
+               WHERE item_id = %s AND loc = %s
                GROUP BY 1 ORDER BY 1 DESC LIMIT 12""",
-            [item_no, location_id],
+            [item_id, location_id],
         )
         rows = cur.fetchall()
         if rows:
@@ -69,7 +69,7 @@ def market_intelligence(req: MarketIntelRequest):
             sales_context = "Recent 12-month sales (newest first):\n" + "\n".join(sales_lines)
 
     # 4. Build product context for the AI
-    product_parts = [f"Item: {item_no}"]
+    product_parts = [f"Item: {item_id}"]
     if item_desc:
         product_parts.append(f"Description: {item_desc}")
     if brand_name:
@@ -184,7 +184,7 @@ Be specific and actionable. Focus on factors that would help a planner or analys
 
     from datetime import datetime, timezone
     return {
-        "item_no": item_no,
+        "item_id": item_id,
         "location_id": location_id,
         "item_desc": item_desc,
         "brand_name": brand_name,

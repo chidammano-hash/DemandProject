@@ -6,13 +6,13 @@
 
 -- ---------------------------------------------------------------------------
 -- fact_inventory_projection
--- Grain: (projection_run_id, item_no, loc, scenario, projection_date)
+-- Grain: (projection_run_id, item_id, loc, scenario, projection_date)
 -- Retention: only the most recent run per DFU is kept
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS fact_inventory_projection (
     id                      BIGSERIAL PRIMARY KEY,
     projection_run_id       UUID            NOT NULL,
-    item_no                 VARCHAR(50)     NOT NULL,
+    item_id                 VARCHAR(50)     NOT NULL,
     loc                     VARCHAR(50)     NOT NULL,
     projection_date         DATE            NOT NULL,
     scenario                VARCHAR(30)     NOT NULL,   -- 'no_order', 'with_open_po', 'with_planned_orders'
@@ -30,13 +30,13 @@ CREATE TABLE IF NOT EXISTS fact_inventory_projection (
 );
 
 CREATE INDEX IF NOT EXISTS idx_inv_proj_item_loc_scenario
-    ON fact_inventory_projection (item_no, loc, scenario, projection_date);
+    ON fact_inventory_projection (item_id, loc, scenario, projection_date);
 
 CREATE INDEX IF NOT EXISTS idx_inv_proj_run_id
     ON fact_inventory_projection (projection_run_id);
 
 CREATE INDEX IF NOT EXISTS idx_inv_proj_stockout
-    ON fact_inventory_projection (item_no, loc, scenario, projection_date)
+    ON fact_inventory_projection (item_id, loc, scenario, projection_date)
     WHERE stockout_risk = TRUE;
 
 -- ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ CREATE INDEX IF NOT EXISTS idx_inv_proj_stockout
 -- ---------------------------------------------------------------------------
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_inventory_projection_summary AS
 SELECT
-    p.item_no,
+    p.item_id,
     p.loc,
     p.scenario,
     p.projection_run_id,
@@ -60,7 +60,7 @@ SELECT
     MIN(p.projected_qty)                                            AS min_projected_qty,
     MAX(p.created_at)                                               AS last_computed_at
 FROM fact_inventory_projection p
-GROUP BY p.item_no, p.loc, p.scenario, p.projection_run_id, p.plan_version, p.forecast_source;
+GROUP BY p.item_id, p.loc, p.scenario, p.projection_run_id, p.plan_version, p.forecast_source;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_mv_proj_summary
-    ON mv_inventory_projection_summary (item_no, loc, scenario, projection_run_id);
+    ON mv_inventory_projection_summary (item_id, loc, scenario, projection_run_id);

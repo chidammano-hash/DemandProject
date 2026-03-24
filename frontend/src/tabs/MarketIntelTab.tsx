@@ -35,7 +35,7 @@ export default function MarketIntelTab() {
   // Item typeahead suggestions
   const { data: itemSuggestions = [] } = useQuery({
     queryKey: ["mi-item-suggest", miItemFilter],
-    queryFn: () => fetchDomainSuggest("item", "item_no", miItemFilter.trim(), undefined, 12),
+    queryFn: () => fetchDomainSuggest("item", "item_id", miItemFilter.trim(), undefined, 12),
     staleTime: STALE.THIRTY_SEC,
     enabled: true,
   });
@@ -82,7 +82,7 @@ export default function MarketIntelTab() {
         </CardDescription>
         <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
           <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Item (item_no)
+            Item (item_id)
             <Input
               className="h-9"
               placeholder="Search for item..."

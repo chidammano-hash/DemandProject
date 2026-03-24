@@ -9,7 +9,7 @@ Endpoints:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from api.core import get_conn
 
@@ -39,7 +39,7 @@ async def get_echelon_network():
 
 @router.get("/supply/echelon/targets")
 async def get_echelon_targets(
-    item_no: str | None = None,
+    item_id: str | None = None,
     loc: str | None = None,
     echelon_level: int | None = None,
     page: int = 1,
@@ -51,12 +51,15 @@ async def get_echelon_targets(
 
     conditions = ["1=1"]
     params: list = []
-    if item_no:
-        conditions.append("item_no = %s"); params.append(item_no)
+    if item_id:
+        conditions.append("item_id = %s")
+        params.append(item_id)
     if loc:
-        conditions.append("loc = %s"); params.append(loc)
+        conditions.append("loc = %s")
+        params.append(loc)
     if echelon_level is not None:
-        conditions.append("echelon_level = %s"); params.append(echelon_level)
+        conditions.append("echelon_level = %s")
+        params.append(echelon_level)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -67,12 +70,12 @@ async def get_echelon_targets(
             total = cur.fetchone()[0] or 0
             cur.execute(
                 f"""
-                SELECT item_no, loc, echelon_level,
+                SELECT item_id, loc, echelon_level,
                        echelon_ss_qty, standalone_ss_qty, pooling_benefit_pct,
                        service_level_target, computed_at
                 FROM fact_echelon_ss_targets
                 WHERE {where}
-                ORDER BY echelon_level, item_no, loc
+                ORDER BY echelon_level, item_id, loc
                 LIMIT %s OFFSET %s
                 """,
                 params + [page_size, offset],
@@ -80,7 +83,7 @@ async def get_echelon_targets(
             rows = cur.fetchall()
 
     cols = [
-        "item_no", "loc", "echelon_level",
+        "item_id", "loc", "echelon_level",
         "echelon_ss_qty", "standalone_ss_qty", "pooling_benefit_pct",
         "service_level_target", "computed_at",
     ]
@@ -101,7 +104,7 @@ async def get_echelon_summary():
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
-                    COUNT(DISTINCT item_no || '@' || loc)      AS total_sku_locs,
+                    COUNT(DISTINCT item_id || '@' || loc)      AS total_sku_locs,
                     AVG(pooling_benefit_pct)                   AS avg_pooling_benefit_pct,
                     SUM(standalone_ss_qty - echelon_ss_qty)    AS total_units_saved,
                     COUNT(DISTINCT echelon_level)              AS echelon_depth,
@@ -124,7 +127,7 @@ async def get_echelon_summary():
 
 @router.get("/supply/echelon/reorder-points")
 async def get_echelon_reorder_points(
-    item_no: str | None = None,
+    item_id: str | None = None,
     loc: str | None = None,
     page: int = 1,
     page_size: int = 50,
@@ -135,10 +138,12 @@ async def get_echelon_reorder_points(
 
     conditions = ["1=1"]
     params: list = []
-    if item_no:
-        conditions.append("item_no = %s"); params.append(item_no)
+    if item_id:
+        conditions.append("item_id = %s")
+        params.append(item_id)
     if loc:
-        conditions.append("loc = %s"); params.append(loc)
+        conditions.append("loc = %s")
+        params.append(loc)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -149,7 +154,7 @@ async def get_echelon_reorder_points(
             total = cur.fetchone()[0] or 0
             cur.execute(
                 f"""
-                SELECT item_no, loc, echelon_level, reorder_point_qty,
+                SELECT item_id, loc, echelon_level, reorder_point_qty,
                        echelon_ss_qty, demand_during_lt_qty,
                        cascade_risk_flag, computed_at
                 FROM fact_echelon_reorder_points
@@ -162,7 +167,7 @@ async def get_echelon_reorder_points(
             rows = cur.fetchall()
 
     cols = [
-        "item_no", "loc", "echelon_level", "reorder_point_qty",
+        "item_id", "loc", "echelon_level", "reorder_point_qty",
         "echelon_ss_qty", "demand_during_lt_qty",
         "cascade_risk_flag", "computed_at",
     ]

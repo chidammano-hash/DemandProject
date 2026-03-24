@@ -13,7 +13,7 @@ export const TREND_METRICS = [
 ] as const;
 
 export type DetailSortCol =
-  | "item_no"
+  | "item_id"
   | "loc"
   | "month_start"
   | "model_id"

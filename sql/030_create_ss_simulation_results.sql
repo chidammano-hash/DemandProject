@@ -5,7 +5,7 @@
 CREATE TABLE IF NOT EXISTS fact_ss_simulation_results (
     sim_sk                  BIGSERIAL PRIMARY KEY,
     sim_run_id              TEXT NOT NULL,
-    item_no                 TEXT NOT NULL,
+    item_id                 TEXT NOT NULL,
     loc                     TEXT NOT NULL,
     simulation_date         DATE NOT NULL,
     n_simulations           INTEGER NOT NULL,
@@ -31,9 +31,9 @@ CREATE TABLE IF NOT EXISTS fact_ss_simulation_results (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ss_sim_run_item
-    ON fact_ss_simulation_results (sim_run_id, item_no, loc);
+    ON fact_ss_simulation_results (sim_run_id, item_id, loc);
 CREATE INDEX IF NOT EXISTS idx_ss_sim_item_loc
-    ON fact_ss_simulation_results (item_no, loc, simulation_date DESC);
+    ON fact_ss_simulation_results (item_id, loc, simulation_date DESC);
 CREATE INDEX IF NOT EXISTS idx_ss_sim_divergence
     ON fact_ss_simulation_results (sim_vs_analytical_pct)
     WHERE ABS(sim_vs_analytical_pct) > 20;

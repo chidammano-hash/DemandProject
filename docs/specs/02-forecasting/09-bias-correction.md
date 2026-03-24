@@ -79,7 +79,7 @@ If no production forecast exists for a DFU, the projection falls back to a 3-mon
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `item_no`, `loc` | VARCHAR | DFU identifier |
+| `item_id`, `loc` | VARCHAR | DFU identifier |
 | `projection_date` | DATE | Specific future date |
 | `scenario` | VARCHAR(30) | Which scenario |
 | `projected_qty` | NUMERIC(12,2) | Projected on-hand |
@@ -89,7 +89,7 @@ If no production forecast exists for a DFU, the projection falls back to a 3-mon
 | `daily_demand_rate` | NUMERIC(10,4) | Demand/day used |
 | `forecast_source` | VARCHAR(30) | "production_forecast" or "fallback_avg" |
 
-**Grain:** `(projection_run_id, item_no, loc, scenario, projection_date)`
+**Grain:** `(projection_run_id, item_id, loc, scenario, projection_date)`
 
 ### API
 
@@ -112,7 +112,7 @@ If no production forecast exists for a DFU, the projection falls back to a 3-mon
 | Target | Description |
 |--------|-------------|
 | `make projection-compute` | Run projection for all active DFUs |
-| `make projection-compute-dfu ITEM=100320 LOC=1401-BULK` | Single DFU projection |
+| `make projection-compute-sku ITEM=100320 LOC=1401-BULK` | Single DFU projection |
 | `make projection-dry` | Preview without writing |
 
 **Scheduler:** Runs daily at 07:00 UTC (after production forecast at 06:00).

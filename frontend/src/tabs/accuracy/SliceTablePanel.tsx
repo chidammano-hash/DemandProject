@@ -23,7 +23,7 @@ export const ACCURACY_KPI_OPTIONS = [
   { key: "bias",         label: "Bias",        format: "bias" },
   { key: "sum_forecast", label: "\u03A3 Forecast", format: "num" },
   { key: "sum_actual",   label: "\u03A3 Actual",   format: "num" },
-  { key: "dfu_count",    label: "DFU Count",  format: "num" },
+  { key: "sku_count",    label: "DFU Count",  format: "num" },
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ export interface SliceTablePanelProps {
   sliceData: AccuracySliceRow[];
   allModels: string[];
   commonDfuCount: number | null;
-  dfuCounts: Record<string, number> | null;
+  skuCounts: Record<string, number> | null;
   onSliceGroupByChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   onSliceLagChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   onSliceModelsChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -70,7 +70,7 @@ export function SliceTablePanel({
   sliceData,
   allModels,
   commonDfuCount,
-  dfuCounts,
+  skuCounts,
   onSliceGroupByChange,
   onSliceLagChange,
   onSliceModelsChange,
@@ -97,7 +97,7 @@ export function SliceTablePanel({
             <option value="abc_vol">ABC Volume</option>
             <option value="region">Region</option>
             <option value="brand_desc">Brand</option>
-            <option value="dfu_execution_lag">Execution Lag</option>
+            <option value="sku_execution_lag">Execution Lag</option>
             <option value="month_start">Month</option>
           </select>
         </label>
@@ -169,15 +169,15 @@ export function SliceTablePanel({
             disabled={loadingSlice}
           />
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground whitespace-nowrap">
-            Common DFUs Only
+            Common SKUs Only
           </span>
         </label>
-        {commonDfus && commonDfuCount != null && dfuCounts ? (
+        {commonDfus && commonDfuCount != null && skuCounts ? (
           <div className="flex items-center gap-2 self-end pb-1.5 text-xs text-muted-foreground tabular-nums">
             <Badge variant="secondary" className="font-mono text-xs">
               {commonDfuCount.toLocaleString()} common
             </Badge>
-            {Object.entries(dfuCounts).map(([m, cnt]) => (
+            {Object.entries(skuCounts).map(([m, cnt]) => (
               <span key={m} className="font-mono">
                 {m}: {cnt.toLocaleString()}
               </span>

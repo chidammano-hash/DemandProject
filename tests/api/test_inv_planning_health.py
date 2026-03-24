@@ -131,7 +131,7 @@ async def test_health_detail_200():
          0.12, 0),
     ]
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("variability_class",), ("cluster_assignment",),
+        ("item_id",), ("loc",), ("abc_vol",), ("variability_class",), ("cluster_assignment",),
         ("health_score",), ("health_tier",),
         ("score_ss_coverage",), ("score_dos_target",), ("score_stockout_risk",), ("score_forecast_accuracy",),
         ("ss_coverage",), ("current_dos",), ("target_dos_min",), ("target_dos_max",), ("is_below_ss",),
@@ -164,7 +164,7 @@ async def test_health_detail_row_keys():
          0.22, 0),
     ]
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("variability_class",), ("cluster_assignment",),
+        ("item_id",), ("loc",), ("abc_vol",), ("variability_class",), ("cluster_assignment",),
         ("health_score",), ("health_tier",),
         ("score_ss_coverage",), ("score_dos_target",), ("score_stockout_risk",), ("score_forecast_accuracy",),
         ("ss_coverage",), ("current_dos",), ("target_dos_min",), ("target_dos_max",), ("is_below_ss",),
@@ -178,7 +178,7 @@ async def test_health_detail_row_keys():
             resp = await client.get("/inv-planning/health/detail")
 
     row = resp.json()["rows"][0]
-    for key in ("item_no", "loc", "health_score", "health_tier",
+    for key in ("item_id", "loc", "health_score", "health_tier",
                 "score_ss_coverage", "score_dos_target", "score_stockout_risk", "score_forecast_accuracy"):
         assert key in row
 
@@ -190,7 +190,7 @@ async def test_health_detail_filter_by_tier():
     cursor.fetchone.return_value = (5,)
     cursor.fetchall.return_value = []
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("variability_class",), ("cluster_assignment",),
+        ("item_id",), ("loc",), ("abc_vol",), ("variability_class",), ("cluster_assignment",),
         ("health_score",), ("health_tier",),
         ("score_ss_coverage",), ("score_dos_target",), ("score_stockout_risk",), ("score_forecast_accuracy",),
         ("ss_coverage",), ("current_dos",), ("target_dos_min",), ("target_dos_max",), ("is_below_ss",),
@@ -213,7 +213,7 @@ async def test_health_detail_empty_view():
     cursor.fetchone.return_value = (0,)
     cursor.fetchall.return_value = []
     cursor.description = [
-        ("item_no",), ("loc",), ("abc_vol",), ("variability_class",), ("cluster_assignment",),
+        ("item_id",), ("loc",), ("abc_vol",), ("variability_class",), ("cluster_assignment",),
         ("health_score",), ("health_tier",),
         ("score_ss_coverage",), ("score_dos_target",), ("score_stockout_risk",), ("score_forecast_accuracy",),
         ("ss_coverage",), ("current_dos",), ("target_dos_min",), ("target_dos_max",), ("is_below_ss",),

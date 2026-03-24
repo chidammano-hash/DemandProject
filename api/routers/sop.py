@@ -224,7 +224,8 @@ async def get_sop_gaps(
     conditions = ["cycle_id = %s", "resolution_status = %s"]
     params: list = [cycle_id, resolution_status]
     if severity:
-        conditions.append("severity = %s"); params.append(severity)
+        conditions.append("severity = %s")
+        params.append(severity)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -249,7 +250,7 @@ async def get_sop_gaps(
 @router.get("/sop/approved-plan")
 async def get_approved_plan(
     cycle_id: int | None = None,
-    item_no: str | None = None,
+    item_id: str | None = None,
     loc: str | None = None,
     category: str | None = None,
     page: int = 1,
@@ -262,11 +263,14 @@ async def get_approved_plan(
     conditions = ["1=1"]
     params: list = []
     if cycle_id:
-        conditions.append("cycle_id = %s"); params.append(cycle_id)
-    if item_no:
-        conditions.append("item_no = %s"); params.append(item_no)
+        conditions.append("cycle_id = %s")
+        params.append(cycle_id)
+    if item_id:
+        conditions.append("item_id = %s")
+        params.append(item_id)
     if loc:
-        conditions.append("loc = %s"); params.append(loc)
+        conditions.append("loc = %s")
+        params.append(loc)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -277,11 +281,11 @@ async def get_approved_plan(
             total = cur.fetchone()[0]
             cur.execute(
                 f"""
-                SELECT cycle_id, item_no, loc, plan_month, approved_qty,
+                SELECT cycle_id, item_id, loc, plan_month, approved_qty,
                        statistical_qty, override_qty, source, locked
                 FROM fact_sop_approved_plan
                 WHERE {where}
-                ORDER BY plan_month, item_no, loc
+                ORDER BY plan_month, item_id, loc
                 LIMIT %s OFFSET %s
                 """,
                 params + [page_size, offset],
@@ -289,7 +293,7 @@ async def get_approved_plan(
             rows = cur.fetchall()
 
     cols = [
-        "cycle_id", "item_no", "loc", "plan_month", "approved_qty",
+        "cycle_id", "item_id", "loc", "plan_month", "approved_qty",
         "statistical_qty", "override_qty", "source", "locked",
     ]
     items = []

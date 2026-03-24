@@ -140,9 +140,9 @@ class TestUpsertPolicies:
 class TestAutoAssignDfus:
     def test_dry_run_counts_without_db_writes(self, cfg):
         dfus = [
-            {"item_no": "I1", "loc": "L1", "abc_vol": "A", "variability_class": "low"},
-            {"item_no": "I2", "loc": "L2", "abc_vol": "B", "variability_class": "medium"},
-            {"item_no": "I3", "loc": "L3", "abc_vol": None, "variability_class": None},
+            {"item_id": "I1", "loc": "L1", "abc_vol": "A", "variability_class": "low"},
+            {"item_id": "I2", "loc": "L2", "abc_vol": "B", "variability_class": "medium"},
+            {"item_id": "I3", "loc": "L3", "abc_vol": None, "variability_class": None},
         ]
         conn = MagicMock()
         result = auto_assign_dfus(conn, dfus, cfg, dry_run=True)
@@ -153,7 +153,7 @@ class TestAutoAssignDfus:
 
     def test_unknown_abc_skipped(self, cfg):
         dfus = [
-            {"item_no": "I1", "loc": "L1", "abc_vol": "X", "variability_class": None},
+            {"item_id": "I1", "loc": "L1", "abc_vol": "X", "variability_class": None},
         ]
         conn = MagicMock()
         result = auto_assign_dfus(conn, dfus, cfg, dry_run=True)

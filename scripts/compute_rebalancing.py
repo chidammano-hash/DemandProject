@@ -15,7 +15,7 @@ import math
 import sys
 import time
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -24,6 +24,7 @@ import yaml
 import psycopg
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "rebalancing_config.yaml"
 
@@ -69,20 +70,20 @@ def load_inventory_state(conn, item_filter: str | None = None) -> dict[tuple[str
     wheres = ["a.month_start = (SELECT MAX(month_start) FROM agg_inventory_monthly)"]
     params: list = []
     if item_filter:
-        wheres.append("a.item_no = %s")
+        wheres.append("a.item_id = %s")
         params.append(item_filter)
 
     where_clause = " AND ".join(wheres)
     with conn.cursor() as cur:
         cur.execute(f"""
-            SELECT a.item_no, a.loc, a.eom_qty_on_hand, a.avg_daily_sales,
+            SELECT a.item_id, a.loc, a.eom_qty_on_hand, a.avg_daily_sls,
                    s.ss_combined, d.abc_vol,
                    COALESCE(s.reorder_point, 0) AS reorder_point
             FROM agg_inventory_monthly a
             LEFT JOIN fact_safety_stock_targets s
-                ON a.item_no = s.item_no AND a.loc = s.loc
-            LEFT JOIN dim_dfu d
-                ON a.item_no = d.dmdunit AND a.loc = d.loc
+                ON a.item_id = s.item_id AND a.loc = s.loc
+            LEFT JOIN dim_sku d
+                ON a.item_id = d.item_id AND a.loc = d.loc
             WHERE {where_clause}
         """, params)
         rows = cur.fetchall()
@@ -94,7 +95,7 @@ def load_inventory_state(conn, item_filter: str | None = None) -> dict[tuple[str
         ss = float(r[4]) if r[4] is not None else None
         dos = on_hand / daily_sales if daily_sales > 0 else None
         state[(r[0], r[1])] = {
-            "item_no": r[0], "loc": r[1],
+            "item_id": r[0], "loc": r[1],
             "on_hand": on_hand, "daily_sales": daily_sales,
             "ss_target": ss, "dos": dos,
             "abc_vol": r[5], "reorder_point": float(r[6]),
@@ -109,15 +110,15 @@ def detect_imbalances(
 ) -> dict[str, dict]:
     """Classify each item-loc as excess, shortage, or balanced.
 
-    Returns dict keyed by item_no with lists of excess and shortage locations.
+    Returns dict keyed by item_id with lists of excess and shortage locations.
     Only items with BOTH excess AND shortage are included.
     """
     by_item: dict[str, dict] = {}
-    for (item_no, loc), info in state.items():
+    for (item_id, loc), info in state.items():
         if info["ss_target"] is None or info["ss_target"] <= 0:
             continue
         ratio = info["on_hand"] / info["ss_target"]
-        entry = by_item.setdefault(item_no, {"excess": [], "shortage": []})
+        entry = by_item.setdefault(item_id, {"excess": [], "shortage": []})
         if ratio > excess_pct:
             entry["excess"].append(info)
         elif ratio < shortage_pct:
@@ -138,12 +139,11 @@ def build_transfer_candidates(
         lane_map[(lane["source_loc"], lane["dest_loc"])] = lane
 
     defaults = config.get("network", {})
-    costs_cfg = config.get("costs", {})
     constraints = config.get("constraints", {})
     max_drawdown = constraints.get("max_source_drawdown_pct", 0.30)
 
     candidates = []
-    for item_no, groups in imbalances.items():
+    for item_id, groups in imbalances.items():
         for src in groups["excess"]:
             for dst in groups["shortage"]:
                 lane = lane_map.get((src["loc"], dst["loc"]))
@@ -182,7 +182,7 @@ def build_transfer_candidates(
                     continue
 
                 candidates.append({
-                    "item_no": item_no,
+                    "item_id": item_id,
                     "source_loc": src["loc"],
                     "dest_loc": dst["loc"],
                     "lane_id": lane_id,
@@ -277,15 +277,15 @@ def greedy_solver(
     remaining_excess: dict[tuple[str, str], float] = {}
     remaining_shortage: dict[tuple[str, str], float] = {}
     for c in viable:
-        key_src = (c["item_no"], c["source_loc"])
-        key_dst = (c["item_no"], c["dest_loc"])
+        key_src = (c["item_id"], c["source_loc"])
+        key_dst = (c["item_id"], c["dest_loc"])
         remaining_excess.setdefault(key_src, c["source_excess_qty"])
         remaining_shortage.setdefault(key_dst, c["dest_shortage_qty"])
 
     selected = []
     for c in viable:
-        key_src = (c["item_no"], c["source_loc"])
-        key_dst = (c["item_no"], c["dest_loc"])
+        key_src = (c["item_id"], c["source_loc"])
+        key_dst = (c["item_id"], c["dest_loc"])
 
         avail_excess = remaining_excess.get(key_src, 0)
         avail_shortage = remaining_shortage.get(key_dst, 0)
@@ -329,26 +329,26 @@ def lp_solver(
     bounds = [(0, c["recommended_qty"]) for c in viable]
 
     # Source constraints: sum of transfers from same source <= excess
-    source_keys = list({(c["item_no"], c["source_loc"]) for c in viable})
+    source_keys = list({(c["item_id"], c["source_loc"]) for c in viable})
     A_ub = []
     b_ub = []
     for sk in source_keys:
         row = [0.0] * n
         for i, c in enumerate(viable):
-            if (c["item_no"], c["source_loc"]) == sk:
+            if (c["item_id"], c["source_loc"]) == sk:
                 row[i] = 1.0
         A_ub.append(row)
-        b_ub.append(viable[[i for i, c in enumerate(viable) if (c["item_no"], c["source_loc"]) == sk][0]]["source_excess_qty"])
+        b_ub.append(viable[[i for i, c in enumerate(viable) if (c["item_id"], c["source_loc"]) == sk][0]]["source_excess_qty"])
 
     # Dest constraints: sum of transfers to same dest <= shortage
-    dest_keys = list({(c["item_no"], c["dest_loc"]) for c in viable})
+    dest_keys = list({(c["item_id"], c["dest_loc"]) for c in viable})
     for dk in dest_keys:
         row = [0.0] * n
         for i, c in enumerate(viable):
-            if (c["item_no"], c["dest_loc"]) == dk:
+            if (c["item_id"], c["dest_loc"]) == dk:
                 row[i] = 1.0
         A_ub.append(row)
-        b_ub.append(viable[[i for i, c in enumerate(viable) if (c["item_no"], c["dest_loc"]) == dk][0]]["dest_shortage_qty"])
+        b_ub.append(viable[[i for i, c in enumerate(viable) if (c["item_id"], c["dest_loc"]) == dk][0]]["dest_shortage_qty"])
 
     time_limit = config.get("optimization", {}).get("time_limit_seconds", 60)
     result = linprog(
@@ -380,9 +380,9 @@ def compute_network_balance(state: dict[tuple[str, str], dict]) -> float:
     """Compute network DOS coefficient of variation across all items."""
     from collections import defaultdict
     item_dos: dict[str, list[float]] = defaultdict(list)
-    for (item_no, _), info in state.items():
+    for (item_id, _), info in state.items():
         if info["dos"] is not None:
-            item_dos[item_no].append(info["dos"])
+            item_dos[item_id].append(info["dos"])
 
     cvs = []
     for dos_vals in item_dos.values():
@@ -412,7 +412,7 @@ def write_plan(
     total_avoided = sum(t.get("stockout_cost_avoided", 0) for t in transfers)
     net_roi = (total_avoided - total_cost) / max(total_cost, 0.01)
     balance_before = compute_network_balance(state)
-    items_rebalanced = len({t["item_no"] for t in transfers})
+    items_rebalanced = len({t["item_id"] for t in transfers})
     lanes_used = len({(t["source_loc"], t["dest_loc"]) for t in transfers})
 
     plan_sql = """
@@ -426,7 +426,7 @@ def write_plan(
 
     transfer_sql = """
         INSERT INTO fact_rebalancing_transfer (
-            transfer_id, plan_id, item_no, source_loc, dest_loc, lane_id, transfer_mode,
+            transfer_id, plan_id, item_id, source_loc, dest_loc, lane_id, transfer_mode,
             recommended_qty, source_on_hand, source_dos, source_ss_target, source_excess_qty,
             dest_on_hand, dest_dos, dest_ss_target, dest_shortage_qty,
             transfer_cost, carrying_cost_saved, stockout_cost_avoided, net_benefit, roi,
@@ -445,7 +445,7 @@ def write_plan(
             ship_date = computation_date + timedelta(days=config.get("constraints", {}).get("frozen_period_days", 7))
             arrival_date = ship_date + timedelta(days=t.get("transfer_lt_days", 3))
             cur.execute(transfer_sql, [
-                str(uuid.uuid4()), plan_id, t["item_no"],
+                str(uuid.uuid4()), plan_id, t["item_id"],
                 t["source_loc"], t["dest_loc"], t.get("lane_id"), t["recommended_qty"],
                 t["source_on_hand"], t["source_dos"], t["source_ss_target"], t["source_excess_qty"],
                 t["dest_on_hand"], t["dest_dos"], t["dest_ss_target"], t["dest_shortage_qty"],
@@ -472,9 +472,10 @@ def run(
 
     start = time.time()
 
-    with psycopg.connect(**get_db_params()) as conn:
-        lanes = load_network(conn)
-        state = load_inventory_state(conn, item_filter)
+    with profiled_section("load_network_and_inventory"):
+        with psycopg.connect(**get_db_params()) as conn:
+            lanes = load_network(conn)
+            state = load_inventory_state(conn, item_filter)
 
     if not state:
         print("No inventory data found.")
@@ -483,35 +484,36 @@ def run(
     excess_pct = config.get("triggers", {}).get("excess_threshold_pct", 1.50)
     shortage_pct = config.get("triggers", {}).get("shortage_threshold_pct", 0.80)
 
-    imbalances = detect_imbalances(state, excess_pct, shortage_pct)
-    print(f"Detected {len(imbalances)} items with spatial imbalances")
+    with profiled_section("detect_imbalances_and_solve"):
+        imbalances = detect_imbalances(state, excess_pct, shortage_pct)
+        print(f"Detected {len(imbalances)} items with spatial imbalances")
 
-    if not imbalances:
-        print("No imbalances detected — network is balanced.")
-        return {"plan_id": None, "transfers": 0, "total_cost": 0}
+        if not imbalances:
+            print("No imbalances detected — network is balanced.")
+            return {"plan_id": None, "transfers": 0, "total_cost": 0}
 
-    candidates = build_transfer_candidates(imbalances, lanes, config)
-    print(f"Built {len(candidates)} transfer candidates")
+        candidates = build_transfer_candidates(imbalances, lanes, config)
+        print(f"Built {len(candidates)} transfer candidates")
 
-    candidates = compute_financials(candidates, config)
-    candidates = assign_urgency(candidates)
+        candidates = compute_financials(candidates, config)
+        candidates = assign_urgency(candidates)
 
-    if solver_method == "lp":
-        selected = lp_solver(candidates, config)
-    else:
-        selected = greedy_solver(candidates, config)
+        if solver_method == "lp":
+            selected = lp_solver(candidates, config)
+        else:
+            selected = greedy_solver(candidates, config)
 
-    if budget_cap is not None:
-        # Sort by ROI desc, keep under budget
-        selected.sort(key=lambda x: -x.get("roi", 0))
-        capped = []
-        cumulative = 0.0
-        for t in selected:
-            if cumulative + t["transfer_cost"] > budget_cap:
-                break
-            capped.append(t)
-            cumulative += t["transfer_cost"]
-        selected = capped
+        if budget_cap is not None:
+            # Sort by ROI desc, keep under budget
+            selected.sort(key=lambda x: -x.get("roi", 0))
+            capped = []
+            cumulative = 0.0
+            for t in selected:
+                if cumulative + t["transfer_cost"] > budget_cap:
+                    break
+                capped.append(t)
+                cumulative += t["transfer_cost"]
+            selected = capped
 
     runtime_ms = int((time.time() - start) * 1000)
     total_cost = sum(t["transfer_cost"] for t in selected)
@@ -522,12 +524,13 @@ def run(
     if dry_run:
         print("[DRY RUN] No data written.")
         for t in selected[:10]:
-            print(f"  {t['item_no']} {t['source_loc']}→{t['dest_loc']} qty={t['recommended_qty']:.0f} "
+            print(f"  {t['item_id']} {t['source_loc']}→{t['dest_loc']} qty={t['recommended_qty']:.0f} "
                   f"cost=${t['transfer_cost']:.2f} benefit=${t['net_benefit']:.2f} urgency={t['urgency']}")
         return {"plan_id": None, "transfers": len(selected), "total_cost": total_cost}
 
-    with psycopg.connect(**get_db_params()) as conn:
-        plan_id = write_plan(conn, selected, config, solver_method, runtime_ms, state)
+    with profiled_section("write_rebalancing_plan"):
+        with psycopg.connect(**get_db_params()) as conn:
+            plan_id = write_plan(conn, selected, config, solver_method, runtime_ms, state)
 
     print(f"Plan {plan_id} written with {len(selected)} transfers.")
     return {"plan_id": plan_id, "transfers": len(selected), "total_cost": total_cost}

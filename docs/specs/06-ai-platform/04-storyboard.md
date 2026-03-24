@@ -76,7 +76,7 @@ The engine checks for existing open exceptions on the same DFU + exception type 
 
 | Table | Purpose | Key Columns |
 |---|---|---|
-| `fact_storyboard_exceptions` | Exception records | `id`, `exception_type`, `severity`, `item_no`, `loc`, `trigger_value`, `threshold_value`, `causal_chain` (JSONB), `recommendation`, `status`, `created_at`, `resolved_at` |
+| `fact_storyboard_exceptions` | Exception records | `id`, `exception_type`, `severity`, `item_id`, `loc`, `trigger_value`, `threshold_value`, `causal_chain` (JSONB), `recommendation`, `status`, `created_at`, `resolved_at` |
 
 Six indexes support filtering by: severity, status, exception type, item-location, creation date, and the composite (status + severity) for the default sorted view.
 

@@ -33,20 +33,20 @@ beforeEach(() => {
         segment: "A",
         service_level: 0.98,
         review_cycle_days: null,
-        dfu_count: 500,
+        sku_count: 500,
       },
     ],
   });
   (fetchPolicyCompliance as any).mockResolvedValue({
     assignment_pct: 82,
     assigned_count: 820,
-    total_dfus: 1000,
+    total_skus: 1000,
     unassigned_count: 180,
     by_policy: {
       p1: {
         policy_name: "Continuous ROP",
         policy_type: "continuous_rop",
-        dfu_count: 500,
+        sku_count: 500,
         below_ss_pct: 12.5,
         avg_ss_coverage: 85.0,
         avg_dos: 22.0,

@@ -1,12 +1,12 @@
 """Inventory Planning — IPfeature14: Intra-Month Stockout Detection endpoints."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
+from api.core import _f, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -101,7 +101,7 @@ def get_intramonth_stockout_detail(
         where_clauses.append("month_start <= %s")
     if item:
         params.append(f"%{item}%")
-        where_clauses.append("item_no ILIKE %s")
+        where_clauses.append("item_id ILIKE %s")
     if location:
         params.append(f"%{location}%")
         where_clauses.append("loc ILIKE %s")
@@ -123,7 +123,7 @@ def get_intramonth_stockout_detail(
     params.append(limit)
     params.append(offset)
     data_sql = f"""
-        SELECT item_no, loc, month_start,
+        SELECT item_id, loc, month_start,
                snapshot_days, stockout_days, stockout_day_rate,
                min_qty_on_hand, max_qty_on_hand, avg_qty_on_hand,
                est_lost_sales, had_full_stockout, had_extended_stockout,
@@ -145,7 +145,7 @@ def get_intramonth_stockout_detail(
         "total": int(total),
         "rows": [
             {
-                "item_no":              r[0],
+                "item_id":              r[0],
                 "loc":                  r[1],
                 "month_start":          str(r[2]),
                 "snapshot_days":        int(r[3] or 0),
@@ -186,12 +186,12 @@ def get_intramonth_daily(
         SELECT snapshot_date, qty_on_hand, mtd_sales,
                GREATEST(
                    mtd_sales - LAG(mtd_sales, 1, 0::NUMERIC) OVER (
-                       PARTITION BY item_no, loc, DATE_TRUNC('month', snapshot_date)
+                       PARTITION BY item_id, loc, DATE_TRUNC('month', snapshot_date)
                        ORDER BY snapshot_date
                    ), 0
                ) AS daily_sls
         FROM fact_inventory_snapshot
-        WHERE item_no = %s AND loc = %s
+        WHERE item_id = %s AND loc = %s
         {month_filter}
         ORDER BY snapshot_date DESC
         LIMIT 62
@@ -203,7 +203,7 @@ def get_intramonth_daily(
             rows = cur.fetchall()
 
     return {
-        "item_no": item,
+        "item_id": item,
         "loc": location,
         "daily": [
             {

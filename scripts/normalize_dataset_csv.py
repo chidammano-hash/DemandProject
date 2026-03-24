@@ -9,6 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.domain_specs import DOMAIN_SPECS, get_spec
+from common.services.perf_profiler import profiled_section
 
 
 def dedupe_headers(headers: list[str]) -> list[str]:
@@ -45,7 +46,7 @@ def write_time_csv(target: Path, columns: list[str]) -> None:
     one_day = timedelta(days=1)
 
     with target.open("w", encoding="utf-8", newline="") as dst:
-        writer = csv.DictWriter(dst, fieldnames=columns)
+        writer = csv.DictWriter(dst, fieldnames=columns, lineterminator="\n")
         writer.writeheader()
 
         d = start
@@ -95,6 +96,16 @@ def to_iso_date_yyyymmdd(v: str, require_month_start: bool = False) -> str:
     s = (v or "").strip()
     if not s:
         return ""
+    # Handle YYYY-MM-DD (ISO) format
+    if len(s) == 10 and s[4] == "-" and s[7] == "-":
+        try:
+            parsed = date.fromisoformat(s)
+            if require_month_start and parsed.day != 1:
+                return ""
+            return parsed.isoformat()
+        except ValueError:
+            return ""
+    # Handle YYYYMMDD (compact) format
     if len(s) != 8 or not s.isdigit():
         return ""
     if require_month_start and s[6:8] != "01":
@@ -143,11 +154,15 @@ def main() -> None:
     allowed = ", ".join(sorted(DOMAIN_SPECS))
     parser = argparse.ArgumentParser(description="Normalize source file for a given dataset (dimension or fact)")
     parser.add_argument("--dataset", required=True, help=allowed)
+    parser.add_argument("--source-dir", default=None, help="Override source data directory")
     args = parser.parse_args()
 
     spec = get_spec(args.dataset)
 
-    source = Path(__file__).resolve().parents[3] / "datafiles" / spec.source_file
+    if args.source_dir:
+        source = Path(args.source_dir).resolve() / spec.source_file
+    else:
+        source = Path(__file__).resolve().parents[1] / "data" / "input" / spec.source_file
     target = Path(__file__).resolve().parents[1] / "data" / spec.clean_file
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -156,21 +171,25 @@ def main() -> None:
         print(f"Wrote normalized CSV for {spec.name}: {target}")
         return
 
-    with source.open("r", encoding="utf-8-sig", newline="") as src:
-        reader = csv.reader(src, delimiter=spec.source_delimiter)
-        raw_headers = next(reader)
-        headers = dedupe_headers(raw_headers)
-        header_idx = {h.strip().lower(): i for i, h in enumerate(headers)}
+    with profiled_section("read_source_csv"):
+        with source.open("r", encoding="utf-8-sig", newline="") as src:
+            reader = csv.reader(src, delimiter=spec.source_delimiter)
+            raw_headers = next(reader)
+            headers = dedupe_headers(raw_headers)
+            header_idx = {h.strip().lower(): i for i, h in enumerate(headers)}
 
-        source_keys = {c: spec.source_col_for(c).strip().lower() for c in spec.columns}
-        present_cols = [c for c in spec.columns if source_keys[c] in header_idx]
-        absent_cols = [c for c in spec.columns if source_keys[c] not in header_idx]
+            source_keys = {c: spec.source_col_for(c).strip().lower() for c in spec.columns}
+            present_cols = [c for c in spec.columns if source_keys[c] in header_idx]
+            absent_cols = [c for c in spec.columns if source_keys[c] not in header_idx]
 
+            source_rows = list(reader)
+
+    with profiled_section("normalize_and_write"):
         with target.open("w", encoding="utf-8", newline="") as dst:
-            writer = csv.DictWriter(dst, fieldnames=spec.columns)
+            writer = csv.DictWriter(dst, fieldnames=spec.columns, lineterminator="\n")
             writer.writeheader()
 
-            for row in reader:
+            for row in source_rows:
                 out = {
                     c: row[header_idx[source_keys[c]]] if header_idx[source_keys[c]] < len(row) else ""
                     for c in present_cols
@@ -203,6 +222,17 @@ def main() -> None:
                     out["lag"] = str(lag)
                     out["execution_lag"] = to_int_string(out.get("execution_lag", "")) or str(lag)
                     out["model_id"] = (out.get("model_id", "").strip() or "external")
+
+                if spec.name == "sourcing":
+                    src_cd = (out.get("source_cd", "") or "").strip()
+                    parts = src_cd.split("-", 1)
+                    out["supplier_id"] = parts[0] if parts else ""
+                    out["plant_id"] = parts[1] if len(parts) > 1 else ""
+
+                if spec.name == "purchase_order":
+                    for dt_col in ("delivery_date", "original_delivery_date",
+                                   "current_ship_date", "original_ship_date"):
+                        out[dt_col] = to_iso_date_yyyymmdd(out.get(dt_col, ""))
 
                 writer.writerow(out)
 

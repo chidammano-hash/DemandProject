@@ -1,13 +1,13 @@
 """Inventory Planning — IPfeature13: Investment Optimization endpoints."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.auth import require_api_key
-from api.core import _f, _s, get_conn, set_cache
+from api.core import _f, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -91,7 +91,7 @@ def get_investment_summary(
         WHERE plan_id = (SELECT MAX(plan_id) FROM fact_inventory_investment_plan)
     """
     top_sql = """
-        SELECT item_no, loc, marginal_roi, investment_increment, csl_increment
+        SELECT item_id, loc, marginal_roi, investment_increment, csl_increment
         FROM fact_inventory_investment_plan
         WHERE plan_id = (SELECT MAX(plan_id) FROM fact_inventory_investment_plan)
         ORDER BY investment_rank
@@ -111,7 +111,7 @@ def get_investment_summary(
         **{k: _f(v) for k, v in result.items()},
         "top_roi_items": [
             {
-                "item_no":             r[0],
+                "item_id":             r[0],
                 "loc":                 r[1],
                 "marginal_roi":        _f(r[2]),
                 "investment_increment":_f(r[3]),
@@ -149,7 +149,7 @@ def get_investment_detail(
 
     if item:
         params.append(f"%{item}%")
-        where_clauses.append("item_no ILIKE %s")
+        where_clauses.append("item_id ILIKE %s")
     if location:
         params.append(f"%{location}%")
         where_clauses.append("loc ILIKE %s")
@@ -166,7 +166,7 @@ def get_investment_detail(
     params.append(limit)
     params.append(offset)
     data_sql = f"""
-        SELECT item_no, loc, abc_vol, abc_xyz_segment,
+        SELECT item_id, loc, abc_vol, abc_xyz_segment,
                current_ss_qty, current_ss_value, current_csl,
                recommended_ss_qty, recommended_ss_value, recommended_csl,
                ss_increment_qty, investment_increment, csl_increment, marginal_roi,
@@ -188,7 +188,7 @@ def get_investment_detail(
         "total": int(total),
         "rows": [
             {
-                "item_no":              r[0],
+                "item_id":              r[0],
                 "loc":                  r[1],
                 "abc_vol":              r[2],
                 "abc_xyz_segment":      r[3],

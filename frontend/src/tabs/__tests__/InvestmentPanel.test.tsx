@@ -49,7 +49,7 @@ beforeEach(() => {
     rows: [
       {
         investment_rank: 1,
-        item_no: "100320",
+        item_id: "100320",
         loc: "1401-BULK",
         abc_vol: "A",
         current_csl: 0.9,
@@ -77,7 +77,7 @@ describe("InvestmentPanel", () => {
     });
     expect(screen.getByText("Current Portfolio CSL")).toBeInTheDocument();
     expect(screen.getByText("Target Portfolio CSL")).toBeInTheDocument();
-    expect(screen.getByText("DFUs Analyzed")).toBeInTheDocument();
+    expect(screen.getByText("SKUs Analyzed")).toBeInTheDocument();
   });
 
   it("renders Run Plan button", async () => {

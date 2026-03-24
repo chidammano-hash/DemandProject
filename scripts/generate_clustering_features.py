@@ -18,7 +18,7 @@ import multiprocessing
 import os
 import sys
 from pathlib import Path
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Any
 
 import numpy as np
@@ -33,7 +33,7 @@ if str(ROOT) not in sys.path:
 
 from common.db import get_db_params
 from common.planning_date import get_planning_date
-from common.domain_specs import DFU_SPEC, ITEM_SPEC
+from common.services.perf_profiler import profiled_section
 
 
 def _seasonal_r2(y: np.ndarray, months: np.ndarray) -> float:
@@ -288,20 +288,20 @@ def _compute_features_for_group(args_tuple: tuple) -> dict:
 
     Parameters
     ----------
-    args_tuple : (dfu_ck, group_df_values)
+    args_tuple : (sku_ck, group_df_values)
         ``group_df_values`` is a dict with ``startdate`` and ``qty`` arrays to avoid
         pickling full DataFrames.
 
     Returns
     -------
-    dict of feature name -> value, including ``dfu_ck``.
+    dict of feature name -> value, including ``sku_ck``.
     """
-    dfu_ck, gdata = args_tuple
+    sku_ck, gdata = args_tuple
     # Reconstruct a minimal DataFrame for compute_time_series_features
     df = pd.DataFrame({"startdate": gdata["startdate"], "qty": gdata["qty"]})
     features = compute_time_series_features(df)
     result = features.to_dict()
-    result["dfu_ck"] = dfu_ck
+    result["sku_ck"] = sku_ck
     return result
 
 
@@ -360,146 +360,150 @@ def main() -> None:
     print(f"Fetching sales data (min_months={min_months}, time_window={time_window})...")
 
     # Query sales data aggregated by DFU
-    with psycopg.connect(**db) as conn:
-        # Get all DFUs
-        dfu_query = """
-            SELECT dfu_ck, dmdunit, dmdgroup, loc
-            FROM dim_dfu
-        """
-        with conn.cursor() as cur:
-            cur.execute(dfu_query)
-            cols = [desc[0] for desc in cur.description]
-            dfus = pd.DataFrame(cur.fetchall(), columns=cols)
-        print(f"Found {len(dfus)} DFUs")
+    with profiled_section("load_data_from_db"):
+        with psycopg.connect(**db) as conn:
+            # Get all DFUs
+            dfu_query = """
+                SELECT sku_ck, item_id, customer_group, loc
+                FROM dim_sku
+            """
+            with conn.cursor() as cur:
+                cur.execute(dfu_query)
+                cols = [desc[0] for desc in cur.description]
+                dfus = pd.DataFrame(cur.fetchall(), columns=cols)
+            print(f"Found {len(dfus)} DFUs")
 
-        # Get sales data — only for DFUs that exist in dim_dfu
-        sales_query = """
-            SELECT d.dfu_ck, s.startdate, s.qty
-            FROM fact_sales_monthly s
-            INNER JOIN dim_dfu d
-                ON d.dmdunit = s.dmdunit
-                AND d.dmdgroup = s.dmdgroup
-                AND d.loc = s.loc
-            WHERE s.qty IS NOT NULL
-        """
-        params: dict[str, object] = {}
-        if cutoff_date:
-            sales_query += " AND s.startdate >= %(cutoff)s"
-            params["cutoff"] = cutoff_date
-        # Cap at planning date — exclude any data beyond current planning horizon
-        planning_upper = get_planning_date().replace(day=1)
-        sales_query += " AND s.startdate <= %(planning_upper)s"
-        params["planning_upper"] = planning_upper
-        sales_query += " ORDER BY d.dfu_ck, s.startdate"
+            # Get sales data — only for DFUs that exist in dim_sku
+            sales_query = """
+                SELECT d.sku_ck, s.startdate, s.qty
+                FROM fact_sales_monthly s
+                INNER JOIN dim_sku d
+                    ON d.item_id = s.item_id
+                    AND d.customer_group = s.customer_group
+                    AND d.loc = s.loc
+                WHERE s.qty IS NOT NULL
+            """
+            params: dict[str, object] = {}
+            if cutoff_date:
+                sales_query += " AND s.startdate >= %(cutoff)s"
+                params["cutoff"] = cutoff_date
+            # Cap at planning date — exclude any data beyond current planning horizon
+            planning_upper = get_planning_date().replace(day=1)
+            sales_query += " AND s.startdate <= %(planning_upper)s"
+            params["planning_upper"] = planning_upper
+            sales_query += " ORDER BY d.sku_ck, s.startdate"
 
-        with conn.cursor() as cur:
-            cur.execute(sales_query, params if params else None)
-            cols = [desc[0] for desc in cur.description]
-            sales_df = pd.DataFrame(cur.fetchall(), columns=cols)
-        sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
-        print(f"Found {len(sales_df)} sales records")
-        print(f"Unique DFUs with sales: {sales_df['dfu_ck'].nunique()}")
+            with conn.cursor() as cur:
+                cur.execute(sales_query, params if params else None)
+                cols = [desc[0] for desc in cur.description]
+                sales_df = pd.DataFrame(cur.fetchall(), columns=cols)
+            sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
+            print(f"Found {len(sales_df)} sales records")
+            print(f"Unique DFUs with sales: {sales_df['sku_ck'].nunique()}")
 
-        # Get DFU attributes (only for qualified DFUs)
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT dfu_ck, brand, region, state_plan, sales_div,"
-                " prod_cat_desc, prod_class_desc, subclass_desc,"
-                " abc_vol, service_lvl_grp, supergroup,"
-                " execution_lag, total_lt, alcoh_pct, proof, vintage"
-                " FROM dim_dfu"
-            )
-            cols = [desc[0] for desc in cur.description]
-            dfu_attrs = pd.DataFrame(cur.fetchall(), columns=cols)
+            # Get DFU attributes (only for qualified DFUs)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT sku_ck, brand, region, state_plan, sales_div,"
+                    " prod_cat_desc, prod_class_desc, subclass_desc,"
+                    " abc_vol, service_lvl_grp, supergroup,"
+                    " execution_lag, total_lt, alcoh_pct, proof, vintage"
+                    " FROM dim_sku"
+                )
+                cols = [desc[0] for desc in cur.description]
+                dfu_attrs = pd.DataFrame(cur.fetchall(), columns=cols)
 
-        # Get item attributes (join via dmdunit)
-        item_query = """
-            SELECT DISTINCT
-                i.item_no AS dmdunit,
-                i.category, i.class, i.sub_class,
-                i.brand_name, i.country, i.national_service_model,
-                i.case_weight, i.item_proof,
-                i.bpc, i.bottle_pack, i.pack_case
-            FROM dim_item i
-            INNER JOIN dim_dfu d ON i.item_no = d.dmdunit
-        """
-        with conn.cursor() as cur:
-            cur.execute(item_query)
-            cols = [desc[0] for desc in cur.description]
-            item_attrs = pd.DataFrame(cur.fetchall(), columns=cols)
+            # Get item attributes (join via item_id)
+            item_query = """
+                SELECT DISTINCT
+                    i.item_id AS item_id,
+                    i.category, i.class, i.sub_class,
+                    i.brand_name, i.country, i.national_service_model,
+                    i.case_weight, i.item_proof,
+                    i.bpc, i.bottle_pack, i.pack_case
+                FROM dim_item i
+                INNER JOIN dim_sku d ON i.item_id = d.item_id
+            """
+            with conn.cursor() as cur:
+                cur.execute(item_query)
+                cols = [desc[0] for desc in cur.description]
+                item_attrs = pd.DataFrame(cur.fetchall(), columns=cols)
 
     print("Computing time series features...")
 
-    # Group sales by dfu_ck once (single pass)
-    sales_df = sales_df.sort_values(["dfu_ck", "startdate"])
-    grouped = sales_df.groupby("dfu_ck", sort=False)
+    # Group sales by sku_ck once (single pass)
+    sales_df = sales_df.sort_values(["sku_ck", "startdate"])
+    grouped = sales_df.groupby("sku_ck", sort=False)
     n_groups = grouped.ngroups
 
     # Determine worker count
     n_workers = args.workers if args.workers is not None else min(os.cpu_count() or 1, 8)
     n_workers = max(1, n_workers)
 
-    if n_workers == 1 or n_groups < 500:
-        # Serial path — avoids multiprocessing overhead for small datasets or when requested
-        ts_features_list = []
-        report_interval = max(1, n_groups // 20)  # ~5% progress steps
-        for idx, (dfu_ck, dfu_sales) in enumerate(grouped):
-            if idx == 0 or (idx + 1) % report_interval == 0 or (idx + 1) == n_groups:
-                print(f"  Processing DFU {idx + 1}/{n_groups} ({(idx + 1) / n_groups * 100:.0f}%)...")
-            ts_features = compute_time_series_features(dfu_sales)
-            ts_features["dfu_ck"] = dfu_ck
-            ts_features_list.append(ts_features)
-    else:
-        # Parallel path — distribute DFU groups across worker processes
-        print(f"  Using {n_workers} parallel workers...")
-        # Pre-extract group data as lightweight dicts (avoid pickling DataFrames)
-        work_items = []
-        for dfu_ck, dfu_sales in grouped:
-            work_items.append((
-                dfu_ck,
-                {
-                    "startdate": dfu_sales["startdate"].values,
-                    "qty": dfu_sales["qty"].values,
-                },
-            ))
+    with profiled_section("compute_time_series_features"):
+        if n_workers == 1 or n_groups < 500:
+            # Serial path — avoids multiprocessing overhead for small datasets or when requested
+            ts_features_list = []
+            report_interval = max(1, n_groups // 20)  # ~5% progress steps
+            for idx, (sku_ck, dfu_sales) in enumerate(grouped):
+                if idx == 0 or (idx + 1) % report_interval == 0 or (idx + 1) == n_groups:
+                    print(f"  Processing DFU {idx + 1}/{n_groups} ({(idx + 1) / n_groups * 100:.0f}%)...")
+                ts_features = compute_time_series_features(dfu_sales)
+                ts_features["sku_ck"] = sku_ck
+                ts_features_list.append(ts_features)
+        else:
+            # Parallel path — distribute DFU groups across worker processes
+            print(f"  Using {n_workers} parallel workers...")
+            # Pre-extract group data as lightweight dicts (avoid pickling DataFrames)
+            work_items = []
+            for sku_ck, dfu_sales in grouped:
+                work_items.append((
+                    sku_ck,
+                    {
+                        "startdate": dfu_sales["startdate"].values,
+                        "qty": dfu_sales["qty"].values,
+                    },
+                ))
 
-        try:
-            with multiprocessing.Pool(processes=n_workers) as pool:
-                ts_features_list = pool.map(
-                    _compute_features_for_group,
-                    work_items,
-                    chunksize=max(1, n_groups // (n_workers * 4)),
-                )
-        except Exception as exc:
-            print(f"ERROR: Worker process failed during feature computation: {exc}")
-            raise
+            try:
+                with multiprocessing.Pool(processes=n_workers) as pool:
+                    ts_features_list = pool.map(
+                        _compute_features_for_group,
+                        work_items,
+                        chunksize=max(1, n_groups // (n_workers * 4)),
+                    )
+            except Exception as exc:
+                print(f"ERROR: Worker process failed during feature computation: {exc}")
+                raise
 
-        print(f"  Completed {len(ts_features_list)}/{n_groups} DFUs across {n_workers} workers.")
+            print(f"  Completed {len(ts_features_list)}/{n_groups} DFUs across {n_workers} workers.")
 
     ts_features_df = pd.DataFrame(ts_features_list)
     print(f"Computed features for {len(ts_features_df)} DFUs")
 
     # Merge with DFU attributes
     print("Merging DFU attributes...")
-    feature_df = ts_features_df.merge(dfu_attrs, on="dfu_ck", how="left")
+    with profiled_section("merge_attributes"):
+        feature_df = ts_features_df.merge(dfu_attrs, on="sku_ck", how="left")
 
-    # Merge with item attributes
-    print("Merging item attributes...")
-    feature_df = feature_df.merge(
-        dfus[["dfu_ck", "dmdunit"]].merge(item_attrs, on="dmdunit", how="left"),
-        on="dfu_ck",
-        how="left",
-        suffixes=("", "_item"),
-    )
+        # Merge with item attributes
+        print("Merging item attributes...")
+        feature_df = feature_df.merge(
+            dfus[["sku_ck", "item_id"]].merge(item_attrs, on="item_id", how="left"),
+            on="sku_ck",
+            how="left",
+            suffixes=("", "_item"),
+        )
 
-    # Handle missing values
-    numeric_cols = feature_df.select_dtypes(include=[np.number]).columns
-    feature_df[numeric_cols] = feature_df[numeric_cols].fillna(0)
+        # Handle missing values
+        numeric_cols = feature_df.select_dtypes(include=[np.number]).columns
+        feature_df[numeric_cols] = feature_df[numeric_cols].fillna(0)
 
     # Save feature matrix
-    output_path = root / args.output
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    feature_df.to_csv(output_path, index=False)
+    with profiled_section("save_feature_matrix"):
+        output_path = root / args.output
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        feature_df.to_csv(output_path, index=False)
     print(f"Saved feature matrix to {output_path}")
     print(f"Feature matrix shape: {feature_df.shape}")
     print(f"Features: {list(feature_df.columns)}")

@@ -22,6 +22,7 @@ import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 
 
 # ---------------------------------------------------------------------------
@@ -114,12 +115,12 @@ def run(config: dict, dry_run: bool = False) -> dict[str, int]:
     extract_sql = """
         WITH daily AS (
             SELECT
-                item_no,
+                item_id,
                 loc,
                 snapshot_date,
                 lead_time_days,
                 LAG(lead_time_days) OVER (
-                    PARTITION BY item_no, loc
+                    PARTITION BY item_id, loc
                     ORDER BY snapshot_date
                 ) AS prev_lt
             FROM fact_inventory_snapshot
@@ -128,39 +129,39 @@ def run(config: dict, dry_run: bool = False) -> dict[str, int]:
               AND lead_time_days > 0
         ),
         change_points AS (
-            SELECT item_no, loc, lead_time_days, snapshot_date
+            SELECT item_id, loc, lead_time_days, snapshot_date
             FROM daily
             WHERE prev_lt IS NULL OR lead_time_days != prev_lt
         )
         SELECT
-            item_no,
+            item_id,
             loc,
             array_agg(lead_time_days ORDER BY snapshot_date)    AS lt_observations,
             COUNT(*)                                             AS observation_count,
             COUNT(DISTINCT DATE_TRUNC('month', snapshot_date))   AS observation_months
         FROM change_points
-        GROUP BY item_no, loc
+        GROUP BY item_id, loc
         HAVING COUNT(*) >= %(min_obs)s
-        ORDER BY item_no, loc
+        ORDER BY item_id, loc
     """
 
     upsert_sql = """
         INSERT INTO dim_item_lead_time_profile (
-            item_no, loc,
+            item_id, loc,
             lt_mean_days, lt_std_days, lt_cv,
             lt_min_days, lt_max_days,
             lt_p25_days, lt_p50_days, lt_p75_days, lt_p95_days,
             observation_count, observation_months,
             lt_variability_class, computed_at
         ) VALUES (
-            %(item_no)s, %(loc)s,
+            %(item_id)s, %(loc)s,
             %(lt_mean_days)s, %(lt_std_days)s, %(lt_cv)s,
             %(lt_min_days)s, %(lt_max_days)s,
             %(lt_p25_days)s, %(lt_p50_days)s, %(lt_p75_days)s, %(lt_p95_days)s,
             %(observation_count)s, %(observation_months)s,
             %(lt_variability_class)s, %(computed_at)s
         )
-        ON CONFLICT (item_no, loc) DO UPDATE SET
+        ON CONFLICT (item_id, loc) DO UPDATE SET
             lt_mean_days         = EXCLUDED.lt_mean_days,
             lt_std_days          = EXCLUDED.lt_std_days,
             lt_cv                = EXCLUDED.lt_cv,
@@ -182,51 +183,54 @@ def run(config: dict, dry_run: bool = False) -> dict[str, int]:
     now = datetime.now(timezone.utc)
 
     with psycopg.connect(**conn_params) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                extract_sql,
-                {
-                    "history_months": history_months,
-                    "min_obs": config["change_point"]["min_observations"],
-                },
-            )
-            rows = cur.fetchall()
+        with profiled_section("load_data"):
+            with conn.cursor() as cur:
+                cur.execute(
+                    extract_sql,
+                    {
+                        "history_months": history_months,
+                        "min_obs": config["change_point"]["min_observations"],
+                    },
+                )
+                rows = cur.fetchall()
 
         batch: list[dict] = []
 
-        for item_no, loc, lt_observations, obs_count, obs_months in rows:
-            processed += 1
+        with profiled_section("compute_variability"):
+            for item_id, loc, lt_observations, obs_count, obs_months in rows:
+                processed += 1
 
-            # lt_observations is already a list from array_agg
-            lt_list = [float(v) for v in lt_observations]
-            metrics = compute_lt_metrics(lt_list, config)
-            if metrics is None:
-                skipped += 1
-                continue
+                # lt_observations is already a list from array_agg
+                lt_list = [float(v) for v in lt_observations]
+                metrics = compute_lt_metrics(lt_list, config)
+                if metrics is None:
+                    skipped += 1
+                    continue
 
-            lt_class = classify_lt_variability_class(metrics["lt_cv"], config)
-            row = {
-                "item_no": item_no,
-                "loc": loc,
-                **metrics,
-                "observation_months": int(obs_months),
-                "lt_variability_class": lt_class,
-                "computed_at": now,
-            }
-            batch.append(row)
+                lt_class = classify_lt_variability_class(metrics["lt_cv"], config)
+                row = {
+                    "item_id": item_id,
+                    "loc": loc,
+                    **metrics,
+                    "observation_months": int(obs_months),
+                    "lt_variability_class": lt_class,
+                    "computed_at": now,
+                }
+                batch.append(row)
 
-            if len(batch) >= batch_size and not dry_run:
+                if len(batch) >= batch_size and not dry_run:
+                    with conn.cursor() as cur:
+                        cur.executemany(upsert_sql, batch)
+                    conn.commit()
+                    updated += len(batch)
+                    batch.clear()
+
+        with profiled_section("write_results"):
+            if batch and not dry_run:
                 with conn.cursor() as cur:
                     cur.executemany(upsert_sql, batch)
                 conn.commit()
                 updated += len(batch)
-                batch.clear()
-
-        if batch and not dry_run:
-            with conn.cursor() as cur:
-                cur.executemany(upsert_sql, batch)
-            conn.commit()
-            updated += len(batch)
 
     return {"processed": processed, "updated": updated, "skipped": skipped}
 

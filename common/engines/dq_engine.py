@@ -5,11 +5,7 @@ Runs configurable SQL-based data quality checks and produces domain health score
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from typing import Any
-
 from common.db import get_db_params
-from common.planning_date import get_planning_date
 from common.utils import load_config, reset_config
 
 _CONFIG_NAME = "data_quality_config.yaml"
@@ -29,23 +25,6 @@ def _reset_config():
 # ---------------------------------------------------------------------------
 # Check types
 # ---------------------------------------------------------------------------
-def _check_freshness(conn, table_name: str, max_hours: int) -> dict:
-    """Check if a table has been loaded within max_hours of the planning date."""
-    with conn.cursor() as cur:
-        cur.execute(
-            f"SELECT max(load_ts) FROM {table_name} WHERE load_ts IS NOT NULL"
-        )
-        row = cur.fetchone()
-    last_load = row[0] if row and row[0] else None
-    if last_load is None:
-        return {"status": "fail", "metric_value": None, "details": {"message": "No load_ts found"}}
-
-    # Compare against planning date (frozen dev date), not wall-clock time
-    planning_dt = datetime.combine(get_planning_date(), datetime.min.time(), tzinfo=timezone.utc)
-    hours_ago = (planning_dt - last_load.replace(tzinfo=timezone.utc)).total_seconds() / 3600
-    hours_ago = max(hours_ago, 0)  # Don't report negative if load_ts is after planning date
-    status = "pass" if hours_ago <= max_hours else "fail"
-    return {"status": status, "metric_value": round(hours_ago, 2), "details": {"hours_since_load": round(hours_ago, 2), "planning_date": str(get_planning_date())}}
 
 
 def _check_completeness(conn, table_name: str, column: str, max_null_pct: float) -> dict:
@@ -175,82 +154,6 @@ def _check_referential_integrity(
             "orphan_keys": orphan_count,
             "source_table": source_table,
             "target_table": target_table,
-        },
-    }
-
-
-# ---------------------------------------------------------------------------
-# Statistical DQ checks (Expert checks)
-# ---------------------------------------------------------------------------
-
-def _check_statistical_outlier(
-    conn, table_name: str, column: str, method: str = "iqr", threshold: float = 1.5,
-) -> dict:
-    """Detect statistical outliers using IQR or Z-score method.
-
-    IQR method: outliers outside [Q1 - threshold*IQR, Q3 + threshold*IQR].
-    Z-score method: outliers beyond ±threshold standard deviations.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            f"SELECT count(*) AS total, "
-            f"avg({column}) AS mean, "
-            f"stddev_pop({column}) AS stddev, "
-            f"percentile_cont(0.25) WITHIN GROUP (ORDER BY {column}) AS q1, "
-            f"percentile_cont(0.50) WITHIN GROUP (ORDER BY {column}) AS median, "
-            f"percentile_cont(0.75) WITHIN GROUP (ORDER BY {column}) AS q3, "
-            f"min({column}) AS col_min, "
-            f"max({column}) AS col_max "
-            f"FROM {table_name} WHERE {column} IS NOT NULL"
-        )
-        row = cur.fetchone()
-
-    total = row[0]
-    if total == 0:
-        return {"status": "warn", "metric_value": 0, "details": {"message": "No non-null rows"}}
-
-    mean, stddev = float(row[1] or 0), float(row[2] or 0)
-    q1, median, q3 = float(row[3] or 0), float(row[4] or 0), float(row[5] or 0)
-    col_min, col_max = float(row[6] or 0), float(row[7] or 0)
-    iqr = q3 - q1
-
-    if method == "zscore":
-        lower = mean - threshold * stddev if stddev > 0 else col_min
-        upper = mean + threshold * stddev if stddev > 0 else col_max
-    else:  # iqr
-        lower = q1 - threshold * iqr
-        upper = q3 + threshold * iqr
-
-    # Count outliers
-    with conn.cursor() as cur:
-        cur.execute(
-            f"SELECT count(*) FROM {table_name} "
-            f"WHERE {column} IS NOT NULL AND ({column} < %s OR {column} > %s)",
-            (lower, upper),
-        )
-        outliers = cur.fetchone()[0]
-
-    outlier_pct = round(100.0 * outliers / total, 4) if total > 0 else 0
-    status = "pass" if outlier_pct < 1.0 else ("warn" if outlier_pct < 5.0 else "fail")
-    return {
-        "status": status,
-        "metric_value": outliers,
-        "details": {
-            "method": method,
-            "threshold": threshold,
-            "total": total,
-            "outliers": outliers,
-            "outlier_pct": outlier_pct,
-            "lower_bound": round(lower, 4),
-            "upper_bound": round(upper, 4),
-            "mean": round(mean, 4),
-            "median": round(median, 4),
-            "stddev": round(stddev, 4),
-            "q1": round(q1, 4),
-            "q3": round(q3, 4),
-            "iqr": round(iqr, 4),
-            "col_min": round(col_min, 4),
-            "col_max": round(col_max, 4),
         },
     }
 
@@ -487,14 +390,12 @@ def _check_cardinality_anomaly(
 # DQEngine class
 # ---------------------------------------------------------------------------
 CHECK_FUNCTIONS = {
-    "freshness": _check_freshness,
     "completeness": _check_completeness,
     "row_count": _check_row_count,
     "uniqueness": _check_uniqueness,
     "range": _check_range,
     "volume_delta": _check_volume_delta,
     "referential_integrity": _check_referential_integrity,
-    "statistical_outlier": _check_statistical_outlier,
     "distribution_drift": _check_distribution_drift,
     "temporal_gaps": _check_temporal_gaps,
     "cross_column": _check_cross_column,
@@ -641,8 +542,11 @@ class DQEngine:
 
                 # --- Statistical outlier (per-column) -------------------------
                 if check_type == "statistical_outlier" and "columns" in spec:
+                    # group_by can be set at domain level or per-column level
+                    domain_group_by = spec.get("group_by")
                     for col_spec in spec["columns"]:
                         col_name = col_spec.get("column", "")
+                        col_group_by = col_spec.get("group_by", domain_group_by)
                         flat.append({
                             "check_type": "statistical_outlier",
                             "check_name": f"statistical_outlier_{domain_key}_{col_name}",
@@ -651,6 +555,7 @@ class DQEngine:
                             "column": col_name,
                             "method": col_spec.get("method", "iqr"),
                             "threshold": col_spec.get("threshold", 1.5),
+                            "group_by": col_group_by,
                             "severity": col_spec.get("severity", severity),
                             "enabled": enabled,
                         })
@@ -770,6 +675,7 @@ class DQEngine:
                 result = _check_statistical_outlier(
                     conn, table_name, check.get("column", ""),
                     check.get("method", "iqr"), check.get("threshold", 1.5),
+                    group_by=check.get("group_by"),
                 )
             elif check_type == "distribution_drift":
                 result = _check_distribution_drift(
@@ -848,16 +754,3 @@ class DQEngine:
 
         return {"domain": domain, "score": score, "total_checks": total, "passed": passed, "failed": counts.get("fail", 0), "warnings": counts.get("warn", 0)}
 
-    def get_pipeline_health(self) -> dict:
-        """Get freshness status across all key tables."""
-        import psycopg
-        tables = ["dim_item", "dim_location", "dim_dfu", "fact_sales_monthly", "fact_external_forecast_monthly"]
-        results = []
-        with psycopg.connect(**get_db_params()) as conn:
-            for table in tables:
-                try:
-                    r = _check_freshness(conn, table, 48)
-                    results.append({"table": table, **r})
-                except Exception:
-                    results.append({"table": table, "status": "error", "metric_value": None})
-        return {"tables": results}

@@ -367,7 +367,7 @@ def tune_for_timeframe(
         import optuna
         optuna.logging.set_verbosity(optuna.logging.WARNING)
     except ImportError:
-        print(f"  [tune_for_timeframe] optuna not installed — returning empty params")
+        print("  [tune_for_timeframe] optuna not installed — returning empty params")  # noqa: T201
         return {}, 500
 
     from common.feature_engineering import mask_future_sales

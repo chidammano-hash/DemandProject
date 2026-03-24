@@ -28,7 +28,7 @@ _MOCK_SHAP = np.array([
 ])
 _MOCK_BASE = np.full(5, 120.0)  # base value per row
 
-# DFU row: (ml_cluster, execution_lag, total_lt, brand, region, abc_vol, dmdgroup, bpc, item_proof, case_weight)
+# DFU row: (ml_cluster, execution_lag, total_lt, brand, region, abc_vol, customer_group, bpc, item_proof, case_weight)
 _DFU_ROW = ("0", 0, 14, "brand_a", "NE", "A", "grp1", 12.0, 40.0, 15.0)
 
 # 17 consecutive months in DESC order (simulates SQL ORDER BY startdate DESC)
@@ -54,7 +54,7 @@ _SALES_ROWS = [
     (datetime.date(2023, 1, 1), 101.0),
 ]
 
-# Distinct dim_dfu rows for cat encoding
+# Distinct dim_sku rows for cat encoding
 _DISTINCT_ROWS = [("0", "NE", "brand_a", "A")]
 
 # No future forecast rows
@@ -99,12 +99,12 @@ async def test_dfu_shap_200_lgbm(tmp_path):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_no": "100320", "loc": "1401-BULK", "top_n": 6},
+                params={"item_id": "100320", "loc": "1401-BULK", "top_n": 6},
             )
 
     assert resp.status_code == 200, resp.text
     data = resp.json()
-    assert data["item_no"] == "100320"
+    assert data["item_id"] == "100320"
     assert data["loc"] == "1401-BULK"
     assert data["model_id"] == "lgbm_cluster"
     assert data["cluster_id"] == "0"
@@ -143,7 +143,7 @@ async def test_dfu_shap_404_no_model_dir(tmp_path):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_no": "100320", "loc": "1401-BULK"},
+                params={"item_id": "100320", "loc": "1401-BULK"},
             )
 
     assert resp.status_code == 404
@@ -151,12 +151,12 @@ async def test_dfu_shap_404_no_model_dir(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Test: 404 — DFU not found in dim_dfu
+# Test: 404 — DFU not found in dim_sku
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_dfu_shap_404_dfu_not_found(tmp_path):
-    """DFU not in dim_dfu → 404."""
+    """DFU not in dim_sku → 404."""
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = None  # DFU not found
 
@@ -172,7 +172,7 @@ async def test_dfu_shap_404_dfu_not_found(tmp_path):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_no": "UNKNOWN", "loc": "NOWHERE"},
+                params={"item_id": "UNKNOWN", "loc": "NOWHERE"},
             )
 
     assert resp.status_code == 404
@@ -202,7 +202,7 @@ async def test_dfu_shap_404_pkl_missing(tmp_path):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_no": "100320", "loc": "1401-BULK"},
+                params={"item_id": "100320", "loc": "1401-BULK"},
             )
 
     assert resp.status_code == 404
@@ -230,7 +230,7 @@ async def test_dfu_shap_top_n_clamped(tmp_path):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_no": "100320", "loc": "1401-BULK", "top_n": 999},
+                params={"item_id": "100320", "loc": "1401-BULK", "top_n": 999},
             )
 
     assert resp.status_code == 422  # FastAPI rejects out-of-range Query
@@ -268,7 +268,7 @@ async def test_dfu_shap_includes_future_months(tmp_path):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_no": "100320", "loc": "1401-BULK"},
+                params={"item_id": "100320", "loc": "1401-BULK"},
             )
 
     assert resp.status_code == 200, resp.text
@@ -313,7 +313,7 @@ async def test_dfu_shap_future_lag_model_mismatch(tmp_path):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/shap/lgbm_cluster/dfu",
-                params={"item_no": "100320", "loc": "1401-BULK"},
+                params={"item_id": "100320", "loc": "1401-BULK"},
             )
 
     assert resp.status_code == 200, resp.text

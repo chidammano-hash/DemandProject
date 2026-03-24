@@ -53,13 +53,17 @@ async def get_event_calendar(
     conditions = ["1=1"]
     params: list = []
     if event_type:
-        conditions.append("event_type = %s"); params.append(event_type)
+        conditions.append("event_type = %s")
+        params.append(event_type)
     if status:
-        conditions.append("status = %s"); params.append(status)
+        conditions.append("status = %s")
+        params.append(status)
     if from_date:
-        conditions.append("event_end >= %s"); params.append(from_date)
+        conditions.append("event_end >= %s")
+        params.append(from_date)
     if to_date:
-        conditions.append("event_start <= %s"); params.append(to_date)
+        conditions.append("event_start <= %s")
+        params.append(to_date)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -187,25 +191,28 @@ async def approve_event(event_id: int, request: Request):
 @router.get("/events/impact-preview")
 async def get_event_impact(
     event_id: int | None = None,
-    item_no: str | None = None,
+    item_id: str | None = None,
     loc: str | None = None,
 ):
     """Demand adjustment preview for an event."""
     conditions = ["1=1"]
     params: list = []
     if event_id:
-        conditions.append("event_id = %s"); params.append(event_id)
-    if item_no:
-        conditions.append("item_no = %s"); params.append(item_no)
+        conditions.append("event_id = %s")
+        params.append(event_id)
+    if item_id:
+        conditions.append("item_id = %s")
+        params.append(item_id)
     if loc:
-        conditions.append("loc = %s"); params.append(loc)
+        conditions.append("loc = %s")
+        params.append(loc)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT item_no, loc, plan_month, event_id, base_forecast_qty,
+                SELECT item_id, loc, plan_month, event_id, base_forecast_qty,
                        event_adjustment_qty, post_promo_dip_qty, adjusted_forecast_qty,
                        adjustment_type, order_deadline
                 FROM fact_event_adjusted_forecast
@@ -217,7 +224,7 @@ async def get_event_impact(
             rows = cur.fetchall()
 
     cols = [
-        "item_no", "loc", "plan_month", "event_id", "base_forecast_qty",
+        "item_id", "loc", "plan_month", "event_id", "base_forecast_qty",
         "event_adjustment_qty", "post_promo_dip_qty", "adjusted_forecast_qty",
         "adjustment_type", "order_deadline",
     ]
@@ -231,7 +238,7 @@ async def get_event_impact(
 
     return {
         "event_id": event_id,
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "adjustments": adjustments,
     }
@@ -251,9 +258,11 @@ async def get_event_performance(
     conditions = ["1=1"]
     params: list = []
     if event_id:
-        conditions.append("event_id = %s"); params.append(event_id)
+        conditions.append("event_id = %s")
+        params.append(event_id)
     if min_lift_accuracy is not None:
-        conditions.append("lift_accuracy_pct >= %s"); params.append(min_lift_accuracy)
+        conditions.append("lift_accuracy_pct >= %s")
+        params.append(min_lift_accuracy)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -264,7 +273,7 @@ async def get_event_performance(
             total = cur.fetchone()[0]
             cur.execute(
                 f"""
-                SELECT event_id, item_no, loc, plan_month,
+                SELECT event_id, item_id, loc, plan_month,
                        forecasted_lift_qty, actual_lift_qty, lift_accuracy_pct,
                        uplift_calibration_factor
                 FROM fact_event_performance
@@ -277,7 +286,7 @@ async def get_event_performance(
             rows = cur.fetchall()
 
     cols = [
-        "event_id", "item_no", "loc", "plan_month",
+        "event_id", "item_id", "loc", "plan_month",
         "forecasted_lift_qty", "actual_lift_qty", "lift_accuracy_pct",
         "uplift_calibration_factor",
     ]

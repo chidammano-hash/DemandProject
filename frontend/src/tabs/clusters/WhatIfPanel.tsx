@@ -48,7 +48,7 @@ function ParamInput({
 // ---------------------------------------------------------------------------
 type ScenarioEstimate = {
   estimated_seconds: number;
-  dfu_count: number;
+  sku_count: number;
   sampled: boolean;
   training_sample: number;
 };
@@ -129,7 +129,7 @@ export default function WhatIfPanel({
               />
               <ParamInput
                 label="Min History (months)"
-                description="DFUs with fewer months of data are excluded from clustering. Lower values include newer products but may produce noisy features."
+                description="SKUs with fewer months of data are excluded from clustering. Lower values include newer products but may produce noisy features."
                 value={featureParams.min_months_history}
                 onChange={(v) => setFeatureParams((p) => ({ ...p, min_months_history: v }))}
                 min={1}
@@ -167,7 +167,7 @@ export default function WhatIfPanel({
               </div>
               <ParamInput
                 label="Min Cluster Size (%)"
-                description="Minimum percentage of DFUs required in each cluster. Prevents tiny, unstable clusters. Higher values produce more balanced groups for model training."
+                description="Minimum percentage of SKUs required in each cluster. Prevents tiny, unstable clusters. Higher values produce more balanced groups for model training."
                 value={modelParams.min_cluster_size_pct}
                 onChange={(v) => setModelParams((p) => ({ ...p, min_cluster_size_pct: v }))}
                 step={0.5}
@@ -181,7 +181,7 @@ export default function WhatIfPanel({
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Labeling Thresholds</p>
               <ParamInput
                 label="Volume High (pctl)"
-                description="Percentile threshold for 'high volume' classification. DFUs above this percentile are labeled high/very_high volume."
+                description="Percentile threshold for 'high volume' classification. SKUs above this percentile are labeled high/very_high volume."
                 value={labelParams.volume_high}
                 onChange={(v) => setLabelParams((p) => ({ ...p, volume_high: v }))}
                 step={0.05}
@@ -190,7 +190,7 @@ export default function WhatIfPanel({
               />
               <ParamInput
                 label="Volume Low (pctl)"
-                description="Percentile threshold for 'low volume' classification. DFUs below this percentile are labeled low/very_low volume."
+                description="Percentile threshold for 'low volume' classification. SKUs below this percentile are labeled low/very_low volume."
                 value={labelParams.volume_low}
                 onChange={(v) => setLabelParams((p) => ({ ...p, volume_low: v }))}
                 step={0.05}
@@ -272,9 +272,9 @@ export default function WhatIfPanel({
                   : estimate.estimated_seconds >= 60
                   ? `${Math.floor(estimate.estimated_seconds / 60)}m ${Math.round(estimate.estimated_seconds % 60)}s`
                   : `${Math.round(estimate.estimated_seconds)}s`}
-                {estimate.dfu_count > 0 && (
+                {estimate.sku_count > 0 && (
                   <span className="ml-1 text-[10px]">
-                    ({formatCompactNumber(estimate.dfu_count)} DFUs{estimate.sampled ? `, ${formatCompactNumber(estimate.training_sample)} sample` : ""})
+                    ({formatCompactNumber(estimate.sku_count)} SKUs{estimate.sampled ? `, ${formatCompactNumber(estimate.training_sample)} sample` : ""})
                   </span>
                 )}
               </span>

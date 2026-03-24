@@ -83,8 +83,8 @@ export function BiasCorrectionsPanel() {
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <KpiCard
-          label="DFUs Corrected"
-          value={sumLoading ? "…" : (summary?.dfu_count ?? 0).toLocaleString()}
+          label="SKUs Corrected"
+          value={sumLoading ? "…" : (summary?.sku_count ?? 0).toLocaleString()}
           icon={<TrendingUp size={16} />}
         />
         <KpiCard
@@ -160,7 +160,7 @@ export function BiasCorrectionsPanel() {
                       key={i}
                       className="border-t hover:bg-muted/30 transition-colors"
                     >
-                      <td className="px-3 py-2 font-mono text-xs">{row.item_no}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{row.item_id}</td>
                       <td className="px-3 py-2 text-xs">{row.loc}</td>
                       <td className="px-3 py-2 text-xs">{row.plan_month?.slice(0, 7) ?? "—"}</td>
                       <td className="px-3 py-2 text-xs">{row.segment_type}</td>

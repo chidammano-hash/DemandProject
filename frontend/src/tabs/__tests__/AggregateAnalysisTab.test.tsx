@@ -50,7 +50,7 @@ vi.mock("@/api/queries", () => ({
     forecastModels: () => ["forecast-models"],
   },
   filterMetaKeys: {
-    dfuCount: (f: unknown) => ["dfu-count", f],
+    skuCount: (f: unknown) => ["sku-count", f],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchDashboardKpis: vi.fn().mockResolvedValue({
@@ -69,7 +69,7 @@ vi.mock("@/api/queries", () => ({
     period_labels: ["2025-09", "2025-10", "2025-11"],
     metric: "accuracy_pct",
   }),
-  fetchAccuracySlice: vi.fn().mockResolvedValue({ rows: [], common_dfu_count: null, dfu_counts: null }),
+  fetchAccuracySlice: vi.fn().mockResolvedValue({ rows: [], common_sku_count: null, sku_counts: null }),
   fetchLagCurve: vi.fn().mockResolvedValue({ by_lag: [] }),
   fetchCompetitionConfig: vi.fn().mockResolvedValue({ config: null, available_models: [] }),
   fetchCompetitionSummary: vi.fn().mockResolvedValue({ summary: null }),
@@ -88,7 +88,7 @@ vi.mock("@/api/queries", () => ({
 }));
 
 vi.mock("@/api/queries/core", () => ({
-  fetchDfuShap: vi.fn().mockResolvedValue(null),
+  fetchSkuShap: vi.fn().mockResolvedValue(null),
   fetchShapSummary: vi.fn().mockResolvedValue({ model_id: "", total_features: 0, features: [] }),
 }));
 

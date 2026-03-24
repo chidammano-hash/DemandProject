@@ -144,7 +144,7 @@ def _make_override(
 ) -> dict:
     return {
         "override_id": override_id,
-        "item_no": "100320",
+        "item_id": "100320",
         "loc": "1401-BULK",
         "override_month": date(2026, 5, 1),
         "override_type": override_type,

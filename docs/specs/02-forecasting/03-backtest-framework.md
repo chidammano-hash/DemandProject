@@ -44,6 +44,10 @@ With sales data from Feb 2023 to Jan 2026 (36 months), 10 timeframes:
 
 Each DFU (Demand Forecast Unit -- a unique item-location combination) has an `execution_lag` that represents how far in advance its forecast is issued. A DFU with `execution_lag = 2` means the forecast for April is issued in February. The main table stores only the prediction at this operationally relevant lag; the archive stores all 5 lags for accuracy analysis at any horizon.
 
+**External forecast loading:** All rows in `dfu_stat_fcst.txt` are assumed to be at execution lag. The `lag` and `execution_lag` fields in the source file are ignored — the loader overwrites both from `dim_sku.execution_lag` (defaulting to 0 for unmatched DFUs). No `WHERE lag = execution_lag` filter is applied; all rows are inserted. Additionally, only the last 12 months of data (by `startdate`) are loaded, based on the current planning date.
+
+**Backtest loading:** Backtests still produce predictions at all 5 lags (0-4). The backtest loader (`scripts/load_backtest_forecasts.py`) retains the original dual-path logic: archive gets all lags, main table gets execution-lag rows only.
+
 ## Data Model
 
 ### Main Table: `fact_external_forecast_monthly`
@@ -55,7 +59,7 @@ Stores execution-lag predictions only. One row per DFU per month per model.
 | Column | Type | Description |
 |--------|------|-------------|
 | `forecast_ck` | TEXT | Composite business key |
-| `dmdunit`, `loc` | TEXT | Item and location |
+| `item_id`, `loc` | TEXT | Item and location |
 | `fcstdate` | DATE | When the forecast was issued |
 | `startdate` | DATE | Month being forecast |
 | `lag` | INTEGER | 0-4 (months between issue and target) |
@@ -69,11 +73,12 @@ Stores execution-lag predictions only. One row per DFU per month per model.
 ### Dual-Path Loading (Critical Ordering)
 
 The loader uses phase ordering to preserve archive integrity:
-1. **Phase 3b** loads the archive FIRST from untouched staging data (each row keeps its original lag)
-2. **Phase 3c** THEN mutates the staging table's execution_lag from `dim_dfu`
-3. **Phase 5** inserts into the main table with `WHERE lag = execution_lag` (only execution-lag rows)
+1. **12-month filter** removes staging rows with `startdate` older than 12 months from planning date
+2. **Archive load** inserts remaining rows into `backtest_lag_archive` FIRST from untouched staging data (original lag values preserved)
+3. **Execution lag resolution** overwrites both `lag` and `execution_lag` on staging from `dim_sku`
+4. **Main table INSERT** loads all rows (no lag filter — all external forecasts are assumed at execution lag)
 
-This ordering is critical: the archive must be loaded before the staging mutation, otherwise all rows for a DFU would have the same execution_lag value.
+This ordering is critical: the archive must be loaded before the staging mutation, otherwise all rows for a DFU would have the same lag value. Backtest model rows in the archive are not affected (only `model_id='external'` rows are replaced).
 
 ## API
 

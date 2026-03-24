@@ -16,7 +16,7 @@ from tests.api.conftest import make_pool as _make_pool
 
 def _override_row(
     override_id=1,
-    item_no="100320",
+    item_id="100320",
     loc="1401-BULK",
     override_month=None,
     override_type="PROMO",
@@ -45,7 +45,7 @@ def _override_row(
 ):
     return (
         override_id,
-        item_no,
+        item_id,
         loc,
         override_month or datetime.date(2026, 5, 1),
         override_type,
@@ -144,7 +144,7 @@ async def test_list_overrides_returns_rows():
     assert data["total"] == 2
     assert len(data["overrides"]) == 1
     ov = data["overrides"][0]
-    assert ov["item_no"] == "100320"
+    assert ov["item_id"] == "100320"
     assert ov["override_type"] == "PROMO"
     assert ov["status"] == "pending_approval"
 
@@ -185,7 +185,7 @@ async def test_submit_override_auto_approved():
             resp = await client.post(
                 "/forecast/overrides",
                 json={
-                    "item_no": "100320",
+                    "item_id": "100320",
                     "loc": "1401-BULK",
                     "override_month": "2026-05-01",
                     "override_type": "PROMO",
@@ -217,7 +217,7 @@ async def test_submit_override_requires_approval():
             resp = await client.post(
                 "/forecast/overrides",
                 json={
-                    "item_no": "100320",
+                    "item_id": "100320",
                     "loc": "1401-BULK",
                     "override_month": "2026-05-01",
                     "override_type": "PROMO",
@@ -248,7 +248,7 @@ async def test_submit_override_invalid_type():
             resp = await client.post(
                 "/forecast/overrides",
                 json={
-                    "item_no": "100320",
+                    "item_id": "100320",
                     "loc": "1401-BULK",
                     "override_month": "2026-05-01",
                     "override_type": "INVALID_TYPE",
@@ -274,7 +274,7 @@ async def test_submit_override_multiplier_out_of_bounds():
             resp = await client.post(
                 "/forecast/overrides",
                 json={
-                    "item_no": "100320",
+                    "item_id": "100320",
                     "loc": "1401-BULK",
                     "override_month": "2026-05-01",
                     "override_type": "PROMO",
@@ -449,7 +449,7 @@ async def test_get_consensus_plan_returns_months():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/consensus-plan",
-                params={"item_no": "100320", "loc": "1401-BULK"},
+                params={"item_id": "100320", "loc": "1401-BULK"},
             )
 
     assert resp.status_code == 200
@@ -477,7 +477,7 @@ async def test_get_consensus_plan_with_explicit_version():
             resp = await client.get(
                 "/forecast/consensus-plan",
                 params={
-                    "item_no": "100320",
+                    "item_id": "100320",
                     "loc": "1401-BULK",
                     "plan_version": "2026-04-01_production",
                 },
@@ -500,7 +500,7 @@ async def test_get_consensus_plan_404_no_version():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/consensus-plan",
-                params={"item_no": "UNKNOWN", "loc": "X"},
+                params={"item_id": "UNKNOWN", "loc": "X"},
             )
 
     assert resp.status_code == 404
@@ -519,7 +519,7 @@ async def test_get_consensus_plan_404_no_rows():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
                 "/forecast/consensus-plan",
-                params={"item_no": "100320", "loc": "1401-BULK"},
+                params={"item_id": "100320", "loc": "1401-BULK"},
             )
 
     assert resp.status_code == 404

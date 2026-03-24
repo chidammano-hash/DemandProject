@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { queryKeys, fetchDfuClusters, fetchClusterProfiles, submitJob, STALE } from "@/api/queries";
+import { queryKeys, fetchSkuClusters, fetchClusterProfiles, submitJob, STALE } from "@/api/queries";
 import type { ClusterInfo } from "@/types";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
@@ -21,8 +21,8 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
   const [pipelineError, setPipelineError] = useState<string | null>(null);
 
   const { data: clustersPayload } = useQuery({
-    queryKey: queryKeys.dfuClusters(clusterSource),
-    queryFn: () => fetchDfuClusters(clusterSource),
+    queryKey: queryKeys.skuClusters(clusterSource),
+    queryFn: () => fetchSkuClusters(clusterSource),
     staleTime: STALE.FIVE_MIN,
   });
 
@@ -58,7 +58,7 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
           Filter by demand-pattern cluster.{" "}
           {clusterSource === "ml"
             ? "ML pipeline clusters from KMeans."
-            : "Source clusters from dfu.txt."}
+            : "Source clusters from sku.txt."}
         </CardDescription>
         <div className="flex flex-wrap items-end gap-3">
           <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -72,7 +72,7 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
               }}
             >
               <option value="ml">ML Pipeline</option>
-              <option value="source">Source (dfu.txt)</option>
+              <option value="source">Source (sku.txt)</option>
             </select>
           </label>
           {clusterSummary.length > 0 ? (
@@ -99,14 +99,14 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
           <>
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Cluster summary &mdash; {clusterSummary.length} clusters,{" "}
-              {formatCompactNumber(clusterSummary.reduce((s, c) => s + c.count, 0))} DFUs assigned
+              {formatCompactNumber(clusterSummary.reduce((s, c) => s + c.count, 0))} SKUs assigned
             </p>
             <div className="max-h-[320px] overflow-y-auto rounded-md border border-input">
               <Table>
                 <TableHeader>
                   <TableRow className="border-muted bg-muted/30">
                     <TableHead className="text-xs">Cluster</TableHead>
-                    <TableHead className="text-xs text-right">DFUs</TableHead>
+                    <TableHead className="text-xs text-right">SKUs</TableHead>
                     <TableHead className="text-xs text-right">%</TableHead>
                     <TableHead className="text-xs text-right">Avg demand</TableHead>
                     <TableHead className="text-xs text-right">CV</TableHead>
@@ -165,7 +165,7 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
                         K Selection (Elbow / Silhouette / Gap)
                       </p>
                       <img
-                        src="/domains/dfu/clusters/visualization/k_selection_plots.png"
+                        src="/domains/sku/clusters/visualization/k_selection_plots.png"
                         alt="K Selection Plots"
                         className="w-full rounded-md border"
                         onError={(e) => {
@@ -178,7 +178,7 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
                         Cluster Visualization (2D PCA)
                       </p>
                       <img
-                        src="/domains/dfu/clusters/visualization/cluster_visualization.png"
+                        src="/domains/sku/clusters/visualization/cluster_visualization.png"
                         alt="Cluster PCA Visualization"
                         className="w-full rounded-md border"
                         onError={(e) => {
@@ -229,7 +229,7 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
         ) : (
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              No cluster assignments yet. Run the clustering pipeline to group DFUs by demand patterns.
+              No cluster assignments yet. Run the clustering pipeline to group SKUs by demand patterns.
             </p>
             <button
               className={cn(
@@ -283,7 +283,7 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
                 <li>1. <strong>Generate features</strong> — extract demand patterns from sales history</li>
                 <li>2. <strong>Train model</strong> — find optimal K and fit KMeans</li>
                 <li>3. <strong>Label clusters</strong> — assign business labels (e.g., high_volume_steady)</li>
-                <li>4. <strong>Update assignments</strong> — write new labels to <code className="text-[10px] bg-amber-100 dark:bg-amber-900/50 rounded px-0.5">dim_dfu.ml_cluster</code></li>
+                <li>4. <strong>Update assignments</strong> — write new labels to <code className="text-[10px] bg-amber-100 dark:bg-amber-900/50 rounded px-0.5">dim_sku.ml_cluster</code></li>
               </ul>
               <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-500">
                 After completion, re-run backtests to validate model accuracy with the new clusters.

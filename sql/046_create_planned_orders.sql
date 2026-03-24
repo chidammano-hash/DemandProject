@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS fact_planned_orders (
     id                      BIGSERIAL PRIMARY KEY,
-    item_no                 VARCHAR(50)     NOT NULL,
+    item_id                 VARCHAR(50)     NOT NULL,
     loc                     VARCHAR(50)     NOT NULL,
     supplier_id             VARCHAR(50)     REFERENCES dim_supplier(supplier_id),
     policy_id               INTEGER,
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS fact_planned_orders (
     expected_receipt_date   DATE            NOT NULL,
     lead_time_days          INTEGER         NOT NULL,
     review_cycle_days       INTEGER,
-    is_past_due             BOOLEAN GENERATED ALWAYS AS (order_by_date < CURRENT_DATE) STORED,
+    is_past_due             BOOLEAN NOT NULL DEFAULT FALSE,
 
     -- Demand inputs used in calculation
     current_qty_on_hand     NUMERIC(12, 2)  NOT NULL,
@@ -51,14 +51,14 @@ CREATE TABLE IF NOT EXISTS fact_planned_orders (
 );
 
 CREATE INDEX IF NOT EXISTS idx_planned_orders_item_loc
-    ON fact_planned_orders (item_no, loc, status);
+    ON fact_planned_orders (item_id, loc, status);
 
 CREATE INDEX IF NOT EXISTS idx_planned_orders_order_by_date
     ON fact_planned_orders (order_by_date, status)
     WHERE status IN ('proposed', 'approved');
 
 CREATE INDEX IF NOT EXISTS idx_planned_orders_past_due
-    ON fact_planned_orders (item_no, loc, order_by_date)
+    ON fact_planned_orders (item_id, loc, order_by_date)
     WHERE is_past_due AND status IN ('proposed', 'approved');
 
 CREATE INDEX IF NOT EXISTS idx_planned_orders_status_created

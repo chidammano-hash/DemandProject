@@ -11,7 +11,7 @@ class TestGenerateSummaryChampion:
     def _make_winners(self, rows):
         """Helper: build winner tuples matching the 8-tuple shape.
 
-        Each row: (dmdunit, dmdgroup, loc, startdate, model_id,
+        Each row: (item_id, customer_group, loc, startdate, model_id,
                    prior_wape, basefcst_pref, tothist_dmd)
         """
         return rows
@@ -83,7 +83,7 @@ class TestGenerateSummaryCeiling:
         """Verify ceiling WAPE = SUM(|F-A|) / |SUM(A)|, not SUM(|A|)."""
         winners = []  # no champion winners needed
         ceiling_rows = [
-            # (dmdunit, dmdgroup, loc, startdate, model_id, abs_err, basefcst_pref, tothist_dmd)
+            # (item_id, customer_group, loc, startdate, model_id, abs_err, basefcst_pref, tothist_dmd)
             ("I1", "G1", "L1", date(2024, 1, 1), "modelA", 10.0, 110.0, 100.0),
             ("I1", "G1", "L1", date(2024, 2, 1), "modelB", 20.0, 80.0, 100.0),
         ]

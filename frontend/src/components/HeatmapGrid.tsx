@@ -97,9 +97,9 @@ export function HeatmapGrid({
             </div>
             {row.values.map((value, colIdx) => {
               const isHovered = hoveredCell?.row === rowIdx && hoveredCell?.col === colIdx;
-              const dfuCount = row.counts?.[colIdx];
+              const skuCount = row.counts?.[colIdx];
               const hasCounts = row.counts != null && row.counts.length > 0;
-              const isEmpty = hasCounts && (dfuCount ?? 0) === 0;
+              const isEmpty = hasCounts && (skuCount ?? 0) === 0;
               const bg = isEmpty ? "var(--color-muted, #e5e7eb)" : colorScale(value);
               return (
                 <div
@@ -119,12 +119,12 @@ export function HeatmapGrid({
                   role="gridcell"
                   aria-label={isEmpty
                     ? `${row.label}, ${columnLabels[colIdx]}: no data`
-                    : `${row.label}, ${columnLabels[colIdx]}: ${valueFormat(value)}${dfuCount != null ? `, ${dfuCount} DFUs` : ""}`}
+                    : `${row.label}, ${columnLabels[colIdx]}: ${valueFormat(value)}${skuCount != null ? `, ${skuCount} SKUs` : ""}`}
                 >
                   {isEmpty
                     ? "\u00A0"
-                    : isHovered && dfuCount != null
-                      ? <>{valueFormat(value)} <span className="opacity-80">({dfuCount.toLocaleString()})</span></>
+                    : isHovered && skuCount != null
+                      ? <>{valueFormat(value)} <span className="opacity-80">({skuCount.toLocaleString()})</span></>
                       : valueFormat(value)}
                 </div>
               );

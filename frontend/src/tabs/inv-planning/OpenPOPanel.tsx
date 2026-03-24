@@ -100,7 +100,7 @@ export function OpenPOPanel() {
     queryKey: queryKeys.openPOs({ itemFilter, locFilter, statusFilter, pastDueOnly, page }),
     queryFn: () =>
       fetchOpenPOs({
-        item_no: itemFilter || undefined,
+        item_id: itemFilter || undefined,
         loc: locFilter || undefined,
         status: statusFilter,
         past_due_only: pastDueOnly,
@@ -175,7 +175,7 @@ export function OpenPOPanel() {
             {pastDueQuery.data!.items.map((pd) => (
               <div key={`${pd.po_number}`} className="text-xs text-yellow-700 dark:text-yellow-300 flex gap-3">
                 <span className="font-mono">{pd.po_number}</span>
-                <span>{pd.item_no} @ {pd.loc}</span>
+                <span>{pd.item_id} @ {pd.loc}</span>
                 <span className="text-red-600 font-medium">{pd.days_past_due}d overdue</span>
                 <span>{pd.supplier_name}</span>
               </div>
@@ -261,7 +261,7 @@ export function OpenPOPanel() {
             {pos?.items.map((po) => (
               <tr key={`${po.po_number}-${po.po_line_number}`} className="border-t hover:bg-muted/20">
                 <td className="px-3 py-2 font-mono">{po.po_number}-{po.po_line_number}</td>
-                <td className="px-3 py-2">{po.item_no}</td>
+                <td className="px-3 py-2">{po.item_id}</td>
                 <td className="px-3 py-2">{po.loc}</td>
                 <td className="px-3 py-2 max-w-[140px] truncate">{po.supplier_name ?? po.supplier_id ?? "—"}</td>
                 <td className="px-3 py-2 text-right">{fmtNum(po.open_qty)}</td>

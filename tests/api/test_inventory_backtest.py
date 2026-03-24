@@ -216,7 +216,7 @@ async def test_detail_returns_200(mock_pool):
     """GET /inventory-backtest/detail returns paginated event rows."""
     pool, _, cursor = mock_pool
     cursor.fetchone.return_value = (1,)
-    # item_no, loc, month_start, model_id, forecast, actual_demand,
+    # item_id, loc, month_start, model_id, forecast, actual_demand,
     # eom_qty_on_hand, dos, forecast_error, abs_error, bias_direction,
     # seasonality_profile, zero_velocity_flag
     cursor.fetchall.return_value = [
@@ -235,7 +235,7 @@ async def test_detail_returns_200(mock_pool):
             assert "rows" in data
             assert len(data["rows"]) == 1
             row = data["rows"][0]
-            assert row["item_no"] == "100320"
+            assert row["item_id"] == "100320"
             assert row["loc"] == "1401-BULK"
             assert row["model_id"] == "lgbm_cluster"
             assert row["event_type"] == "stockout"

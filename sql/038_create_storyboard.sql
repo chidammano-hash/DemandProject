@@ -11,7 +11,7 @@
 CREATE TABLE IF NOT EXISTS exception_queue (
     exception_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     exception_type   TEXT NOT NULL,        -- forecast_bias | stockout_risk | accuracy_drop | excess_risk | model_drift | new_item
-    item_no          TEXT NOT NULL,
+    item_id          TEXT NOT NULL,
     loc              TEXT NOT NULL,
     severity         NUMERIC NOT NULL,     -- 0.0-1.0 computed score
     financial_impact NUMERIC,              -- estimated $ impact
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS exception_queue (
 );
 
 CREATE INDEX IF NOT EXISTS idx_eq_status_severity  ON exception_queue(status, severity DESC);
-CREATE INDEX IF NOT EXISTS idx_eq_item_loc         ON exception_queue(item_no, loc);
+CREATE INDEX IF NOT EXISTS idx_eq_item_loc         ON exception_queue(item_id, loc);
 CREATE INDEX IF NOT EXISTS idx_eq_type             ON exception_queue(exception_type);
 CREATE INDEX IF NOT EXISTS idx_eq_generated        ON exception_queue(generated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_eq_month_start      ON exception_queue(month_start DESC);
@@ -43,7 +43,7 @@ CREATE INDEX IF NOT EXISTS idx_eq_open_critical
 CREATE TABLE IF NOT EXISTS planner_decisions (
     decision_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     exception_id   UUID REFERENCES exception_queue(exception_id),
-    item_no        TEXT NOT NULL,
+    item_id        TEXT NOT NULL,
     loc            TEXT NOT NULL,
     decision_type  TEXT NOT NULL,  -- override_forecast | accept_exception | escalate | dismiss | request_info
     decision_value JSONB,          -- {"new_forecast": 500} or {"escalation_reason": "..."}
@@ -53,5 +53,5 @@ CREATE TABLE IF NOT EXISTS planner_decisions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pd_exception  ON planner_decisions(exception_id);
-CREATE INDEX IF NOT EXISTS idx_pd_item_loc   ON planner_decisions(item_no, loc);
+CREATE INDEX IF NOT EXISTS idx_pd_item_loc   ON planner_decisions(item_id, loc);
 CREATE INDEX IF NOT EXISTS idx_pd_decided_at ON planner_decisions(decided_at DESC);

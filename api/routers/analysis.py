@@ -12,8 +12,8 @@ router = APIRouter(tags=["dfu-analysis"])
 _DFU_ANALYSIS_MODES = {"item_location", "all_items_at_location", "item_at_all_locations"}
 
 
-@router.get("/dfu/analysis")
-def dfu_analysis(
+@router.get("/sku/analysis")
+def sku_analysis(
     mode: str = Query(default="item_location", max_length=30),
     item: str = Query(default="", max_length=120),
     location: str = Query(default="", max_length=120),
@@ -37,7 +37,7 @@ def dfu_analysis(
     where_parts: list[str] = []
     params: list[Any] = []
     if mode == "item_location":
-        where_parts.append("dmdunit = %s")
+        where_parts.append("item_id = %s")
         params.append(item_val)
         where_parts.append("loc = %s")
         params.append(loc_val)
@@ -45,13 +45,13 @@ def dfu_analysis(
         where_parts.append("loc = %s")
         params.append(loc_val)
     elif mode == "item_at_all_locations":
-        where_parts.append("dmdunit = %s")
+        where_parts.append("item_id = %s")
         params.append(item_val)
 
     sp_val = seasonality_profile.strip()
     if sp_val:
         where_parts.append(
-            "(dmdunit, loc) IN (SELECT dmdunit, loc FROM dim_dfu WHERE seasonality_profile = %s)"
+            "(item_id, loc) IN (SELECT item_id, loc FROM dim_sku WHERE seasonality_profile = %s)"
         )
         params.append(sp_val)
 
@@ -62,7 +62,8 @@ def dfu_analysis(
         sales_measures_sql = f"""
             SELECT month_start,
                    SUM(qty_shipped)::double precision AS qty_shipped,
-                   SUM(qty_ordered)::double precision AS qty_ordered
+                   SUM(qty_ordered)::double precision AS qty_ordered,
+                   SUM(qty)::double precision AS sales_qty
             FROM agg_sales_monthly
             {where_sql}
             GROUP BY 1 ORDER BY 1 ASC
@@ -70,10 +71,12 @@ def dfu_analysis(
         cur.execute(sales_measures_sql, params)
         shipped_by_month: dict[str, float] = {}
         ordered_by_month: dict[str, float] = {}
+        sales_qty_by_month: dict[str, float] = {}
         for row in cur.fetchall():
             month_key = str(row[0])
             shipped_by_month[month_key] = float(row[1] or 0)
             ordered_by_month[month_key] = float(row[2] or 0)
+            sales_qty_by_month[month_key] = float(row[3] or 0)
 
         # 2. Forecast trend from agg_forecast_monthly (all models)
         forecast_sql = f"""
@@ -131,6 +134,7 @@ def dfu_analysis(
             | set(ordered_by_month.keys())
             | set(actual_by_month.keys())
             | set(forecast_by_month.keys())
+            | set(sales_qty_by_month.keys())
         )
         if len(all_months) > points:
             all_months = all_months[-points:]
@@ -142,6 +146,8 @@ def dfu_analysis(
                 point["qty_shipped"] = shipped_by_month[month]
             if month in ordered_by_month:
                 point["qty_ordered"] = ordered_by_month[month]
+            if month in sales_qty_by_month:
+                point["sales_qty"] = sales_qty_by_month[month]
             if month in actual_by_month:
                 point["tothist_dmd"] = actual_by_month[month]
             for model_id in models:
@@ -162,19 +168,19 @@ def dfu_analysis(
                     "actual": vals["actual"],
                 })
 
-        # 5. DFU attributes from dim_dfu
+        # 5. DFU attributes from dim_sku
         dfu_attrs: list[dict[str, Any]] = []
         dfu_where_parts: list[str] = []
         dfu_params: list[Any] = []
         if item_val:
-            dfu_where_parts.append("dmdunit = %s")
+            dfu_where_parts.append("item_id = %s")
             dfu_params.append(item_val)
         if loc_val:
             dfu_where_parts.append("loc = %s")
             dfu_params.append(loc_val)
         if dfu_where_parts:
             dfu_cols = [
-                "dmdunit", "dmdgroup", "loc", "brand", "brand_desc",
+                "item_id", "customer_group", "loc", "brand", "brand_desc",
                 "abc_vol", "prod_cat_desc", "prod_class_desc", "subclass_desc",
                 "prod_subgrp_desc", "size", "brand_size", "bot_type_desc",
                 "region", "state_plan", "cnty", "premise", "supergroup",
@@ -189,9 +195,9 @@ def dfu_analysis(
             ]
             dfu_sql = f"""
                 SELECT {', '.join(dfu_cols)}
-                FROM dim_dfu
+                FROM dim_sku
                 WHERE {' AND '.join(dfu_where_parts)}
-                ORDER BY dmdunit, loc
+                ORDER BY item_id, loc
                 LIMIT 20
             """
             cur.execute(dfu_sql, dfu_params)

@@ -21,14 +21,14 @@ vi.mock("@/api/queries", async () => {
     },
     STALE: { FIVE_MIN: 300000, ONE_MIN: 60000, TEN_MIN: 600000, TWO_MIN: 120000 },
     fetchVariabilitySummary: vi.fn().mockResolvedValue({
-      total_dfus: 500,
+      total_skus: 500,
       avg_cv: 0.45,
       by_class: { low: 200, medium: 180, high: 100, lumpy: 20 },
     }),
     fetchVariabilityDetail: vi.fn().mockResolvedValue({
       rows: [
         {
-          item_no: "100320",
+          item_id: "100320",
           loc: "1401-BULK",
           demand_cv: 0.92,
           variability_class: "high",

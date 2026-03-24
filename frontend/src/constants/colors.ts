@@ -12,13 +12,14 @@ export const CHART_COLORS: Record<Theme, { grid: string; axis: string; tooltip_b
   soft: { grid: "#DDD8D0", axis: "#8A8078", tooltip_bg: "#FDFCFA", tooltip_border: "#DDD8D0" },
 };
 
-export const DFU_SALES_COLORS: Record<string, string> = {
+export const SKU_SALES_COLORS: Record<string, string> = {
   tothist_dmd: "#e11d48",
+  sales_qty: "#9333ea",
   qty_shipped: "#2563eb",
   qty_ordered: "#059669",
 };
 
-export const DFU_MODEL_COLORS: Record<string, string> = {
+const DFU_MODEL_COLORS: Record<string, string> = {
   champion: "#D97706",
   ceiling: "#0891B2",
   external: "#06B6D4",
@@ -33,8 +34,8 @@ export const DFU_MODEL_COLORS: Record<string, string> = {
   xgboost_transfer: "#fb923c",
 };
 
-export const DFU_MODEL_FALLBACK_COLORS = ["#64748B", "#78716C", "#0F766E", "#B45309", "#0891B2", "#EA580C"];
+const DFU_MODEL_FALLBACK_COLORS = ["#64748B", "#78716C", "#0F766E", "#B45309", "#0891B2", "#EA580C"];
 
-export function dfuModelColor(model: string, idx: number): string {
+export function skuModelColor(model: string, idx: number): string {
   return DFU_MODEL_COLORS[model] ?? DFU_MODEL_FALLBACK_COLORS[idx % DFU_MODEL_FALLBACK_COLORS.length];
 }

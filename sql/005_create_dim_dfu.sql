@@ -1,8 +1,8 @@
-CREATE TABLE IF NOT EXISTS dim_dfu (
-  dfu_sk BIGSERIAL PRIMARY KEY,
-  dfu_ck TEXT UNIQUE NOT NULL,
-  dmdunit TEXT NOT NULL,
-  dmdgroup TEXT,
+CREATE TABLE IF NOT EXISTS dim_sku (
+  sku_sk BIGSERIAL PRIMARY KEY,
+  sku_ck TEXT UNIQUE NOT NULL,
+  item_id TEXT NOT NULL,
+  customer_group TEXT,
   loc TEXT NOT NULL,
   brand TEXT,
   abc_vol TEXT,
@@ -39,6 +39,35 @@ CREATE TABLE IF NOT EXISTS dim_dfu (
   cluster_assignment TEXT,
   ml_cluster TEXT,
   sop_ref TEXT,
+  -- Seasonality columns (Feature 30)
+  seasonality_profile TEXT,
+  seasonality_strength NUMERIC(10,4),
+  is_yearly_seasonal BOOLEAN,
+  peak_month INTEGER,
+  trough_month INTEGER,
+  peak_trough_ratio NUMERIC(10,4),
+  -- Demand variability columns (IPfeature1)
+  demand_mean NUMERIC(15,4),
+  demand_std NUMERIC(15,4),
+  demand_cv NUMERIC(10,6),
+  demand_mad NUMERIC(15,4),
+  demand_p50 NUMERIC(15,4),
+  demand_p90 NUMERIC(15,4),
+  demand_skewness NUMERIC(10,6),
+  demand_kurtosis NUMERIC(10,6),
+  zero_demand_months INTEGER,
+  total_demand_months INTEGER,
+  intermittency_ratio NUMERIC(10,6),
+  variability_class TEXT,
+  demand_profile_ts TIMESTAMPTZ,
+  -- ABC-XYZ classification (IPfeature11)
+  xyz_class TEXT,
+  abc_xyz_segment TEXT,
+  abc_xyz_policy_id TEXT,
+  abc_xyz_dos_min NUMERIC(10,2),
+  abc_xyz_dos_max NUMERIC(10,2),
+  abc_xyz_service_level NUMERIC(6,4),
+  abc_xyz_classified_ts TIMESTAMPTZ,
   load_ts TIMESTAMPTZ DEFAULT NOW(),
   modified_ts TIMESTAMPTZ DEFAULT NOW()
 );
@@ -47,138 +76,143 @@ DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'dim_dfu' AND column_name = 'u_abc_vol'
+    WHERE table_name = 'dim_sku' AND column_name = 'u_abc_vol'
   ) AND NOT EXISTS (
     SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'dim_dfu' AND column_name = 'abc_vol'
+    WHERE table_name = 'dim_sku' AND column_name = 'abc_vol'
   ) THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_abc_vol TO abc_vol;
+    ALTER TABLE dim_sku RENAME COLUMN u_abc_vol TO abc_vol;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_brand_desc')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'brand_desc') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_brand_desc TO brand_desc;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_brand_desc')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'brand_desc') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_brand_desc TO brand_desc;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_ded_div_sw')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'ded_div_sw') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_ded_div_sw TO ded_div_sw;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_ded_div_sw')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'ded_div_sw') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_ded_div_sw TO ded_div_sw;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_execution_lag')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'execution_lag') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_execution_lag TO execution_lag;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_execution_lag')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'execution_lag') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_execution_lag TO execution_lag;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_otc_status')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'otc_status') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_otc_status TO otc_status;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_otc_status')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'otc_status') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_otc_status TO otc_status;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_premise')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'premise') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_premise TO premise;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_premise')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'premise') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_premise TO premise;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_prod_subgrp_desc')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'prod_subgrp_desc') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_prod_subgrp_desc TO prod_subgrp_desc;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_prod_subgrp_desc')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'prod_subgrp_desc') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_prod_subgrp_desc TO prod_subgrp_desc;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_region')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'region') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_region TO region;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_region')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'region') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_region TO region;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_service_lvl_grp')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'service_lvl_grp') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_service_lvl_grp TO service_lvl_grp;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_service_lvl_grp')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'service_lvl_grp') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_service_lvl_grp TO service_lvl_grp;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_size')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'size') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_size TO size;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_size')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'size') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_size TO size;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_state_plan')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'state_plan') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_state_plan TO state_plan;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_state_plan')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'state_plan') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_state_plan TO state_plan;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_supergroup')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'supergroup') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_supergroup TO supergroup;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_supergroup')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'supergroup') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_supergroup TO supergroup;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_supplier_desc')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'supplier_desc') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_supplier_desc TO supplier_desc;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_supplier_desc')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'supplier_desc') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_supplier_desc TO supplier_desc;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_total_lt')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'total_lt') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_total_lt TO total_lt;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_total_lt')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'total_lt') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_total_lt TO total_lt;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_vintage')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'vintage') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_vintage TO vintage;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_vintage')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'vintage') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_vintage TO vintage;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_sales_div')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'sales_div') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_sales_div TO sales_div;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_sales_div')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'sales_div') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_sales_div TO sales_div;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_purge_sw')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'purge_sw') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_purge_sw TO purge_sw;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_purge_sw')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'purge_sw') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_purge_sw TO purge_sw;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_alcoh_pct')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'alcoh_pct') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_alcoh_pct TO alcoh_pct;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_alcoh_pct')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'alcoh_pct') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_alcoh_pct TO alcoh_pct;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_bot_type_desc')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'bot_type_desc') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_bot_type_desc TO bot_type_desc;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_bot_type_desc')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'bot_type_desc') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_bot_type_desc TO bot_type_desc;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_brand_size')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'brand_size') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_brand_size TO brand_size;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_brand_size')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'brand_size') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_brand_size TO brand_size;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_cnty')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'cnty') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_cnty TO cnty;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_cnty')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'cnty') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_cnty TO cnty;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_dom_imp_opt')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'dom_imp_opt') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_dom_imp_opt TO dom_imp_opt;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_dom_imp_opt')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'dom_imp_opt') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_dom_imp_opt TO dom_imp_opt;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_grape_vrty_desc')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'grape_vrty_desc') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_grape_vrty_desc TO grape_vrty_desc;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_grape_vrty_desc')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'grape_vrty_desc') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_grape_vrty_desc TO grape_vrty_desc;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_material')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'material') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_material TO material;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_material')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'material') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_material TO material;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_prod_cat_desc')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'prod_cat_desc') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_prod_cat_desc TO prod_cat_desc;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_prod_cat_desc')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'prod_cat_desc') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_prod_cat_desc TO prod_cat_desc;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_producer_desc')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'producer_desc') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_producer_desc TO producer_desc;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_producer_desc')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'producer_desc') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_producer_desc TO producer_desc;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_proof')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'proof') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_proof TO proof;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_proof')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'proof') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_proof TO proof;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_subclass_desc')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'subclass_desc') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_subclass_desc TO subclass_desc;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_subclass_desc')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'subclass_desc') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_subclass_desc TO subclass_desc;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_prod_class_desc')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'prod_class_desc') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_prod_class_desc TO prod_class_desc;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_prod_class_desc')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'prod_class_desc') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_prod_class_desc TO prod_class_desc;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_cluster_assignment')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'cluster_assignment') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_cluster_assignment TO cluster_assignment;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_cluster_assignment')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'cluster_assignment') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_cluster_assignment TO cluster_assignment;
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'u_sop_ref')
-     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_dfu' AND column_name = 'sop_ref') THEN
-    ALTER TABLE dim_dfu RENAME COLUMN u_sop_ref TO sop_ref;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'u_sop_ref')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dim_sku' AND column_name = 'sop_ref') THEN
+    ALTER TABLE dim_sku RENAME COLUMN u_sop_ref TO sop_ref;
   END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_dim_dfu_dmdunit ON dim_dfu (dmdunit);
-CREATE INDEX IF NOT EXISTS idx_dim_dfu_loc ON dim_dfu (loc);
-CREATE INDEX IF NOT EXISTS idx_dim_dfu_brand ON dim_dfu (brand);
-CREATE INDEX IF NOT EXISTS idx_dim_dfu_region ON dim_dfu (region);
-CREATE INDEX IF NOT EXISTS idx_dim_dfu_cluster_assignment ON dim_dfu (cluster_assignment);
-CREATE INDEX IF NOT EXISTS idx_dim_dfu_ml_cluster ON dim_dfu (ml_cluster);
+CREATE INDEX IF NOT EXISTS idx_dim_sku_item_id ON dim_sku (item_id);
+CREATE INDEX IF NOT EXISTS idx_dim_sku_loc ON dim_sku (loc);
+CREATE INDEX IF NOT EXISTS idx_dim_sku_brand ON dim_sku (brand);
+CREATE INDEX IF NOT EXISTS idx_dim_sku_region ON dim_sku (region);
+CREATE INDEX IF NOT EXISTS idx_dim_sku_cluster_assignment ON dim_sku (cluster_assignment);
+CREATE INDEX IF NOT EXISTS idx_dim_sku_ml_cluster ON dim_sku (ml_cluster);
+CREATE INDEX IF NOT EXISTS idx_dim_sku_seasonality_profile ON dim_sku (seasonality_profile);
+CREATE INDEX IF NOT EXISTS idx_dim_sku_is_yearly_seasonal ON dim_sku (is_yearly_seasonal);
+CREATE INDEX IF NOT EXISTS idx_dim_sku_variability_class ON dim_sku (variability_class);
+CREATE INDEX IF NOT EXISTS idx_dim_sku_xyz ON dim_sku (xyz_class);
+CREATE INDEX IF NOT EXISTS idx_dim_sku_abc_xyz ON dim_sku (abc_xyz_segment);

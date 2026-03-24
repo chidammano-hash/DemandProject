@@ -113,7 +113,7 @@ describe("HeatmapGrid", () => {
         colorScale={colorScale}
       />
     );
-    const cell = screen.getByLabelText("Category A, Jan: 92.5%, 42 DFUs");
+    const cell = screen.getByLabelText("Category A, Jan: 92.5%, 42 SKUs");
     fireEvent.mouseEnter(cell);
     expect(screen.getByText("(42)")).toBeInTheDocument();
   });
@@ -198,10 +198,10 @@ describe("HeatmapGrid zero-DFU cells", () => {
     render(
       <HeatmapGrid rows={rows} columnLabels={["Jan", "Feb"]} colorScale={colorScale} />
     );
-    // Cells with DFUs render value
-    expect(screen.getByLabelText("CatA, Jan: 90.0%, 5 DFUs")).toBeInTheDocument();
-    expect(screen.getByLabelText("CatB, Feb: 85.0%, 3 DFUs")).toBeInTheDocument();
-    // Cells without DFUs render as no data
+    // Cells with SKUs render value
+    expect(screen.getByLabelText("CatA, Jan: 90.0%, 5 SKUs")).toBeInTheDocument();
+    expect(screen.getByLabelText("CatB, Feb: 85.0%, 3 SKUs")).toBeInTheDocument();
+    // Cells without SKUs render as no data
     expect(screen.getByLabelText("CatA, Feb: no data")).toBeInTheDocument();
     expect(screen.getByLabelText("CatB, Jan: no data")).toBeInTheDocument();
   });

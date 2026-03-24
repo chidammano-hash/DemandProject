@@ -11,7 +11,7 @@ vi.mock("@/api/queries", () => ({
     planningDate: () => ["planning-date"],
   },
   filterMetaKeys: {
-    dfuCount: () => ["dfu-count", {}],
+    skuCount: () => ["sku-count", {}],
   },
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },
   fetchDistinctValues: vi.fn().mockResolvedValue({ column: "brand", values: ["BrandA", "BrandB"], total: 2 }),

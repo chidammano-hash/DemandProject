@@ -51,9 +51,11 @@ async def list_supply_scenarios(
     conditions = ["1=1"]
     params: list = []
     if scenario_type:
-        conditions.append("scenario_type = %s"); params.append(scenario_type)
+        conditions.append("scenario_type = %s")
+        params.append(scenario_type)
     if status:
-        conditions.append("status = %s"); params.append(status)
+        conditions.append("status = %s")
+        params.append(status)
     where = " AND ".join(conditions)
 
     with get_conn() as conn:
@@ -201,7 +203,7 @@ async def get_scenario_results(scenario_id: int, page: int = 1, page_size: int =
             total = cur.fetchone()[0]
             cur.execute(
                 """
-                SELECT item_no, loc, plan_month,
+                SELECT item_id, loc, plan_month,
                        baseline_qty, scenario_qty, impact_qty, impact_pct,
                        stockout_risk_days, excess_risk_qty, mitigation_option
                 FROM fact_scenario_results
@@ -214,7 +216,7 @@ async def get_scenario_results(scenario_id: int, page: int = 1, page_size: int =
             rows = cur.fetchall()
 
     cols = [
-        "item_no", "loc", "plan_month",
+        "item_id", "loc", "plan_month",
         "baseline_qty", "scenario_qty", "impact_qty", "impact_pct",
         "stockout_risk_days", "excess_risk_qty", "mitigation_option",
     ]

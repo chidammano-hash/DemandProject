@@ -214,7 +214,7 @@ async def test_shap_timeframe_detail_success(tmp_path):
 
 
 def _make_pool_with_clusters(cluster_labels: list[str]):
-    """Create a mock pool where dim_dfu query returns the given clusters."""
+    """Create a mock pool where dim_sku query returns the given clusters."""
     mock_conn = MagicMock()
     mock_cursor = MagicMock()
     mock_cursor.fetchall.return_value = [(c,) for c in cluster_labels]

@@ -68,13 +68,13 @@ export function PlannedOrdersPanel() {
 
   const ordersQ = useQuery({
     queryKey: queryKeys.plannedOrders({
-      item_no: itemFilter,
+      item_id: itemFilter,
       loc: locFilter,
       status: statusFilter,
       past_due_only: pastDueOnly,
     }),
     queryFn: () => fetchPlannedOrders({
-      item_no: itemFilter || undefined,
+      item_id: itemFilter || undefined,
       loc: locFilter || undefined,
       status: statusFilter,
       past_due_only: pastDueOnly,
@@ -270,7 +270,7 @@ export function PlannedOrdersPanel() {
                 const isPastDue = order.is_past_due;
                 return (
                   <tr key={order.id} className={`hover:bg-muted/30 ${isPastDue ? "bg-red-50/30 dark:bg-red-900/10" : ""}`}>
-                    <td className="px-3 py-2 font-mono">{order.item_no}</td>
+                    <td className="px-3 py-2 font-mono">{order.item_id}</td>
                     <td className="px-3 py-2">{order.loc}</td>
                     <td className="px-3 py-2 text-muted-foreground">
                       {order.supplier_name ?? order.supplier_id ?? "—"}

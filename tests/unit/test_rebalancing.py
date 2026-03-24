@@ -27,12 +27,12 @@ def test_detect_imbalances_basic():
     """1 item, 2 locs: one excess (ratio 2.0 > 1.5), one shortage (ratio 0.5 < 0.8)."""
     state = {
         ("ITEM1", "LOC_A"): {
-            "item_no": "ITEM1", "loc": "LOC_A",
+            "item_id": "ITEM1", "loc": "LOC_A",
             "on_hand": 200, "daily_sales": 10, "ss_target": 100,
             "dos": 20, "abc_vol": "A", "reorder_point": 80,
         },
         ("ITEM1", "LOC_B"): {
-            "item_no": "ITEM1", "loc": "LOC_B",
+            "item_id": "ITEM1", "loc": "LOC_B",
             "on_hand": 50, "daily_sales": 10, "ss_target": 100,
             "dos": 5, "abc_vol": "A", "reorder_point": 80,
         },
@@ -49,12 +49,12 @@ def test_detect_imbalances_no_shortage():
     """Both locs are excess — no item qualifies (need BOTH excess + shortage)."""
     state = {
         ("ITEM1", "LOC_A"): {
-            "item_no": "ITEM1", "loc": "LOC_A",
+            "item_id": "ITEM1", "loc": "LOC_A",
             "on_hand": 200, "daily_sales": 10, "ss_target": 100,
             "dos": 20, "abc_vol": "A", "reorder_point": 80,
         },
         ("ITEM1", "LOC_B"): {
-            "item_no": "ITEM1", "loc": "LOC_B",
+            "item_id": "ITEM1", "loc": "LOC_B",
             "on_hand": 200, "daily_sales": 10, "ss_target": 100,
             "dos": 20, "abc_vol": "A", "reorder_point": 80,
         },
@@ -67,7 +67,7 @@ def test_detect_imbalances_single_location():
     """Item at only 1 location — cannot have both excess and shortage."""
     state = {
         ("ITEM1", "LOC_A"): {
-            "item_no": "ITEM1", "loc": "LOC_A",
+            "item_id": "ITEM1", "loc": "LOC_A",
             "on_hand": 200, "daily_sales": 10, "ss_target": 100,
             "dos": 20, "abc_vol": "A", "reorder_point": 80,
         },
@@ -80,12 +80,12 @@ def test_detect_imbalances_no_ss_target():
     """ss_target is None — location should be skipped entirely."""
     state = {
         ("ITEM1", "LOC_A"): {
-            "item_no": "ITEM1", "loc": "LOC_A",
+            "item_id": "ITEM1", "loc": "LOC_A",
             "on_hand": 200, "daily_sales": 10, "ss_target": None,
             "dos": 20, "abc_vol": "A", "reorder_point": 80,
         },
         ("ITEM1", "LOC_B"): {
-            "item_no": "ITEM1", "loc": "LOC_B",
+            "item_id": "ITEM1", "loc": "LOC_B",
             "on_hand": 50, "daily_sales": 10, "ss_target": 100,
             "dos": 5, "abc_vol": "A", "reorder_point": 80,
         },
@@ -104,12 +104,12 @@ def _make_imbalances():
     return {
         "ITEM1": {
             "excess": [{
-                "item_no": "ITEM1", "loc": "LOC_A",
+                "item_id": "ITEM1", "loc": "LOC_A",
                 "on_hand": 200, "ss_target": 100, "dos": 20,
                 "daily_sales": 10, "abc_vol": "A", "reorder_point": 80,
             }],
             "shortage": [{
-                "item_no": "ITEM1", "loc": "LOC_B",
+                "item_id": "ITEM1", "loc": "LOC_B",
                 "on_hand": 50, "ss_target": 100, "dos": 5,
                 "daily_sales": 10, "abc_vol": "A", "reorder_point": 80,
             }],
@@ -171,12 +171,12 @@ def test_build_transfer_candidates_batch_rounding():
     imbalances = {
         "ITEM1": {
             "excess": [{
-                "item_no": "ITEM1", "loc": "LOC_A",
+                "item_id": "ITEM1", "loc": "LOC_A",
                 "on_hand": 200, "ss_target": 100, "dos": 20,
                 "daily_sales": 10, "abc_vol": "A", "reorder_point": 80,
             }],
             "shortage": [{
-                "item_no": "ITEM1", "loc": "LOC_B",
+                "item_id": "ITEM1", "loc": "LOC_B",
                 "on_hand": 65, "ss_target": 100, "dos": 6.5,
                 "daily_sales": 10, "abc_vol": "A", "reorder_point": 80,
             }],
@@ -203,12 +203,12 @@ def test_build_transfer_candidates_below_min():
     imbalances = {
         "ITEM1": {
             "excess": [{
-                "item_no": "ITEM1", "loc": "LOC_A",
+                "item_id": "ITEM1", "loc": "LOC_A",
                 "on_hand": 200, "ss_target": 100, "dos": 20,
                 "daily_sales": 10, "abc_vol": "A", "reorder_point": 80,
             }],
             "shortage": [{
-                "item_no": "ITEM1", "loc": "LOC_B",
+                "item_id": "ITEM1", "loc": "LOC_B",
                 "on_hand": 97, "ss_target": 100, "dos": 9.7,
                 "daily_sales": 10, "abc_vol": "A", "reorder_point": 80,
             }],
@@ -225,12 +225,12 @@ def test_build_transfer_candidates_drawdown_limit():
     imbalances = {
         "ITEM1": {
             "excess": [{
-                "item_no": "ITEM1", "loc": "LOC_A",
+                "item_id": "ITEM1", "loc": "LOC_A",
                 "on_hand": 200, "ss_target": 100, "dos": 20,
                 "daily_sales": 10, "abc_vol": "A", "reorder_point": 80,
             }],
             "shortage": [{
-                "item_no": "ITEM1", "loc": "LOC_B",
+                "item_id": "ITEM1", "loc": "LOC_B",
                 "on_hand": 0, "ss_target": 100, "dos": 0,
                 "daily_sales": 10, "abc_vol": "A", "reorder_point": 80,
             }],
@@ -330,7 +330,7 @@ def _make_candidate(
     dest_dos=5, abc="A",
 ):
     return {
-        "item_no": item, "source_loc": src, "dest_loc": dst,
+        "item_id": item, "source_loc": src, "dest_loc": dst,
         "recommended_qty": qty, "cost_per_unit": cost_per_unit,
         "fixed_cost": fixed_cost, "transfer_cost": qty * cost_per_unit + fixed_cost,
         "net_benefit": net_benefit, "roi": roi, "urgency": urgency,
@@ -371,16 +371,16 @@ def test_greedy_solver_negative_roi_skipped():
 def test_compute_network_balance():
     """2 items, each with 2 locs with different DOS → avg CV > 0."""
     state = {
-        ("ITEM1", "LOC_A"): {"dos": 30, "item_no": "ITEM1", "loc": "LOC_A",
+        ("ITEM1", "LOC_A"): {"dos": 30, "item_id": "ITEM1", "loc": "LOC_A",
                               "on_hand": 300, "daily_sales": 10, "ss_target": 100,
                               "abc_vol": "A", "reorder_point": 80},
-        ("ITEM1", "LOC_B"): {"dos": 10, "item_no": "ITEM1", "loc": "LOC_B",
+        ("ITEM1", "LOC_B"): {"dos": 10, "item_id": "ITEM1", "loc": "LOC_B",
                               "on_hand": 100, "daily_sales": 10, "ss_target": 100,
                               "abc_vol": "A", "reorder_point": 80},
-        ("ITEM2", "LOC_A"): {"dos": 20, "item_no": "ITEM2", "loc": "LOC_A",
+        ("ITEM2", "LOC_A"): {"dos": 20, "item_id": "ITEM2", "loc": "LOC_A",
                               "on_hand": 200, "daily_sales": 10, "ss_target": 100,
                               "abc_vol": "B", "reorder_point": 80},
-        ("ITEM2", "LOC_B"): {"dos": 5, "item_no": "ITEM2", "loc": "LOC_B",
+        ("ITEM2", "LOC_B"): {"dos": 5, "item_id": "ITEM2", "loc": "LOC_B",
                               "on_hand": 50, "daily_sales": 10, "ss_target": 100,
                               "abc_vol": "B", "reorder_point": 80},
     }

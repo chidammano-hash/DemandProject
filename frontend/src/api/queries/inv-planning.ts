@@ -5,13 +5,13 @@ import { fetchJson } from "./core";
 // ---------------------------------------------------------------------------
 
 export interface VariabilitySummaryPayload {
-  total_dfus: number;
+  total_skus: number;
   by_class: { low: number; medium: number; high: number; lumpy: number };
   cv_percentiles: { p25: number | null; p50: number | null; p75: number | null; p95: number | null };
   avg_cv: number | null;
   avg_intermittency_ratio: number | null;
   top_volatile: {
-    item_no: string;
+    item_id: string;
     loc: string;
     abc_vol: string | null;
     cluster_assignment: string | null;
@@ -25,7 +25,7 @@ export interface VariabilitySummaryPayload {
 }
 
 export interface VariabilityDetailRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   abc_vol: string | null;
   cluster_assignment: string | null;
@@ -94,7 +94,7 @@ export interface LtSummaryPayload {
   lt_cv_p50: number | null;
   lt_cv_p95: number | null;
   top_volatile: {
-    item_no: string;
+    item_id: string;
     loc: string;
     lt_mean_days: number | null;
     lt_std_days: number | null;
@@ -107,7 +107,7 @@ export interface LtSummaryPayload {
 }
 
 export interface LtProfileRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   lt_mean_days: number | null;
   lt_std_days: number | null;

@@ -1,7 +1,7 @@
 """Inventory Planning — IPfeature4: EOQ & Cycle Stock endpoints."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Query
 
@@ -117,7 +117,7 @@ async def eoq_detail(
     wheres = []
     params: list = []
     if item:
-        wheres.append("item_no ILIKE %s")
+        wheres.append("item_id ILIKE %s")
         params.append(f"%{item}%")
     if loc:
         wheres.append("loc ILIKE %s")
@@ -131,7 +131,7 @@ async def eoq_detail(
     count_sql = f"SELECT COUNT(*) FROM fact_eoq_targets t {where_clause}"
     rows_sql = f"""
         SELECT
-            item_no, loc, abc_vol,
+            item_id, loc, abc_vol,
             demand_mean_monthly, annual_demand,
             ordering_cost, holding_cost_pct, unit_cost, moq,
             eoq, effective_eoq, eoq_cycle_stock, order_frequency,
@@ -156,7 +156,7 @@ async def eoq_detail(
         "offset": offset,
         "rows": [
             {
-                "item_no": r[0], "loc": r[1], "abc_vol": r[2],
+                "item_id": r[0], "loc": r[1], "abc_vol": r[2],
                 "demand_mean_monthly": float(r[3]) if r[3] is not None else None,
                 "annual_demand": float(r[4]) if r[4] is not None else None,
                 "ordering_cost": float(r[5]) if r[5] is not None else None,
@@ -189,7 +189,7 @@ async def eoq_sensitivity(item: str | None = None, loc: str | None = None):
         config = yaml.safe_load(fh)
 
     if item and loc:
-        sql = "SELECT demand_mean_monthly FROM fact_eoq_targets WHERE item_no = %s AND loc = %s LIMIT 1"
+        sql = "SELECT demand_mean_monthly FROM fact_eoq_targets WHERE item_id = %s AND loc = %s LIMIT 1"
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, [item, loc])
@@ -205,7 +205,7 @@ async def eoq_sensitivity(item: str | None = None, loc: str | None = None):
 
     curve = sensitivity_curve(avg_demand, config)
     return {
-        "item_no": item,
+        "item_id": item,
         "loc": loc,
         "avg_demand_monthly": avg_demand,
         "curve": curve,

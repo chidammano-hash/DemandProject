@@ -41,7 +41,7 @@ def _inv_backtest_filters(
         parts.append("month_start <= %s::date")
         params.append(month_to.strip())
     if item.strip():
-        parts.append("item_no ILIKE %s")
+        parts.append("item_id ILIKE %s")
         params.append(f"%{item.strip()}%")
     if location.strip():
         parts.append("loc ILIKE %s")
@@ -277,7 +277,7 @@ def inv_backtest_root_cause(
 
 
 _INV_BACKTEST_DETAIL_SORT_COLS = {
-    "item_no", "loc", "month_start", "model_id", "forecast",
+    "item_id", "loc", "month_start", "model_id", "forecast",
     "actual_demand", "eom_qty_on_hand", "dos", "forecast_error", "abs_error",
 }
 
@@ -322,7 +322,7 @@ def inv_backtest_detail(
     count_sql = f"SELECT COUNT(*) FROM mv_inventory_forecast_monthly {where_sql}"
     data_sql = f"""
         SELECT
-            item_no, loc, month_start, model_id,
+            item_id, loc, month_start, model_id,
             forecast, actual_demand, eom_qty_on_hand, dos,
             forecast_error, abs_error, bias_direction,
             seasonality_profile, zero_velocity_flag
@@ -346,7 +346,7 @@ def inv_backtest_detail(
         actual = float(r[5]) if r[5] is not None else 0.0
         fc_err = float(r[8]) if r[8] is not None else 0.0
         detail_rows.append({
-            "item_no": r[0],
+            "item_id": r[0],
             "loc": r[1],
             "month": str(r[2]),
             "model_id": r[3],

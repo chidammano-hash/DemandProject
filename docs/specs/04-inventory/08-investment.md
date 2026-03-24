@@ -50,7 +50,7 @@ Planners can run multiple budget scenarios (e.g., $1M, $2M, $5M) to see how the 
 
 | Table | Grain | Purpose |
 |---|---|---|
-| `fact_inventory_investment_plan` | item_no + loc + plan_date | Per-DFU budget allocation |
+| `fact_inventory_investment_plan` | item_id + loc + plan_date | Per-DFU budget allocation |
 | `fact_efficient_frontier` | budget_level + plan_date | Frontier curve data points |
 
 DDL: `sql/033_create_investment_plan.sql`
@@ -90,7 +90,7 @@ Investment parameters are passed at runtime (budget amount, holding cost rate). 
 
 ## Dependencies
 
-- **Upstream:** `fact_safety_stock_targets` (SS quantities and unit costs), `fact_ss_simulation_results` (service level curves), `dim_dfu` (ABC class for prioritization)
+- **Upstream:** `fact_safety_stock_targets` (SS quantities and unit costs), `fact_ss_simulation_results` (service level curves), `dim_sku` (ABC class for prioritization)
 - **Downstream:** Financial planning (budget utilization), S&OP (investment approval)
 
 ---

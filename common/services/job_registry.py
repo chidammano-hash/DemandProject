@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import signal
 import threading
 import time
 import uuid
@@ -33,6 +35,8 @@ from common.job_state import (
     JobTypeDef,
     _get_conn,
     _row_to_dict,
+    get_job_log,
+    get_job_pid,
     _run_assign_policies,
     _run_backtest_catboost,
     _run_backtest_lgbm,
@@ -56,6 +60,7 @@ from common.job_state import (
     _run_refresh_intramonth,
     _run_seasonality,
     _run_ss_simulation,
+    _run_tuning_backtest,
 )
 from common.job_scheduler import make_scheduler, make_trigger
 
@@ -192,7 +197,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
     "classify_abc_xyz": JobTypeDef(
         type_id="classify_abc_xyz",
         label="ABC-XYZ Classification",
-        description="Classify DFUs by volume (ABC) and variability (XYZ) and update dim_dfu",
+        description="Classify DFUs by volume (ABC) and variability (XYZ) and update dim_sku",
         group="inventory",
         callable=_run_classify_abc_xyz,
         params_schema={},
@@ -244,6 +249,15 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="inventory",
         callable=_run_ss_simulation,
         params_schema={},
+    ),
+    # ── AI Tuning (tuning group) ──────────────────────────────────────────────
+    "tuning_backtest": JobTypeDef(
+        type_id="tuning_backtest",
+        label="AI Tuning Backtest",
+        description="Run LGBM backtest with tuning chat overrides and register results",
+        group="tuning",
+        callable=_run_tuning_backtest,
+        params_schema={"run_id": 0, "session_id": "", "overrides": {}, "strategy_label": ""},
     ),
     # ── Platform (platform group) ─────────────────────────────────────────────
     "data_quality": JobTypeDef(
@@ -348,6 +362,15 @@ class JobManager:
         if "result" in kwargs:
             sets.append("result = %s")
             vals.append(json.dumps(kwargs["result"]) if kwargs["result"] is not None else None)
+        # Append log entry when progress_msg is provided
+        if "progress_msg" in kwargs and kwargs["progress_msg"]:
+            log_entry = json.dumps({
+                "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                "pct": kwargs.get("progress_pct", 0),
+                "msg": kwargs["progress_msg"],
+            })
+            sets.append("logs = COALESCE(logs, '[]'::jsonb) || %s::jsonb")
+            vals.append(log_entry)
         vals.append(job_id)
         with _get_conn() as conn:
             conn.execute(f"UPDATE job_history SET {', '.join(sets)} WHERE job_id = %s", vals)
@@ -356,7 +379,7 @@ class JobManager:
     def _db_get(job_id: str) -> dict[str, Any] | None:
         cols = ("job_id", "job_type", "job_label", "status", "params", "result",
                 "error", "submitted_at", "started_at", "completed_at",
-                "progress_pct", "progress_msg")
+                "progress_pct", "progress_msg", "logs", "pid")
         with _get_conn() as conn:
             row = conn.execute(
                 f"SELECT {', '.join(cols)} FROM job_history WHERE job_id = %s",
@@ -384,7 +407,7 @@ class JobManager:
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
         cols = ("job_id", "job_type", "job_label", "status", "params", "result",
                 "error", "submitted_at", "started_at", "completed_at",
-                "progress_pct", "progress_msg")
+                "progress_pct", "progress_msg", "logs", "pid")
 
         with _get_conn() as conn:
             total = conn.execute(
@@ -688,8 +711,12 @@ class JobManager:
         """Get aggregate job statistics for dashboard."""
         return self._db_stats()
 
+    def get_job_logs(self, job_id: str) -> str:
+        """Get the persistent execution log for a job."""
+        return get_job_log(job_id)
+
     def cancel_job(self, job_id: str) -> bool:
-        """Cancel a running job."""
+        """Cancel a running job. Kills the subprocess if a PID is tracked."""
         job = self._db_get(job_id)
         if job is None:
             return False
@@ -706,6 +733,8 @@ class JobManager:
             self._scheduler.remove_job(job_id)
         except Exception:
             pass
+        # Kill the subprocess by PID as safety net
+        self._kill_process(job_id)
         self._db_update_status(
             job_id, "cancelled",
             completed_at=datetime.now(timezone.utc),
@@ -713,23 +742,78 @@ class JobManager:
         )
         return True
 
+    @staticmethod
+    def _kill_process(job_id: str) -> None:
+        """Kill the subprocess process group by PID stored in job_history."""
+        pid = get_job_pid(job_id)
+        if not pid:
+            return
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+            logger.info("Sent SIGTERM to process group of PID %d for job %s", pid, job_id)
+        except ProcessLookupError:
+            pass  # already dead
+        except OSError as exc:
+            logger.warning("Failed to kill PID %d for job %s: %s", pid, job_id, exc)
+
     def delete_job(self, job_id: str) -> bool:
         """Delete a completed/failed/cancelled job from history."""
         return self._db_delete(job_id)
 
     def recover_stale_jobs(self) -> int:
-        """On startup: fail stale 'running' jobs, re-enqueue 'queued' jobs."""
+        """On startup: recover running jobs (PID-aware) and re-enqueue queued jobs.
+
+        For running jobs:
+        - If PID is alive → re-adopt via a monitoring thread
+        - If PID is dead or missing → mark as failed
+        """
         recovered = 0
 
-        # 1. Mark running jobs as failed (they were interrupted mid-execution)
-        with _get_conn() as conn:
-            result = conn.execute(
-                """UPDATE job_history SET status = 'failed',
-                          error = 'Interrupted by server restart',
-                          completed_at = NOW()
-                   WHERE status = 'running'"""
-            )
-            recovered += result.rowcount
+        # 1. Handle running jobs — PID-aware recovery
+        try:
+            with _get_conn() as conn:
+                running_rows = conn.execute(
+                    """SELECT job_id, job_type, pid, params, max_retries, pipeline_id
+                       FROM job_history
+                       WHERE status = 'running'
+                       ORDER BY submitted_at ASC"""
+                ).fetchall()
+            for row in running_rows:
+                job_id, job_type, pid, params_raw, max_retries, pipeline_id = row
+                if pid and self._is_pid_alive(pid):
+                    # Process is still running — re-adopt it
+                    type_def = JOB_TYPE_REGISTRY.get(job_type)
+                    if type_def:
+                        self._readopt_job(job_id, type_def, pid)
+                        logger.info("Re-adopted running job %s (PID %d) on startup", job_id, pid)
+                    else:
+                        self._db_update_status(
+                            job_id, "failed",
+                            error=f"Unknown job type '{job_type}' on restart",
+                            completed_at=datetime.now(timezone.utc),
+                        )
+                else:
+                    # PID is dead or missing — mark as failed
+                    self._db_update_status(
+                        job_id, "failed",
+                        error="Interrupted by server restart (process not found)",
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                recovered += 1
+        except Exception:
+            logger.exception("Failed to recover running jobs on startup")
+            # Fallback: mark all running as failed
+            try:
+                with _get_conn() as conn:
+                    result = conn.execute(
+                        """UPDATE job_history SET status = 'failed',
+                                  error = 'Interrupted by server restart',
+                                  completed_at = NOW()
+                           WHERE status = 'running'"""
+                    )
+                    recovered += result.rowcount
+            except Exception:
+                logger.exception("Fallback recovery also failed")
 
         # 2. Re-enqueue queued jobs into memory (in submission order)
         try:
@@ -744,7 +828,6 @@ class JobManager:
                 job_id, job_type, params_raw, max_retries, pipeline_id = row
                 type_def = JOB_TYPE_REGISTRY.get(job_type)
                 if not type_def:
-                    # Unknown job type — mark as failed
                     self._db_update_status(
                         job_id, "failed",
                         error=f"Unknown job type '{job_type}' on restart",
@@ -758,10 +841,83 @@ class JobManager:
                     queue.append((job_id, type_def, params, max_retries or 0, pipeline_id))
                 recovered += 1
                 logger.info("Re-enqueued job %s (%s) from DB on startup", job_id, job_type)
+
+            # Dispatch first queued job for each group that has no active job
+            groups_with_queued: set[str] = set()
+            with self._state_lock:
+                groups_with_queued = set(self._pending_queues.keys())
+            for group in groups_with_queued:
+                with self._state_lock:
+                    busy = self._is_group_busy(group)
+                if not busy:
+                    self._dispatch_next(group)
         except Exception:
             logger.exception("Failed to re-enqueue queued jobs on startup")
 
         return recovered
+
+    @staticmethod
+    def _is_pid_alive(pid: int) -> bool:
+        """Check if a process with the given PID is still running."""
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True  # process exists but we can't signal it
+
+    def _readopt_job(self, job_id: str, type_def: JobTypeDef, pid: int) -> None:
+        """Start a monitoring thread that polls a re-adopted process until it exits.
+
+        Since the re-adopted process is NOT a child of this API process,
+        we cannot use proc.wait(). Instead we poll os.kill(pid, 0).
+        """
+        with self._state_lock:
+            self._active_jobs[job_id] = type_def.group
+            self._cancel_flags[job_id] = threading.Event()
+
+        def _monitor():
+            try:
+                while self._is_pid_alive(pid):
+                    cancel_event = self._cancel_flags.get(job_id)
+                    if cancel_event and cancel_event.is_set():
+                        self._kill_process(job_id)
+                        self._db_update_status(
+                            job_id, "cancelled",
+                            completed_at=datetime.now(timezone.utc),
+                            progress_msg="Cancelled by user (re-adopted job)",
+                        )
+                        return
+                    time.sleep(2)
+                # Process exited — check if results were written by the subprocess
+                # If the subprocess wrote its own result, status may already be completed
+                job = self._db_get(job_id)
+                if job and job["status"] == "running":
+                    # Subprocess exited but didn't update status — assume success
+                    self._db_update_status(
+                        job_id, "completed",
+                        completed_at=datetime.now(timezone.utc),
+                        progress_msg="Completed (re-adopted)",
+                    )
+            except Exception:
+                logger.exception("Monitor thread for re-adopted job %s failed", job_id)
+                try:
+                    self._db_update_status(
+                        job_id, "failed",
+                        error="Monitor thread failed",
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                except Exception:
+                    pass
+            finally:
+                with self._state_lock:
+                    self._active_jobs.pop(job_id, None)
+                    self._cancel_flags.pop(job_id, None)
+                self._dispatch_next(type_def.group)
+
+        t = threading.Thread(target=_monitor, name=f"readopt-{job_id}", daemon=True)
+        t.start()
 
     def get_types(self) -> list[dict[str, Any]]:
         """List all registered job types with metadata."""
@@ -810,7 +966,11 @@ class JobManager:
 
                 # Strip pipeline metadata before passing to callable
                 clean_params = {k: v for k, v in params.items() if not k.startswith("__pipeline")}
-                result = type_def.callable(clean_params, progress_cb)
+                cancel_event = self._cancel_flags.get(job_id)
+                result = type_def.callable(
+                    clean_params, progress_cb,
+                    cancel_event=cancel_event, job_id=job_id,
+                )
 
                 self._db_update_status(
                     job_id, "completed",

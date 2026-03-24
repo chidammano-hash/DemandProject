@@ -98,7 +98,7 @@ def list_exceptions(
         params.append(severity_min)
 
     if item.strip():
-        where_parts.append("item_no ILIKE %s")
+        where_parts.append("item_id ILIKE %s")
         params.append(f"%{item.strip()}%")
 
     if loc.strip():
@@ -106,7 +106,7 @@ def list_exceptions(
         params.append(f"%{loc.strip()}%")
 
     add_cross_dim_filters(where_parts, params, brand=brand, category=category, market=market,
-                          item_col="item_no", loc_col="loc")
+                          item_col="item_id", loc_col="loc")
 
     where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
@@ -116,7 +116,7 @@ def list_exceptions(
         SELECT
             exception_id,
             exception_type,
-            item_no,
+            item_id,
             loc,
             severity,
             financial_impact,
@@ -196,14 +196,14 @@ def exceptions_summary(response: FastAPIResponse) -> dict:
 
     top_items_sql = """
         SELECT
-            item_no,
+            item_id,
             loc,
             COUNT(*) AS exception_count,
             MAX(severity) AS max_severity,
             SUM(COALESCE(financial_impact, 0)) AS total_impact
         FROM exception_queue
         WHERE status = 'open'
-        GROUP BY item_no, loc
+        GROUP BY item_id, loc
         ORDER BY max_severity DESC, exception_count DESC
         LIMIT 5
     """
@@ -216,12 +216,12 @@ def exceptions_summary(response: FastAPIResponse) -> dict:
             summary = dict(zip(col_names, row)) if row else {}
 
             cur.execute(top_items_sql)
-            top_cols = [d[0] for d in cur.description]
+            [d[0] for d in cur.description]
             top_rows = cur.fetchall()
 
     top_items = [
         {
-            "item_no": r[0],
+            "item_id": r[0],
             "loc": r[1],
             "exception_count": int(r[2] or 0),
             "max_severity": _f(r[3]),
@@ -263,7 +263,7 @@ def get_exception_detail(exception_id: str) -> dict:
         SELECT
             exception_id,
             exception_type,
-            item_no,
+            item_id,
             loc,
             severity,
             financial_impact,
@@ -421,10 +421,10 @@ def add_decision(
 
     insert_decision_sql = """
         INSERT INTO planner_decisions
-            (exception_id, item_no, loc, decision_type, decision_value, rationale, decided_by)
+            (exception_id, item_id, loc, decision_type, decision_value, rationale, decided_by)
         SELECT
             %s::uuid,
-            item_no,
+            item_id,
             loc,
             %s,
             %s::jsonb,
@@ -432,7 +432,7 @@ def add_decision(
             %s
         FROM exception_queue
         WHERE exception_id = %s::uuid
-        RETURNING decision_id, item_no, loc
+        RETURNING decision_id, item_id, loc
     """
 
     update_status_sql = """
@@ -455,7 +455,7 @@ def add_decision(
             if not row:
                 raise HTTPException(status_code=404, detail="Exception not found")
 
-            decision_id, item_no, loc = row
+            decision_id, item_id, loc = row
 
             cur.execute(update_status_sql, (new_status, exception_id))
 
@@ -466,7 +466,7 @@ def add_decision(
         "exception_id": exception_id,
         "decision_type": body.decision_type,
         "new_exception_status": new_status,
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
     }
 
@@ -495,7 +495,7 @@ def list_decisions(
     params: list[Any] = []
 
     if item.strip():
-        where_parts.append("item_no ILIKE %s")
+        where_parts.append("item_id ILIKE %s")
         params.append(f"%{item.strip()}%")
 
     if loc.strip():
@@ -513,7 +513,7 @@ def list_decisions(
         SELECT
             decision_id,
             exception_id,
-            item_no,
+            item_id,
             loc,
             decision_type,
             decision_value,

@@ -43,10 +43,21 @@ export function usePanelToggles(
 
   const allOn = Object.values(panels).every(Boolean);
 
+  const set = useCallback(
+    (key: string, value: boolean) => {
+      setPanels((prev) => {
+        const next = { ...prev, [key]: value };
+        try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* quota */ }
+        return next;
+      });
+    },
+    [storageKey],
+  );
+
   const resetDefaults = useCallback(() => {
     setPanels({ ...defaults });
     try { localStorage.removeItem(storageKey); } catch { /* ignore */ }
   }, [storageKey, defaults]);
 
-  return { panels, toggle, setAll, allOn, resetDefaults } as const;
+  return { panels, toggle, set, setAll, allOn, resetDefaults } as const;
 }

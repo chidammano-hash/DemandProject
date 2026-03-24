@@ -17,8 +17,8 @@ from common.domain_specs import (
 
 
 class TestDomainSpecs:
-    def test_all_eight_domains_defined(self):
-        expected = {"item", "location", "customer", "time", "dfu", "sales", "forecast", "inventory"}
+    def test_all_ten_domains_defined(self):
+        expected = {"item", "location", "customer", "time", "sku", "sales", "forecast", "inventory", "sourcing", "purchase_order"}
         assert set(DOMAIN_SPECS.keys()) == expected
 
     def test_get_spec_valid(self):
@@ -88,10 +88,11 @@ class TestDomainSpecs:
 
     def test_source_col_for_with_mapping(self):
         assert DFU_SPEC.source_col_for("abc_vol") == "U_ABC_VOL"
-        assert DFU_SPEC.source_col_for("dmdunit") == "dmdunit"
+        assert DFU_SPEC.source_col_for("item_id") == "DMDUNIT"
+        assert DFU_SPEC.source_col_for("customer_group") == "DMDGROUP"
 
     def test_source_col_for_without_mapping(self):
-        assert ITEM_SPEC.source_col_for("item_no") == "item_no"
+        assert ITEM_SPEC.source_col_for("item_id") == "item_no"
 
     def test_frozen_dataclass(self):
         with pytest.raises(AttributeError):

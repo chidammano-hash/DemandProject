@@ -43,7 +43,7 @@ class TestConstants:
         assert LEAD_TIME_DEFAULT_DAYS == 7
 
     def test_hash_chunk_size(self):
-        assert HASH_CHUNK_SIZE == 1024 * 1024
+        assert HASH_CHUNK_SIZE == 8 * 1024 * 1024
 
     def test_external_model_id(self):
         assert EXTERNAL_MODEL_ID == "external"
@@ -118,7 +118,7 @@ class TestTypedExpr:
 
     def test_text_field_passthrough(self):
         spec = get_spec("sales")
-        result = typed_expr("dmdunit", spec, "s")
+        result = typed_expr("item_id", spec, "s")
         assert "::" not in result
 
     def test_unknown_field_warns(self, caplog):

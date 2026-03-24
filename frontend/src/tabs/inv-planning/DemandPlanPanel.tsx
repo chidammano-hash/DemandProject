@@ -68,7 +68,7 @@ export function DemandPlanPanel() {
     queryKey: ["demand-plan", { itemNo, loc, horizon, version: selectedVersion }],
     queryFn: () =>
       fetchDemandPlan({
-        item_no: itemNo,
+        item_id: itemNo,
         loc,
         horizon,
         plan_version: selectedVersion || undefined,
@@ -81,7 +81,7 @@ export function DemandPlanPanel() {
     queryKey: ["demand-plan-weekly", { itemNo, loc, version: selectedVersion }],
     queryFn: () =>
       fetchDemandPlanWeekly({
-        item_no: itemNo,
+        item_id: itemNo,
         loc,
         plan_version: selectedVersion || undefined,
         weeks_ahead: 8,

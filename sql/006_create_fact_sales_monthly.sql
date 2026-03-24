@@ -1,8 +1,8 @@
 CREATE TABLE IF NOT EXISTS fact_sales_monthly (
   sales_sk BIGSERIAL PRIMARY KEY,
   sales_ck TEXT UNIQUE NOT NULL,
-  dmdunit TEXT NOT NULL,
-  dmdgroup TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  customer_group TEXT NOT NULL,
   loc TEXT NOT NULL,
   startdate DATE NOT NULL,
   type INTEGER NOT NULL,
@@ -63,7 +63,7 @@ BEGIN
   END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_fact_sales_monthly_item ON fact_sales_monthly (dmdunit);
+CREATE INDEX IF NOT EXISTS idx_fact_sales_monthly_item ON fact_sales_monthly (item_id);
 CREATE INDEX IF NOT EXISTS idx_fact_sales_monthly_loc ON fact_sales_monthly (loc);
 CREATE INDEX IF NOT EXISTS idx_fact_sales_monthly_month ON fact_sales_monthly (startdate);
 CREATE INDEX IF NOT EXISTS idx_fact_sales_monthly_type ON fact_sales_monthly (type);

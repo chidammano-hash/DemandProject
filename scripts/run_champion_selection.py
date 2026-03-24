@@ -1,7 +1,7 @@
 """
 Champion model selection: rolling/expanding window best-model per DFU per month.
 
-For each DFU (dmdunit + dmdgroup + loc) at each month, evaluates competing
+For each DFU (item_id + customer_group + loc) at each month, evaluates competing
 models using cumulative WAPE from **prior months only** (before-the-fact)
 and selects the best model for that month.  The selected model's forecast
 rows are copied into fact_external_forecast_monthly with
@@ -17,7 +17,6 @@ Usage:
 import argparse
 import io
 import json
-import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -35,6 +34,7 @@ if str(ROOT) not in sys.path:
 
 from common.champion_strategies import STRATEGY_REGISTRY
 from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +104,7 @@ def load_monthly_errors_df(
         params.append(int(lag_mode))
 
     sql = f"""
-        SELECT dmdunit, dmdgroup, loc, startdate, fcstdate, execution_lag,
+        SELECT item_id, customer_group, loc, startdate, fcstdate, execution_lag,
                model_id, basefcst_pref, tothist_dmd,
                ABS(basefcst_pref - tothist_dmd) AS abs_err
         FROM fact_external_forecast_monthly
@@ -112,7 +112,7 @@ def load_monthly_errors_df(
           AND {lag_cond}
           AND basefcst_pref IS NOT NULL
           AND tothist_dmd IS NOT NULL
-        ORDER BY dmdunit, dmdgroup, loc, model_id, startdate
+        ORDER BY item_id, customer_group, loc, model_id, startdate
     """
     with psycopg.connect(**db) as conn:
         df = pd.read_sql(sql, conn, params=params)
@@ -127,13 +127,13 @@ def load_monthly_errors_df(
 def load_dfu_features(db: dict[str, Any]) -> pd.DataFrame:
     """Load DFU static features for meta-learner strategy."""
     sql = """
-        SELECT dmdunit, dmdgroup, loc,
+        SELECT item_id, customer_group, loc,
                ml_cluster, abc_vol, execution_lag, total_lt,
                brand, region,
                seasonality_profile, seasonality_strength,
                is_yearly_seasonal, peak_month, trough_month,
                peak_trough_ratio
-        FROM dim_dfu
+        FROM dim_sku
     """
     with psycopg.connect(**db) as conn:
         df = pd.read_sql(sql, conn)
@@ -155,12 +155,12 @@ def compute_champion_winners(
 ) -> list[tuple[str, str, str, str, str, float, float, float]]:
     """Return per-DFU per-month champion winners using expanding window.
 
-    For each (dmdunit, dmdgroup, loc, startdate), picks the model with
+    For each (item_id, customer_group, loc, startdate), picks the model with
     lowest cumulative WAPE computed from all **prior** months only
     (before-the-fact selection).  Requires at least ``min_rows`` prior
     months of history before a model can be selected.
 
-    Returns (dmdunit, dmdgroup, loc, startdate, model_id, prior_wape,
+    Returns (item_id, customer_group, loc, startdate, model_id, prior_wape,
              basefcst_pref, tothist_dmd).
     """
     placeholders = ",".join(["%s"] * len(models))
@@ -179,7 +179,7 @@ def compute_champion_winners(
     sql = f"""
     WITH monthly_errors AS (
         SELECT
-            dmdunit, dmdgroup, loc, startdate, model_id,
+            item_id, customer_group, loc, startdate, model_id,
             basefcst_pref, tothist_dmd, execution_lag,
             fcstdate,
             ABS(basefcst_pref - tothist_dmd) AS abs_err
@@ -195,20 +195,20 @@ def compute_champion_winners(
         -- This enforces exec-lag causality: excludes the last exec_lag
         -- months that weren't available when the forecast was issued.
         SELECT
-            a.dmdunit, a.dmdgroup, a.loc, a.startdate, a.model_id,
+            a.item_id, a.customer_group, a.loc, a.startdate, a.model_id,
             a.basefcst_pref, a.tothist_dmd,
             SUM(b.abs_err)     AS cum_abs_err,
             SUM(b.tothist_dmd) AS cum_actual,
             COUNT(b.startdate) AS prior_months
         FROM monthly_errors a
         LEFT JOIN monthly_errors b
-            ON  a.dmdunit  = b.dmdunit
-            AND a.dmdgroup = b.dmdgroup
+            ON  a.item_id  = b.item_id
+            AND a.customer_group = b.customer_group
             AND a.loc      = b.loc
             AND a.model_id = b.model_id
             AND b.startdate < a.fcstdate   -- causal cutoff: prior to issuance
         GROUP BY
-            a.dmdunit, a.dmdgroup, a.loc, a.startdate, a.model_id,
+            a.item_id, a.customer_group, a.loc, a.startdate, a.model_id,
             a.basefcst_pref, a.tothist_dmd
     ),
     with_wape AS (
@@ -220,17 +220,17 @@ def compute_champion_winners(
     ranked AS (
         SELECT *,
             ROW_NUMBER() OVER (
-                PARTITION BY dmdunit, dmdgroup, loc, startdate
+                PARTITION BY item_id, customer_group, loc, startdate
                 ORDER BY prior_wape ASC NULLS LAST
             ) AS rn
         FROM with_wape
         WHERE prior_wape IS NOT NULL
     )
-    SELECT dmdunit, dmdgroup, loc, startdate, model_id,
+    SELECT item_id, customer_group, loc, startdate, model_id,
            prior_wape, basefcst_pref, tothist_dmd
     FROM ranked
     WHERE rn = 1
-    ORDER BY dmdunit, dmdgroup, loc, startdate
+    ORDER BY item_id, customer_group, loc, startdate
     """
     params.append(min_rows)
     cur.execute(sql, params)
@@ -248,11 +248,11 @@ def compute_ceiling_winners(
 ) -> list[tuple[str, str, str, str, str, float, float, float]]:
     """Return per-DFU per-month oracle winners.
 
-    For each (dmdunit, dmdgroup, loc, startdate), picks the model with
+    For each (item_id, customer_group, loc, startdate), picks the model with
     lowest absolute error — the theoretical best if you always knew which
     model would be most accurate for every single month.
 
-    Returns (dmdunit, dmdgroup, loc, startdate, model_id, abs_err,
+    Returns (item_id, customer_group, loc, startdate, model_id, abs_err,
              basefcst_pref, tothist_dmd).
     """
     placeholders = ",".join(["%s"] * len(models))
@@ -267,11 +267,11 @@ def compute_ceiling_winners(
     sql = f"""
     WITH monthly_ranked AS (
         SELECT
-            dmdunit, dmdgroup, loc, startdate, model_id,
+            item_id, customer_group, loc, startdate, model_id,
             ABS(basefcst_pref - tothist_dmd) AS abs_err,
             basefcst_pref, tothist_dmd,
             ROW_NUMBER() OVER (
-                PARTITION BY dmdunit, dmdgroup, loc, startdate
+                PARTITION BY item_id, customer_group, loc, startdate
                 ORDER BY ABS(basefcst_pref - tothist_dmd) ASC NULLS LAST
             ) AS rn
         FROM fact_external_forecast_monthly
@@ -280,11 +280,11 @@ def compute_ceiling_winners(
           AND basefcst_pref IS NOT NULL
           AND tothist_dmd IS NOT NULL
     )
-    SELECT dmdunit, dmdgroup, loc, startdate, model_id,
+    SELECT item_id, customer_group, loc, startdate, model_id,
            abs_err, basefcst_pref, tothist_dmd
     FROM monthly_ranked
     WHERE rn = 1
-    ORDER BY dmdunit, dmdgroup, loc, startdate
+    ORDER BY item_id, customer_group, loc, startdate
     """
     cur.execute(sql, params)
     return cur.fetchall()
@@ -315,8 +315,8 @@ def insert_ceiling_forecasts(
     # 2. Create temp table with DFU+month -> winning model mapping
     cur.execute("""
         CREATE TEMP TABLE _ceiling_winners (
-            dmdunit TEXT NOT NULL,
-            dmdgroup TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            customer_group TEXT NOT NULL,
             loc TEXT NOT NULL,
             startdate DATE NOT NULL,
             winning_model_id TEXT NOT NULL
@@ -325,8 +325,8 @@ def insert_ceiling_forecasts(
 
     # 3. COPY ceiling winners into temp table
     buf = io.StringIO()
-    for dmdunit, dmdgroup, loc, startdate, model_id, *_ in ceiling_rows:
-        buf.write(f"{dmdunit}\t{dmdgroup}\t{loc}\t{startdate}\t{model_id}\n")
+    for item_id, customer_group, loc, startdate, model_id, *_ in ceiling_rows:
+        buf.write(f"{item_id}\t{customer_group}\t{loc}\t{startdate}\t{model_id}\n")
     buf.seek(0)
     with cur.copy("COPY _ceiling_winners FROM STDIN") as copy:
         copy.write(buf.read())
@@ -335,16 +335,16 @@ def insert_ceiling_forecasts(
     cur.execute(
         """
         INSERT INTO fact_external_forecast_monthly
-            (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+            (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
              lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
         SELECT
-            f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
+            f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate, f.startdate,
             f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
             %s
         FROM fact_external_forecast_monthly f
         INNER JOIN _ceiling_winners w
-            ON f.dmdunit = w.dmdunit
-           AND f.dmdgroup = w.dmdgroup
+            ON f.item_id = w.item_id
+           AND f.customer_group = w.customer_group
            AND f.loc = w.loc
            AND f.startdate = w.startdate
            AND f.model_id = w.winning_model_id
@@ -380,8 +380,8 @@ def insert_champion_forecasts(
     # 2. Create temp table with DFU+month -> winning model mapping
     cur.execute("""
         CREATE TEMP TABLE _champion_winners (
-            dmdunit TEXT NOT NULL,
-            dmdgroup TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            customer_group TEXT NOT NULL,
             loc TEXT NOT NULL,
             startdate DATE NOT NULL,
             winning_model_id TEXT NOT NULL
@@ -390,8 +390,8 @@ def insert_champion_forecasts(
 
     # 3. COPY champion winners into temp table
     buf = io.StringIO()
-    for dmdunit, dmdgroup, loc, startdate, model_id, *_ in winners:
-        buf.write(f"{dmdunit}\t{dmdgroup}\t{loc}\t{startdate}\t{model_id}\n")
+    for item_id, customer_group, loc, startdate, model_id, *_ in winners:
+        buf.write(f"{item_id}\t{customer_group}\t{loc}\t{startdate}\t{model_id}\n")
     buf.seek(0)
     with cur.copy("COPY _champion_winners FROM STDIN") as copy:
         copy.write(buf.read())
@@ -402,16 +402,16 @@ def insert_champion_forecasts(
     cur.execute(
         """
         INSERT INTO fact_external_forecast_monthly
-            (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+            (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
              lag, execution_lag, basefcst_pref, tothist_dmd, model_id, source_model_id)
         SELECT
-            f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
+            f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate, f.startdate,
             f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
             %s, w.winning_model_id
         FROM fact_external_forecast_monthly f
         INNER JOIN _champion_winners w
-            ON f.dmdunit = w.dmdunit
-           AND f.dmdgroup = w.dmdgroup
+            ON f.item_id = w.item_id
+           AND f.customer_group = w.customer_group
            AND f.loc = w.loc
            AND f.startdate = w.startdate
            AND f.model_id = w.winning_model_id
@@ -447,8 +447,8 @@ def insert_ensemble_forecasts(
     # 2. Create temp table with blended forecast values
     cur.execute("""
         CREATE TEMP TABLE _ensemble_winners (
-            dmdunit TEXT NOT NULL,
-            dmdgroup TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            customer_group TEXT NOT NULL,
             loc TEXT NOT NULL,
             startdate DATE NOT NULL,
             blended_fcst DOUBLE PRECISION NOT NULL
@@ -459,7 +459,7 @@ def insert_ensemble_forecasts(
     buf = io.StringIO()
     for _, row in winners_df.iterrows():
         buf.write(
-            f"{row['dmdunit']}\t{row['dmdgroup']}\t{row['loc']}\t"
+            f"{row['item_id']}\t{row['customer_group']}\t{row['loc']}\t"
             f"{row['startdate'].date()}\t{row['basefcst_pref']}\n"
         )
     buf.seek(0)
@@ -470,20 +470,20 @@ def insert_ensemble_forecasts(
     cur.execute(
         """
         INSERT INTO fact_external_forecast_monthly
-            (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+            (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
              lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
-        SELECT DISTINCT ON (f.dmdunit, f.dmdgroup, f.loc, f.startdate)
-            f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
+        SELECT DISTINCT ON (f.item_id, f.customer_group, f.loc, f.startdate)
+            f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate, f.startdate,
             f.lag, f.execution_lag, w.blended_fcst, f.tothist_dmd,
             %s
         FROM fact_external_forecast_monthly f
         INNER JOIN _ensemble_winners w
-            ON f.dmdunit = w.dmdunit
-           AND f.dmdgroup = w.dmdgroup
+            ON f.item_id = w.item_id
+           AND f.customer_group = w.customer_group
            AND f.loc = w.loc
            AND f.startdate = w.startdate
         WHERE f.model_id != %s AND f.model_id != 'ceiling'
-        ORDER BY f.dmdunit, f.dmdgroup, f.loc, f.startdate, f.model_id
+        ORDER BY f.item_id, f.customer_group, f.loc, f.startdate, f.model_id
         """,
         (champion_model_id, champion_model_id),
     )
@@ -518,10 +518,10 @@ def insert_fallback_champions(
 
     sql = f"""
     INSERT INTO fact_external_forecast_monthly
-        (forecast_ck, dmdunit, dmdgroup, loc, fcstdate, startdate,
+        (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
          lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
     SELECT
-        f.forecast_ck, f.dmdunit, f.dmdgroup, f.loc, f.fcstdate, f.startdate,
+        f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate, f.startdate,
         f.lag, f.execution_lag, f.basefcst_pref, f.tothist_dmd,
         %s
     FROM fact_external_forecast_monthly f
@@ -533,8 +533,8 @@ def insert_fallback_champions(
           SELECT 1
           FROM fact_external_forecast_monthly c
           WHERE c.model_id = %s
-            AND c.dmdunit    = f.dmdunit
-            AND c.dmdgroup   = f.dmdgroup
+            AND c.item_id    = f.item_id
+            AND c.customer_group   = f.customer_group
             AND c.loc        = f.loc
             AND c.startdate  = f.startdate
       )
@@ -559,11 +559,11 @@ def generate_summary(
     champ_actual_sum = 0.0
     unique_dfus: set[tuple[str, str, str]] = set()
 
-    for dmdunit, dmdgroup, loc, _startdate, model_id, _prior_wape, basefcst_pref, tothist_dmd in winners:
+    for item_id, customer_group, loc, _startdate, model_id, _prior_wape, basefcst_pref, tothist_dmd in winners:
         model_wins[model_id] = model_wins.get(model_id, 0) + 1
         champ_abs_err_sum += abs(float(basefcst_pref) - float(tothist_dmd))
         champ_actual_sum += float(tothist_dmd)
-        unique_dfus.add((dmdunit, dmdgroup, loc))
+        unique_dfus.add((item_id, customer_group, loc))
 
     overall_wape = (champ_abs_err_sum / abs(champ_actual_sum) * 100) if champ_actual_sum else None
     overall_acc = (100.0 - overall_wape) if overall_wape is not None else None
@@ -679,37 +679,38 @@ def main() -> None:
     t0 = time.time()
     strategy_fn = STRATEGY_REGISTRY.get(strategy_name)
 
-    if strategy_fn:
-        # Use DataFrame-based strategy from registry
-        print(f"Loading monthly errors for strategy '{strategy_name}'...")
-        monthly_errors_df = load_monthly_errors_df(db, models, lag_mode)
-        print(f"  {len(monthly_errors_df):,} rows loaded")
+    with profiled_section("compute_champion_winners"):
+        if strategy_fn:
+            # Use DataFrame-based strategy from registry
+            print(f"Loading monthly errors for strategy '{strategy_name}'...")
+            monthly_errors_df = load_monthly_errors_df(db, models, lag_mode)
+            print(f"  {len(monthly_errors_df):,} rows loaded")
 
-        # Build kwargs
-        strat_kwargs = {
-            "min_prior_months": min_rows,
-            **strategy_params,
-        }
-        if strategy_name == "meta_learner":
-            strat_kwargs["dfu_features"] = load_dfu_features(db)
-            strat_kwargs.setdefault(
-                "meta_model_path",
-                str(ROOT / "data" / "champion" / "meta_learner.joblib"),
-            )
+            # Build kwargs
+            strat_kwargs = {
+                "min_prior_months": min_rows,
+                **strategy_params,
+            }
+            if strategy_name == "meta_learner":
+                strat_kwargs["dfu_features"] = load_dfu_features(db)
+                strat_kwargs.setdefault(
+                    "meta_model_path",
+                    str(ROOT / "data" / "champion" / "meta_learner.joblib"),
+                )
 
-        print(f"Computing champion winners ({strategy_name}, prior months only)...")
-        winners_df = strategy_fn(monthly_errors_df, **strat_kwargs)
+            print(f"Computing champion winners ({strategy_name}, prior months only)...")
+            winners_df = strategy_fn(monthly_errors_df, **strat_kwargs)
 
-        # Convert to tuple list for existing insert/summary logic
-        winners = list(winners_df.itertuples(index=False, name=None))
-        is_ensemble = strategy_name == "ensemble"
-    else:
-        # Fallback to SQL-based expanding window
-        print("Computing per-DFU per-month champion (expanding window, prior months only)...")
-        with psycopg.connect(**db) as conn, conn.cursor() as cur:
-            winners = compute_champion_winners(cur, models, lag_mode, min_rows)
-        winners_df = pd.DataFrame()
-        is_ensemble = False
+            # Convert to tuple list for existing insert/summary logic
+            winners = list(winners_df.itertuples(index=False, name=None))
+            is_ensemble = strategy_name == "ensemble"
+        else:
+            # Fallback to SQL-based expanding window
+            print("Computing per-DFU per-month champion (expanding window, prior months only)...")
+            with psycopg.connect(**db) as conn, conn.cursor() as cur:
+                winners = compute_champion_winners(cur, models, lag_mode, min_rows)
+            winners_df = pd.DataFrame()
+            is_ensemble = False
 
     elapsed = time.time() - t0
     unique_dfus = len({(w[0], w[1], w[2]) for w in winners})
@@ -732,12 +733,13 @@ def main() -> None:
     # Step 2: Insert champion rows
     print("Inserting champion forecast rows...")
     t1 = time.time()
-    with psycopg.connect(**db) as conn, conn.cursor() as cur:
-        if is_ensemble and not winners_df.empty:
-            inserted = insert_ensemble_forecasts(cur, winners_df, champion_id)
-        else:
-            inserted = insert_champion_forecasts(cur, winners, champion_id)
-        conn.commit()
+    with profiled_section("insert_champion_rows"):
+        with psycopg.connect(**db) as conn, conn.cursor() as cur:
+            if is_ensemble and not winners_df.empty:
+                inserted = insert_ensemble_forecasts(cur, winners_df, champion_id)
+            else:
+                inserted = insert_champion_forecasts(cur, winners, champion_id)
+            conn.commit()
     print(f"  Inserted {inserted:,} champion rows ({time.time() - t1:.1f}s)")
 
     # Step 2b: Fill warm-up gaps with fallback model
@@ -745,11 +747,12 @@ def main() -> None:
     if fallback_id:
         print(f"Filling warm-up gaps with fallback model '{fallback_id}'...")
         t1b = time.time()
-        with psycopg.connect(**db) as conn, conn.cursor() as cur:
-            fallback_inserted = insert_fallback_champions(
-                cur, lag_mode, champion_id, fallback_id,
-            )
-            conn.commit()
+        with profiled_section("insert_fallback_rows"):
+            with psycopg.connect(**db) as conn, conn.cursor() as cur:
+                fallback_inserted = insert_fallback_champions(
+                    cur, lag_mode, champion_id, fallback_id,
+                )
+                conn.commit()
         print(f"  Inserted {fallback_inserted:,} fallback rows ({time.time() - t1b:.1f}s)")
     print()
 
@@ -757,8 +760,9 @@ def main() -> None:
     ceiling_id = cfg.get("ceiling_model_id", "ceiling")
     print("Computing ceiling (oracle) — best model per DFU per month (after-the-fact)...")
     t2 = time.time()
-    with psycopg.connect(**db) as conn, conn.cursor() as cur:
-        ceiling_rows = compute_ceiling_winners(cur, models, lag_mode)
+    with profiled_section("compute_ceiling_winners"):
+        with psycopg.connect(**db) as conn, conn.cursor() as cur:
+            ceiling_rows = compute_ceiling_winners(cur, models, lag_mode)
     print(f"  {len(ceiling_rows):,} DFU-month rows evaluated ({time.time() - t2:.1f}s)")
 
     # Print ceiling model wins
@@ -774,27 +778,30 @@ def main() -> None:
     # Step 4: Insert ceiling rows
     print("Inserting ceiling forecast rows...")
     t3 = time.time()
-    with psycopg.connect(**db) as conn, conn.cursor() as cur:
-        ceiling_inserted = insert_ceiling_forecasts(cur, ceiling_rows, ceiling_id)
-        conn.commit()
+    with profiled_section("insert_ceiling_rows"):
+        with psycopg.connect(**db) as conn, conn.cursor() as cur:
+            ceiling_inserted = insert_ceiling_forecasts(cur, ceiling_rows, ceiling_id)
+            conn.commit()
     print(f"  Inserted {ceiling_inserted:,} ceiling rows ({time.time() - t3:.1f}s)")
     print()
 
     # Step 5: Refresh materialized views
-    refresh_views(db)
+    with profiled_section("refresh_materialized_views"):
+        refresh_views(db)
     print()
 
     # Step 6: Save summary JSON
-    summary = generate_summary(
-        winners, champion_id, inserted, cfg,
-        ceiling_rows=ceiling_rows, ceiling_inserted=ceiling_inserted,
-        fallback_inserted=fallback_inserted,
-    )
-    summary_dir = ROOT / "data" / "champion"
-    summary_dir.mkdir(parents=True, exist_ok=True)
-    summary_path = summary_dir / "champion_summary.json"
-    with open(summary_path, "w") as f:
-        json.dump(summary, f, indent=2, default=str)
+    with profiled_section("save_summary"):
+        summary = generate_summary(
+            winners, champion_id, inserted, cfg,
+            ceiling_rows=ceiling_rows, ceiling_inserted=ceiling_inserted,
+            fallback_inserted=fallback_inserted,
+        )
+        summary_dir = ROOT / "data" / "champion"
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        summary_path = summary_dir / "champion_summary.json"
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2, default=str)
     print(f"Summary saved to {summary_path}")
     print(f"  Champion: {unique_dfus:,} DFUs, {len(winners):,} DFU-months")
     print(f"  Fallback rows (warm-up gaps): {fallback_inserted:,}")

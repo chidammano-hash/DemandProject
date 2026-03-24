@@ -33,7 +33,7 @@ export default function ScenarioResultsPanel({
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold">
             Scenario {scenarioLabel} &mdash; K={scenarioResult.result.optimal_k},{" "}
-            {scenarioResult.result.total_dfus} DFUs, {scenarioResult.runtime_seconds.toFixed(1)}s
+            {scenarioResult.result.total_skus} SKUs, {scenarioResult.runtime_seconds.toFixed(1)}s
           </p>
           <button
             className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
@@ -49,7 +49,7 @@ export default function ScenarioResultsPanel({
             <TableHeader>
               <TableRow className="border-muted bg-muted/30">
                 <TableHead className="text-xs">Cluster</TableHead>
-                <TableHead className="text-xs text-right">DFUs</TableHead>
+                <TableHead className="text-xs text-right">SKUs</TableHead>
                 <TableHead className="text-xs text-right">%</TableHead>
                 <TableHead className="text-xs text-right">Avg demand</TableHead>
                 <TableHead className="text-xs text-right">CV</TableHead>
@@ -87,7 +87,7 @@ export default function ScenarioResultsPanel({
                 ⚠ This action affects downstream models
               </p>
               <ul className="mt-1.5 space-y-1 text-xs text-amber-700 dark:text-amber-400">
-                <li>• <strong>Cluster assignments</strong> in <code className="text-[10px] bg-amber-100 dark:bg-amber-900/50 rounded px-0.5">dim_dfu.ml_cluster</code> will be overwritten for all DFUs</li>
+                <li>• <strong>Cluster assignments</strong> in <code className="text-[10px] bg-amber-100 dark:bg-amber-900/50 rounded px-0.5">dim_sku.ml_cluster</code> will be overwritten for all SKUs</li>
                 <li>• <strong>Backtesting</strong> — all per-cluster models (LGBM, CatBoost, XGBoost) will train on the new cluster boundaries. Previous backtest results may no longer be comparable.</li>
                 <li>• <strong>Production forecasts</strong> — champion model selection and forecast generation will use the new clusters. Forecast values will shift.</li>
                 <li>• <strong>Inventory planning</strong> — safety stock, EOQ, and exception detection rely on cluster-based demand patterns</li>
@@ -98,7 +98,7 @@ export default function ScenarioResultsPanel({
             </div>
 
             <p className="mt-3 text-xs text-muted-foreground">
-              K={scenarioResult.result.optimal_k} clusters, {scenarioResult.result.total_dfus.toLocaleString()} DFUs will be reassigned.
+              K={scenarioResult.result.optimal_k} clusters, {scenarioResult.result.total_skus.toLocaleString()} SKUs will be reassigned.
             </p>
 
             <div className="mt-4 flex justify-end gap-3">

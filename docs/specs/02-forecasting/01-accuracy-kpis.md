@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `common/metrics.py`, `api/routers/accuracy.py`, `frontend/src/tabs/AccuracyTab.tsx`, `sql/011_create_accuracy_slice_views.sql`, `sql/016_add_seasonality_to_accuracy_views.sql` |
+| **Key Files** | `common/metrics.py`, `api/routers/accuracy.py`, `frontend/src/tabs/AccuracyTab.tsx`, `sql/011_create_accuracy_slice_views.sql`, `sql/011_create_accuracy_slice_views.sql` |
 
 ---
 
@@ -34,8 +34,8 @@ Three core metrics are computed across the platform: WAPE (Weighted Absolute Per
 
 | View | Source | Grain | Purpose |
 |------|--------|-------|---------|
-| `agg_accuracy_by_dim` | `fact_external_forecast_monthly` + `dim_dfu` | model_id, lag, month, cluster, supplier, abc_vol, region, brand, seasonality_profile | Fast accuracy slicing |
-| `agg_accuracy_lag_archive` | `backtest_lag_archive` + `dim_dfu` | Same + timeframe | Lag-horizon accuracy curves |
+| `agg_accuracy_by_dim` | `fact_external_forecast_monthly` + `dim_sku` | model_id, lag, month, cluster, supplier, abc_vol, region, brand, seasonality_profile | Fast accuracy slicing |
+| `agg_accuracy_lag_archive` | `backtest_lag_archive` + `dim_sku` | Same + timeframe | Lag-horizon accuracy curves |
 | `agg_dfu_coverage` | `fact_external_forecast_monthly` | model_id, lag | DFU count per model |
 | `agg_dfu_coverage_lag_archive` | `backtest_lag_archive` | model_id, lag | DFU count per model (archive) |
 

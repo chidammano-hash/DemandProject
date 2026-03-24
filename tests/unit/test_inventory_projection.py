@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -58,7 +59,7 @@ def _run(
         forecast_source="production_forecast",
         plan_version="2026-03",
         projection_run_id="test-run-id",
-        item_no="100320",
+        item_id="100320",
         loc="1401-BULK",
     )
 
@@ -217,3 +218,89 @@ class TestDisaggregateDemand:
         apr_days = [d for d in daily if d.month == 4]
         for d in apr_days:
             assert daily[d] == pytest.approx(300.0 / 30, rel=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Batched write tests — write_all_projection_rows
+# ---------------------------------------------------------------------------
+
+class TestWriteAllProjectionRowsBatching:
+    """Verify write_all_projection_rows uses 50K-row batches."""
+
+    def _make_rows(self, n: int) -> list[dict]:
+        """Generate n fake projection rows across 2 DFUs."""
+        rows = []
+        for i in range(n):
+            rows.append({
+                "projection_run_id": "run-1",
+                "item_id": f"ITEM-{i % 2}",
+                "loc": "LOC-A",
+                "projection_date": date(2026, 1, 1) + timedelta(days=i),
+                "scenario": "base",
+                "projected_qty": 100.0,
+                "projected_dos": 30.0,
+                "forecast_qty_consumed": 10.0,
+                "receipts_expected": 0.0,
+                "reorder_triggered": False,
+                "stockout_risk": False,
+                "excess_risk": False,
+                "daily_demand_rate": 3.33,
+                "forecast_source": "production_forecast",
+                "plan_version": "v1",
+            })
+        return rows
+
+    def test_small_batch_single_executemany(self):
+        """Rows fewer than 50K should result in a single executemany call for inserts."""
+        from scripts.compute_inventory_projection import write_all_projection_rows
+
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        rows = self._make_rows(100)
+        written = write_all_projection_rows(rows, dry_run=False, conn=mock_conn)
+
+        assert written == 100
+        # 1 call for DELETE executemany + 1 call for INSERT executemany (single batch)
+        assert mock_cur.executemany.call_count == 2
+        mock_conn.commit.assert_called_once()
+
+    def test_large_batch_multiple_executemany(self):
+        """Rows exceeding 50K should be split into multiple executemany calls."""
+        from scripts.compute_inventory_projection import write_all_projection_rows
+
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        rows = self._make_rows(120_000)
+        written = write_all_projection_rows(rows, dry_run=False, conn=mock_conn)
+
+        assert written == 120_000
+        # 1 DELETE executemany + 3 INSERT executemany (50K + 50K + 20K)
+        assert mock_cur.executemany.call_count == 4
+        mock_conn.commit.assert_called_once()
+
+    def test_dry_run_no_writes(self):
+        """Dry run should not call executemany at all."""
+        from scripts.compute_inventory_projection import write_all_projection_rows
+
+        mock_conn = MagicMock()
+        rows = self._make_rows(10)
+        written = write_all_projection_rows(rows, dry_run=True, conn=mock_conn)
+
+        assert written == 10
+        mock_conn.cursor.assert_not_called()
+
+    def test_empty_rows_no_writes(self):
+        """Empty row list should not call executemany."""
+        from scripts.compute_inventory_projection import write_all_projection_rows
+
+        mock_conn = MagicMock()
+        written = write_all_projection_rows([], dry_run=False, conn=mock_conn)
+
+        assert written == 0
+        mock_conn.cursor.assert_not_called()

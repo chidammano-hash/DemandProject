@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS fact_plan_versions (
 
 CREATE TABLE IF NOT EXISTS fact_demand_plan (
     id                  BIGSERIAL       PRIMARY KEY,
-    item_no             VARCHAR(50)     NOT NULL,
+    item_id             VARCHAR(50)     NOT NULL,
     loc                 VARCHAR(50)     NOT NULL,
     plan_month          DATE            NOT NULL,
     quantile            NUMERIC(4,2)    NOT NULL,
@@ -34,11 +34,11 @@ CREATE TABLE IF NOT EXISTS fact_demand_plan (
     cluster_id          INTEGER,
     abc_class           VARCHAR(5),
     seasonality_profile VARCHAR(50),
-    CONSTRAINT uq_demand_plan UNIQUE (item_no, loc, plan_month, quantile, plan_version)
+    CONSTRAINT uq_demand_plan UNIQUE (item_id, loc, plan_month, quantile, plan_version)
 );
 
 CREATE INDEX IF NOT EXISTS idx_demand_plan_item_loc_month
-    ON fact_demand_plan (item_no, loc, plan_month);
+    ON fact_demand_plan (item_id, loc, plan_month);
 
 CREATE INDEX IF NOT EXISTS idx_demand_plan_version
     ON fact_demand_plan (plan_version, plan_month);
@@ -51,7 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_demand_plan_horizon
 
 CREATE TABLE IF NOT EXISTS fact_demand_plan_weekly (
     id                  BIGSERIAL       PRIMARY KEY,
-    item_no             VARCHAR(50)     NOT NULL,
+    item_id             VARCHAR(50)     NOT NULL,
     loc                 VARCHAR(50)     NOT NULL,
     plan_week           DATE            NOT NULL,
     iso_week            INTEGER         NOT NULL,
@@ -62,11 +62,11 @@ CREATE TABLE IF NOT EXISTS fact_demand_plan_weekly (
     weekly_weight       NUMERIC(6,4)    NOT NULL,
     plan_version        VARCHAR(50)     NOT NULL,
     generated_at        TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_demand_plan_weekly UNIQUE (item_no, loc, plan_week, quantile, plan_version)
+    CONSTRAINT uq_demand_plan_weekly UNIQUE (item_id, loc, plan_week, quantile, plan_version)
 );
 
 CREATE INDEX IF NOT EXISTS idx_demand_plan_weekly_item_loc
-    ON fact_demand_plan_weekly (item_no, loc, plan_week);
+    ON fact_demand_plan_weekly (item_id, loc, plan_week);
 
 CREATE INDEX IF NOT EXISTS idx_demand_plan_weekly_version
     ON fact_demand_plan_weekly (plan_version, plan_week);

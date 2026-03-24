@@ -41,7 +41,7 @@ export function EchelonPanel() {
   }, [globalFilters.item]);
 
   const params = {
-    item_no: itemNo || undefined,
+    item_id: itemNo || undefined,
     severity: severity || undefined,
     page,
     page_size: PAGE,
@@ -168,7 +168,7 @@ export function EchelonPanel() {
                 <tbody>
                   {rows.map((r, i) => (
                     <tr key={i} className="border-t hover:bg-muted/30 transition-colors">
-                      <td className="px-3 py-2 font-mono text-xs">{r.item_no}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{r.item_id}</td>
                       <td className="px-3 py-2 text-xs">{r.loc}</td>
                       <td className="px-3 py-2 text-xs">{r.node_type}</td>
                       <td className="px-3 py-2 text-xs">{r.pooled_sigma?.toFixed(1) ?? "—"}</td>

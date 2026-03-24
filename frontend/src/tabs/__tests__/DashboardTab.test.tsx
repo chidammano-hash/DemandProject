@@ -49,7 +49,7 @@ vi.mock("@/api/queries", () => ({
     insights: [
       {
         insight_id: 1,
-        item_no: "587382",
+        item_id: "587382",
         loc: "1401-BULK",
         severity: "critical",
         insight_type: "stockout_risk",
@@ -73,7 +73,7 @@ vi.mock("@/api/queries", () => ({
       {
         memo_id: 1,
         period: "2026-03-01",
-        narrative_text: "Portfolio is under pressure this week. Three A-class DFUs show critical stockout risk.",
+        narrative_text: "Portfolio is under pressure this week. Three A-class SKUs show critical stockout risk.",
         model_version: "claude-sonnet-4-6",
         created_at: new Date().toISOString(),
       },

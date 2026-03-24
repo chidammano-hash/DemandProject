@@ -147,9 +147,9 @@ export function ScenarioPlanningPanel() {
                       <span>Impact: {s.impact_pct}%</span>
                       <span>Duration: {s.duration_weeks}w</span>
                     </div>
-                    {(s.item_no || s.loc) && (
+                    {(s.item_id || s.loc) && (
                       <p className="text-xs text-muted-foreground mt-0.5 font-mono">
-                        {s.item_no ?? "All"} / {s.loc ?? "All"}
+                        {s.item_id ?? "All"} / {s.loc ?? "All"}
                       </p>
                     )}
                   </li>
@@ -197,7 +197,7 @@ export function ScenarioPlanningPanel() {
                     <tbody>
                       {results.items.map((r, i) => (
                         <tr key={i} className={`border-t ${(r.stockout_days ?? 0) > 0 ? "bg-red-50" : ""}`}>
-                          <td className="px-2 py-1 font-mono">{r.item_no}</td>
+                          <td className="px-2 py-1 font-mono">{r.item_id}</td>
                           <td className="px-2 py-1">{r.loc}</td>
                           <td className="px-2 py-1">{r.adjusted_lt_days?.toFixed(1) ?? "—"}</td>
                           <td className="px-2 py-1 text-red-600">{r.supply_reduction?.toFixed(0) ?? "—"}</td>

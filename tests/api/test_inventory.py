@@ -51,7 +51,7 @@ async def test_inventory_position_returns_200(mock_pool):
             assert "offset" in data
             assert len(data["positions"]) == 1
             pos = data["positions"][0]
-            assert pos["item_no"] == "item1"
+            assert pos["item_id"] == "item1"
             assert pos["loc"] == "loc1"
             assert pos["qty_on_hand"] == 100.0
 

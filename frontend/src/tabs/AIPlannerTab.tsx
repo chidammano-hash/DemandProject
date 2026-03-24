@@ -58,7 +58,7 @@ export default function AIPlannerTab() {
     category: filters.category.length > 0 ? filters.category.join(",") : undefined,
     market: filters.market.length > 0 ? filters.market.join(",") : undefined,
     channel: filters.channel.length > 0 ? filters.channel.join(",") : undefined,
-    item_no: filters.item.length === 1 ? filters.item[0] : undefined,
+    item_id: filters.item.length === 1 ? filters.item[0] : undefined,
     loc: filters.location.length === 1 ? filters.location[0] : undefined,
   };
 

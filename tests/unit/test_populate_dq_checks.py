@@ -14,7 +14,6 @@ if str(ROOT) not in sys.path:
 from scripts.populate_dq_checks import (
     _completeness_template,
     _domain_from_table,
-    _freshness_template,
     _range_template,
     _referential_integrity_template,
     _uniqueness_template,
@@ -27,18 +26,6 @@ from scripts.populate_dq_checks import (
 # ---------------------------------------------------------------------------
 # SQL template tests
 # ---------------------------------------------------------------------------
-
-class TestFreshnessTemplate:
-    def test_basic(self):
-        sql = _freshness_template("dim_item")
-        assert "dim_item" in sql
-        assert "load_ts" in sql
-        assert "hours_since_load" in sql
-
-    def test_fact_table(self):
-        sql = _freshness_template("fact_sales_monthly")
-        assert "fact_sales_monthly" in sql
-
 
 class TestCompletenessTemplate:
     def test_basic(self):
@@ -54,14 +41,14 @@ class TestCompletenessTemplate:
 
 class TestUniquenessTemplate:
     def test_single_key(self):
-        sql = _uniqueness_template("dim_item", ["item_no"])
-        assert "item_no" in sql
+        sql = _uniqueness_template("dim_item", ["item_id"])
+        assert "item_id" in sql
         assert "HAVING COUNT(*) > 1" in sql
 
     def test_composite_key(self):
-        sql = _uniqueness_template("dim_dfu", ["dmdunit", "loc"])
-        assert "dmdunit, loc" in sql
-        assert "GROUP BY dmdunit, loc" in sql
+        sql = _uniqueness_template("dim_sku", ["item_id", "loc"])
+        assert "item_id, loc" in sql
+        assert "GROUP BY item_id, loc" in sql
 
 
 class TestRangeTemplate:
@@ -82,20 +69,20 @@ class TestVolumeDeltaTemplate:
 class TestReferentialIntegrityTemplate:
     def test_single_column(self):
         sql = _referential_integrity_template(
-            "fact_inventory_snapshot", ["item_no"],
-            "dim_item", ["item_no"],
+            "fact_inventory_snapshot", ["item_id"],
+            "dim_item", ["item_id"],
         )
         assert "fact_inventory_snapshot s" in sql
         assert "dim_item t" in sql
-        assert "s.item_no = t.item_no" in sql
-        assert "t.item_no IS NULL" in sql
+        assert "s.item_id = t.item_id" in sql
+        assert "t.item_id IS NULL" in sql
 
     def test_composite_columns(self):
         sql = _referential_integrity_template(
-            "fact_sales_monthly", ["dmdunit", "loc"],
-            "dim_dfu", ["dmdunit", "loc"],
+            "fact_sales_monthly", ["item_id", "loc"],
+            "dim_sku", ["item_id", "loc"],
         )
-        assert "s.dmdunit = t.dmdunit" in sql
+        assert "s.item_id = t.item_id" in sql
         assert "s.loc = t.loc" in sql
 
 
@@ -113,8 +100,8 @@ class TestDomainFromTable:
     def test_inventory(self):
         assert _domain_from_table("fact_inventory_snapshot") == "inventory"
 
-    def test_dim_dfu(self):
-        assert _domain_from_table("dim_dfu") == "dfu"
+    def test_dim_sku(self):
+        assert _domain_from_table("dim_sku") == "sku"
 
     def test_dim_item(self):
         assert _domain_from_table("dim_item") == "item"
@@ -127,21 +114,17 @@ class TestDomainFromTable:
 MINIMAL_CONFIG = {
     "global_defaults": {"severity": "warning", "enabled": True},
     "checks": {
-        "freshness": {
-            "item": {"table": "dim_item", "max_hours_since_load": 168, "severity": "warning"},
-            "sales": {"table": "fact_sales_monthly", "max_hours_since_load": 48, "severity": "critical"},
-        },
         "completeness": {
             "item": {
                 "table": "dim_item",
                 "columns": [
-                    {"column": "item_no", "null_pct_threshold": 0.0, "severity": "critical"},
+                    {"column": "item_id", "null_pct_threshold": 0.0, "severity": "critical"},
                     {"column": "brand", "null_pct_threshold": 10.0, "severity": "warning"},
                 ],
             },
         },
         "uniqueness": {
-            "dfu": {"table": "dim_dfu", "key_columns": ["dmdunit", "loc"], "severity": "critical"},
+            "sku": {"table": "dim_sku", "key_columns": ["item_id", "loc"], "severity": "critical"},
         },
         "range": {
             "sales": {
@@ -157,9 +140,9 @@ MINIMAL_CONFIG = {
         "referential_integrity": {
             "sales_to_dfu": {
                 "source_table": "fact_sales_monthly",
-                "source_columns": ["dmdunit", "loc"],
-                "target_table": "dim_dfu",
-                "target_columns": ["dmdunit", "loc"],
+                "source_columns": ["item_id", "loc"],
+                "target_table": "dim_sku",
+                "target_columns": ["item_id", "loc"],
                 "severity": "warning",
             },
         },
@@ -170,15 +153,8 @@ MINIMAL_CONFIG = {
 class TestParseChecks:
     def test_total_count(self):
         checks = parse_checks(MINIMAL_CONFIG)
-        # 2 freshness + 2 completeness + 1 uniqueness + 1 range + 1 volume_delta + 1 RI = 8
-        assert len(checks) == 8
-
-    def test_freshness_checks(self):
-        checks = parse_checks(MINIMAL_CONFIG)
-        freshness = [c for c in checks if c["check_type"] == "freshness"]
-        assert len(freshness) == 2
-        names = {c["check_name"] for c in freshness}
-        assert names == {"freshness_item", "freshness_sales"}
+        # 2 completeness + 1 uniqueness + 1 range + 1 volume_delta + 1 RI = 6
+        assert len(checks) == 6
 
     def test_table_name_included(self):
         checks = parse_checks(MINIMAL_CONFIG)
@@ -191,13 +167,13 @@ class TestParseChecks:
         comp = [c for c in checks if c["check_type"] == "completeness"]
         assert len(comp) == 2
         names = {c["check_name"] for c in comp}
-        assert names == {"completeness_item_item_no", "completeness_item_brand"}
+        assert names == {"completeness_item_item_id", "completeness_item_brand"}
 
     def test_uniqueness_check(self):
         checks = parse_checks(MINIMAL_CONFIG)
         uniq = [c for c in checks if c["check_type"] == "uniqueness"]
         assert len(uniq) == 1
-        assert uniq[0]["check_name"] == "uniqueness_dfu"
+        assert uniq[0]["check_name"] == "uniqueness_sku"
         assert uniq[0]["threshold"] == 0
 
     def test_range_check(self):
@@ -222,8 +198,8 @@ class TestParseChecks:
 
     def test_severity_preserved(self):
         checks = parse_checks(MINIMAL_CONFIG)
-        freshness_sales = [c for c in checks if c["check_name"] == "freshness_sales"][0]
-        assert freshness_sales["severity"] == "critical"
+        comp_id = [c for c in checks if c["check_name"] == "completeness_item_item_id"][0]
+        assert comp_id["severity"] == "critical"
 
     def test_enabled_default(self):
         checks = parse_checks(MINIMAL_CONFIG)
@@ -235,14 +211,14 @@ class TestParseChecks:
         assert checks == []
 
     def test_full_config_parse(self):
-        """Parse the real config file and verify all 6 check types present."""
+        """Parse the real config file and verify all 5 check types present."""
         from common.utils import load_config, reset_config
         reset_config(None)
         config = load_config("data_quality_config.yaml")
         checks = parse_checks(config)
         types_found = {c["check_type"] for c in checks}
         assert types_found == {
-            "freshness", "completeness", "uniqueness",
+            "completeness", "uniqueness",
             "range", "volume_delta", "referential_integrity",
         }
         # Verify all check names are unique
@@ -266,29 +242,29 @@ class TestUpsertChecks:
         conn, cursor = self._make_conn()
         checks = [
             {
-                "check_name": "freshness_item",
-                "check_type": "freshness",
+                "check_name": "completeness_item_item_id",
+                "check_type": "completeness",
                 "domain": "item",
                 "sql_template": "SELECT 1",
-                "threshold": 168,
+                "threshold": 0.0,
                 "severity": "warning",
                 "enabled": True,
             },
         ]
         count = upsert_checks(conn, checks, dry_run=False)
         assert count == 1
-        cursor.execute.assert_called_once()
+        cursor.executemany.assert_called_once()
         conn.commit.assert_called_once()
 
     def test_dry_run_skips_execute(self):
         conn, cursor = self._make_conn()
         checks = [
             {
-                "check_name": "freshness_item",
-                "check_type": "freshness",
+                "check_name": "completeness_item_item_id",
+                "check_type": "completeness",
                 "domain": "item",
                 "sql_template": "SELECT 1",
-                "threshold": 168,
+                "threshold": 0.0,
                 "severity": "warning",
                 "enabled": True,
             },
@@ -301,13 +277,15 @@ class TestUpsertChecks:
     def test_multiple_checks(self):
         conn, cursor = self._make_conn()
         checks = [
-            {"check_name": f"check_{i}", "check_type": "freshness", "domain": "item",
-             "sql_template": "SELECT 1", "threshold": 168, "severity": "warning", "enabled": True}
+            {"check_name": f"check_{i}", "check_type": "completeness", "domain": "item",
+             "sql_template": "SELECT 1", "threshold": 0.0, "severity": "warning", "enabled": True}
             for i in range(5)
         ]
         count = upsert_checks(conn, checks, dry_run=False)
         assert count == 5
-        assert cursor.execute.call_count == 5
+        cursor.executemany.assert_called_once()
+        # All 5 checks passed as a single batch
+        assert len(cursor.executemany.call_args[0][1]) == 5
 
     def test_empty_checks_list(self):
         conn, cursor = self._make_conn()
@@ -339,8 +317,8 @@ class TestRun:
             result = run(dry_run=True)
 
         assert result["dry_run"] is True
-        assert result["total"] == 8
-        assert "freshness" in result["by_type"]
+        assert result["total"] == 6
+        assert "completeness" in result["by_type"]
         # dry_run should NOT execute any SQL
         mock_cursor.execute.assert_not_called()
 
@@ -362,6 +340,7 @@ class TestRun:
             result = run(dry_run=False)
 
         assert result["dry_run"] is False
-        assert result["total"] == 8
-        assert mock_cursor.execute.call_count == 8
+        assert result["total"] == 6
+        mock_cursor.executemany.assert_called_once()
+        assert len(mock_cursor.executemany.call_args[0][1]) == 6
         mock_conn.commit.assert_called_once()

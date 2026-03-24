@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS fact_inventory_investment_plan (
     plan_sk                BIGSERIAL PRIMARY KEY,
     plan_id                TEXT NOT NULL,
-    item_no                TEXT NOT NULL,
+    item_id                TEXT NOT NULL,
     loc                    TEXT NOT NULL,
     computation_date       DATE NOT NULL,
     -- Current state
@@ -28,13 +28,13 @@ CREATE TABLE IF NOT EXISTS fact_inventory_investment_plan (
     abc_xyz_segment        TEXT,
     unit_cost              NUMERIC(12,4),
     created_ts             TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE (plan_id, item_no, loc)
+    UNIQUE (plan_id, item_id, loc)
 );
 
 CREATE INDEX IF NOT EXISTS idx_inv_plan_plan_id
     ON fact_inventory_investment_plan (plan_id, investment_rank);
 CREATE INDEX IF NOT EXISTS idx_inv_plan_item_loc
-    ON fact_inventory_investment_plan (item_no, loc);
+    ON fact_inventory_investment_plan (item_id, loc);
 CREATE INDEX IF NOT EXISTS idx_inv_plan_marginal_roi
     ON fact_inventory_investment_plan (marginal_roi DESC);
 

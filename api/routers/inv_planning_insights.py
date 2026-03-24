@@ -15,10 +15,10 @@ from typing import Optional
 
 import psycopg
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _f, _s, get_conn, set_cache
+from api.core import _s, get_conn, set_cache
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def get_action_feed(
                 # --- Critical / high exceptions ---
                 try:
                     cur.execute("""
-                        SELECT item_no, loc, severity, exception_type,
+                        SELECT item_id, loc, severity, exception_type,
                                current_qty_on_hand, recommended_order_qty,
                                estimated_order_value, exception_date
                         FROM fact_replenishment_exceptions
@@ -100,7 +100,7 @@ def get_action_feed(
                         items.append({
                             "source": "exception",
                             "severity": r[2],
-                            "item_no": r[0],
+                            "item_id": r[0],
                             "loc": r[1],
                             "title": f"{r[3]} exception",
                             "detail": f"On-hand {_safe_float(r[4])}, recommend order {_safe_float(r[5])}",
@@ -114,7 +114,7 @@ def get_action_feed(
                 # --- Urgent demand signals ---
                 try:
                     cur.execute("""
-                        SELECT item_no, loc, signal_type, signal_strength,
+                        SELECT item_id, loc, signal_type, signal_strength,
                                projected_stockout, signal_date
                         FROM fact_demand_signals
                         WHERE alert_priority = 'urgent'
@@ -125,7 +125,7 @@ def get_action_feed(
                         items.append({
                             "source": "signal",
                             "severity": "high",
-                            "item_no": r[0],
+                            "item_id": r[0],
                             "loc": r[1],
                             "title": f"Urgent signal: {r[2]}",
                             "detail": f"Strength {_safe_float(r[3])}, stockout projected: {r[4]}",
@@ -139,7 +139,7 @@ def get_action_feed(
                 # --- At-risk POs (open orders past expected delivery) ---
                 try:
                     cur.execute("""
-                        SELECT item_no, loc, expected_receipt_date,
+                        SELECT item_id, loc, expected_receipt_date,
                                recommended_order_qty, estimated_order_value
                         FROM fact_replenishment_exceptions
                         WHERE status = 'ordered'
@@ -151,7 +151,7 @@ def get_action_feed(
                         items.append({
                             "source": "po_risk",
                             "severity": "high",
-                            "item_no": r[0],
+                            "item_id": r[0],
                             "loc": r[1],
                             "title": "Overdue PO",
                             "detail": f"Expected {r[2]}, qty {_safe_float(r[3])}",
@@ -165,7 +165,7 @@ def get_action_feed(
                 # --- Projected stockouts ---
                 try:
                     cur.execute("""
-                        SELECT item_no, loc, signal_date
+                        SELECT item_id, loc, signal_date
                         FROM fact_demand_signals
                         WHERE projected_stockout = TRUE
                         ORDER BY signal_date DESC
@@ -175,7 +175,7 @@ def get_action_feed(
                         items.append({
                             "source": "stockout",
                             "severity": "critical",
-                            "item_no": r[0],
+                            "item_id": r[0],
                             "loc": r[1],
                             "title": "Projected stockout",
                             "detail": "Demand signal projects stockout",
@@ -200,12 +200,12 @@ def get_action_feed(
 
 
 # ───────────────────────────────────────────────────────────────────────────
-# 2. GET /inv-planning/exceptions/{item_no}/{loc}/root-cause (Expert #2)
+# 2. GET /inv-planning/exceptions/{item_id}/{loc}/root-cause (Expert #2)
 # ───────────────────────────────────────────────────────────────────────────
 
-@router.get("/inv-planning/exceptions/{item_no}/{loc}/root-cause")
+@router.get("/inv-planning/exceptions/{item_id}/{loc}/root-cause")
 def get_exception_root_cause(
-    item_no: str,
+    item_id: str,
     loc: str,
 ) -> dict:
     """Root cause analysis for a specific item+loc exception."""
@@ -220,10 +220,10 @@ def get_exception_root_cause(
                         SELECT signal_type, signal_strength, alert_priority,
                                projected_stockout, signal_date
                         FROM fact_demand_signals
-                        WHERE item_no = %s AND loc = %s
+                        WHERE item_id = %s AND loc = %s
                         ORDER BY signal_date DESC
                         LIMIT 5
-                    """, [item_no, loc])
+                    """, [item_id, loc])
                     rows = cur.fetchall()
                     if rows:
                         latest = rows[0]
@@ -250,10 +250,10 @@ def get_exception_root_cause(
                             SUM(basefcst_pref) AS total_fcst,
                             SUM(tothist_dmd)   AS total_actual
                         FROM agg_forecast_monthly
-                        WHERE dmdunit = %s AND loc = %s
+                        WHERE item_id = %s AND loc = %s
                           AND model_id = 'external'
                           AND month_start >= (CURRENT_DATE - INTERVAL '6 months')
-                    """, [item_no, loc])
+                    """, [item_id, loc])
                     row = cur.fetchone()
                     if row and row[0] is not None and row[1] is not None:
                         fcst, actual = float(row[0]), float(row[1])
@@ -280,11 +280,11 @@ def get_exception_root_cause(
                         FROM mv_supplier_performance sp
                         WHERE EXISTS (
                             SELECT 1 FROM dim_item i
-                            WHERE i.item_no = %s
+                            WHERE i.item_id = %s
                               AND i.supplier_no = sp.supplier_no
                         )
                         LIMIT 1
-                    """, [item_no])
+                    """, [item_id])
                     row = cur.fetchone()
                     if row:
                         cv = _safe_float(row[3])
@@ -311,11 +311,11 @@ def get_exception_root_cause(
                                current_qty_on_hand, ss_combined, reorder_point,
                                recommended_order_qty
                         FROM fact_replenishment_exceptions
-                        WHERE item_no = %s AND loc = %s
+                        WHERE item_id = %s AND loc = %s
                           AND status IN ('open', 'ordered')
                         ORDER BY exception_date DESC
                         LIMIT 3
-                    """, [item_no, loc])
+                    """, [item_id, loc])
                     rows = cur.fetchall()
                     if rows:
                         causes.append({
@@ -367,7 +367,7 @@ def get_segment_dashboard(
                 try:
                     cur.execute("""
                         SELECT COUNT(*) AS dfu_count
-                        FROM dim_dfu
+                        FROM dim_sku
                         WHERE abc_xyz_segment = %s
                     """, [segment])
                     row = cur.fetchone()
@@ -382,7 +382,7 @@ def get_segment_dashboard(
                             AVG(health_score)  AS avg_health_score,
                             AVG(score_dos_target) AS avg_dos_score
                         FROM mv_inventory_health_score h
-                        JOIN dim_dfu d ON h.item_no = d.dmdunit AND h.loc = d.loc
+                        JOIN dim_sku d ON h.item_id = d.item_id AND h.loc = d.loc
                         WHERE d.abc_xyz_segment = %s
                     """, [segment])
                     row = cur.fetchone()
@@ -397,7 +397,7 @@ def get_segment_dashboard(
                     cur.execute("""
                         SELECT AVG(fill_rate) AS avg_fill_rate
                         FROM mv_fill_rate_monthly f
-                        JOIN dim_dfu d ON f.item_no = d.dmdunit AND f.loc = d.loc
+                        JOIN dim_sku d ON f.item_id = d.item_id AND f.loc = d.loc
                         WHERE d.abc_xyz_segment = %s
                           AND f.month_start >= (CURRENT_DATE - INTERVAL '3 months')
                     """, [segment])
@@ -411,7 +411,7 @@ def get_segment_dashboard(
                 try:
                     cur.execute("""
                         SELECT COUNT(*) FROM fact_safety_stock_targets s
-                        JOIN dim_dfu d ON s.item_no = d.dmdunit AND s.loc = d.loc
+                        JOIN dim_sku d ON s.item_id = d.item_id AND s.loc = d.loc
                         WHERE d.abc_xyz_segment = %s
                           AND s.is_below_ss = TRUE
                           AND s.policy_version = 'v1'
@@ -425,7 +425,7 @@ def get_segment_dashboard(
                 try:
                     cur.execute("""
                         SELECT COUNT(*) FROM fact_replenishment_exceptions e
-                        JOIN dim_dfu d ON e.item_no = d.dmdunit AND e.loc = d.loc
+                        JOIN dim_sku d ON e.item_id = d.item_id AND e.loc = d.loc
                         WHERE d.abc_xyz_segment = %s AND e.status = 'open'
                     """, [segment])
                     row = cur.fetchone()
@@ -438,7 +438,7 @@ def get_segment_dashboard(
                     cur.execute("""
                         SELECT p.policy_id, COUNT(*) AS cnt
                         FROM fact_dfu_policy_assignment p
-                        JOIN dim_dfu d ON p.item_no = d.dmdunit AND p.loc = d.loc
+                        JOIN dim_sku d ON p.item_id = d.item_id AND p.loc = d.loc
                         WHERE d.abc_xyz_segment = %s
                           AND p.is_active = TRUE
                         GROUP BY p.policy_id
@@ -453,10 +453,10 @@ def get_segment_dashboard(
                 # --- Top exceptions ---
                 try:
                     cur.execute("""
-                        SELECT e.item_no, e.loc, e.exception_type, e.severity,
+                        SELECT e.item_id, e.loc, e.exception_type, e.severity,
                                e.estimated_order_value
                         FROM fact_replenishment_exceptions e
-                        JOIN dim_dfu d ON e.item_no = d.dmdunit AND e.loc = d.loc
+                        JOIN dim_sku d ON e.item_id = d.item_id AND e.loc = d.loc
                         WHERE d.abc_xyz_segment = %s AND e.status = 'open'
                         ORDER BY CASE e.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2
                                  WHEN 'medium' THEN 3 ELSE 4 END,
@@ -465,7 +465,7 @@ def get_segment_dashboard(
                     """, [segment])
                     result["exceptions"] = [
                         {
-                            "item_no": r[0], "loc": r[1],
+                            "item_id": r[0], "loc": r[1],
                             "exception_type": r[2], "severity": r[3],
                             "estimated_order_value": _safe_float(r[4]),
                         }
@@ -505,7 +505,7 @@ def get_ss_cost_benefit(
     params: list = []
 
     if item:
-        where_parts.append("s.item_no ILIKE %s")
+        where_parts.append("s.item_id ILIKE %s")
         params.append(f"%{item}%")
     if loc:
         where_parts.append("s.loc ILIKE %s")
@@ -535,7 +535,7 @@ def get_ss_cost_benefit(
                 # since unit_cost is not on this table. We estimate holding with
                 # a notional unit cost of 1.0 and scale by demand magnitude.
                 cur.execute(f"""
-                    SELECT s.item_no, s.loc, s.ss_combined,
+                    SELECT s.item_id, s.loc, s.ss_combined,
                            s.demand_mean_monthly, s.service_level_target,
                            s.ss_coverage, s.is_below_ss, s.abc_vol,
                            s.current_qty_on_hand
@@ -581,7 +581,7 @@ def get_ss_cost_benefit(
                     total_stockout += stockout_cost
 
                     items.append({
-                        "item_no": r[0],
+                        "item_id": r[0],
                         "loc": r[1],
                         "ss_target": round(ss_target, 2),
                         "demand_mean_monthly": round(demand_mean, 2),
@@ -759,14 +759,14 @@ def get_network_heatmap(
                     ),
                     snapshot AS (
                         SELECT
-                            inv.item_no,
+                            inv.item_id,
                             inv.loc,
                             inv.qty_on_hand,
                             inv.mtd_sales,
                             COALESCE(i.prod_class_desc, '(unknown)') AS category
                         FROM fact_inventory_snapshot inv
                         CROSS JOIN latest l
-                        JOIN dim_item i ON inv.item_no = i.item_no
+                        JOIN dim_item i ON inv.item_id = i.item_id
                         WHERE inv.snapshot_date = l.sd
                     )
                     SELECT
@@ -775,7 +775,7 @@ def get_network_heatmap(
                         CASE WHEN SUM(s.mtd_sales) > 0
                              THEN SUM(s.qty_on_hand) / (SUM(s.mtd_sales) / GREATEST(EXTRACT(day FROM CURRENT_DATE), 1))
                              ELSE NULL END AS avg_dos,
-                        COUNT(DISTINCT s.item_no) AS item_count
+                        COUNT(DISTINCT s.item_id) AS item_count
                     FROM snapshot s
                     GROUP BY s.loc, s.category
                     ORDER BY s.loc, s.category
@@ -1088,7 +1088,7 @@ def get_constrained_optimization(
             with conn.cursor() as cur:
                 # Fetch items below SS with their gap and service level info
                 cur.execute("""
-                    SELECT item_no, loc, ss_combined, current_qty_on_hand,
+                    SELECT item_id, loc, ss_combined, current_qty_on_hand,
                            service_level_target, demand_mean_monthly, ss_gap
                     FROM fact_safety_stock_targets
                     WHERE policy_version = 'v1'
@@ -1120,7 +1120,7 @@ def get_constrained_optimization(
                     uplift_per_dollar = uplift / investment_needed if investment_needed > 0 else 0.0
 
                     candidates.append({
-                        "item_no": r[0],
+                        "item_id": r[0],
                         "loc": r[1],
                         "current_ss": round(ss_target, 2),
                         "recommended_ss": round(ss_target, 2),
@@ -1187,7 +1187,7 @@ def get_proactive_rebalancing(
                     ),
                     item_loc_dos AS (
                         SELECT
-                            inv.item_no,
+                            inv.item_id,
                             inv.loc,
                             inv.qty_on_hand,
                             CASE WHEN inv.mtd_sales > 0
@@ -1200,17 +1200,17 @@ def get_proactive_rebalancing(
                           AND inv.qty_on_hand IS NOT NULL
                     ),
                     deficit AS (
-                        SELECT item_no, loc, qty_on_hand, dos
+                        SELECT item_id, loc, qty_on_hand, dos
                         FROM item_loc_dos
                         WHERE dos IS NOT NULL AND dos < %s
                     ),
                     surplus AS (
-                        SELECT item_no, loc, qty_on_hand, dos
+                        SELECT item_id, loc, qty_on_hand, dos
                         FROM item_loc_dos
                         WHERE dos IS NOT NULL AND dos > %s
                     )
                     SELECT
-                        d.item_no,
+                        d.item_id,
                         s.loc AS from_loc,
                         d.loc AS to_loc,
                         s.dos AS from_dos,
@@ -1220,7 +1220,7 @@ def get_proactive_rebalancing(
                             (d.qty_on_hand * %s / NULLIF(d.dos, 0)) - d.qty_on_hand
                         ) AS suggested_qty
                     FROM deficit d
-                    JOIN surplus s ON d.item_no = s.item_no AND d.loc <> s.loc
+                    JOIN surplus s ON d.item_id = s.item_id AND d.loc <> s.loc
                     WHERE LEAST(
                         s.qty_on_hand - (s.qty_on_hand * %s / NULLIF(s.dos, 0)),
                         (d.qty_on_hand * %s / NULLIF(d.dos, 0)) - d.qty_on_hand
@@ -1241,7 +1241,7 @@ def get_proactive_rebalancing(
                         "high" if (to_dos or 0) < 7 else "medium"
                     )
                     opportunities.append({
-                        "item_no": r[0],
+                        "item_id": r[0],
                         "from_loc": r[1],
                         "to_loc": r[2],
                         "from_dos": round(from_dos, 1) if from_dos is not None else None,

@@ -47,7 +47,7 @@ vi.mock("@/api/queries/evolution", () => ({
   },
   STALE_EVO: { FIVE_MIN: 300000, ONE_MIN: 60000 },
   fetchBiasCorrectionSummary: vi.fn().mockResolvedValue({
-    dfu_count: 0,
+    sku_count: 0,
     avg_correction_factor: null,
     flagged_count: 0,
     clipped_count: 0,
@@ -102,8 +102,8 @@ describe("AccuracyTab", () => {
     const { fetchCompetitionSummary } = await import("@/api/queries");
     (fetchCompetitionSummary as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       summary: {
-        total_dfus: 100,
-        total_dfu_months: 500,
+        total_skus: 100,
+        total_sku_months: 500,
         total_champion_rows: 5000,
         model_wins: { lgbm_global: 300, catboost_global: 200 },
         overall_champion_wape: 30.0,
@@ -133,8 +133,8 @@ describe("AccuracyTab", () => {
     const { fetchCompetitionSummary } = await import("@/api/queries");
     (fetchCompetitionSummary as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       summary: {
-        total_dfus: 50,
-        total_dfu_months: 200,
+        total_skus: 50,
+        total_sku_months: 200,
         total_champion_rows: 2000,
         model_wins: { lgbm_global: 200 },
         overall_champion_wape: 25.0,

@@ -6,35 +6,35 @@ import {
   formatPercent,
   formatCompactNumber,
 } from "@/lib/formatters";
-import type { DfuAnalysisKpis, DfuAnalysisPayload } from "@/types";
+import type { SkuAnalysisKpis, SkuAnalysisPayload } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 export interface ModelKpiSectionProps {
-  dfuData: DfuAnalysisPayload;
-  dfuKpis: Record<string, DfuAnalysisKpis>;
-  dfuKpiMonths: number;
-  setDfuKpiMonths: (v: number) => void;
-  dfuVisibleSeries: Set<string>;
+  skuData: SkuAnalysisPayload;
+  skuKpis: Record<string, SkuAnalysisKpis>;
+  skuKpiMonths: number;
+  setSkuKpiMonths: (v: number) => void;
+  skuVisibleSeries: Set<string>;
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 export function ModelKpiSection({
-  dfuData,
-  dfuKpis,
-  dfuKpiMonths,
-  setDfuKpiMonths,
-  dfuVisibleSeries,
+  skuData,
+  skuKpis,
+  skuKpiMonths,
+  setSkuKpiMonths,
+  skuVisibleSeries,
 }: ModelKpiSectionProps) {
   const { trendColors } = useChartColors();
 
-  if (Object.keys(dfuKpis).length === 0) return null;
+  if (Object.keys(skuKpis).length === 0) return null;
 
-  const visibleModels = dfuData.models.filter(
-    (m) => dfuVisibleSeries.has(`forecast_${m}`) && dfuKpis[m],
+  const visibleModels = skuData.models.filter(
+    (m) => skuVisibleSeries.has(`forecast_${m}`) && skuKpis[m],
   );
 
   if (visibleModels.length === 0) return null;
@@ -49,8 +49,8 @@ export function ModelKpiSection({
           <span className="text-[10px] font-medium text-muted-foreground">Window</span>
           <select
             className="h-7 rounded border border-input bg-background px-2 text-xs"
-            value={dfuKpiMonths}
-            onChange={(e) => setDfuKpiMonths(Number(e.target.value))}
+            value={skuKpiMonths}
+            onChange={(e) => setSkuKpiMonths(Number(e.target.value))}
             onClick={(e) => e.stopPropagation()}
           >
             {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
@@ -62,8 +62,8 @@ export function ModelKpiSection({
       <div className="border-t border-input px-3 py-3">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {visibleModels.map((model) => {
-            const kpi = dfuKpis[model];
-            const colorIdx = dfuData.models.indexOf(model) + 1;
+            const kpi = skuKpis[model];
+            const colorIdx = skuData.models.indexOf(model) + 1;
             return (
               <Card
                 key={model}

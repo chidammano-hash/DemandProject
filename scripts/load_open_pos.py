@@ -22,7 +22,7 @@ import argparse
 import glob
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -32,6 +32,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.services.perf_profiler import profiled_section
 
 CONFIG_PATH = "config/po_integration_config.yaml"
 
@@ -84,155 +85,158 @@ def validate_po_row(row: dict, config: dict) -> tuple[bool, str]:
 
 def load_suppliers(filepath: str, conn, dry_run: bool) -> int:
     """Upsert supplier rows from CSV. Returns row count."""
-    df = pd.read_csv(filepath, dtype=str)
-    df.columns = [c.strip().lower() for c in df.columns]
+    with profiled_section("load_suppliers"):
+        df = pd.read_csv(filepath, dtype=str)
+        df.columns = [c.strip().lower() for c in df.columns]
 
-    count = 0
-    sql = """
-        INSERT INTO dim_supplier
-            (supplier_id, supplier_name, country_code, address_line1, city,
-             state_province, postal_code, payment_terms, default_lead_time_days,
-             reliability_score, on_time_pct, is_active, modified_ts)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-        ON CONFLICT (supplier_id) DO UPDATE SET
-            supplier_name           = EXCLUDED.supplier_name,
-            country_code            = EXCLUDED.country_code,
-            payment_terms           = EXCLUDED.payment_terms,
-            default_lead_time_days  = EXCLUDED.default_lead_time_days,
-            reliability_score       = EXCLUDED.reliability_score,
-            on_time_pct             = EXCLUDED.on_time_pct,
-            is_active               = EXCLUDED.is_active,
-            modified_ts             = NOW()
-    """
-    for _, row in df.iterrows():
-        is_active = str(row.get("is_active", "true")).lower() in ("true", "1", "yes")
-        params = (
-            row.get("supplier_id"), row.get("supplier_name"),
-            row.get("country_code") or None, row.get("address_line1") or None,
-            row.get("city") or None, row.get("state_province") or None,
-            row.get("postal_code") or None, row.get("payment_terms") or None,
-            int(row["default_lead_time_days"]) if not pd.isna(row.get("default_lead_time_days", "")) else None,
-            float(row["reliability_score"]) if not pd.isna(row.get("reliability_score", "")) else None,
-            float(row["on_time_pct"]) if not pd.isna(row.get("on_time_pct", "")) else None,
-            is_active,
-        )
+        count = 0
+        sql = """
+            INSERT INTO dim_supplier
+                (supplier_id, supplier_name, country_code, address_line1, city,
+                 state_province, postal_code, payment_terms, default_lead_time_days,
+                 reliability_score, on_time_pct, is_active, modified_ts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (supplier_id) DO UPDATE SET
+                supplier_name           = EXCLUDED.supplier_name,
+                country_code            = EXCLUDED.country_code,
+                payment_terms           = EXCLUDED.payment_terms,
+                default_lead_time_days  = EXCLUDED.default_lead_time_days,
+                reliability_score       = EXCLUDED.reliability_score,
+                on_time_pct             = EXCLUDED.on_time_pct,
+                is_active               = EXCLUDED.is_active,
+                modified_ts             = NOW()
+        """
+        for _, row in df.iterrows():
+            is_active = str(row.get("is_active", "true")).lower() in ("true", "1", "yes")
+            params = (
+                row.get("supplier_id"), row.get("supplier_name"),
+                row.get("country_code") or None, row.get("address_line1") or None,
+                row.get("city") or None, row.get("state_province") or None,
+                row.get("postal_code") or None, row.get("payment_terms") or None,
+                int(row["default_lead_time_days"]) if not pd.isna(row.get("default_lead_time_days", "")) else None,
+                float(row["reliability_score"]) if not pd.isna(row.get("reliability_score", "")) else None,
+                float(row["on_time_pct"]) if not pd.isna(row.get("on_time_pct", "")) else None,
+                is_active,
+            )
+            if not dry_run:
+                with conn.cursor() as cur:
+                    cur.execute(sql, params)
+            count += 1
+
         if not dry_run:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-        count += 1
-
-    if not dry_run:
-        conn.commit()
-    print(f"  Suppliers: {count} rows upserted{' (dry-run)' if dry_run else ''}")
-    return count
+            conn.commit()
+        print(f"  Suppliers: {count} rows upserted{' (dry-run)' if dry_run else ''}")
+        return count
 
 
 def load_pos(filepath: str, conn, dry_run: bool, config: dict) -> tuple[int, int, dict]:
     """Load PO lines from CSV. Returns (loaded, skipped, rejection_reasons)."""
-    df = pd.read_csv(filepath, dtype=str)
-    df.columns = [c.strip().lower() for c in df.columns]
+    with profiled_section("load_purchase_orders"):
+        df = pd.read_csv(filepath, dtype=str)
+        df.columns = [c.strip().lower() for c in df.columns]
 
-    loaded = 0
-    skipped = 0
-    reasons: dict[str, int] = {}
+        loaded = 0
+        skipped = 0
+        reasons: dict[str, int] = {}
 
-    sql = """
-        INSERT INTO fact_open_purchase_orders
-            (po_number, po_line_number, item_no, loc, supplier_id, po_date,
-             ordered_qty, confirmed_qty, received_qty, unit_cost, currency,
-             promised_delivery_date, confirmed_delivery_date, revised_delivery_date,
-             po_status, line_status, source_file, modified_ts)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-        ON CONFLICT (po_number, po_line_number) DO UPDATE SET
-            confirmed_qty           = EXCLUDED.confirmed_qty,
-            received_qty            = EXCLUDED.received_qty,
-            unit_cost               = EXCLUDED.unit_cost,
-            revised_delivery_date   = EXCLUDED.revised_delivery_date,
-            po_status               = EXCLUDED.po_status,
-            line_status             = EXCLUDED.line_status,
-            modified_ts             = NOW()
-    """
+        sql = """
+            INSERT INTO fact_open_purchase_orders
+                (po_number, po_line_number, item_id, loc, supplier_id, po_date,
+                 ordered_qty, confirmed_qty, received_qty, unit_cost, currency,
+                 promised_delivery_date, confirmed_delivery_date, revised_delivery_date,
+                 po_status, line_status, source_file, modified_ts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (po_number, po_line_number) DO UPDATE SET
+                confirmed_qty           = EXCLUDED.confirmed_qty,
+                received_qty            = EXCLUDED.received_qty,
+                unit_cost               = EXCLUDED.unit_cost,
+                revised_delivery_date   = EXCLUDED.revised_delivery_date,
+                po_status               = EXCLUDED.po_status,
+                line_status             = EXCLUDED.line_status,
+                modified_ts             = NOW()
+        """
 
-    for _, row in df.iterrows():
-        r = {
-            "po_number": row.get("po_number"),
-            "po_line_number": int(row.get("po_line_number", 1)),
-            "item_no": row.get("item_no"),
-            "loc": row.get("loc"),
-            "supplier_id": row.get("supplier_id") or None,
-            "po_date": _parse_date(row.get("po_date")),
-            "ordered_qty": float(row.get("ordered_qty") or 0),
-            "confirmed_qty": float(row["confirmed_qty"]) if not pd.isna(row.get("confirmed_qty", "")) else None,
-            "received_qty": float(row.get("received_qty") or 0),
-            "unit_cost": float(row["unit_cost"]) if not pd.isna(row.get("unit_cost", "")) else None,
-            "currency": row.get("currency") or "USD",
-            "promised_delivery_date": _parse_date(row.get("promised_delivery_date")),
-            "confirmed_delivery_date": _parse_date(row.get("confirmed_delivery_date")),
-            "revised_delivery_date": _parse_date(row.get("revised_delivery_date")),
-            "po_status": row.get("po_status") or "open",
-            "line_status": row.get("line_status") or "open",
-        }
+        for _, row in df.iterrows():
+            r = {
+                "po_number": row.get("po_number"),
+                "po_line_number": int(row.get("po_line_number", 1)),
+                "item_id": row.get("item_id"),
+                "loc": row.get("loc"),
+                "supplier_id": row.get("supplier_id") or None,
+                "po_date": _parse_date(row.get("po_date")),
+                "ordered_qty": float(row.get("ordered_qty") or 0),
+                "confirmed_qty": float(row["confirmed_qty"]) if not pd.isna(row.get("confirmed_qty", "")) else None,
+                "received_qty": float(row.get("received_qty") or 0),
+                "unit_cost": float(row["unit_cost"]) if not pd.isna(row.get("unit_cost", "")) else None,
+                "currency": row.get("currency") or "USD",
+                "promised_delivery_date": _parse_date(row.get("promised_delivery_date")),
+                "confirmed_delivery_date": _parse_date(row.get("confirmed_delivery_date")),
+                "revised_delivery_date": _parse_date(row.get("revised_delivery_date")),
+                "po_status": row.get("po_status") or "open",
+                "line_status": row.get("line_status") or "open",
+            }
 
-        valid, reason = validate_po_row(r, config)
-        if not valid:
-            skipped += 1
-            reasons[reason] = reasons.get(reason, 0) + 1
-            continue
+            valid, reason = validate_po_row(r, config)
+            if not valid:
+                skipped += 1
+                reasons[reason] = reasons.get(reason, 0) + 1
+                continue
+
+            if not dry_run:
+                with conn.cursor() as cur:
+                    cur.execute(sql, (
+                        r["po_number"], r["po_line_number"], r["item_id"], r["loc"],
+                        r["supplier_id"], r["po_date"], r["ordered_qty"], r["confirmed_qty"],
+                        r["received_qty"], r["unit_cost"], r["currency"],
+                        r["promised_delivery_date"], r["confirmed_delivery_date"],
+                        r["revised_delivery_date"], r["po_status"], r["line_status"],
+                        os.path.basename(filepath),
+                    ))
+            loaded += 1
 
         if not dry_run:
-            with conn.cursor() as cur:
-                cur.execute(sql, (
-                    r["po_number"], r["po_line_number"], r["item_no"], r["loc"],
-                    r["supplier_id"], r["po_date"], r["ordered_qty"], r["confirmed_qty"],
-                    r["received_qty"], r["unit_cost"], r["currency"],
-                    r["promised_delivery_date"], r["confirmed_delivery_date"],
-                    r["revised_delivery_date"], r["po_status"], r["line_status"],
-                    os.path.basename(filepath),
-                ))
-        loaded += 1
-
-    if not dry_run:
-        conn.commit()
-    return loaded, skipped, reasons
+            conn.commit()
+        return loaded, skipped, reasons
 
 
 def load_receipts(filepath: str, conn, dry_run: bool) -> int:
     """Load goods receipt postings from CSV. Returns row count."""
-    df = pd.read_csv(filepath, dtype=str)
-    df.columns = [c.strip().lower() for c in df.columns]
+    with profiled_section("load_receipts"):
+        df = pd.read_csv(filepath, dtype=str)
+        df.columns = [c.strip().lower() for c in df.columns]
 
-    count = 0
-    sql = """
-        INSERT INTO fact_po_receipts
-            (receipt_number, po_number, po_line_number, item_no, loc,
-             received_qty, unit_cost, actual_receipt_date, receipt_status, source_file)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (receipt_number, po_number, po_line_number) DO UPDATE SET
-            received_qty        = EXCLUDED.received_qty,
-            actual_receipt_date = EXCLUDED.actual_receipt_date,
-            receipt_status      = EXCLUDED.receipt_status
-    """
-    for _, row in df.iterrows():
-        receipt_date = _parse_date(row.get("actual_receipt_date"))
-        if not receipt_date:
-            continue
-        params = (
-            row.get("receipt_number"), row.get("po_number"),
-            int(row.get("po_line_number", 1)), row.get("item_no"), row.get("loc"),
-            float(row.get("received_qty") or 0),
-            float(row["unit_cost"]) if not pd.isna(row.get("unit_cost", "")) else None,
-            receipt_date, row.get("receipt_status") or "posted",
-            os.path.basename(filepath),
-        )
+        count = 0
+        sql = """
+            INSERT INTO fact_po_receipts
+                (receipt_number, po_number, po_line_number, item_id, loc,
+                 received_qty, unit_cost, actual_receipt_date, receipt_status, source_file)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (receipt_number, po_number, po_line_number) DO UPDATE SET
+                received_qty        = EXCLUDED.received_qty,
+                actual_receipt_date = EXCLUDED.actual_receipt_date,
+                receipt_status      = EXCLUDED.receipt_status
+        """
+        for _, row in df.iterrows():
+            receipt_date = _parse_date(row.get("actual_receipt_date"))
+            if not receipt_date:
+                continue
+            params = (
+                row.get("receipt_number"), row.get("po_number"),
+                int(row.get("po_line_number", 1)), row.get("item_id"), row.get("loc"),
+                float(row.get("received_qty") or 0),
+                float(row["unit_cost"]) if not pd.isna(row.get("unit_cost", "")) else None,
+                receipt_date, row.get("receipt_status") or "posted",
+                os.path.basename(filepath),
+            )
+            if not dry_run:
+                with conn.cursor() as cur:
+                    cur.execute(sql, params)
+            count += 1
+
         if not dry_run:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-        count += 1
-
-    if not dry_run:
-        conn.commit()
-    print(f"  Receipts: {count} rows upserted{' (dry-run)' if dry_run else ''}")
-    return count
+            conn.commit()
+        print(f"  Receipts: {count} rows upserted{' (dry-run)' if dry_run else ''}")
+        return count
 
 
 def reconcile_received_qty(conn) -> int:
@@ -240,31 +244,32 @@ def reconcile_received_qty(conn) -> int:
     After loading receipts, update fact_open_purchase_orders.received_qty
     from fact_po_receipts aggregates. Returns number of rows updated.
     """
-    sql = """
-        UPDATE fact_open_purchase_orders po
-        SET received_qty = COALESCE(r.total_received, 0),
-            line_status = CASE
-                WHEN COALESCE(r.total_received, 0) >= COALESCE(po.confirmed_qty, po.ordered_qty)
-                THEN 'closed'
-                WHEN COALESCE(r.total_received, 0) > 0
-                THEN 'partially_received'
-                ELSE po.line_status
-            END,
-            modified_ts = NOW()
-        FROM (
-            SELECT po_number, po_line_number, SUM(received_qty) AS total_received
-            FROM fact_po_receipts
-            WHERE receipt_status = 'posted'
-            GROUP BY po_number, po_line_number
-        ) r
-        WHERE po.po_number = r.po_number
-          AND po.po_line_number = r.po_line_number
-    """
-    with conn.cursor() as cur:
-        cur.execute(sql)
-        count = cur.rowcount
-    conn.commit()
-    return count
+    with profiled_section("reconcile_received_qty"):
+        sql = """
+            UPDATE fact_open_purchase_orders po
+            SET received_qty = COALESCE(r.total_received, 0),
+                line_status = CASE
+                    WHEN COALESCE(r.total_received, 0) >= COALESCE(po.confirmed_qty, po.ordered_qty)
+                    THEN 'closed'
+                    WHEN COALESCE(r.total_received, 0) > 0
+                    THEN 'partially_received'
+                    ELSE po.line_status
+                END,
+                modified_ts = NOW()
+            FROM (
+                SELECT po_number, po_line_number, SUM(received_qty) AS total_received
+                FROM fact_po_receipts
+                WHERE receipt_status = 'posted'
+                GROUP BY po_number, po_line_number
+            ) r
+            WHERE po.po_number = r.po_number
+              AND po.po_line_number = r.po_line_number
+        """
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            count = cur.rowcount
+        conn.commit()
+        return count
 
 
 def main():

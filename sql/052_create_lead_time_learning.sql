@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS fact_lead_time_actuals (
     po_number               VARCHAR(50)     NOT NULL,
     line_number             INTEGER         NOT NULL DEFAULT 1,
     supplier_id             VARCHAR(50),
-    item_no                 VARCHAR(50)     NOT NULL,
+    item_id                 VARCHAR(50)     NOT NULL,
     item_category           VARCHAR(100),
     loc                     VARCHAR(50)     NOT NULL,
     promised_delivery_date  DATE,
@@ -26,7 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_lt_actuals_supplier_cat
     ON fact_lead_time_actuals (supplier_id, item_category, actual_receipt_date DESC);
 
 CREATE INDEX IF NOT EXISTS idx_lt_actuals_item_loc
-    ON fact_lead_time_actuals (item_no, loc, actual_receipt_date DESC);
+    ON fact_lead_time_actuals (item_id, loc, actual_receipt_date DESC);
 
 -- -----------------------------------------------------------------------
 

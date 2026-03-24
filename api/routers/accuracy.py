@@ -45,7 +45,7 @@ def _add_item_location_filters(
     where_parts: list[str],
     params: list[Any],
     *,
-    dmdunit_col: str,
+    item_id_col: str,
     loc_col: str,
     item: Optional[str] = None,
     location: Optional[str] = None,
@@ -55,7 +55,7 @@ def _add_item_location_filters(
         values = [v.strip() for v in item.split(",") if v.strip()]
         if values:
             ph = ",".join(["%s"] * len(values))
-            where_parts.append(f"{dmdunit_col} IN ({ph})")
+            where_parts.append(f"{item_id_col} IN ({ph})")
             params.extend(values)
     if location:
         values = [v.strip() for v in location.split(",") if v.strip()]
@@ -69,7 +69,7 @@ def _add_cross_dim_filters(
     where_parts: list[str],
     params: list[Any],
     *,
-    dmdunit_col: str,
+    item_id_col: str,
     loc_col: str,
     brand: Optional[str] = None,
     category: Optional[str] = None,
@@ -81,7 +81,7 @@ def _add_cross_dim_filters(
         if values:
             ph = ",".join(["%s"] * len(values))
             where_parts.append(
-                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = {dmdunit_col} AND di.brand_name = ANY(ARRAY[{ph}]))"
+                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = {item_id_col} AND di.brand_name = ANY(ARRAY[{ph}]))"
             )
             params.extend(values)
     if category:
@@ -89,7 +89,7 @@ def _add_cross_dim_filters(
         if values:
             ph = ",".join(["%s"] * len(values))
             where_parts.append(
-                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_no = {dmdunit_col} AND di.class_ = ANY(ARRAY[{ph}]))"
+                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = {item_id_col} AND di.class_ = ANY(ARRAY[{ph}]))"
             )
             params.extend(values)
     if market:
@@ -167,7 +167,7 @@ def forecast_accuracy_slice(
     # ── Common-DFUs path: raw fact table with intersection CTE ──────────
     use_common = common_dfus and len(model_list) >= 2
     # Use raw fact table when cross-dim filters (brand/category/market/item/location) are set,
-    # because the pre-aggregated view does not expose dmdunit/loc for direct filtering.
+    # because the pre-aggregated view does not expose item_id/loc for direct filtering.
     use_raw = bool(brand or category or market or item or location)
 
     if use_common:
@@ -207,10 +207,10 @@ def forecast_accuracy_slice(
             where_parts.append("COALESCE(d.seasonality_profile, '(unknown)') = %s")
             main_params.append(seasonality_profile.strip())
         _add_item_location_filters(where_parts, main_params,
-                                   dmdunit_col="f.dmdunit", loc_col="f.loc",
+                                   item_id_col="f.item_id", loc_col="f.loc",
                                    item=item, location=location)
         _add_cross_dim_filters(where_parts, main_params,
-                               dmdunit_col="f.dmdunit", loc_col="f.loc",
+                               item_id_col="f.item_id", loc_col="f.loc",
                                brand=brand, category=category, market=market)
 
         where_sql = " AND ".join(where_parts)
@@ -219,7 +219,7 @@ def forecast_accuracy_slice(
 
         sql = f"""
             WITH cd AS (
-                SELECT dmdunit, dmdgroup, loc
+                SELECT item_id, customer_group, loc
                 FROM fact_external_forecast_monthly
                 WHERE model_id IN ({cte_ph})
                   AND tothist_dmd IS NOT NULL AND basefcst_pref IS NOT NULL
@@ -229,14 +229,14 @@ def forecast_accuracy_slice(
             SELECT
                 {bucket_expr} AS bucket,
                 f.model_id,
-                COUNT(DISTINCT (f.dmdunit, f.dmdgroup, f.loc))::bigint AS dfu_count,
+                COUNT(DISTINCT (f.item_id, f.customer_group, f.loc))::bigint AS dfu_count,
                 SUM(f.basefcst_pref)                     AS sum_forecast,
                 SUM(f.tothist_dmd)                       AS sum_actual,
                 SUM(ABS(f.basefcst_pref - f.tothist_dmd)) AS sum_abs_error
             FROM fact_external_forecast_monthly f
-            JOIN dim_dfu d
-              ON f.dmdunit = d.dmdunit AND f.dmdgroup = d.dmdgroup AND f.loc = d.loc
-            WHERE (f.dmdunit, f.dmdgroup, f.loc) IN (SELECT dmdunit, dmdgroup, loc FROM cd)
+            JOIN dim_sku d
+              ON f.item_id = d.item_id AND f.customer_group = d.customer_group AND f.loc = d.loc
+            WHERE (f.item_id, f.customer_group, f.loc) IN (SELECT item_id, customer_group, loc FROM cd)
               AND f.tothist_dmd IS NOT NULL AND f.basefcst_pref IS NOT NULL
               AND {where_sql}
             GROUP BY 1, 2
@@ -248,12 +248,12 @@ def forecast_accuracy_slice(
                 SELECT 1 FROM fact_external_forecast_monthly
                 WHERE model_id IN ({cte_ph})
                   AND tothist_dmd IS NOT NULL AND basefcst_pref IS NOT NULL
-                GROUP BY dmdunit, dmdgroup, loc
+                GROUP BY item_id, customer_group, loc
                 HAVING COUNT(DISTINCT model_id) = %s
             ) sub
         """
         per_model_sql = f"""
-            SELECT model_id, COUNT(DISTINCT (dmdunit, dmdgroup, loc))::bigint
+            SELECT model_id, COUNT(DISTINCT (item_id, customer_group, loc))::bigint
             FROM fact_external_forecast_monthly
             WHERE model_id IN ({cte_ph})
               AND tothist_dmd IS NOT NULL AND basefcst_pref IS NOT NULL
@@ -282,7 +282,9 @@ def forecast_accuracy_slice(
             "models": model_list,
             "common_dfus": True,
             "common_dfu_count": common_count,
+            "common_sku_count": common_count,
             "dfu_counts": dfu_counts,
+            "sku_counts": dfu_counts,
             "rows": sorted(pivot.values(), key=lambda r: r["bucket"]),
             "source": "fact_external_forecast_monthly",
         }
@@ -327,10 +329,10 @@ def forecast_accuracy_slice(
             where_parts_raw.append("COALESCE(d.seasonality_profile, '(unknown)') = %s")
             raw_params.append(seasonality_profile.strip())
         _add_item_location_filters(where_parts_raw, raw_params,
-                                   dmdunit_col="f.dmdunit", loc_col="f.loc",
+                                   item_id_col="f.item_id", loc_col="f.loc",
                                    item=item, location=location)
         _add_cross_dim_filters(where_parts_raw, raw_params,
-                               dmdunit_col="f.dmdunit", loc_col="f.loc",
+                               item_id_col="f.item_id", loc_col="f.loc",
                                brand=brand, category=category, market=market)
 
         where_sql_raw = " AND ".join(where_parts_raw)
@@ -339,13 +341,13 @@ def forecast_accuracy_slice(
             SELECT
                 {bucket_expr} AS bucket,
                 f.model_id,
-                COUNT(DISTINCT (f.dmdunit, f.dmdgroup, f.loc))::bigint AS dfu_count,
+                COUNT(DISTINCT (f.item_id, f.customer_group, f.loc))::bigint AS dfu_count,
                 SUM(f.basefcst_pref)                       AS sum_forecast,
                 SUM(f.tothist_dmd)                         AS sum_actual,
                 SUM(ABS(f.basefcst_pref - f.tothist_dmd))  AS sum_abs_error
             FROM fact_external_forecast_monthly f
-            JOIN dim_dfu d
-              ON f.dmdunit = d.dmdunit AND f.dmdgroup = d.dmdgroup AND f.loc = d.loc
+            JOIN dim_sku d
+              ON f.item_id = d.item_id AND f.customer_group = d.customer_group AND f.loc = d.loc
             WHERE {where_sql_raw}
             GROUP BY 1, 2
             ORDER BY 1 ASC NULLS LAST, 2 ASC
@@ -522,10 +524,10 @@ def forecast_accuracy_lag_curve(
             where_parts.append("date_trunc('month', a.startdate)::date <= %s::date")
             main_params.append(month_to.strip())
         _add_item_location_filters(where_parts, main_params,
-                                   dmdunit_col="a.dmdunit", loc_col="a.loc",
+                                   item_id_col="a.item_id", loc_col="a.loc",
                                    item=item, location=location)
         _add_cross_dim_filters(where_parts, main_params,
-                               dmdunit_col="a.dmdunit", loc_col="a.loc",
+                               item_id_col="a.item_id", loc_col="a.loc",
                                brand=brand, category=category, market=market)
 
         where_sql = " AND ".join(where_parts)
@@ -534,7 +536,7 @@ def forecast_accuracy_lag_curve(
 
         sql = f"""
             WITH cd AS (
-                SELECT dmdunit, dmdgroup, loc
+                SELECT item_id, customer_group, loc
                 FROM backtest_lag_archive
                 WHERE model_id IN ({cte_ph})
                   AND tothist_dmd IS NOT NULL AND basefcst_pref IS NOT NULL
@@ -544,14 +546,14 @@ def forecast_accuracy_lag_curve(
             SELECT
                 a.model_id,
                 a.lag,
-                COUNT(DISTINCT (a.dmdunit, a.dmdgroup, a.loc))::bigint AS dfu_count,
+                COUNT(DISTINCT (a.item_id, a.customer_group, a.loc))::bigint AS dfu_count,
                 SUM(a.basefcst_pref)          AS sum_forecast,
                 SUM(a.tothist_dmd)            AS sum_actual,
                 SUM(ABS(a.basefcst_pref - a.tothist_dmd)) AS sum_abs_error
             FROM backtest_lag_archive a
-            JOIN dim_dfu d
-              ON a.dmdunit = d.dmdunit AND a.dmdgroup = d.dmdgroup AND a.loc = d.loc
-            WHERE (a.dmdunit, a.dmdgroup, a.loc) IN (SELECT dmdunit, dmdgroup, loc FROM cd)
+            JOIN dim_sku d
+              ON a.item_id = d.item_id AND a.customer_group = d.customer_group AND a.loc = d.loc
+            WHERE (a.item_id, a.customer_group, a.loc) IN (SELECT item_id, customer_group, loc FROM cd)
               AND a.tothist_dmd IS NOT NULL AND a.basefcst_pref IS NOT NULL
               AND {where_sql}
             GROUP BY 1, 2
@@ -609,10 +611,10 @@ def forecast_accuracy_lag_curve(
             where_parts_raw.append("date_trunc('month', a.startdate)::date <= %s::date")
             raw_params.append(month_to.strip())
         _add_item_location_filters(where_parts_raw, raw_params,
-                                   dmdunit_col="a.dmdunit", loc_col="a.loc",
+                                   item_id_col="a.item_id", loc_col="a.loc",
                                    item=item, location=location)
         _add_cross_dim_filters(where_parts_raw, raw_params,
-                               dmdunit_col="a.dmdunit", loc_col="a.loc",
+                               item_id_col="a.item_id", loc_col="a.loc",
                                brand=brand, category=category, market=market)
 
         where_sql_raw = " AND ".join(where_parts_raw)
@@ -621,13 +623,13 @@ def forecast_accuracy_lag_curve(
             SELECT
                 a.model_id,
                 a.lag,
-                COUNT(DISTINCT (a.dmdunit, a.dmdgroup, a.loc))::bigint AS dfu_count,
+                COUNT(DISTINCT (a.item_id, a.customer_group, a.loc))::bigint AS dfu_count,
                 SUM(a.basefcst_pref)          AS sum_forecast,
                 SUM(a.tothist_dmd)            AS sum_actual,
                 SUM(ABS(a.basefcst_pref - a.tothist_dmd)) AS sum_abs_error
             FROM backtest_lag_archive a
-            JOIN dim_dfu d
-              ON a.dmdunit = d.dmdunit AND a.dmdgroup = d.dmdgroup AND a.loc = d.loc
+            JOIN dim_sku d
+              ON a.item_id = d.item_id AND a.customer_group = d.customer_group AND a.loc = d.loc
             WHERE {where_sql_raw}
             GROUP BY 1, 2
             ORDER BY 2 ASC, 1 ASC
@@ -716,8 +718,8 @@ def forecast_accuracy_lag_curve(
         db_rows = cur.fetchall()
         if include_dfu_count:
             cur.execute(dfu_sql, dfu_params)
-            for mid, l, cnt in cur.fetchall():
-                dfu_map[(mid, int(l))] = int(cnt)
+            for mid, lag, cnt in cur.fetchall():
+                dfu_map[(mid, int(lag))] = int(cnt)
 
     by_lag = {}
     for model_id, lag_val, n_rows, sf, sa, sae in db_rows:

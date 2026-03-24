@@ -28,7 +28,7 @@ class TestAddCrossDimFilters:
         fn(where, params, brand="Nike")
         assert len(where) == 1
         assert "brand_name" in where[0]
-        assert "t.item_no" in where[0]
+        assert "t.item_id" in where[0]
         assert params == [["Nike"]]
 
     def test_category_only(self):
@@ -93,9 +93,9 @@ class TestAddCrossDimFilters:
         fn = _import_fn()
         where: list[str] = []
         params: list = []
-        fn(where, params, brand="Nike", item_col="s.item_no")
-        assert "s.item_no" in where[0]
-        assert "t.item_no" not in where[0]
+        fn(where, params, brand="Nike", item_col="s.item_id")
+        assert "s.item_id" in where[0]
+        assert "t.item_id" not in where[0]
 
     def test_custom_loc_col(self):
         fn = _import_fn()
@@ -110,8 +110,8 @@ class TestAddCrossDimFilters:
         where: list[str] = []
         params: list = []
         fn(where, params, brand="Nike", market="CA",
-           item_col="p.item_no", loc_col="p.loc")
-        assert "p.item_no" in where[0]
+           item_col="p.item_id", loc_col="p.loc")
+        assert "p.item_id" in where[0]
         assert "p.loc" in where[1]
 
     def test_appends_to_existing(self):
@@ -133,13 +133,13 @@ class TestAddCrossDimFilters:
         assert where == []
         assert params == []
 
-    def test_dmdunit_item_col(self):
-        """Verify the common dmdunit pattern works."""
+    def test_item_id_item_col(self):
+        """Verify the common item_id pattern works."""
         fn = _import_fn()
         where: list[str] = []
         params: list = []
-        fn(where, params, brand="Nike", item_col="t.dmdunit")
-        assert "t.dmdunit" in where[0]
+        fn(where, params, brand="Nike", item_col="t.item_id")
+        assert "t.item_id" in where[0]
 
     def test_supplier_no_item_col(self):
         """Verify the supplier_no pattern works."""

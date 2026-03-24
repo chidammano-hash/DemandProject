@@ -10,7 +10,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import _f, _s, get_conn, set_cache
+from api.core import _f, get_conn, set_cache
 
 router = APIRouter(tags=["control-tower"])
 
@@ -133,7 +133,7 @@ def get_control_tower_alerts(
             'EXC-' || exception_id::TEXT AS alert_id,
             'exception'                  AS source,
             severity,
-            item_no, loc,
+            item_id, loc,
             exception_type               AS alert_type,
             'Exception: ' || exception_type || ' — ' || COALESCE(notes, '')  AS description,
             'Review and action required' AS action,
@@ -155,13 +155,13 @@ def get_control_tower_alerts(
     ds_params = sev_params + [limit]
     ds_sql = f"""
         SELECT
-            'DS-' || item_no || '-' || loc AS alert_id,
+            'DS-' || item_id || '-' || loc AS alert_id,
             'demand_signal'                AS source,
             CASE alert_priority
                 WHEN 'urgent' THEN 'critical'
                 WHEN 'watch'  THEN 'high'
                 ELSE 'medium' END          AS severity,
-            item_no, loc,
+            item_id, loc,
             signal_type                    AS alert_type,
             'Demand ' || signal_type || ' vs forecast by ' ||
                 ROUND(ABS(demand_vs_forecast_pct)::NUMERIC, 1) || '%%' AS description,
@@ -190,7 +190,7 @@ def get_control_tower_alerts(
             "alert_id":    r[0],
             "source":      r[1],
             "severity":    r[2],
-            "item_no":     r[3],
+            "item_id":     r[3],
             "loc":         r[4],
             "alert_type":  r[5],
             "description": r[6],
@@ -232,56 +232,56 @@ def get_top_critical_items(
     params: list[Any] = []
     if item:
         params.append(item)
-        where_clauses.append(f"h.item_no = %s")
+        where_clauses.append("h.item_id = %s")
     if location:
         params.append(location)
-        where_clauses.append(f"h.loc = %s")
+        where_clauses.append("h.loc = %s")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
     sql = f"""
         WITH ranked_health AS (
             SELECT
-                h.item_no, h.loc,
+                h.item_id, h.loc,
                 d.abc_vol, d.abc_xyz_segment,
                 h.health_score, h.health_tier,
                 h.ss_coverage, h.is_below_ss,
                 h.current_dos, h.dos_min_target, h.dos_max_target
             FROM mv_inventory_health_score h
-            LEFT JOIN dim_dfu d ON h.item_no = d.dmdunit AND h.loc = d.loc
+            LEFT JOIN dim_sku d ON h.item_id = d.item_id AND h.loc = d.loc
             {where_sql}
             ORDER BY h.health_score ASC NULLS LAST
             LIMIT %s
         ),
         exc_agg AS (
             SELECT
-                e.item_no, e.loc,
+                e.item_id, e.loc,
                 COUNT(*) AS open_exception_count,
                 MAX(CASE WHEN e.severity = 'critical'
                          THEN e.recommended_order_qty END) AS recommended_order_qty
             FROM fact_replenishment_exceptions e
             INNER JOIN ranked_health rh
-                ON e.item_no = rh.item_no AND e.loc = rh.loc
+                ON e.item_id = rh.item_id AND e.loc = rh.loc
             WHERE e.status = 'open'
-            GROUP BY e.item_no, e.loc
+            GROUP BY e.item_id, e.loc
         ),
         latest_fr AS (
-            SELECT DISTINCT ON (fr.item_no, fr.loc)
-                fr.item_no, fr.loc, fr.fill_rate
+            SELECT DISTINCT ON (fr.item_id, fr.loc)
+                fr.item_id, fr.loc, fr.fill_rate
             FROM mv_fill_rate_monthly fr
             INNER JOIN ranked_health rh
-                ON fr.item_no = rh.item_no AND fr.loc = rh.loc
-            ORDER BY fr.item_no, fr.loc, fr.month_start DESC
+                ON fr.item_id = rh.item_id AND fr.loc = rh.loc
+            ORDER BY fr.item_id, fr.loc, fr.month_start DESC
         ),
         cur_stockout AS (
-            SELECT ms.item_no, ms.loc, ms.stockout_days
+            SELECT ms.item_id, ms.loc, ms.stockout_days
             FROM mv_intramonth_stockout ms
             INNER JOIN ranked_health rh
-                ON ms.item_no = rh.item_no AND ms.loc = rh.loc
+                ON ms.item_id = rh.item_id AND ms.loc = rh.loc
             WHERE ms.month_start = DATE_TRUNC('month', CURRENT_DATE)::DATE
         )
         SELECT
-            rh.item_no, rh.loc,
+            rh.item_id, rh.loc,
             rh.abc_vol, rh.abc_xyz_segment,
             rh.health_score, rh.health_tier,
             rh.ss_coverage, rh.is_below_ss,
@@ -291,9 +291,9 @@ def get_top_critical_items(
             lfr.fill_rate                          AS fill_rate_last_3m,
             cs.stockout_days                       AS stockout_days_this_month
         FROM ranked_health rh
-        LEFT JOIN exc_agg ea      ON rh.item_no = ea.item_no AND rh.loc = ea.loc
-        LEFT JOIN latest_fr lfr   ON rh.item_no = lfr.item_no AND rh.loc = lfr.loc
-        LEFT JOIN cur_stockout cs ON rh.item_no = cs.item_no AND rh.loc = cs.loc
+        LEFT JOIN exc_agg ea      ON rh.item_id = ea.item_id AND rh.loc = ea.loc
+        LEFT JOIN latest_fr lfr   ON rh.item_id = lfr.item_id AND rh.loc = lfr.loc
+        LEFT JOIN cur_stockout cs ON rh.item_id = cs.item_id AND rh.loc = cs.loc
         ORDER BY rh.health_score ASC NULLS LAST
     """
     params.append(limit)
@@ -306,7 +306,7 @@ def get_top_critical_items(
     return {
         "items": [
             {
-                "item_no":               r[0],
+                "item_id":               r[0],
                 "loc":                   r[1],
                 "abc_vol":               r[2],
                 "abc_xyz_segment":       r[3],
@@ -353,9 +353,9 @@ def get_control_tower_trend(
             AVG(ms.avg_qty_on_hand)    AS avg_dos
         FROM mv_fill_rate_monthly fr
         LEFT JOIN mv_inventory_health_score h
-            ON fr.item_no = h.item_no AND fr.loc = h.loc
+            ON fr.item_id = h.item_id AND fr.loc = h.loc
         LEFT JOIN mv_intramonth_stockout ms
-            ON fr.item_no = ms.item_no AND fr.loc = ms.loc AND fr.month_start = ms.month_start
+            ON fr.item_id = ms.item_id AND fr.loc = ms.loc AND fr.month_start = ms.month_start
         WHERE fr.month_start >= (SELECT MAX(month_start) FROM mv_fill_rate_monthly)
                                 - ((%s - 1) || ' months')::INTERVAL
         GROUP BY fr.month_start

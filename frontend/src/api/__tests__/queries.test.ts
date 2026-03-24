@@ -31,9 +31,9 @@ describe("queryKeys", () => {
     expect(key[0]).toBe("accuracy-slice");
   });
 
-  it("dfuAnalysis includes params", () => {
-    const key = queryKeys.dfuAnalysis({ item: "X", location: "Y" });
-    expect(key[0]).toBe("dfu-analysis");
+  it("skuAnalysis includes params", () => {
+    const key = queryKeys.skuAnalysis({ item: "X", location: "Y" });
+    expect(key[0]).toBe("sku-analysis");
   });
 });
 

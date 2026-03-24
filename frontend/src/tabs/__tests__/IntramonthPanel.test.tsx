@@ -21,7 +21,7 @@ vi.mock("@/api/queries", async () => {
     fetchIntramonthDetail: vi.fn().mockResolvedValue({
       rows: [
         {
-          item_no: "100320",
+          item_id: "100320",
           loc: "1401-BULK",
           month_start: "2026-03-01",
           stockout_days: 12,

@@ -208,7 +208,7 @@ async def test_eoq_sensitivity_200():
 
 @pytest.mark.asyncio
 async def test_eoq_sensitivity_response_structure():
-    """Sensitivity endpoint returns item_no, loc, avg_demand_monthly, curve."""
+    """Sensitivity endpoint returns item_id, loc, avg_demand_monthly, curve."""
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (100.0,)
 

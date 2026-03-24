@@ -1,14 +1,16 @@
 """
-Run LGBM backtesting with per-cluster strategy and expanding-window timeframes.
+Run tree-model backtesting with per-cluster strategy and expanding-window timeframes.
 
+Supports LGBM (default), CatBoost, and XGBoost via the --model flag.
 All run options (recursive, SHAP, tuning) are controlled via
 config/algorithm_config.yaml rather than CLI flags.
 
-Produces two CSVs under data/backtest/lgbm_cluster/:
+Produces two CSVs under data/backtest/<model_id>/:
   - backtest_predictions.csv          (execution-lag row for DB load)
   - backtest_predictions_all_lags.csv (lag 0-4 archive)
 """
 
+import importlib
 import json
 import logging
 import os
@@ -16,11 +18,11 @@ import pickle
 import platform
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import yaml
@@ -30,14 +32,295 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.backtest_framework import run_tree_backtest
+from common.backtest_framework import (
+    compute_cluster_demand_stats,
+    resolve_cluster_params,
+    run_tree_backtest,
+)
 from common.constants import MIN_CLUSTER_ROWS
+from common.services.perf_profiler import profiled_section
 from common.tuning import TRAIN_FOLD_FNS, load_best_params, tune_for_timeframe
 
 logger = logging.getLogger(__name__)
 
 
-# ── LGBM per-cluster training function ───────────────────────────────────────
+# ── Model Registry ────────────────────────────────────────────────────────────
+
+MODEL_REGISTRY: dict[str, dict[str, Any]] = {
+    "lgbm": {
+        "class": "lightgbm.LGBMRegressor",
+        "config_key": "lgbm",
+        "config_section": "lgbm_cluster",
+        "iter_param": "n_estimators",
+        "gpu_params": lambda: {"device": "gpu"},
+        "gpu_test": lambda cls: cls(device="gpu", n_estimators=1, verbosity=-1),
+        "gpu_test_platform_check": True,  # only auto-detect on Darwin
+        "fit_extras_per_cluster": lambda params, iter_param: {
+            iter_param: max(params.get(iter_param, 800), 800),
+        },
+        "fit_extras_global": lambda params, iter_param: {
+            iter_param: max(params.get(iter_param, 1000), 1000),
+        },
+        "default_params": lambda algo: {
+            "n_estimators": algo.get("n_estimators", 300),
+            "learning_rate": algo.get("learning_rate", 0.08),
+            "num_leaves": algo.get("num_leaves", 31),
+            "min_child_samples": algo.get("min_child_samples", 20),
+            "max_depth": algo.get("max_depth", -1),
+            "min_gain_to_split": algo.get("min_gain_to_split", 0.01),
+            "subsample": algo.get("subsample", 0.80),
+            "bagging_freq": algo.get("bagging_freq", 1),
+            "colsample_bytree": algo.get("colsample_bytree", 0.80),
+            "feature_fraction_bynode": algo.get("feature_fraction_bynode", 0.7),
+            "reg_lambda": algo.get("reg_lambda", 1.0),
+            "reg_alpha": algo.get("reg_alpha", 0.1),
+            "path_smooth": algo.get("path_smooth", 2.0),
+            "max_bin": algo.get("max_bin", 127),  # halve histogram memory (default 255)
+            "feature_pre_filter": True,  # skip features not used in splits
+            "verbosity": -1,
+            "random_state": 42,
+            "n_jobs": -1,
+        },
+        "cat_dtype": "category",
+        "model_params_key": "lgbm_params",
+        "model_type_tag": "lgbm_backtest",
+        "shap_extractor": "compute_shap_global",
+        "best_iteration_attr": "best_iteration_",
+        "feature_importance_fn": lambda model: model.feature_importances_,
+        "constant_target_guard": True,
+        "needs_cat_indices": False,
+        "needs_cat_dtype_cast": False,
+    },
+    "catboost": {
+        "class": "catboost.CatBoostRegressor",
+        "config_key": "catboost",
+        "config_section": "catboost_cluster",
+        "iter_param": "iterations",
+        "gpu_params": lambda: {"task_type": "GPU"},
+        "gpu_test": lambda cls: cls(task_type="GPU", iterations=1, verbose=0),
+        "gpu_test_platform_check": False,
+        "fit_extras_per_cluster": lambda params, iter_param: {
+            iter_param: max(params.get(iter_param, 800), 800),
+        },
+        "fit_extras_global": lambda params, iter_param: {
+            iter_param: max(params.get(iter_param, 1000), 1000),
+        },
+        "default_params": lambda algo: {
+            "iterations": algo.get("iterations", 300),
+            "learning_rate": algo.get("learning_rate", 0.08),
+            "depth": algo.get("depth", 5),
+            "l2_leaf_reg": algo.get("l2_leaf_reg", 3.0),
+            "border_count": algo.get("border_count", 64),  # fewer histogram bins (default 254)
+            "max_ctr_complexity": algo.get("max_ctr_complexity", 1),  # simpler categorical combos
+            "random_seed": 42,
+            "loss_function": "RMSE",
+            "verbose": 0,
+            "thread_count": -1,
+        },
+        "cat_dtype": "str",
+        "model_params_key": "catboost_params",
+        "model_type_tag": "catboost_backtest",
+        "shap_extractor": "compute_shap_catboost",
+        "best_iteration_attr": "best_iteration_",
+        "feature_importance_fn": lambda model: model.get_feature_importance(),
+        "constant_target_guard": True,
+        "needs_cat_indices": True,
+        "needs_cat_dtype_cast": False,
+    },
+    "xgboost": {
+        "class": "xgboost.XGBRegressor",
+        "config_key": "xgboost",
+        "config_section": "xgboost_cluster",
+        "iter_param": "n_estimators",
+        "gpu_params": lambda: {"device": "cuda"},
+        "gpu_test": lambda cls: cls(device="cuda", n_estimators=1, verbosity=0),
+        "gpu_test_platform_check": False,
+        "fit_extras_per_cluster": lambda params, iter_param: {
+            iter_param: max(params.get(iter_param, 1000), 1000),
+            "early_stopping_rounds": 50,
+        },
+        "fit_extras_global": lambda params, iter_param: {
+            iter_param: max(params.get(iter_param, 1200), 1200),
+            "early_stopping_rounds": 50,
+        },
+        "default_params": lambda algo: {
+            "n_estimators": algo.get("n_estimators", 500),
+            "learning_rate": algo.get("learning_rate", 0.05),
+            "max_depth": algo.get("max_depth", 6),
+            "min_child_weight": algo.get("min_child_weight", 5),
+            "subsample": algo.get("subsample", 0.8),
+            "colsample_bytree": algo.get("colsample_bytree", 0.8),
+            "verbosity": 0,
+            "random_state": 42,
+            "n_jobs": -1,
+            "enable_categorical": True,
+            "tree_method": "hist",
+        },
+        "cat_dtype": "category",
+        "model_params_key": "xgboost_params",
+        "model_type_tag": "xgboost_backtest",
+        "shap_extractor": "compute_shap_global",
+        "best_iteration_attr": "best_iteration",  # no trailing underscore for XGBoost
+        "feature_importance_fn": lambda model: model.feature_importances_,
+        "constant_target_guard": True,
+        "needs_cat_indices": False,
+        "needs_cat_dtype_cast": True,  # XGBoost needs explicit .astype("category")
+    },
+}
+
+
+def _import_model_class(dotted_path: str) -> type:
+    """Dynamically import a model class from a dotted module.class path."""
+    module_path, class_name = dotted_path.rsplit(".", 1)
+    mod = importlib.import_module(module_path)
+    return getattr(mod, class_name)
+
+
+def _get_callbacks(model_name: str, lib_module: Any) -> list | None:
+    """Return early-stopping callbacks for LGBM, None for others."""
+    if model_name == "lgbm":
+        return [
+            lib_module.early_stopping(stopping_rounds=50, verbose=False),
+            lib_module.log_evaluation(period=-1),
+        ]
+    return None
+
+
+# ── Single-cluster training worker (used by both sequential and parallel) ─────
+
+
+def _train_single_cluster(
+    cluster_label: str,
+    ci: int,
+    n_clusters: int,
+    train_c: pd.DataFrame,
+    pred_c: pd.DataFrame,
+    feature_cols: list[str],
+    cat_cols: list[str],
+    params: dict,
+    *,
+    model_name: str,
+    registry: dict[str, Any],
+    model_class: type,
+    lib_module: Any,
+) -> tuple[str, pd.DataFrame | None, Any | None, dict | None]:
+    """Train a single cluster model. Returns (cluster_label, result_df, model, meta_dict).
+
+    This function is self-contained with no shared mutable state, making it safe
+    for use in ProcessPoolExecutor.
+    """
+    needs_cat_indices = registry["needs_cat_indices"]
+    needs_cat_dtype_cast = registry["needs_cat_dtype_cast"]
+    constant_target_guard = registry["constant_target_guard"]
+    best_iter_attr = registry["best_iteration_attr"]
+    iter_param = registry["iter_param"]
+
+    cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols] if needs_cat_indices else []
+    cat_cols_in_features = [c for c in cat_cols if c in feature_cols] if needs_cat_dtype_cast else []
+    callbacks = _get_callbacks(model_name, lib_module)
+
+    if len(train_c) < MIN_CLUSTER_ROWS or len(pred_c) == 0:
+        if len(pred_c) > 0:
+            logger.info("Cluster %d/%d '%s': skipped (train=%d), zeroing %d predictions",
+                        ci, n_clusters, cluster_label, len(train_c), len(pred_c))
+            result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
+            result["basefcst_pref"] = 0.0
+            return cluster_label, result, None, None
+        return cluster_label, None, None, None
+
+    X_train = train_c[feature_cols].copy() if needs_cat_dtype_cast else train_c[feature_cols]
+    y_train = train_c["qty"]
+    X_pred = pred_c[feature_cols].copy() if needs_cat_dtype_cast else pred_c[feature_cols]
+
+    if needs_cat_dtype_cast:
+        for col in cat_cols_in_features:
+            X_train[col] = X_train[col].astype("category")
+            X_pred[col] = X_pred[col].astype("category")
+
+    t0 = time.time()
+    # Time-aware train/val split — last 20% of cluster rows for validation
+    n_val = max(1, int(len(X_train) * 0.20))
+    X_tr, X_val = X_train.iloc[:-n_val], X_train.iloc[-n_val:]
+    y_tr, y_val = y_train.iloc[:-n_val], y_train.iloc[-n_val:]
+
+    # Guard: some models crash on constant targets
+    if constant_target_guard and y_tr.nunique() <= 1:
+        const_val = float(y_tr.iloc[0]) if len(y_tr) > 0 else 0.0
+        logger.info("Cluster %d/%d '%s': skipped (constant target=%.0f), using constant for %d predictions",
+                    ci, n_clusters, cluster_label, const_val, len(pred_c))
+        result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
+        result["basefcst_pref"] = const_val
+        return cluster_label, result, None, None
+
+    # Per-cluster adaptive hyperparameter profiles: resolve cluster-specific
+    # overrides based on demand characteristics (sparse, volatile, stable, etc.)
+    cluster_stats = compute_cluster_demand_stats(train_c, cluster_label)
+    resolved_params, profile_name = resolve_cluster_params(
+        cluster_label, cluster_stats, params,
+    )
+    if profile_name not in ("none", "default"):
+        logger.info(
+            "Cluster %d/%d '%s': matched profile '%s' (mean_demand=%.1f, cv=%.2f, "
+            "zero_pct=%.2f, seasonal_amp=%.2f)",
+            ci, n_clusters, cluster_label, profile_name,
+            cluster_stats["mean_demand"], cluster_stats["cv_demand"],
+            cluster_stats["zero_demand_pct"], cluster_stats["seasonal_amplitude"],
+        )
+
+    fit_params = {**resolved_params, **registry["fit_extras_per_cluster"](resolved_params, iter_param)}
+    model = model_class(**fit_params)
+
+    # Model-specific fit call
+    if model_name == "lgbm":
+        model.fit(
+            X_tr, y_tr,
+            eval_set=[(X_val, y_val)],
+            eval_metric="mae",
+            categorical_feature=cat_cols,
+            callbacks=callbacks,
+        )
+    elif model_name == "catboost":
+        eval_pool = lib_module.Pool(X_val, y_val, cat_features=cat_indices)
+        model.fit(
+            X_tr, y_tr,
+            cat_features=cat_indices,
+            eval_set=eval_pool,
+            early_stopping_rounds=30,
+            verbose=False,
+        )
+    else:  # xgboost
+        model.fit(
+            X_tr, y_tr,
+            eval_set=[(X_val, y_val)],
+            verbose=False,
+        )
+
+    preds = model.predict(X_pred)
+
+    # Per-cluster validation WAPE
+    val_preds = model.predict(X_val)
+    val_denom = float(abs(y_val.sum()))
+    val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2) if val_denom > 0 else 0.0
+
+    result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
+    result["basefcst_pref"] = np.maximum(preds, 0)
+    n_est_used = getattr(model, best_iter_attr, None)
+    if n_est_used is None:
+        n_est_used = fit_params[iter_param]
+    meta = {
+        "val_wape": val_wape,
+        "train_rows": len(X_tr),
+        "cluster_profile": profile_name,
+        "cluster_stats": cluster_stats,
+    }
+    logger.info("Cluster %d/%d '%s': train=%s, pred=%s, best_iter=%s, val_wape=%.1f%%, profile=%s (%.1fs)",
+                ci, n_clusters, cluster_label, f"{len(train_c):,}", f"{len(pred_c):,}",
+                n_est_used, val_wape, profile_name, time.time() - t0)
+
+    return cluster_label, result, model, meta
+
+
+# ── Per-cluster training function ─────────────────────────────────────────────
 
 
 def train_and_predict_per_cluster(
@@ -46,73 +329,87 @@ def train_and_predict_per_cluster(
     feature_cols: list[str],
     cat_cols: list[str],
     params: dict,
-) -> tuple[pd.DataFrame, dict, dict]:
-    """Train separate LGBM per ml_cluster.
+    *,
+    model_name: str,
+    registry: dict[str, Any],
+    model_class: type,
+    lib_module: Any,
+    parallel: bool = False,
+    max_workers: int = 4,
+) -> tuple[pd.DataFrame, dict, dict[str, dict]]:
+    """Train separate tree models per ml_cluster.
 
     ml_cluster is kept as a hard feature (constant within each cluster partition,
     but required for consistent feature alignment with global models).
 
+    When ``parallel=True`` and there are >4 clusters, uses ProcessPoolExecutor
+    to train clusters concurrently.  Each cluster's training is independent
+    (no shared mutable state).
+
     Returns (predictions, models, model_meta) where model_meta stores per-cluster
-    training metadata (val_wape, train_rows) without monkey-patching sklearn objects.
+    training metadata (val_wape, train_rows).
     """
-    all_results = []
-    models = {}
-    model_meta: dict[str, dict] = {}  # metadata stored separately, not monkey-patched onto model
+    all_results: list[pd.DataFrame] = []
+    models: dict = {}
+    model_meta: dict[str, dict] = {}
 
     clusters = sorted(train_df["ml_cluster"].dropna().unique())
-    logger.info("Training %d per-cluster LGBM models...", len(clusters))
-    for ci, cluster_label in enumerate(clusters, 1):
-        train_c = train_df[train_df["ml_cluster"] == cluster_label]
-        pred_c = predict_df[predict_df["ml_cluster"] == cluster_label]
+    label = model_name.upper()
+    n_clusters = len(clusters)
+    logger.info("Training %d per-cluster %s models...", n_clusters, label)
 
-        if len(train_c) < MIN_CLUSTER_ROWS or len(pred_c) == 0:
-            if len(pred_c) > 0:
-                logger.info("Cluster %d/%d '%s': skipped (train=%d), zeroing %d predictions",
-                            ci, len(clusters), cluster_label, len(train_c), len(pred_c))
-                result = pred_c[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
-                result["basefcst_pref"] = 0.0
+    _worker_kwargs = {
+        "model_name": model_name,
+        "registry": registry,
+        "model_class": model_class,
+        "lib_module": lib_module,
+    }
+
+    use_parallel = parallel and n_clusters > 4
+    if use_parallel:
+        logger.info("Parallel cluster training enabled: %d workers for %d clusters",
+                    max_workers, n_clusters)
+        futures = {}
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            for ci, cluster_label in enumerate(clusters, 1):
+                train_c = train_df[train_df["ml_cluster"] == cluster_label]
+                pred_c = predict_df[predict_df["ml_cluster"] == cluster_label]
+                future = executor.submit(
+                    _train_single_cluster,
+                    cluster_label, ci, n_clusters,
+                    train_c, pred_c,
+                    feature_cols, cat_cols, params,
+                    **_worker_kwargs,
+                )
+                futures[future] = cluster_label
+
+            for future in as_completed(futures):
+                cl, result, model, meta = future.result()
+                if result is not None:
+                    all_results.append(result)
+                if model is not None:
+                    models[cl] = model
+                if meta is not None:
+                    model_meta[cl] = meta
+    else:
+        if parallel:
+            logger.info("Parallel mode requested but only %d clusters (<= 4), using sequential",
+                        n_clusters)
+        for ci, cluster_label in enumerate(clusters, 1):
+            train_c = train_df[train_df["ml_cluster"] == cluster_label]
+            pred_c = predict_df[predict_df["ml_cluster"] == cluster_label]
+            cl, result, model, meta = _train_single_cluster(
+                cluster_label, ci, n_clusters,
+                train_c, pred_c,
+                feature_cols, cat_cols, params,
+                **_worker_kwargs,
+            )
+            if result is not None:
                 all_results.append(result)
-            continue
-
-        X_train = train_c[feature_cols]
-        y_train = train_c["qty"]
-        X_pred = pred_c[feature_cols]
-
-        t0 = time.time()
-        # Time-aware train/val split — last 20% of cluster rows for validation
-        n_val = max(1, int(len(X_train) * 0.20))
-        X_tr, X_val = X_train.iloc[:-n_val], X_train.iloc[-n_val:]
-        y_tr, y_val = y_train.iloc[:-n_val], y_train.iloc[-n_val:]
-
-        callbacks = [
-            lgb.early_stopping(stopping_rounds=50, verbose=False),
-            lgb.log_evaluation(period=-1),
-        ]
-        fit_params = {**params, "n_estimators": max(params.get("n_estimators", 1000), 1000)}
-        model = lgb.LGBMRegressor(**fit_params)
-        model.fit(
-            X_tr, y_tr,
-            eval_set=[(X_val, y_val)],
-            eval_metric="mae",
-            categorical_feature=cat_cols,
-            callbacks=callbacks,
-        )
-        preds = model.predict(X_pred)
-
-        # Per-cluster validation WAPE
-        val_preds = model.predict(X_val)
-        val_denom = float(abs(y_val.sum()))
-        val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2) if val_denom > 0 else 0.0
-
-        result = pred_c[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
-        result["basefcst_pref"] = np.maximum(preds, 0)
-        all_results.append(result)
-        models[cluster_label] = model
-        n_est_used = model.best_iteration_ if model.best_iteration_ is not None else fit_params["n_estimators"]
-        model_meta[cluster_label] = {"val_wape": val_wape, "train_rows": len(X_tr)}
-        logger.info("Cluster %d/%d '%s': train=%s, pred=%s, best_iter=%s, val_wape=%.1f%% (%.1fs)",
-                    ci, len(clusters), cluster_label, f"{len(train_c):,}", f"{len(pred_c):,}",
-                    n_est_used, val_wape, time.time() - t0)
+            if model is not None:
+                models[cl] = model
+            if meta is not None:
+                model_meta[cl] = meta
 
     no_cluster = predict_df[
         predict_df["ml_cluster"].isna() | (
@@ -121,11 +418,14 @@ def train_and_predict_per_cluster(
     ]
     if len(no_cluster) > 0:
         logger.info("%d predict rows with no cluster -> zeroing", len(no_cluster))
-        result = no_cluster[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
+        result = no_cluster[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
         result["basefcst_pref"] = 0.0
         all_results.append(result)
 
     return pd.concat(all_results, ignore_index=True), models, model_meta
+
+
+# ── Global training function ──────────────────────────────────────────────────
 
 
 def train_and_predict_global(
@@ -134,48 +434,89 @@ def train_and_predict_global(
     feature_cols: list[str],
     cat_cols: list[str],
     params: dict,
-) -> tuple[pd.DataFrame, dict, dict]:
-    """Train a single global LGBM on ALL data with ml_cluster as categorical feature."""
-    # ml_cluster is INCLUDED as a feature — do NOT strip it
-    logger.info("Training global LGBM on %s rows, %d features (includes ml_cluster)...",
-                f"{len(train_df):,}", len(feature_cols))
+    *,
+    model_name: str,
+    registry: dict[str, Any],
+    model_class: type,
+    lib_module: Any,
+) -> tuple[pd.DataFrame, dict, dict[str, dict]]:
+    """Train a single global tree model on ALL data with ml_cluster as categorical feature."""
+    needs_cat_indices = registry["needs_cat_indices"]
+    needs_cat_dtype_cast = registry["needs_cat_dtype_cast"]
+    best_iter_attr = registry["best_iteration_attr"]
+    iter_param = registry["iter_param"]
+    label = model_name.upper()
 
-    X_train = train_df[feature_cols]
-    y_train = train_df["qty"]
-    X_pred = predict_df[feature_cols]
+    cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols] if needs_cat_indices else []
+    cat_cols_in_features = [c for c in cat_cols if c in feature_cols] if needs_cat_dtype_cast else []
+    callbacks = _get_callbacks(model_name, lib_module)
 
-    # Time-aware train/val split — last 15% of rows for validation
+    logger.info("Training global %s on %s rows, %d features (includes ml_cluster)...",
+                label, f"{len(train_df):,}", len(feature_cols))
+
+    # Sort by startdate so last 15% = most recent months (not last DFUs alphabetically)
+    sorted_idx = train_df["startdate"].argsort(kind="mergesort")
+    train_sorted = train_df.iloc[sorted_idx]
+    X_train = train_sorted[feature_cols].copy() if needs_cat_dtype_cast else train_sorted[feature_cols]
+    y_train = train_sorted["qty"]
+    X_pred = predict_df[feature_cols].copy() if needs_cat_dtype_cast else predict_df[feature_cols]
+
+    if needs_cat_dtype_cast:
+        for col in cat_cols_in_features:
+            X_train[col] = X_train[col].astype("category")
+            X_pred[col] = X_pred[col].astype("category")
+
+    # Time-aware train/val split — last 15% of rows for validation (most recent months)
     n_val = max(1, int(len(X_train) * 0.15))
     X_tr, X_val = X_train.iloc[:-n_val], X_train.iloc[-n_val:]
     y_tr, y_val = y_train.iloc[:-n_val], y_train.iloc[-n_val:]
 
-    callbacks = [
-        lgb.early_stopping(stopping_rounds=50, verbose=False),
-        lgb.log_evaluation(period=-1),
-    ]
-    fit_params = {**params, "n_estimators": max(params.get("n_estimators", 1200), 1200)}
-    model = lgb.LGBMRegressor(**fit_params)
-    model.fit(
-        X_tr, y_tr,
-        eval_set=[(X_val, y_val)],
-        eval_metric="mae",
-        categorical_feature=cat_cols,
-        callbacks=callbacks,
-    )
+    fit_params = {**params, **registry["fit_extras_global"](params, iter_param)}
+    model = model_class(**fit_params)
+
+    # Model-specific fit call
+    if model_name == "lgbm":
+        model.fit(
+            X_tr, y_tr,
+            eval_set=[(X_val, y_val)],
+            eval_metric="mae",
+            categorical_feature=cat_cols,
+            callbacks=callbacks,
+        )
+    elif model_name == "catboost":
+        eval_pool = lib_module.Pool(X_val, y_val, cat_features=cat_indices)
+        model.fit(
+            X_tr, y_tr,
+            cat_features=cat_indices,
+            eval_set=eval_pool,
+            early_stopping_rounds=30,
+            verbose=False,
+        )
+    else:  # xgboost
+        model.fit(
+            X_tr, y_tr,
+            eval_set=[(X_val, y_val)],
+            verbose=False,
+        )
+
     preds = model.predict(X_pred)
 
     val_preds = model.predict(X_val)
     val_denom = float(abs(y_val.sum()))
     val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2) if val_denom > 0 else 0.0
-    n_est_used = model.best_iteration_ if model.best_iteration_ is not None else fit_params["n_estimators"]
-    logger.info("Global LGBM: val_WAPE=%.1f%%, best_iter=%s, train=%s, pred=%s",
-                val_wape, n_est_used, f"{len(train_df):,}", f"{len(predict_df):,}")
+    n_est_used = getattr(model, best_iter_attr, None)
+    if not n_est_used:
+        n_est_used = fit_params[iter_param]
+    logger.info("Global %s: val_WAPE=%.1f%%, best_iter=%s, train=%s, pred=%s",
+                label, val_wape, n_est_used, f"{len(train_df):,}", f"{len(predict_df):,}")
 
-    result = predict_df[["dfu_ck", "dmdunit", "dmdgroup", "loc", "startdate"]].copy()
+    result = predict_df[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
     result["basefcst_pref"] = np.clip(preds, 0, None)
-    # Use "global" as the single key so persist_cluster_models saves one file
     global_meta = {"global": {"val_wape": val_wape, "train_rows": len(X_tr)}}
     return result, {"global": model}, global_meta
+
+
+# ── Model persistence ─────────────────────────────────────────────────────────
 
 
 def persist_cluster_models(
@@ -185,6 +526,9 @@ def persist_cluster_models(
     timeframe_label: str,
     prod_config: dict | None = None,
     model_meta: dict[str, dict] | None = None,
+    *,
+    feature_importance_fn: Callable | None = None,
+    best_iteration_attr: str = "best_iteration_",
 ) -> None:
     """Persist trained cluster models to disk for production inference (F1.1).
 
@@ -199,9 +543,14 @@ def persist_cluster_models(
         timeframe_label: Backtest timeframe label (e.g. 'J' = most recent).
         prod_config: Loaded production_forecast_config.yaml dict (optional).
         model_meta: {cluster_label: {val_wape, train_rows}} from training functions.
+        feature_importance_fn: Callable that extracts importance array from a model.
+        best_iteration_attr: Attribute name for best iteration on the model object.
     """
     if not models:
         return
+
+    # Default to sklearn-style feature_importances_
+    _get_importance = feature_importance_fn or (lambda m: m.feature_importances_)
 
     base_path = "data/models"
     if prod_config:
@@ -213,8 +562,8 @@ def persist_cluster_models(
     _meta = model_meta or {}
     saved = 0
     for cluster_label, model in models.items():
-        n_est_used = getattr(model, "best_iteration_", None) or 0
-        importance_raw = model.feature_importances_
+        n_est_used = getattr(model, best_iteration_attr, None) or 0
+        importance_raw = _get_importance(model)
         importance_dict = dict(zip(feature_cols, [float(v) for v in importance_raw])) if len(importance_raw) == len(feature_cols) else {}
         cluster_meta = _meta.get(cluster_label, {})
         artifact = {
@@ -238,8 +587,8 @@ def persist_cluster_models(
     fi_dir = out_dir / "feature_importance"
     fi_dir.mkdir(parents=True, exist_ok=True)
     for cluster_label, model in models.items():
-        imp = getattr(model, "feature_importances_", None)
-        if imp is not None and len(imp) == len(feature_cols):
+        imp = _get_importance(model)
+        if len(imp) == len(feature_cols):
             fi_dict = dict(zip(feature_cols, [float(v) for v in imp]))
             fi_sorted = dict(sorted(fi_dict.items(), key=lambda x: x[1], reverse=True))
             with open(fi_dir / f"cluster_{cluster_label}.json", "w") as f:
@@ -254,40 +603,73 @@ def persist_cluster_models(
 
 def main() -> None:
     import argparse
-    parser = argparse.ArgumentParser(description="Run LGBM per-cluster backtest (settings from algorithm_config.yaml)")
+    parser = argparse.ArgumentParser(
+        description="Run tree-model per-cluster backtest (settings from algorithm_config.yaml)",
+    )
+    parser.add_argument("--model", type=str, default="lgbm",
+                        choices=list(MODEL_REGISTRY.keys()),
+                        help="Model type to run (default: lgbm)")
     parser.add_argument("--config", type=str, default=None,
                         help="Path to algorithm_config.yaml (default: config/algorithm_config.yaml)")
     parser.add_argument("--model-id", type=str, default=None,
                         help="Override model_id from config")
     parser.add_argument("--n-timeframes", type=int, default=None,
                         help="Override n_timeframes from config")
+    parser.add_argument("--parallel", action="store_true",
+                        help="Train clusters in parallel (only when >4 clusters)")
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Max parallel workers (default: 4, requires --parallel)")
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
 
-    # Load algorithm config
-    config_path = Path(args.config) if args.config else ROOT / "config" / "algorithm_config.yaml"
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
+    model_name = args.model
+    registry = MODEL_REGISTRY[model_name]
+    label = model_name.upper()
 
-    algo = cfg["algorithms"]["lgbm"]
-    backtest_cfg = cfg.get("backtest", {})
+    with profiled_section("load_config"):
+        # Dynamically import model class and its parent library module
+        model_class = _import_model_class(registry["class"])
+        lib_module = importlib.import_module(registry["class"].rsplit(".", 1)[0])
+
+        # Load algorithm config
+        config_path = Path(args.config) if args.config else ROOT / "config" / "algorithm_config.yaml"
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+
+        algo = cfg["algorithms"][registry["config_key"]]
+        backtest_cfg = cfg.get("backtest", {})
 
     cluster_strategy = algo.get("cluster_strategy", "per_cluster")
+    iter_param = registry["iter_param"]
+
     # Registry captures model metadata across timeframes for use in _persistence_fn.
-    # Training functions return (result, models, meta); the backtest framework expects
-    # only (result, models), so we strip meta here and stash it in the registry.
     _model_meta_registry: dict[str, dict] = {}
+
+    # Build partial train functions with model-specific kwargs bound
+    _model_kwargs: dict[str, Any] = {
+        "model_name": model_name,
+        "registry": registry,
+        "model_class": model_class,
+        "lib_module": lib_module,
+    }
 
     if cluster_strategy == "global":
         _inner_train_fn = train_and_predict_global
-        default_model_id = "lgbm_global"
+        default_model_id = f"{model_name}_global"
     else:
         _inner_train_fn = train_and_predict_per_cluster
-        default_model_id = "lgbm_cluster"
+        default_model_id = f"{model_name}_cluster"
+        _model_kwargs["parallel"] = args.parallel
+        _model_kwargs["max_workers"] = args.workers
+        if args.parallel:
+            logger.info("Parallel cluster training enabled (max_workers=%d)", args.workers)
 
     def train_fn(train_df, predict_df, feature_cols, cat_cols, params):
-        result, models, meta = _inner_train_fn(train_df, predict_df, feature_cols, cat_cols, params)
+        result, models, meta = _inner_train_fn(
+            train_df, predict_df, feature_cols, cat_cols, params,
+            **_model_kwargs,
+        )
         _model_meta_registry.update(meta)
         return result, models
 
@@ -302,53 +684,50 @@ def main() -> None:
     tune_inline = algo.get("tune_inline", False)
     params_file = algo.get("params_file", None)
 
-    logger.info("LGBM config: model_id=%s, cluster_strategy=%s, recursive=%s, shap_select=%s, "
+    logger.info("%s config: model_id=%s, cluster_strategy=%s, recursive=%s, shap_select=%s, "
                 "tune_inline=%s, n_timeframes=%d",
-                model_id, cluster_strategy, recursive, shap_select, tune_inline, n_timeframes)
+                label, model_id, cluster_strategy, recursive, shap_select, tune_inline, n_timeframes)
 
     # GPU detection with env-var override: DEMAND_GPU=on|off|auto (default: auto)
-    _gpu_pref = os.getenv("DEMAND_GPU", "auto").lower()
-    _use_gpu = False
-    if _gpu_pref == "on":
-        _use_gpu = True
-        logger.info("GPU forced ON via DEMAND_GPU env var")
-    elif _gpu_pref == "off":
+    with profiled_section("detect_gpu"):
+        _gpu_pref = os.getenv("DEMAND_GPU", "auto").lower()
         _use_gpu = False
-        logger.info("GPU disabled via DEMAND_GPU env var")
-    else:  # auto
-        if platform.system() == "Darwin":
-            try:
-                _test = lgb.LGBMRegressor(device="gpu", n_estimators=1, verbosity=-1)
-                _test.fit([[0]], [0])
-                _use_gpu = True
-                logger.info("Using Apple GPU (OpenCL) for LightGBM")
-            except Exception:
-                logger.info("GPU not available, falling back to CPU")
+        if _gpu_pref == "on":
+            _use_gpu = True
+            logger.info("GPU forced ON via DEMAND_GPU env var")
+        elif _gpu_pref == "off":
+            _use_gpu = False
+            logger.info("GPU disabled via DEMAND_GPU env var")
+        else:  # auto
+            should_test = True
+            if registry["gpu_test_platform_check"] and platform.system() != "Darwin":
+                should_test = False
+            if should_test:
+                try:
+                    _test_model = registry["gpu_test"](model_class)
+                    _test_model.fit([[0]], [0])
+                    _use_gpu = True
+                    logger.info("Using GPU for %s", label)
+                except Exception:
+                    logger.info("GPU not available, falling back to CPU")
 
-    lgbm_params = {
-        "n_estimators": algo.get("n_estimators", 500),
-        "learning_rate": algo.get("learning_rate", 0.05),
-        "num_leaves": algo.get("num_leaves", 31),
-        "min_child_samples": algo.get("min_child_samples", 20),
-        "verbosity": -1,
-        "random_state": 42,
-        "n_jobs": -1,
-    }
+    # Build model-specific default params from config
+    model_params = registry["default_params"](algo)
 
     params_source = "config_defaults"
     if params_file:
         tuning_data = load_best_params(Path(params_file))
         tuned = tuning_data.get("best_params", {})
         n_est_tuned = tuning_data.get("best_n_estimators", None)
-        lgbm_params.update(tuned)
+        model_params.update(tuned)
         if n_est_tuned:
-            lgbm_params["n_estimators"] = n_est_tuned
+            model_params[iter_param] = n_est_tuned
         params_source = f"tuning_file:{params_file}"
         logger.info("Loaded tuned params from %s (best_wape=%s%%, n_est=%s)",
-                    params_file, tuning_data.get('best_wape'), lgbm_params['n_estimators'])
+                    params_file, tuning_data.get('best_wape'), model_params[iter_param])
 
     if _use_gpu:
-        lgbm_params["device"] = "gpu"
+        model_params.update(registry["gpu_params"]())
 
     # Build causal per-timeframe tuner when tune_inline is set (PL-002)
     inline_tuner_fn = None
@@ -356,12 +735,12 @@ def main() -> None:
         _tune_config_path = ROOT / "config" / "hyperparameter_tuning.yaml"
         with open(_tune_config_path) as _f:
             _tune_config = yaml.safe_load(_f)
-        _fold_fn = TRAIN_FOLD_FNS["lgbm"]
-        _base_params = lgbm_params.copy()
+        _fold_fn = TRAIN_FOLD_FNS[model_name]
+        _base_params = model_params.copy()
 
         def inline_tuner_fn(full_grid, feature_cols, cat_cols, train_end):
             tuned, n_est = tune_for_timeframe(
-                model_name="lgbm",
+                model_name=model_name,
                 train_fold_fn=_fold_fn,
                 full_grid=full_grid,
                 feature_cols=feature_cols,
@@ -372,9 +751,9 @@ def main() -> None:
             )
             if not tuned:
                 return _base_params.copy()
-            result = {**_base_params, **tuned, "n_estimators": n_est}
-            logger.info("Inline tuned: n_estimators=%s, lr=%.4f",
-                        n_est, tuned.get('learning_rate', 0))
+            result = {**_base_params, **tuned, iter_param: n_est}
+            logger.info("Inline tuned: %s=%s, lr=%.4f",
+                        iter_param, n_est, tuned.get('learning_rate', 0))
             return result
 
         params_source = "inline_tuning"
@@ -387,13 +766,18 @@ def main() -> None:
     # Build SHAP feature selector closure (Feature 42)
     feature_selector_fn = None
     if shap_select:
-        from common.shap_selector import compute_shap_global, compute_timeframe_shap
+        from common.shap_selector import compute_timeframe_shap
+        shap_extractor_name = registry["shap_extractor"]
+        shap_extractor_fn = getattr(
+            importlib.import_module("common.shap_selector"),
+            shap_extractor_name,
+        )
 
         def feature_selector_fn(model_or_dict, train_data, feature_cols, cat_cols, tf_idx, cutoff):
             return compute_timeframe_shap(
                 model_or_dict, train_data, feature_cols, cat_cols,
                 tf_idx, cutoff,
-                shap_extractor_fn=compute_shap_global,
+                shap_extractor_fn=shap_extractor_fn,
                 cluster_strategy="per_cluster",
                 sample_size=shap_sample_size,
                 cumulative_threshold=shap_threshold,
@@ -410,24 +794,33 @@ def main() -> None:
         with open(prod_config_path) as f:
             prod_config = yaml.safe_load(f)
 
-    def _persistence_fn(models: dict, feature_cols: list[str], timeframe_label: str) -> None:
-        persist_cluster_models(models, feature_cols, model_id, timeframe_label, prod_config, _model_meta_registry)
+    _fi_fn = registry["feature_importance_fn"]
+    _best_iter_attr = registry["best_iteration_attr"]
 
-    run_tree_backtest(
-        model_id=model_id,
-        n_timeframes=n_timeframes,
-        output_dir=output_dir,
-        model_params=lgbm_params,
-        model_params_key="lgbm_params",
-        model_type_tag="lgbm_backtest",
-        train_fn_per_cluster=train_fn,
-        extra_metadata={"params_source": params_source},
-        cat_dtype="category",
-        inline_tuner_fn=inline_tuner_fn,
-        feature_selector_fn=feature_selector_fn,
-        recursive=recursive,
-        model_persistence_fn=_persistence_fn,
-    )
+    def _persistence_fn(models: dict, feature_cols: list[str], timeframe_label: str) -> None:
+        persist_cluster_models(
+            models, feature_cols, model_id, timeframe_label, prod_config,
+            _model_meta_registry,
+            feature_importance_fn=_fi_fn,
+            best_iteration_attr=_best_iter_attr,
+        )
+
+    with profiled_section("run_backtest"):
+        run_tree_backtest(
+            model_id=model_id,
+            n_timeframes=n_timeframes,
+            output_dir=output_dir,
+            model_params=model_params,
+            model_params_key=registry["model_params_key"],
+            model_type_tag=registry["model_type_tag"],
+            train_fn_per_cluster=train_fn,
+            extra_metadata={"params_source": params_source},
+            cat_dtype=registry["cat_dtype"],
+            inline_tuner_fn=inline_tuner_fn,
+            feature_selector_fn=feature_selector_fn,
+            recursive=recursive,
+            model_persistence_fn=_persistence_fn,
+        )
 
 
 if __name__ == "__main__":

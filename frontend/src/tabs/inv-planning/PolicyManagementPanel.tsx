@@ -85,7 +85,7 @@ export function PolicyManagementPanel() {
       );
     },
     onSuccess: (result) => {
-      setAutoAssignStatus(`Assigned ${result.assigned} DFUs${result.failed ? `, ${result.failed} failed` : ""}`);
+      setAutoAssignStatus(`Assigned ${result.assigned} SKUs${result.failed ? `, ${result.failed} failed` : ""}`);
       queryClient.invalidateQueries({ queryKey: ["policy-compliance"] });
       refetchCompliance();
     },
@@ -196,11 +196,11 @@ export function PolicyManagementPanel() {
             <div className="text-sm text-foreground">
               <p className="font-medium">DFU Coverage</p>
               <p className="text-muted-foreground text-xs mt-0.5">
-                {compliance.assigned_count.toLocaleString()} of {compliance.total_dfus.toLocaleString()} DFUs assigned
+                {compliance.assigned_count.toLocaleString()} of {compliance.total_skus.toLocaleString()} SKUs assigned
               </p>
               {compliance.unassigned_count > 0 && (
                 <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-                  {compliance.unassigned_count.toLocaleString()} DFUs unassigned
+                  {compliance.unassigned_count.toLocaleString()} SKUs unassigned
                 </p>
               )}
             </div>
@@ -218,7 +218,7 @@ export function PolicyManagementPanel() {
           description="Policies define review cycle, service level, and order method (ROP, Min/Max, Periodic, Manual) per demand segment. Auto-assignment maps each DFU to its policy based on ABC class and variability."
           steps={[
             { label: "Apply schema (first time only)", command: "make policy-schema" },
-            { label: "Seed default policies and assign DFUs", command: "make policy-assign" },
+            { label: "Seed default policies and assign SKUs", command: "make policy-assign" },
           ]}
         />
       ) : (
@@ -257,7 +257,7 @@ export function PolicyManagementPanel() {
                 {policy.review_cycle_days != null && (
                   <p>Review cycle: <span className="font-medium text-foreground">{policy.review_cycle_days}d</span></p>
                 )}
-                <p>DFUs: <span className="font-medium text-foreground">{policy.dfu_count.toLocaleString()}</span></p>
+                <p>SKUs: <span className="font-medium text-foreground">{policy.sku_count.toLocaleString()}</span></p>
               </div>
             </div>
           ))}
@@ -274,8 +274,8 @@ export function PolicyManagementPanel() {
                 <tr className="border-b text-muted-foreground">
                   <th className="text-left py-1 pr-4">Policy</th>
                   <th className="text-left py-1 pr-4">Type</th>
-                  <th className="text-right py-1 pr-4">DFUs</th>
-                  <th className="text-right py-1 pr-4" title="Percentage of DFUs in this policy currently below their safety stock target">Below SS%</th>
+                  <th className="text-right py-1 pr-4">SKUs</th>
+                  <th className="text-right py-1 pr-4" title="Percentage of SKUs in this policy currently below their safety stock target">Below SS%</th>
                   <th className="text-right py-1 pr-4" title="Average ratio of on-hand inventory to safety stock target (1.0 = exactly at target, >1.0 = healthy)">SS Coverage</th>
                   <th className="text-right py-1" title="Average Days of Supply — how many days the current inventory will last at current consumption rate">Avg DOS</th>
                 </tr>
@@ -294,7 +294,7 @@ export function PolicyManagementPanel() {
                           {bp.policy_type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
                         </span>
                       </td>
-                      <td className="py-1 pr-4 text-right">{bp.dfu_count.toLocaleString()}</td>
+                      <td className="py-1 pr-4 text-right">{bp.sku_count.toLocaleString()}</td>
                       <td className="py-1 pr-4 text-right">{formatPct(bp.below_ss_pct)}</td>
                       <td className="py-1 pr-4 text-right">{formatPct(bp.avg_ss_coverage)}</td>
                       <td className="py-1 text-right">{formatFixed(bp.avg_dos, 1)}</td>

@@ -41,7 +41,7 @@ export function AbcXyzPanel() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard className={PANEL_KPI} label="Total DFUs" value={(summary?.total_dfus ?? 0).toLocaleString()} />
+        <KpiCard className={PANEL_KPI} label="Total SKUs" value={(summary?.total_skus ?? 0).toLocaleString()} />
         <KpiCard className={PANEL_KPI} label="Classified" value={(matrix?.total_classified ?? 0).toLocaleString()} />
         <KpiCard className={PANEL_KPI} label="Z-Class (High Variability)" value={(summary?.z_count ?? 0).toLocaleString()} colorClass="text-amber-600" />
       </div>
@@ -52,7 +52,7 @@ export function AbcXyzPanel() {
           description="ABC-XYZ segments each DFU by demand volume (A=top 80%, B=next 15%, C=bottom 5%) cross-classified with demand variability (X=stable, Y=moderate, Z=volatile). The 3×3 matrix guides differentiated service-level policies."
           steps={[
             { label: "Apply schema (first time only)", command: "make abc-xyz-schema" },
-            { label: "Classify all DFUs", command: "make abc-xyz-classify" },
+            { label: "Classify all SKUs", command: "make abc-xyz-classify" },
           ]}
         />
       )}
@@ -97,7 +97,7 @@ export function AbcXyzPanel() {
                         <td key={x} className="text-center py-1 px-2">
                           {cell ? (
                             <div className={`rounded ${bgClass} px-2 py-1`}>
-                              <span className="font-semibold">{cell.dfu_count}</span>
+                              <span className="font-semibold">{cell.sku_count}</span>
                               <br />
                               <span className="text-muted-foreground">SL {((cell.avg_service_level ?? 0) * 100).toFixed(0)}%</span>
                             </div>

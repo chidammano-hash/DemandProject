@@ -8,7 +8,7 @@ from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
 
 from api.auth import require_api_key
-from api.core import _f, _s, add_cross_dim_filters, get_conn, set_cache
+from api.core import _f, add_cross_dim_filters, get_conn, set_cache
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -20,7 +20,7 @@ _VALID_SEVERITIES = {"critical", "high", "medium", "low"}
 _VALID_STATUSES = {"open", "acknowledged", "ordered", "resolved"}
 _EXCEPTION_SORT_COLS = {
     "severity", "exception_date", "recommended_order_by",
-    "current_qty_on_hand", "item_no", "loc",
+    "current_qty_on_hand", "item_id", "loc",
 }
 _SEVERITY_ORDER = "CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END"
 
@@ -73,7 +73,7 @@ def get_exceptions(
         wheres.append("severity = %s")
         params.append(severity)
     if item:
-        wheres.append("item_no ILIKE %s")
+        wheres.append("item_id ILIKE %s")
         params.append(f"%{item}%")
     if location:
         wheres.append("loc ILIKE %s")
@@ -93,7 +93,7 @@ def get_exceptions(
     count_sql = f"SELECT COUNT(*) FROM fact_replenishment_exceptions t {where_clause}"
     rows_sql = f"""
         SELECT
-            exception_id, item_no, loc, exception_date, exception_type, severity,
+            exception_id, item_id, loc, exception_date, exception_type, severity,
             current_qty_on_hand, current_dos, ss_combined, reorder_point,
             recommended_order_qty, recommended_order_by, expected_receipt_date,
             estimated_order_value, policy_id, status, acknowledged_by, notes
@@ -117,7 +117,7 @@ def get_exceptions(
         "rows": [
             {
                 "exception_id":           r[0],
-                "item_no":                r[1],
+                "item_id":                r[1],
                 "loc":                    r[2],
                 "exception_date":         r[3].isoformat() if r[3] else None,
                 "exception_type":         r[4],
@@ -232,7 +232,7 @@ def acknowledge_exception(
         WHERE exception_id = %s
           AND status       = 'open'
         RETURNING
-            exception_id, item_no, loc, exception_type, severity,
+            exception_id, item_id, loc, exception_type, severity,
             status, acknowledged_by, acknowledged_ts, notes
     """
     now = _dt.datetime.now(_dt.timezone.utc)
@@ -247,7 +247,7 @@ def acknowledge_exception(
 
     return {
         "exception_id":    row[0],
-        "item_no":         row[1],
+        "item_id":         row[1],
         "loc":             row[2],
         "exception_type":  row[3],
         "severity":        row[4],
@@ -282,7 +282,7 @@ def update_exception_status(
             modified_ts = %s
         WHERE exception_id = %s
         RETURNING
-            exception_id, item_no, loc, exception_type, severity,
+            exception_id, item_id, loc, exception_type, severity,
             status, acknowledged_by, {ts_col}, notes
     """
     with get_conn() as conn:
@@ -296,7 +296,7 @@ def update_exception_status(
 
     return {
         "exception_id":   row[0],
-        "item_no":        row[1],
+        "item_id":        row[1],
         "loc":            row[2],
         "exception_type": row[3],
         "severity":       row[4],

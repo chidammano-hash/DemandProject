@@ -28,17 +28,17 @@ vi.mock("@/api/queries", async () => {
     STALE: { FIVE_MIN: 300000, TEN_MIN: 600000, ONE_MIN: 60000, TWO_MIN: 120000 },
     fetchProductionForecastVersions: vi.fn().mockResolvedValue({
       versions: [
-        { plan_version: "v2026-03", dfu_count: 500, generated_at: "2026-03-01T00:00:00Z" },
+        { plan_version: "v2026-03", sku_count: 500, generated_at: "2026-03-01T00:00:00Z" },
       ],
     }),
     fetchProductionForecastSummary: vi.fn().mockResolvedValue({
       plan_version: "v2026-03",
       generated_at: "2026-03-01T00:00:00Z",
-      total_dfu_count: 500,
+      total_sku_count: 500,
       total_forecast_qty: 125000,
       by_abc_class: [
-        { abc_class: "A", forecast_qty: 80000, dfu_count: 100 },
-        { abc_class: "B", forecast_qty: 35000, dfu_count: 200 },
+        { abc_class: "A", forecast_qty: 80000, sku_count: 100 },
+        { abc_class: "B", forecast_qty: 35000, sku_count: 200 },
       ],
     }),
     fetchProductionForecast: vi.fn().mockResolvedValue({

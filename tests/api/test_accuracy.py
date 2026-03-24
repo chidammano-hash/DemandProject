@@ -89,7 +89,7 @@ async def test_slice_item_and_location_combined():
     sql_call = cursor.execute.call_args_list[0]
     sql_text = sql_call[0][0]
     sql_params = sql_call[0][1]
-    assert "f.dmdunit IN" in sql_text
+    assert "f.item_id IN" in sql_text
     assert "f.loc IN" in sql_text
     assert "100320" in sql_params
     assert "100321" in sql_params
@@ -177,7 +177,7 @@ async def test_lag_curve_item_location_sql_contains_filters():
     sql_call = cursor.execute.call_args_list[0]
     sql_text = sql_call[0][0]
     sql_params = sql_call[0][1]
-    assert "a.dmdunit IN" in sql_text
+    assert "a.item_id IN" in sql_text
     assert "a.loc IN" in sql_text
     assert "100320" in sql_params
     assert "1401-BULK" in sql_params
@@ -206,17 +206,17 @@ async def test_lag_curve_no_filters_uses_agg_view():
 def test_add_item_location_filters_single_item():
     from api.routers.accuracy import _add_item_location_filters
     where, params = [], []
-    _add_item_location_filters(where, params, dmdunit_col="f.dmdunit", loc_col="f.loc",
+    _add_item_location_filters(where, params, item_id_col="f.item_id", loc_col="f.loc",
                                item="100320", location=None)
     assert len(where) == 1
-    assert "f.dmdunit IN" in where[0]
+    assert "f.item_id IN" in where[0]
     assert params == ["100320"]
 
 
 def test_add_item_location_filters_multi_items():
     from api.routers.accuracy import _add_item_location_filters
     where, params = [], []
-    _add_item_location_filters(where, params, dmdunit_col="f.dmdunit", loc_col="f.loc",
+    _add_item_location_filters(where, params, item_id_col="f.item_id", loc_col="f.loc",
                                item="100320,100321", location="LOC1,LOC2")
     assert len(where) == 2
     assert params == ["100320", "100321", "LOC1", "LOC2"]
@@ -225,7 +225,7 @@ def test_add_item_location_filters_multi_items():
 def test_add_item_location_filters_empty_strings():
     from api.routers.accuracy import _add_item_location_filters
     where, params = [], []
-    _add_item_location_filters(where, params, dmdunit_col="f.dmdunit", loc_col="f.loc",
+    _add_item_location_filters(where, params, item_id_col="f.item_id", loc_col="f.loc",
                                item="", location="")
     assert len(where) == 0
     assert params == []
@@ -234,7 +234,7 @@ def test_add_item_location_filters_empty_strings():
 def test_add_item_location_filters_none():
     from api.routers.accuracy import _add_item_location_filters
     where, params = [], []
-    _add_item_location_filters(where, params, dmdunit_col="f.dmdunit", loc_col="f.loc",
+    _add_item_location_filters(where, params, item_id_col="f.item_id", loc_col="f.loc",
                                item=None, location=None)
     assert len(where) == 0
     assert params == []

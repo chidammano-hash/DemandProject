@@ -59,7 +59,7 @@ Six filter dimensions applied across Dashboard, Accuracy, and auto-populated int
 |---|---|---|
 | Brand | Multi-select dropdown | Filters by `dim_item.brand` |
 | Category | Multi-select dropdown | Filters by `dim_item.category` |
-| Item | Searchable multi-select | Filters by `dim_item.item_no` |
+| Item | Searchable multi-select | Filters by `dim_item.item_id` |
 | Location | Searchable multi-select | Filters by `dim_location.loc` |
 | Market | Multi-select dropdown | Filters by `dim_location.market` |
 | Channel | Multi-select dropdown | Filters by `dim_customer.channel` |
@@ -90,7 +90,7 @@ Every tab is loaded via `React.lazy()` with a per-tab error boundary. This keeps
 |---|
 | `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard` |
 | `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard` |
-| `/chat`, `/market-intelligence`, `/dfu`, `/competition`, `/health`, `/bench` |
+| `/chat`, `/market-intelligence`, `/sku`, `/competition`, `/health`, `/bench` |
 
 ---
 

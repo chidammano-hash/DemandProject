@@ -105,7 +105,7 @@ defaults:
   dedup_window_minutes: 5
 templates:
   job_completed: "Job '{job_type}' completed with status: {status}"
-  exception_detected: "New {severity} exception: {exception_type} for {item_no}/{loc}"
+  exception_detected: "New {severity} exception: {exception_type} for {item_id}/{loc}"
   ai_insight_created: "AI insight ({severity}): {summary}"
 ```
 

@@ -7,7 +7,6 @@ Endpoints:
 """
 from __future__ import annotations
 
-import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,7 +26,7 @@ _SCENARIOS = ("no_order", "with_open_po", "with_planned_orders")
 
 @router.get("/inv-planning/projection")
 async def get_projection(
-    item_no: str,
+    item_id: str,
     loc: str,
     horizon_days: int = 90,
     scenario: str = "all",
@@ -43,16 +42,16 @@ async def get_projection(
             cur.execute("""
                 SELECT DISTINCT projection_run_id, forecast_source, plan_version
                 FROM fact_inventory_projection
-                WHERE item_no = %s AND loc = %s
+                WHERE item_id = %s AND loc = %s
                 ORDER BY 1 DESC
                 LIMIT 1
-            """, [item_no, loc])
+            """, [item_id, loc])
             run_row = cur.fetchone()
             if not run_row:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"No projection found for {item_no}/{loc}. "
-                           f"Run 'make projection-compute-dfu ITEM={item_no} LOC={loc}'."
+                    detail=f"No projection found for {item_id}/{loc}. "
+                           f"Run 'make projection-compute-dfu ITEM={item_id} LOC={loc}'."
                 )
             run_id, forecast_source, plan_version = run_row
 
@@ -61,27 +60,27 @@ async def get_projection(
                 SELECT scenario, reorder_trigger_date, stockout_date,
                        excess_date, days_until_stockout, last_computed_at
                 FROM mv_inventory_projection_summary
-                WHERE item_no = %s AND loc = %s AND projection_run_id = %s
+                WHERE item_id = %s AND loc = %s AND projection_run_id = %s
                   AND scenario = ANY(%s::varchar[])
-            """, [item_no, loc, str(run_id), list(scenarios_filter)])
+            """, [item_id, loc, str(run_id), list(scenarios_filter)])
             summary_rows = cur.fetchall()
 
             # Current inventory snapshot
             cur.execute("""
                 SELECT qty_on_hand
                 FROM fact_inventory_snapshot
-                WHERE item_no = %s AND loc = %s
+                WHERE item_id = %s AND loc = %s
                 ORDER BY snapshot_date DESC LIMIT 1
-            """, [item_no, loc])
+            """, [item_id, loc])
             inv_row = cur.fetchone()
             current_qty = float(inv_row[0] or 0) if inv_row else 0.0
 
             # Safety stock
             cur.execute("""
                 SELECT ss_combined FROM fact_safety_stock_targets
-                WHERE item_no = %s AND loc = %s
+                WHERE item_id = %s AND loc = %s
                 ORDER BY computed_at DESC LIMIT 1
-            """, [item_no, loc])
+            """, [item_id, loc])
             ss_row = cur.fetchone()
             safety_stock = float(ss_row[0] or 0) if ss_row else 0.0
 
@@ -95,11 +94,11 @@ async def get_projection(
                 SELECT projection_date, scenario, projected_qty, daily_demand_rate,
                        receipts_expected, reorder_triggered, stockout_risk, excess_risk
                 FROM fact_inventory_projection
-                WHERE item_no = %s AND loc = %s AND projection_run_id = %s
+                WHERE item_id = %s AND loc = %s AND projection_run_id = %s
                   AND scenario = ANY(%s::varchar[])
                   AND projection_date <= CURRENT_DATE + %s
                 ORDER BY projection_date, scenario
-            """, [item_no, loc, str(run_id), list(scenarios_filter), horizon_days])
+            """, [item_id, loc, str(run_id), list(scenarios_filter), horizon_days])
             proj_rows = cur.fetchall()
 
     # Build key_dates dict
@@ -133,7 +132,7 @@ async def get_projection(
     projection = sorted(by_date.values(), key=lambda x: x["projection_date"])
 
     return {
-        "item_no": item_no,
+        "item_id": item_id,
         "loc": loc,
         "current_qty_on_hand": current_qty,
         "safety_stock": safety_stock,
@@ -164,7 +163,7 @@ async def get_projection_at_risk(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT COUNT(DISTINCT (s.item_no, s.loc))
+                SELECT COUNT(DISTINCT (s.item_id, s.loc))
                 FROM mv_inventory_projection_summary s
                 WHERE s.scenario = 'with_open_po'
                   AND s.stockout_date IS NOT NULL
@@ -175,7 +174,7 @@ async def get_projection_at_risk(
 
             cur.execute("""
                 SELECT
-                    s.item_no,
+                    s.item_id,
                     s.loc,
                     s.stockout_date,
                     s.days_until_stockout,
@@ -190,19 +189,19 @@ async def get_projection_at_risk(
                 FROM mv_inventory_projection_summary s
                 LEFT JOIN LATERAL (
                     SELECT qty_on_hand FROM fact_inventory_snapshot
-                    WHERE item_no = s.item_no AND loc = s.loc
+                    WHERE item_id = s.item_id AND loc = s.loc
                     ORDER BY snapshot_date DESC LIMIT 1
                 ) i ON TRUE
                 LEFT JOIN LATERAL (
                     SELECT ss_combined FROM fact_safety_stock_targets
-                    WHERE item_no = s.item_no AND loc = s.loc
+                    WHERE item_id = s.item_id AND loc = s.loc
                     ORDER BY computed_at DESC LIMIT 1
                 ) ss ON TRUE
                 WHERE s.scenario = 'with_open_po'
                   AND s.stockout_date IS NOT NULL
                   AND s.days_until_stockout <= %s
                   AND s.days_until_stockout >= 0
-                ORDER BY s.days_until_stockout ASC, s.item_no
+                ORDER BY s.days_until_stockout ASC, s.item_id
                 LIMIT %s OFFSET %s
             """, [horizon_days, page_size, offset])
             rows = cur.fetchall()
@@ -214,7 +213,7 @@ async def get_projection_at_risk(
         "page_size": page_size,
         "items": [
             {
-                "item_no": r[0],
+                "item_id": r[0],
                 "loc": r[1],
                 "stockout_date": r[2].isoformat() if r[2] else None,
                 "days_until_stockout": int(r[3]) if r[3] is not None else None,
@@ -233,7 +232,7 @@ async def get_projection_at_risk(
 # ---------------------------------------------------------------------------
 
 class ProjectionRefreshRequest(BaseModel):
-    item_no: str
+    item_id: str
     loc: str
     horizon_days: int = 90
 
@@ -242,7 +241,6 @@ class ProjectionRefreshRequest(BaseModel):
 async def refresh_projection(body: ProjectionRefreshRequest, api_key: str = Depends(require_api_key)):
     """Trigger a synchronous projection recompute for one DFU."""
     import yaml
-    from pathlib import Path
     from scripts.compute_inventory_projection import (
         compute_dfu_projection, refresh_summary_view,
     )
@@ -258,7 +256,7 @@ async def refresh_projection(body: ProjectionRefreshRequest, api_key: str = Depe
 
     with get_conn() as conn:
         written, run_id = compute_dfu_projection(
-            body.item_no, body.loc,
+            body.item_id, body.loc,
             body.horizon_days, config, conn,
             dry_run=False,
         )
@@ -269,7 +267,7 @@ async def refresh_projection(body: ProjectionRefreshRequest, api_key: str = Depe
 
     return {
         "status": "ok",
-        "item_no": body.item_no,
+        "item_id": body.item_id,
         "loc": body.loc,
         "rows_written": written,
         "run_id": run_id,

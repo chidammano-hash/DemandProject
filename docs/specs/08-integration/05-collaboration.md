@@ -34,7 +34,7 @@ An in-app annotation system lets planners attach notes directly to forecasts, DF
 | Column | Type | Description |
 |---|---|---|
 | `annotation_id` | `BIGSERIAL PK` | Auto-increment ID |
-| `entity_type` | `TEXT` | What the note is attached to: dfu, forecast, exception, insight, scenario |
+| `entity_type` | `TEXT` | What the note is attached to: sku, forecast, exception, insight, scenario |
 | `entity_id` | `TEXT` | Composite key or ID of the referenced entity |
 | `author_id` | `INTEGER` | User ID (nullable for unauthenticated mode) |
 | `author_name` | `TEXT` | Display name (default: "Planner") |

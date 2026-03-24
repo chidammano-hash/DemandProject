@@ -49,7 +49,7 @@ async def test_production_forecast_returns_ci_bands():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
-                "/forecast/production?item_no=100320&loc=1401-BULK&plan_version=2026-02"
+                "/forecast/production?item_id=100320&loc=1401-BULK&plan_version=2026-02"
             )
 
     assert response.status_code == 200
@@ -78,7 +78,7 @@ async def test_production_forecast_null_ci_bands():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
-                "/forecast/production?item_no=100320&loc=1401-BULK&plan_version=2026-02"
+                "/forecast/production?item_id=100320&loc=1401-BULK&plan_version=2026-02"
             )
 
     assert response.status_code == 200
@@ -195,7 +195,7 @@ async def test_production_forecast_explicit_plan_version():
             response = await client.get(
                 "/forecast/production",
                 params={
-                    "item_no": "100320",
+                    "item_id": "100320",
                     "loc": "1401-BULK",
                     "plan_version": "2026-01",
                 },

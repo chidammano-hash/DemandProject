@@ -5,7 +5,7 @@ import { fetchJson } from "./core";
 // ---------------------------------------------------------------------------
 
 export interface IntramonthStockoutRow {
-  item_no: string;
+  item_id: string;
   loc: string;
   month_start: string;
   snapshot_days: number;
