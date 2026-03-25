@@ -56,6 +56,8 @@ from common.job_state import (
     _run_generate_exceptions,
     _run_generate_production_forecast,
     _run_generate_storyboard,
+    _run_load_backtest_results,
+    _run_model_tuning_experiment,
     _run_refresh_health_scores,
     _run_refresh_intramonth,
     _run_seasonality,
@@ -258,6 +260,27 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="tuning",
         callable=_run_tuning_backtest,
         params_schema={"run_id": 0, "session_id": "", "overrides": {}, "strategy_label": ""},
+    ),
+    "model_tuning_run": JobTypeDef(
+        type_id="model_tuning_run",
+        label="Model Tuning Experiment",
+        description="Run backtest with custom hyperparameters and register results",
+        group="tuning",  # overridden to tuning_{model} at submit time
+        callable=_run_model_tuning_experiment,
+        params_schema={
+            "run_id": 0,
+            "model": "",
+            "config_path": "",
+            "run_label": "",
+        },
+    ),
+    "load_backtest_results": JobTypeDef(
+        type_id="load_backtest_results",
+        label="Load Backtest Results",
+        description="Load backtest predictions into DB and refresh materialized views",
+        group="tuning",  # overridden to tuning_{model} at submit time
+        callable=_run_load_backtest_results,
+        params_schema={"run_id": 0, "model": ""},
     ),
     # ── Platform (platform group) ─────────────────────────────────────────────
     "data_quality": JobTypeDef(
@@ -478,11 +501,16 @@ class JobManager:
         max_retries: int = 0,
         pipeline_id: str | None = None,
         pipeline_step: int | None = None,
+        group_override: str | None = None,
     ) -> str:
         """Submit a job for immediate background execution. Returns job_id.
 
         The job is dispatched to APScheduler's managed thread pool for execution.
         Per-group concurrency control ensures only one job runs per group at a time.
+
+        Args:
+            group_override: If provided, use this group instead of the job type's
+                default group. Allows e.g. per-model concurrency for tuning jobs.
         """
         self._ensure_init()
 
@@ -490,13 +518,14 @@ class JobManager:
             raise ValueError(f"Unknown job type: {job_type}")
 
         type_def = JOB_TYPE_REGISTRY[job_type]
+        effective_group = group_override or type_def.group
 
         job_id = self._generate_id()
         job_label = label or type_def.label
         job_params = params or {}
 
         with self._state_lock:
-            if self._is_group_busy(type_def.group):
+            if self._is_group_busy(effective_group):
                 # Queue the job instead of rejecting
                 self._db_insert(
                     job_id, job_type, job_label, job_params,
@@ -506,13 +535,13 @@ class JobManager:
                     max_retries=max_retries,
                 )
                 self._db_update_status(job_id, "queued", progress_msg="Waiting for group to be free")
-                queue = self._pending_queues.setdefault(type_def.group, [])
+                queue = self._pending_queues.setdefault(effective_group, [])
                 queue.append((job_id, type_def, job_params, max_retries, pipeline_id))
-                logger.info("Queued job %s (%s) — group '%s' is busy", job_id, job_type, type_def.group)
+                logger.info("Queued job %s (%s) — group '%s' is busy", job_id, job_type, effective_group)
                 return job_id
 
             # Track as active (inside lock to prevent race with _dispatch_next)
-            self._active_jobs[job_id] = type_def.group
+            self._active_jobs[job_id] = effective_group
             self._cancel_flags[job_id] = threading.Event()
 
         # DB insert and APScheduler dispatch outside lock (no contention on I/O)
@@ -716,7 +745,7 @@ class JobManager:
         return get_job_log(job_id)
 
     def cancel_job(self, job_id: str) -> bool:
-        """Cancel a running job. Kills the subprocess if a PID is tracked."""
+        """Cancel a queued or running job. Removes from pending queue or kills subprocess."""
         job = self._db_get(job_id)
         if job is None:
             return False
@@ -728,6 +757,15 @@ class JobManager:
                 cancel_event.set()
             self._active_jobs.pop(job_id, None)
             self._cancel_flags.pop(job_id, None)
+            # Remove from pending queues (queued jobs that haven't dispatched yet)
+            for group, queue in self._pending_queues.items():
+                before = len(queue)
+                self._pending_queues[group] = [
+                    entry for entry in queue if entry[0] != job_id
+                ]
+                if len(self._pending_queues[group]) < before:
+                    logger.info("Removed queued job %s from pending queue '%s'", job_id, group)
+                    break
         # Remove from APScheduler if still pending
         try:
             self._scheduler.remove_job(job_id)
@@ -836,8 +874,12 @@ class JobManager:
                     recovered += 1
                     continue
                 params = params_raw if isinstance(params_raw, dict) else json.loads(params_raw or "{}")
+                # Use per-model group for tuning jobs (matches submit-time group_override)
+                effective_group = type_def.group
+                if job_type == "model_tuning_run" and params.get("model"):
+                    effective_group = f"tuning_{params['model']}"
                 with self._state_lock:
-                    queue = self._pending_queues.setdefault(type_def.group, [])
+                    queue = self._pending_queues.setdefault(effective_group, [])
                     queue.append((job_id, type_def, params, max_retries or 0, pipeline_id))
                 recovered += 1
                 logger.info("Re-enqueued job %s (%s) from DB on startup", job_id, job_type)
@@ -895,6 +937,9 @@ class JobManager:
                 job = self._db_get(job_id)
                 if job and job["status"] == "running":
                     # Subprocess exited but didn't update status — assume success
+                    # For tuning jobs, run post-completion registration
+                    if type_def.type_id == "model_tuning_run":
+                        self._finalize_tuning_run(job_id)
                     self._db_update_status(
                         job_id, "completed",
                         completed_at=datetime.now(timezone.utc),
@@ -918,6 +963,44 @@ class JobManager:
 
         t = threading.Thread(target=_monitor, name=f"readopt-{job_id}", daemon=True)
         t.start()
+
+    def _finalize_tuning_run(self, job_id: str) -> None:
+        """Post-completion registration for re-adopted tuning jobs.
+
+        When a tuning subprocess completes after an API restart, the normal
+        callback (complete_run + register_timeframes + register_cluster_month_breakdowns)
+        never fires. This method reads the backtest output and registers results.
+        """
+        job = self._db_get(job_id)
+        if not job:
+            return
+        params = job.get("params") or {}
+        if isinstance(params, str):
+            import json as _json
+            params = _json.loads(params)
+        run_id = params.get("run_id")
+        model = params.get("model")
+        if not run_id or not model:
+            return
+
+        MODEL_OUTPUT_DIRS = {"lgbm": "lgbm_cluster", "catboost": "catboost_cluster", "xgboost": "xgboost_cluster"}
+        output_dir = MODEL_OUTPUT_DIRS.get(model)
+        if not output_dir:
+            return
+
+        root = Path(__file__).resolve().parents[2]
+        meta_path = root / "data" / "backtest" / output_dir / "backtest_metadata.json"
+        pred_path = root / "data" / "backtest" / output_dir / "backtest_predictions.csv"
+
+        try:
+            from common.ml.tuning_tracker import complete_run, register_timeframes, register_cluster_month_breakdowns
+            complete_run(run_id, meta_path)
+            register_timeframes(run_id, meta_path)
+            if pred_path.exists():
+                register_cluster_month_breakdowns(run_id, pred_path)
+            logger.info("Finalized re-adopted tuning run %d (%s) from backtest output", run_id, model)
+        except Exception:
+            logger.exception("Failed to finalize re-adopted tuning run %d (%s)", run_id, model)
 
     def get_types(self) -> list[dict[str, Any]]:
         """List all registered job types with metadata."""
@@ -1014,12 +1097,14 @@ class JobManager:
 
             finally:
                 with self._state_lock:
+                    # Use the stored group (may differ from type_def.group if group_override was used)
+                    active_group = self._active_jobs.get(job_id, type_def.group)
                     was_active = job_id in self._active_jobs
                     self._active_jobs.pop(job_id, None)
                     self._cancel_flags.pop(job_id, None)
                 # Auto-dispatch next queued job (outside lock to avoid deadlock)
                 if was_active:
-                    self._dispatch_next(type_def.group)
+                    self._dispatch_next(active_group)
 
     def _dispatch_next(self, group: str) -> None:
         """Pop the next queued job for *group* and dispatch it to APScheduler."""

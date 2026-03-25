@@ -3,7 +3,7 @@ SHELL := /bin/zsh
 DC := docker compose
 UV := uv run
 
-.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list
+.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all
 
 help:
 	@echo "Targets:"
@@ -117,6 +117,17 @@ help:
 	@echo "  setup-inv-planning   - inventory planning (SS, EOQ, policies, exceptions)"
 	@echo "  setup-demand-planning - forecasts + projections + orders + replenishment"
 	@echo "  setup-ops            - S&OP + events + financial + storyboard + DQ"
+	@echo ""
+	@echo "  === Database Cleanup & Fresh Recreate ==="
+	@echo "  fresh-all            - FULL RESET: truncate + clean + load + ML + champion"
+	@echo "  fresh-champion       - load + features + backtests + champion (no truncate)"
+	@echo "  fresh-backtest       - load + features + backtests (no champion)"
+	@echo "  fresh-features       - load + clustering + seasonality + variability + LT"
+	@echo "  fresh-load           - normalize + load + refresh MVs only"
+	@echo "  db-truncate-data     - truncate all data tables (preserves config/algo)"
+	@echo "  clean-artifacts      - remove stale CSVs, backtest, clustering files"
+	@echo "  refresh-mvs-tiered   - refresh all MVs in dependency order"
+	@echo "  refresh-accuracy-mvs - refresh accuracy MVs (after backtest load)"
 
 init:
 	@if [ ! -f .env ]; then cp .env.example .env; fi
@@ -347,7 +358,7 @@ seasonality-detect:
 	$(UV) python scripts/detect_seasonality.py --config config/seasonality_config.yaml
 
 seasonality-update:
-	$(UV) python scripts/update_seasonality_profiles.py --config config/seasonality_config.yaml
+	$(UV) python scripts/update_seasonality_profiles.py
 
 seasonality-all: seasonality-schema seasonality-detect seasonality-update
 
@@ -358,7 +369,7 @@ variability-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/022_add_demand_variability_columns.sql').read()); conn.close(); print('Variability DDL applied')"
 
 variability-compute:
-	$(UV) python scripts/compute_demand_variability.py --config config/variability_config.yaml
+	$(UV) python scripts/compute_demand_variability.py
 
 variability-all: variability-schema variability-compute
 
@@ -369,7 +380,7 @@ lt-profile-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/023_create_lead_time_profile.sql').read()); conn.close(); print('Lead time profile DDL applied')"
 
 lt-profile-compute:
-	$(UV) python scripts/compute_lead_time_variability.py --config config/lead_time_config.yaml
+	$(UV) python scripts/compute_lead_time_variability.py
 
 lt-profile-all: lt-profile-schema lt-profile-compute
 
@@ -380,7 +391,7 @@ eoq-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/024_create_eoq_targets.sql').read()); conn.close(); print('EOQ targets DDL applied')"
 
 eoq-compute:
-	$(UV) python scripts/compute_eoq.py --config config/eoq_config.yaml
+	$(UV) python scripts/compute_eoq.py
 
 eoq-all: eoq-schema eoq-compute
 
@@ -504,13 +515,13 @@ accuracy-slice-check:
 	curl -s "http://localhost:8000/forecast/accuracy/lag-curve" | python3 -m json.tool | head -40
 
 champion-select:
-	$(UV) python scripts/run_champion_selection.py --config config/model_competition.yaml
+	$(UV) python scripts/run_champion_selection.py
 
 champion-simulate:
-	$(UV) python scripts/simulate_champion_strategies.py --config config/model_competition.yaml
+	$(UV) python scripts/simulate_champion_strategies.py
 
 champion-train-meta:
-	$(UV) python scripts/train_meta_learner.py --config config/model_competition.yaml
+	$(UV) python scripts/train_meta_learner.py
 
 champion-all: champion-train-meta champion-simulate champion-select
 
@@ -1056,3 +1067,154 @@ perf-pipeline:                         ## ETL pipeline performance analysis (rea
 
 perf-clean:                            ## Truncate all perf profiling history from DB
 	psql "$(DATABASE_URL)" -c "TRUNCATE perf_suggestion, perf_query, perf_section, perf_run CASCADE;"
+
+# ── Database Cleanup & Fresh Recreate ────────────────────────────────────────
+# Full wipe-and-reload: clears data tables (preserves config/algo/tuning/MLflow),
+# reloads from data/input/, runs ML pipeline through champion selection.
+# See docs/RUNBOOK.md "Database Cleanup & Fresh Recreate" for details.
+
+db-truncate-data:                      ## Truncate all data tables (preserves config/algo/tuning/MLflow)
+	@echo "Truncating all data tables (preserving config, algorithm, tuning, MLflow)..."
+	@printf '%s\n' \
+	  'BEGIN;' \
+	  'TRUNCATE TABLE ai_recommendation_outcomes CASCADE;' \
+	  'TRUNCATE TABLE ai_insights CASCADE;' \
+	  'TRUNCATE TABLE ai_planning_memos CASCADE;' \
+	  'TRUNCATE TABLE ai_call_log CASCADE;' \
+	  'TRUNCATE TABLE chat_embeddings CASCADE;' \
+	  'TRUNCATE TABLE planner_decisions CASCADE;' \
+	  'TRUNCATE TABLE exception_queue CASCADE;' \
+	  'TRUNCATE TABLE fact_sop_approved_plan CASCADE;' \
+	  'TRUNCATE TABLE fact_sop_gaps CASCADE;' \
+	  'TRUNCATE TABLE fact_sop_supply_constraints CASCADE;' \
+	  'TRUNCATE TABLE fact_sop_demand_review CASCADE;' \
+	  'TRUNCATE TABLE fact_sop_cycles CASCADE;' \
+	  'TRUNCATE TABLE fact_event_conflicts CASCADE;' \
+	  'TRUNCATE TABLE fact_event_performance CASCADE;' \
+	  'TRUNCATE TABLE fact_event_adjusted_forecast CASCADE;' \
+	  'TRUNCATE TABLE fact_event_calendar CASCADE;' \
+	  'TRUNCATE TABLE fact_scenario_results CASCADE;' \
+	  'TRUNCATE TABLE fact_supply_scenarios CASCADE;' \
+	  'TRUNCATE TABLE fact_po_approval_log CASCADE;' \
+	  'TRUNCATE TABLE fact_po_receipts CASCADE;' \
+	  'TRUNCATE TABLE fact_open_purchase_orders CASCADE;' \
+	  'TRUNCATE TABLE fact_purchase_orders CASCADE;' \
+	  'TRUNCATE TABLE fact_consensus_plan CASCADE;' \
+	  'TRUNCATE TABLE fact_forecast_overrides CASCADE;' \
+	  'TRUNCATE TABLE fact_rebalancing_transfer CASCADE;' \
+	  'TRUNCATE TABLE fact_rebalancing_plan CASCADE;' \
+	  'TRUNCATE TABLE backtest_lag_archive CASCADE;' \
+	  'TRUNCATE TABLE fact_external_forecast_monthly CASCADE;' \
+	  'TRUNCATE TABLE fact_production_forecast CASCADE;' \
+	  'TRUNCATE TABLE fact_blended_demand_plan CASCADE;' \
+	  'TRUNCATE TABLE fact_demand_plan CASCADE;' \
+	  'TRUNCATE TABLE fact_demand_plan_weekly CASCADE;' \
+	  'TRUNCATE TABLE fact_bias_corrections CASCADE;' \
+	  'TRUNCATE TABLE fact_bias_correction_history CASCADE;' \
+	  'TRUNCATE TABLE fact_inventory_snapshot CASCADE;' \
+	  'TRUNCATE TABLE fact_inventory_projection CASCADE;' \
+	  'TRUNCATE TABLE fact_sales_monthly CASCADE;' \
+	  'TRUNCATE TABLE fact_sales_monthly_original CASCADE;' \
+	  'TRUNCATE TABLE fact_ss_simulation_results CASCADE;' \
+	  'TRUNCATE TABLE fact_demand_signals CASCADE;' \
+	  'TRUNCATE TABLE fact_replenishment_plan CASCADE;' \
+	  'TRUNCATE TABLE fact_replenishment_exceptions CASCADE;' \
+	  'TRUNCATE TABLE fact_planned_orders CASCADE;' \
+	  'TRUNCATE TABLE fact_plan_versions CASCADE;' \
+	  'TRUNCATE TABLE fact_financial_inventory_plan CASCADE;' \
+	  'TRUNCATE TABLE fact_budget_periods CASCADE;' \
+	  'TRUNCATE TABLE fact_inventory_investment_plan CASCADE;' \
+	  'TRUNCATE TABLE fact_efficient_frontier CASCADE;' \
+	  'TRUNCATE TABLE fact_echelon_reorder_points CASCADE;' \
+	  'TRUNCATE TABLE fact_echelon_ss_targets CASCADE;' \
+	  'TRUNCATE TABLE dim_echelon_network CASCADE;' \
+	  'TRUNCATE TABLE fact_service_level_performance CASCADE;' \
+	  'TRUNCATE TABLE fact_service_level_targets CASCADE;' \
+	  'TRUNCATE TABLE fact_lead_time_actuals CASCADE;' \
+	  'TRUNCATE TABLE fact_lt_review_triggers CASCADE;' \
+	  'TRUNCATE TABLE fact_external_signal CASCADE;' \
+	  'TRUNCATE TABLE dim_external_signal_source CASCADE;' \
+	  'TRUNCATE TABLE fact_dq_corrections CASCADE;' \
+	  'TRUNCATE TABLE fact_dq_check_results CASCADE;' \
+	  'TRUNCATE TABLE fact_annotation CASCADE;' \
+	  'TRUNCATE TABLE fact_shared_view CASCADE;' \
+	  'TRUNCATE TABLE fact_intervention_metrics CASCADE;' \
+	  'TRUNCATE TABLE fact_notification_log CASCADE;' \
+	  'TRUNCATE TABLE fact_webhook_delivery CASCADE;' \
+	  'TRUNCATE TABLE fact_report_delivery CASCADE;' \
+	  'TRUNCATE TABLE fact_audit_log CASCADE;' \
+	  'TRUNCATE TABLE fact_query_performance CASCADE;' \
+	  'TRUNCATE TABLE audit_load_batch CASCADE;' \
+	  'TRUNCATE TABLE dim_transfer_lane CASCADE;' \
+	  'TRUNCATE TABLE dim_sku CASCADE;' \
+	  'TRUNCATE TABLE dim_item CASCADE;' \
+	  'TRUNCATE TABLE dim_location CASCADE;' \
+	  'TRUNCATE TABLE dim_customer CASCADE;' \
+	  'TRUNCATE TABLE dim_time CASCADE;' \
+	  'TRUNCATE TABLE dim_sourcing CASCADE;' \
+	  'TRUNCATE TABLE dim_item_cost CASCADE;' \
+	  'TRUNCATE TABLE dim_lead_time_profile CASCADE;' \
+	  'TRUNCATE TABLE mv_demand_decomposition CASCADE;' \
+	  'COMMIT;' \
+	  | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1
+	@echo "✓ All data tables truncated. Config/algo/tuning/MLflow preserved."
+
+clean-artifacts:                       ## Remove stale intermediate files (clean CSVs, backtest, clustering, champion)
+	rm -f data/*_clean.csv data/inventory_clean.csv
+	rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/
+	rm -rf data/clustering/ data/champion/ data/models/
+	rm -f data/seasonality_results.csv data/clustering_features.csv
+	@echo "✓ Intermediate artifacts cleaned."
+
+refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4 tiers)
+	@echo "Refreshing materialized views (tier-ordered)..."
+	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 -c " \
+	  REFRESH MATERIALIZED VIEW agg_sales_monthly; \
+	  REFRESH MATERIALIZED VIEW agg_forecast_monthly; \
+	  REFRESH MATERIALIZED VIEW agg_inventory_monthly; \
+	  REFRESH MATERIALIZED VIEW mv_inventory_forecast_monthly; \
+	  REFRESH MATERIALIZED VIEW mv_fill_rate_monthly; \
+	  REFRESH MATERIALIZED VIEW mv_intramonth_stockout; \
+	  REFRESH MATERIALIZED VIEW mv_supplier_performance; \
+	  REFRESH MATERIALIZED VIEW mv_supplier_po_performance; \
+	  REFRESH MATERIALIZED VIEW mv_po_lead_time_analysis; \
+	  REFRESH MATERIALIZED VIEW agg_accuracy_by_dim; \
+	  REFRESH MATERIALIZED VIEW agg_dfu_coverage; \
+	  REFRESH MATERIALIZED VIEW mv_inventory_health_score; \
+	  REFRESH MATERIALIZED VIEW mv_control_tower_kpis; \
+	"
+	@echo "✓ All materialized views refreshed."
+
+refresh-accuracy-mvs:                  ## Refresh accuracy MVs (after backtest load)
+	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 -c " \
+	  REFRESH MATERIALIZED VIEW agg_accuracy_by_dim; \
+	  REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive; \
+	  REFRESH MATERIALIZED VIEW agg_dfu_coverage; \
+	  REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive; \
+	"
+	@echo "✓ Accuracy materialized views refreshed."
+
+fresh-load: normalize-all load-all refresh-mvs-tiered  ## Normalize + load + refresh MVs (from input CSVs)
+	@echo "✓ Fresh data load complete."
+
+fresh-features: fresh-load cluster-all seasonality-all variability-all lt-profile-all  ## Load + clustering + seasonality + variability + LT
+	@echo "✓ Fresh load + feature engineering complete."
+
+fresh-backtest: fresh-features backtest-all backtest-load-all refresh-accuracy-mvs  ## Load + features + backtests + accuracy refresh
+	@echo "✓ Fresh load + features + backtests complete."
+
+fresh-champion: fresh-backtest champion-all  ## Load + features + backtests + champion selection (full ML pipeline)
+	@echo ""
+	@echo "============================================================"
+	@echo "  Fresh recreate complete (data → champion selection)."
+	@echo "  Run 'make check-all' to validate, then start services."
+	@echo "============================================================"
+
+fresh-all: db-truncate-data clean-artifacts fresh-champion  ## Full cleanup & recreate: truncate → clean → load → ML → champion
+	@echo ""
+	@echo "============================================================"
+	@echo "  Full database cleanup & recreate complete."
+	@echo "  Start the application:"
+	@echo "    make api    # FastAPI on :8000"
+	@echo "    make ui     # React UI on :5173"
+	@echo "============================================================"

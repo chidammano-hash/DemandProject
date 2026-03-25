@@ -537,6 +537,70 @@ docker exec demand-mvp-postgres psql -U demand -d demand_mvp \
 
 ---
 
+## Phase 5b: Unified Model Tuning Studio (Feature 46)
+
+Optional — use the UI-driven tuning studio to run experiments interactively instead of CLI-based tuning.
+
+The Unified Model Tuning Studio lets users configure hyperparameters, launch backtest experiments, compare results, and promote winners — all from the browser for LightGBM, CatBoost, and XGBoost.
+
+### Accessing the Studio
+
+Navigate to **Model Tuning** in the sidebar (Demand section). Select a model type tab (LGBM, CatBoost, XGBoost) at the top.
+
+### Workflow
+
+1. **Create Experiment** — Click "New Experiment", select a template (production baseline, expert recommendation, or custom), adjust parameters, and submit
+2. **Monitor** — Watch the experiment in the Jobs tab with live log streaming
+3. **Compare** — Select two completed runs for side-by-side comparison with per-lag, per-cluster, per-month accuracy breakdowns, parameter diffs, and feature diffs
+4. **Promote** — Promote the winning run to production via the confirmation modal (writes to `algorithm_config.yaml`)
+
+### API Endpoints
+
+All endpoints are under `/model-tuning/{model}/` where `{model}` is `lgbm`, `catboost`, or `xgboost`.
+
+```
+GET  /model-tuning/{model}/experiments           # List experiments (paginated, filterable)
+GET  /model-tuning/{model}/experiments/{id}       # Experiment detail with timeframes
+GET  /model-tuning/{model}/experiments/{id}/lags  # Per-execution-lag accuracy breakdown
+GET  /model-tuning/{model}/experiments/{id}/clusters  # Per-cluster accuracy (filterable by exec_lag)
+GET  /model-tuning/{model}/experiments/{id}/months    # Per-month accuracy
+GET  /model-tuning/{model}/experiments/{id}/logs      # Incremental log streaming (offset-based)
+GET  /model-tuning/{model}/compare                    # Pairwise comparison with deltas
+GET  /model-tuning/{model}/templates                  # Available experiment templates
+GET  /model-tuning/{model}/promoted                   # Currently promoted (champion) run
+GET  /model-tuning/{model}/promotions                 # Promotion audit trail
+POST /model-tuning/{model}/experiments                # Create and launch experiment
+POST /model-tuning/{model}/experiments/{id}/promote   # Promote to production
+POST /model-tuning/{model}/experiments/{id}/cancel    # Cancel running/queued experiment
+DELETE /model-tuning/{model}/experiments/{id}          # Delete completed/failed experiment
+```
+
+### Schema
+
+Reuses existing `lgbm_tuning_run` table with `model_id` column (`lgbm_cluster`, `catboost_cluster`, `xgboost_cluster`) to discriminate model types. DDL: `sql/098_add_promoted_to_tuning.sql` adds `is_promoted` and `promoted_at` columns with a partial unique index per model.
+
+```bash
+# Apply schema (one-time)
+make db-apply-sql    # Includes sql/098_add_promoted_to_tuning.sql
+```
+
+### Configuration
+
+Experiment templates are loaded from `config/algorithm_config.yaml` (each model section) plus strategy YAML files:
+- `config/catboost_tune_strategies.yaml`
+- `config/xgboost_tune_strategies.yaml`
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `api/routers/forecasting/unified_model_tuning.py` | Unified router (14 endpoints) |
+| `frontend/src/api/queries/unified-model-tuning.ts` | Frontend query module |
+| `frontend/src/tabs/LgbmTuningTab.tsx` | Main UI component |
+| `tests/api/test_unified_model_tuning.py` | Backend tests (40 tests) |
+
+---
+
 ## Phase 6: Champion Model Selection
 
 Run after Phase 5 (requires 2+ backtest models in DB).
@@ -1223,6 +1287,367 @@ make e2e-report        # Open HTML report from last run
 **Test coverage:** 8 E2E test files — navigation, dashboard, accuracy, global-filters, inv-planning, ai-planner, control-tower, theme.
 
 **Config:** `frontend/e2e/playwright.config.ts`. Shared fixtures: `frontend/e2e/fixtures/base.ts`.
+
+---
+
+## Database Cleanup & Fresh Recreate
+
+Full wipe-and-reload procedure: clears all data tables while preserving config, algorithm parameters, tuning history, MLflow experiments, jobs, and platform settings. Then reloads from `data/input/` and runs the ML pipeline through champion selection.
+
+> **When to use:** Starting fresh with new input data, recovering from a corrupted pipeline state, or resetting after major schema changes.
+
+### Quick Start (Make Targets)
+
+**One-command recipes** — pick the level you need:
+
+```bash
+make fresh-all              # Full reset: truncate + clean + load + ML + champion (~4-6 hours)
+make fresh-champion         # Load + features + backtests + champion (no truncate, ~3-4 hours)
+make fresh-backtest         # Load + features + backtests (no champion, ~3 hours)
+make fresh-features         # Load + clustering + seasonality + variability + LT (~1 hour)
+make fresh-load             # Normalize + load + refresh MVs only (~5 min)
+```
+
+**Individual step targets** — run these manually if you need granular control:
+
+| Target | What it does | Time |
+|---|---|---|
+| `make db-truncate-data` | Truncate all 67 data tables in a single transaction (preserves config/algo/tuning/MLflow) | < 1 min |
+| `make clean-artifacts` | Remove stale clean CSVs, backtest outputs, clustering artifacts, champion files | < 1 sec |
+| `make normalize-all` | Normalize all 10 input CSVs → `data/*_clean.csv` | ~1 min |
+| `make load-all` | Load all 10 domains into Postgres (dimensions first, facts second) | ~1 min |
+| `make refresh-mvs-tiered` | Refresh all 13 MVs in 4-tier dependency order | ~30 sec |
+| `make cluster-all` | Feature engineering + KMeans training + label + update dim_sku.ml_cluster | ~10 min |
+| `make seasonality-all` | Seasonality detection + update dim_sku | ~5 min |
+| `make variability-all` | Demand variability computation → dim_sku | ~2 min |
+| `make lt-profile-all` | Lead time profiles → dim_item_lead_time_profile | ~2 min |
+| `make backtest-lgbm` | LGBM per-cluster backtest (10 timeframes) | ~30 min |
+| `make backtest-catboost` | CatBoost per-cluster backtest | ~40 min |
+| `make backtest-xgboost` | XGBoost per-cluster backtest | ~20 min |
+| `make backtest-all` | All 3 backtests sequentially | ~1.5 hours |
+| `make backtest-load-all` | Load all backtest predictions into DB | ~5 min |
+| `make refresh-accuracy-mvs` | Refresh 4 accuracy MVs (after backtest load) | ~10 sec |
+| `make champion-all` | Train meta-learner + simulate strategies + select champion | ~15 min |
+
+**Dependency chain:**
+
+```
+fresh-all
+├── db-truncate-data              (truncate 67 data tables)
+├── clean-artifacts               (remove stale files)
+└── fresh-champion
+    └── fresh-backtest
+        └── fresh-features
+            └── fresh-load
+                ├── normalize-all     (CSV → clean CSV)
+                ├── load-all          (clean CSV → Postgres)
+                └── refresh-mvs-tiered (13 MVs, tier-ordered)
+            ├── cluster-all           (clustering pipeline)
+            ├── seasonality-all       (seasonality detection)
+            ├── variability-all       (demand variability)
+            └── lt-profile-all        (lead time profiles)
+        ├── backtest-all              (LGBM + CatBoost + XGBoost)
+        ├── backtest-load-all         (load predictions → DB)
+        └── refresh-accuracy-mvs      (accuracy MVs)
+    └── champion-all                  (meta-learner + simulate + select)
+```
+
+### Preserved Tables (Untouched)
+
+These tables are **never truncated** — they contain configuration, algorithm parameters, experiment governance, and platform settings:
+
+| Category | Tables |
+|---|---|
+| Config/Policy | `dim_replenishment_policy`, `fact_dfu_policy_assignment`, `dim_item_lead_time_profile`, `fact_eoq_targets`, `fact_safety_stock_targets` |
+| Supplier | `dim_supplier`, `dim_item_supplier` |
+| Platform | `dim_user`, `dim_dq_check_catalog`, `dim_notification_channel`, `dim_webhook_registration`, `dim_erp_integration`, `dim_report_template`, `fact_report_schedule` |
+| Jobs/Perf | `job_history`, `job_schedule`, `perf_run`, `perf_section`, `perf_query`, `perf_suggestion` |
+| Tuning | `lgbm_tuning_run` + children (timeframe, cluster, month, lag, lag_cluster, comparison), `tuning_promotion_log`, `tuning_chat_session`, `tuning_chat_message` |
+| MLflow | All `experiments`, `runs`, `metrics`, `params`, `tags`, `logged_models`, `model_versions`, `registered_models`, `datasets`, `inputs`, `trace_*` tables |
+| System | `alembic_version` |
+
+### Step 1: Truncate Data Tables
+
+Run as a single SQL transaction. Ordered by FK dependency (children before parents). CASCADE handles FK chains safely — no preserved table has an FK pointing TO a data table, so CASCADE cannot reach preserved tables.
+
+> **Note:** `fact_inventory_snapshot` is monthly RANGE-partitioned (2025-01 through 2026-03 + default). TRUNCATE on the parent cascades to all partitions automatically.
+
+```bash
+docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 <<'EOSQL'
+BEGIN;
+
+-- Group 1: AI / Chat / Analytics
+TRUNCATE TABLE ai_recommendation_outcomes CASCADE;
+TRUNCATE TABLE ai_insights CASCADE;
+TRUNCATE TABLE ai_planning_memos CASCADE;
+TRUNCATE TABLE ai_call_log CASCADE;
+TRUNCATE TABLE chat_embeddings CASCADE;
+
+-- Group 2: Exceptions / Decisions
+TRUNCATE TABLE planner_decisions CASCADE;
+TRUNCATE TABLE exception_queue CASCADE;
+
+-- Group 3: S&OP (children → parent)
+TRUNCATE TABLE fact_sop_approved_plan CASCADE;
+TRUNCATE TABLE fact_sop_gaps CASCADE;
+TRUNCATE TABLE fact_sop_supply_constraints CASCADE;
+TRUNCATE TABLE fact_sop_demand_review CASCADE;
+TRUNCATE TABLE fact_sop_cycles CASCADE;
+
+-- Group 4: Events (children → parent)
+TRUNCATE TABLE fact_event_conflicts CASCADE;
+TRUNCATE TABLE fact_event_performance CASCADE;
+TRUNCATE TABLE fact_event_adjusted_forecast CASCADE;
+TRUNCATE TABLE fact_event_calendar CASCADE;
+
+-- Group 5: Scenarios (child → parent)
+TRUNCATE TABLE fact_scenario_results CASCADE;
+TRUNCATE TABLE fact_supply_scenarios CASCADE;
+
+-- Group 6: Procurement (children → parent)
+TRUNCATE TABLE fact_po_approval_log CASCADE;
+TRUNCATE TABLE fact_po_receipts CASCADE;
+TRUNCATE TABLE fact_open_purchase_orders CASCADE;
+TRUNCATE TABLE fact_purchase_orders CASCADE;
+
+-- Group 7: Consensus / Overrides
+TRUNCATE TABLE fact_consensus_plan CASCADE;
+TRUNCATE TABLE fact_forecast_overrides CASCADE;
+
+-- Group 8: Rebalancing (child → parent)
+TRUNCATE TABLE fact_rebalancing_transfer CASCADE;
+TRUNCATE TABLE fact_rebalancing_plan CASCADE;
+
+-- Group 9: Forecasting / Backtesting
+TRUNCATE TABLE backtest_lag_archive CASCADE;
+TRUNCATE TABLE fact_external_forecast_monthly CASCADE;
+TRUNCATE TABLE fact_production_forecast CASCADE;
+TRUNCATE TABLE fact_blended_demand_plan CASCADE;
+TRUNCATE TABLE fact_demand_plan CASCADE;
+TRUNCATE TABLE fact_demand_plan_weekly CASCADE;
+TRUNCATE TABLE fact_bias_corrections CASCADE;
+TRUNCATE TABLE fact_bias_correction_history CASCADE;
+
+-- Group 10: Inventory (parent CASCADE → all 15 partitions + default)
+TRUNCATE TABLE fact_inventory_snapshot CASCADE;
+TRUNCATE TABLE fact_inventory_projection CASCADE;
+
+-- Group 11: Sales
+TRUNCATE TABLE fact_sales_monthly CASCADE;
+TRUNCATE TABLE fact_sales_monthly_original CASCADE;
+
+-- Group 12: Inventory Planning
+TRUNCATE TABLE fact_ss_simulation_results CASCADE;
+TRUNCATE TABLE fact_demand_signals CASCADE;
+TRUNCATE TABLE fact_replenishment_plan CASCADE;
+TRUNCATE TABLE fact_replenishment_exceptions CASCADE;
+TRUNCATE TABLE fact_planned_orders CASCADE;
+TRUNCATE TABLE fact_plan_versions CASCADE;
+TRUNCATE TABLE fact_financial_inventory_plan CASCADE;
+TRUNCATE TABLE fact_budget_periods CASCADE;
+TRUNCATE TABLE fact_inventory_investment_plan CASCADE;
+TRUNCATE TABLE fact_efficient_frontier CASCADE;
+
+-- Group 13: Echelon
+TRUNCATE TABLE fact_echelon_reorder_points CASCADE;
+TRUNCATE TABLE fact_echelon_ss_targets CASCADE;
+TRUNCATE TABLE dim_echelon_network CASCADE;
+
+-- Group 14: Service Level / Lead Time
+TRUNCATE TABLE fact_service_level_performance CASCADE;
+TRUNCATE TABLE fact_service_level_targets CASCADE;
+TRUNCATE TABLE fact_lead_time_actuals CASCADE;
+TRUNCATE TABLE fact_lt_review_triggers CASCADE;
+
+-- Group 15: External Signals
+TRUNCATE TABLE fact_external_signal CASCADE;
+TRUNCATE TABLE dim_external_signal_source CASCADE;
+
+-- Group 16: DQ / Collaboration / Audit / Notifications / Reports
+TRUNCATE TABLE fact_dq_corrections CASCADE;
+TRUNCATE TABLE fact_dq_check_results CASCADE;
+TRUNCATE TABLE fact_annotation CASCADE;
+TRUNCATE TABLE fact_shared_view CASCADE;
+TRUNCATE TABLE fact_intervention_metrics CASCADE;
+TRUNCATE TABLE fact_notification_log CASCADE;
+TRUNCATE TABLE fact_webhook_delivery CASCADE;
+TRUNCATE TABLE fact_report_delivery CASCADE;
+TRUNCATE TABLE fact_audit_log CASCADE;
+TRUNCATE TABLE fact_query_performance CASCADE;
+
+-- Group 17: Infrastructure
+TRUNCATE TABLE audit_load_batch CASCADE;
+
+-- Group 18: Network
+TRUNCATE TABLE dim_transfer_lane CASCADE;
+
+-- Group 19: Dimensions (facts already cleared)
+TRUNCATE TABLE dim_sku CASCADE;
+TRUNCATE TABLE dim_item CASCADE;
+TRUNCATE TABLE dim_location CASCADE;
+TRUNCATE TABLE dim_customer CASCADE;
+TRUNCATE TABLE dim_time CASCADE;
+TRUNCATE TABLE dim_sourcing CASCADE;
+
+-- Group 20: Cost / Profile / Decomposition
+TRUNCATE TABLE dim_item_cost CASCADE;
+TRUNCATE TABLE dim_lead_time_profile CASCADE;
+TRUNCATE TABLE mv_demand_decomposition CASCADE;
+
+COMMIT;
+EOSQL
+```
+
+### Step 2: Clean Intermediate Files
+
+Remove stale artifacts so the pipeline regenerates everything from scratch:
+
+```bash
+rm -f data/*_clean.csv data/inventory_clean.csv
+rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/
+rm -rf data/clustering/ data/champion/ data/models/
+rm -f data/seasonality_results.csv data/clustering_features.csv
+```
+
+### Step 3: Normalize Input CSVs
+
+```bash
+~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset item
+~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset location
+~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset customer
+~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset time
+~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset sku
+~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset sales
+~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset forecast
+~/.local/bin/uv run python scripts/normalize_inventory_csv.py
+~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset sourcing
+~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset purchase_order
+```
+
+### Step 4: Load Into Postgres (Dimensions First, Then Facts)
+
+```bash
+# Wave 1: Dimensions
+~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset item
+~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset location
+~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset customer
+~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset time
+~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset sku
+~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset sourcing
+
+# Wave 2: Facts
+~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset sales
+~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset forecast
+~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset inventory
+~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset purchase_order
+```
+
+### Step 5: Refresh Materialized Views (Tier-Ordered)
+
+MV dependencies require a specific refresh order. Some MVs (DQ, sensing, projections) depend on data from later pipeline steps — they will populate when those steps run.
+
+```bash
+docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "
+  -- Tier 1: Base aggregates (no MV dependencies)
+  REFRESH MATERIALIZED VIEW agg_sales_monthly;
+  REFRESH MATERIALIZED VIEW agg_forecast_monthly;
+  REFRESH MATERIALIZED VIEW agg_inventory_monthly;
+
+  -- Tier 2: Depend on tier 1 aggregates
+  REFRESH MATERIALIZED VIEW mv_inventory_forecast_monthly;
+  REFRESH MATERIALIZED VIEW mv_fill_rate_monthly;
+  REFRESH MATERIALIZED VIEW mv_intramonth_stockout;
+  REFRESH MATERIALIZED VIEW mv_supplier_performance;
+  REFRESH MATERIALIZED VIEW mv_supplier_po_performance;
+  REFRESH MATERIALIZED VIEW mv_po_lead_time_analysis;
+  REFRESH MATERIALIZED VIEW agg_accuracy_by_dim;
+  REFRESH MATERIALIZED VIEW agg_dfu_coverage;
+
+  -- Tier 3: Depend on tier 2 (mv_inventory_forecast_monthly)
+  REFRESH MATERIALIZED VIEW mv_inventory_health_score;
+
+  -- Tier 4: Depend on tier 3 (mv_inventory_health_score + mv_fill_rate + mv_intramonth)
+  REFRESH MATERIALIZED VIEW mv_control_tower_kpis;
+"
+```
+
+### Step 6: Clustering & Feature Engineering
+
+```bash
+~/.local/bin/uv run python scripts/generate_clustering_features.py
+~/.local/bin/uv run python scripts/train_clustering_model.py
+~/.local/bin/uv run python scripts/label_clusters.py
+~/.local/bin/uv run python scripts/update_cluster_assignments.py
+```
+
+### Step 7: Seasonality Detection
+
+```bash
+~/.local/bin/uv run python scripts/detect_seasonality.py
+~/.local/bin/uv run python scripts/update_seasonality_profiles.py
+```
+
+### Step 8: Demand Variability & Lead Time Profiles
+
+```bash
+~/.local/bin/uv run python scripts/compute_demand_variability.py
+~/.local/bin/uv run python scripts/compute_lead_time_variability.py
+```
+
+### Step 9: Run Backtests (3 Models)
+
+Sequential execution (safe for laptops). For parallel, append `&` to each and `wait` at the end.
+
+```bash
+~/.local/bin/uv run python scripts/run_backtest.py
+~/.local/bin/uv run python scripts/run_backtest_catboost.py
+~/.local/bin/uv run python scripts/run_backtest_xgboost.py
+```
+
+### Step 10: Load Backtest Predictions
+
+```bash
+~/.local/bin/uv run python scripts/load_backtest_forecasts.py --all --replace
+```
+
+### Step 11: Refresh Accuracy MVs
+
+These MVs depend on backtest data loaded in Step 10:
+
+```bash
+docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "
+  REFRESH MATERIALIZED VIEW agg_accuracy_by_dim;
+  REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive;
+  REFRESH MATERIALIZED VIEW agg_dfu_coverage;
+  REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive;
+"
+```
+
+### Step 12: Champion Model Selection
+
+```bash
+~/.local/bin/uv run python scripts/train_meta_learner.py --config config/model_competition.yaml
+~/.local/bin/uv run python scripts/simulate_champion_strategies.py --config config/model_competition.yaml
+~/.local/bin/uv run python scripts/run_champion_selection.py --config config/model_competition.yaml
+```
+
+### Validation
+
+After completing the pipeline, verify key table counts:
+
+```bash
+docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "
+  SELECT 'dim_item' AS tbl, COUNT(*) FROM dim_item
+  UNION ALL SELECT 'dim_location', COUNT(*) FROM dim_location
+  UNION ALL SELECT 'dim_sku', COUNT(*) FROM dim_sku
+  UNION ALL SELECT 'fact_sales_monthly', COUNT(*) FROM fact_sales_monthly
+  UNION ALL SELECT 'fact_external_forecast_monthly', COUNT(*) FROM fact_external_forecast_monthly
+  UNION ALL SELECT 'fact_inventory_snapshot', COUNT(*) FROM fact_inventory_snapshot
+  UNION ALL SELECT 'backtest_lag_archive', COUNT(*) FROM backtest_lag_archive
+  UNION ALL SELECT 'champion_rows', COUNT(*) FROM fact_external_forecast_monthly WHERE model_id = 'champion'
+  ORDER BY tbl;
+"
+```
 
 ---
 

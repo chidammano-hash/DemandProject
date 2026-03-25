@@ -8,7 +8,7 @@ A full-stack supply chain analytics platform for demand planning and inventory o
 
 | Layer | Technology |
 |---|---|
-| Backend API | Python + FastAPI + Uvicorn (60 mounted routers) |
+| Backend API | Python + FastAPI + Uvicorn (61 mounted routers) |
 | Frontend | React + Vite + TypeScript + Tailwind CSS + shadcn/ui |
 | Charts | Recharts + ECharts |
 | Database | PostgreSQL 16 (pgvector for embeddings) |
@@ -29,7 +29,7 @@ Data flow: raw CSVs -> normalize scripts -> PostgreSQL -> FastAPI (:8000) -> Rea
 ```
 DemandProject/
 ├── api/                         FastAPI backend (main.py + routers/)
-│   └── routers/                 62 router files (60 mounted)
+│   └── routers/                 63 router files (61 mounted)
 ├── common/                      29 shared Python modules
 ├── scripts/                     Data pipeline & ML scripts (ETL, clustering, backtesting)
 ├── frontend/                    React + TypeScript UI
@@ -175,6 +175,8 @@ Three tree-based backtest models (LightGBM, CatBoost, XGBoost) with configurable
 
 **Tuning Analysis Panels:** The LGBM Tuning tab includes 4 analysis sub-tabs: Cluster EDA (cluster demand profiles, error concentration, seasonality heatmap), Feature Lab (SHAP importance, stability, correlation, per-cluster importance), Accuracy Budget (waterfall decomposition, ABC targets, monthly trend, model comparison), and Sampled Backtest (stratified DFU sampling for fast ~3-min iteration runs). API prefixes: `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/lgbm-tuning/sampled`.
 
+**Unified Model Tuning Studio (Feature 46):** A production-grade, UI-driven hyperparameter tuning platform for LightGBM, CatBoost, and XGBoost. Users configure experiment parameters directly in the browser using an Experiment Builder with templates (production baseline, expert recommendations, custom), launch backtest runs as resilient jobs (subprocess isolation, PID tracking, log streaming), monitor real-time logs in the Jobs tab, compare results with execution-lag filtering (lags 0-4) including per-lag/per-cluster/per-month breakdowns, parameter diffs, and feature diffs, then promote winners to the champion pipeline via a confirmation modal. A unified API router (`/model-tuning/{model}/`) replaces the split between `lgbm-tuning.py` and `model-tuning.py` with a parametrized prefix supporting all three model types. 14 endpoints: list experiments (paginated + filtered), experiment detail, per-lag accuracy, per-cluster accuracy, per-month accuracy, experiment logs (offset-based streaming), pairwise comparison, templates, promoted run, promotion log, create experiment, promote, cancel, delete. See `docs/specs/02-forecasting/11-unified-model-tuning-v2.md` for full spec.
+
 ### 2. DFU Clustering & Segmentation
 
 KMeans clustering groups ~112K DFUs by demand patterns using **14 core features across 6 dimensions** (volume, trend, seasonality, periodicity, intermittency, lifecycle). Feature engineering includes FFT periodicity strength, OLS seasonal R-squared, Croston ADI, scale-invariant trend slope, IQR, CAGR, recency ratio, and YoY correlation (36-month window). Optimal K via combined Silhouette + Calinski-Harabasz scoring with 5% minimum cluster size constraint (k_range [5,18]). Priority-ordered taxonomy labeling produces compound labels like `high_volume_seasonal_growing`. What-If scenario engine runs trial clusterings with custom parameters without touching production. Seasonality detection computes strength, profile, and peak/trough months per DFU. ABC-XYZ classification cross-segments DFUs by revenue volume x demand variability into a 3x3 policy matrix.
@@ -286,7 +288,7 @@ APScheduler-powered engine with 8 job types across 5 groups (clustering, backtes
 
 ## Testing
 
-Full-stack automated testing (2,273 backend / 741 frontend):
+Full-stack automated testing (2,380 backend / 837 frontend):
 
 ```bash
 cd DemandProject
@@ -327,7 +329,7 @@ Every feature ships with tests; every removed feature removes its tests.
 | Backend tests | `tests/` |
 | Frontend tests | `frontend/src/**/__tests__/` |
 | E2E tests | `frontend/e2e/tests/` |
-| Design specs | `docs/specs/` (8 domains, 53 files) |
+| Design specs | `docs/specs/` (8 domains, 54 files) |
 | Makefile | `Makefile` |
 
 ## Key Documentation

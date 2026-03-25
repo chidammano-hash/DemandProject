@@ -66,8 +66,9 @@ Predict future demand using ML models, then select the best forecast per item.
 | 08 | [Production Forecast](02-forecasting/08-production-forecast.md) | Generate real forward-looking predictions from champion models |
 | 09 | [Bias Correction](02-forecasting/09-bias-correction.md) | Detect and correct systematic over/under-forecasting |
 | 10 | [Forecast CI Bands](02-forecasting/10-forecast-ci-bands.md) | Confidence intervals showing the range of likely outcomes |
+| 11 | [Unified Model Tuning Studio](02-forecasting/11-unified-model-tuning-v2.md) | UI-driven experiment launch, comparison, and promotion for LGBM/CatBoost/XGBoost |
 
-**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production)
+**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11 (tuning studio)
 
 ---
 

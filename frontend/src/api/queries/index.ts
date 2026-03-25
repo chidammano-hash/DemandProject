@@ -22,3 +22,4 @@ export * from "./tuning-chat";
 export * from "./cluster-eda";
 export * from "./feature-lab";
 export * from "./accuracy-budget";
+export * from "./unified-model-tuning";

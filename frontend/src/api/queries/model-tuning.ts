@@ -11,10 +11,10 @@ import type {
   TuningTimeframe,
 } from "./lgbm-tuning";
 
-export type ModelType = "lgbm" | "catboost" | "xgboost";
+// ModelType is now exported from unified-model-tuning.ts — do not re-export here.
+import type { ModelType } from "./unified-model-tuning";
 
-// Re-export types for convenience
-export type { TuningRun, TuningComparison, TuningComparisonSummary, PromoteResponse, PromotedRun, TuningTimeframe };
+// Types (TuningRun, TuningComparison, etc.) are already exported from lgbm-tuning.ts via the barrel.
 
 // --- URL prefix map ---
 const MODEL_PREFIX: Record<ModelType, string> = {
@@ -23,19 +23,7 @@ const MODEL_PREFIX: Record<ModelType, string> = {
   xgboost: "/xgboost-tuning",
 };
 
-// --- Query keys ---
-export const modelTuningKeys = {
-  runs: (model: ModelType, params?: { limit?: number; status?: string }) =>
-    [`${model}-tuning-runs`, params] as const,
-  run: (model: ModelType, runId: number) =>
-    [`${model}-tuning-run`, runId] as const,
-  compare: (model: ModelType, baselineId: number, candidateId: number) =>
-    [`${model}-tuning-compare`, baselineId, candidateId] as const,
-  comparisons: (model: ModelType, limit?: number) =>
-    [`${model}-tuning-comparisons`, limit] as const,
-  promoted: (model: ModelType) =>
-    [`${model}-tuning-promoted`] as const,
-};
+// Query keys are now in unified-model-tuning.ts — modelTuningKeys removed to avoid conflict.
 
 // --- Fetchers ---
 export async function fetchModelTuningRuns(

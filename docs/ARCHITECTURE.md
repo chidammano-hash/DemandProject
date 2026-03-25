@@ -59,7 +59,7 @@ flowchart TD
         AI["AI Insights"]
     end
 
-    subgraph API["FastAPI (59 Routers)"]
+    subgraph API["FastAPI (61 Routers)"]
         REST["/domains, /forecast,<br/>/inventory, /inv-planning,<br/>/ai-planner, /jobs, ..."]
     end
 
@@ -579,6 +579,11 @@ erDiagram
 59. `tuning_chat_session` — AI tuning chat sessions (LGBM Tuning Chat); grain: `(session_id)` UUID PK; columns: title, status (active/archived), context (JSONB), created_at, updated_at; DDL: `sql/096_create_tuning_chat.sql`
 60. `tuning_chat_message` — messages within tuning chat sessions (LGBM Tuning Chat); grain: `(message_id)` SERIAL PK; columns: session_id (FK), role (user/assistant/system), content, message_type (text/recommendation/run_started/run_completed/run_failed/analysis/error), metadata (JSONB), created_at; DDL: `sql/096_create_tuning_chat.sql`
 
+**Unified Model Tuning (Feature 46) — schema extensions:**
+- `lgbm_tuning_run` gains `is_promoted BOOLEAN DEFAULT FALSE` and `promoted_at TIMESTAMPTZ` columns; partial unique index `idx_tuning_run_promoted_per_model ON (model_id) WHERE is_promoted = TRUE` ensures at most one promoted run per model type; DDL: `sql/098_add_promoted_to_tuning.sql`
+- The `model_id` column (`lgbm_cluster`, `catboost_cluster`, `xgboost_cluster`) discriminates model types within the same table — all 3 model types share the existing `lgbm_tuning_run`, `lgbm_tuning_timeframe`, `lgbm_tuning_cluster`, and `lgbm_tuning_month` tables
+- Unified API router at `/model-tuning/{model}/` (model = lgbm | catboost | xgboost) with 14 endpoints: list, detail, lags, clusters, months, logs, compare, templates, promoted, promotions, create, promote, cancel, delete
+
 ---
 
 ## 11. Accuracy Slice Materialized Views (feature10)
@@ -739,13 +744,13 @@ flowchart TD
 
 ## 15. API Router Architecture
 
-`api/main.py` creates the app, adds middleware, and mounts all 60 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/`. `domains.py` is mounted last (catch-all `{domain}` path parameter). Note: `inv_planning.py` is a thin compatibility shim (not directly mounted); `api_governance.py` does not exist as a router file (governance logic is in `common/rate_limiter.py`).
+`api/main.py` creates the app, adds middleware, and mounts all 61 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/`. `domains.py` is mounted last (catch-all `{domain}` path parameter). Note: `inv_planning.py` is a thin compatibility shim (not directly mounted); `api_governance.py` does not exist as a router file (governance logic is in `common/rate_limiter.py`).
 
-**60 mounted routers** (as of 08-01 through 08-10 + all evolution features):
-accuracy, ai_planner, analysis, auth_router, bias_corrections, blended_forecast, chat, clusters, collaboration, competition, consensus_plan, control_tower, dashboard, data_quality, domains, echelon_planning, events, external_signals, fill_rate, financial_plan, fva, intel, inv_backtest, inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_projection, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, inventory, jobs, lead_time_learning, lgbm_tuning, notifications, production_forecast, reports, service_level, shap, sop, storyboard, supply, supply_scenarios, users, webhooks
+**61 mounted routers** (as of 08-01 through 08-10 + all evolution features + Feature 46):
+accuracy, ai_planner, analysis, auth_router, bias_corrections, blended_forecast, chat, clusters, collaboration, competition, consensus_plan, control_tower, dashboard, data_quality, domains, echelon_planning, events, external_signals, fill_rate, financial_plan, fva, intel, inv_backtest, inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_projection, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, inventory, jobs, lead_time_learning, lgbm_tuning, notifications, production_forecast, reports, service_level, shap, sop, storyboard, supply, supply_scenarios, unified_model_tuning, users, webhooks
 
-**30 Vite proxy path prefixes** in `frontend/vite.config.ts`:
-`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/sku`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/auth`, `/users`, `/notifications`, `/collaboration`, `/external-signals`, `/fva`, `/reports`, `/api`, `/webhooks`, `/lgbm-tuning`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`
+**31 Vite proxy path prefixes** in `frontend/vite.config.ts`:
+`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/sku`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/auth`, `/users`, `/notifications`, `/collaboration`, `/external-signals`, `/fva`, `/reports`, `/api`, `/webhooks`, `/lgbm-tuning`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`
 
 **CRITICAL:** Every new API path prefix must be added to `frontend/vite.config.ts` or the frontend receives HTML instead of JSON. Restart the Vite dev server after changes.
 
@@ -774,12 +779,13 @@ accuracy, ai_planner, analysis, auth_router, bias_corrections, blended_forecast,
 | **Feature Lab** | `/feature-lab/importance`, `/stability`, `/correlation`, `/cluster-importance`, `/categories` | `backtest_lag_archive`, `ml_cluster_assignments` |
 | **Accuracy Budget** | `/accuracy-budget/decomposition`, `/abc`, `/models`, `/monthly`, `/forecast-value` | `backtest_lag_archive`, `fact_sales_monthly` |
 | **Sampled Backtest** | `/lgbm-tuning/sampled/run`, `/sampled/status/{job_id}`, `/sampled/result/{job_id}` | `lgbm_tuning_run` (sampled mode) |
+| **Unified Model Tuning** | `/model-tuning/{model}/experiments`, `/experiments/{id}`, `/experiments/{id}/lags`, `/experiments/{id}/clusters`, `/experiments/{id}/months`, `/experiments/{id}/logs`, `/compare`, `/templates`, `/promoted`, `/promotions`, `/experiments/{id}/promote`, `/experiments/{id}/cancel` | `lgbm_tuning_run`, `lgbm_tuning_timeframe`, `lgbm_tuning_cluster`, `lgbm_tuning_month`, `lgbm_tuning_comparison` |
 
 ### Vite Proxy Routes (frontend/vite.config.ts)
 
 All API prefixes proxied to FastAPI at `http://127.0.0.1:8000`:
 
-`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/sku`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/sop`, `/fva`, `/supply`, `/notifications`, `/reports`, `/webhooks`, `/auth`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`
+`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/sku`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/sop`, `/fva`, `/supply`, `/notifications`, `/reports`, `/webhooks`, `/auth`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`
 
 > **CRITICAL:** When adding a new API path prefix, add a corresponding proxy entry in `vite.config.ts` or the frontend will receive HTML instead of JSON.
 

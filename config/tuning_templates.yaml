@@ -1,0 +1,161 @@
+templates:
+  lgbm:
+    - id: production_baseline
+      label: "Production Baseline (Run 16)"
+      description: "Current production parameters"
+      source: algorithm_config  # read live from algorithm_config.yaml
+    - id: expert_aggressive_depth
+      label: "Expert: Aggressive Depth + Heavy Reg"
+      description: "Cap depth at 10, halve leaves, increase L2 to 3.5"
+      params:
+        max_depth: 10
+        num_leaves: 63
+        reg_lambda: 3.5
+        reg_alpha: 0.5
+        path_smooth: 8.0
+        min_child_samples: 60
+    - id: expert_ultra_slow_lr
+      label: "Expert: Ultra-Slow LR + Max Trees"
+      description: "LR=0.008 with 3000 trees for residual capture"
+      params:
+        learning_rate: 0.008
+        n_estimators: 3000
+        subsample: 0.85
+        colsample_bytree: 0.85
+    - id: expert_sparse_demand
+      label: "Expert: Feature Fraction + Sparse Campaign"
+      description: "High node-level features with sparse demand regularization"
+      params:
+        feature_fraction_bynode: 0.9
+        colsample_bytree: 0.9
+        min_child_samples: 100
+        min_gain_to_split: 0.05
+        reg_alpha: 1.0
+        path_smooth: 12.0
+    - id: expert_balanced_champion
+      label: "Expert: Balanced Champion Candidate"
+      description: "Moderate depth cap, slower LR, balanced regularization"
+      params:
+        learning_rate: 0.015
+        n_estimators: 2000
+        max_depth: 12
+        num_leaves: 95
+        reg_lambda: 2.5
+        reg_alpha: 0.3
+        feature_fraction_bynode: 0.8
+        path_smooth: 6.0
+        min_child_samples: 50
+
+  catboost:
+    - id: production_baseline
+      label: "Production Baseline"
+      source: algorithm_config
+    - id: expert_ordered_symmetric
+      label: "Expert: Ordered Boosting + Symmetric Trees"
+      description: "Symmetric trees with ordered boosting for temporal data"
+      params:
+        grow_policy: SymmetricTree
+        depth: 8
+        bootstrap_type: Ordered
+        iterations: 4000
+        learning_rate: 0.006
+        random_strength: 1.0
+    - id: expert_high_border
+      label: "Expert: High Border Count + Reduced Leaf Reg"
+      description: "Finer split resolution with 128 borders"
+      params:
+        border_count: 128
+        l2_leaf_reg: 3.0
+        min_data_in_leaf: 40
+        bagging_temperature: 0.6
+        model_size_reg: 0.02
+    - id: expert_langevin
+      label: "Expert: Langevin Gradient Boosting"
+      description: "Diffusion noise for implicit regularization"
+      params:
+        langevin: true
+        diffusion_temperature: 10000
+        learning_rate: 0.005
+        iterations: 5000
+        l2_leaf_reg: 5.0
+        bootstrap_type: Bayesian
+        bagging_temperature: 1.0
+    - id: expert_ensemble_optimized
+      label: "Expert: Ensemble-Optimized Blend"
+      description: "Low-bias params to complement LGBM in meta-learner"
+      params:
+        iterations: 3500
+        learning_rate: 0.01
+        depth: 12
+        l2_leaf_reg: 4.0
+        max_leaves: 191
+        subsample: 0.9
+        colsample_bylevel: 0.9
+        reg_lambda: 2.0
+        model_size_reg: 0.04
+
+  xgboost:
+    - id: production_baseline
+      label: "Production Baseline"
+      source: algorithm_config
+    - id: expert_lossguide_heavy_reg
+      label: "Expert: Lossguide + Heavy Regularization"
+      description: "Leaf-wise splitting with L1/L2 regularization"
+      params:
+        grow_policy: lossguide
+        max_leaves: 127
+        max_depth: 10
+        n_estimators: 2000
+        learning_rate: 0.015
+        reg_lambda: 5.0
+        reg_alpha: 0.5
+        gamma: 0.2
+        min_child_weight: 15
+        max_bin: 256
+        colsample_bylevel: 0.8
+    - id: expert_dart
+      label: "Expert: DART Booster + Conservative Dropout"
+      description: "Tree dropout for balanced ensemble generalization"
+      params:
+        booster: dart
+        rate_drop: 0.08
+        skip_drop: 0.5
+        n_estimators: 2500
+        learning_rate: 0.012
+        max_depth: 8
+        subsample: 0.85
+        colsample_bytree: 0.85
+        reg_lambda: 3.0
+    - id: expert_ultra_high_trees
+      label: "Expert: Ultra-High Trees + Micro LR"
+      description: "3000 trees at 0.008 LR — close the gap with LGBM"
+      params:
+        n_estimators: 3000
+        learning_rate: 0.008
+        max_depth: 10
+        max_leaves: 95
+        grow_policy: lossguide
+        max_bin: 256
+        subsample: 0.82
+        colsample_bylevel: 0.85
+        reg_lambda: 4.0
+        gamma: 0.15
+    - id: expert_champion_blend
+      label: "Expert: Champion Candidate Blend"
+      description: "DART + lossguide + 256 bins + balanced reg"
+      params:
+        booster: dart
+        rate_drop: 0.05
+        skip_drop: 0.6
+        n_estimators: 2800
+        learning_rate: 0.01
+        grow_policy: lossguide
+        max_leaves: 127
+        max_depth: 10
+        max_bin: 256
+        min_child_weight: 12
+        subsample: 0.85
+        colsample_bylevel: 0.85
+        reg_lambda: 5.0
+        reg_alpha: 0.3
+        gamma: 0.12

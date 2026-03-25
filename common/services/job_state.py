@@ -163,6 +163,8 @@ def _run_subprocess(
     if progress_cb and step_msg:
         progress_cb(msg=step_msg)
 
+    # Force line-buffered stdout so log streaming is real-time, not block-buffered
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -170,6 +172,7 @@ def _run_subprocess(
         text=True,
         cwd=str(_SCRIPTS_DIR.parent),
         start_new_session=True,
+        env=env,
     )
 
     # Store PID for kill/recovery
@@ -705,6 +708,216 @@ def _run_tuning_backtest(
         progress_cb(pct=100, msg=f"Tuning run #{run_id} completed in {duration:.0f}s")
     return {"run_id": run_id, "strategy_label": strategy_label, "duration_seconds": round(duration),
             "output_log": output[:5000] if output else "Tuning backtest completed"}
+
+
+def _run_model_tuning_experiment(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run a model tuning experiment: update run status, run backtest, register results.
+
+    Supports lgbm, catboost, and xgboost models. The caller provides a pre-built
+    temp config file and the run_id of the lgbm_tuning_run record.
+    """
+    ROOT = Path(__file__).resolve().parents[2]
+
+    # Model → backtest output directory mapping
+    MODEL_OUTPUT_DIRS: dict[str, str] = {
+        "lgbm": "lgbm_cluster",
+        "catboost": "catboost_cluster",
+        "xgboost": "xgboost_cluster",
+    }
+
+    run_id = params["run_id"]
+    model = params["model"]
+    config_path = params["config_path"]
+    run_label = params.get("run_label", "tuning_experiment")
+
+    if model not in MODEL_OUTPUT_DIRS:
+        raise ValueError(f"Unknown model type: {model}")
+
+    if progress_cb:
+        progress_cb(pct=0, msg=f"Starting {model.upper()} tuning experiment #{run_id} ({run_label})")
+
+    # 1. Update lgbm_tuning_run: set job_id, status=running, started_at
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                "UPDATE lgbm_tuning_run SET job_id = %s, status = 'running', started_at = NOW() "
+                "WHERE run_id = %s",
+                (job_id, run_id),
+            )
+    except Exception:
+        logger.warning("Failed to update run %d status to running", run_id)
+
+    if cancel_event and cancel_event.is_set():
+        raise RuntimeError("Job cancelled by user")
+
+    # 2. Run backtest via _run_subprocess (PID tracking + cancel + log streaming)
+    cmd = [
+        _UV, "run", "python", str(ROOT / "scripts" / "run_backtest.py"),
+        "--model", model,
+        "--config", config_path,
+    ]
+    start = time.time()
+    try:
+        if progress_cb:
+            progress_cb(pct=5, msg=f"Running {model.upper()} backtest")
+        output = _run_subprocess(cmd, progress_cb, f"Running {model.upper()} backtest",
+                                 cancel_event=cancel_event, job_id=job_id)
+        duration = time.time() - start
+    except (RuntimeError, OSError) as exc:
+        # 5. On failure: update lgbm_tuning_run with status=failed
+        duration = time.time() - start
+        error_msg = str(exc)[:2000]
+        try:
+            from common.ml.tuning_tracker import fail_run
+            fail_run(run_id, error_msg)
+        except ImportError:
+            logger.warning("tuning_tracker not available — marking run %d failed via direct SQL", run_id)
+            try:
+                with _get_conn() as conn:
+                    conn.execute(
+                        "UPDATE lgbm_tuning_run SET status = 'failed', completed_at = NOW(), "
+                        "notes = COALESCE(notes || E'\\n', '') || %s WHERE run_id = %s",
+                        (error_msg, run_id),
+                    )
+            except Exception:
+                logger.warning("Failed to mark run %d as failed in DB", run_id)
+        # 6. Clean up temp config file
+        _cleanup_temp_config(config_path)
+        raise
+
+    # 3. On success: complete run via tracker
+    if cancel_event and cancel_event.is_set():
+        raise RuntimeError("Job cancelled by user")
+
+    if progress_cb:
+        progress_cb(pct=90, msg="Registering results")
+
+    from common.ml.tuning_tracker import (
+        complete_run,
+        register_cluster_month_breakdowns,
+        register_timeframes,
+    )
+
+    output_dir_name = MODEL_OUTPUT_DIRS[model]
+    meta_path = ROOT / "data" / "backtest" / output_dir_name / "backtest_metadata.json"
+    complete_run(run_id, meta_path)
+
+    if progress_cb:
+        progress_cb(pct=93, msg="Registering timeframe breakdowns")
+    register_timeframes(run_id, meta_path)
+
+    predictions_path = ROOT / "data" / "backtest" / output_dir_name / "backtest_predictions.csv"
+    if predictions_path.exists():
+        if progress_cb:
+            progress_cb(pct=96, msg="Registering cluster/month breakdowns")
+        register_cluster_month_breakdowns(run_id, predictions_path)
+
+    # 6. Clean up temp config file
+    _cleanup_temp_config(config_path)
+
+    if progress_cb:
+        progress_cb(pct=100, msg=f"Tuning experiment #{run_id} completed in {duration:.0f}s")
+    return {
+        "run_id": run_id,
+        "model": model,
+        "run_label": run_label,
+        "duration_seconds": round(duration),
+        "output_log": output[:5000] if output else "Model tuning experiment completed",
+    }
+
+
+def _run_load_backtest_results(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Load backtest predictions into DB and refresh materialized views.
+
+    Invokes ``scripts/load_backtest_forecasts.py --model <model_id> --replace``
+    as a subprocess. On success, marks the tuning run as results-promoted.
+    """
+    ROOT = Path(__file__).resolve().parents[2]
+
+    MODEL_OUTPUT_DIRS: dict[str, str] = {
+        "lgbm": "lgbm_cluster",
+        "catboost": "catboost_cluster",
+        "xgboost": "xgboost_cluster",
+    }
+
+    run_id = params["run_id"]
+    model = params["model"]
+    model_id = MODEL_OUTPUT_DIRS.get(model, params.get("model_id", ""))
+
+    if progress_cb:
+        progress_cb(pct=0, msg=f"Starting results load for {model.upper()}")
+
+    pred_path = ROOT / "data" / "backtest" / model_id / "backtest_predictions.csv"
+    if not pred_path.exists():
+        raise RuntimeError(f"Prediction file not found: {pred_path}")
+
+    cmd = [
+        _UV, "run", "python",
+        str(ROOT / "scripts" / "load_backtest_forecasts.py"),
+        "--model", model_id, "--replace",
+    ]
+    start = time.time()
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Loading {model.upper()} predictions into database")
+
+    output = _run_subprocess(
+        cmd, progress_cb, f"Loading {model.upper()} results",
+        cancel_event=cancel_event, job_id=job_id,
+    )
+    duration = time.time() - start
+
+    # Mark tuning run as results-promoted
+    if progress_cb:
+        progress_cb(pct=95, msg="Updating promotion status")
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                "UPDATE lgbm_tuning_run "
+                "SET is_results_promoted = TRUE, results_promoted_at = NOW() "
+                "WHERE run_id = %s",
+                (run_id,),
+            )
+            conn.execute(
+                "INSERT INTO tuning_promotion_log "
+                "(run_id, model_id, promoted_by, params_written, promotion_type) "
+                "VALUES (%s, %s, %s, %s::jsonb, %s)",
+                (run_id, model_id, "manual", "{}", "results"),
+            )
+    except Exception:
+        logger.warning("Failed to update results promotion status for run %d", run_id)
+
+    if progress_cb:
+        progress_cb(pct=100, msg=f"Results loaded in {duration:.0f}s")
+
+    return {
+        "run_id": run_id,
+        "model": model,
+        "duration_seconds": round(duration),
+        "status": "loaded",
+    }
+
+
+def _cleanup_temp_config(config_path: str) -> None:
+    """Remove a temporary config file and its parent directory if empty."""
+    try:
+        p = Path(config_path)
+        if p.exists():
+            p.unlink()
+        parent = p.parent
+        if parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+    except OSError:
+        logger.warning("Failed to clean up temp config: %s", config_path)
 
 
 def _insert_tuning_chat_message(

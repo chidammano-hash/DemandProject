@@ -34,13 +34,13 @@
 
 ```
 api/                         # FastAPI backend
-├── main.py                  # App entry point — mounts 60 routers
+├── main.py                  # App entry point — mounts 61 routers
 ├── core.py                  # SQL helpers, filtering, pagination
 ├── pool.py                  # Connection pool management
 ├── llm.py                   # OpenAI client management
 └── routers/
     ├── inventory/           # 22 routers — inv_planning_*, inventory, supply, fill_rate
-    ├── forecasting/         # 8 routers — accuracy, shap, competition, blended, fva
+    ├── forecasting/         # 9 routers — accuracy, shap, competition, blended, fva, unified_model_tuning
     ├── operations/          # 10 routers — sop, control_tower, storyboard, events
     ├── platform/            # 10 routers — auth, users, config, notifications, webhooks
     ├── intelligence/        # 4 routers — ai_planner, chat, intel, analysis
@@ -211,7 +211,7 @@ These are hard constraints that cause bugs or test failures if violated.
 
 ### Frontend Patterns
 
-- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`.
+- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/model-tuning`.
 - **Theme context, not props**: Use `useThemeContext()` or `useChartColors()` — never pass `theme` as a prop from `App.tsx`.
 - **Test wrappers**: Wrap components with `TestQueryWrapper` from `src/tabs/__tests__/test-utils.tsx`. Mock API with `vi.mock("../api/queries")`. Mock `echarts-for-react` for chart tests. Mock `@tanstack/react-virtual` for virtualized row tests.
 
@@ -314,6 +314,11 @@ When adding a new router, also:
 3. `docs/specs/<domain>/<spec>.md` — create/update the relevant design spec
 4. `docs/specs/01-foundation/01-infrastructure.md` — add to "Implemented Features" list
 5. `CLAUDE.md` (this file) — if critical rules, entry points, or commands change
+6. `docs/RUNBOOK.md` "Database Cleanup & Fresh Recreate" + `Makefile` cleanup targets — when adding new tables, MVs, or pipeline steps:
+   - **New data table** → add `TRUNCATE TABLE <name> CASCADE;` to the correct FK group in RUNBOOK SQL + Makefile `db-truncate-data`
+   - **New materialized view** → add `REFRESH MATERIALIZED VIEW <name>;` to the correct tier in RUNBOOK Step 5 + Makefile `refresh-mvs-tiered`
+   - **New pipeline step** → add to the appropriate RUNBOOK step + Makefile `fresh-*` dependency chain
+   - **New config/preserved table** → add to the "Preserved Tables" list (do NOT add a TRUNCATE)
 
 **What requires updates**: New features, schema changes, new dependencies, new Make targets, pipeline changes, removals/renames.
 

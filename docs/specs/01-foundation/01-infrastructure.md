@@ -57,7 +57,7 @@ Postgres tuning: `shared_buffers=512MB`, `work_mem=64MB`, `effective_cache_size=
 
 ## Architecture
 
-The API layer uses 54 modular routers mounted in `api/main.py`. The `domains.py` router is mounted last because it has a catch-all `{domain}` path parameter. All route handlers live in router modules — `main.py` is a ~149-line shell. Optional API key auth is enabled when the `API_KEY` env var is set.
+The API layer uses 61 modular routers mounted in `api/main.py`. The `domains.py` router is mounted last because it has a catch-all `{domain}` path parameter. All route handlers live in router modules — `main.py` is a ~149-line shell. Optional API key auth is enabled when the `API_KEY` env var is set.
 
 The central schema registry is `DomainSpec` in `common/domain_specs.py`, covering all 8 domains (item, location, customer, time, sku, sales, forecast, inventory). Scripts and API endpoints are generic — they operate on any domain via `--dataset <name>` or `/domains/{domain}/*`.
 
@@ -104,6 +104,7 @@ The central schema registry is `DomainSpec` in `common/domain_specs.py`, coverin
 | Testing Strategy (pytest + Vitest + Playwright) | [../06-ui/03-testing.md](../06-ui/03-testing.md) | UI |
 | LGBM Tuning Tracker (experiment tracking, A/B comparison) | [../02-forecasting/10-lgbm-tuning.md](../02-forecasting/10-lgbm-tuning.md) | Forecasting |
 | Performance Profiling (decorator, suggestions, production-safe) | [05-performance-profiling.md](05-performance-profiling.md) | Foundation |
+| Unified Model Tuning Studio (LGBM, CatBoost, XGBoost) | [../02-forecasting/11-unified-model-tuning-v2.md](../02-forecasting/11-unified-model-tuning-v2.md) | Forecasting |
 | Unified Pipeline Orchestrator (full/incremental modes) | — | Integration |
 | RBAC + User Management | [../07-integration/02-rbac.md](../07-integration/02-rbac.md) | Integration |
 | Notifications + Webhooks | [../07-integration/03-notifications.md](../07-integration/03-notifications.md) | Integration |

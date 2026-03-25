@@ -138,7 +138,6 @@ strategies:
       grow_policy: "Lossguide"
       max_leaves: 127
       colsample_bylevel: 0.85
-      reg_lambda: 3.5
       bootstrap_type: "MVS"
       model_size_reg: 0.08
       leaf_estimation_method: "Newton"

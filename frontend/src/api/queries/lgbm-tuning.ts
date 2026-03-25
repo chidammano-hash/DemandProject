@@ -27,6 +27,9 @@ export interface TuningRun {
   notes: string | null;
   is_promoted?: boolean;
   promoted_at?: string | null;
+  is_results_promoted?: boolean;
+  results_promoted_at?: string | null;
+  results_promote_job_id?: string | null;
 }
 
 export interface PromoteResponse {
