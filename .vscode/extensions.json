@@ -1,5 +1,13 @@
 {
-    "recommendations": [
-        "anthropic.claude-code"
-    ]
+  "recommendations": [
+    "anthropic.claude-code",
+    "charliermarsh.ruff",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "eamodio.gitlens",
+    "ms-vscode.makefile-tools",
+    "redhat.vscode-yaml"
+  ]
 }

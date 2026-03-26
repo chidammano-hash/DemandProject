@@ -279,8 +279,8 @@ class TestFitModel:
         """compute_early_stop_patience(500, 0.03) must return 15."""
         assert compute_early_stop_patience(500, 0.03) == 15
 
-    def test_lgbm_passes_wape_eval_metric(self):
-        """LGBM fit must receive eval_metric=_wape_lgbm (not 'mae')."""
+    def test_lgbm_passes_mae_eval_metric(self):
+        """LGBM fit must receive eval_metric='mae'."""
         model = MagicMock()
         lib_module = MagicMock()
         lib_module.early_stopping.return_value = "es"
@@ -290,10 +290,10 @@ class TestFitModel:
                   [], ["f1"], lib_module, 1500)
 
         call_kwargs = model.fit.call_args.kwargs
-        assert call_kwargs["eval_metric"] is _wape_lgbm
+        assert call_kwargs["eval_metric"] == "mae"
 
-    def test_catboost_passes_wape_eval_metric(self):
-        """CatBoost eval_metric set via set_params as a WapeMetric instance."""
+    def test_catboost_passes_mae_eval_metric(self):
+        """CatBoost eval_metric set via set_params as 'MAE'."""
         model = MagicMock()
         lib_module = MagicMock()
 
@@ -302,12 +302,12 @@ class TestFitModel:
 
         model.set_params.assert_called_once()
         sp_kwargs = model.set_params.call_args.kwargs
-        assert isinstance(sp_kwargs["eval_metric"], WapeMetric)
+        assert sp_kwargs["eval_metric"] == "MAE"
         # eval_metric must NOT be in fit() kwargs
         assert "eval_metric" not in model.fit.call_args.kwargs
 
-    def test_xgboost_passes_wape_eval_metric(self):
-        """XGBoost eval_metric set via set_params as _wape_xgb callable."""
+    def test_xgboost_passes_mae_eval_metric(self):
+        """XGBoost eval_metric set via set_params as 'mae'."""
         model = MagicMock()
         lib_module = MagicMock()
 
@@ -316,7 +316,7 @@ class TestFitModel:
 
         model.set_params.assert_called_once()
         sp_kwargs = model.set_params.call_args.kwargs
-        assert sp_kwargs["eval_metric"] is _wape_xgb
+        assert sp_kwargs["eval_metric"] == "mae"
         # custom_metric must NOT be in fit() kwargs
         assert "custom_metric" not in model.fit.call_args.kwargs
 

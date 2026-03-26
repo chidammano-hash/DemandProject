@@ -7,8 +7,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import time
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 
 def _sign_payload(payload: str, secret: str) -> str:
@@ -114,4 +117,7 @@ class WebhookEngine:
                 )
                 conn.commit()
         except Exception:
-            pass
+            logger.warning(
+                "Failed to log webhook delivery for webhook_id=%s event=%s",
+                webhook_id, event_type, exc_info=True,
+            )

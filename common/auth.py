@@ -10,6 +10,8 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import logging
+
 import bcrypt
 import jwt
 from fastapi import Depends, Header, HTTPException
@@ -44,15 +46,23 @@ def verify_password(plain: str, hashed: str) -> bool:
     """Verify a plaintext password against a bcrypt hash."""
     try:
         return bcrypt.checkpw(plain.encode(), hashed.encode())
-    except Exception:
+    except (ValueError, TypeError) as exc:
+        logging.getLogger(__name__).warning("Password verification failed: %s", exc)
         return False
 
 
 # ---------------------------------------------------------------------------
 # JWT tokens
 # ---------------------------------------------------------------------------
+_JWT_INSECURE_DEFAULT = "demand-studio-dev-secret-change-me"
+
+
 def _jwt_secret() -> str:
-    secret = os.getenv("JWT_SECRET", "demand-studio-dev-secret-change-me")
+    secret = os.getenv("JWT_SECRET", _JWT_INSECURE_DEFAULT)
+    if secret == _JWT_INSECURE_DEFAULT:
+        logging.getLogger(__name__).warning(
+            "JWT_SECRET is using insecure default — set JWT_SECRET env var in production"
+        )
     return secret
 
 

@@ -12,9 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from api.auth import require_api_key
 from common.utils import load_config, reset_config
 
 logger = logging.getLogger(__name__)
@@ -736,7 +737,7 @@ def get_config(name: str):
     }
 
 
-@router.put("/{name}")
+@router.put("/{name}", dependencies=[Depends(require_api_key)])
 def update_config(name: str, body: ConfigUpdate):
     """Update configuration values and write back to YAML.
 
@@ -786,7 +787,7 @@ def update_config(name: str, body: ConfigUpdate):
     return {"name": name, "changed": changes, "message": f"Updated {len(changes)} field(s)"}
 
 
-@router.post("/{name}/reset")
+@router.post("/{name}/reset", dependencies=[Depends(require_api_key)])
 def reset_to_backup(name: str):
     """Reset configuration to the last backup (.yaml.bak)."""
     if name not in CONFIG_REGISTRY:

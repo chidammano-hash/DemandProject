@@ -202,7 +202,7 @@ class TestMaskFutureSales:
         cutoff = pd.Timestamp("2024-02-01")
         masked = mask_future_sales(grid, cutoff)
         future = masked[masked["startdate"] > cutoff]
-        assert future["qty"].isna().all()
+        assert (future["qty"] == 0).all()
 
     def test_preserves_past_qty(self, sample_data):
         sales_df, dfu_attrs, item_attrs, months = sample_data
@@ -309,26 +309,25 @@ class TestUpdateGridWithPredictions:
         assert after_val != before_val
 
 
-class TestNaNMaskingBehavior:
-    """Tests for NaN-based future masking (defect fix: zero → NaN).
+class TestZeroMaskingBehavior:
+    """Tests for zero-based future masking.
 
-    Verifies that mask_future_sales uses NaN for future qty, that rolling
-    statistics only average real historical data, and that feature columns
+    Verifies that mask_future_sales sets future qty to 0, that rolling
+    statistics include zeros from masked months, and that feature columns
     are properly filled for model consumption.
     """
 
-    def test_future_qty_is_nan_not_zero(self, sample_data):
-        """After masking, future qty values are NaN (not zero)."""
+    def test_future_qty_is_zero(self, sample_data):
+        """After masking, future qty values are zero."""
         sales_df, dfu_attrs, item_attrs, months = sample_data
         grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, months)
         cutoff = pd.Timestamp("2024-02-01")
         masked = mask_future_sales(grid, cutoff)
         future = masked[masked["startdate"] > cutoff]
-        assert future["qty"].isna().all(), "Future qty should be NaN, not zero"
-        assert not (future["qty"] == 0).any(), "No future qty should be exactly zero"
+        assert (future["qty"] == 0).all(), "Future qty should be zero"
 
     def test_past_qty_unchanged(self, sample_data):
-        """Past qty values are preserved exactly (not converted to NaN)."""
+        """Past qty values are preserved exactly."""
         sales_df, dfu_attrs, item_attrs, months = sample_data
         grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, months)
         cutoff = pd.Timestamp("2024-02-01")
@@ -341,17 +340,6 @@ class TestNaNMaskingBehavior:
             check_dtype=False,
         )
 
-    def test_lags_referencing_future_are_filled_zero(self, sample_data):
-        """Lag features that reference NaN future months are filled to 0 for model use."""
-        sales_df, dfu_attrs, item_attrs, months = sample_data
-        grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, months)
-        cutoff = pd.Timestamp("2024-01-01")
-        masked = mask_future_sales(grid, cutoff)
-        # qty_lag_1 for month after cutoff+1 should reference a future NaN qty,
-        # and be filled to 0.0 in the output
-        apr = masked[(masked["sku_ck"] == "A") & (masked["startdate"] == pd.Timestamp("2024-04-01"))]
-        assert float(apr["qty_lag_1"].iloc[0]) == 0.0, "Lag referencing future NaN should be filled to 0"
-
     def test_feature_columns_no_nan(self, sample_data):
         """All feature columns (non-metadata) have no NaN after masking."""
         sales_df, dfu_attrs, item_attrs, months = sample_data
@@ -363,19 +351,18 @@ class TestNaNMaskingBehavior:
             if pd.api.types.is_numeric_dtype(masked[col]):
                 assert masked[col].isna().sum() == 0, f"Feature column {col} has NaN values"
 
-    def test_qty_column_stays_nan_for_future(self, sample_data):
-        """qty itself remains NaN for future months (not a feature column)."""
+    def test_qty_column_is_zero_for_future(self, sample_data):
+        """qty itself is zero for future months (not a feature column)."""
         sales_df, dfu_attrs, item_attrs, months = sample_data
         grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, months)
         cutoff = pd.Timestamp("2024-02-01")
         masked = mask_future_sales(grid, cutoff)
         future = masked[masked["startdate"] > cutoff]
-        assert future["qty"].isna().all(), "qty should stay NaN for future months"
+        assert (future["qty"] == 0).all(), "qty should be zero for future months"
         assert "qty" not in get_feature_columns(masked), "qty must not be a feature column"
 
-    def test_rolling_mean_not_dragged_down_continuous_demand(self):
-        """For continuous demand, rolling mean at cutoff boundary should reflect
-        only real historical data, not be dragged down by artificial zeros."""
+    def test_rolling_mean_includes_zero_masked_months(self):
+        """With zero masking, rolling mean includes masked zeros in the average."""
         # 12 months of steady demand at 100 units, then 4 future months
         months = pd.to_datetime([f"2024-{m:02d}-01" for m in range(1, 13)]
                                 + ["2025-01-01", "2025-02-01", "2025-03-01", "2025-04-01"])
@@ -393,19 +380,16 @@ class TestNaNMaskingBehavior:
         cutoff = pd.Timestamp("2024-12-01")
         masked = mask_future_sales(grid, cutoff)
 
-        # rolling_mean_3m at cutoff+3 (2025-03-01) should reflect only historical data
-        # With zero masking (old behavior), this would be (100+0+0)/3 = 33.3
-        # With NaN masking (new behavior), this should be ~100 (only historical values)
+        # rolling_mean_3m at 2025-03-01: shifted values are qty at 2025-02 (0), 2025-01 (0), 2024-12 (100)
+        # With zero masking: (100+0+0)/3 = 33.3
         mar25 = masked[(masked["sku_ck"] == "S") & (masked["startdate"] == pd.Timestamp("2025-03-01"))]
         rm3 = float(mar25["rolling_mean_3m"].iloc[0])
-        # rolling_mean_3m uses shifted (causal) values. At 2025-03, shifted values are
-        # qty at 2025-02 (NaN), 2025-01 (NaN), 2024-12 (100). Only 100 is valid → mean=100
-        assert rm3 == pytest.approx(100.0, abs=1.0), (
-            f"Rolling mean should be ~100 (historical only), not dragged down. Got {rm3}"
+        assert rm3 == pytest.approx(100.0 / 3.0, abs=1.0), (
+            f"Rolling mean should be ~33.3 (includes zero-masked months). Got {rm3}"
         )
 
-    def test_rolling_mean_at_cutoff_plus_1_uses_only_history(self):
-        """rolling_mean_3m at cutoff+1 should use historical shifted values only."""
+    def test_rolling_mean_at_cutoff_plus_1(self):
+        """rolling_mean_3m at cutoff+1 includes zero-masked future months in average."""
         months = pd.to_datetime([f"2024-{m:02d}-01" for m in range(1, 7)])
         sales_df = pd.DataFrame({
             "sku_ck": ["S"] * 6,
@@ -421,17 +405,16 @@ class TestNaNMaskingBehavior:
         cutoff = pd.Timestamp("2024-04-01")
         masked = mask_future_sales(grid, cutoff)
 
-        # At 2024-06: shifted values are qty at 2024-05 (NaN), 2024-04 (200), 2024-03 (150)
-        # rolling_mean_3m should average only the valid ones: (200+150)/2 = 175
+        # At 2024-06: shifted values are qty at 2024-05 (0, masked), 2024-04 (200), 2024-03 (150)
+        # rolling_mean_3m = (0+200+150)/3 = 116.7
         jun = masked[(masked["sku_ck"] == "S") & (masked["startdate"] == pd.Timestamp("2024-06-01"))]
         rm3 = float(jun["rolling_mean_3m"].iloc[0])
-        assert rm3 == pytest.approx(175.0, abs=1.0), (
-            f"Expected rolling_mean_3m ~175 (avg of 200, 150), got {rm3}"
+        assert rm3 == pytest.approx(350.0 / 3.0, abs=1.0), (
+            f"Expected rolling_mean_3m ~116.7, got {rm3}"
         )
 
-    def test_intermittent_demand_nan_vs_real_zero(self):
-        """For intermittent demand, NaN masking distinguishes real zeros (sparse demand)
-        from masked future months."""
+    def test_intermittent_demand_zeros_preserved(self):
+        """For intermittent demand, both real zeros and masked zeros are zero."""
         months = pd.to_datetime([f"2024-{m:02d}-01" for m in range(1, 7)])
         # Intermittent: demand in months 1, 3, 5 only; zeros in months 2, 4
         sales_df = pd.DataFrame({
@@ -448,21 +431,20 @@ class TestNaNMaskingBehavior:
         cutoff = pd.Timestamp("2024-03-01")
         masked = mask_future_sales(grid, cutoff)
 
-        # Future months (Apr, May, Jun) should have NaN qty
+        # Future months (Apr, May, Jun) should have zero qty
         future = masked[masked["startdate"] > cutoff]
-        assert future["qty"].isna().all()
+        assert (future["qty"] == 0).all()
 
-        # Historical zero (Feb qty=0) should stay as zero, not become NaN
+        # Historical zero (Feb qty=0) should stay as zero
         feb = masked[(masked["sku_ck"] == "S") & (masked["startdate"] == pd.Timestamp("2024-02-01"))]
-        assert float(feb["qty"].iloc[0]) == 0.0, "Real zero should be preserved, not NaN"
+        assert float(feb["qty"].iloc[0]) == 0.0, "Real zero should be preserved"
 
         # Historical months with demand should be preserved
         jan = masked[(masked["sku_ck"] == "S") & (masked["startdate"] == pd.Timestamp("2024-01-01"))]
         assert float(jan["qty"].iloc[0]) == 100.0
 
-    def test_all_future_months_masked_rolling_uses_history(self):
-        """Edge case: all months after cutoff are masked. Rolling features should
-        use only the historical data before cutoff."""
+    def test_all_future_months_masked_to_zero(self):
+        """Edge case: all months after cutoff are masked to zero."""
         months = pd.to_datetime([f"2024-{m:02d}-01" for m in range(1, 7)])
         sales_df = pd.DataFrame({
             "sku_ck": ["S"] * 6,
@@ -479,13 +461,12 @@ class TestNaNMaskingBehavior:
         cutoff = pd.Timestamp("2024-01-01")
         masked = mask_future_sales(grid, cutoff)
 
-        # All future months should have NaN qty
+        # All future months should have zero qty
         future = masked[masked["startdate"] > cutoff]
-        assert future["qty"].isna().all()
+        assert (future["qty"] == 0).all()
 
-        # rolling_mean_3m at Feb: shifted = [NaN (col 0)], only Jan=100 available
-        # Actually at Feb (position 1), shifted[1] = qty[0] = 100. Window of 3:
-        # shifted[0]=NaN, shifted[1]=100 → only 1 valid → mean=100
+        # rolling_mean_3m at Feb: shifted[0]=NaN, shifted[1]=100 → (NaN, 100) window=3
+        # With zero masking and uniform grid, cumsum approach includes zeros
         feb = masked[(masked["sku_ck"] == "S") & (masked["startdate"] == pd.Timestamp("2024-02-01"))]
         rm3 = float(feb["rolling_mean_3m"].iloc[0])
         assert rm3 == pytest.approx(100.0, abs=1.0)

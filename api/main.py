@@ -12,6 +12,7 @@ import logging
 import time
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -23,11 +24,29 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
 
 logger = logging.getLogger("api.access")
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Rate limit write endpoints (POST/PUT/DELETE) to prevent abuse."""
+    if request.method in ("POST", "PUT", "DELETE"):
+        from common.services.rate_limiter import get_rate_limiter
+        limiter = get_rate_limiter()
+        client_ip = request.client.host if request.client else "unknown"
+        limit = limiter.get_tier_limit("standard")
+        allowed, remaining = limiter.check(client_ip, max_requests=limit, window_seconds=60)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Try again later."},
+                headers={"Retry-After": "60"},
+            )
+    return await call_next(request)
 
 
 @app.middleware("http")

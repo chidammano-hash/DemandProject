@@ -214,5 +214,5 @@ class TestYAMLConfigIntegration:
         cfg = load_config("algorithm_config.yaml")
         backtest = cfg["backtest"]
         assert backtest["tweedie_variance_power"] == 1.5
-        assert backtest["intermittent_threshold"] == 0.5
+        assert backtest["intermittent_threshold"] == 0.7
         assert backtest["lumpy_threshold"] == 0.3

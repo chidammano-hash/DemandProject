@@ -635,7 +635,7 @@ def get_feature_columns(grid: pd.DataFrame) -> list[str]:
 
 
 def mask_future_sales(grid: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame:
-    """Set future qty to NaN and recompute lag/rolling features for rows after cutoff.
+    """Set future qty to 0 and recompute lag/rolling features for rows after cutoff.
 
     Instead of rebuilding the whole grid, we mask the qty column and
     recompute only the affected features. This is much faster than
@@ -658,8 +658,8 @@ def mask_future_sales(grid: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame:
 
     df = grid.copy()
 
-    # Mask future sales with NaN (not zero) to avoid dragging rolling means
-    df.loc[future_mask, "qty"] = np.nan
+    # Mask future sales with zero
+    df.loc[future_mask, "qty"] = 0
 
     # Recompute lags, rolling, and derived features on the masked data
     _compute_lags_and_rolling(df)

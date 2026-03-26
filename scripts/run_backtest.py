@@ -533,11 +533,9 @@ def _train_single_cluster(
     val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2) if val_denom > 0 else 0.0
 
     result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
-    # Tweedie predictions are inherently non-negative; clip only for non-Tweedie
-    if demand_pattern == "intermittent":
-        result["basefcst_pref"] = preds
-    else:
-        result["basefcst_pref"] = np.maximum(preds, 0)
+    # Always clip predictions to non-negative (Tweedie can still produce negatives
+    # due to link-function approximations, and negative forecasts are nonsensical)
+    result["basefcst_pref"] = np.maximum(preds, 0)
     n_est_used = get_best_iteration(model, model_name)
     if n_est_used is None:
         n_est_used = fit_params[iter_param]

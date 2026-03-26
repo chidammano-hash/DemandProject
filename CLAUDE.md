@@ -34,7 +34,7 @@
 
 ```
 api/                         # FastAPI backend
-├── main.py                  # App entry point — mounts 62 routers
+├── main.py                  # App entry point — mounts 69 routers
 ├── core.py                  # SQL helpers, filtering, pagination
 ├── pool.py                  # Connection pool management
 ├── llm.py                   # OpenAI client management
@@ -65,14 +65,14 @@ scripts/                     # Pipeline scripts
 
 frontend/                    # React + Vite + TypeScript
 ├── src/tabs/                # 21 tab components + sub-panels
-├── src/api/queries/         # 30 domain API modules
+├── src/api/queries/         # 39 domain API modules
 ├── src/components/          # Shared UI components
 ├── Dockerfile               # Nginx multi-stage build
 └── nginx.conf               # SPA fallback + API reverse proxy
 
-config/                      # 41 YAML config files (one per module/pipeline)
-sql/                         # 71 DDL migration files
-tests/                       # 2380 backend tests (api/ + unit/)
+config/                      # 54 YAML config files (one per module/pipeline)
+sql/                         # 86 DDL migration files
+tests/                       # 2762+ backend tests (api/ + unit/)
 docs/                        # ARCHITECTURE, PLATFORM_GUIDE, RUNBOOK, specs/
 data/                        # Generated ML artifacts + input CSVs (gitignored)
 archive/                     # Archived reference materials
@@ -142,9 +142,21 @@ make setup-backtest       # Features + 3 backtests + champion selection
 make setup-inv-planning   # Inventory planning (SS, EOQ, policies, exceptions)
 make setup-demand-planning # Forecasts + projections + orders + replenishment
 make setup-ops            # S&OP + events + financial + storyboard + DQ
+
+# Convenience Aliases
+make dev                  # Start Docker + API + UI
+make test-quick           # Backend + frontend tests only
+make lint                 # Ruff lint check + fix
+make format               # Ruff format all Python
+make type-check           # Mypy type checking
+make health               # DB row counts + API health
+
+# Developer Tooling
+make audit-routers        # Check route consistency (main.py vs vite.config.ts)
+make new-router DOMAIN=forecasting NAME=my_feature  # Scaffold new router
 ```
 
-See `Makefile` for the full list (100+ targets including one-time schema setup, inv-planning pipelines, cleanup utilities).
+See `Makefile` for the full list (130+ targets including one-time schema setup, inv-planning pipelines, cleanup utilities).
 
 ---
 
@@ -283,6 +295,79 @@ When adding a new router, also:
 - **Accuracy**: `100 - (100 * SUM(ABS(F-A)) / ABS(SUM(A)))`
 - **Bias**: `(SUM(Forecast) / SUM(History)) - 1`
 - **WAPE**: `SUM(|F-A|) / |SUM(A)|`
+
+---
+
+## Feature Integration Checklist
+
+When adding a new feature end-to-end, follow these steps in order:
+
+### 1. Database
+- [ ] Create DDL migration in `sql/` (next sequence number)
+- [ ] Add tables/MVs to `docs/RUNBOOK.md` cleanup section
+- [ ] Add `TRUNCATE` / `REFRESH` to Makefile targets if applicable
+
+### 2. Backend
+- [ ] Create router in correct `api/routers/{domain}/` subdirectory
+- [ ] Use `get_conn()` pattern (not `Depends(_get_pool)` for inv_planning)
+- [ ] Use `%s` placeholders in all SQL
+- [ ] Add `app.include_router()` in `api/main.py` — **before** `domains.py`
+- [ ] Add auth guard (`dependencies=[Depends(require_api_key)]`) on write endpoints
+- [ ] Externalize config to `config/<name>.yaml`
+
+### 3. Frontend
+- [ ] Add query module in `frontend/src/api/queries/`
+- [ ] Add Vite proxy entry in `frontend/vite.config.ts` for new API prefix
+- [ ] Create component(s) in `frontend/src/tabs/` or `frontend/src/components/`
+- [ ] Use `useThemeContext()` for theme — never pass as prop
+
+### 4. Testing
+- [ ] Backend test in `tests/api/test_<feature>.py`
+- [ ] Frontend test in `src/tabs/__tests__/<Tab>.test.tsx`
+- [ ] Run `make test-all` to verify
+
+### 5. Documentation
+- [ ] Update `docs/ARCHITECTURE.md`
+- [ ] Update `docs/PLATFORM_GUIDE.md`
+- [ ] Create/update spec in `docs/specs/<domain>/`
+- [ ] Update `CLAUDE.md` if new critical rules apply
+
+### 6. Verification
+- [ ] Run `make audit-routers` to check route consistency
+- [ ] Verify Vite proxy works (no "HTML instead of JSON" errors)
+- [ ] Run `make test-all` one final time
+
+---
+
+## Troubleshooting Common Errors
+
+### 422 Validation Error in Tests
+**Cause**: Using `Depends(_get_pool)` in `inv_planning_*.py` routers. FastAPI inspects MagicMock signatures and fails validation.
+**Fix**: Use `get_conn()` directly instead.
+
+### "HTML instead of JSON" in Frontend
+**Cause**: Missing Vite proxy entry for the API prefix.
+**Fix**: Add the prefix to `frontend/vite.config.ts` proxy config. Run `make audit-routers` to check.
+
+### Dimension Mismatch in SHAP
+**Cause**: `ml_cluster` was stripped from `feature_cols` during SHAP computation.
+**Fix**: Never strip `ml_cluster` — it is a hard feature that must always be present.
+
+### Import Errors After Restructure
+**Cause**: Missing backward-compat shim in `common/` root.
+**Fix**: Ensure `common/__init__.py` or shim module re-exports from the correct subpackage.
+
+### Tests Pass But API Fails
+**Cause**: Mock row tuple column count doesn't match actual table DDL.
+**Fix**: Verify mock tuples match the exact column count and order of the SQL query.
+
+### MV Refresh Stale Data
+**Cause**: Materialized views refreshed in wrong order (dependent MVs refresh before their sources).
+**Fix**: Follow tiered refresh order — base aggregates first, then derived MVs. See `Makefile` `refresh-mvs-tiered`.
+
+### Connection Pool Exhaustion
+**Cause**: Too many concurrent requests with `max_size=10` (now increased to 20).
+**Fix**: Set `POOL_MAX_SIZE` env var. Check for unclosed connections in scripts.
 
 ---
 

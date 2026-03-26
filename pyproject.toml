@@ -42,4 +42,65 @@ dev = [
   "pytest-asyncio>=0.24",
   "pytest-cov>=6.0",
   "pytest-mock>=3.14",
+  "pre-commit>=4.0",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff — linting & formatting
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [".venv", "data/", "archive/"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "B", "C4", "RUF", "UP"]
+ignore = [
+  "E501",   # line too long — handled by formatter
+  "B008",   # function call in default argument (FastAPI Depends)
+  "N806",   # variable in function should be lowercase (common in ML code)
+  "N803",   # argument name should be lowercase (common in ML formulas)
+  "RUF012", # mutable class variable — too noisy for dataclasses
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["api", "common", "scripts"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# Mypy — static type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+check_untyped_defs = true
+strict_optional = true
+ignore_missing_imports = true
+exclude = ["data/", "archive/", ".venv/"]
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["api", "common"]
+omit = ["*/tests/*", "*/data/*", "*/archive/*"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+exclude_lines = [
+  "pragma: no cover",
+  "if __name__",
+  "if TYPE_CHECKING",
 ]

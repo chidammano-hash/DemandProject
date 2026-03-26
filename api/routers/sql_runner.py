@@ -11,9 +11,10 @@ import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from api.auth import require_api_key
 from api.core import get_conn
 from common.utils import load_config
 
@@ -96,7 +97,7 @@ _MAX_HISTORY = 50
 # ---------------------------------------------------------------------------
 # POST /execute
 # ---------------------------------------------------------------------------
-@router.post("/execute", response_model=SqlResponse)
+@router.post("/execute", response_model=SqlResponse, dependencies=[Depends(require_api_key)])
 async def execute_query(body: SqlRequest):
     """Execute a read-only SQL query and return results."""
     cfg = _cfg()
@@ -182,7 +183,7 @@ def _record_history(sql: str, elapsed_ms: float, row_count: int, status: str):
 # ---------------------------------------------------------------------------
 # GET /schema
 # ---------------------------------------------------------------------------
-@router.get("/schema")
+@router.get("/schema", dependencies=[Depends(require_api_key)])
 async def get_schema():
     """Return all user tables and views with their columns."""
     sql = """

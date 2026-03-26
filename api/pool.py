@@ -35,7 +35,7 @@ def _get_pool() -> ConnectionPool:
         _pool = ConnectionPool(
             conninfo,
             min_size=2,
-            max_size=10,
+            max_size=int(os.getenv("POOL_MAX_SIZE", "20")),
             open=True,
             timeout=10,
             max_lifetime=3600,

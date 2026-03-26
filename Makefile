@@ -6,7 +6,38 @@ POSTGRES_SERVICE := postgres
 PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
 PSQL := $(PG_EXEC) psql -U demand -d demand_mvp
 
-.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all
+.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router
+
+# ---------------------------------------------------------------------------
+# Convenience aliases
+# ---------------------------------------------------------------------------
+dev: up api ui
+fresh: fresh-all
+test-quick: test ui-test
+lint:
+	$(UV) ruff check api/ common/ scripts/ --fix
+format:
+	$(UV) ruff format api/ common/ scripts/
+type-check:
+	$(UV) mypy api/ common/ --ignore-missing-imports
+health: check-all
+
+# ---------------------------------------------------------------------------
+# Developer tooling
+# ---------------------------------------------------------------------------
+audit-routers:
+	@echo "=== Router Audit ==="
+	@echo "Router files in api/routers/:"
+	@find api/routers -name '*.py' ! -name '__init__.py' | wc -l
+	@echo "include_router() calls in main.py:"
+	@grep -c 'app.include_router' api/main.py
+	@echo ""
+	@echo "=== Vite Proxy Check ==="
+	@echo "Checking for API prefixes missing from vite.config.ts..."
+	@python3 scripts/tools/audit_routes.py 2>/dev/null || echo "Run: python3 scripts/tools/audit_routes.py"
+
+new-router:
+	@python3 scripts/tools/scaffold_router.py --domain $(DOMAIN) --name $(NAME)
 
 help:
 	@echo "Targets:"
@@ -1204,18 +1235,26 @@ clean-artifacts:                       ## Remove stale intermediate files (clean
 
 refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4 tiers)
 	@echo "Refreshing materialized views (tier-ordered)..."
+	@echo "  Tier 1: Base aggregates (no dependencies)"
+	@echo "  Tier 2: Derived views (depend on Tier 1)"
+	@echo "  Tier 3: Cross-domain views (depend on Tier 2)"
+	@echo "  Tier 4: Dashboard views (depend on all above)"
 	$(PSQL) -v ON_ERROR_STOP=1 -c " \
+	  /* --- Tier 1: Base aggregates (source: fact tables only) --- */ \
 	  REFRESH MATERIALIZED VIEW agg_sales_monthly; \
 	  REFRESH MATERIALIZED VIEW agg_forecast_monthly; \
 	  REFRESH MATERIALIZED VIEW agg_inventory_monthly; \
+	  /* --- Tier 2: Derived views (depend on Tier 1 aggregates) --- */ \
 	  REFRESH MATERIALIZED VIEW mv_inventory_forecast_monthly; \
 	  REFRESH MATERIALIZED VIEW mv_fill_rate_monthly; \
 	  REFRESH MATERIALIZED VIEW mv_intramonth_stockout; \
+	  /* --- Tier 3: Supplier / procurement views --- */ \
 	  REFRESH MATERIALIZED VIEW mv_supplier_performance; \
 	  REFRESH MATERIALIZED VIEW mv_supplier_po_performance; \
 	  REFRESH MATERIALIZED VIEW mv_po_lead_time_analysis; \
 	  REFRESH MATERIALIZED VIEW agg_accuracy_by_dim; \
 	  REFRESH MATERIALIZED VIEW agg_dfu_coverage; \
+	  /* --- Tier 4: Dashboard / composite views (depend on all above) --- */ \
 	  REFRESH MATERIALIZED VIEW mv_inventory_health_score; \
 	  REFRESH MATERIALIZED VIEW mv_control_tower_kpis; \
 	"

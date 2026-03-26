@@ -68,6 +68,13 @@ from common.job_state import (
 )
 from common.job_scheduler import make_scheduler, make_trigger
 
+try:
+    from apscheduler.jobstores.base import JobLookupError
+except ImportError:
+    JobLookupError = KeyError  # type: ignore[assignment,misc]
+
+import psycopg
+
 logger = logging.getLogger(__name__)
 
 
@@ -657,14 +664,17 @@ class JobManager:
         self._ensure_init()
         try:
             self._scheduler.remove_job(schedule_id)
+        except (KeyError, JobLookupError):
+            logger.debug("Schedule %s not found in APScheduler", schedule_id)
         except Exception:
-            pass
+            logger.exception("Failed to remove APScheduler job %s", schedule_id)
         try:
             with _get_conn() as conn:
                 res = conn.execute(
                     "DELETE FROM job_schedule WHERE schedule_id = %s", (schedule_id,))
                 return res.rowcount > 0
-        except Exception:
+        except psycopg.Error:
+            logger.exception("Failed to delete schedule %s from DB", schedule_id)
             return False
 
     def list_schedules(self) -> list[dict[str, Any]]:
@@ -692,7 +702,7 @@ class JobManager:
                 })
             return schedules
         except Exception:
-            # table may not exist yet
+            logger.warning("Failed to list schedules — table may not exist yet")
             return []
 
     def submit_pipeline(
@@ -787,8 +797,10 @@ class JobManager:
         # Remove from APScheduler if still pending
         try:
             self._scheduler.remove_job(job_id)
+        except (KeyError, JobLookupError):
+            pass  # job not in APScheduler — already running or completed
         except Exception:
-            pass
+            logger.exception("Failed to remove APScheduler job %s during cancel", job_id)
         # Kill the subprocess by PID as safety net
         self._kill_process(job_id)
         self._db_update_status(

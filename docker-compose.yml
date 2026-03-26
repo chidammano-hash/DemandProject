@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: demand_mvp
       POSTGRES_USER: demand
-      POSTGRES_PASSWORD: demand
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-demand}
     command: >
       postgres
       -c shared_buffers=512MB
@@ -18,6 +18,13 @@ services:
       - "${POSTGRES_HOST_PORT:-5440}:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demand -d demand_mvp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
       - ./sql/001_create_dim_item.sql:/docker-entrypoint-initdb.d/001_create_dim_item.sql:ro
       - ./sql/002_create_dim_location.sql:/docker-entrypoint-initdb.d/002_create_dim_location.sql:ro
       - ./sql/003_create_dim_customer.sql:/docker-entrypoint-initdb.d/003_create_dim_customer.sql:ro
@@ -30,7 +37,8 @@ services:
   mlflow:
     image: ghcr.io/mlflow/mlflow:v3.0.0
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       MLFLOW_TRACKING_URI: http://0.0.0.0:5000
     command: >
@@ -54,6 +62,12 @@ services:
     volumes:
       - redis_data:/data
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
 
 volumes:
   pg_data:

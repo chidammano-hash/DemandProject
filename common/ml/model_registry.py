@@ -220,7 +220,7 @@ def fit_model(
         model.fit(
             X_tr, y_tr,
             eval_set=[(X_val, y_val)],
-            eval_metric=_wape_lgbm,
+            eval_metric="mae",
             categorical_feature=cat_cols,
             callbacks=[
                 lib_module.early_stopping(stopping_rounds=patience, verbose=False),
@@ -230,7 +230,9 @@ def fit_model(
     elif model_name == "catboost":
         cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
         eval_pool = lib_module.Pool(X_val, y_val, cat_features=cat_indices)
-        model.set_params(eval_metric=WapeMetric())
+        # Do NOT override eval_metric — CatBoost must monitor its own loss function.
+        # Setting eval_metric="MAE" conflicts with Tweedie loss on intermittent clusters
+        # and causes early stopping at suboptimal points for RMSE clusters.
         model.fit(
             X_tr, y_tr,
             cat_features=cat_indices,
@@ -239,7 +241,7 @@ def fit_model(
             verbose=False,
         )
     elif model_name == "xgboost":
-        model.set_params(eval_metric=_wape_xgb, early_stopping_rounds=patience)
+        model.set_params(eval_metric="mae", early_stopping_rounds=patience)
         model.fit(
             X_tr, y_tr,
             eval_set=[(X_val, y_val)],
