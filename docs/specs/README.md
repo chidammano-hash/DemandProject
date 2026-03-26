@@ -47,6 +47,7 @@ The data layer everything else depends on.
 | 03 | [Data Quality](01-foundation/03-data-quality.md) | 12 check types, Self-Heal auto-fix, scoring dashboard |
 | 04 | [Planning Date](01-foundation/04-planning-date.md) | Configurable date replacing `date.today()` for reproducibility |
 | 05 | [Performance Profiling](01-foundation/05-performance-profiling.md) | Centralized profiling, suggestion engine, production-safe |
+| 06 | [Execution Lag](01-foundation/06-execution-lag.md) | DFU-level planning horizon, forecast lag vs execution lag, lag filter semantics |
 
 ---
 
@@ -68,7 +69,11 @@ Predict future demand using ML models, then select the best forecast per item.
 | 10 | [Forecast CI Bands](02-forecasting/10-forecast-ci-bands.md) | Confidence intervals showing the range of likely outcomes |
 | 11 | [Unified Model Tuning Studio](02-forecasting/11-unified-model-tuning-v2.md) | UI-driven experiment launch, comparison, and promotion for LGBM/CatBoost/XGBoost |
 
-**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11 (tuning studio)
+| 12 | [Dual Promotion](02-forecasting/12-dual-promotion.md) | Two-stage promotion: config → results for tuning experiments |
+| 13 | [Production Baseline Seeding](02-forecasting/13-production-baseline-seeding.md) | Auto-seed production baselines from completed backtests |
+| 14 | [Execution Lag Filters](02-forecasting/14-execution-lag-filters.md) | Lag filter bar semantics for Algorithm and Champion experiment tabs |
+
+**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio)
 
 ---
 
@@ -81,6 +86,8 @@ Understand demand patterns — descriptive analytics that inform forecasting and
 | 01 | [DFU Clustering](03-demand-intelligence/01-dfu-clustering.md) | Group items by demand behavior (14 features, KMeans, What-If) |
 | 02 | [Seasonality](03-demand-intelligence/02-seasonality.md) | Detect peak/trough months and seasonal strength per item |
 | 03 | [Blended Demand](03-demand-intelligence/03-blended-demand.md) | Alpha-weighted blend of statistical forecast + demand signals |
+| 04 | [Cluster Experimentation Studio](03-demand-intelligence/04-cluster-experimentation-studio.md) | Experiment lifecycle for testing segmentation configs (create, run, compare, promote) with cluster-aware algorithm tuning |
+| 05 | [Champion Experimentation Studio](03-demand-intelligence/05-champion-experimentation-studio.md) | Experiment lifecycle for champion selection strategies (expanding, rolling, decay, ensemble, meta_learner) with 2-stage promotion |
 
 ---
 

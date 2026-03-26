@@ -87,6 +87,7 @@ _ALGO_SECTION: dict[str, str] = {
 _CONFIG_KEYS = [
     "cluster_strategy", "recursive", "shap_select", "shap_threshold",
     "shap_top_n", "shap_sample_size", "tune_inline", "params_source",
+    "cluster_source", "cluster_experiment_id",
 ]
 
 # Script path per model for backtest launch
@@ -102,7 +103,14 @@ _BACKTEST_SCRIPT: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 class CreateExperimentBody(BaseModel):
-    """Request body for POST /{model}/experiments."""
+    """Request body for POST /{model}/experiments.
+
+    The ``config`` dict supports these keys:
+    - cluster_strategy, recursive, shap_select, shap_threshold, shap_sample_size
+    - cluster_source: "production" (default) or "experimental"
+    - cluster_experiment_id: int — FK to cluster_experiment (required when
+      cluster_source is "experimental")
+    """
     run_label: str = Field(min_length=1, max_length=200)
     notes: str | None = None
     template: str | None = None
@@ -151,8 +159,8 @@ def _parse_json(val: Any) -> Any:
 
 
 def _run_row_to_dict(r: tuple) -> dict[str, Any]:
-    """Convert a run row tuple (13 columns) to a response dict."""
-    return {
+    """Convert a run row tuple (16 columns) to a response dict."""
+    d: dict[str, Any] = {
         "run_id": r[0],
         "run_label": r[1],
         "model_id": r[2],
@@ -167,6 +175,12 @@ def _run_row_to_dict(r: tuple) -> dict[str, Any]:
         "feature_count": int(r[11]) if r[11] is not None else None,
         "metadata": _parse_json(r[12]),
     }
+    # Cluster source fields (columns 13-15, present in compare queries)
+    if len(r) > 13:
+        d["cluster_source"] = r[13] or "production"
+        d["cluster_experiment_id"] = int(r[14]) if r[14] is not None else None
+        d["cluster_experiment_label"] = r[15] if len(r) > 15 else None
+    return d
 
 
 # ---------------------------------------------------------------------------
@@ -189,25 +203,28 @@ def list_experiments(
     mid = _model_id(model)
     offset = (page - 1) * page_size
 
-    parts: list[str] = ["model_id = %s"]
+    parts: list[str] = ["r.model_id = %s"]
     params: list[Any] = [mid]
     if status.strip():
-        parts.append("status = %s")
+        parts.append("r.status = %s")
         params.append(status.strip())
 
     where_sql = f"WHERE {' AND '.join(parts)}"
 
     # Count total for pagination
-    count_sql = f"SELECT count(*) FROM lgbm_tuning_run {where_sql}"
+    count_sql = f"SELECT count(*) FROM lgbm_tuning_run r {where_sql}"
 
     sql = f"""
-        SELECT run_id, run_label, model_id, started_at, completed_at,
-               status, accuracy_pct, wape, bias, n_predictions, n_dfus, notes,
-               is_promoted, promoted_at, job_id, template_id,
-               is_results_promoted, results_promoted_at, results_promote_job_id
-        FROM lgbm_tuning_run
+        SELECT r.run_id, r.run_label, r.model_id, r.started_at, r.completed_at,
+               r.status, r.accuracy_pct, r.wape, r.bias, r.n_predictions, r.n_dfus, r.notes,
+               r.is_promoted, r.promoted_at, r.job_id, r.template_id,
+               r.is_results_promoted, r.results_promoted_at, r.results_promote_job_id,
+               r.cluster_source, r.cluster_experiment_id,
+               ce.label AS cluster_experiment_label
+        FROM lgbm_tuning_run r
+        LEFT JOIN cluster_experiment ce ON ce.experiment_id = r.cluster_experiment_id
         {where_sql}
-        ORDER BY started_at DESC
+        ORDER BY r.started_at DESC
         LIMIT %s OFFSET %s
     """
 
@@ -266,6 +283,9 @@ def list_experiments(
             "is_results_promoted": bool(r[16]),
             "results_promoted_at": str(r[17]) if r[17] else None,
             "results_promote_job_id": r[18],
+            "cluster_source": r[19] or "production",
+            "cluster_experiment_id": int(r[20]) if r[20] is not None else None,
+            "cluster_experiment_label": r[21],
         }
         # Override with lag-specific metrics when filtering by exec_lag
         if exec_lag is not None and run_id in lag_metrics:
@@ -388,13 +408,59 @@ def create_experiment(model: str, body: CreateExperimentBody):
     mid = _model_id(model)
 
     params_json = json.dumps(body.params) if body.params else None
+
+    # Extract cluster source settings from config
+    cfg = body.config or {}
+    cluster_source = cfg.get("cluster_source", "production")
+    cluster_experiment_id = cfg.get("cluster_experiment_id")
+
+    if cluster_source not in ("production", "experimental"):
+        raise HTTPException(
+            status_code=400,
+            detail="cluster_source must be 'production' or 'experimental'",
+        )
+    if cluster_source == "experimental" and cluster_experiment_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="cluster_experiment_id is required when cluster_source is 'experimental'",
+        )
+
+    # Validate cluster experiment if experimental
+    cluster_override_path: str | None = None
+    if cluster_source == "experimental":
+        try:
+            with get_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT artifacts_path, scenario_id, label FROM cluster_experiment "
+                    "WHERE experiment_id = %s AND status = 'completed'",
+                    [cluster_experiment_id],
+                )
+                ce_row = cur.fetchone()
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("Failed to validate cluster_experiment_id %s", cluster_experiment_id)
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to validate cluster experiment",
+            )
+
+        if ce_row is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cluster experiment {cluster_experiment_id} not found or not completed",
+            )
+        artifacts_path = ce_row[0]
+        cluster_override_path = f"{artifacts_path}/cluster_labels.csv"
+
     config_json = json.dumps(body.config) if body.config else None
 
     # Insert the run record with status='queued'
     insert_sql = """
         INSERT INTO lgbm_tuning_run
-            (run_label, model_id, params, notes, status, template_id, metadata)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (run_label, model_id, params, notes, status, template_id, metadata,
+             cluster_source, cluster_experiment_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING run_id
     """
     try:
@@ -407,6 +473,8 @@ def create_experiment(model: str, body: CreateExperimentBody):
                 "queued",
                 body.template,
                 config_json,
+                cluster_source,
+                cluster_experiment_id,
             ])
             row = cur.fetchone()
             conn.commit()
@@ -417,7 +485,10 @@ def create_experiment(model: str, body: CreateExperimentBody):
     new_run_id = row[0]
 
     # Build temporary algorithm_config.yaml with overrides
-    config_path = _build_temp_config(model, body.params, body.config)
+    effective_config = dict(cfg)
+    if cluster_override_path:
+        effective_config["cluster_override_path"] = cluster_override_path
+    config_path = _build_temp_config(model, body.params, effective_config)
 
     # Submit job via JobManager
     job_id: str | None = None
@@ -773,10 +844,13 @@ def compare_experiments(
         raise HTTPException(status_code=400, detail="Baseline and candidate must be different runs")
 
     run_sql = """
-        SELECT run_id, run_label, model_id, accuracy_pct, wape, bias,
-               n_predictions, n_dfus, status, params, features, feature_count, metadata
-        FROM lgbm_tuning_run
-        WHERE run_id = %s
+        SELECT r.run_id, r.run_label, r.model_id, r.accuracy_pct, r.wape, r.bias,
+               r.n_predictions, r.n_dfus, r.status, r.params, r.features, r.feature_count,
+               r.metadata, r.cluster_source, r.cluster_experiment_id,
+               ce.label AS cluster_experiment_label
+        FROM lgbm_tuning_run r
+        LEFT JOIN cluster_experiment ce ON ce.experiment_id = r.cluster_experiment_id
+        WHERE r.run_id = %s
     """
 
     try:
@@ -928,14 +1002,15 @@ def compare_experiments(
         "common_count": len(b_features & c_features),
     }
 
-    # Config diff
+    # Config diff — check metadata dict first, then fall back to top-level keys
+    # (cluster_source / cluster_experiment_id are stored as direct columns)
     config_diffs: list[dict[str, Any]] = []
     config_common: list[dict[str, Any]] = []
     b_meta = b.get("metadata") or {}
     c_meta = c.get("metadata") or {}
     for key in _CONFIG_KEYS:
-        bv = b_meta.get(key)
-        cv = c_meta.get(key)
+        bv = b_meta.get(key) if b_meta.get(key) is not None else b.get(key)
+        cv = c_meta.get(key) if c_meta.get(key) is not None else c.get(key)
         if bv is None and cv is None:
             continue
         if bv != cv:

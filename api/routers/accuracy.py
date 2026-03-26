@@ -89,7 +89,7 @@ def _add_cross_dim_filters(
         if values:
             ph = ",".join(["%s"] * len(values))
             where_parts.append(
-                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = {item_id_col} AND di.class_ = ANY(ARRAY[{ph}]))"
+                f'EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = {item_id_col} AND di."class" = ANY(ARRAY[{ph}]))'
             )
             params.extend(values)
     if market:
@@ -109,7 +109,7 @@ _ACCURACY_SLICE_DIMS = {
     "abc_vol",
     "region",
     "brand_desc",
-    "dfu_execution_lag",
+    "sku_execution_lag",
     "month_start",
     "lag",
     "model_id",
@@ -123,7 +123,7 @@ _RAW_BUCKET_EXPR: dict[str, str] = {
     "abc_vol": "COALESCE(d.abc_vol, '(unknown)')",
     "region": "COALESCE(d.region, '(unknown)')",
     "brand_desc": "COALESCE(d.brand_desc, '(unknown)')",
-    "dfu_execution_lag": "COALESCE(d.execution_lag::text, '(none)')",
+    "sku_execution_lag": "COALESCE(d.execution_lag::text, '(none)')",
     "seasonality_profile": "COALESCE(d.seasonality_profile, '(unknown)')",
     "month_start": "date_trunc('month', f.startdate)::date",
     "lag": "f.lag",

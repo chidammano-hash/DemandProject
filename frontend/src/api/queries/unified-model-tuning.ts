@@ -38,6 +38,9 @@ export interface TuningExperiment {
   job_id: string | null;
   template_id: string | null;
   metadata: Record<string, unknown> | null;
+  cluster_source: "production" | "experimental";
+  cluster_experiment_id: number | null;
+  cluster_experiment_label: string | null;
 }
 
 export interface TuningLag {

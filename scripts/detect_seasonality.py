@@ -10,6 +10,7 @@ import argparse
 import logging
 import multiprocessing
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,8 @@ import pandas as pd
 import psycopg
 import yaml
 from dotenv import load_dotenv
+
+warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
 
 logger = logging.getLogger(__name__)
 

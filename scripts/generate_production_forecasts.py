@@ -33,6 +33,7 @@ import pickle
 import sys
 import time
 import uuid
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +43,8 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 import yaml
+
+warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:

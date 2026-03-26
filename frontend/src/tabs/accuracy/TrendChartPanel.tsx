@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -36,7 +36,7 @@ export interface TrendChartPanelProps {
 // Component
 // ---------------------------------------------------------------------------
 
-export function TrendChartPanel({
+export const TrendChartPanel = memo(function TrendChartPanel({
   lagCurveData,
   lagModels,
   sliceKpis,
@@ -171,4 +171,4 @@ export function TrendChartPanel({
       </ResponsiveContainer>
     </div>
   );
-}
+});

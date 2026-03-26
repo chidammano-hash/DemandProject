@@ -1,0 +1,23 @@
+# Production baseline seeding configuration
+# Seeds production pipeline results as promoted experiments in the UI
+
+baseline_label: "Production Baseline"
+template_id: "production_baseline"
+
+tuning:
+  models:
+    - lgbm_cluster
+    - catboost_cluster
+    - xgboost_cluster
+  artifact_base: "data/backtest"
+  model_artifact_base: "data/models"
+
+champion:
+  summary_path: "data/champion/champion_summary.json"
+  config_source: "model_competition.yaml"
+
+clustering:
+  metadata_path: "data/clustering/cluster_metadata.json"
+  profiles_path: "data/clustering/cluster_profiles.json"
+  assignments_path: "data/clustering/cluster_assignments.csv"
+  config_source: "clustering_config.yaml"

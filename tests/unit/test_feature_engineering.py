@@ -75,6 +75,29 @@ class TestBuildFeatureMatrix:
         # Should not raise an error
         assert len(grid) > 0
 
+    def test_numeric_item_attrs_are_coerced_from_object_dtype(self, sample_data):
+        sales_df, dfu_attrs, _, months = sample_data
+        item_attrs = pd.DataFrame({
+            "item_id": ["ITEM1", "ITEM2"],
+            "case_weight": ["12.5", "bad-value"],
+            "item_proof": ["80", None],
+            "bpc": ["24", "6"],
+        })
+
+        grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, months)
+
+        for col in ["case_weight", "item_proof", "bpc"]:
+            assert pd.api.types.is_numeric_dtype(grid[col]), f"{col} should be numeric"
+
+        item1_row = grid[grid["item_id"] == "ITEM1"].iloc[0]
+        item2_row = grid[grid["item_id"] == "ITEM2"].iloc[0]
+        assert float(item1_row["case_weight"]) == 12.5
+        assert float(item1_row["item_proof"]) == 80.0
+        assert float(item1_row["bpc"]) == 24.0
+        assert float(item2_row["case_weight"]) == 0.0
+        assert float(item2_row["item_proof"]) == 0.0
+        assert float(item2_row["bpc"]) == 6.0
+
 
 class TestLagRatioFeatures:
     def test_lag_ratio_yoy_present(self, sample_data):

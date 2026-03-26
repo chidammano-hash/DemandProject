@@ -43,7 +43,7 @@ function Select({ value, onValueChange, children }: SelectProps) {
 
   return (
     <SelectContext.Provider value={{ value, onValueChange, open, setOpen }}>
-      <div ref={ref} className="relative inline-block">
+      <div ref={ref} className={cn("relative inline-block", open && "z-[200]")}>
         {children}
       </div>
     </SelectContext.Provider>

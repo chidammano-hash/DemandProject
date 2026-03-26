@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 INPUT_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "input"
 
-DEFAULT_LOCATIONS = {"1401-BULK", "3201-COLU"}
+DEFAULT_LOCATIONS = {"1401-BULK"}
 
 # Map of filename pattern -> (delimiter, location_column_name)
 # Column names are case-sensitive as they appear in headers.

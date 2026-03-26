@@ -230,7 +230,8 @@ def _compute_ts_profile_features(grid: pd.DataFrame) -> pd.DataFrame:
 
         # Year-over-year correlation
         if n >= 24:
-            corr = float(np.corrcoef(vals[:-12], vals[12:])[0, 1])
+            with np.errstate(divide="ignore", invalid="ignore"):
+                corr = float(np.corrcoef(vals[:-12], vals[12:])[0, 1])
             profiles["yoy_correlation"].append(corr if np.isfinite(corr) else 0.0)
         else:
             profiles["yoy_correlation"].append(0.0)
@@ -595,7 +596,7 @@ def build_feature_matrix(
     # Fill missing numerics (including enhanced features)
     for col in NUMERIC_SKU_FEATURES + NUMERIC_ITEM_FEATURES + ENHANCED_FEATURES:
         if col in grid.columns:
-            grid[col] = grid[col].fillna(0)
+            grid[col] = pd.to_numeric(grid[col], errors="coerce").fillna(0)
 
     # Set categorical dtypes
     for col in CAT_FEATURES:
@@ -693,7 +694,7 @@ def update_grid_incremental(
     """
     pred_map = predictions.drop_duplicates(subset="sku_ck", keep="first").set_index("sku_ck")["basefcst_pref"]
     month_mask = grid["startdate"] == month
-    grid.loc[month_mask, "qty"] = grid.loc[month_mask, "sku_ck"].map(pred_map).fillna(0)
+    grid.loc[month_mask, "qty"] = grid.loc[month_mask, "sku_ck"].map(pred_map).fillna(0).astype(grid["qty"].dtype)
 
     # Find position of this month in the sorted month list
     try:

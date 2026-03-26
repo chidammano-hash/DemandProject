@@ -1,6 +1,7 @@
 /**
  * RootCauseChart — Forecast bias correlation stacked bar chart.
  */
+import { memo } from "react";
 import {
   Bar,
   BarChart,
@@ -14,7 +15,7 @@ import {
 import { LoadingElement } from "@/components/LoadingElement";
 import { CHART_MARGIN } from "./invBacktestShared";
 
-export function RootCauseChart({
+export const RootCauseChart = memo(function RootCauseChart({
   rootCauseChartData,
   loadingRootCause,
   rootCauseModel,
@@ -78,4 +79,4 @@ export function RootCauseChart({
       ) : null}
     </div>
   );
-}
+});

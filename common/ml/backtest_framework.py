@@ -30,6 +30,8 @@ from common.constants import (
     LAG_RANGE,
     MAX_ARCHIVE_LAG,
     MIN_TRAINING_MONTHS,
+    NUMERIC_ITEM_FEATURES,
+    NUMERIC_SKU_FEATURES,
     OUTPUT_COLS,
 )
 from common.db import get_db_params
@@ -214,6 +216,7 @@ def generate_timeframes(
 def load_backtest_data(
     db: dict[str, Any],
     include_item_attrs: bool = True,
+    algo_config: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Load sales, DFU attributes, and item attributes from Postgres.
 
@@ -228,48 +231,74 @@ def load_backtest_data(
         # Prefer uncorrected sales for accuracy (medallion dual-track)
         sales_table = "fact_sales_monthly"
         try:
-            _cnt = pd.read_sql(
-                "SELECT count(*) AS n FROM fact_sales_monthly_original LIMIT 1",
-                conn,
-            )
+            with conn.cursor() as _cur:
+                _cur.execute("SELECT count(*) AS n FROM fact_sales_monthly_original LIMIT 1")
+                _cnt_cols = [d[0] for d in _cur.description]
+                _cnt = pd.DataFrame(_cur.fetchall(), columns=_cnt_cols)
             if _cnt.iloc[0]["n"] > 0:
                 sales_table = "fact_sales_monthly_original"
         except Exception:
             pass  # Table doesn't exist or is empty, use default
 
-        sales_df = pd.read_sql(f"""
-            SELECT d.sku_ck, s.item_id, s.customer_group, s.loc, s.startdate, s.qty
-            FROM {sales_table} s
-            INNER JOIN dim_sku d
-                ON d.item_id = s.item_id AND d.customer_group = s.customer_group AND d.loc = s.loc
-            WHERE s.qty IS NOT NULL
-              AND s.startdate <= %(planning_cutoff)s
-            ORDER BY d.sku_ck, s.startdate
-        """, conn, params={"planning_cutoff": planning_cutoff})
+        with conn.cursor() as _cur:
+            _cur.execute(f"""
+                SELECT d.sku_ck, s.item_id, s.customer_group, s.loc, s.startdate, s.qty
+                FROM {sales_table} s
+                INNER JOIN dim_sku d
+                    ON d.item_id = s.item_id AND d.customer_group = s.customer_group AND d.loc = s.loc
+                WHERE s.qty IS NOT NULL
+                  AND s.startdate <= %s
+                ORDER BY d.sku_ck, s.startdate
+            """, (planning_cutoff,))
+            _cols = [d[0] for d in _cur.description]
+            sales_df = pd.DataFrame(_cur.fetchall(), columns=_cols)
 
-        dfu_attrs = pd.read_sql("""
-            SELECT sku_ck, item_id, customer_group, loc,
-                   execution_lag, total_lt, ml_cluster,
-                   brand, region, abc_vol
-            FROM dim_sku
-        """, conn)
+        with conn.cursor() as _cur:
+            _cur.execute("""
+                SELECT sku_ck, item_id, customer_group, loc,
+                       execution_lag, total_lt, ml_cluster,
+                       brand, region, abc_vol
+                FROM dim_sku
+            """)
+            _cols = [d[0] for d in _cur.description]
+            dfu_attrs = pd.DataFrame(_cur.fetchall(), columns=_cols)
 
         if include_item_attrs:
-            item_attrs = pd.read_sql("""
-                SELECT DISTINCT i.item_id AS item_id,
-                       i.case_weight, i.item_proof, i.bpc
-                FROM dim_item i
-                INNER JOIN dim_sku d ON i.item_id = d.item_id
-            """, conn)
+            with conn.cursor() as _cur:
+                _cur.execute("""
+                    SELECT DISTINCT i.item_id AS item_id,
+                           i.case_weight, i.item_proof, i.bpc
+                    FROM dim_item i
+                    INNER JOIN dim_sku d ON i.item_id = d.item_id
+                """)
+                _cols = [d[0] for d in _cur.description]
+                item_attrs = pd.DataFrame(_cur.fetchall(), columns=_cols)
         else:
             item_attrs = pd.DataFrame()
 
     sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
     sales_df["qty"] = pd.to_numeric(sales_df["qty"], errors="coerce").fillna(0)
+    for col in NUMERIC_SKU_FEATURES:
+        if col in dfu_attrs.columns:
+            dfu_attrs[col] = pd.to_numeric(dfu_attrs[col], errors="coerce").fillna(0)
+    for col in NUMERIC_ITEM_FEATURES:
+        if col in item_attrs.columns:
+            item_attrs[col] = pd.to_numeric(item_attrs[col], errors="coerce").fillna(0)
 
     # Only keep DFUs that have sales
     dfus_with_sales = set(sales_df["sku_ck"].unique())
     dfu_attrs = dfu_attrs[dfu_attrs["sku_ck"].isin(dfus_with_sales)]
+
+    # Apply cluster override if provided (for cluster experiments)
+    cluster_override_path = algo_config.get("cluster_override_path") if algo_config else None
+    if cluster_override_path:
+        override_df = pd.read_csv(cluster_override_path, usecols=["sku_ck", "cluster_label"])
+        override_map = dict(zip(override_df["sku_ck"], override_df["cluster_label"]))
+        original_clusters = dfu_attrs["ml_cluster"].copy()
+        dfu_attrs["ml_cluster"] = dfu_attrs["sku_ck"].map(override_map).fillna(dfu_attrs["ml_cluster"])
+        n_remapped = int((dfu_attrs["ml_cluster"] != original_clusters).sum())
+        print(f"  [{_ts()}] Cluster override applied: {len(override_map):,} entries from {cluster_override_path}, "
+              f"{n_remapped:,} DFUs remapped")
 
     print(f"  [{_ts()}] Sales: {len(sales_df):,} rows, {len(dfus_with_sales):,} DFUs ({time.time() - t1:.1f}s)")
     print(f"  [{_ts()}] DFU attrs: {len(dfu_attrs):,}, Item attrs: {len(item_attrs):,}")
@@ -314,41 +343,76 @@ def assign_execution_lag(
     return result
 
 
-# ── All-lag expansion (archive) ──────────────────────────────────────────────
+# ── Natural lag assignment (archive) ─────────────────────────────────────────
 
 
-def expand_to_all_lags(
+def assign_natural_lags(
     pred_df: pd.DataFrame,
+    timeframes: list[dict],
     max_lag: int,
     execution_lag_map: dict[str, int],
 ) -> pd.DataFrame:
-    """Expand each prediction to lag 0 .. max_lag rows for the archive table.
+    """Assign each prediction its natural forecast lag based on timeframe.
 
-    fcstdate = startdate - lag months.
+    The natural lag is the number of months between the timeframe's first
+    predict month and the demand month (startdate).  This represents the
+    true forecast horizon — how far ahead the model was predicting.
+
+        lag = months_between(startdate, train_end) - 1
+
+    For example, with 10 timeframes (A-J) predicting demand month Feb 2026:
+      - Timeframe J (train_end = Jan 2026) → lag 0  (1-month-ahead)
+      - Timeframe I (train_end = Dec 2025) → lag 1  (2-month-ahead)
+      - Timeframe H (train_end = Nov 2025) → lag 2  (3-month-ahead)
+      - Timeframe G (train_end = Oct 2025) → lag 3  (4-month-ahead)
+      - Timeframe F (train_end = Sep 2025) → lag 4  (5-month-ahead)
+
+    Each lag uses a genuinely different prediction because the model was
+    trained on different data cutoffs.  Only keeps 0 <= lag <= max_lag.
     """
     t0 = time.time()
-    dfs = []
-    for lag in range(max_lag + 1):
-        df = pred_df.copy()
-        df["lag"] = lag
-        df["fcstdate"] = df["startdate"] - pd.DateOffset(months=lag)
-        dfs.append(df)
 
-    result = pd.concat(dfs, ignore_index=True)
-    result["execution_lag"] = result["sku_ck"].map(execution_lag_map).fillna(0).astype(int)
+    # Map timeframe_idx → train_end
+    tf_map = {tf["index"]: pd.Timestamp(tf["train_end"]) for tf in timeframes}
+
+    df = pred_df.copy()
+    df["_train_end"] = df["timeframe_idx"].map(tf_map)
+
+    # Compute natural lag: months between train_end and startdate, minus 1
+    # (predict_start = train_end + 1 month, so lag 0 = first predict month)
+    df["lag"] = (
+        (df["startdate"].dt.year * 12 + df["startdate"].dt.month)
+        - (df["_train_end"].dt.year * 12 + df["_train_end"].dt.month)
+        - 1
+    )
+
+    # Filter to valid lag range (0 .. max_lag)
+    df = df[(df["lag"] >= 0) & (df["lag"] <= max_lag)].copy()
+
+    # Assign execution_lag from DFU dimension
+    df["execution_lag"] = df["sku_ck"].map(execution_lag_map).fillna(0).astype(int)
+
+    # Compute fcstdate = startdate - lag months (vectorized per lag value)
+    for lag_val in range(max_lag + 1):
+        mask = df["lag"] == lag_val
+        if mask.any():
+            df.loc[mask, "fcstdate"] = df.loc[mask, "startdate"] - pd.DateOffset(months=lag_val)
 
     # Build forecast_ck (vectorized string concat via str.cat)
-    result["forecast_ck"] = (
-        result["item_id"].astype(str).str.cat([
-            result["customer_group"].astype(str),
-            result["loc"].astype(str),
-            result["fcstdate"].dt.strftime("%Y-%m-%d"),
-            result["startdate"].dt.strftime("%Y-%m-%d"),
+    df["forecast_ck"] = (
+        df["item_id"].astype(str).str.cat([
+            df["customer_group"].astype(str),
+            df["loc"].astype(str),
+            df["fcstdate"].dt.strftime("%Y-%m-%d"),
+            df["startdate"].dt.strftime("%Y-%m-%d"),
         ], sep="_")
     )
 
-    print(f"  [{_ts()}] All-lag expansion (0-{max_lag}) done: {len(result):,} rows ({time.time() - t0:.1f}s)")
-    return result
+    # Drop helper column
+    df = df.drop(columns=["_train_end"])
+
+    print(f"  [{_ts()}] Natural lag assignment (0-{max_lag}) done: {len(df):,} rows ({time.time() - t0:.1f}s)")
+    return df
 
 
 # ── Post-processing: combine, dedup, attach actuals ─────────────────────────
@@ -358,8 +422,17 @@ def postprocess_predictions(
     all_predictions: list[pd.DataFrame],
     sales_df: pd.DataFrame,
     exec_lag_map: dict[str, int],
+    timeframes: list[dict] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Combine timeframe predictions, assign execution lag, dedup, attach actuals.
+
+    Args:
+        all_predictions: list of DataFrames from each timeframe (carry timeframe_idx)
+        sales_df: sales data for attaching actuals
+        exec_lag_map: sku_ck → execution_lag mapping from dim_sku
+        timeframes: list of timeframe dicts (with train_end).  When provided,
+            the archive uses natural lags computed from the timeframe's training
+            cutoff — each lag gets a genuinely different prediction.
 
     Returns (output_df, archive_df, combined_raw).
     """
@@ -390,9 +463,29 @@ def postprocess_predictions(
 
     # ── All-lags archive ──────────────────────────────────────────────────
     print(f"  [{_ts()}] Generating all-lags archive (lag 0-{MAX_ARCHIVE_LAG})...")
-    archive_expanded = expand_to_all_lags(combined, MAX_ARCHIVE_LAG, exec_lag_map)
 
-    # Deduplicate
+    if timeframes is not None:
+        # Natural lags: each prediction gets its true forecast horizon based
+        # on the gap between the timeframe's training cutoff and the demand
+        # month.  Different lags = different predictions from different
+        # timeframes = genuinely different accuracy per horizon.
+        archive_expanded = assign_natural_lags(
+            combined, timeframes, MAX_ARCHIVE_LAG, exec_lag_map,
+        )
+    else:
+        # Legacy fallback (no timeframe metadata available) — duplicates the
+        # same prediction across all lags.  This path should only be hit if
+        # postprocess_predictions is called without timeframes.
+        logger.warning(
+            "postprocess_predictions called without timeframes — "
+            "archive will have identical predictions across all lags"
+        )
+        archive_expanded = _expand_to_all_lags_legacy(
+            combined, MAX_ARCHIVE_LAG, exec_lag_map,
+        )
+
+    # Deduplicate: each (DFU, startdate, lag) should map to exactly one
+    # timeframe with natural lags, but keep dedup as safety net.
     archive_expanded = archive_expanded.sort_values("timeframe_idx")
     archive_expanded = archive_expanded.drop_duplicates(
         subset=["forecast_ck", "model_id", "lag"], keep="last"
@@ -403,6 +496,39 @@ def postprocess_predictions(
     archive_expanded = archive_expanded.merge(actuals, on=["sku_ck", "startdate"], how="left")
 
     return expanded, archive_expanded, combined
+
+
+def _expand_to_all_lags_legacy(
+    pred_df: pd.DataFrame,
+    max_lag: int,
+    execution_lag_map: dict[str, int],
+) -> pd.DataFrame:
+    """Legacy: duplicate each prediction to lag 0..max_lag (same basefcst_pref).
+
+    Kept only as a fallback when timeframe metadata is unavailable.
+    """
+    t0 = time.time()
+    dfs = []
+    for lag in range(max_lag + 1):
+        df = pred_df.copy()
+        df["lag"] = lag
+        df["fcstdate"] = df["startdate"] - pd.DateOffset(months=lag)
+        dfs.append(df)
+
+    result = pd.concat(dfs, ignore_index=True)
+    result["execution_lag"] = result["sku_ck"].map(execution_lag_map).fillna(0).astype(int)
+
+    result["forecast_ck"] = (
+        result["item_id"].astype(str).str.cat([
+            result["customer_group"].astype(str),
+            result["loc"].astype(str),
+            result["fcstdate"].dt.strftime("%Y-%m-%d"),
+            result["startdate"].dt.strftime("%Y-%m-%d"),
+        ], sep="_")
+    )
+
+    print(f"  [{_ts()}] Legacy all-lag expansion (0-{max_lag}) done: {len(result):,} rows ({time.time() - t0:.1f}s)")
+    return result
 
 
 # ── Output saving ────────────────────────────────────────────────────────────
@@ -564,7 +690,7 @@ def _predict_single_month(
         feature_cols: Ordered list of feature columns passed to each model.
     """
     parts = []
-    for cluster, group in predict_data.groupby("ml_cluster"):
+    for cluster, group in predict_data.groupby("ml_cluster", observed=True):
         m = models.get(cluster)
         if m is None:
             continue
@@ -599,6 +725,7 @@ def run_tree_backtest(
     ] | None = None,
     recursive: bool = False,
     model_persistence_fn: Callable[[Any, list[str], str], None] | None = None,
+    algo_config: dict[str, Any] | None = None,
 ) -> None:
     """Run a complete tree-based per-cluster backtest (LGBM, CatBoost, XGBoost).
 
@@ -622,7 +749,7 @@ def run_tree_backtest(
 
     # ── Step 1: Load data ────────────────────────────────────────────────────
     print(f"\n[{_ts()}] Step 1: Loading data from Postgres...")
-    sales_df, dfu_attrs, item_attrs = load_backtest_data(db)
+    sales_df, dfu_attrs, item_attrs = load_backtest_data(db, algo_config=algo_config)
 
     # Execution lag lookup
     exec_lag_map = dfu_attrs.set_index("sku_ck")["execution_lag"].fillna(0).astype(int).to_dict()
@@ -745,10 +872,11 @@ def run_tree_backtest(
             shap_timeframe_reports.append(shap_df)
             print(f"  [{_ts()}] SHAP done ({time.time() - t_shap:.1f}s)")
 
-            # Only retrain if SHAP dropped >= 10% of features (otherwise marginal gain not worth cost)
+            # Retrain if SHAP dropped >= threshold of features (configurable via algorithm_config.yaml)
+            retrain_threshold = algo_config.get("shap_retrain_threshold", 0.10) if algo_config else 0.10
             features_dropped = len(feature_cols) - len(selected_features)
             drop_pct = features_dropped / len(feature_cols) if feature_cols else 0
-            if drop_pct >= 0.10 and set(selected_features) != set(feature_cols):
+            if drop_pct >= retrain_threshold and set(selected_features) != set(feature_cols):
                 print(
                     f"  [{_ts()}] Retraining with {len(selected_features)} SHAP-selected features "
                     f"(was {len(feature_cols)})..."
@@ -822,7 +950,7 @@ def run_tree_backtest(
     # ── Step 5: Combine, assign execution lag, attach actuals ────────────────
     print(f"\n[{_ts()}] Step 5: Combining predictions...")
     expanded, archive_expanded, combined = postprocess_predictions(
-        all_predictions, sales_df, exec_lag_map
+        all_predictions, sales_df, exec_lag_map, timeframes=timeframes,
     )
 
     # ── Step 6: Save output ──────────────────────────────────────────────────

@@ -1,0 +1,75 @@
+templates:
+  - id: production_baseline
+    label: "Production Baseline"
+    description: "Current production strategy from model_competition.yaml"
+    source: model_competition_config
+
+  - id: expanding_conservative
+    label: "Expanding Window (Conservative)"
+    description: "Cumulative WAPE from all history, min 5 prior months"
+    strategy: expanding
+    strategy_params:
+      min_prior_months: 5
+
+  - id: rolling_6m
+    label: "Rolling 6-Month Window"
+    description: "Last 6 months WAPE — adapts faster to regime changes"
+    strategy: rolling
+    strategy_params:
+      window_months: 6
+      min_prior_months: 3
+
+  - id: rolling_3m
+    label: "Rolling 3-Month (Aggressive Recency)"
+    description: "Last 3 months — fast adaptation, higher variance"
+    strategy: rolling
+    strategy_params:
+      window_months: 3
+      min_prior_months: 2
+
+  - id: decay_090
+    label: "Exponential Decay (0.90)"
+    description: "Each prior month weighted 0.90^d — moderate recency bias"
+    strategy: decay
+    strategy_params:
+      decay_factor: 0.90
+      min_prior_months: 3
+
+  - id: decay_095
+    label: "Exponential Decay (0.95)"
+    description: "Gentle decay — close to expanding but with recency tilt"
+    strategy: decay
+    strategy_params:
+      decay_factor: 0.95
+      min_prior_months: 3
+
+  - id: ensemble_top3_inverse
+    label: "Ensemble Top-3 (Inverse WAPE)"
+    description: "Blend top 3 models weighted by 1/WAPE — synthetic forecast"
+    strategy: ensemble
+    strategy_params:
+      top_k: 3
+      weight_method: inverse_wape
+      min_prior_months: 3
+
+  - id: ensemble_top2_equal
+    label: "Ensemble Top-2 (Equal Weight)"
+    description: "Simple average of top 2 models — robust diversification"
+    strategy: ensemble
+    strategy_params:
+      top_k: 2
+      weight_method: equal
+      min_prior_months: 3
+
+  - id: meta_learner_rf
+    label: "Meta-Learner (Random Forest)"
+    description: "ML classifier predicts best model from DFU features + performance"
+    strategy: meta_learner
+    strategy_params:
+      min_prior_months: 3
+    meta_learner_params:
+      model_type: random_forest
+      n_estimators: 200
+      max_depth: 15
+      test_months: 3
+      performance_window: 6

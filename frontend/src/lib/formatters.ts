@@ -59,3 +59,138 @@ export function formatCurrency(value: number | null | undefined): string {
   if (Math.abs(n) >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
   return `$${n.toFixed(0)}`;
 }
+
+// ---------------------------------------------------------------------------
+// Cluster label formatting — standardized 4-letter code system
+// ---------------------------------------------------------------------------
+//
+// Two-axis taxonomy using 4-letter supply chain velocity codes:
+//   [VELOCITY].[BEHAVIOR]  or  [VELOCITY].[B1].[B2].[B3]  for compounds
+//
+// ┌──────────┬──────┬──────────────────────────────────┐
+// │ Axis     │ Code │ Meaning                          │
+// ├──────────┼──────┼──────────────────────────────────┤
+// │ Velocity │ FAST │ Fast mover — top volume drivers   │
+// │          │ MOVR │ Mover — above-average runners     │
+// │          │ BASE │ Base demand — core portfolio bulk  │
+// │          │ SLOW │ Slow mover — below-average volume  │
+// │          │ TAIL │ Long tail — niche / sparse SKUs    │
+// ├──────────┼──────┼──────────────────────────────────┤
+// │ Pattern  │ SEAS │ Seasonal amplitude                │
+// │          │ CYCL │ Non-annual periodicity             │
+// │          │ RISE │ Growing / accelerating ↑           │
+// │          │ FALL │ Declining / decelerating ↓         │
+// │          │ WILD │ High CV / volatile                 │
+// │          │ CALM │ Low CV / stable / steady           │
+// │          │ RARE │ Intermittent / sparse / dormant    │
+// │          │ EVEN │ No dominant signal (balanced)      │
+// │          │ FLAT │ No trend, no seasonality           │
+// │          │ BUMP │ Lumpy / bursty demand              │
+// │          │ NEWW │ Emerging / new product             │
+// │          │ EOLP │ End-of-life / phasing out          │
+// └──────────┴──────┴──────────────────────────────────┘
+//
+// Examples:
+//   very_high_volume_periodic            → FAST.CYCL
+//   high_volume_seasonal_growing         → MOVR.SEAS.RISE
+//   medium_volume_steady                 → BASE.CALM
+//   low_volume_volatile                  → SLOW.WILD
+//   very_low_volume_intermittent         → TAIL.RARE
+//   medium_volume_moderate               → BASE.EVEN
+//   high_volume_declining                → MOVR.FALL
+//   low_volume_seasonal_growing_volatile → SLOW.SEAS.RISE.WILD
+
+const VOLUME_CODE: [RegExp, string][] = [
+  [/very[_\s]?high/, "FAST"],
+  [/very[_\s]?low/, "TAIL"],
+  [/high/, "MOVR"],
+  [/medium/, "BASE"],
+  [/low/, "SLOW"],
+];
+
+const PATTERN_CODE: Record<string, string> = {
+  // Seasonality & cycles
+  periodic: "CYCL",
+  seasonal: "SEAS",
+  cyclical: "CYCL",
+  // Stability
+  moderate: "EVEN",
+  steady: "CALM",
+  very_steady: "CALM",
+  stable: "CALM",
+  consistent: "CALM",
+  // Volatility
+  volatile: "WILD",
+  very_volatile: "WILD",
+  erratic: "WILD",
+  noisy: "WILD",
+  // Intermittency
+  intermittent: "RARE",
+  sparse: "RARE",
+  dormant: "RARE",
+  // Trend — up
+  growing: "RISE",
+  increasing: "RISE",
+  trending_up: "RISE",
+  upward: "RISE",
+  accelerating: "RISE",
+  // Trend — down
+  declining: "FALL",
+  decreasing: "FALL",
+  trending_down: "FALL",
+  downward: "FALL",
+  shrinking: "FALL",
+  decelerating: "FALL",
+  flat: "FLAT",
+  // Shape
+  lumpy: "BUMP",
+  bursty: "BUMP",
+  peaky: "BUMP",
+  smooth: "CALM",
+  // Lifecycle
+  new: "NEWW",
+  emerging: "NEWW",
+  mature: "CALM",
+  phasing_out: "EOLP",
+  end_of_life: "EOLP",
+  // Zero-demand
+  zero_heavy: "RARE",
+  stockout_prone: "RARE",
+  // Disambiguator sub-range splits
+  higher_avg: "HIGH",
+  lower_avg: "LITE",
+};
+
+export function formatClusterLabel(raw: string): string {
+  const s = raw.toLowerCase().replace(/-/g, "_");
+
+  // --- Volume axis ---
+  let vol = "";
+  for (const [re, code] of VOLUME_CODE) {
+    if (re.test(s)) { vol = code; break; }
+  }
+
+  // --- Pattern axis ---
+  const stripped = s
+    .replace(/very[_\s]?(high|low)/g, "")
+    .replace(/\b(high|medium|low|volume|demand)\b/g, "")
+    .replace(/[_\s]+/g, " ")
+    .trim();
+
+  const tokens = stripped.split(" ").filter(Boolean);
+  const seen = new Set<string>();
+  const mapped: string[] = [];
+  for (const w of tokens) {
+    const m = PATTERN_CODE[w];
+    if (m && !seen.has(m)) { seen.add(m); mapped.push(m); }
+  }
+  // Up to 3 pattern codes for compound behaviors
+  const codes = mapped.length > 0
+    ? mapped.slice(0, 3)
+    : tokens.map((w) => w.slice(0, 4).toUpperCase());
+
+  const parts = vol ? [vol, ...codes] : codes;
+  if (parts.length > 0) return parts.join(".");
+
+  return raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 22);
+}

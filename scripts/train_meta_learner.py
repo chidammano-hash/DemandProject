@@ -19,6 +19,7 @@ import argparse
 import json
 import sys
 import time
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ import pandas as pd
 import psycopg
 import yaml
 from dotenv import load_dotenv
+
+warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:

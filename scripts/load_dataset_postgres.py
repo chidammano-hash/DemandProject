@@ -360,8 +360,9 @@ def _post_load_purchase_order(cur) -> None:
                 promised_delivery_date = EXCLUDED.promised_delivery_date,
                 modified_ts            = NOW()
         """)
+        open_po_count = cur.rowcount
         cur.execute("RELEASE SAVEPOINT sp_open_po")
-        logger.info("  Upserted %s open POs", f"{cur.rowcount:,}")
+        logger.info("  Upserted %s open POs", f"{open_po_count:,}")
     except psycopg.errors.ForeignKeyViolation:
         cur.execute("ROLLBACK TO SAVEPOINT sp_open_po")
         logger.warning("  Skipped open PO sync — dim_supplier not yet populated")

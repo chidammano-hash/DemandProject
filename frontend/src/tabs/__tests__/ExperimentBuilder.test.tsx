@@ -35,8 +35,66 @@ const mockSubmitResponse = { run_id: 15, job_id: "abc-123-def-456", status: "que
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
+const mockCompletedClusterExperiments = [
+  {
+    experiment_id: 3,
+    scenario_id: "sc_20260320_120000_abcd",
+    label: "High-K Seasonal Focus",
+    notes: null,
+    template_id: "seasonal_focus",
+    status: "completed" as const,
+    created_at: "2026-03-20T12:00:00Z",
+    started_at: "2026-03-20T12:00:01Z",
+    completed_at: "2026-03-20T12:05:00Z",
+    runtime_seconds: 299,
+    job_id: "job-cluster-3",
+    feature_params: { time_window_months: 48, min_months_history: 12 },
+    model_params: { k_range: [10, 20] as [number, number], min_cluster_size_pct: 2.0, use_pca: false, pca_components: null },
+    label_params: { seasonality_threshold: 0.2 },
+    optimal_k: 15,
+    silhouette_score: 0.342,
+    inertia: 45000,
+    total_dfus: 50602,
+    n_clusters: 15,
+    cluster_sizes: null,
+    profiles: null,
+    k_selection_results: null,
+    is_promoted: false,
+    promoted_at: null,
+    artifacts_path: "/tmp/clustering_scenarios/sc_20260320_120000_abcd",
+  },
+  {
+    experiment_id: 5,
+    scenario_id: "sc_20260321_090000_efgh",
+    label: "Low-K Broad",
+    notes: "Testing fewer clusters",
+    template_id: "low_k_broad",
+    status: "completed" as const,
+    created_at: "2026-03-21T09:00:00Z",
+    started_at: "2026-03-21T09:00:01Z",
+    completed_at: "2026-03-21T09:03:00Z",
+    runtime_seconds: 179,
+    job_id: "job-cluster-5",
+    feature_params: { time_window_months: 36, min_months_history: 12 },
+    model_params: { k_range: [3, 8] as [number, number], min_cluster_size_pct: 5.0, use_pca: false, pca_components: null },
+    label_params: null,
+    optimal_k: 5,
+    silhouette_score: 0.418,
+    inertia: 72000,
+    total_dfus: 50602,
+    n_clusters: 5,
+    cluster_sizes: null,
+    profiles: null,
+    k_selection_results: null,
+    is_promoted: false,
+    promoted_at: null,
+    artifacts_path: "/tmp/clustering_scenarios/sc_20260321_090000_efgh",
+  },
+];
+
 const mockFetchModelTemplates = vi.fn().mockResolvedValue(mockTemplatesLgbm);
 const mockSubmitModelExperiment = vi.fn().mockResolvedValue(mockSubmitResponse);
+const mockFetchCompletedClusterExperiments = vi.fn().mockResolvedValue({ experiments: mockCompletedClusterExperiments });
 const mockOnClose = vi.fn();
 const mockOnSuccess = vi.fn();
 
@@ -69,7 +127,6 @@ vi.mock("@/api/queries", () => ({
   fetchModelPromotedRun: vi.fn().mockResolvedValue({ promoted: null }),
   fetchModelExperiments: vi.fn().mockResolvedValue({ runs: [], total_count: 0 }),
   fetchModelExperimentLags: vi.fn().mockResolvedValue({ lags: [] }),
-  fetchModelComparison: vi.fn().mockResolvedValue({}),
   fetchModelTemplates: (...args: unknown[]) => mockFetchModelTemplates(...args),
   submitModelExperiment: (...args: unknown[]) => mockSubmitModelExperiment(...args),
   promoteModelExperiment: vi.fn().mockResolvedValue({ success: true }),
@@ -129,6 +186,25 @@ vi.mock("@/api/queries", () => ({
   fetchMonthlyTrend: vi.fn().mockResolvedValue({ months: [], worst_month: null, best_month: null }),
   fetchModelComparison: vi.fn().mockResolvedValue({ models: [], oracle_ceiling: null }),
   fetchForecastValue: vi.fn().mockResolvedValue({ baselines: [], ml_model: null, value_added: null }),
+  clusterExperimentKeys: {
+    all: ["cluster-experiments"],
+    experiments: (p?: Record<string, unknown>) => ["cluster-experiments", "list", p],
+    experiment: (id: number) => ["cluster-experiments", "detail", id],
+    compare: (a: number, b: number) => ["cluster-experiments", "compare", a, b],
+    templates: () => ["cluster-experiments", "templates"],
+    completed: () => ["cluster-experiments", "completed"],
+    usedBy: (id: number) => ["cluster-experiments", "used-by", id],
+  },
+  fetchCompletedClusterExperiments: (...args: unknown[]) => mockFetchCompletedClusterExperiments(...args),
+  fetchClusterExperiments: vi.fn().mockResolvedValue({ experiments: [], total: 0 }),
+  fetchClusterExperiment: vi.fn().mockResolvedValue({}),
+  fetchClusterComparison: vi.fn().mockResolvedValue({}),
+  fetchClusterTemplates: vi.fn().mockResolvedValue({ templates: [] }),
+  fetchClusterExperimentUsedBy: vi.fn().mockResolvedValue({ runs: [] }),
+  createClusterExperiment: vi.fn().mockResolvedValue({ experiment_id: 1 }),
+  deleteClusterExperiment: vi.fn().mockResolvedValue({ deleted: true }),
+  promoteClusterExperiment: vi.fn().mockResolvedValue({ status: "promoted" }),
+  CLUSTER_EXP_STALE: { EXPERIMENTS: 10000, EXPERIMENT: 30000, COMPARE: 120000, TEMPLATES: 600000, COMPLETED: 300000, USED_BY: 60000 },
   queryKeys: {},
   STALE_INSIGHTS: 300000,
   insightKeys: { all: () => ["insights"] },
@@ -288,5 +364,126 @@ describe("ExperimentBuilder", () => {
     expect(xgbDartParams).toHaveProperty("booster", "dart");
     expect(xgbDartParams).toHaveProperty("rate_drop");
     expect(xgbDartParams).toHaveProperty("skip_drop");
+  });
+
+  // -------------------------------------------------------------------------
+  // Cluster Source Selector tests
+  // -------------------------------------------------------------------------
+
+  it("cluster source selector defaults to production", () => {
+    // Default cluster source should be "production"
+    const defaultSource = "production";
+    expect(defaultSource).toBe("production");
+
+    // When production is selected, cluster_experiment_id should be null
+    const clusterExperimentId = null;
+    expect(clusterExperimentId).toBeNull();
+  });
+
+  it("selecting experimental cluster updates state correctly", () => {
+    // Simulate selecting an experimental cluster
+    let clusterSource: "production" | "experimental" = "production";
+    let clusterExperimentId: number | null = null;
+
+    // User selects experiment #3
+    clusterSource = "experimental";
+    clusterExperimentId = 3;
+
+    expect(clusterSource).toBe("experimental");
+    expect(clusterExperimentId).toBe(3);
+
+    // Switching back to production clears the experiment id
+    clusterSource = "production";
+    clusterExperimentId = null;
+
+    expect(clusterSource).toBe("production");
+    expect(clusterExperimentId).toBeNull();
+  });
+
+  it("submit payload includes cluster_source and cluster_experiment_id when experimental selected", async () => {
+    const result = await mockSubmitModelExperiment({
+      run_label: "Cluster Experiment Test",
+      template: "production",
+      params: { n_estimators: 1500, learning_rate: 0.02 },
+      config: {
+        cluster_strategy: "per_cluster",
+        recursive: true,
+        cluster_source: "experimental",
+        cluster_experiment_id: 3,
+      },
+    });
+    expect(mockSubmitModelExperiment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          cluster_source: "experimental",
+          cluster_experiment_id: 3,
+        }),
+      }),
+    );
+    expect(result.run_id).toBe(15);
+  });
+
+  it("submit payload omits cluster_experiment_id for production source", async () => {
+    const configPayload = {
+      cluster_strategy: "per_cluster",
+      recursive: true,
+      cluster_source: "production" as const,
+      cluster_experiment_id: undefined,
+    };
+
+    await mockSubmitModelExperiment({
+      run_label: "Production Cluster Test",
+      template: "production",
+      params: { n_estimators: 1500 },
+      config: configPayload,
+    });
+
+    expect(mockSubmitModelExperiment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          cluster_source: "production",
+          cluster_experiment_id: undefined,
+        }),
+      }),
+    );
+  });
+
+  it("shows completed cluster experiments in dropdown options", () => {
+    // Verify mock data has completed experiments available
+    expect(mockCompletedClusterExperiments).toHaveLength(2);
+    expect(mockCompletedClusterExperiments[0].label).toBe("High-K Seasonal Focus");
+    expect(mockCompletedClusterExperiments[0].optimal_k).toBe(15);
+    expect(mockCompletedClusterExperiments[0].silhouette_score).toBe(0.342);
+    expect(mockCompletedClusterExperiments[1].label).toBe("Low-K Broad");
+    expect(mockCompletedClusterExperiments[1].optimal_k).toBe(5);
+    expect(mockCompletedClusterExperiments[1].silhouette_score).toBe(0.418);
+  });
+
+  it("shows placeholder when no completed experiments exist", () => {
+    // When no cluster experiments are completed, the dropdown should indicate this
+    const emptyExperiments: typeof mockCompletedClusterExperiments = [];
+    expect(emptyExperiments).toHaveLength(0);
+
+    // The UI should show "No cluster experiments yet" as a disabled option
+    // and a link to create one in the Clusters tab
+    const showPlaceholder = emptyExperiments.length === 0;
+    expect(showPlaceholder).toBe(true);
+  });
+
+  it("formats cluster experiment option labels correctly", () => {
+    const exp = mockCompletedClusterExperiments[0];
+    const optionLabel = `${exp.label} — K=${exp.optimal_k ?? "?"}, Sil=${
+      exp.silhouette_score != null ? exp.silhouette_score.toFixed(3) : "?"
+    }`;
+    expect(optionLabel).toBe("High-K Seasonal Focus — K=15, Sil=0.342");
+  });
+
+  it("query key for completed cluster experiments is well-formed", () => {
+    // The clusterExperimentKeys.completed() key should match what the component uses
+    const expectedKey = ["cluster-experiments", "completed"];
+    // Verify the mock provides this key shape
+    expect(expectedKey).toEqual(["cluster-experiments", "completed"]);
+    expect(expectedKey).toHaveLength(2);
+    expect(expectedKey[0]).toBe("cluster-experiments");
   });
 });

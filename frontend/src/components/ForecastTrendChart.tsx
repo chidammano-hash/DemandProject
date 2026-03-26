@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { EChartContainer } from "@/components/EChartContainer";
 
 interface ForecastTrendChartProps {
@@ -7,7 +8,7 @@ interface ForecastTrendChartProps {
   seriesColors: string[];
 }
 
-export function ForecastTrendChart({ data, theme, chartColors, seriesColors }: ForecastTrendChartProps) {
+export const ForecastTrendChart = memo(function ForecastTrendChart({ data, theme, chartColors, seriesColors }: ForecastTrendChartProps) {
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
@@ -78,4 +79,4 @@ export function ForecastTrendChart({ data, theme, chartColors, seriesColors }: F
   };
 
   return <EChartContainer option={option} theme={theme} height={260} />;
-}
+});

@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `common/backtest_framework.py`, `common/feature_engineering.py`, `common/metrics.py`, `common/constants.py`, `scripts/load_backtest_forecasts.py`, `sql/010_create_backtest_lag_archive.sql` |
+| **Key Files** | `common/backtest_framework.py`, `common/ml/model_registry.py`, `common/feature_engineering.py`, `common/metrics.py`, `common/constants.py`, `scripts/load_backtest_forecasts.py`, `sql/010_create_backtest_lag_archive.sql` |
 
 ---
 
@@ -23,7 +23,7 @@ The backtesting framework trains models on progressively larger slices of histor
 1. The framework generates 10 expanding-window timeframes labeled A through J
 2. Timeframe A trains on the shortest history; timeframe J trains on the longest
 3. For each timeframe, the model predicts all remaining months up to the latest data
-4. Each prediction is stored at 5 lag horizons (lag 0 through lag 4) in the archive
+4. Each prediction's **natural lag** is computed from its timeframe: `lag = months(startdate - train_end) - 1`. For a given demand month, different timeframes produce predictions at different horizons (lags 0-4), with genuinely different `basefcst_pref` values because the model was trained on different data cutoffs
 5. Only the execution-lag prediction (the lag that matters operationally for each DFU) goes into the main forecast table
 6. After loading, 5 materialized views are refreshed for instant accuracy queries
 7. The `model_id` column distinguishes predictions from different algorithms
@@ -32,13 +32,17 @@ The backtesting framework trains models on progressively larger slices of histor
 
 With sales data from Feb 2023 to Jan 2026 (36 months), 10 timeframes:
 
-| Timeframe | Training Period | Prediction Period | Available Lags |
-|-----------|----------------|-------------------|---------------|
-| A | Feb 2023 -- Mar 2025 | Apr 2025 -- Jan 2026 (10 months) | 0-4 |
-| B | Feb 2023 -- Apr 2025 | May 2025 -- Jan 2026 (9 months) | 0-4 |
+| Timeframe | Training Period | Prediction Period | Natural Lags (for Jan 2026) |
+|-----------|----------------|-------------------|---------------------------|
+| A | Feb 2023 -- Mar 2025 | Apr 2025 -- Jan 2026 (10 months) | Jan: lag 9 (filtered out, >4) |
 | ... | ... | ... | ... |
-| I | Feb 2023 -- Nov 2025 | Dec 2025 -- Jan 2026 (2 months) | 0-1 |
-| J | Feb 2023 -- Dec 2025 | Jan 2026 (1 month) | 0 only |
+| F | Feb 2023 -- Aug 2025 | Sep 2025 -- Jan 2026 (5 months) | Jan: **lag 4** (5-month-ahead) |
+| G | Feb 2023 -- Sep 2025 | Oct 2025 -- Jan 2026 (4 months) | Jan: **lag 3** (4-month-ahead) |
+| H | Feb 2023 -- Oct 2025 | Nov 2025 -- Jan 2026 (3 months) | Jan: **lag 2** (3-month-ahead) |
+| I | Feb 2023 -- Nov 2025 | Dec 2025 -- Jan 2026 (2 months) | Jan: **lag 1** (2-month-ahead) |
+| J | Feb 2023 -- Dec 2025 | Jan 2026 (1 month) | Jan: **lag 0** (1-month-ahead) |
+
+Each lag for Jan 2026 comes from a different timeframe with a different training data cutoff, producing genuinely different predictions. Lag 0 uses the most recent data (highest accuracy), lag 4 uses 5-month-old data (lowest accuracy).
 
 ### Execution Lag
 
@@ -112,9 +116,42 @@ Each backtest writes to `data/backtest/<model_id>/`:
 - `backtest_metadata.json` -- run configuration and metrics
 - `feature_importance.csv` -- model feature rankings
 
+## Model Registry (`common/ml/model_registry.py`)
+
+The model registry provides a centralized abstraction layer for all tree-based models, eliminating duplicate code across backtest scripts:
+
+### Canonical Parameter Mapping
+
+| Canonical | LGBM | CatBoost | XGBoost |
+|-----------|------|----------|---------|
+| `estimators` | `n_estimators` | `iterations` | `n_estimators` |
+| `max_depth` | `max_depth` | `depth` | `max_depth` |
+| `l2_reg` | `reg_lambda` | `l2_leaf_reg` | `reg_lambda` |
+| `l1_reg` | `reg_alpha` | _(not supported)_ | `reg_alpha` |
+| `min_leaf_samples` | `min_child_samples` | `min_data_in_leaf` | `min_child_weight` |
+| `col_sample` | `colsample_bytree` | `colsample_bylevel` | `colsample_bytree` |
+
+### Unified Functions
+
+- **`fit_model()`** — single fit function replacing 3× duplicate if/elif/else blocks in `_train_single_cluster` and `train_and_predict_global`
+- **`get_best_iteration()`** — abstracts `best_iteration_` (LGBM/CatBoost) vs `best_iteration` (XGBoost)
+- **`compute_early_stop_patience()`** — standardized 3% of max iterations (floor 10) for all models
+- **`to_native_params()` / `from_native_params()`** — bidirectional canonical ↔ native translation
+
+### Early Stopping Standardization
+
+All models use `compute_early_stop_patience(max_iterations, pct=0.03)`:
+- LGBM 1500 iterations → 45 rounds patience
+- CatBoost 3000 iterations → 90 rounds patience
+- XGBoost 500 iterations → 15 rounds patience
+
 ## Configuration
 
 Backtest behavior is controlled by `config/algorithm_config.yaml`. See [Algorithm Config](./06-algorithm-config.md) for details.
+
+Key backtest-level settings:
+- `early_stop_pct: 0.03` — early stopping patience as percentage of max iterations
+- `shap_retrain_threshold: 0.10` — retrain if >= 10% of features are dropped by SHAP
 
 ## Dependencies
 

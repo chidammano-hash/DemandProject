@@ -1,3 +1,4 @@
+import { memo } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -120,7 +121,7 @@ export interface OverlayChartPanelProps {
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export function OverlayChartPanel({
+export const OverlayChartPanel = memo(function OverlayChartPanel({
   skuData,
   skuFilteredSeries,
   skuMonths,
@@ -455,4 +456,4 @@ export function OverlayChartPanel({
       </Card>
     </>
   );
-}
+});

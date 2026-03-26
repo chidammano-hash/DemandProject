@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useContext, useMemo, useReducer } from "react";
 
 export interface CompletedJob {
   id: string;
@@ -24,53 +24,58 @@ export interface JobNotificationContextValue {
   dismissCompletion: (id: string) => void;
 }
 
+interface JobState {
+  activeJobs: Map<string, ActiveJob>;
+  recentCompletions: CompletedJob[];
+}
+
+type JobAction =
+  | { type: "START_JOB"; id: string; jobType: string; label: string }
+  | { type: "COMPLETE_JOB"; job: CompletedJob }
+  | { type: "FAIL_JOB"; id: string }
+  | { type: "DISMISS_COMPLETION"; id: string };
+
+function jobReducer(state: JobState, action: JobAction): JobState {
+  switch (action.type) {
+    case "START_JOB": {
+      const next = new Map(state.activeJobs);
+      next.set(action.id, { id: action.id, type: action.jobType, label: action.label });
+      return { ...state, activeJobs: next };
+    }
+    case "COMPLETE_JOB": {
+      const next = new Map(state.activeJobs);
+      next.delete(action.job.id);
+      return { activeJobs: next, recentCompletions: [action.job, ...state.recentCompletions] };
+    }
+    case "FAIL_JOB": {
+      const next = new Map(state.activeJobs);
+      next.delete(action.id);
+      return { ...state, activeJobs: next };
+    }
+    case "DISMISS_COMPLETION":
+      return { ...state, recentCompletions: state.recentCompletions.filter((c) => c.id !== action.id) };
+  }
+}
+
+const initialState: JobState = { activeJobs: new Map(), recentCompletions: [] };
+
 const JobNotificationContext = createContext<JobNotificationContextValue | null>(null);
 
 export function JobNotificationProvider({ children }: { children: React.ReactNode }) {
-  const [activeJobs, setActiveJobs] = useState<Map<string, ActiveJob>>(new Map());
-  const [recentCompletions, setRecentCompletions] = useState<CompletedJob[]>([]);
+  const [state, dispatch] = useReducer(jobReducer, initialState);
 
-  const startJob = useCallback((id: string, type: string, label: string) => {
-    setActiveJobs((prev) => {
-      const next = new Map(prev);
-      next.set(id, { id, type, label });
-      return next;
-    });
-  }, []);
-
-  const completeJob = useCallback((job: CompletedJob) => {
-    setActiveJobs((prev) => {
-      const next = new Map(prev);
-      next.delete(job.id);
-      return next;
-    });
-    setRecentCompletions((prev) => [job, ...prev]);
-  }, []);
-
-  const failJob = useCallback((id: string) => {
-    setActiveJobs((prev) => {
-      const next = new Map(prev);
-      next.delete(id);
-      return next;
-    });
-  }, []);
-
-  const dismissCompletion = useCallback((id: string) => {
-    setRecentCompletions((prev) => prev.filter((c) => c.id !== id));
-  }, []);
+  const value = useMemo<JobNotificationContextValue>(() => ({
+    activeJobs: state.activeJobs,
+    recentCompletions: state.recentCompletions,
+    activeJobCount: state.activeJobs.size,
+    startJob: (id, type, label) => dispatch({ type: "START_JOB", id, jobType: type, label }),
+    completeJob: (job) => dispatch({ type: "COMPLETE_JOB", job }),
+    failJob: (id) => dispatch({ type: "FAIL_JOB", id }),
+    dismissCompletion: (id) => dispatch({ type: "DISMISS_COMPLETION", id }),
+  }), [state]);
 
   return (
-    <JobNotificationContext.Provider
-      value={{
-        activeJobs,
-        recentCompletions,
-        activeJobCount: activeJobs.size,
-        startJob,
-        completeJob,
-        failJob,
-        dismissCompletion,
-      }}
-    >
+    <JobNotificationContext.Provider value={value}>
       {children}
     </JobNotificationContext.Provider>
   );

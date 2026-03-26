@@ -71,6 +71,10 @@ vi.mock("recharts", () => ({
   Pie: () => null,
   RadarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="radar-chart">{children}</div>,
   Radar: () => null,
+  ComposedChart: ({ children }: { children: React.ReactNode }) => <div data-testid="composed-chart">{children}</div>,
+  ScatterChart: ({ children }: { children: React.ReactNode }) => <div data-testid="scatter-chart">{children}</div>,
+  Scatter: () => null,
+  ZAxis: () => null,
   PolarGrid: () => null,
   PolarAngleAxis: () => null,
   PolarRadiusAxis: () => null,
@@ -296,8 +300,9 @@ describe("WhatIfScenarios", () => {
     fireEvent.click(await screen.findByText("Schedule Scenario Job"));
 
     await waitFor(() => {
-      expect(screen.getByText("Elbow (WCSS/Inertia)")).toBeDefined();
-      expect(screen.getByText("Silhouette Score")).toBeDefined();
+      expect(screen.getByText(/K Selection/)).toBeDefined();
+      expect(screen.getByText("Elbow Method")).toBeDefined();
+      expect(screen.getByText(/Silhouette Score/)).toBeDefined();
       expect(screen.getByText("Cluster Size Distribution")).toBeDefined();
     });
   });

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { memo, useState, useCallback } from "react";
 import {
   CartesianGrid,
   Line,
@@ -43,7 +43,7 @@ interface TrendChartPanelProps {
   params?: InventoryTrendParams;
 }
 
-export function TrendChartPanel({ trendData, isLoading, params }: TrendChartPanelProps) {
+export const TrendChartPanel = memo(function TrendChartPanel({ trendData, isLoading, params }: TrendChartPanelProps) {
   const { chartColors, trendColors } = useChartColors();
   const [hiddenSeries, setHiddenSeries] = useState<Set<SeriesKey>>(new Set());
 
@@ -359,4 +359,4 @@ export function TrendChartPanel({ trendData, isLoading, params }: TrendChartPane
       )}
     </div>
   );
-}
+});

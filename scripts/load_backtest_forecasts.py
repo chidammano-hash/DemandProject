@@ -308,9 +308,17 @@ def _resolve_input_files(
       --input PATH     → explicit path (backward-compatible)
     """
     if args_all:
-        found = sorted(backtest_dir.glob("*/backtest_predictions.csv"))
+        # Only load from canonical model directories — skip auxiliary dirs
+        # like lgbm_cluster_baseline_20260322, logs, tuning_archive that
+        # contain stale CSVs which would overwrite real backtest data.
+        _CANONICAL_MODEL_DIRS = {"lgbm_cluster", "catboost_cluster", "xgboost_cluster"}
+        found = sorted(
+            p for p in backtest_dir.glob("*/backtest_predictions.csv")
+            if p.parent.name in _CANONICAL_MODEL_DIRS
+        )
         if not found:
             print(f"No backtest_predictions.csv files found under {backtest_dir}/*/")
+            print(f"  (looked in canonical dirs: {sorted(_CANONICAL_MODEL_DIRS)})")
             print("  Run a backtest first: make backtest-lgbm-cluster")
             sys.exit(1)
         return found

@@ -247,21 +247,56 @@ def _run_cluster_scenario(
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run a what-if clustering scenario (delegates to run_clustering_scenario.py)."""
+    """Run a what-if clustering scenario (delegates to run_clustering_scenario.py).
+
+    When params contains ``experiment_id``, the cluster_experiment row is updated
+    to ``status='running'`` before starting, and the experiment_id is forwarded to
+    ``run_scenario()`` so it can write results on completion/failure.
+    """
     from scripts.run_clustering_scenario import run_scenario, generate_scenario_id, get_scenario_result
 
     scenario_id = params.get("scenario_id") or generate_scenario_id()
+    experiment_id: int | None = params.get("experiment_id")
+
     if progress_cb:
         progress_cb(pct=5, msg="Starting clustering scenario")
 
-    run_scenario(
-        scenario_id=scenario_id,
-        feature_params=params.get("feature_params"),
-        model_params=params.get("model_params"),
-        label_params=params.get("label_params"),
-        relabel_only=params.get("relabel_only", False),
-        previous_scenario_id=params.get("previous_scenario_id"),
-    )
+    # If this is a cluster experiment, mark it as running
+    if experiment_id is not None:
+        try:
+            with _get_conn() as conn:
+                conn.execute(
+                    "UPDATE cluster_experiment SET status = 'running', started_at = NOW() "
+                    "WHERE experiment_id = %s",
+                    (experiment_id,),
+                )
+        except Exception:
+            logger.warning("Failed to update cluster_experiment %d to running", experiment_id)
+
+    try:
+        run_scenario(
+            scenario_id=scenario_id,
+            feature_params=params.get("feature_params"),
+            model_params=params.get("model_params"),
+            label_params=params.get("label_params"),
+            relabel_only=params.get("relabel_only", False),
+            previous_scenario_id=params.get("previous_scenario_id"),
+            experiment_id=experiment_id,
+        )
+    except Exception:
+        # run_scenario already handles updating experiment status to 'failed'
+        # internally, but if it raises before that (unlikely), mark failed here
+        if experiment_id is not None:
+            try:
+                with _get_conn() as conn:
+                    conn.execute(
+                        "UPDATE cluster_experiment SET status = 'failed', completed_at = NOW() "
+                        "WHERE experiment_id = %s AND status = 'running'",
+                        (experiment_id,),
+                    )
+            except Exception:
+                logger.warning("Failed to mark cluster_experiment %d as failed", experiment_id)
+        raise
 
     result = get_scenario_result(scenario_id) or {}
     return {"scenario_id": scenario_id, **result}
@@ -389,6 +424,68 @@ def _run_champion_select(
     cmd = [_UV, "run", "python", "scripts/run_champion_selection.py"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Champion selection completed"}
+
+
+def _run_champion_experiment(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run a champion selection strategy experiment."""
+    experiment_id = params["experiment_id"]
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Starting champion experiment #{experiment_id}")
+
+    # Store job_id on experiment record
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                "UPDATE champion_experiment SET job_id = %s WHERE experiment_id = %s",
+                (job_id, experiment_id),
+            )
+    except Exception:
+        logger.warning("Failed to store job_id on champion experiment %d", experiment_id)
+
+    cmd = [_UV, "run", "python", "scripts/run_champion_experiment.py",
+           "--experiment-id", str(experiment_id)]
+    output = _run_subprocess(cmd, progress_cb, "Running champion experiment",
+                             cancel_event=cancel_event, job_id=job_id)
+    if progress_cb:
+        progress_cb(pct=100, msg=f"Champion experiment #{experiment_id} completed")
+    return {"experiment_id": experiment_id, "output_log": output or "Champion experiment completed"}
+
+
+def _run_champion_results_load(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run champion selection with promoted config and load results into DB."""
+    experiment_id = params["experiment_id"]
+    if progress_cb:
+        progress_cb(pct=5, msg="Loading champion results into forecast tables")
+
+    cmd = [_UV, "run", "python", "scripts/run_champion_selection.py"]
+    output = _run_subprocess(cmd, progress_cb, "Loading champion results",
+                             cancel_event=cancel_event, job_id=job_id)
+
+    # Mark results promoted on experiment
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                "UPDATE champion_experiment SET is_results_promoted = TRUE, "
+                "results_promoted_at = NOW(), results_promote_job_id = %s "
+                "WHERE experiment_id = %s",
+                (job_id, experiment_id),
+            )
+    except Exception:
+        logger.warning("Failed to mark champion experiment %d results as promoted", experiment_id)
+
+    if progress_cb:
+        progress_cb(pct=100, msg="Champion results loaded successfully")
+    return {"experiment_id": experiment_id, "output_log": output or "Champion results loaded"}
 
 
 def _run_generate_production_forecast(
@@ -755,12 +852,59 @@ def _run_model_tuning_experiment(
     if cancel_event and cancel_event.is_set():
         raise RuntimeError("Job cancelled by user")
 
-    # 2. Run backtest via _run_subprocess (PID tracking + cancel + log streaming)
+    # 2. Build backtest command — optionally include cluster override
     cmd = [
         _UV, "run", "python", str(ROOT / "scripts" / "run_backtest.py"),
         "--model", model,
         "--config", config_path,
     ]
+
+    # If a cluster experiment is referenced, look up its artifacts and add --cluster-override
+    cluster_experiment_id: int | None = params.get("cluster_experiment_id")
+    if cluster_experiment_id is not None:
+        try:
+            with _get_conn() as conn:
+                row = conn.execute(
+                    "SELECT artifacts_path, scenario_id, status FROM cluster_experiment "
+                    "WHERE experiment_id = %s",
+                    (cluster_experiment_id,),
+                ).fetchone()
+            if row is None:
+                raise ValueError(
+                    f"Cluster experiment {cluster_experiment_id} not found"
+                )
+            ce_artifacts_path, ce_scenario_id, ce_status = row
+            if ce_status != "completed":
+                raise ValueError(
+                    f"Cluster experiment {cluster_experiment_id} is not completed "
+                    f"(status={ce_status})"
+                )
+            if not ce_artifacts_path:
+                raise ValueError(
+                    f"Cluster experiment {cluster_experiment_id} has no artifacts_path"
+                )
+            safe_path = Path(ce_artifacts_path).resolve()
+            allowed_base = Path(__file__).resolve().parents[2] / "data"
+            if not str(safe_path).startswith(str(allowed_base)):
+                raise ValueError(
+                    f"artifacts_path {ce_artifacts_path!r} is outside the allowed data directory"
+                )
+            cluster_override_csv = str(safe_path / "cluster_labels.csv")
+            cmd.extend(["--cluster-override", cluster_override_csv])
+            if progress_cb:
+                progress_cb(
+                    pct=3,
+                    msg=f"Using clusters from experiment #{cluster_experiment_id} "
+                        f"(scenario {ce_scenario_id})",
+                )
+        except ValueError:
+            raise
+        except Exception:
+            logger.warning(
+                "Failed to look up cluster experiment %d — proceeding with production clusters",
+                cluster_experiment_id,
+            )
+
     start = time.time()
     try:
         if progress_cb:

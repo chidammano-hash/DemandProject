@@ -45,7 +45,7 @@ import type {
 } from "@/types";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { useDebounce } from "@/hooks/useDebounce";
-import { titleCase, formatCell, formatNumber, formatCompactNumber } from "@/lib/formatters";
+import { titleCase, formatCell, formatNumber, formatCompactNumber, formatClusterLabel } from "@/lib/formatters";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -646,7 +646,7 @@ export function ExplorerTab({ domain, onDomainChange }: ExplorerTabProps) {
                       <option value="">All Clusters</option>
                       {clusterSummary.map((c) => (
                         <option key={c.label} value={c.label}>
-                          {c.label} ({formatCompactNumber(c.count)})
+                          {formatClusterLabel(c.label)} ({formatCompactNumber(c.count)})
                         </option>
                       ))}
                     </select>

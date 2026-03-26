@@ -42,7 +42,7 @@ def get_health_summary(
 
     summary_sql = f"""
         SELECT
-            COUNT(*)                                                    AS total_dfus,
+            COUNT(*)                                                    AS total_skus,
             AVG(health_score)                                           AS avg_health_score,
             SUM(CASE WHEN health_tier = 'healthy'  THEN 1 ELSE 0 END)  AS healthy_count,
             SUM(CASE WHEN health_tier = 'monitor'  THEN 1 ELSE 0 END)  AS monitor_count,
@@ -82,7 +82,7 @@ def get_health_summary(
             cur.execute(histogram_sql, params)
             hist_rows = cur.fetchall()
 
-    total_dfus = int(summary.get("total_dfus") or 0)
+    total_skus = int(summary.get("total_skus") or 0)
 
     def _pct(n):
         v = summary.get(n)
@@ -102,7 +102,7 @@ def get_health_summary(
     score_histogram = [{"bucket": r[0], "count": int(r[1])} for r in hist_rows]
 
     return {
-        "total_dfus":      total_dfus,
+        "total_skus":      total_skus,
         "by_tier":         by_tier,
         "avg_health_score": _fval("avg_health_score"),
         "component_avgs": {

@@ -268,6 +268,18 @@ export interface ScenarioProfile {
   zero_demand_pct: number;
 }
 
+export interface PCAScatterPoint {
+  pc1: number;
+  pc2: number;
+  cluster: number;
+}
+
+export interface PCAScatterData {
+  pc1_variance: number;
+  pc2_variance: number;
+  points: PCAScatterPoint[];
+}
+
 export interface ClusteringScenarioResult {
   scenario_id: string;
   status: "completed" | "failed";
@@ -277,7 +289,8 @@ export interface ClusteringScenarioResult {
     optimal_k: number;
     silhouette_score: number;
     inertia: number;
-    total_skus: number;
+    total_dfus: number;
+    total_skus?: number;
     k_selection_results: {
       k_values: number[];
       inertias: number[];
@@ -288,6 +301,7 @@ export interface ClusteringScenarioResult {
     };
     profiles: ScenarioProfile[];
     feature_importance?: { feature: string; variance_ratio: number }[];
+    pca_scatter?: PCAScatterData;
   } | null;
   error?: string | null;
 }

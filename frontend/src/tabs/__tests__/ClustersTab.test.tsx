@@ -73,6 +73,10 @@ vi.mock("recharts", () => ({
   Pie: () => null,
   RadarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="radar-chart">{children}</div>,
   Radar: () => null,
+  ComposedChart: ({ children }: { children: React.ReactNode }) => <div data-testid="composed-chart">{children}</div>,
+  ScatterChart: ({ children }: { children: React.ReactNode }) => <div data-testid="scatter-chart">{children}</div>,
+  Scatter: () => null,
+  ZAxis: () => null,
   PolarGrid: () => null,
   PolarAngleAxis: () => null,
   PolarRadiusAxis: () => null,
@@ -102,7 +106,7 @@ describe("ClustersTab", () => {
   it("renders cluster summary table", async () => {
     renderTab();
     await waitFor(() => {
-      expect(screen.getByText("high_volume_steady")).toBeDefined();
+      expect(screen.getByText("MOVR.CALM")).toBeDefined();
     });
   });
 

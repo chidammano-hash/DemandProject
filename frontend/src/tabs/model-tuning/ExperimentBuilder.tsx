@@ -6,7 +6,7 @@
  * with loading state.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   X,
   Loader2,
@@ -27,6 +27,11 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import type { ModelType } from "@/api/queries";
+import {
+  clusterExperimentKeys,
+  fetchCompletedClusterExperiments,
+  type ClusterExperiment,
+} from "@/api/queries";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -404,7 +409,10 @@ async function submitExperiment(
     notes: string;
     template: string;
     params: Record<string, unknown>;
-    config: TrainingConfig;
+    config: TrainingConfig & {
+      cluster_source?: "production" | "experimental";
+      cluster_experiment_id?: number | null;
+    };
   },
 ): Promise<{ run_id: number; status: string }> {
   const res = await fetch(`${MODEL_PREFIX[model]}/experiments`, {
@@ -464,6 +472,16 @@ export function ExperimentBuilder({
   const [config, setConfig] = useState<TrainingConfig>({ ...DEFAULT_CONFIG });
   const [errors, setErrors] = useState<ValidationError[]>([]);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [clusterSource, setClusterSource] = useState<"production" | "experimental">("production");
+  const [clusterExperimentId, setClusterExperimentId] = useState<number | null>(null);
+
+  // Fetch completed cluster experiments for the dropdown
+  const { data: completedExperimentsData } = useQuery({
+    queryKey: clusterExperimentKeys.completed(),
+    queryFn: fetchCompletedClusterExperiments,
+    staleTime: 300_000, // 5 min
+  });
+  const completedExperiments = completedExperimentsData?.experiments ?? [];
 
   // Cross-param warnings (non-blocking)
   const warnings = useMemo(() => {
@@ -483,6 +501,8 @@ export function ExperimentBuilder({
     setNotes("");
     setErrors([]);
     setConfig({ ...DEFAULT_CONFIG });
+    setClusterSource("production");
+    setClusterExperimentId(null);
   }, [model]);
 
   // Apply template
@@ -519,7 +539,11 @@ export function ExperimentBuilder({
         notes: notes.trim(),
         template: selectedTemplate,
         params,
-        config,
+        config: {
+          ...config,
+          cluster_source: clusterSource,
+          cluster_experiment_id: clusterSource === "experimental" ? clusterExperimentId : undefined,
+        },
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["model-tuning"] });
@@ -853,6 +877,56 @@ export function ExperimentBuilder({
               Training Configuration
             </p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {/* Cluster Source selector */}
+              <div>
+                <label className="text-[10px] text-muted-foreground mb-1 block">
+                  Cluster Source
+                </label>
+                <select
+                  value={clusterSource === "experimental" && clusterExperimentId ? String(clusterExperimentId) : "production"}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === "production") {
+                      setClusterSource("production");
+                      setClusterExperimentId(null);
+                    } else {
+                      setClusterSource("experimental");
+                      setClusterExperimentId(Number(val));
+                    }
+                  }}
+                  className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  aria-label="Cluster Source"
+                >
+                  <option value="production">Production Clusters</option>
+                  {completedExperiments.length > 0 && (
+                    <option disabled>---</option>
+                  )}
+                  {completedExperiments.length === 0 && (
+                    <option disabled>No cluster experiments yet</option>
+                  )}
+                  {completedExperiments.map((exp: ClusterExperiment) => (
+                    <option key={exp.experiment_id} value={String(exp.experiment_id)}>
+                      {exp.label} — K={exp.optimal_k ?? "?"}, Sil=
+                      {exp.silhouette_score != null
+                        ? exp.silhouette_score.toFixed(3)
+                        : "?"}
+                    </option>
+                  ))}
+                </select>
+                {clusterSource === "experimental" && clusterExperimentId && (
+                  <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                    Using clusters from experiment #{clusterExperimentId}
+                  </div>
+                )}
+                {completedExperiments.length === 0 && clusterSource === "production" && (
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    <a href="#" className="text-blue-600 dark:text-blue-400 hover:underline" onClick={(e) => e.preventDefault()}>
+                      Create one in the Clusters tab &rarr;
+                    </a>
+                  </p>
+                )}
+              </div>
+
               <div>
                 <label className="text-[10px] text-muted-foreground mb-1 block">
                   Cluster Strategy

@@ -510,7 +510,7 @@ def dashboard_heatmap(
         "category": "i.category",
         "brand": "i.brand_name",
         "location": "f.loc",
-        "class": "i.class",
+        "class": "i.\"class\"",
         "sub_class": "i.sub_class",
         "date": "TO_CHAR(f.startdate, 'Mon YY')",
     }
@@ -518,7 +518,7 @@ def dashboard_heatmap(
         "category": "i.category",
         "brand": "i.brand_name",
         "location": "f.loc",
-        "class": "i.class",
+        "class": "i.\"class\"",
         "sub_class": "i.sub_class",
         "date": "f.startdate",
     }

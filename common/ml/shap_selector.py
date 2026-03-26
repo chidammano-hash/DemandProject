@@ -20,7 +20,11 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
+import logging
+
 from common.constants import PROTECTED_FEATURES
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Type alias
@@ -73,7 +77,7 @@ def compute_shap_global(
     # LGBM: use native pred_contrib (avoids shap library dtype issues)
     if module_name == "lightgbm" or hasattr(model, "booster_"):
         try:
-            full = model.predict(X_sample.to_numpy(), pred_contrib=True)
+            full = model.predict(X_sample, pred_contrib=True)
             return np.abs(full[:, :-1])  # strip baseline column
         except Exception:
             pass  # fall through to shap.TreeExplainer
@@ -151,7 +155,7 @@ def _weighted_pool_cluster_shap(
             weighted_shap += cluster_mean * n
             total_rows += n
         except Exception as exc:
-            print(f"    [shap] Warning: SHAP extraction failed for cluster '{cluster_label}': {exc}")
+            logger.warning("[shap] SHAP extraction failed for cluster '%s': %s", cluster_label, exc)
 
     if total_rows > 0:
         weighted_shap /= total_rows
@@ -209,10 +213,13 @@ def _select_features_from_shap(
 
     # Return selected features in SHAP-rank order, with protected features appended
     result_features = [f for f in sorted_features if f in selected_set]
-    print(
-        f"    [shap] Selected {len(result_features)}/{len(feature_cols)} features "
-        f"(threshold={cumulative_threshold:.2f}, protected={len(PROTECTED_FEATURES & set(feature_cols))}, "
-        f"top: {sorted_features[0]})"
+    logger.info(
+        "[shap] Selected %d/%d features (threshold=%.2f, protected=%d, top: %s)",
+        len(result_features),
+        len(feature_cols),
+        cumulative_threshold,
+        len(PROTECTED_FEATURES & set(feature_cols)),
+        sorted_features[0],
     )
     return result_features, shap_df
 
@@ -239,9 +246,9 @@ def compute_timeframe_shap(
     """Compute SHAP values for one backtest timeframe and select top features.
 
     Handles both single-model (global strategy) and dict-of-models
-    (per_cluster / transfer strategies).  For per_cluster / transfer, ml_cluster
-    is stripped from effective_feature_cols to match the convention used inside
-    train_and_predict_per_cluster().
+    (per_cluster / transfer strategies).  ml_cluster is kept in the feature
+    list for all strategies — per-cluster models are trained WITH ml_cluster
+    as a hard feature (constant within each cluster partition).
 
     Args:
         model_or_dict: Trained model (global) or dict[cluster_label → model].
@@ -264,13 +271,9 @@ def compute_timeframe_shap(
     """
     t0 = time.time()
 
-    # Per-cluster / transfer: mirror the internal ml_cluster drop in train_fn
-    if cluster_strategy in ("per_cluster", "transfer"):
-        effective_feature_cols = [c for c in feature_cols if c != "ml_cluster"]
-        effective_cat_cols = [c for c in cat_cols if c != "ml_cluster"]
-    else:
-        effective_feature_cols = feature_cols
-        effective_cat_cols = cat_cols
+    # All strategies keep ml_cluster — models are trained with it as a hard feature
+    effective_feature_cols = feature_cols
+    effective_cat_cols = cat_cols
 
     # Compute mean absolute SHAP across the training sample
     per_cluster_shap: dict[str, np.ndarray] = {}
@@ -292,7 +295,7 @@ def compute_timeframe_shap(
             )
             mean_abs_shap = abs_shap.mean(axis=0)
     except Exception as exc:
-        print(f"    [shap] Warning: SHAP computation failed: {exc}. Keeping all features.")
+        logger.warning("[shap] SHAP computation failed: %s. Keeping all features.", exc)
         shap_df = pd.DataFrame({
             "feature": effective_feature_cols,
             "mean_abs_shap": [0.0] * len(effective_feature_cols),
@@ -304,7 +307,7 @@ def compute_timeframe_shap(
         })
         return effective_feature_cols, shap_df
 
-    print(f"    [shap] SHAP computed ({time.time() - t0:.1f}s)")
+    logger.info("[shap] SHAP computed (%.1fs)", time.time() - t0)
 
     selected, pooled_df = _select_features_from_shap(
         mean_abs_shap,
@@ -414,7 +417,5 @@ def save_shap_outputs(
     summary_path = shap_dir / "shap_summary.csv"
     summary_df.to_csv(summary_path, index=False)
 
-    print(
-        f"  [shap] Saved {len(timeframe_paths)} timeframe reports + summary to {shap_dir}"
-    )
+    logger.info("[shap] Saved %d timeframe reports + summary to %s", len(timeframe_paths), shap_dir)
     return timeframe_paths, summary_path

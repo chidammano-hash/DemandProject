@@ -531,7 +531,7 @@ Each backtest run writes to a **model-scoped subdirectory** so multiple models c
 
 Verify archive data:
 ```bash
-docker exec demand-mvp-postgres psql -U demand -d demand_mvp \
+docker compose exec -T postgres psql -U demand -d demand_mvp \
   -c "SELECT model_id, lag, COUNT(*) FROM backtest_lag_archive GROUP BY 1,2 ORDER BY 1,2"
 ```
 
@@ -1292,7 +1292,7 @@ make e2e-report        # Open HTML report from last run
 
 ## Database Cleanup & Fresh Recreate
 
-Full wipe-and-reload procedure: clears all data tables while preserving config, algorithm parameters, tuning history, MLflow experiments, jobs, and platform settings. Then reloads from `data/input/` and runs the ML pipeline through champion selection.
+Full wipe-and-reload procedure: clears non-config data, derived outputs, job/perf history, and experiment history while preserving configuration masters, schedules, and platform settings. Then reloads from `data/input/`, runs the ML pipeline through champion selection, and refreshes baseline planning outputs.
 
 > **When to use:** Starting fresh with new input data, recovering from a corrupted pipeline state, or resetting after major schema changes.
 
@@ -1301,7 +1301,7 @@ Full wipe-and-reload procedure: clears all data tables while preserving config, 
 **One-command recipes** — pick the level you need:
 
 ```bash
-make fresh-all              # Full reset: truncate + clean + load + ML + champion (~4-6 hours)
+make fresh-all              # Full reset: truncate + clean + load + ML + champion + baseline planning (~4-6 hours)
 make fresh-champion         # Load + features + backtests + champion (no truncate, ~3-4 hours)
 make fresh-backtest         # Load + features + backtests (no champion, ~3 hours)
 make fresh-features         # Load + clustering + seasonality + variability + LT (~1 hour)
@@ -1312,8 +1312,8 @@ make fresh-load             # Normalize + load + refresh MVs only (~5 min)
 
 | Target | What it does | Time |
 |---|---|---|
-| `make db-truncate-data` | Truncate all 67 data tables in a single transaction (preserves config/algo/tuning/MLflow) | < 1 min |
-| `make clean-artifacts` | Remove stale clean CSVs, backtest outputs, clustering artifacts, champion files | < 1 sec |
+| `make db-truncate-data` | Truncate non-config data, history, and experiment tables in one transaction while preserving configuration masters | < 1 min |
+| `make clean-artifacts` | Remove stale clean CSVs, backtest/tuning outputs, clustering artifacts, champion files, and perf reports | < 1 sec |
 | `make normalize-all` | Normalize all 10 input CSVs → `data/*_clean.csv` | ~1 min |
 | `make load-all` | Load all 10 domains into Postgres (dimensions first, facts second) | ~1 min |
 | `make refresh-mvs-tiered` | Refresh all 13 MVs in 4-tier dependency order | ~30 sec |
@@ -1328,12 +1328,16 @@ make fresh-load             # Normalize + load + refresh MVs only (~5 min)
 | `make backtest-load-all` | Load all backtest predictions into DB | ~5 min |
 | `make refresh-accuracy-mvs` | Refresh 4 accuracy MVs (after backtest load) | ~10 sec |
 | `make champion-all` | Train meta-learner + simulate strategies + select champion | ~15 min |
+| `make policy-all` | Refresh policy assignments while preserving manual overrides | ~1 min |
+| `make ss-all` | Recompute safety stock targets | ~2 min |
+| `make eoq-all` | Recompute EOQ targets | ~1 min |
+| `make health-all` | Refresh inventory health score after SS/EOQ refresh | ~1 min |
 
 **Dependency chain:**
 
 ```
 fresh-all
-├── db-truncate-data              (truncate 67 data tables)
+├── db-truncate-data              (truncate non-config data/history/experiments)
 ├── clean-artifacts               (remove stale files)
 └── fresh-champion
     └── fresh-backtest
@@ -1350,30 +1354,32 @@ fresh-all
         ├── backtest-load-all         (load predictions → DB)
         └── refresh-accuracy-mvs      (accuracy MVs)
     └── champion-all                  (meta-learner + simulate + select)
+├── policy-all                       (refresh DFU policy assignments)
+├── ss-all                           (recompute safety stock)
+├── eoq-all                          (recompute EOQ)
+└── health-all                       (refresh inventory health score)
 ```
 
 ### Preserved Tables (Untouched)
 
-These tables are **never truncated** — they contain configuration, algorithm parameters, experiment governance, and platform settings:
+These tables are not explicitly truncated by `db-truncate-data` because they hold durable configuration, master data, schedules, or platform settings that should survive a fresh reload:
 
 | Category | Tables |
 |---|---|
-| Config/Policy | `dim_replenishment_policy`, `fact_dfu_policy_assignment`, `dim_item_lead_time_profile`, `fact_eoq_targets`, `fact_safety_stock_targets` |
-| Supplier | `dim_supplier`, `dim_item_supplier` |
-| Platform | `dim_user`, `dim_dq_check_catalog`, `dim_notification_channel`, `dim_webhook_registration`, `dim_erp_integration`, `dim_report_template`, `fact_report_schedule` |
-| Jobs/Perf | `job_history`, `job_schedule`, `perf_run`, `perf_section`, `perf_query`, `perf_suggestion` |
-| Tuning | `lgbm_tuning_run` + children (timeframe, cluster, month, lag, lag_cluster, comparison), `tuning_promotion_log`, `tuning_chat_session`, `tuning_chat_message` |
+| Config / Policy | `dim_replenishment_policy`, `fact_dfu_policy_assignment`, `fact_service_level_targets` |
+| Master Data / Planning Inputs | `dim_supplier`, `dim_item_supplier`, `dim_item_cost`, `fact_budget_periods`, `dim_echelon_network`, `dim_external_signal_source`, `dim_transfer_lane` |
+| Platform | `dim_user`, `dim_dq_check_catalog`, `dim_notification_channel`, `dim_webhook_registration`, `dim_erp_integration`, `dim_report_template`, `fact_report_schedule`, `job_schedule` |
 | MLflow | All `experiments`, `runs`, `metrics`, `params`, `tags`, `logged_models`, `model_versions`, `registered_models`, `datasets`, `inputs`, `trace_*` tables |
 | System | `alembic_version` |
 
 ### Step 1: Truncate Data Tables
 
-Run as a single SQL transaction. Ordered by FK dependency (children before parents). CASCADE handles FK chains safely — no preserved table has an FK pointing TO a data table, so CASCADE cannot reach preserved tables.
+Run as a single SQL transaction. Ordered by FK dependency (children before parents). This reset clears transactional facts, derived outputs, job/perf history, and experiment history, while leaving configuration masters in place.
 
 > **Note:** `fact_inventory_snapshot` is monthly RANGE-partitioned (2025-01 through 2026-03 + default). TRUNCATE on the parent cascades to all partitions automatically.
 
 ```bash
-docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 <<'EOSQL'
+docker compose exec -T postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 <<'EOSQL'
 BEGIN;
 
 -- Group 1: AI / Chat / Analytics
@@ -1438,30 +1444,28 @@ TRUNCATE TABLE fact_sales_monthly_original CASCADE;
 
 -- Group 12: Inventory Planning
 TRUNCATE TABLE fact_ss_simulation_results CASCADE;
+TRUNCATE TABLE fact_safety_stock_targets CASCADE;
+TRUNCATE TABLE fact_eoq_targets CASCADE;
 TRUNCATE TABLE fact_demand_signals CASCADE;
 TRUNCATE TABLE fact_replenishment_plan CASCADE;
 TRUNCATE TABLE fact_replenishment_exceptions CASCADE;
 TRUNCATE TABLE fact_planned_orders CASCADE;
 TRUNCATE TABLE fact_plan_versions CASCADE;
 TRUNCATE TABLE fact_financial_inventory_plan CASCADE;
-TRUNCATE TABLE fact_budget_periods CASCADE;
 TRUNCATE TABLE fact_inventory_investment_plan CASCADE;
 TRUNCATE TABLE fact_efficient_frontier CASCADE;
 
 -- Group 13: Echelon
 TRUNCATE TABLE fact_echelon_reorder_points CASCADE;
 TRUNCATE TABLE fact_echelon_ss_targets CASCADE;
-TRUNCATE TABLE dim_echelon_network CASCADE;
 
 -- Group 14: Service Level / Lead Time
 TRUNCATE TABLE fact_service_level_performance CASCADE;
-TRUNCATE TABLE fact_service_level_targets CASCADE;
 TRUNCATE TABLE fact_lead_time_actuals CASCADE;
 TRUNCATE TABLE fact_lt_review_triggers CASCADE;
 
 -- Group 15: External Signals
 TRUNCATE TABLE fact_external_signal CASCADE;
-TRUNCATE TABLE dim_external_signal_source CASCADE;
 
 -- Group 16: DQ / Collaboration / Audit / Notifications / Reports
 TRUNCATE TABLE fact_dq_corrections CASCADE;
@@ -1477,11 +1481,30 @@ TRUNCATE TABLE fact_query_performance CASCADE;
 
 -- Group 17: Infrastructure
 TRUNCATE TABLE audit_load_batch CASCADE;
+TRUNCATE TABLE job_history CASCADE;
+TRUNCATE TABLE perf_suggestion CASCADE;
+TRUNCATE TABLE perf_query CASCADE;
+TRUNCATE TABLE perf_section CASCADE;
+TRUNCATE TABLE perf_run CASCADE;
 
--- Group 18: Network
-TRUNCATE TABLE dim_transfer_lane CASCADE;
+-- Group 18: Tuning / Model Experiment History
+TRUNCATE TABLE tuning_chat_message CASCADE;
+TRUNCATE TABLE tuning_chat_session CASCADE;
+TRUNCATE TABLE tuning_promotion_log CASCADE;
+TRUNCATE TABLE lgbm_tuning_lag_cluster CASCADE;
+TRUNCATE TABLE lgbm_tuning_lag CASCADE;
+TRUNCATE TABLE lgbm_tuning_comparison CASCADE;
+TRUNCATE TABLE lgbm_tuning_month CASCADE;
+TRUNCATE TABLE lgbm_tuning_cluster CASCADE;
+TRUNCATE TABLE lgbm_tuning_timeframe CASCADE;
+TRUNCATE TABLE lgbm_tuning_run CASCADE;
 
--- Group 19: Dimensions (facts already cleared)
+-- Group 19: Cluster / Champion Experiment History
+TRUNCATE TABLE cluster_experiment_comparison CASCADE;
+TRUNCATE TABLE cluster_experiment CASCADE;
+TRUNCATE TABLE champion_experiment CASCADE;
+
+-- Group 20: Dimensions (facts already cleared)
 TRUNCATE TABLE dim_sku CASCADE;
 TRUNCATE TABLE dim_item CASCADE;
 TRUNCATE TABLE dim_location CASCADE;
@@ -1489,8 +1512,8 @@ TRUNCATE TABLE dim_customer CASCADE;
 TRUNCATE TABLE dim_time CASCADE;
 TRUNCATE TABLE dim_sourcing CASCADE;
 
--- Group 20: Cost / Profile / Decomposition
-TRUNCATE TABLE dim_item_cost CASCADE;
+-- Group 21: Profiles / Decomposition
+TRUNCATE TABLE dim_item_lead_time_profile CASCADE;
 TRUNCATE TABLE dim_lead_time_profile CASCADE;
 TRUNCATE TABLE mv_demand_decomposition CASCADE;
 
@@ -1505,6 +1528,7 @@ Remove stale artifacts so the pipeline regenerates everything from scratch:
 ```bash
 rm -f data/*_clean.csv data/inventory_clean.csv
 rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/
+rm -rf data/backtest/logs/ data/backtest/tuning_archive/ data/tuning/ data/perf_reports/
 rm -rf data/clustering/ data/champion/ data/models/
 rm -f data/seasonality_results.csv data/clustering_features.csv
 ```
@@ -1547,7 +1571,7 @@ rm -f data/seasonality_results.csv data/clustering_features.csv
 MV dependencies require a specific refresh order. Some MVs (DQ, sensing, projections) depend on data from later pipeline steps — they will populate when those steps run.
 
 ```bash
-docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "
+docker compose exec -T postgres psql -U demand -d demand_mvp -c "
   -- Tier 1: Base aggregates (no MV dependencies)
   REFRESH MATERIALIZED VIEW agg_sales_monthly;
   REFRESH MATERIALIZED VIEW agg_forecast_monthly;
@@ -1615,7 +1639,7 @@ Sequential execution (safe for laptops). For parallel, append `&` to each and `w
 These MVs depend on backtest data loaded in Step 10:
 
 ```bash
-docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "
+docker compose exec -T postgres psql -U demand -d demand_mvp -c "
   REFRESH MATERIALIZED VIEW agg_accuracy_by_dim;
   REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive;
   REFRESH MATERIALIZED VIEW agg_dfu_coverage;
@@ -1631,12 +1655,23 @@ docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "
 ~/.local/bin/uv run python scripts/run_champion_selection.py --config config/model_competition.yaml
 ```
 
+### Step 13: Baseline Planning Refresh
+
+`fresh-all` finishes by rebuilding the baseline planning outputs that are derived from the refreshed dataset while preserving user-managed configuration tables:
+
+```bash
+make policy-all
+make ss-all
+make eoq-all
+make health-all
+```
+
 ### Validation
 
 After completing the pipeline, verify key table counts:
 
 ```bash
-docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "
+docker compose exec -T postgres psql -U demand -d demand_mvp -c "
   SELECT 'dim_item' AS tbl, COUNT(*) FROM dim_item
   UNION ALL SELECT 'dim_location', COUNT(*) FROM dim_location
   UNION ALL SELECT 'dim_sku', COUNT(*) FROM dim_sku
@@ -1644,6 +1679,8 @@ docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "
   UNION ALL SELECT 'fact_external_forecast_monthly', COUNT(*) FROM fact_external_forecast_monthly
   UNION ALL SELECT 'fact_inventory_snapshot', COUNT(*) FROM fact_inventory_snapshot
   UNION ALL SELECT 'backtest_lag_archive', COUNT(*) FROM backtest_lag_archive
+  UNION ALL SELECT 'fact_safety_stock_targets', COUNT(*) FROM fact_safety_stock_targets
+  UNION ALL SELECT 'fact_eoq_targets', COUNT(*) FROM fact_eoq_targets
   UNION ALL SELECT 'champion_rows', COUNT(*) FROM fact_external_forecast_monthly WHERE model_id = 'champion'
   ORDER BY tbl;
 "
@@ -1710,7 +1747,7 @@ After any cleanup that affects champion/ceiling rows, re-run `make champion-sele
 | Forecast load fails with "missing data for column model_id" | `make normalize-forecast && make load-forecast` |
 | Inventory normalize fails | Verify 14 CSVs in `data/input/`: `ls data/input/Inventory_Snapshot_*.csv \| wc -l` (expect 14); files must be UTF-8 CSV with columns `exec_date,item,loc,lead_time,tot_oh,tot_oh_oo,mtd_sls` |
 | Inventory load fails | Apply DDL first: `make db-apply-inventory`; verify `ls -lh data/inventory_clean.csv` |
-| Inventory tab shows no data | Verify load: `docker exec demand-mvp-postgres psql -U demand -d demand_mvp -c "SELECT COUNT(*) FROM fact_inventory_snapshot"`; refresh view: `make refresh-agg-inventory` |
+| Inventory tab shows no data | Verify load: `docker compose exec -T postgres psql -U demand -d demand_mvp -c "SELECT COUNT(*) FROM fact_inventory_snapshot"`; refresh view: `make refresh-agg-inventory` |
 
 ### ML Pipelines
 

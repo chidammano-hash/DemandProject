@@ -192,43 +192,44 @@ export default function ClustersTab({ domain, onDomainChange }: ClustersTabProps
           model training in backtests and are used as segmentation dimensions across all analytics.
         </p>
       </div>
+
       <ClusterOverviewPanel onDomainChange={onDomainChange} />
 
-      <WhatIfPanel
-        showWhatIf={showWhatIf}
-        onToggle={() => setShowWhatIf((v) => !v)}
-        featureParams={featureParams}
-        modelParams={modelParams}
-        labelParams={labelParams}
-        setFeatureParams={setFeatureParams}
-        setModelParams={setModelParams}
-        setLabelParams={setLabelParams}
-        scenarioRunning={scenarioRunning}
-        scenarioQueued={scenarioQueued}
-        scenarioError={scenarioError}
-        scheduledJobId={scheduledJobId}
-        estimate={estimate}
-        statusData={statusData}
-        onRunScenario={handleRunScenario}
-        onReset={handleReset}
-      >
-        <CardContent className="space-y-4 pt-0">
-          <ScenarioResultsPanel
-            scenarioResult={scenarioResult}
-            scenarioLabel={scenarioLabel}
-            scenarioResultRef={scenarioResultRef}
-            showPromoteConfirm={showPromoteConfirm}
-            onShowPromoteConfirm={() => setShowPromoteConfirm(true)}
-            onCancelPromote={() => setShowPromoteConfirm(false)}
-            onConfirmPromote={handlePromote}
-          />
-          <PastScenariosPanel
-            pastScenarios={pastScenarios}
-            scenarioResultRef={scenarioResultRef}
-            onLoadResult={(result, label) => { setScenarioResult(result); setScenarioLabel(label); }}
-          />
-        </CardContent>
-      </WhatIfPanel>
+          <WhatIfPanel
+            showWhatIf={showWhatIf}
+            onToggle={() => setShowWhatIf((v) => !v)}
+            featureParams={featureParams}
+            modelParams={modelParams}
+            labelParams={labelParams}
+            setFeatureParams={setFeatureParams}
+            setModelParams={setModelParams}
+            setLabelParams={setLabelParams}
+            scenarioRunning={scenarioRunning}
+            scenarioQueued={scenarioQueued}
+            scenarioError={scenarioError}
+            scheduledJobId={scheduledJobId}
+            estimate={estimate}
+            statusData={statusData}
+            onRunScenario={handleRunScenario}
+            onReset={handleReset}
+          >
+            <CardContent className="space-y-4 pt-0">
+              <ScenarioResultsPanel
+                scenarioResult={scenarioResult}
+                scenarioLabel={scenarioLabel}
+                scenarioResultRef={scenarioResultRef}
+                showPromoteConfirm={showPromoteConfirm}
+                onShowPromoteConfirm={() => setShowPromoteConfirm(true)}
+                onCancelPromote={() => setShowPromoteConfirm(false)}
+                onConfirmPromote={handlePromote}
+              />
+              <PastScenariosPanel
+                pastScenarios={pastScenarios}
+                scenarioResultRef={scenarioResultRef}
+                onLoadResult={(result, label) => { setScenarioResult(result); setScenarioLabel(label); }}
+              />
+            </CardContent>
+          </WhatIfPanel>
     </>
   );
 }

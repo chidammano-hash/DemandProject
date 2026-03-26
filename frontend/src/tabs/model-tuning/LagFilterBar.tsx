@@ -27,7 +27,7 @@ interface LagOption {
 }
 
 const LAG_OPTIONS: LagOption[] = [
-  { label: "All", subLabel: "Portfolio", value: undefined },
+  { label: "Exec Lag", subLabel: "Portfolio", value: undefined },
   { label: "Lag 0", subLabel: "1mo", value: 0 },
   { label: "Lag 1", subLabel: "2mo", value: 1 },
   { label: "Lag 2", subLabel: "3mo", value: 2 },

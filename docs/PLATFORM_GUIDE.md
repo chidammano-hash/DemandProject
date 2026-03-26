@@ -8,7 +8,7 @@ A full-stack supply chain analytics platform for demand planning and inventory o
 
 | Layer | Technology |
 |---|---|
-| Backend API | Python + FastAPI + Uvicorn (61 mounted routers) |
+| Backend API | Python + FastAPI + Uvicorn (62 mounted routers) |
 | Frontend | React + Vite + TypeScript + Tailwind CSS + shadcn/ui |
 | Charts | Recharts + ECharts |
 | Database | PostgreSQL 16 (pgvector for embeddings) |
@@ -29,7 +29,7 @@ Data flow: raw CSVs -> normalize scripts -> PostgreSQL -> FastAPI (:8000) -> Rea
 ```
 DemandProject/
 ├── api/                         FastAPI backend (main.py + routers/)
-│   └── routers/                 63 router files (61 mounted)
+│   └── routers/                 64 router files (62 mounted)
 ├── common/                      29 shared Python modules
 ├── scripts/                     Data pipeline & ML scripts (ETL, clustering, backtesting)
 ├── frontend/                    React + TypeScript UI
@@ -41,7 +41,7 @@ DemandProject/
 ├── tests/                       Backend test suite (pytest: unit/ + api/)
 ├── sql/                         72 DDL migration files
 ├── config/                      YAML configs (all tunable parameters externalized)
-├── docs/specs/                  Design specs (8 domains, 53 files)
+├── docs/specs/                  Design specs (8 domains, 54 files)
 ├── Makefile                     All dev commands
 ├── docker-compose.yml           2-service infra (Postgres + MLflow)
 ├── CLAUDE.md                    Full project specification
@@ -161,7 +161,7 @@ make rebalancing-all          # Inventory rebalancing computation
 
 ### 1. Demand Forecasting & Accuracy
 
-Three tree-based backtest models (LightGBM, CatBoost, XGBoost) with configurable `cluster_strategy` (per_cluster or global) via `config/algorithm_config.yaml`. `ml_cluster` is always a hard feature. Expanding-window backtesting across 10 timeframes (A-J), storing lag 0-4 predictions in an archive table. Champion model selection picks the best model per DFU per month using 5 strategies (expanding, rolling, decay, ensemble, meta-learner) with exec-lag-aware causal safeguards. Production forecast inference generates versioned forward-looking forecasts with P10/P90 confidence intervals. Advanced options: recursive multi-step forecasting, SHAP-based feature selection, Bayesian hyperparameter tuning (Optuna), per-timeframe inline causal tuning.
+Three tree-based backtest models (LightGBM, CatBoost, XGBoost) with configurable `cluster_strategy` (per_cluster or global) via `config/algorithm_config.yaml`. `ml_cluster` is always a hard feature. All models share a centralized `model_registry.py` abstraction layer: canonical ↔ native parameter mapping, unified `fit_model()` (no duplicate fit blocks), `get_best_iteration()` (abstracts attribute differences), and standardized early stopping at 3% of max iterations. Expanding-window backtesting across 10 timeframes (A-J), storing lag 0-4 predictions in an archive table. Champion model selection picks the best model per DFU per month using 5 strategies (expanding, rolling, decay, ensemble, meta-learner) with exec-lag-aware causal safeguards. Production forecast inference generates versioned forward-looking forecasts with P10/P90 confidence intervals. Advanced options: recursive multi-step forecasting, SHAP-based feature selection, Bayesian hyperparameter tuning (Optuna), per-timeframe inline causal tuning.
 
 **Hyperparameter Tuning:** Two modes -- (1) Production scoring: tune once on full history (`make tune-lgbm`), apply via `params_file` in algorithm config. (2) Honest backtesting: set `tune_inline: true` for per-timeframe causal tuning with no future leakage.
 
@@ -177,9 +177,13 @@ Three tree-based backtest models (LightGBM, CatBoost, XGBoost) with configurable
 
 **Unified Model Tuning Studio (Feature 46):** A production-grade, UI-driven hyperparameter tuning platform for LightGBM, CatBoost, and XGBoost. Users configure experiment parameters directly in the browser using an Experiment Builder with templates (production baseline, expert recommendations, custom), launch backtest runs as resilient jobs (subprocess isolation, PID tracking, log streaming), monitor real-time logs in the Jobs tab, compare results with execution-lag filtering (lags 0-4) including per-lag/per-cluster/per-month breakdowns, parameter diffs, and feature diffs, then promote winners to the champion pipeline via a confirmation modal. A unified API router (`/model-tuning/{model}/`) replaces the split between `lgbm-tuning.py` and `model-tuning.py` with a parametrized prefix supporting all three model types. 14 endpoints: list experiments (paginated + filtered), experiment detail, per-lag accuracy, per-cluster accuracy, per-month accuracy, experiment logs (offset-based streaming), pairwise comparison, templates, promoted run, promotion log, create experiment, promote, cancel, delete. See `docs/specs/02-forecasting/11-unified-model-tuning-v2.md` for full spec.
 
+**Champion Experimentation Studio (Feature 48):** A dedicated sub-tab within the Model Tuning tab for testing champion selection strategies. Users create experiments with 5 champion selection strategies (expanding window, rolling window, exponential decay, ensemble blended, meta-learner ML) using an Experiment Builder with 9 pre-built templates covering production baselines, rolling/decay variants, ensemble configurations, and meta-learner presets. Each experiment configures strategy-specific parameters (window months, decay factor, top-K, weight method, meta-learner model type/depth/estimators), selects which models to compete (LGBM, CatBoost, XGBoost -- minimum 2), and chooses the scoring metric (accuracy or WAPE) and lag mode (execution lag or fixed lags 0-4). Experiments run as resilient background jobs and produce overall champion accuracy, ceiling accuracy, and gap-to-ceiling in basis points. Comparison panel shows side-by-side results between two experiments: overall metric deltas with verdict badges, per-lag accuracy breakdowns, per-month accuracy trends, model distribution comparison (percentage of DFUs won by each model), and config diffs. 2-stage promotion workflow: Stage 1 writes the winning strategy and parameters to `model_competition.yaml` (with automatic backup), Stage 2 triggers a background job to run champion selection and load results into `fact_external_forecast_monthly`. Results load status is polled with progress updates. API prefix: `/champion-experiments` (list, detail, lags, months, logs, compare, templates, promoted, promotions, create, promote config, promote results with status polling, cancel, delete). UI: ModelTuningTab Champion sub-tab with KPI cards (best accuracy, promoted strategy, total experiments, active runs), status-filterable experiment list, log viewer, and promote modal. DB: `champion_experiment`, `champion_experiment_comparison` tables. Frontend: `src/tabs/champion/` (4 components: ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal).
+
 ### 2. DFU Clustering & Segmentation
 
 KMeans clustering groups ~112K DFUs by demand patterns using **14 core features across 6 dimensions** (volume, trend, seasonality, periodicity, intermittency, lifecycle). Feature engineering includes FFT periodicity strength, OLS seasonal R-squared, Croston ADI, scale-invariant trend slope, IQR, CAGR, recency ratio, and YoY correlation (36-month window). Optimal K via combined Silhouette + Calinski-Harabasz scoring with 5% minimum cluster size constraint (k_range [5,18]). Priority-ordered taxonomy labeling produces compound labels like `high_volume_seasonal_growing`. What-If scenario engine runs trial clusterings with custom parameters without touching production. Seasonality detection computes strength, profile, and peak/trough months per DFU. ABC-XYZ classification cross-segments DFUs by revenue volume x demand variability into a 3x3 policy matrix.
+
+**Cluster Experimentation Studio (Feature 47):** A standalone experiment lifecycle for testing DFU segmentation configurations. Users create labeled cluster experiments from templates (Production Baseline, High-K Granular, Low-K Broad, Seasonal Focus, Intermittent Specialist, PCA Compressed, Custom), run them as resilient jobs, and compare results side by side with DFU migration matrices, quality metric deltas (silhouette, inertia, K), and cluster profile comparisons. Completed cluster experiments can be selected as the cluster source when creating algorithm tuning experiments, enabling accuracy-aware cluster promotion -- users see how a new clustering impacts LGBM/CatBoost/XGBoost backtest accuracy before committing to production. API prefix: `/cluster-experiments` (10 endpoints). UI: ClustersTab Experiments sub-tab. DB: `cluster_experiment`, `cluster_experiment_comparison` tables. See `docs/specs/03-demand-intelligence/04-cluster-experimentation-studio.md` for full spec.
 
 ### 3. Inventory Planning (15 Sub-features, 34 Panels)
 
@@ -335,6 +339,6 @@ Every feature ships with tests; every removed feature removes its tests.
 ## Key Documentation
 
 - [CLAUDE.md](../../CLAUDE.md) -- Complete project specification (tech stack, commands, conventions)
-- [docs/specs/](../../docs/specs/) -- Feature design specifications (8 domains, 53 files)
+- [docs/specs/](../../docs/specs/) -- Feature design specifications (8 domains, 54 files)
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- Architecture, data flow, database schema, API routing
 - [RUNBOOK.md](RUNBOOK.md) -- Setup, workflow, troubleshooting guide

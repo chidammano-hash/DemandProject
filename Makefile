@@ -2,8 +2,11 @@ SHELL := /bin/zsh
 
 DC := docker compose
 UV := uv run
+POSTGRES_SERVICE := postgres
+PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
+PSQL := $(PG_EXEC) psql -U demand -d demand_mvp
 
-.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all
+.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all
 
 help:
 	@echo "Targets:"
@@ -107,6 +110,7 @@ help:
 	@echo "  e2e-headed           - run E2E tests with visible browser"
 	@echo "  e2e-report           - open last HTML test report"
 	@echo "  check-all            - run DB/API/Trino checks"
+	@echo "  ai-sync-check        - verify Claude and Codex guidance stay wired to shared repo scripts"
 	@echo ""
 	@echo "  === Full Pipeline (input CSVs -> ready app) ==="
 	@echo "  setup-all            - EVERYTHING: data + ML + planning + ops (~4-6 hours)"
@@ -119,13 +123,13 @@ help:
 	@echo "  setup-ops            - S&OP + events + financial + storyboard + DQ"
 	@echo ""
 	@echo "  === Database Cleanup & Fresh Recreate ==="
-	@echo "  fresh-all            - FULL RESET: truncate + clean + load + ML + champion"
+	@echo "  fresh-all            - FULL RESET: truncate + clean + load + ML + champion + baseline planning"
 	@echo "  fresh-champion       - load + features + backtests + champion (no truncate)"
 	@echo "  fresh-backtest       - load + features + backtests (no champion)"
 	@echo "  fresh-features       - load + clustering + seasonality + variability + LT"
 	@echo "  fresh-load           - normalize + load + refresh MVs only"
-	@echo "  db-truncate-data     - truncate all data tables (preserves config/algo)"
-	@echo "  clean-artifacts      - remove stale CSVs, backtest, clustering files"
+	@echo "  db-truncate-data     - truncate non-config data/history while preserving configuration masters"
+	@echo "  clean-artifacts      - remove stale CSVs, backtest, tuning, clustering, champion files"
 	@echo "  refresh-mvs-tiered   - refresh all MVs in dependency order"
 	@echo "  refresh-accuracy-mvs - refresh accuracy MVs (after backtest load)"
 
@@ -151,15 +155,15 @@ up:
 
 
 db-apply-sql:
-	docker exec demand-mvp-postgres sh -lc '\
+	$(PG_EXEC) sh -lc '\
 		until pg_isready -U demand -d demand_mvp >/dev/null 2>&1; do \
 			sleep 1; \
 		done \
 	'
 	@for f in $$(ls sql/*.sql | sort); do \
-		cat "$$f" | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null; \
+		$(PSQL) -v ON_ERROR_STOP=1 < "$$f" >/dev/null; \
 	done
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 -c "ALTER TABLE IF EXISTS dim_customer ALTER COLUMN customer_name DROP NOT NULL;" >/dev/null
+	$(PSQL) -v ON_ERROR_STOP=1 -c "ALTER TABLE IF EXISTS dim_customer ALTER COLUMN customer_name DROP NOT NULL;" >/dev/null
 	@echo "Applied $$(ls sql/*.sql | wc -l | tr -d ' ') SQL migration files"
 
 down:
@@ -255,13 +259,13 @@ load-all:
 	$(MAKE) refresh-agg
 
 refresh-agg-sales:
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_sales_monthly;" >/dev/null
+	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_sales_monthly;" >/dev/null
 
 refresh-agg-forecast:
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_forecast_monthly;" >/dev/null
+	$(PSQL) -v ON_ERROR_STOP=1 -c "REFRESH MATERIALIZED VIEW agg_forecast_monthly;" >/dev/null
 
 refresh-agg-inventory:
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp \
+	$(PSQL) \
 		-c "REFRESH MATERIALIZED VIEW agg_inventory_monthly;"
 
 refresh-agg: refresh-agg-sales refresh-agg-forecast refresh-agg-inventory
@@ -299,20 +303,20 @@ e2e-report:
 
 
 db-apply-chat:
-	cat sql/009_create_chat_embeddings.sql | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 >/dev/null
+	$(PSQL) -v ON_ERROR_STOP=1 < sql/009_create_chat_embeddings.sql >/dev/null
 
 db-apply-inventory:
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp < sql/017_create_fact_inventory_snapshot.sql
+	$(PSQL) < sql/017_create_fact_inventory_snapshot.sql
 
 db-apply-inv-backtest:
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp < sql/019_inventory_forecast_view.sql
+	$(PSQL) < sql/019_inventory_forecast_view.sql
 
 db-apply-jobs:
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp < sql/020_create_job_history.sql
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp < sql/021_alter_job_history_scheduling.sql
+	$(PSQL) < sql/020_create_job_history.sql
+	$(PSQL) < sql/021_alter_job_history_scheduling.sql
 
 refresh-inv-backtest:
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp \
+	$(PSQL) \
 		-c "REFRESH MATERIALIZED VIEW mv_inventory_forecast_monthly;"
 
 inventory-pipeline: normalize-inventory load-inventory
@@ -332,7 +336,7 @@ check-api:
 	curl -s "http://localhost:8000/forecasts?limit=3" && echo
 
 check-db:
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -c "SELECT 'dim_item' AS table_name, count(*) AS cnt FROM dim_item UNION ALL SELECT 'dim_location' AS table_name, count(*) AS cnt FROM dim_location UNION ALL SELECT 'dim_customer' AS table_name, count(*) AS cnt FROM dim_customer UNION ALL SELECT 'dim_time' AS table_name, count(*) AS cnt FROM dim_time UNION ALL SELECT 'dim_dfu' AS table_name, count(*) AS cnt FROM dim_dfu UNION ALL SELECT 'fact_sales_monthly' AS table_name, count(*) AS cnt FROM fact_sales_monthly UNION ALL SELECT 'fact_external_forecast_monthly' AS table_name, count(*) AS cnt FROM fact_external_forecast_monthly;"
+	$(PSQL) -c "SELECT 'dim_item' AS table_name, count(*) AS cnt FROM dim_item UNION ALL SELECT 'dim_location' AS table_name, count(*) AS cnt FROM dim_location UNION ALL SELECT 'dim_customer' AS table_name, count(*) AS cnt FROM dim_customer UNION ALL SELECT 'dim_time' AS table_name, count(*) AS cnt FROM dim_time UNION ALL SELECT 'dim_dfu' AS table_name, count(*) AS cnt FROM dim_dfu UNION ALL SELECT 'fact_sales_monthly' AS table_name, count(*) AS cnt FROM fact_sales_monthly UNION ALL SELECT 'fact_external_forecast_monthly' AS table_name, count(*) AS cnt FROM fact_external_forecast_monthly;"
 
 cluster-features:
 	$(UV) python scripts/generate_clustering_features.py
@@ -507,7 +511,7 @@ forecast-clean-list:
 	$(UV) python scripts/clean_forecasts_by_date.py --list
 
 accuracy-slice-refresh:
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 \
+	$(PSQL) -v ON_ERROR_STOP=1 \
 		-c "REFRESH MATERIALIZED VIEW agg_accuracy_by_dim; REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive; REFRESH MATERIALIZED VIEW agg_dfu_coverage; REFRESH MATERIALIZED VIEW agg_dfu_coverage_lag_archive;"
 
 accuracy-slice-check:
@@ -535,6 +539,19 @@ tune-xgboost:
 	$(UV) python scripts/tune_hyperparams.py --model xgboost
 
 tune-all: tune-lgbm tune-catboost tune-xgboost
+
+# ── Production Baseline Seeding ──────────────────────────────────────────────
+seed-baselines:          ## Seed production baselines into experiment tables
+	$(UV) python scripts/seed_production_baselines.py
+
+seed-baselines-tuning:
+	$(UV) python scripts/seed_production_baselines.py --scope tuning
+
+seed-baselines-champion:
+	$(UV) python scripts/seed_production_baselines.py --scope champion
+
+seed-baselines-clustering:
+	$(UV) python scripts/seed_production_baselines.py --scope clustering
 
 # ── LGBM Tuning ──────────────────────────────────────────────────────────────
 lgbm-tuning-list:
@@ -581,6 +598,9 @@ test-cov:
 test-all: test ui-test
 
 check-all: check-db check-api
+
+ai-sync-check:
+	bash scripts/ai_checks/sync_check.sh
 
 # ---------------------------------------------------------------------------
 # IPfeature8: Fill Rate Analytics
@@ -1026,7 +1046,7 @@ setup-data:
 setup-features: setup-data cluster-all seasonality-all variability-all lt-profile-all abc-xyz-all demand-signals-all
 	@echo "✓ Phase 2 complete: clustering, seasonality, variability, lead time, ABC-XYZ, demand signals"
 
-setup-backtest: setup-features backtest-all backtest-load-all accuracy-slice-refresh champion-all
+setup-backtest: setup-features backtest-all backtest-load-all accuracy-slice-refresh champion-all seed-baselines
 	@echo "✓ Phase 3 complete: backtests, champion selection"
 
 setup-inv-planning: eoq-all policy-all ss-all exceptions-generate fill-rate-all health-all supplier-perf-all investment-all intramonth-all control-tower-all rebalancing-all
@@ -1069,12 +1089,12 @@ perf-clean:                            ## Truncate all perf profiling history fr
 	psql "$(DATABASE_URL)" -c "TRUNCATE perf_suggestion, perf_query, perf_section, perf_run CASCADE;"
 
 # ── Database Cleanup & Fresh Recreate ────────────────────────────────────────
-# Full wipe-and-reload: clears data tables (preserves config/algo/tuning/MLflow),
-# reloads from data/input/, runs ML pipeline through champion selection.
+# Full wipe-and-reload: clears non-config data/history, reloads from data/input/,
+# and refreshes the core ML + baseline planning outputs while preserving configs.
 # See docs/RUNBOOK.md "Database Cleanup & Fresh Recreate" for details.
 
-db-truncate-data:                      ## Truncate all data tables (preserves config/algo/tuning/MLflow)
-	@echo "Truncating all data tables (preserving config, algorithm, tuning, MLflow)..."
+db-truncate-data:                      ## Truncate non-config data/history (preserves configuration masters)
+	@echo "Truncating non-config data, history, and experiment tables (preserving configuration masters)..."
 	@printf '%s\n' \
 	  'BEGIN;' \
 	  'TRUNCATE TABLE ai_recommendation_outcomes CASCADE;' \
@@ -1116,24 +1136,22 @@ db-truncate-data:                      ## Truncate all data tables (preserves co
 	  'TRUNCATE TABLE fact_sales_monthly CASCADE;' \
 	  'TRUNCATE TABLE fact_sales_monthly_original CASCADE;' \
 	  'TRUNCATE TABLE fact_ss_simulation_results CASCADE;' \
+	  'TRUNCATE TABLE fact_safety_stock_targets CASCADE;' \
+	  'TRUNCATE TABLE fact_eoq_targets CASCADE;' \
 	  'TRUNCATE TABLE fact_demand_signals CASCADE;' \
 	  'TRUNCATE TABLE fact_replenishment_plan CASCADE;' \
 	  'TRUNCATE TABLE fact_replenishment_exceptions CASCADE;' \
 	  'TRUNCATE TABLE fact_planned_orders CASCADE;' \
 	  'TRUNCATE TABLE fact_plan_versions CASCADE;' \
 	  'TRUNCATE TABLE fact_financial_inventory_plan CASCADE;' \
-	  'TRUNCATE TABLE fact_budget_periods CASCADE;' \
 	  'TRUNCATE TABLE fact_inventory_investment_plan CASCADE;' \
 	  'TRUNCATE TABLE fact_efficient_frontier CASCADE;' \
 	  'TRUNCATE TABLE fact_echelon_reorder_points CASCADE;' \
 	  'TRUNCATE TABLE fact_echelon_ss_targets CASCADE;' \
-	  'TRUNCATE TABLE dim_echelon_network CASCADE;' \
 	  'TRUNCATE TABLE fact_service_level_performance CASCADE;' \
-	  'TRUNCATE TABLE fact_service_level_targets CASCADE;' \
 	  'TRUNCATE TABLE fact_lead_time_actuals CASCADE;' \
 	  'TRUNCATE TABLE fact_lt_review_triggers CASCADE;' \
 	  'TRUNCATE TABLE fact_external_signal CASCADE;' \
-	  'TRUNCATE TABLE dim_external_signal_source CASCADE;' \
 	  'TRUNCATE TABLE fact_dq_corrections CASCADE;' \
 	  'TRUNCATE TABLE fact_dq_check_results CASCADE;' \
 	  'TRUNCATE TABLE fact_annotation CASCADE;' \
@@ -1145,30 +1163,48 @@ db-truncate-data:                      ## Truncate all data tables (preserves co
 	  'TRUNCATE TABLE fact_audit_log CASCADE;' \
 	  'TRUNCATE TABLE fact_query_performance CASCADE;' \
 	  'TRUNCATE TABLE audit_load_batch CASCADE;' \
-	  'TRUNCATE TABLE dim_transfer_lane CASCADE;' \
+	  'TRUNCATE TABLE job_history CASCADE;' \
+	  'TRUNCATE TABLE perf_suggestion CASCADE;' \
+	  'TRUNCATE TABLE perf_query CASCADE;' \
+	  'TRUNCATE TABLE perf_section CASCADE;' \
+	  'TRUNCATE TABLE perf_run CASCADE;' \
+	  'TRUNCATE TABLE tuning_chat_message CASCADE;' \
+	  'TRUNCATE TABLE tuning_chat_session CASCADE;' \
+	  'TRUNCATE TABLE tuning_promotion_log CASCADE;' \
+	  'TRUNCATE TABLE lgbm_tuning_lag_cluster CASCADE;' \
+	  'TRUNCATE TABLE lgbm_tuning_lag CASCADE;' \
+	  'TRUNCATE TABLE lgbm_tuning_comparison CASCADE;' \
+	  'TRUNCATE TABLE lgbm_tuning_month CASCADE;' \
+	  'TRUNCATE TABLE lgbm_tuning_cluster CASCADE;' \
+	  'TRUNCATE TABLE lgbm_tuning_timeframe CASCADE;' \
+	  'TRUNCATE TABLE lgbm_tuning_run CASCADE;' \
+	  'TRUNCATE TABLE cluster_experiment_comparison CASCADE;' \
+	  'TRUNCATE TABLE cluster_experiment CASCADE;' \
+	  'TRUNCATE TABLE champion_experiment CASCADE;' \
 	  'TRUNCATE TABLE dim_sku CASCADE;' \
 	  'TRUNCATE TABLE dim_item CASCADE;' \
 	  'TRUNCATE TABLE dim_location CASCADE;' \
 	  'TRUNCATE TABLE dim_customer CASCADE;' \
 	  'TRUNCATE TABLE dim_time CASCADE;' \
 	  'TRUNCATE TABLE dim_sourcing CASCADE;' \
-	  'TRUNCATE TABLE dim_item_cost CASCADE;' \
+	  'TRUNCATE TABLE dim_item_lead_time_profile CASCADE;' \
 	  'TRUNCATE TABLE dim_lead_time_profile CASCADE;' \
 	  'TRUNCATE TABLE mv_demand_decomposition CASCADE;' \
 	  'COMMIT;' \
-	  | docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1
-	@echo "✓ All data tables truncated. Config/algo/tuning/MLflow preserved."
+	  | $(PSQL) -v ON_ERROR_STOP=1
+	@echo "✓ Reset complete. Configuration masters preserved."
 
-clean-artifacts:                       ## Remove stale intermediate files (clean CSVs, backtest, clustering, champion)
+clean-artifacts:                       ## Remove stale intermediate files (clean CSVs, backtest, tuning, clustering, champion)
 	rm -f data/*_clean.csv data/inventory_clean.csv
 	rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/
+	rm -rf data/backtest/logs/ data/backtest/tuning_archive/ data/tuning/ data/perf_reports/
 	rm -rf data/clustering/ data/champion/ data/models/
 	rm -f data/seasonality_results.csv data/clustering_features.csv
 	@echo "✓ Intermediate artifacts cleaned."
 
 refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4 tiers)
 	@echo "Refreshing materialized views (tier-ordered)..."
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 -c " \
+	$(PSQL) -v ON_ERROR_STOP=1 -c " \
 	  REFRESH MATERIALIZED VIEW agg_sales_monthly; \
 	  REFRESH MATERIALIZED VIEW agg_forecast_monthly; \
 	  REFRESH MATERIALIZED VIEW agg_inventory_monthly; \
@@ -1186,7 +1222,7 @@ refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4
 	@echo "✓ All materialized views refreshed."
 
 refresh-accuracy-mvs:                  ## Refresh accuracy MVs (after backtest load)
-	docker exec -i demand-mvp-postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 -c " \
+	$(PSQL) -v ON_ERROR_STOP=1 -c " \
 	  REFRESH MATERIALIZED VIEW agg_accuracy_by_dim; \
 	  REFRESH MATERIALIZED VIEW agg_accuracy_lag_archive; \
 	  REFRESH MATERIALIZED VIEW agg_dfu_coverage; \
@@ -1210,10 +1246,11 @@ fresh-champion: fresh-backtest champion-all  ## Load + features + backtests + ch
 	@echo "  Run 'make check-all' to validate, then start services."
 	@echo "============================================================"
 
-fresh-all: db-truncate-data clean-artifacts fresh-champion  ## Full cleanup & recreate: truncate → clean → load → ML → champion
+fresh-all: db-truncate-data clean-artifacts fresh-champion policy-all ss-all eoq-all health-all  ## Full cleanup & recreate: truncate → clean → load → ML → champion → baseline planning
 	@echo ""
 	@echo "============================================================"
 	@echo "  Full database cleanup & recreate complete."
+	@echo "  Core data, champion forecasts, and baseline planning outputs refreshed."
 	@echo "  Start the application:"
 	@echo "    make api    # FastAPI on :8000"
 	@echo "    make ui     # React UI on :5173"

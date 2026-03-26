@@ -672,7 +672,7 @@ def main() -> None:
                 if (output_dir / "cluster_visualization.png").exists():
                     mlflow.log_artifact(str(output_dir / "cluster_visualization.png"), "cluster_visualization.png")
 
-                mlflow.sklearn.log_model(kmeans, "model")
+                mlflow.sklearn.log_model(kmeans, name="model")
 
                 logger.info("Logged to MLflow: %s", mlflow.get_artifact_uri())
         except (ConnectionError, OSError, mlflow.exceptions.MlflowException) as e:

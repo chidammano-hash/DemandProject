@@ -22,7 +22,7 @@ async def test_health_summary_200():
     # First fetchone = summary row, fetchall = histogram rows
     cursor.fetchone.return_value = (500, 72.5, 200, 150, 100, 50, 18.0, 20.0, 22.0, 19.0)
     cursor.description = [
-        ("total_dfus",), ("avg_health_score",),
+        ("total_skus",), ("avg_health_score",),
         ("healthy_count",), ("monitor_count",), ("at_risk_count",), ("critical_count",),
         ("avg_score_ss",), ("avg_score_dos",), ("avg_score_stockout",), ("avg_score_forecast",),
     ]
@@ -39,7 +39,7 @@ async def test_health_summary_200():
 
     assert resp.status_code == 200
     data = resp.json()
-    assert "total_dfus" in data
+    assert "total_skus" in data
     assert "by_tier" in data
     assert "avg_health_score" in data
     assert "component_avgs" in data
@@ -52,7 +52,7 @@ async def test_health_summary_by_tier_keys():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (100, 65.0, 40, 30, 20, 10, 17.0, 18.0, 22.0, 16.0)
     cursor.description = [
-        ("total_dfus",), ("avg_health_score",),
+        ("total_skus",), ("avg_health_score",),
         ("healthy_count",), ("monitor_count",), ("at_risk_count",), ("critical_count",),
         ("avg_score_ss",), ("avg_score_dos",), ("avg_score_stockout",), ("avg_score_forecast",),
     ]
@@ -75,7 +75,7 @@ async def test_health_summary_component_avgs_keys():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (50, 55.0, 10, 20, 15, 5, 12.0, 15.0, 20.0, 15.0)
     cursor.description = [
-        ("total_dfus",), ("avg_health_score",),
+        ("total_skus",), ("avg_health_score",),
         ("healthy_count",), ("monitor_count",), ("at_risk_count",), ("critical_count",),
         ("avg_score_ss",), ("avg_score_dos",), ("avg_score_stockout",), ("avg_score_forecast",),
     ]
@@ -99,7 +99,7 @@ async def test_health_summary_with_filters():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (10, 70.0, 5, 3, 2, 0, 18.0, 20.0, 22.0, 18.0)
     cursor.description = [
-        ("total_dfus",), ("avg_health_score",),
+        ("total_skus",), ("avg_health_score",),
         ("healthy_count",), ("monitor_count",), ("at_risk_count",), ("critical_count",),
         ("avg_score_ss",), ("avg_score_dos",), ("avg_score_stockout",), ("avg_score_forecast",),
     ]

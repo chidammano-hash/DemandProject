@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { RefObject } from "react";
 import type { ClusteringScenarioResult } from "@/api/queries";
-import { formatNumber, formatCompactNumber } from "@/lib/formatters";
+import { formatNumber, formatCompactNumber, formatClusterLabel } from "@/lib/formatters";
 import { ScenarioCharts } from "@/components/ScenarioCharts";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -41,7 +41,7 @@ export default function PastScenariosPanel({
           const jr = pj.result as Record<string, unknown> | null;
           const inner = jr ? ((jr.result ?? jr) as Record<string, unknown>) : null;
           const optK = inner?.optimal_k as number | undefined;
-          const totalSkus = inner?.total_skus as number | undefined;
+          const totalSkus = (inner?.total_dfus ?? inner?.total_skus) as number | undefined;
           const runtimeSec = (jr?.runtime_seconds as number) ?? 0;
           const scenId = (jr?.scenario_id as string) || pj.job_id;
           const isExpanded = expandedHistoryId === pj.job_id;
@@ -125,7 +125,7 @@ export default function PastScenariosPanel({
                       <TableBody>
                         {historyResult.result.profiles.map((p) => (
                           <TableRow key={p.label}>
-                            <TableCell className="text-xs font-medium">{p.label}</TableCell>
+                            <TableCell className="text-xs font-medium" title={p.label}>{formatClusterLabel(p.label)}</TableCell>
                             <TableCell className="text-right text-xs tabular-nums">{formatNumber(p.count)}</TableCell>
                             <TableCell className="text-right text-xs tabular-nums">{formatNumber(p.pct_of_total)}%</TableCell>
                             <TableCell className="text-right text-xs tabular-nums">{formatNumber(p.mean_demand)}</TableCell>

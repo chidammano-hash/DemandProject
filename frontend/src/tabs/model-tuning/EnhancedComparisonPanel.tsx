@@ -437,9 +437,31 @@ export function EnhancedComparisonPanel({
   const param_diffs = data.param_diffs ?? [];
   const param_common = data.param_common ?? [];
   const feature_diffs = data.feature_diffs;
-  const config_diffs = data.config_diffs ?? [];
+  const rawConfigDiffs = data.config_diffs ?? [];
   const config_common = data.config_common ?? [];
   const per_lag = data.per_lag ?? [];
+
+  // Synthesize cluster source diff from baseline/candidate metadata if present
+  const baselineRec = baseline as Record<string, unknown>;
+  const candidateRec = candidate as Record<string, unknown>;
+  const baseClusterSource = (baselineRec.cluster_source as string) ?? "production";
+  const candClusterSource = (candidateRec.cluster_source as string) ?? "production";
+  const clusterSourceDiffers = baseClusterSource !== candClusterSource;
+
+  const config_diffs: ConfigDiff[] = [
+    ...(clusterSourceDiffers && !rawConfigDiffs.some((d: ConfigDiff) => d.setting === "cluster_source")
+      ? [{
+          setting: "cluster_source",
+          baseline: baseClusterSource === "experimental"
+            ? `experimental (#${baselineRec.cluster_experiment_id ?? "?"})`
+            : "production",
+          candidate: candClusterSource === "experimental"
+            ? `experimental (#${candidateRec.cluster_experiment_id ?? "?"})`
+            : "production",
+        }]
+      : []),
+    ...rawConfigDiffs,
+  ];
 
   const baselineLabel = `Baseline (#${baseline.run_id})`;
   const candidateLabel = `Candidate (#${candidate.run_id})`;

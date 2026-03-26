@@ -45,10 +45,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { KpiCard } from "@/components/KpiCard";
 import { LoadingElement } from "@/components/LoadingElement";
+import { StatusBadge, formatDuration, timeAgo } from "@/components/shared-tuning-utils";
 import {
   Select,
   SelectTrigger,
@@ -65,6 +65,8 @@ import { EnhancedComparisonPanel } from "./model-tuning/EnhancedComparisonPanel"
 import { ExperimentBuilder } from "./model-tuning/ExperimentBuilder";
 import { EnhancedPromoteModal } from "./model-tuning/EnhancedPromoteModal";
 import { LogViewer } from "./model-tuning/LogViewer";
+import { ClusterExperimentsPanel } from "./clusters/ClusterExperimentsPanel";
+import { ChampionExperimentsPanel } from "./champion/ChampionExperimentsPanel";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -84,10 +86,12 @@ const MODEL_PREFIX: Record<ModelType, string> = {
 // ---------------------------------------------------------------------------
 // Sub-tab definitions
 // ---------------------------------------------------------------------------
-type SubTab = "experiments" | "cluster-eda" | "feature-lab";
+type SubTab = "experiments" | "cluster-experiments" | "champion" | "cluster-eda" | "feature-lab";
 
 const SUB_TAB_LABELS: Record<SubTab, { label: string; icon: typeof FlaskConical }> = {
-  experiments: { label: "Experiments", icon: FlaskConical },
+  experiments: { label: "Algorithm Experiments", icon: FlaskConical },
+  "cluster-experiments": { label: "Cluster Experiments", icon: Target },
+  champion: { label: "Champion", icon: Crown },
   "cluster-eda": { label: "Cluster EDA", icon: BarChart3 },
   "feature-lab": { label: "Feature Lab", icon: Microscope },
 };
@@ -115,59 +119,7 @@ async function fetchExperiments(
   return res.json();
 }
 
-// ---------------------------------------------------------------------------
-// StatusBadge
-// ---------------------------------------------------------------------------
-function StatusBadge({ status }: { status: TuningRun["status"] }) {
-  const styles: Record<TuningRun["status"], string> = {
-    completed:
-      "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-    running:
-      "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-    failed:
-      "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
-  };
-  return (
-    <Badge
-      className={cn(
-        "text-[10px] font-medium px-2 py-0.5",
-        styles[status] ?? "bg-gray-100 text-gray-700",
-      )}
-    >
-      {status}
-    </Badge>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Duration formatter
-// ---------------------------------------------------------------------------
-function formatDuration(startedAt: string | null, completedAt: string | null): string {
-  if (!startedAt) return "--";
-  const start = new Date(startedAt).getTime();
-  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
-  const elapsed = Math.max(0, end - start);
-  const totalSec = Math.floor(elapsed / 1000);
-  const min = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  if (min > 0) return `${min}m ${sec}s`;
-  return `${sec}s`;
-}
-
-// ---------------------------------------------------------------------------
-// Relative time formatter
-// ---------------------------------------------------------------------------
-function timeAgo(dateStr: string | null): string {
-  if (!dateStr) return "--";
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
+// StatusBadge, formatDuration, timeAgo imported from @/components/shared-tuning-utils
 
 // ---------------------------------------------------------------------------
 // Component
@@ -323,23 +275,6 @@ export default function ModelTuningTab() {
     );
   }
 
-  // ---- Loading / error -----------------------------------------------------
-  if (isLoading) {
-    return (
-      <div className="p-6">
-        <LoadingElement message="Loading tuning experiments..." size="md" />
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <div className="p-6 text-center text-sm text-destructive">
-        Failed to load experiments: {(error as Error).message}
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-5 p-4 md:p-6">
       {/* ---- Header ---- */}
@@ -350,32 +285,10 @@ export default function ModelTuningTab() {
             Model Tuning Studio
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Configure experiments, compare results, and promote champions for{" "}
-            {MODEL_LABELS[selectedModel]}.
+            Configure experiments, compare results, and promote champions.
           </p>
         </div>
-
-        {/* Model selector pills */}
-        <div className="flex gap-1 rounded-lg border border-border bg-muted/30 p-1 shrink-0">
-          {(Object.keys(MODEL_LABELS) as ModelType[]).map((model) => (
-            <button
-              key={model}
-              onClick={() => handleModelChange(model)}
-              className={cn(
-                "px-3 py-1 text-xs font-medium rounded-md transition-colors",
-                selectedModel === model
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted",
-              )}
-            >
-              {MODEL_LABELS[model]}
-            </button>
-          ))}
-        </div>
       </div>
-
-      {/* ---- Lag filter bar ---- */}
-      <LagFilterBar value={execLag} onChange={setExecLag} />
 
       {/* ---- Sub-tab navigation ---- */}
       <div className="flex gap-1 border-b border-border pb-1">
@@ -400,12 +313,44 @@ export default function ModelTuningTab() {
       </div>
 
       {/* ---- Sub-tab content ---- */}
+      {subTab === "cluster-experiments" && <ClusterExperimentsPanel />}
+      {subTab === "champion" && <ChampionExperimentsPanel />}
       {subTab === "cluster-eda" && <ClusterEDAPanel />}
       {subTab === "feature-lab" && <FeatureLabPanel />}
 
       {/* ---- Experiments sub-tab ---- */}
       {subTab === "experiments" && (
         <>
+          {/* Model selector pills + Lag filter */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex gap-1 rounded-lg border border-border bg-muted/30 p-1">
+              {(Object.keys(MODEL_LABELS) as ModelType[]).map((model) => (
+                <button
+                  key={model}
+                  onClick={() => handleModelChange(model)}
+                  className={cn(
+                    "px-3 py-1 text-xs font-medium rounded-md transition-colors",
+                    selectedModel === model
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted",
+                  )}
+                >
+                  {MODEL_LABELS[model]}
+                </button>
+              ))}
+            </div>
+            <LagFilterBar value={execLag} onChange={setExecLag} />
+          </div>
+
+          {/* Loading / error states */}
+          {isLoading ? (
+            <LoadingElement message={`Loading ${MODEL_LABELS[selectedModel]} experiments...`} size="md" />
+          ) : isError ? (
+            <div className="py-8 text-center text-sm text-destructive">
+              Failed to load experiments: {(error as Error).message}
+            </div>
+          ) : (
+          <>
           {/* KPI cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <KpiCard
@@ -614,14 +559,28 @@ export default function ModelTuningTab() {
                                   </span>
                                 )}
                               </TableCell>
-                              <TableCell className="text-sm truncate max-w-[160px]">
-                                {run.run_label}
-                                {run.is_promoted && (
-                                  <Crown className="inline-block h-3 w-3 ml-1 text-amber-500" title="Parameters promoted" />
-                                )}
-                                {(run as Record<string, unknown>).is_results_promoted === true && (
-                                  <Database className="inline-block h-3 w-3 ml-1 text-blue-500" title="Results loaded" />
-                                )}
+                              <TableCell className="text-sm max-w-[200px]">
+                                <div className="flex items-center gap-1">
+                                  <span className="truncate">{run.run_label}</span>
+                                  {run.is_promoted && (
+                                    <Crown className="shrink-0 h-3 w-3 text-amber-500" title="Parameters promoted" />
+                                  )}
+                                  {(run as Record<string, unknown>).is_results_promoted === true && (
+                                    <Database className="shrink-0 h-3 w-3 text-blue-500" title="Results loaded" />
+                                  )}
+                                  {(run as Record<string, unknown>).cluster_source === "experimental" && (
+                                    <span
+                                      className="shrink-0 px-1.5 py-0 text-[9px] font-medium rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
+                                      title={
+                                        (run as Record<string, unknown>).cluster_experiment_label
+                                          ? `Cluster: ${(run as Record<string, unknown>).cluster_experiment_label}`
+                                          : `Cluster experiment #${(run as Record<string, unknown>).cluster_experiment_id}`
+                                      }
+                                    >
+                                      Exp #{String((run as Record<string, unknown>).cluster_experiment_id ?? "?")}
+                                    </span>
+                                  )}
+                                </div>
                               </TableCell>
                               <TableCell>
                                 <StatusBadge status={run.status} />
@@ -747,6 +706,8 @@ export default function ModelTuningTab() {
               )}
             </div>
           </div>
+        </>
+          )}
         </>
       )}
 

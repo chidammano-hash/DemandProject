@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryKeys, fetchSkuClusters, fetchClusterProfiles, submitJob, STALE } from "@/api/queries";
 import type { ClusterInfo } from "@/types";
-import { formatNumber, formatCompactNumber } from "@/lib/formatters";
+import { formatNumber, formatCompactNumber, formatClusterLabel } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -86,7 +86,7 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
                 <option value="">All Clusters</option>
                 {clusterSummary.map((c) => (
                   <option key={c.label} value={c.label}>
-                    {c.label} ({formatCompactNumber(c.count)})
+                    {formatClusterLabel(c.label)} ({formatCompactNumber(c.count)})
                   </option>
                 ))}
               </select>
@@ -122,7 +122,7 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
                       )}
                       onClick={() => setSelectedCluster(selectedCluster === c.label ? "" : c.label)}
                     >
-                      <TableCell className="font-medium text-sm">{c.label}</TableCell>
+                      <TableCell className="font-medium text-sm" title={c.label}>{formatClusterLabel(c.label)}</TableCell>
                       <TableCell className="text-right text-sm tabular-nums">{formatNumber(c.count)}</TableCell>
                       <TableCell className="text-right text-sm tabular-nums">{formatNumber(c.pct_of_total)}%</TableCell>
                       <TableCell className="text-right text-sm tabular-nums">{formatNumber(c.avg_demand)}</TableCell>

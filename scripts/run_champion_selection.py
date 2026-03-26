@@ -19,6 +19,7 @@ import io
 import json
 import sys
 import time
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,8 @@ import pandas as pd
 import psycopg
 import yaml
 from dotenv import load_dotenv
+
+warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -93,27 +96,50 @@ def load_monthly_errors_df(
 
     Includes fcstdate and execution_lag so strategies can compute the
     correct causal prior window (startdate < fcstdate = T - exec_lag).
+
+    Lag modes:
+        "execution"  — only rows where lag == execution_lag (one per DFU-month).
+                        Queries fact_external_forecast_monthly.
+        "all"        — all 5 lag rows (0-4) per DFU-month, for cross-horizon
+                        analysis.  Queries backtest_lag_archive.
+        "0".."4"     — single specific lag for all DFUs.
+                        Queries fact_external_forecast_monthly.
     """
     placeholders = ",".join(["%s"] * len(models))
     params: list[Any] = list(models)
 
-    if lag_mode == "execution":
-        lag_cond = "lag::text = execution_lag::text"
+    if lag_mode == "all":
+        # All lags from archive table (5 rows per DFU-month)
+        sql = f"""
+            SELECT item_id, customer_group, loc, startdate, fcstdate,
+                   execution_lag, lag,
+                   model_id, basefcst_pref, tothist_dmd,
+                   ABS(basefcst_pref - tothist_dmd) AS abs_err
+            FROM backtest_lag_archive
+            WHERE model_id IN ({placeholders})
+              AND basefcst_pref IS NOT NULL
+              AND tothist_dmd IS NOT NULL
+            ORDER BY item_id, customer_group, loc, model_id, lag, startdate
+        """
     else:
-        lag_cond = "lag = %s"
-        params.append(int(lag_mode))
+        if lag_mode == "execution":
+            lag_cond = "lag::text = execution_lag::text"
+        else:
+            lag_cond = "lag = %s"
+            params.append(int(lag_mode))
 
-    sql = f"""
-        SELECT item_id, customer_group, loc, startdate, fcstdate, execution_lag,
-               model_id, basefcst_pref, tothist_dmd,
-               ABS(basefcst_pref - tothist_dmd) AS abs_err
-        FROM fact_external_forecast_monthly
-        WHERE model_id IN ({placeholders})
-          AND {lag_cond}
-          AND basefcst_pref IS NOT NULL
-          AND tothist_dmd IS NOT NULL
-        ORDER BY item_id, customer_group, loc, model_id, startdate
-    """
+        sql = f"""
+            SELECT item_id, customer_group, loc, startdate, fcstdate, execution_lag,
+                   model_id, basefcst_pref, tothist_dmd,
+                   ABS(basefcst_pref - tothist_dmd) AS abs_err
+            FROM fact_external_forecast_monthly
+            WHERE model_id IN ({placeholders})
+              AND {lag_cond}
+              AND basefcst_pref IS NOT NULL
+              AND tothist_dmd IS NOT NULL
+            ORDER BY item_id, customer_group, loc, model_id, startdate
+        """
+
     with psycopg.connect(**db) as conn:
         df = pd.read_sql(sql, conn, params=params)
     df["startdate"] = pd.to_datetime(df["startdate"])
@@ -121,6 +147,8 @@ def load_monthly_errors_df(
     for col in ["basefcst_pref", "tothist_dmd", "abs_err"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["execution_lag"] = pd.to_numeric(df["execution_lag"], errors="coerce").fillna(0).astype(int)
+    if "lag" in df.columns:
+        df["lag"] = pd.to_numeric(df["lag"], errors="coerce").fillna(0).astype(int)
     return df
 
 

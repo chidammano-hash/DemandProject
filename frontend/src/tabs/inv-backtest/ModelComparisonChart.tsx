@@ -1,6 +1,7 @@
 /**
  * ModelComparisonChart — Stockout vs Excess Rate bar chart with WAPE overlay line.
  */
+import { memo } from "react";
 import {
   Bar,
   CartesianGrid,
@@ -16,7 +17,7 @@ import {
 import { formatNumber } from "@/lib/formatters";
 import { CHART_MARGIN } from "./invBacktestShared";
 
-export function ModelComparisonChart({
+export const ModelComparisonChart = memo(function ModelComparisonChart({
   comparisonData,
   chartColors,
   trendColors,
@@ -91,4 +92,4 @@ export function ModelComparisonChart({
       </ResponsiveContainer>
     </div>
   );
-}
+});

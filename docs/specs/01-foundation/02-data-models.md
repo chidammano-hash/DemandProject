@@ -60,7 +60,7 @@ The DFU (Demand Forecast Unit — an item+customerGroup+location combination) ta
 | `peak_month`, `trough_month` | Seasonality detection | Month numbers for seasonal peaks/troughs |
 | `abc_vol` | Source data | Volume classification (A/B/C) |
 | `xyz_class` | ABC-XYZ pipeline | Variability classification (X/Y/Z) |
-| `execution_lag` | Source data | Months between forecast creation and target month |
+| `execution_lag` | Source data | Planning horizon (0-4) based on lead time; determines which forecast lag is production-relevant. See [Execution Lag spec](06-execution-lag.md) |
 
 ### Fact Tables
 

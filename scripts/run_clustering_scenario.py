@@ -11,12 +11,16 @@ import re
 import sys
 import time
 import uuid
+import warnings
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
+
+warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="sklearn")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -77,6 +81,78 @@ def generate_scenario_id() -> str:
     return f"sc_{ts}_{short_uuid}"
 
 
+def _update_experiment_completed(
+    experiment_id: int,
+    result: dict[str, Any],
+    runtime_seconds: float,
+    artifacts_path: str,
+) -> None:
+    """Write completed results to the cluster_experiment table."""
+    import psycopg
+
+    db = get_db_params()
+    try:
+        with psycopg.connect(**db) as conn:
+            conn.execute(
+                """
+                UPDATE cluster_experiment
+                SET status = 'completed',
+                    completed_at = NOW(),
+                    runtime_seconds = %s,
+                    optimal_k = %s,
+                    silhouette_score = %s,
+                    inertia = %s,
+                    total_dfus = %s,
+                    n_clusters = %s,
+                    cluster_sizes = %s::jsonb,
+                    profiles = %s::jsonb,
+                    k_selection_results = %s::jsonb,
+                    artifacts_path = %s
+                WHERE experiment_id = %s
+                """,
+                (
+                    runtime_seconds,
+                    result.get("optimal_k"),
+                    result.get("silhouette_score"),
+                    result.get("inertia"),
+                    result.get("total_dfus"),
+                    result.get("n_clusters"),
+                    json.dumps(result.get("cluster_sizes", {})),
+                    json.dumps(result.get("profiles", [])),
+                    json.dumps({
+                        **result.get("k_selection_results", {}),
+                        **({"pca_scatter": result["pca_scatter"]} if result.get("pca_scatter") else {}),
+                    }),
+                    artifacts_path,
+                    experiment_id,
+                ),
+            )
+    except psycopg.Error:
+        import logging
+        logging.getLogger(__name__).exception(
+            "Failed to update cluster_experiment %d to completed", experiment_id
+        )
+
+
+def _update_experiment_failed(experiment_id: int) -> None:
+    """Mark a cluster_experiment as failed."""
+    import psycopg
+
+    db = get_db_params()
+    try:
+        with psycopg.connect(**db) as conn:
+            conn.execute(
+                "UPDATE cluster_experiment SET status = 'failed', completed_at = NOW() "
+                "WHERE experiment_id = %s",
+                (experiment_id,),
+            )
+    except psycopg.Error:
+        import logging
+        logging.getLogger(__name__).exception(
+            "Failed to update cluster_experiment %d to failed", experiment_id
+        )
+
+
 def run_scenario(
     feature_params: dict[str, Any] | None = None,
     model_params: dict[str, Any] | None = None,
@@ -84,6 +160,7 @@ def run_scenario(
     scenario_id: str | None = None,
     relabel_only: bool = False,
     previous_scenario_id: str | None = None,
+    experiment_id: int | None = None,
 ) -> dict[str, Any]:
     """Run a complete clustering scenario.
 
@@ -95,6 +172,8 @@ def run_scenario(
     scenario_id : optional ID (auto-generated if not provided)
     relabel_only : skip feature gen and training, just re-label
     previous_scenario_id : scenario to relabel from (for relabel_only)
+    experiment_id : optional cluster_experiment PK — when provided, writes
+        results to the cluster_experiment table on completion or failure
 
     Returns
     -------
@@ -172,10 +251,24 @@ def run_scenario(
         with open(scenario_dir / "scenario_result.json", "w") as f:
             json.dump(output, f, indent=2, default=str)
 
+        # Write results to cluster_experiment table when experiment_id is provided
+        if experiment_id is not None:
+            _update_experiment_completed(
+                experiment_id=experiment_id,
+                result=result,
+                runtime_seconds=round(runtime, 1),
+                artifacts_path=str(scenario_dir),
+            )
+
         return output
 
     except Exception as e:
         runtime = time.time() - start_time
+
+        # Mark cluster_experiment as failed when experiment_id is provided
+        if experiment_id is not None:
+            _update_experiment_failed(experiment_id)
+
         output = {
             "scenario_id": scenario_id,
             "status": "failed",
@@ -337,6 +430,12 @@ def _run_full_pipeline(
         X = X[:, high_var_mask]
         feature_names = [feature_names[i] for i in range(len(feature_names)) if high_var_mask[i]]
 
+        # Sanitize inf/NaN before scaling (prevents KMeans overflow warnings)
+        X = np.where(np.isinf(X), np.nan, X)
+        col_medians = np.nanmedian(X, axis=0)
+        col_medians = np.where(np.isnan(col_medians), 0.0, col_medians)
+        X = np.where(np.isnan(X), col_medians, X)
+
         # Scale
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
@@ -457,6 +556,41 @@ def _run_full_pipeline(
             feature_importance.append({"feature": fname, "variance_ratio": round(var_ratio, 4)})
         feature_importance.sort(key=lambda x: x["variance_ratio"], reverse=True)
 
+    # PCA 2D projection for visualization (always computed, independent of model PCA)
+    pca_scatter: dict[str, Any] | None = None
+    with profiled_section("pca_2d_scatter"):
+        pca_2d = PCA(n_components=2, random_state=42)
+        X_2d = pca_2d.fit_transform(X_scaled)
+        pc1_var = round(float(pca_2d.explained_variance_ratio_[0]) * 100, 2)
+        pc2_var = round(float(pca_2d.explained_variance_ratio_[1]) * 100, 2)
+
+        # Stratified downsample to max 2000 points for payload size
+        max_scatter_points = 2000
+        if n_total > max_scatter_points:
+            rng = np.random.RandomState(42)
+            sample_indices: list[int] = []
+            for cid in np.unique(labels):
+                cid_indices = np.where(labels == cid)[0]
+                n_take = max(1, int(max_scatter_points * len(cid_indices) / n_total))
+                chosen = rng.choice(cid_indices, min(n_take, len(cid_indices)), replace=False)
+                sample_indices.extend(chosen.tolist())
+            scatter_idx = np.array(sample_indices[:max_scatter_points])
+        else:
+            scatter_idx = np.arange(n_total)
+
+        pca_scatter = {
+            "pc1_variance": pc1_var,
+            "pc2_variance": pc2_var,
+            "points": [
+                {
+                    "pc1": round(float(X_2d[i, 0]), 3),
+                    "pc2": round(float(X_2d[i, 1]), 3),
+                    "cluster": int(labels[i]),
+                }
+                for i in scatter_idx
+            ],
+        }
+
     return {
         "optimal_k": optimal_k,
         "silhouette_score": silhouette,
@@ -476,6 +610,7 @@ def _run_full_pipeline(
         },
         "profiles": profiles,
         "feature_importance": feature_importance,
+        "pca_scatter": pca_scatter,
     }
 
 

@@ -34,13 +34,13 @@
 
 ```
 api/                         # FastAPI backend
-├── main.py                  # App entry point — mounts 61 routers
+├── main.py                  # App entry point — mounts 62 routers
 ├── core.py                  # SQL helpers, filtering, pagination
 ├── pool.py                  # Connection pool management
 ├── llm.py                   # OpenAI client management
 └── routers/
     ├── inventory/           # 22 routers — inv_planning_*, inventory, supply, fill_rate
-    ├── forecasting/         # 9 routers — accuracy, shap, competition, blended, fva, unified_model_tuning
+    ├── forecasting/         # 10 routers — accuracy, shap, competition, blended, fva, unified_model_tuning, cluster_experiments
     ├── operations/          # 10 routers — sop, control_tower, storyboard, events
     ├── platform/            # 10 routers — auth, users, config, notifications, webhooks
     ├── intelligence/        # 4 routers — ai_planner, chat, intel, analysis
@@ -49,7 +49,7 @@ api/                         # FastAPI backend
 
 common/                      # Shared Python modules (backward-compat shims at root)
 ├── core/                    # db, utils, planning_date, constants, sql_helpers, domain_specs
-├── ml/                      # backtest_framework, champion_strategies, tuning, shap, features
+├── ml/                      # backtest_framework, model_registry, champion_strategies, tuning, shap, features
 ├── engines/                 # dq_engine, exception_engine
 ├── services/                # job_registry, job_scheduler, notifications, webhooks, cache
 ├── ai/                      # ai_planner
@@ -125,6 +125,7 @@ make e2e               # Playwright E2E (needs API on :8000)
 
 # Validation
 make check-all         # DB row counts + API health
+make ai-sync-check     # Verify Claude/Codex shared guidance wiring
 
 # Performance
 make perf-report           # Full system performance report with suggestions
@@ -211,7 +212,7 @@ These are hard constraints that cause bugs or test failures if violated.
 
 ### Frontend Patterns
 
-- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/model-tuning`.
+- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`.
 - **Theme context, not props**: Use `useThemeContext()` or `useChartColors()` — never pass `theme` as a prop from `App.tsx`.
 - **Test wrappers**: Wrap components with `TestQueryWrapper` from `src/tabs/__tests__/test-utils.tsx`. Mock API with `vi.mock("../api/queries")`. Mock `echarts-for-react` for chart tests. Mock `@tanstack/react-virtual` for virtualized row tests.
 
@@ -221,7 +222,8 @@ These are hard constraints that cause bugs or test failures if violated.
 - **DB params**: All scripts use `from common.db import get_db_params` — no inline connection helpers.
 - **Planning date**: All date-sensitive code uses `get_planning_date()` from `common/planning_date.py`, not `date.today()`. Config: `config/planning_config.yaml`. Env overrides: `PLANNING_DATE` or `USE_SYSTEM_DATE`.
 - **Timestamp helper**: Import `from common.utils import _ts` — no per-file `_ts()` definitions.
-- **`ml_cluster` is always a hard feature** — never stripped from `feature_cols` in per_cluster or global backtest mode.
+- **`ml_cluster` is always a hard feature** — never stripped from `feature_cols` in per_cluster or global backtest mode. This includes SHAP computation — `shap_selector.py` must NOT strip `ml_cluster` from features (causes dimension mismatch with trained models).
+- **Model registry for tree backtests**: Use `common/ml/model_registry.py` for all model-specific logic — `fit_model()`, `get_best_iteration()`, `to_native_params()`. Do NOT add new if/elif/else fit blocks in backtest scripts. Early stopping uses standardized 3% patience via `compute_early_stop_patience()`.
 - **Stub table pattern**: When a materialized view depends on a future feature's table, create it with `CREATE TABLE IF NOT EXISTS` and minimum columns. LEFT JOIN produces NULL → neutral scores until real data flows.
 - **Backward-compatible imports**: `common/` root has shim modules that re-export from subpackages (e.g., `from common.db import get_db_params` works via shim → `common/core/db.py`). New code may use either path; existing imports remain valid.
 - **Structured logging**: Scripts use `logging.getLogger(__name__)` — no raw `print()`. `basicConfig()` only in `__main__` blocks.
@@ -241,7 +243,7 @@ These are hard constraints that cause bugs or test failures if violated.
 | New code type | Place in | Example |
 |---|---|---|
 | Inventory/supply router | `api/routers/inventory/` | `inv_planning_new_feature.py` |
-| Forecast/accuracy router | `api/routers/forecasting/` | `forecast_ensemble.py` |
+| Forecast/accuracy/cluster experiment router | `api/routers/forecasting/` | `forecast_ensemble.py`, `cluster_experiments.py` |
 | SOP/control tower router | `api/routers/operations/` | `supply_risk.py` |
 | Auth/config/admin router | `api/routers/platform/` | `audit_log.py` |
 | AI/chat/analysis router | `api/routers/intelligence/` | `anomaly_detect.py` |
@@ -328,7 +330,7 @@ When adding a new router, also:
 
 ## Design Specs
 
-Located in `docs/specs/` — 8 domains, 53 spec files. See [docs/specs/README.md](docs/specs/README.md) for the full index with reading order.
+Located in `docs/specs/` — 8 domains, 54 spec files. See [docs/specs/README.md](docs/specs/README.md) for the full index with reading order.
 
 Domains: Foundation, Forecasting, Demand Intelligence, Inventory Planning, Operations, AI Platform, User Experience, Integration.
 

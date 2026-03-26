@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 import type { ClusteringScenarioResult } from "@/api/queries";
-import { formatNumber } from "@/lib/formatters";
+import { formatNumber, formatClusterLabel } from "@/lib/formatters";
 import { ScenarioCharts } from "@/components/ScenarioCharts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -33,7 +33,7 @@ export default function ScenarioResultsPanel({
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold">
             Scenario {scenarioLabel} &mdash; K={scenarioResult.result.optimal_k},{" "}
-            {scenarioResult.result.total_skus} SKUs, {scenarioResult.runtime_seconds.toFixed(1)}s
+            {(scenarioResult.result.total_dfus ?? scenarioResult.result.total_skus)?.toLocaleString()} SKUs, {scenarioResult.runtime_seconds.toFixed(1)}s
           </p>
           <button
             className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
@@ -59,7 +59,7 @@ export default function ScenarioResultsPanel({
             <TableBody>
               {scenarioResult.result.profiles.map((p) => (
                 <TableRow key={p.label}>
-                  <TableCell className="text-sm font-medium">{p.label}</TableCell>
+                  <TableCell className="text-sm font-medium" title={p.label}>{formatClusterLabel(p.label)}</TableCell>
                   <TableCell className="text-right text-sm tabular-nums">{formatNumber(p.count)}</TableCell>
                   <TableCell className="text-right text-sm tabular-nums">{formatNumber(p.pct_of_total)}%</TableCell>
                   <TableCell className="text-right text-sm tabular-nums">{formatNumber(p.mean_demand)}</TableCell>
@@ -72,7 +72,7 @@ export default function ScenarioResultsPanel({
         </div>
 
         {/* Charts */}
-        <ScenarioCharts result={scenarioResult.result} />
+        <ScenarioCharts result={scenarioResult.result} pcaScatter={scenarioResult.result.pca_scatter} />
       </div>
 
       {/* Promote confirmation dialog */}
@@ -98,7 +98,7 @@ export default function ScenarioResultsPanel({
             </div>
 
             <p className="mt-3 text-xs text-muted-foreground">
-              K={scenarioResult.result.optimal_k} clusters, {scenarioResult.result.total_skus.toLocaleString()} SKUs will be reassigned.
+              K={scenarioResult.result.optimal_k} clusters, {(scenarioResult.result.total_dfus ?? scenarioResult.result.total_skus)?.toLocaleString()} SKUs will be reassigned.
             </p>
 
             <div className="mt-4 flex justify-end gap-3">

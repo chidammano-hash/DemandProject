@@ -1,6 +1,21 @@
 backtest:
   n_timeframes: 10
   output_dir: data/backtest
+  # Early stopping patience as % of max iterations (standardized across all models)
+  early_stop_pct: 0.03
+  # SHAP retrain threshold: retrain if >= this fraction of features are dropped
+  shap_retrain_threshold: 0.10
+
+# Canonical ↔ native parameter name mapping reference:
+#   canonical        | lgbm              | catboost           | xgboost
+#   estimators       | n_estimators      | iterations         | n_estimators
+#   max_depth        | max_depth         | depth              | max_depth
+#   l2_reg           | reg_lambda        | l2_leaf_reg        | reg_lambda
+#   l1_reg           | reg_alpha         | (not supported)    | reg_alpha
+#   min_leaf_samples | min_child_samples | min_data_in_leaf   | min_child_weight
+#   col_sample       | colsample_bytree  | colsample_bylevel  | colsample_bytree
+# Config uses native names per library; model_registry.py maps to canonical.
+
 algorithms:
   lgbm:
     enabled: true

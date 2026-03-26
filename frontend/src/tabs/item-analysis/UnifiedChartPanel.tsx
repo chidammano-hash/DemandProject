@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from "react";
+import { memo, useMemo, useState, useCallback } from "react";
 import {
   CartesianGrid,
   Line,
@@ -121,7 +121,7 @@ export interface UnifiedChartPanelProps {
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export function UnifiedChartPanel({
+export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   skuData,
   skuFilteredSeries,
   skuMonths,
@@ -676,12 +676,12 @@ export function UnifiedChartPanel({
 
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // TogglePill — reusable pill button for series visibility
 // ---------------------------------------------------------------------------
-function TogglePill({
+const TogglePill = memo(function TogglePill({
   label,
   color,
   active,
@@ -724,4 +724,4 @@ function TogglePill({
       )}
     </button>
   );
-}
+});

@@ -1,6 +1,7 @@
 /**
  * TrendChart — Monthly trend line chart for inventory backtest metrics.
  */
+import { memo } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -15,7 +16,7 @@ import { LoadingElement } from "@/components/LoadingElement";
 import { skuModelColor } from "@/constants/colors";
 import { CHART_MARGIN, TREND_METRICS } from "./invBacktestShared";
 
-export function TrendChart({
+export const TrendChart = memo(function TrendChart({
   trendChartData,
   loadingTrend,
   trendMetric,
@@ -85,4 +86,4 @@ export function TrendChart({
       </ResponsiveContainer>
     </div>
   );
-}
+});

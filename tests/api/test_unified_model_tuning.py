@@ -61,13 +61,17 @@ def _list_row(
     is_results_promoted: bool = False,
     results_promoted_at: str | None = None,
     results_promote_job_id: str | None = None,
+    cluster_source: str = "production",
+    cluster_experiment_id: int | None = None,
+    cluster_experiment_label: str | None = None,
 ) -> tuple:
-    """Build a mock lgbm_tuning_run list-query row (19 columns)."""
+    """Build a mock lgbm_tuning_run list-query row (22 columns)."""
     return (
         run_id, run_label, model_id, started_at, completed_at,
         status, accuracy_pct, wape, bias, n_predictions, n_dfus,
         notes, is_promoted, promoted_at, job_id, template_id,
         is_results_promoted, results_promoted_at, results_promote_job_id,
+        cluster_source, cluster_experiment_id, cluster_experiment_label,
     )
 
 
@@ -149,11 +153,15 @@ def _compare_row(
     features: str | None = '["lag_1"]',
     feature_count: int = 17,
     metadata: str = "{}",
+    cluster_source: str = "production",
+    cluster_experiment_id: int | None = None,
+    cluster_experiment_label: str | None = None,
 ) -> tuple:
-    """Build a mock row for the compare endpoint's SELECT (13 columns)."""
+    """Build a mock row for the compare endpoint's SELECT (16 columns)."""
     return (
         run_id, run_label, model_id, accuracy_pct, wape, bias,
         n_predictions, n_dfus, status, params, features, feature_count, metadata,
+        cluster_source, cluster_experiment_id, cluster_experiment_label,
     )
 
 
@@ -1419,3 +1427,183 @@ async def test_detail_experiment_includes_results_promotion_fields():
     data = resp.json()
     assert data["is_results_promoted"] is True
     assert data["results_promoted_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Cluster Source Selection
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_experiment_with_cluster_source_production():
+    """POST with cluster_source=production (default) works as before."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = (30,)
+
+    mock_jm = MagicMock()
+    mock_jm.submit_job.return_value = "job-prod-100"
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            "common.services.job_registry.JobManager",
+            return_value=mock_jm,
+        ),
+        patch("api.routers.forecasting.unified_model_tuning._build_temp_config",
+              return_value="/tmp/fake_config.yaml"),
+    ):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/model-tuning/lgbm/experiments",
+                json={
+                    "run_label": "Production Clusters Test",
+                    "params": {"n_estimators": 1500},
+                    "config": {
+                        "cluster_strategy": "per_cluster",
+                        "cluster_source": "production",
+                    },
+                },
+            )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["run_id"] == 30
+    assert data["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_create_experiment_with_cluster_source_experimental():
+    """POST with cluster_source=experimental and valid cluster_experiment_id succeeds."""
+    pool, conn, cursor = _make_pool()
+    # Call sequence:
+    # 1. cluster_experiment validation query → returns completed experiment
+    # 2. INSERT lgbm_tuning_run → returns run_id
+    # 3. UPDATE job_id on the run
+    cursor.fetchone.side_effect = [
+        ("/tmp/clustering_scenarios/sc_20260320_120000_abcd", "sc_20260320_120000_abcd", "High-K Test"),
+        (31,),  # new run_id
+    ]
+
+    mock_jm = MagicMock()
+    mock_jm.submit_job.return_value = "job-exp-200"
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(
+            "common.services.job_registry.JobManager",
+            return_value=mock_jm,
+        ),
+        patch("api.routers.forecasting.unified_model_tuning._build_temp_config",
+              return_value="/tmp/fake_config.yaml"),
+    ):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/model-tuning/lgbm/experiments",
+                json={
+                    "run_label": "Experimental Clusters Test",
+                    "params": {"n_estimators": 2000},
+                    "config": {
+                        "cluster_strategy": "per_cluster",
+                        "cluster_source": "experimental",
+                        "cluster_experiment_id": 5,
+                    },
+                },
+            )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["run_id"] == 31
+    assert data["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_create_experiment_with_invalid_cluster_experiment():
+    """POST with cluster_source=experimental and nonexistent cluster_experiment_id returns 400."""
+    pool, conn, cursor = _make_pool()
+    # cluster_experiment validation query → not found
+    cursor.fetchone.return_value = None
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/model-tuning/lgbm/experiments",
+                json={
+                    "run_label": "Invalid Cluster Test",
+                    "params": {"n_estimators": 1500},
+                    "config": {
+                        "cluster_source": "experimental",
+                        "cluster_experiment_id": 999,
+                    },
+                },
+            )
+
+    assert resp.status_code == 400
+    assert "not found or not completed" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_create_experiment_with_incomplete_cluster_experiment():
+    """POST with cluster_source=experimental and running cluster experiment returns 400."""
+    pool, conn, cursor = _make_pool()
+    # The SQL query filters for status='completed', so a running experiment
+    # will return no rows — same as not found.
+    cursor.fetchone.return_value = None
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/model-tuning/lgbm/experiments",
+                json={
+                    "run_label": "Incomplete Cluster Test",
+                    "params": {"n_estimators": 1500},
+                    "config": {
+                        "cluster_source": "experimental",
+                        "cluster_experiment_id": 7,
+                    },
+                },
+            )
+
+    assert resp.status_code == 400
+    assert "not found or not completed" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_list_experiments_includes_cluster_source():
+    """GET /model-tuning/lgbm/experiments includes cluster_source fields."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = (2,)
+    cursor.fetchall.return_value = [
+        _list_row(run_id=30, run_label="prod_clusters",
+                  cluster_source="production"),
+        _list_row(run_id=31, run_label="exp_clusters",
+                  cluster_source="experimental",
+                  cluster_experiment_id=5,
+                  cluster_experiment_label="High-K Test"),
+    ]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/model-tuning/lgbm/experiments")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["experiments"]) == 2
+
+    prod_exp = data["experiments"][0]
+    assert prod_exp["cluster_source"] == "production"
+    assert prod_exp["cluster_experiment_id"] is None
+    assert prod_exp["cluster_experiment_label"] is None
+
+    exp_exp = data["experiments"][1]
+    assert exp_exp["cluster_source"] == "experimental"
+    assert exp_exp["cluster_experiment_id"] == 5
+    assert exp_exp["cluster_experiment_label"] == "High-K Test"

@@ -1,7 +1,8 @@
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "./Skeleton";
 
-export function ChartSkeleton({ height = 260, className }: { height?: number; className?: string }) {
+export const ChartSkeleton = memo(function ChartSkeleton({ height = 260, className }: { height?: number; className?: string }) {
   return (
     <div className={cn("space-y-2", className)}>
       <div className="flex items-center justify-between">
@@ -15,9 +16,9 @@ export function ChartSkeleton({ height = 260, className }: { height?: number; cl
       <Skeleton className="w-full rounded-lg" style={{ height }} />
     </div>
   );
-}
+});
 
-export function KpiRowSkeleton({ count = 4 }: { count?: number }) {
+export const KpiRowSkeleton = memo(function KpiRowSkeleton({ count = 4 }: { count?: number }) {
   return (
     <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${count}, 1fr)` }}>
       {Array.from({ length: count }, (_, i) => (
@@ -29,4 +30,4 @@ export function KpiRowSkeleton({ count = 4 }: { count?: number }) {
       ))}
     </div>
   );
-}
+});

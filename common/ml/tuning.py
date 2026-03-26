@@ -247,7 +247,8 @@ def train_lgbm_fold(
         ],
     )
     preds = np.maximum(model.predict(X_val), 0)
-    best_rounds = int(model.best_iteration_) if model.best_iteration_ else n_estimators_max
+    from common.ml.model_registry import get_best_iteration
+    best_rounds = get_best_iteration(model, "lgbm") or n_estimators_max
     return preds, best_rounds
 
 
@@ -282,7 +283,8 @@ def train_catboost_fold(
         verbose=False,
     )
     preds = np.maximum(model.predict(X_val), 0)
-    best_rounds = int(model.best_iteration_) if model.best_iteration_ else n_estimators_max
+    from common.ml.model_registry import get_best_iteration
+    best_rounds = get_best_iteration(model, "catboost") or n_estimators_max
     return preds, best_rounds
 
 
@@ -315,7 +317,8 @@ def train_xgboost_fold(
         verbose=False,
     )
     preds = np.maximum(model.predict(X_val), 0)
-    best_rounds = int(model.best_iteration) if model.best_iteration else n_estimators_max
+    from common.ml.model_registry import get_best_iteration
+    best_rounds = get_best_iteration(model, "xgboost") or n_estimators_max
     return preds, best_rounds
 
 
