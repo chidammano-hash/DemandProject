@@ -79,10 +79,13 @@ class TestConstants:
 
     def test_protected_features_includes_temporal(self):
         assert "month" in PROTECTED_FEATURES
-        assert "month_sin" in PROTECTED_FEATURES
-        assert "month_cos" in PROTECTED_FEATURES
         assert "quarter" in PROTECTED_FEATURES
         assert "ml_cluster" in PROTECTED_FEATURES
+        # fourier_sin_12/cos_12 replace legacy month_sin/cos
+        assert "fourier_sin_12" in PROTECTED_FEATURES
+        assert "fourier_cos_12" in PROTECTED_FEATURES
+        assert "month_sin" not in PROTECTED_FEATURES
+        assert "month_cos" not in PROTECTED_FEATURES
         assert isinstance(PROTECTED_FEATURES, set)
 
     def test_ts_profile_features_non_empty(self):

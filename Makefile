@@ -1246,7 +1246,7 @@ fresh-champion: fresh-backtest champion-all  ## Load + features + backtests + ch
 	@echo "  Run 'make check-all' to validate, then start services."
 	@echo "============================================================"
 
-fresh-all: db-truncate-data clean-artifacts fresh-champion policy-all ss-all eoq-all health-all  ## Full cleanup & recreate: truncate → clean → load → ML → champion → baseline planning
+fresh-all: db-truncate-data clean-artifacts fresh-champion seed-baselines policy-all ss-all eoq-all health-all  ## Full cleanup & recreate: truncate → clean → load → ML → champion → baselines + baseline planning
 	@echo ""
 	@echo "============================================================"
 	@echo "  Full database cleanup & recreate complete."

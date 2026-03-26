@@ -1354,10 +1354,78 @@ fresh-all
         ├── backtest-load-all         (load predictions → DB)
         └── refresh-accuracy-mvs      (accuracy MVs)
     └── champion-all                  (meta-learner + simulate + select)
+├── seed-baselines                   (seed baseline forecasts)
 ├── policy-all                       (refresh DFU policy assignments)
 ├── ss-all                           (recompute safety stock)
 ├── eoq-all                          (recompute EOQ)
 └── health-all                       (refresh inventory health score)
+```
+
+> **Note:** `fresh-all` covers data loading, ML pipeline, and baseline inventory planning only. To fully populate the application (production forecasts, demand planning, operations), run `setup-all` or the remaining phases below.
+
+### Full Application Setup (`setup-all`)
+
+`setup-all` runs all 6 phases end-to-end. Use this for a complete environment build from scratch.
+
+```bash
+make setup-all    # Phases 1-6: data → features → backtests → inv planning → demand planning → ops
+```
+
+**Phase breakdown:**
+
+| Phase | Target | What it does | Depends on |
+|---|---|---|---|
+| 1 | `setup-data` | Normalize + load all 10 domains (parallel pipeline) | Input CSVs |
+| 2 | `setup-features` | Clustering, seasonality, variability, lead time, ABC-XYZ, demand signals | Phase 1 |
+| 3 | `setup-backtest` | 3 backtests + load + accuracy refresh + champion selection + seed baselines | Phase 2 |
+| 4 | `setup-inv-planning` | EOQ, policies, safety stock, exceptions, fill rate, health, supplier perf, investment, intramonth, control tower, rebalancing | Phase 1 |
+| 5 | `setup-demand-planning` | Production forecasts, projections, POs, quantiles, consensus, planned orders, replenishment plan, bias, blended, service level, lead time, echelon | Phase 3 |
+| 6 | `setup-ops` | S&OP, events, financial plan, storyboard, scenarios, DQ | Phase 1 |
+
+**Dependency chain:**
+
+```
+setup-all
+├── setup-backtest (Phase 3)
+│   └── setup-features (Phase 2)
+│       └── setup-data (Phase 1)
+│           └── run_pipeline.py --mode full --parallel
+│       ├── cluster-all
+│       ├── seasonality-all
+│       ├── variability-all
+│       ├── lt-profile-all
+│       ├── abc-xyz-all
+│       └── demand-signals-all
+│   ├── backtest-all           (LGBM + CatBoost + XGBoost)
+│   ├── backtest-load-all      (predictions → DB)
+│   ├── accuracy-slice-refresh (accuracy MVs)
+│   ├── champion-all           (meta-learner + simulate + select)
+│   └── seed-baselines         (baseline forecasts)
+├── setup-inv-planning (Phase 4)
+│   ├── eoq-all                ├── supplier-perf-all
+│   ├── policy-all             ├── investment-all
+│   ├── ss-all                 ├── intramonth-all
+│   ├── exceptions-generate    ├── control-tower-all
+│   ├── fill-rate-all          └── rebalancing-all
+│   └── health-all
+├── setup-demand-planning (Phase 5)
+│   ├── forecast-prod-all      ├── planned-orders-all
+│   ├── projection-all         ├── replplan-all
+│   ├── po-all                 ├── bias-all
+│   ├── quantile-all           ├── blended-all
+│   ├── consensus-all          ├── service-level-all
+│   ├── lead-time-all          └── echelon-all
+└── setup-ops (Phase 6)
+    ├── sop-all                ├── storyboard-all
+    ├── events-all             ├── scenarios-all
+    ├── financial-plan-all     └── dq-all
+```
+
+**After `fresh-all`, run the remaining phases:**
+
+```bash
+make setup-demand-planning    # Phase 5: production forecasts + demand planning
+make setup-ops                # Phase 6: S&OP, events, storyboard, DQ
 ```
 
 ### Preserved Tables (Untouched)

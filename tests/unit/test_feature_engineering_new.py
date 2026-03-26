@@ -551,25 +551,31 @@ class TestFourierFeatures:
                 col = f"fourier_{func}_{period}"
                 assert grid[col].dtype == np.float32, f"{col} not float32"
 
-    def test_fourier_sin_12_matches_month_sin(self):
-        """fourier_sin_12 should equal sin(2π * month / 12) = month_sin."""
+    def test_fourier_sin_12_equals_sin_2pi_month_over_12(self):
+        """fourier_sin_12 should equal sin(2π * month / 12)."""
         grid = _build_grid()
-        pd.testing.assert_series_equal(
-            grid["fourier_sin_12"].reset_index(drop=True),
-            grid["month_sin"].reset_index(drop=True),
-            check_names=False,
+        expected = np.sin(2 * np.pi * grid["month"].values / 12).astype(np.float32)
+        np.testing.assert_allclose(
+            grid["fourier_sin_12"].values,
+            expected,
             atol=1e-5,
         )
 
-    def test_fourier_cos_12_matches_month_cos(self):
-        """fourier_cos_12 should equal cos(2π * month / 12) = month_cos."""
+    def test_fourier_cos_12_equals_cos_2pi_month_over_12(self):
+        """fourier_cos_12 should equal cos(2π * month / 12)."""
         grid = _build_grid()
-        pd.testing.assert_series_equal(
-            grid["fourier_cos_12"].reset_index(drop=True),
-            grid["month_cos"].reset_index(drop=True),
-            check_names=False,
+        expected = np.cos(2 * np.pi * grid["month"].values / 12).astype(np.float32)
+        np.testing.assert_allclose(
+            grid["fourier_cos_12"].values,
+            expected,
             atol=1e-5,
         )
+
+    def test_month_sin_cos_removed(self):
+        """month_sin and month_cos should not exist (replaced by fourier_sin_12/cos_12)."""
+        grid = _build_grid()
+        assert "month_sin" not in grid.columns
+        assert "month_cos" not in grid.columns
 
     def test_fourier_period_6_alternates(self):
         """Period-6 features should complete a full cycle every 6 months."""

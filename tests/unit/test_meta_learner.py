@@ -191,8 +191,8 @@ class TestBuildTrainingData:
         assert "roll_wape_B" in feature_cols
         # Should include calendar features
         assert "month" in feature_cols
-        assert "month_sin" in feature_cols
-        assert "month_cos" in feature_cols
+        assert "fourier_sin_12" in feature_cols
+        assert "fourier_cos_12" in feature_cols
         # Should include demand stats
         assert "mean_qty" in feature_cols
         assert "cv_demand" in feature_cols

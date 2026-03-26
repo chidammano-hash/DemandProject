@@ -534,8 +534,12 @@ def _build_meta_features(
 
     pivoted["month"] = pivoted["startdate"].dt.month
     pivoted["quarter"] = pivoted["startdate"].dt.quarter
-    pivoted["month_sin"] = np.sin(2 * np.pi * pivoted["month"] / 12)
-    pivoted["month_cos"] = np.cos(2 * np.pi * pivoted["month"] / 12)
+    # Fourier terms (period 12 replaces legacy month_sin/month_cos)
+    month_vals = pivoted["month"].values.astype(np.float64)
+    for period in [12, 6, 4, 3]:
+        angle = 2.0 * np.pi * month_vals / period
+        pivoted[f"fourier_sin_{period}"] = np.sin(angle).astype(np.float32)
+        pivoted[f"fourier_cos_{period}"] = np.cos(angle).astype(np.float32)
 
     pivoted = pivoted.merge(dfu_features, on=_DFU_COLS, how="left")
 

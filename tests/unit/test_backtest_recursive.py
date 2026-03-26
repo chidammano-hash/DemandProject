@@ -170,6 +170,7 @@ class TestRecursiveLoopIntegration:
         m2_before = simple_grid[
             (simple_grid["sku_ck"] == "A") & (simple_grid["startdate"] == month2)
         ]["qty_lag_1"].iloc[0]
+        # After NaN masking, feature columns are filled to 0 for model consumption
         assert m2_before == 0.0
 
         preds_m1 = pd.DataFrame({"sku_ck": ["A", "B"], "basefcst_pref": [123.0, 456.0]})
@@ -210,6 +211,7 @@ class TestRecursiveLoopIntegration:
             (recursive_grid["sku_ck"] == "A") & (recursive_grid["startdate"] == month2)
         ]["qty_lag_1"].iloc[0]
 
+        # After NaN masking, feature columns are filled to 0 for model consumption
         assert direct_lag == 0.0
         assert recursive_lag == pytest.approx(150.0)
         assert recursive_lag != direct_lag

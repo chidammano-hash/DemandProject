@@ -5,10 +5,13 @@ Provides common logic for all backtest scripts:
 - Data loading from Postgres
 - Execution-lag assignment and forecast_ck construction
 - All-lag expansion for archive tables
+- DFU cohort classification (cold-start, sparse, active)
 - Output saving (CSV + metadata JSON)
-- Accuracy computation
+- Accuracy computation (overall + per-cohort)
 - MLflow logging
 - Per-cluster adaptive hyperparameter profiles
+- Per-step recursive accuracy reporting
+- Noise injection for recursive training robustness
 
 Model-specific scripts implement only the training/prediction functions.
 """
@@ -38,7 +41,7 @@ from common.db import get_db_params
 from common.metrics import compute_accuracy_metrics
 from common.mlflow_utils import log_backtest_run
 from common.planning_date import get_planning_date
-from common.utils import _ts, load_config
+from common.utils import load_config
 
 logger = logging.getLogger(__name__)
 
@@ -186,18 +189,32 @@ def generate_timeframes(
     earliest: pd.Timestamp,
     latest: pd.Timestamp,
     n: int = 10,
+    embargo_months: int = 0,
 ) -> list[dict]:
-    """Generate N expanding-window timeframes.
+    """Generate N expanding-window timeframes with optional embargo gap.
 
     For timeframe i (A=0 .. J=9):
-      train_end   = latest - (N - i) months
-      predict     = [train_end + 1 month, latest]
+      train_end     = latest - (N - i) months
+      predict_start = train_end + 1 + embargo_months months
+
+    The embargo creates a gap between the last training month and the first
+    prediction month, matching the causality gap used during hyperparameter
+    tuning (``gap_months`` in ``tuning.py``).  An embargo of 0 preserves
+    the legacy behaviour (predict starts 1 month after train_end).
+
+    Args:
+        earliest: First available month.
+        latest: Last available month.
+        n: Number of timeframes to generate.
+        embargo_months: Number of months to skip between train_end and
+            predict_start (default 0 = no gap beyond the natural 1-month
+            offset).
     """
     timeframes = []
     for i in range(n):
         train_end = latest - pd.DateOffset(months=(n - i))
         train_end = train_end.normalize()  # midnight
-        predict_start = train_end + pd.DateOffset(months=1)
+        predict_start = train_end + pd.DateOffset(months=1 + embargo_months)
         label = chr(ord("A") + i)
         timeframes.append({
             "label": label,
@@ -297,13 +314,73 @@ def load_backtest_data(
         original_clusters = dfu_attrs["ml_cluster"].copy()
         dfu_attrs["ml_cluster"] = dfu_attrs["sku_ck"].map(override_map).fillna(dfu_attrs["ml_cluster"])
         n_remapped = int((dfu_attrs["ml_cluster"] != original_clusters).sum())
-        print(f"  [{_ts()}] Cluster override applied: {len(override_map):,} entries from {cluster_override_path}, "
-              f"{n_remapped:,} DFUs remapped")
+        logger.info(
+            "Cluster override applied: %s entries from %s, %s DFUs remapped",
+            f"{len(override_map):,}", cluster_override_path, f"{n_remapped:,}",
+        )
 
-    print(f"  [{_ts()}] Sales: {len(sales_df):,} rows, {len(dfus_with_sales):,} DFUs ({time.time() - t1:.1f}s)")
-    print(f"  [{_ts()}] DFU attrs: {len(dfu_attrs):,}, Item attrs: {len(item_attrs):,}")
+    # Classify DFUs into cohorts based on sales history depth
+    dfu_attrs = classify_dfu_cohorts(sales_df, dfu_attrs)
+
+    logger.info("Sales: %s rows, %s DFUs (%.1fs)", f"{len(sales_df):,}", f"{len(dfus_with_sales):,}", time.time() - t1)
+    logger.info("DFU attrs: %s, Item attrs: %s", f"{len(dfu_attrs):,}", f"{len(item_attrs):,}")
 
     return sales_df, dfu_attrs, item_attrs
+
+
+# ── DFU cohort classification ───────────────────────────────────────────────
+
+
+def classify_dfu_cohorts(
+    sales_df: pd.DataFrame,
+    dfu_attrs: pd.DataFrame,
+    cold_start_threshold: int = 6,
+    sparse_threshold: int = 12,
+) -> pd.DataFrame:
+    """Classify DFUs into cohorts based on months of sales history.
+
+    Cohorts:
+      - cold_start: < cold_start_threshold months of history (default < 6)
+      - sparse: >= cold_start_threshold and < sparse_threshold (default 6-11)
+      - active: >= sparse_threshold months of history (default >= 12)
+
+    Adds a ``cohort`` column to dfu_attrs (in-place copy).
+
+    Args:
+        sales_df: Sales data with ``sku_ck`` and ``startdate`` columns.
+        dfu_attrs: DFU attributes DataFrame with ``sku_ck`` column.
+        cold_start_threshold: Months below which a DFU is cold-start.
+        sparse_threshold: Months below which (but >= cold_start) a DFU is sparse.
+
+    Returns:
+        dfu_attrs with added ``cohort`` column.
+    """
+    # Determine the DFU key column name (sku_ck in restructured, dfu_ck legacy)
+    dfu_key = "sku_ck" if "sku_ck" in sales_df.columns else "dfu_ck"
+
+    dfu_month_counts = sales_df.groupby(dfu_key)["startdate"].nunique()
+
+    # Map each DFU to its month count
+    result = dfu_attrs.copy()
+    attr_key = "sku_ck" if "sku_ck" in result.columns else "dfu_ck"
+    result["_month_count"] = result[attr_key].map(dfu_month_counts).fillna(0).astype(int)
+
+    # Classify
+    conditions = [
+        result["_month_count"] < cold_start_threshold,
+        result["_month_count"] < sparse_threshold,
+    ]
+    choices = ["cold_start", "sparse"]
+    result["cohort"] = np.select(conditions, choices, default="active")
+
+    n_cold = int((result["cohort"] == "cold_start").sum())
+    n_sparse = int((result["cohort"] == "sparse").sum())
+    n_active = int((result["cohort"] == "active").sum())
+    logger.info("DFU cohorts: active=%d, sparse=%d, cold_start=%d (total=%d)",
+                n_active, n_sparse, n_cold, len(result))
+
+    result.drop(columns=["_month_count"], inplace=True)
+    return result
 
 
 # ── Execution-lag assignment ─────────────────────────────────────────────────
@@ -339,7 +416,7 @@ def assign_execution_lag(
         ], sep="_")
     )
 
-    print(f"  [{_ts()}] Execution-lag assignment done ({time.time() - t0:.1f}s)")
+    logger.info("Execution-lag assignment done (%.1fs)", time.time() - t0)
     return result
 
 
@@ -411,7 +488,7 @@ def assign_natural_lags(
     # Drop helper column
     df = df.drop(columns=["_train_end"])
 
-    print(f"  [{_ts()}] Natural lag assignment (0-{max_lag}) done: {len(df):,} rows ({time.time() - t0:.1f}s)")
+    logger.info("Natural lag assignment (0-%d) done: %s rows (%.1fs)", max_lag, f"{len(df):,}", time.time() - t0)
     return df
 
 
@@ -437,32 +514,32 @@ def postprocess_predictions(
     Returns (output_df, archive_df, combined_raw).
     """
     combined = pd.concat(all_predictions, ignore_index=True)
-    print(f"  [{_ts()}] Total raw predictions: {len(combined):,}")
+    logger.info("Total raw predictions: %s", f"{len(combined):,}")
 
     # Ensure startdate is datetime
     combined["startdate"] = pd.to_datetime(combined["startdate"])
 
     # Assign execution lag and compute fcstdate (one row per prediction)
-    print(f"  [{_ts()}] Assigning execution lag per DFU...")
+    logger.info("Assigning execution lag per DFU...")
     expanded = assign_execution_lag(combined, exec_lag_map)
-    print(f"  [{_ts()}] Rows after execution-lag assignment: {len(expanded):,}")
+    logger.info("Rows after execution-lag assignment: %s", f"{len(expanded):,}")
 
     # Deduplicate: for same (forecast_ck, model_id), keep latest timeframe
     expanded = expanded.sort_values("timeframe_idx")
     expanded = expanded.drop_duplicates(subset=["forecast_ck", "model_id"], keep="last")
-    print(f"  [{_ts()}] After dedup: {len(expanded):,}")
+    logger.info("After dedup: %s", f"{len(expanded):,}")
 
     # Attach actuals via merge (vectorized — not row-by-row apply)
-    print(f"  [{_ts()}] Attaching actuals...")
+    logger.info("Attaching actuals...")
     t1 = time.time()
     actuals = sales_df.drop_duplicates(subset=["sku_ck", "startdate"])[["sku_ck", "startdate", "qty"]].rename(
         columns={"qty": "tothist_dmd"}
     )
     expanded = expanded.merge(actuals, on=["sku_ck", "startdate"], how="left")
-    print(f"  [{_ts()}] Actuals attached ({time.time() - t1:.1f}s)")
+    logger.info("Actuals attached (%.1fs)", time.time() - t1)
 
     # ── All-lags archive ──────────────────────────────────────────────────
-    print(f"  [{_ts()}] Generating all-lags archive (lag 0-{MAX_ARCHIVE_LAG})...")
+    logger.info("Generating all-lags archive (lag 0-%d)...", MAX_ARCHIVE_LAG)
 
     if timeframes is not None:
         # Natural lags: each prediction gets its true forecast horizon based
@@ -490,7 +567,7 @@ def postprocess_predictions(
     archive_expanded = archive_expanded.drop_duplicates(
         subset=["forecast_ck", "model_id", "lag"], keep="last"
     )
-    print(f"  [{_ts()}] Archive after dedup: {len(archive_expanded):,}")
+    logger.info("Archive after dedup: %s", f"{len(archive_expanded):,}")
 
     # Attach actuals
     archive_expanded = archive_expanded.merge(actuals, on=["sku_ck", "startdate"], how="left")
@@ -527,7 +604,7 @@ def _expand_to_all_lags_legacy(
         ], sep="_")
     )
 
-    print(f"  [{_ts()}] Legacy all-lag expansion (0-{max_lag}) done: {len(result):,} rows ({time.time() - t0:.1f}s)")
+    logger.info("Legacy all-lag expansion (0-%d) done: %s rows (%.1fs)", max_lag, f"{len(result):,}", time.time() - t0)
     return result
 
 
@@ -547,11 +624,17 @@ def save_backtest_output(
     earliest_month: pd.Timestamp,
     latest_month: pd.Timestamp,
     extra_metadata: dict[str, Any] | None = None,
+    dfu_cohort_map: dict[str, str] | None = None,
 ) -> tuple[Path, Path, Path, dict]:
     """Save predictions CSV, archive CSV, and metadata JSON.
 
     Writes into a model-scoped subdirectory: output_dir / model_id /
     This prevents multiple backtest runs from overwriting each other (PL-001).
+
+    Args:
+        dfu_cohort_map: Optional mapping of DFU key -> cohort name
+            (``"active"``, ``"sparse"``, ``"cold_start"``). When provided,
+            per-cohort accuracy is computed and added to metadata.
 
     Returns (output_path, archive_path, meta_path, metadata_dict).
     """
@@ -566,7 +649,7 @@ def save_backtest_output(
 
     output_path = model_dir / "backtest_predictions.csv"
     out.to_csv(output_path, index=False)
-    print(f"  [{_ts()}] Saved {len(out):,} predictions to {output_path}")
+    logger.info("Saved %s predictions to %s", f"{len(out):,}", output_path)
 
     # Archive CSV
     arch = archive_df[ARCHIVE_COLS].copy()
@@ -575,7 +658,7 @@ def save_backtest_output(
 
     archive_path = model_dir / "backtest_predictions_all_lags.csv"
     arch.to_csv(archive_path, index=False)
-    print(f"  [{_ts()}] Saved {len(arch):,} archive rows to {archive_path}")
+    logger.info("Saved %s archive rows to %s", f"{len(arch):,}", archive_path)
 
     # Build metadata
     metadata = {
@@ -608,15 +691,47 @@ def save_backtest_output(
     )
     if acc["wape"] is not None:
         metadata["accuracy_at_execution_lag"] = acc
-        print(f"\n  Accuracy at execution lag ({acc['n_rows']:,} rows):")
-        print(f"    WAPE: {acc['wape']:.2f}%")
-        print(f"    Bias: {acc['bias']:.4f}")
-        print(f"    Accuracy: {acc['accuracy_pct']:.2f}%")
+        metadata["accuracy_overall"] = acc["accuracy_pct"]
+        logger.info(
+            "Accuracy at execution lag (%s rows): WAPE=%.2f%%, Bias=%.4f, Accuracy=%.2f%%",
+            f"{acc['n_rows']:,}", acc["wape"], acc["bias"], acc["accuracy_pct"],
+        )
+
+    # Per-cohort accuracy breakdown
+    if dfu_cohort_map:
+        # Determine DFU key column — sku_ck in restructured codebase, dfu_ck in legacy
+        dfu_key = "sku_ck" if "sku_ck" in output_df.columns else "dfu_ck"
+        cohort_col = output_df[dfu_key].map(dfu_cohort_map).fillna("active")
+        cohort_counts: dict[str, int] = {}
+        cohort_accuracy: dict[str, float | None] = {}
+
+        for cohort_name in ("active", "sparse", "cold_start"):
+            mask = cohort_col == cohort_name
+            cohort_counts[f"n_dfus_{cohort_name}"] = int(output_df.loc[mask, dfu_key].nunique())
+
+            cohort_out = out[mask.values] if len(out) == len(mask) else out
+            if cohort_counts[f"n_dfus_{cohort_name}"] > 0 and len(out) == len(mask):
+                cohort_acc = compute_accuracy_metrics(
+                    pd.to_numeric(cohort_out["basefcst_pref"], errors="coerce"),
+                    pd.to_numeric(cohort_out["tothist_dmd"], errors="coerce"),
+                )
+                cohort_accuracy[f"accuracy_{cohort_name}"] = cohort_acc.get("accuracy_pct")
+                logger.info(
+                    "  Accuracy [%s] (%d DFUs): %s%%",
+                    cohort_name, cohort_counts[f"n_dfus_{cohort_name}"],
+                    cohort_acc.get("accuracy_pct"),
+                )
+            else:
+                cohort_accuracy[f"accuracy_{cohort_name}"] = None
+
+        metadata.update(cohort_counts)
+        metadata.update(cohort_accuracy)
+        metadata["accuracy_population"] = "active_and_sparse"
 
     meta_path = model_dir / "backtest_metadata.json"
     with open(meta_path, "w") as f:
         json.dump(metadata, f, indent=2, default=str)
-    print(f"  [{_ts()}] Saved metadata to {meta_path}")
+    logger.info("Saved metadata to %s", meta_path)
 
     return output_path, archive_path, meta_path, metadata
 
@@ -645,7 +760,7 @@ def save_feature_importance(
         }).sort_values("importance", ascending=False)
         imp_path = output_dir / "feature_importance.csv"
         importance.to_csv(imp_path, index=False)
-        print(f"  [{_ts()}] Saved feature importance to {imp_path}")
+        logger.info("Saved feature importance to %s", imp_path)
         return imp_path
     except Exception:
         return None
@@ -660,6 +775,63 @@ TrainFn = Callable[
 ]
 
 _PREDICT_META_COLS = ["sku_ck", "item_id", "customer_group", "loc", "startdate"]
+
+
+# ── Recursive mode helpers ────────────────────────────────────────────────
+
+
+def _inject_recursive_noise(
+    qty_values: np.ndarray,
+    noise_pct: float = 0.05,
+) -> np.ndarray:
+    """Add Gaussian noise to qty values to simulate recursive prediction errors.
+
+    Used during training to make the model robust to noisy lag inputs,
+    reducing the distribution shift between training (real actuals as lags)
+    and recursive inference (model predictions as lags).
+
+    Args:
+        qty_values: Array of quantity values (e.g. lag features).
+        noise_pct: Standard deviation of noise as a fraction of the mean
+            absolute value.  0.0 returns the original values unchanged.
+
+    Returns:
+        Array with additive Gaussian noise applied.
+    """
+    if noise_pct <= 0.0 or len(qty_values) == 0:
+        return qty_values.copy()
+    scale = noise_pct * np.abs(qty_values).mean()
+    if scale <= 0.0:
+        return qty_values.copy()
+    noise = np.random.normal(0, scale, size=qty_values.shape)
+    return qty_values + noise
+
+
+def _compute_step_wape(
+    predictions: pd.DataFrame,
+    actuals_lookup: dict[str, float],
+) -> float | None:
+    """Compute WAPE for a single recursive step.
+
+    Args:
+        predictions: DataFrame with ``sku_ck`` and ``basefcst_pref`` columns.
+        actuals_lookup: Mapping from ``sku_ck`` to actual qty for this month.
+
+    Returns:
+        WAPE as a percentage, or None if no matching actuals.
+    """
+    if predictions.empty or not actuals_lookup:
+        return None
+    matched = predictions[predictions["sku_ck"].isin(actuals_lookup)]
+    if matched.empty:
+        return None
+    fcst = matched["basefcst_pref"].values
+    actual = matched["sku_ck"].map(actuals_lookup).values
+    total_actual = np.abs(np.nansum(actual))
+    if total_actual == 0:
+        return None
+    abs_error = np.nansum(np.abs(fcst - actual))
+    return round(float(100.0 * abs_error / total_actual), 2)
 
 
 def _fill_predict_nans(
@@ -726,6 +898,7 @@ def run_tree_backtest(
     recursive: bool = False,
     model_persistence_fn: Callable[[Any, list[str], str], None] | None = None,
     algo_config: dict[str, Any] | None = None,
+    embargo_months: int = 0,
 ) -> None:
     """Run a complete tree-based per-cluster backtest (LGBM, CatBoost, XGBoost).
 
@@ -744,15 +917,22 @@ def run_tree_backtest(
     t_start = time.time()
     db = get_db_params()
 
-    print(f"[{_ts()}] Backtest: strategy={cluster_strategy}, model_id={model_id}, "
-          f"n_timeframes={n_timeframes}, recursive={recursive}")
+    logger.info(
+        "Backtest: strategy=%s, model_id=%s, n_timeframes=%d, recursive=%s",
+        cluster_strategy, model_id, n_timeframes, recursive,
+    )
 
     # ── Step 1: Load data ────────────────────────────────────────────────────
-    print(f"\n[{_ts()}] Step 1: Loading data from Postgres...")
+    logger.info("Step 1: Loading data from Postgres...")
     sales_df, dfu_attrs, item_attrs = load_backtest_data(db, algo_config=algo_config)
 
     # Execution lag lookup
     exec_lag_map = dfu_attrs.set_index("sku_ck")["execution_lag"].fillna(0).astype(int).to_dict()
+
+    # DFU cohort map for per-cohort accuracy reporting
+    dfu_cohort_map: dict[str, str] | None = None
+    if "cohort" in dfu_attrs.columns:
+        dfu_cohort_map = dfu_attrs.set_index("sku_ck")["cohort"].to_dict()
 
     # ── Step 2: Generate timeframes ──────────────────────────────────────────
     planning_dt = pd.Timestamp(get_planning_date())
@@ -762,28 +942,36 @@ def run_tree_backtest(
     earliest_month = sales_df["startdate"].min()
     # Filter out any sales beyond the planning date
     sales_df = sales_df[sales_df["startdate"] <= latest_month].copy()
-    print(f"  [{_ts()}] Date range: {earliest_month.date()} → {latest_month.date()} "
-          f"(planning date: {planning_dt.date()})")
+    logger.info(
+        "Date range: %s -> %s (planning date: %s)",
+        earliest_month.date(), latest_month.date(), planning_dt.date(),
+    )
 
-    timeframes = generate_timeframes(earliest_month, latest_month, n_timeframes)
-    print(f"\n[{_ts()}] Step 2: Generated {len(timeframes)} timeframes:")
+    timeframes = generate_timeframes(earliest_month, latest_month, n_timeframes, embargo_months=embargo_months)
+    if embargo_months:
+        logger.info("Embargo gap: %d month(s) between train_end and predict_start", embargo_months)
+    logger.info("Step 2: Generated %d timeframes:", len(timeframes))
     for tf in timeframes:
-        print(f"  {tf['label']}: train [{tf['train_start'].date()} → {tf['train_end'].date()}], "
-              f"predict [{tf['predict_start'].date()} → {tf['predict_end'].date()}]")
+        logger.info(
+            "  %s: train [%s -> %s], predict [%s -> %s]",
+            tf["label"], tf["train_start"].date(), tf["train_end"].date(),
+            tf["predict_start"].date(), tf["predict_end"].date(),
+        )
 
     all_months = sorted(sales_df["startdate"].unique())
 
     # ── Step 3: Build feature matrix ONCE ────────────────────────────────────
-    print(f"\n[{_ts()}] Step 3: Building feature matrix (one-time)...")
+    logger.info("Step 3: Building feature matrix (one-time)...")
     full_grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, all_months, cat_dtype=cat_dtype)
     feature_cols = get_feature_columns(full_grid)
     cat_cols = [c for c in CAT_FEATURES if c in feature_cols and c in full_grid.columns]
-    print(f"  [{_ts()}] Features: {len(feature_cols)} columns, cat: {cat_cols}")
+    logger.info("Features: %d columns, cat: %s", len(feature_cols), cat_cols)
 
     # ── Step 4: Train & predict per timeframe ────────────────────────────────
-    print(f"\n[{_ts()}] Step 4: Running {len(timeframes)} timeframe backtests...")
+    logger.info("Step 4: Running %d timeframe backtests...", len(timeframes))
     all_predictions = []
     shap_timeframe_reports: list[pd.DataFrame] = []
+    recursive_step_metrics: list[dict[str, Any]] = []
 
     for ti, tf in enumerate(timeframes):
         label = tf["label"]
@@ -792,23 +980,26 @@ def run_tree_backtest(
         predict_end = tf["predict_end"]
         tf_start = time.time()
 
-        print(f"\n── Timeframe {label} ({ti + 1}/{len(timeframes)}) ──")
+        logger.info("Timeframe %s (%d/%d)", label, ti + 1, len(timeframes))
 
         predict_months = [m for m in all_months if predict_start <= m <= predict_end]
         if not predict_months:
-            print(f"  [{_ts()}] No predict months — skipping")
+            logger.info("No predict months -- skipping")
             continue
 
         train_months = [m for m in all_months if earliest_month <= m <= train_end]
         if len(train_months) < min_training_months:
-            print(f"  [{_ts()}] Insufficient training months ({len(train_months)}) — need {min_training_months} min — skipping")
+            logger.info(
+                "Insufficient training months (%d) -- need %d min -- skipping",
+                len(train_months), min_training_months,
+            )
             continue
 
         # Mask future sales and recompute lag/rolling features
-        print(f"  [{_ts()}] Masking sales after {train_end.date()} and recomputing features...")
+        logger.info("Masking sales after %s and recomputing features...", train_end.date())
         t1 = time.time()
         masked_grid = mask_future_sales(full_grid, train_end)
-        print(f"  [{_ts()}] Masking done ({time.time() - t1:.1f}s)")
+        logger.info("Masking done (%.1fs)", time.time() - t1)
 
         # Split train / predict
         train_mask = masked_grid["startdate"] <= train_end
@@ -823,18 +1014,18 @@ def run_tree_backtest(
             if col in predict_data.columns and col not in cat_cols:
                 predict_data[col] = predict_data[col].fillna(0)
 
-        print(f"  [{_ts()}] Train: {len(train_data):,} rows, Predict: {len(predict_data):,} rows")
+        logger.info("Train: %s rows, Predict: %s rows", f"{len(train_data):,}", f"{len(predict_data):,}")
 
         if len(train_data) == 0 or len(predict_data) == 0:
-            print(f"  [{_ts()}] Empty train or predict — skipping")
+            logger.info("Empty train or predict -- skipping")
             continue
 
         # Resolve hyperparams: per-timeframe inline tuning (PL-002) or static defaults
         if inline_tuner_fn is not None:
-            print(f"  [{_ts()}] Inline hyperparameter tuning (cutoff={train_end.date()})...")
+            logger.info("Inline hyperparameter tuning (cutoff=%s)...", train_end.date())
             t_tune = time.time()
             effective_params = inline_tuner_fn(full_grid, feature_cols, cat_cols, train_end)
-            print(f"  [{_ts()}] Inline tuning done ({time.time() - t_tune:.1f}s)")
+            logger.info("Inline tuning done (%.1fs)", time.time() - t_tune)
         else:
             effective_params = model_params
 
@@ -851,10 +1042,34 @@ def run_tree_backtest(
                 masked_grid[masked_grid["startdate"] == sorted_months[0]].copy(),
                 feature_cols, cat_cols,
             )
-            print(f"  [{_ts()}] Recursive: training on first month {sorted_months[0].date()}, "
-                  f"then iterating {len(sorted_months)} months...")
+            logger.info(
+                "Recursive: training on first month %s, then iterating %d months...",
+                sorted_months[0].date(), len(sorted_months),
+            )
+
+            # ── Noise injection (teacher forcing lite) ────────────────────────
+            # Optionally perturb lag features in training data so the model
+            # learns to be robust to the noisy inputs it will see during
+            # recursive inference (where predictions replace true actuals).
+            algo_cfg_noise = load_config("algorithm_config.yaml")
+            noise_enabled = algo_cfg_noise.get("recursive_noise_enabled", False)
+            noise_pct = algo_cfg_noise.get("recursive_noise_pct", 0.05)
+            train_data_for_fit = train_data
+            if noise_enabled and noise_pct > 0:
+                lag_cols = [c for c in feature_cols if c.startswith("qty_lag_")]
+                if lag_cols:
+                    train_data_for_fit = train_data.copy()
+                    for col in lag_cols:
+                        train_data_for_fit[col] = _inject_recursive_noise(
+                            train_data_for_fit[col].values, noise_pct
+                        )
+                    logger.info(
+                        "Recursive noise injection: %.1f%% on %d lag cols",
+                        noise_pct * 100, len(lag_cols),
+                    )
+
             preds_first, models = train_fn_per_cluster(
-                train_data, first_predict, feature_cols, cat_cols, effective_params
+                train_data_for_fit, first_predict, feature_cols, cat_cols, effective_params
             )
 
         # ── SHAP feature selection + conditional retrain (Feature 42) ─────────
@@ -863,23 +1078,23 @@ def run_tree_backtest(
         effective_feature_cols = feature_cols
         effective_cat_cols = cat_cols
         if feature_selector_fn is not None:
-            print(f"  [{_ts()}] SHAP feature selection (timeframe {label})...")
+            logger.info("SHAP feature selection (timeframe %s)...", label)
             t_shap = time.time()
             selected_features, shap_df = feature_selector_fn(
                 models, train_data, feature_cols, cat_cols,
                 tf["index"], train_end,
             )
             shap_timeframe_reports.append(shap_df)
-            print(f"  [{_ts()}] SHAP done ({time.time() - t_shap:.1f}s)")
+            logger.info("SHAP done (%.1fs)", time.time() - t_shap)
 
             # Retrain if SHAP dropped >= threshold of features (configurable via algorithm_config.yaml)
             retrain_threshold = algo_config.get("shap_retrain_threshold", 0.10) if algo_config else 0.10
             features_dropped = len(feature_cols) - len(selected_features)
             drop_pct = features_dropped / len(feature_cols) if feature_cols else 0
             if drop_pct >= retrain_threshold and set(selected_features) != set(feature_cols):
-                print(
-                    f"  [{_ts()}] Retraining with {len(selected_features)} SHAP-selected features "
-                    f"(was {len(feature_cols)})..."
+                logger.info(
+                    "Retraining with %d SHAP-selected features (was %d)...",
+                    len(selected_features), len(feature_cols),
                 )
                 selected_cat_cols = [c for c in cat_cols if c in selected_features]
                 effective_feature_cols = selected_features
@@ -903,9 +1118,9 @@ def run_tree_backtest(
                     preds_first = preds_retrain
                 else:
                     preds = preds_retrain
-                print(f"  [{_ts()}] Retrain done ({time.time() - t_retrain:.1f}s)")
+                logger.info("Retrain done (%.1fs)", time.time() - t_retrain)
             else:
-                print(f"  [{_ts()}] SHAP: all {len(feature_cols)} features retained")
+                logger.info("SHAP: all %d features retained", len(feature_cols))
 
         # ── Complete recursive loop for months 2+ ─────────────────────────────
         if recursive:
@@ -917,7 +1132,32 @@ def run_tree_backtest(
             # Pass all_months (full grid months), not sorted_months (predict-only)
             update_grid_incremental(current_grid, sorted_months[0], preds_first, all_months)
 
-            for month in sorted_months[1:]:
+            # Build actuals lookup for per-step accuracy reporting.
+            # Maps month -> {sku_ck -> qty} for months in the predict window.
+            actuals_by_month: dict[pd.Timestamp, dict[str, float]] = {}
+            for m in sorted_months:
+                m_sales = sales_df[sales_df["startdate"] == m]
+                if not m_sales.empty:
+                    actuals_by_month[m] = (
+                        m_sales.drop_duplicates(subset="sku_ck")
+                        .set_index("sku_ck")["qty"]
+                        .to_dict()
+                    )
+
+            # Per-step accuracy tracking
+            step_metrics: list[dict[str, Any]] = []
+
+            # Step 1 accuracy (first month)
+            if sorted_months[0] in actuals_by_month:
+                step1_wape = _compute_step_wape(preds_first, actuals_by_month[sorted_months[0]])
+                step_metrics.append({
+                    "step": 1,
+                    "month": str(sorted_months[0].date()),
+                    "wape": step1_wape,
+                    "n_dfus": len(preds_first),
+                })
+
+            for step_idx, month in enumerate(sorted_months[1:], start=2):
                 month_data = _fill_predict_nans(
                     current_grid[current_grid["startdate"] == month].copy(),
                     effective_feature_cols, effective_cat_cols,
@@ -925,9 +1165,33 @@ def run_tree_backtest(
                 preds_month = _predict_single_month(models, month_data, effective_feature_cols)
                 all_month_preds.append(preds_month)
                 update_grid_incremental(current_grid, month, preds_month, all_months)
-                print(f"    [{_ts()}] Recursive month {month.date()}: {len(preds_month):,} predictions")
+
+                # Compute per-step accuracy if actuals available
+                if month in actuals_by_month:
+                    step_wape = _compute_step_wape(preds_month, actuals_by_month[month])
+                    step_metrics.append({
+                        "step": step_idx,
+                        "month": str(month.date()),
+                        "wape": step_wape,
+                        "n_dfus": len(preds_month),
+                    })
+
+                logger.debug(
+                    "Recursive step %d, month %s: %s predictions",
+                    step_idx, month.date(), f"{len(preds_month):,}",
+                )
 
             preds = pd.concat(all_month_preds, ignore_index=True)
+
+            # Accumulate per-step metrics across timeframes
+            if step_metrics:
+                for sm in step_metrics:
+                    sm["timeframe"] = label
+                recursive_step_metrics.extend(step_metrics)
+                logger.info(
+                    "Timeframe %s: %d recursive steps tracked",
+                    label, len(step_metrics),
+                )
 
         preds["model_id"] = model_id
         preds["timeframe"] = label
@@ -939,26 +1203,35 @@ def run_tree_backtest(
             try:
                 model_persistence_fn(models, effective_feature_cols, label)
             except Exception as exc:
-                print(f"  [{_ts()}] Warning: model persistence failed: {exc}")
+                logger.warning("Model persistence failed: %s", exc)
 
-        print(f"  [{_ts()}] Timeframe {label} complete: {len(preds):,} predictions ({time.time() - tf_start:.1f}s)")
+        logger.info("Timeframe %s complete: %s predictions (%.1fs)", label, f"{len(preds):,}", time.time() - tf_start)
 
     if not all_predictions:
-        print(f"\n[{_ts()}] No predictions generated. Check data range and timeframe count.")
+        logger.error("No predictions generated. Check data range and timeframe count.")
         sys.exit(1)
 
     # ── Step 5: Combine, assign execution lag, attach actuals ────────────────
-    print(f"\n[{_ts()}] Step 5: Combining predictions...")
+    logger.info("Step 5: Combining predictions...")
     expanded, archive_expanded, combined = postprocess_predictions(
         all_predictions, sales_df, exec_lag_map, timeframes=timeframes,
     )
 
     # ── Step 6: Save output ──────────────────────────────────────────────────
-    print(f"\n[{_ts()}] Step 6: Saving output...")
+    logger.info("Step 6: Saving output...")
     # Merge recursive flag into extra_metadata for traceability
     _extra_meta = dict(extra_metadata or {})
     if recursive:
         _extra_meta["recursive"] = True
+        # Attach per-step accuracy metrics collected across all timeframes
+        if recursive_step_metrics:
+            _extra_meta["recursive_step_metrics"] = recursive_step_metrics
+            wapes_with_values = [m["wape"] for m in recursive_step_metrics if m.get("wape") is not None]
+            _extra_meta["recursive_accuracy_degradation"] = {
+                "step_1_wape": recursive_step_metrics[0]["wape"] if recursive_step_metrics else None,
+                "last_step_wape": recursive_step_metrics[-1]["wape"] if recursive_step_metrics else None,
+                "mean_wape": round(float(np.mean(wapes_with_values)), 2) if wapes_with_values else None,
+            }
     output_path, archive_path, meta_path, metadata = save_backtest_output(
         output_df=expanded,
         archive_df=archive_expanded,
@@ -972,13 +1245,14 @@ def run_tree_backtest(
         earliest_month=earliest_month,
         latest_month=latest_month,
         extra_metadata=_extra_meta or None,
+        dfu_cohort_map=dfu_cohort_map,
     )
 
     # ── Save SHAP outputs (Feature 42) ───────────────────────────────────────
     extra_artifact_paths: list[str] = []
     if feature_selector_fn is not None and shap_timeframe_reports:
         from common.shap_selector import save_shap_outputs
-        print(f"\n[{_ts()}] Saving SHAP feature selection outputs...")
+        logger.info("Saving SHAP feature selection outputs...")
         _, shap_summary_path = save_shap_outputs(
             shap_timeframe_reports, output_path.parent, len(timeframes)
         )
@@ -1006,4 +1280,4 @@ def run_tree_backtest(
     )
 
     elapsed = time.time() - t_start
-    print(f"\n[{_ts()}] Backtest complete in {elapsed:.0f}s ({elapsed / 60:.1f}m)")
+    logger.info("Backtest complete in %.0fs (%.1fm)", elapsed, elapsed / 60)

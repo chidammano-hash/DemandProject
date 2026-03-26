@@ -5,8 +5,8 @@ and attribute features. Used by all tree-based backtest scripts.
 
 Feature groups (in build order):
   1. Lag + rolling (qty_lag_*, rolling_mean_*, rolling_std_*)
-  2. Calendar (month, quarter, month_sin/cos, etc.)
-  3. Fourier seasonal terms (sin/cos for periods 12, 6, 4, 3)
+  2. Calendar (month, quarter, is_quarter_end, is_year_end, days_in_month)
+  3. Fourier seasonal terms (sin/cos for periods 12, 6, 4, 3 — includes period-12 which replaces legacy month_sin/cos)
   4. Derived demand (mom_growth, volatility_ratio, lag ratios, etc.)
   5. Croston decomposition (intermittent demand: size, interval, probability)
   6. TS profile (per-DFU static: cv_demand, adi, seasonal_amplitude, etc.)
@@ -34,7 +34,6 @@ from common.constants import (
     ROLLING_WINDOWS,
     TS_PROFILE_FEATURES,
 )
-from common.utils import _ts
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +140,9 @@ def _compute_lags_and_rolling(df: pd.DataFrame, group_col: str = "sku_ck") -> No
         df[f"qty_lag_{lag_n}"] = g.shift(lag_n)
 
     # Check if all groups have uniform size (cross-product grid)
-    group_sizes = g.count()
+    # Use size() not count() — count() skips NaN (masked future qty),
+    # which would report non-uniform groups on masked grids.
+    group_sizes = df.groupby(group_col, sort=False).size()
     unique_sizes = group_sizes.unique()
 
     if len(unique_sizes) == 1 and unique_sizes[0] > 1:
@@ -162,16 +163,29 @@ def _compute_lags_and_rolling(df: pd.DataFrame, group_col: str = "sku_ck") -> No
             df[f"rolling_std_{w}m"] = rolling.std().fillna(0).droplevel(0)
 
 
-def _compute_ts_profile_features(grid: pd.DataFrame) -> pd.DataFrame:
-    """Compute per-DFU time-series profile features from the full grid.
+def _compute_ts_profile_features(
+    grid: pd.DataFrame,
+    cutoff: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """Compute per-DFU time-series profile features.
 
     These are static features (one value per DFU) that summarize the demand
-    pattern: volatility, intermittency, trend, seasonality. Computed from
-    the qty column which reflects all available history at grid-build time.
+    pattern: volatility, intermittency, trend, seasonality.
 
-    Returns a DataFrame with columns [sku_ck] + TS_PROFILE_FEATURES.
+    Args:
+        grid: Feature grid with ``sku_ck``, ``startdate``, and ``qty`` columns.
+        cutoff: If provided, only use data where ``startdate <= cutoff`` to
+            avoid leaking future information into profile features.
+
+    Returns:
+        DataFrame with columns [sku_ck] + TS_PROFILE_FEATURES.
     """
-    grouped = grid.groupby("sku_ck", sort=False)["qty"]
+    if cutoff is not None:
+        source = grid.loc[grid["startdate"] <= cutoff]
+    else:
+        source = grid
+
+    grouped = source.groupby("sku_ck", sort=False)["qty"]
 
     profiles: dict[str, list] = {col: [] for col in TS_PROFILE_FEATURES}
     sku_cks: list = []
@@ -243,9 +257,10 @@ def _compute_ts_profile_features(grid: pd.DataFrame) -> pd.DataFrame:
 def _compute_fourier_features(df: pd.DataFrame) -> None:
     """Compute Fourier seasonal terms in-place from the ``month`` column.
 
-    Adds sin/cos pairs for periods 12, 6, 4, 3 months.  These capture
-    sub-annual seasonality (quarterly promotions, biannual patterns) far
-    better than the single month_sin/month_cos pair.
+    Adds sin/cos pairs for periods 12, 6, 4, 3 months.  The period-12
+    pair (fourier_sin_12, fourier_cos_12) replaces the legacy month_sin
+    and month_cos features.  Additional periods capture sub-annual
+    seasonality (quarterly promotions, biannual patterns).
 
     Strictly causal — derived from calendar date only.
     """
@@ -547,8 +562,8 @@ def build_feature_matrix(
     # Calendar features
     grid["month"] = grid["startdate"].dt.month
     grid["quarter"] = grid["startdate"].dt.quarter
-    grid["month_sin"] = np.sin(2 * np.pi * grid["month"] / 12)
-    grid["month_cos"] = np.cos(2 * np.pi * grid["month"] / 12)
+    # NOTE: month_sin/month_cos removed — mathematically identical to
+    # fourier_sin_12/fourier_cos_12 which are computed by _compute_fourier_features().
 
     # Additional calendar features (leakage-free — derived from forecast date)
     grid["is_quarter_end"] = grid["startdate"].dt.month.isin([3, 6, 9, 12]).astype(int)
@@ -620,11 +635,21 @@ def get_feature_columns(grid: pd.DataFrame) -> list[str]:
 
 
 def mask_future_sales(grid: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame:
-    """Zero out qty and recompute lag/rolling features for rows after cutoff.
+    """Set future qty to NaN and recompute lag/rolling features for rows after cutoff.
 
     Instead of rebuilding the whole grid, we mask the qty column and
     recompute only the affected features. This is much faster than
     rebuilding from scratch.
+
+    Using NaN (not zero) prevents artificial zeros from dragging down rolling
+    means in direct-mode prediction. The rolling/lag functions skip NaN values
+    when computing statistics (via ``min_periods=1``), so rolling means only
+    reflect real historical data.
+
+    After recomputation, feature columns (lags, rolling, derived) are filled
+    with 0 so that downstream models can consume them without NaN issues. The
+    ``qty`` column itself remains NaN for future months — models never see it
+    directly as a feature (it is excluded by ``get_feature_columns``).
     """
     # Early return: if no rows are after cutoff, skip copy + recomputation
     future_mask = grid["startdate"] > cutoff
@@ -633,12 +658,29 @@ def mask_future_sales(grid: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame:
 
     df = grid.copy()
 
-    # Mask future sales
-    df.loc[future_mask, "qty"] = 0
+    # Mask future sales with NaN (not zero) to avoid dragging rolling means
+    df.loc[future_mask, "qty"] = np.nan
 
     # Recompute lags, rolling, and derived features on the masked data
     _compute_lags_and_rolling(df)
     _recompute_derived_features(df)
+
+    # Recompute TS profile features using only pre-cutoff data to prevent leakage
+    existing_ts_cols = [c for c in TS_PROFILE_FEATURES if c in df.columns]
+    if existing_ts_cols:
+        df.drop(columns=existing_ts_cols, inplace=True)
+        ts_profiles = _compute_ts_profile_features(df, cutoff=cutoff)
+        df = df.merge(ts_profiles, on="sku_ck", how="left")
+        for col in TS_PROFILE_FEATURES:
+            if col in df.columns:
+                df[col] = df[col].fillna(0).astype(np.float32)
+
+    # Fill NaN in feature columns so models can consume them. The qty column
+    # stays NaN for future months (excluded from features by get_feature_columns).
+    feature_cols = get_feature_columns(df)
+    for col in feature_cols:
+        if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = df[col].fillna(0)
 
     return df
 

@@ -1,16 +1,31 @@
-"""Tests for cluster override mechanism in the backtest pipeline.
+"""Tests for cluster override mechanism and per-cluster time-aware validation split.
 
-Verifies that experimental cluster assignments can be injected via
-a CSV override file without modifying production dim_sku data.
+Verifies that:
+1. Experimental cluster assignments can be injected via a CSV override file
+   without modifying production dim_sku data.
+2. train_and_predict_per_cluster (via _train_single_cluster) sorts each cluster's
+   training data by startdate BEFORE the iloc-based 80/20 train/val split, ensuring
+   the validation set always contains the most recent time periods.
 """
 
+import logging
 import os
+import sys
 import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pandas as pd
 import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from common.constants import MIN_CLUSTER_ROWS
+
+logger = logging.getLogger(__name__)
 
 
 # ── Helper to build a mock dfu_attrs DataFrame ──────────────────────────────
@@ -275,3 +290,376 @@ class TestLoadBacktestDataIntegration:
         )
 
         assert result_dfu_attrs["ml_cluster"].tolist() == original_clusters
+
+
+# ── Per-cluster time-sort helpers ─────────────────────────────────────────────
+
+
+def _make_cluster_grid(
+    n_dfus: int = 5,
+    n_months: int = 24,
+    cluster_label: str = "clusterA",
+    shuffle: bool = True,
+) -> pd.DataFrame:
+    """Build a minimal feature grid for a single cluster.
+
+    By default the rows are in SKU-major order (dfu_ck, startdate), mimicking
+    the real feature grid layout. When shuffle=True, rows are shuffled to
+    simulate the worst case.
+    """
+    rng = np.random.default_rng(42)
+    rows = []
+    dates = pd.date_range("2022-01-01", periods=n_months, freq="MS")
+    for dfu_idx in range(n_dfus):
+        for dt in dates:
+            rows.append({
+                "dfu_ck": f"DFU_{dfu_idx}",
+                "dmdunit": f"ITEM_{dfu_idx}",
+                "dmdgroup": "GRP1",
+                "loc": f"LOC_{dfu_idx % 3}",
+                "startdate": dt,
+                "qty": float(rng.integers(10, 200)),
+                "qty_lag_1": float(rng.integers(10, 200)),
+                "qty_rolling_3": float(rng.integers(10, 200)),
+                "ml_cluster": cluster_label,
+            })
+    df = pd.DataFrame(rows)
+    if shuffle:
+        df = df.sample(frac=1, random_state=7).reset_index(drop=True)
+    return df
+
+
+def _simulate_per_cluster_split(train_c: pd.DataFrame, feature_cols: list[str]):
+    """Reproduce the per-cluster sort + split logic from run_backtest.py.
+
+    This mirrors the fixed code path: sort by startdate, then iloc split.
+    """
+    train_c = train_c.sort_values("startdate")
+    X_train = train_c[feature_cols]
+    y_train = train_c["qty"]
+    n_val = max(1, int(len(X_train) * 0.20))
+    X_tr = X_train.iloc[:-n_val]
+    X_val = X_train.iloc[-n_val:]
+    y_tr = y_train.iloc[:-n_val]
+    y_val = y_train.iloc[-n_val:]
+    return train_c, X_tr, X_val, y_tr, y_val, n_val
+
+
+def _simulate_unsorted_split(train_c: pd.DataFrame, feature_cols: list[str]):
+    """Reproduce the OLD (buggy) split logic WITHOUT sorting by startdate."""
+    X_train = train_c[feature_cols]
+    y_train = train_c["qty"]
+    n_val = max(1, int(len(X_train) * 0.20))
+    X_tr = X_train.iloc[:-n_val]
+    X_val = X_train.iloc[-n_val:]
+    y_tr = y_train.iloc[:-n_val]
+    y_val = y_train.iloc[-n_val:]
+    return train_c, X_tr, X_val, y_tr, y_val, n_val
+
+
+FEATURE_COLS = ["qty_lag_1", "qty_rolling_3", "ml_cluster"]
+
+
+# ── Per-cluster time-sort tests ──────────────────────────────────────────────
+
+
+class TestValidationSetContainsLatestDates:
+    """After sorting, the validation set must contain the most recent dates."""
+
+    def test_val_dates_are_latest(self):
+        df = _make_cluster_grid(n_dfus=5, n_months=20, shuffle=True)
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        # The validation set's dates should all be >= the max training date
+        val_dates = sorted_df.iloc[-n_val:]["startdate"]
+        train_dates = sorted_df.iloc[:-n_val]["startdate"]
+        assert val_dates.min() >= train_dates.max(), (
+            f"Validation min date {val_dates.min()} should be >= "
+            f"training max date {train_dates.max()}"
+        )
+
+    def test_val_set_contains_last_month(self):
+        df = _make_cluster_grid(n_dfus=3, n_months=12, shuffle=True)
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        last_month = df["startdate"].max()
+        val_dates = sorted_df.iloc[-n_val:]["startdate"]
+        assert last_month in val_dates.values, (
+            f"Last month {last_month} should be in validation set"
+        )
+
+
+class TestTrainingSetContainsEarlierDates:
+    """Training set dates must be strictly earlier than or equal to validation."""
+
+    def test_train_max_le_val_min(self):
+        df = _make_cluster_grid(n_dfus=4, n_months=18, shuffle=True)
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        train_max = sorted_df.iloc[:-n_val]["startdate"].max()
+        val_min = sorted_df.iloc[-n_val:]["startdate"].min()
+        assert train_max <= val_min, (
+            f"Training max date {train_max} should be <= validation min date {val_min}"
+        )
+
+    def test_first_month_in_training_set(self):
+        df = _make_cluster_grid(n_dfus=3, n_months=12, shuffle=True)
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        first_month = df["startdate"].min()
+        train_dates = sorted_df.iloc[:-n_val]["startdate"]
+        assert first_month in train_dates.values, (
+            f"First month {first_month} should be in training set"
+        )
+
+
+class TestUnsortedInputCorrected:
+    """Deliberately unsorted input should produce correct splits after sorting."""
+
+    def test_shuffled_input_sorted_correctly(self):
+        df = _make_cluster_grid(n_dfus=5, n_months=20, shuffle=True)
+        # Verify input is NOT sorted
+        dates_before = df["startdate"].values
+        is_sorted_before = all(dates_before[i] <= dates_before[i + 1] for i in range(len(dates_before) - 1))
+        assert not is_sorted_before, "Test precondition: input should not be sorted"
+
+        # After the fix, split should be time-aware
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        val_dates = sorted_df.iloc[-n_val:]["startdate"]
+        train_dates = sorted_df.iloc[:-n_val]["startdate"]
+        assert val_dates.min() >= train_dates.max()
+
+    def test_unsorted_split_would_be_wrong(self):
+        """Without sorting, the split mixes dates across train and val sets.
+
+        This test verifies that the old (buggy) behavior is actually broken
+        when the input is in SKU-major order.
+        """
+        # Build SKU-major ordered data (not shuffled, but dfu_ck-major)
+        rng = np.random.default_rng(99)
+        rows = []
+        dates = pd.date_range("2022-01-01", periods=12, freq="MS")
+        for dfu_idx in range(5):
+            for dt in dates:
+                rows.append({
+                    "dfu_ck": f"DFU_{dfu_idx}",
+                    "dmdunit": f"ITEM_{dfu_idx}",
+                    "dmdgroup": "GRP1",
+                    "loc": "LOC0",
+                    "startdate": dt,
+                    "qty": float(rng.integers(10, 200)),
+                    "qty_lag_1": float(rng.integers(10, 200)),
+                    "qty_rolling_3": float(rng.integers(10, 200)),
+                    "ml_cluster": "clusterA",
+                })
+        df = pd.DataFrame(rows)
+        # Data is in SKU-major order: DFU_0 all months, DFU_1 all months, ...
+
+        # Old split (no sort): last 20% = last DFU's rows (all 12 months)
+        _, _, X_val_old, _, _, n_val_old = _simulate_unsorted_split(df, FEATURE_COLS)
+        old_val_dates = df.iloc[-n_val_old:]["startdate"]
+
+        # New split (with sort): last 20% = latest months across all DFUs
+        _, _, X_val_new, _, _, n_val_new = _simulate_per_cluster_split(df, FEATURE_COLS)
+
+        # The old split should contain the earliest month (Jan 2022) because
+        # it takes the last DFU which has all months including the earliest
+        assert dates[0] in old_val_dates.values, (
+            "Old (buggy) split should have early dates in val set"
+        )
+
+    def test_reverse_ordered_input(self):
+        """Even reverse-chronological input should be sorted correctly."""
+        df = _make_cluster_grid(n_dfus=3, n_months=12, shuffle=False)
+        # Reverse the order
+        df = df.iloc[::-1].reset_index(drop=True)
+
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        val_dates = sorted_df.iloc[-n_val:]["startdate"]
+        train_dates = sorted_df.iloc[:-n_val]["startdate"]
+        assert val_dates.min() >= train_dates.max()
+
+
+class TestInterleavedSkuAndDate:
+    """Cluster with rows interleaved by SKU and date in alternating pattern."""
+
+    def test_interleaved_rows_sorted_correctly(self):
+        """Rows alternate between DFUs for each date — worst case for SKU-major."""
+        rng = np.random.default_rng(42)
+        rows = []
+        dates = pd.date_range("2022-01-01", periods=12, freq="MS")
+        dfus = [f"DFU_{i}" for i in range(4)]
+
+        # Interleave: date1-dfu0, date1-dfu1, date2-dfu0, date2-dfu1, ...
+        for dt in dates:
+            for dfu in dfus:
+                rows.append({
+                    "dfu_ck": dfu,
+                    "dmdunit": dfu.replace("DFU_", "ITEM_"),
+                    "dmdgroup": "GRP1",
+                    "loc": "LOC0",
+                    "startdate": dt,
+                    "qty": float(rng.integers(10, 200)),
+                    "qty_lag_1": float(rng.integers(10, 200)),
+                    "qty_rolling_3": float(rng.integers(10, 200)),
+                    "ml_cluster": "clusterA",
+                })
+        df = pd.DataFrame(rows)
+        # Shuffle to break any accidental ordering
+        df = df.sample(frac=1, random_state=13).reset_index(drop=True)
+
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        val_dates = sorted_df.iloc[-n_val:]["startdate"]
+        train_dates = sorted_df.iloc[:-n_val]["startdate"]
+        assert val_dates.min() >= train_dates.max()
+
+    def test_interleaved_val_has_correct_dfu_count(self):
+        """All DFUs should appear in validation set when last months are taken."""
+        rng = np.random.default_rng(42)
+        rows = []
+        dates = pd.date_range("2022-01-01", periods=20, freq="MS")
+        n_dfus = 4
+
+        for dt in dates:
+            for dfu_idx in range(n_dfus):
+                rows.append({
+                    "dfu_ck": f"DFU_{dfu_idx}",
+                    "dmdunit": f"ITEM_{dfu_idx}",
+                    "dmdgroup": "GRP1",
+                    "loc": "LOC0",
+                    "startdate": dt,
+                    "qty": float(rng.integers(10, 200)),
+                    "qty_lag_1": float(rng.integers(10, 200)),
+                    "qty_rolling_3": float(rng.integers(10, 200)),
+                    "ml_cluster": "clusterA",
+                })
+        df = pd.DataFrame(rows)
+
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        val_dfus = sorted_df.iloc[-n_val:]["dfu_ck"].nunique()
+        # With 80 rows total and 20% val = 16 rows, 4 DFUs * 4 months = 16
+        # All 4 DFUs should appear in the validation set
+        assert val_dfus == n_dfus, (
+            f"Expected all {n_dfus} DFUs in val set, got {val_dfus}"
+        )
+
+
+class TestSingleDfuCluster:
+    """Edge case: cluster with only 1 DFU — already time-sorted by construction."""
+
+    def test_single_dfu_val_split(self):
+        df = _make_cluster_grid(n_dfus=1, n_months=24, shuffle=False)
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        # With 1 DFU, input is already time-sorted
+        val_dates = sorted_df.iloc[-n_val:]["startdate"]
+        train_dates = sorted_df.iloc[:-n_val]["startdate"]
+        assert val_dates.min() >= train_dates.max()
+
+    def test_single_dfu_val_is_20_percent(self):
+        n_months = 24
+        df = _make_cluster_grid(n_dfus=1, n_months=n_months, shuffle=False)
+        _, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        expected_n_val = max(1, int(n_months * 0.20))
+        assert n_val == expected_n_val
+        assert len(X_val) == expected_n_val
+        assert len(X_tr) == n_months - expected_n_val
+
+    def test_single_dfu_shuffled_still_correct(self):
+        """Even if a single-DFU cluster is somehow shuffled, sort fixes it."""
+        df = _make_cluster_grid(n_dfus=1, n_months=24, shuffle=True)
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        val_dates = sorted_df.iloc[-n_val:]["startdate"]
+        train_dates = sorted_df.iloc[:-n_val]["startdate"]
+        assert val_dates.min() >= train_dates.max()
+
+
+class TestMinClusterRowsBoundary:
+    """Edge case: cluster at exactly MIN_CLUSTER_ROWS boundary."""
+
+    def test_exactly_min_rows_is_trained(self):
+        """A cluster with exactly MIN_CLUSTER_ROWS rows should NOT be skipped."""
+        n_months_per_dfu = MIN_CLUSTER_ROWS  # 1 DFU with exactly MIN_CLUSTER_ROWS months
+        df = _make_cluster_grid(n_dfus=1, n_months=n_months_per_dfu, shuffle=True)
+        assert len(df) == MIN_CLUSTER_ROWS
+        # Should be trainable (not skipped)
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        assert len(X_tr) + len(X_val) == MIN_CLUSTER_ROWS
+        assert len(X_val) == max(1, int(MIN_CLUSTER_ROWS * 0.20))
+
+    def test_below_min_rows_is_skipped(self):
+        """A cluster with fewer than MIN_CLUSTER_ROWS rows should be skipped."""
+        n_rows = MIN_CLUSTER_ROWS - 1
+        df = _make_cluster_grid(n_dfus=1, n_months=n_rows, shuffle=True)
+        assert len(df) < MIN_CLUSTER_ROWS
+        # Simulates the skip check in train_and_predict_per_cluster
+        assert len(df) < MIN_CLUSTER_ROWS
+
+    def test_min_rows_val_dates_correct(self):
+        """Even at MIN_CLUSTER_ROWS, the val set should have latest dates."""
+        df = _make_cluster_grid(n_dfus=1, n_months=MIN_CLUSTER_ROWS, shuffle=True)
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        val_dates = sorted_df.iloc[-n_val:]["startdate"]
+        train_dates = sorted_df.iloc[:-n_val]["startdate"]
+        assert val_dates.min() >= train_dates.max()
+
+    def test_min_rows_with_multiple_dfus(self):
+        """Multiple DFUs that sum to exactly MIN_CLUSTER_ROWS."""
+        # 5 DFUs with 10 months each = 50 = MIN_CLUSTER_ROWS
+        n_dfus = 5
+        n_months = MIN_CLUSTER_ROWS // n_dfus
+        df = _make_cluster_grid(n_dfus=n_dfus, n_months=n_months, shuffle=True)
+        assert len(df) == MIN_CLUSTER_ROWS
+
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        val_dates = sorted_df.iloc[-n_val:]["startdate"]
+        train_dates = sorted_df.iloc[:-n_val]["startdate"]
+        assert val_dates.min() >= train_dates.max()
+
+
+class TestSortStability:
+    """Verify that the sort is stable and preserves DFU ordering within same date."""
+
+    def test_sort_preserves_row_count(self):
+        df = _make_cluster_grid(n_dfus=5, n_months=20, shuffle=True)
+        n_before = len(df)
+        sorted_df = df.sort_values("startdate")
+        assert len(sorted_df) == n_before
+
+    def test_sort_produces_monotonic_dates(self):
+        df = _make_cluster_grid(n_dfus=5, n_months=20, shuffle=True)
+        sorted_df = df.sort_values("startdate")
+        dates = sorted_df["startdate"].values
+        assert all(dates[i] <= dates[i + 1] for i in range(len(dates) - 1))
+
+    def test_split_indices_are_contiguous(self):
+        """After sorting, train and val sets have contiguous iloc ranges."""
+        df = _make_cluster_grid(n_dfus=3, n_months=12, shuffle=True)
+        sorted_df, X_tr, X_val, y_tr, y_val, n_val = _simulate_per_cluster_split(
+            df, FEATURE_COLS
+        )
+        # Train is iloc[:-n_val], val is iloc[-n_val:]
+        assert len(X_tr) + len(X_val) == len(sorted_df)

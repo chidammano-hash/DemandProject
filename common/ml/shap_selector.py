@@ -197,7 +197,7 @@ def _select_features_from_shap(
 
     selected_set = set(sorted_features[:n_select])
 
-    # Always keep protected features (month, month_sin, month_cos, quarter, ml_cluster)
+    # Always keep protected features (month, quarter, ml_cluster, fourier terms)
     for feat in feature_cols:
         if feat in PROTECTED_FEATURES:
             selected_set.add(feat)
@@ -246,9 +246,9 @@ def compute_timeframe_shap(
     """Compute SHAP values for one backtest timeframe and select top features.
 
     Handles both single-model (global strategy) and dict-of-models
-    (per_cluster / transfer strategies).  ml_cluster is kept in the feature
-    list for all strategies — per-cluster models are trained WITH ml_cluster
-    as a hard feature (constant within each cluster partition).
+    (per_cluster / transfer strategies).  For per-cluster/transfer strategies,
+    ml_cluster is stripped during SHAP computation (zero variance within each
+    cluster partition) and re-added afterward as a hard feature.
 
     Args:
         model_or_dict: Trained model (global) or dict[cluster_label → model].
@@ -271,9 +271,15 @@ def compute_timeframe_shap(
     """
     t0 = time.time()
 
-    # All strategies keep ml_cluster — models are trained with it as a hard feature
-    effective_feature_cols = feature_cols
-    effective_cat_cols = cat_cols
+    # Per-cluster / transfer: strip ml_cluster for SHAP computation because it is
+    # constant within each cluster partition (zero variance → zero SHAP) and its
+    # presence causes dimension mismatch with per-cluster trained models.
+    if cluster_strategy in ("per_cluster", "transfer"):
+        effective_feature_cols = [c for c in feature_cols if c != "ml_cluster"]
+        effective_cat_cols = [c for c in cat_cols if c != "ml_cluster"]
+    else:
+        effective_feature_cols = feature_cols
+        effective_cat_cols = cat_cols
 
     # Compute mean absolute SHAP across the training sample
     per_cluster_shap: dict[str, np.ndarray] = {}

@@ -508,8 +508,11 @@ def build_inference_grid(
         month_num = fmonth.month
         row["month"] = month_num
         row["quarter"] = (month_num - 1) // 3 + 1
-        row["month_sin"] = float(np.sin(2 * np.pi * month_num / 12))
-        row["month_cos"] = float(np.cos(2 * np.pi * month_num / 12))
+        # Fourier seasonal terms (replaces legacy month_sin/cos)
+        for period in [12, 6, 4, 3]:
+            angle = 2.0 * np.pi * month_num / period
+            row[f"fourier_sin_{period}"] = float(np.sin(angle))
+            row[f"fourier_cos_{period}"] = float(np.cos(angle))
         row["is_quarter_end"] = 1 if month_num in (3, 6, 9, 12) else 0
         row["is_year_end"] = 1 if month_num == 12 else 0
         row["days_in_month"] = float(fmonth.days_in_month if hasattr(fmonth, "days_in_month") else pd.Timestamp(fmonth).days_in_month)

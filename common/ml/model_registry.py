@@ -5,6 +5,7 @@ Provides:
 - Unified ``fit_model()`` that replaces duplicate if/elif/else fit blocks
 - ``get_best_iteration()`` abstracting attribute name differences
 - ``compute_early_stop_patience()`` for standardized 3% patience
+- WAPE eval callbacks for early stopping alignment (LGBM, CatBoost, XGBoost)
 """
 
 from __future__ import annotations
@@ -126,6 +127,60 @@ def compute_early_stop_patience(
 
 
 # ---------------------------------------------------------------------------
+# WAPE eval callbacks for early stopping alignment
+# ---------------------------------------------------------------------------
+# Models train on L2/RMSE but final evaluation uses WAPE.  These custom eval
+# functions ensure early stopping also optimises for WAPE so there is no
+# metric mismatch.
+#
+# WAPE = sum(|F - A|) / |sum(A)|
+# ---------------------------------------------------------------------------
+
+
+def _wape_lgbm(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[str, float, bool]:
+    """LGBM custom eval function that computes WAPE.
+
+    Signature follows the lightgbm **sklearn** custom-eval contract:
+    ``(y_true, y_pred) -> (name, value, is_higher_better)``
+    """
+    denom = max(abs(y_true.sum()), 1.0)
+    wape = float(np.sum(np.abs(y_pred - y_true)) / denom)
+    return "wape", wape, False
+
+
+class WapeMetric:
+    """CatBoost custom metric that computes WAPE for early stopping alignment."""
+
+    def get_final_error(self, error: float, weight: float) -> float:  # noqa: ARG002
+        return error
+
+    def is_max_optimal(self) -> bool:
+        return False
+
+    def evaluate(
+        self,
+        approxes: list[list[float]],
+        target: list[float],
+        weight: list[float] | None,  # noqa: ARG002
+    ) -> tuple[float, float]:
+        y_pred = np.asarray(approxes[0])
+        y_true = np.asarray(target)
+        denom = max(abs(y_true.sum()), 1.0)
+        wape = float(np.sum(np.abs(y_pred - y_true)) / denom)
+        return wape, 1.0
+
+
+def _wape_xgb(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """XGBoost custom eval function that computes WAPE.
+
+    Signature follows the xgboost 3.x **sklearn** eval_metric contract:
+    ``(y_true, y_pred) -> float``  (function ``__name__`` is used as metric name).
+    """
+    denom = max(abs(y_true.sum()), 1.0)
+    return float(np.sum(np.abs(y_pred - y_true)) / denom)
+
+
+# ---------------------------------------------------------------------------
 # Unified fit function
 # ---------------------------------------------------------------------------
 
@@ -165,7 +220,7 @@ def fit_model(
         model.fit(
             X_tr, y_tr,
             eval_set=[(X_val, y_val)],
-            eval_metric="mae",
+            eval_metric=_wape_lgbm,
             categorical_feature=cat_cols,
             callbacks=[
                 lib_module.early_stopping(stopping_rounds=patience, verbose=False),
@@ -175,6 +230,7 @@ def fit_model(
     elif model_name == "catboost":
         cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
         eval_pool = lib_module.Pool(X_val, y_val, cat_features=cat_indices)
+        model.set_params(eval_metric=WapeMetric())
         model.fit(
             X_tr, y_tr,
             cat_features=cat_indices,
@@ -183,6 +239,7 @@ def fit_model(
             verbose=False,
         )
     elif model_name == "xgboost":
+        model.set_params(eval_metric=_wape_xgb, early_stopping_rounds=patience)
         model.fit(
             X_tr, y_tr,
             eval_set=[(X_val, y_val)],

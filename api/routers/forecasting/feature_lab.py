@@ -46,7 +46,7 @@ CATEGORY_DEFINITIONS: list[dict[str, Any]] = [
         "name": "calendar",
         "pattern_prefixes": [],
         "exact_names": [
-            "month", "quarter", "month_sin", "month_cos",
+            "month", "quarter",
             "is_quarter_end", "is_year_end", "days_in_month",
         ],
         "description": "Calendar/seasonal signals",

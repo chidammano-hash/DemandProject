@@ -713,8 +713,11 @@ async def shap_dfu(
             month_num = _pd.Timestamp(month_date).month
         row["month"] = month_num
         row["quarter"] = (month_num - 1) // 3 + 1
-        row["month_sin"] = float(np.sin(2 * np.pi * month_num / 12))
-        row["month_cos"] = float(np.cos(2 * np.pi * month_num / 12))
+        # Fourier seasonal terms (replaces legacy month_sin/cos)
+        for period in [12, 6, 4, 3]:
+            angle = 2.0 * np.pi * month_num / period
+            row[f"fourier_sin_{period}"] = float(np.sin(angle))
+            row[f"fourier_cos_{period}"] = float(np.cos(angle))
         for col in CAT_FEATURES:
             row[col] = attrs.get(col, "__unknown__")
         row["execution_lag"] = attrs["execution_lag"]

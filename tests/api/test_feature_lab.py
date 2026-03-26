@@ -20,7 +20,7 @@ from tests.api.conftest import make_pool as _make_pool
 def _make_summary_df():
     """Minimal shap_summary.csv data."""
     return pd.DataFrame({
-        "feature": ["qty_lag_1", "rolling_mean_3m", "month_sin", "cv_demand", "ml_cluster"],
+        "feature": ["qty_lag_1", "rolling_mean_3m", "fourier_sin_12", "cv_demand", "ml_cluster"],
         "mean_abs_shap_across_timeframes": [0.15, 0.10, 0.08, 0.05, 0.03],
         "mean_rank": [1, 2, 3, 4, 5],
         "selected_count": [10, 10, 9, 8, 10],
@@ -31,7 +31,7 @@ def _make_summary_df():
 def _make_timeframe_df(timeframe_label: str, has_cluster: bool = True):
     """Minimal shap_timeframe_X.csv data."""
     data = {
-        "feature": ["qty_lag_1", "rolling_mean_3m", "month_sin"],
+        "feature": ["qty_lag_1", "rolling_mean_3m", "fourier_sin_12"],
         "mean_abs_shap": [0.15, 0.10, 0.08],
         "rank": [1, 2, 3],
     }
@@ -78,7 +78,7 @@ async def test_feature_importance_returns_200():
     assert data["features"][0]["category"] == "lag"
     assert data["features"][1]["name"] == "rolling_mean_3m"
     assert data["features"][1]["category"] == "rolling"
-    assert data["features"][2]["category"] == "calendar"
+    assert data["features"][2]["category"] == "fourier"
     assert data["features"][3]["category"] == "profile"
     assert data["features"][4]["category"] == "categorical"
 
@@ -384,8 +384,14 @@ def test_classify_feature_rolling():
 
 def test_classify_feature_calendar():
     from api.routers.forecasting.feature_lab import _classify_feature
-    assert _classify_feature("month_sin") == "calendar"
     assert _classify_feature("quarter") == "calendar"
+    assert _classify_feature("month") == "calendar"
+
+
+def test_classify_feature_fourier():
+    from api.routers.forecasting.feature_lab import _classify_feature
+    assert _classify_feature("fourier_sin_12") == "fourier"
+    assert _classify_feature("fourier_cos_6") == "fourier"
 
 
 def test_classify_feature_profile():

@@ -46,7 +46,8 @@ All features are strictly causal -- only data available before the target month 
 | Lag features | `qty_lag_1` through `qty_lag_12` (demand shifted by N months) | 12 |
 | Rolling means | `rolling_mean_3m`, `rolling_mean_6m`, `rolling_mean_12m` (shifted by 1) | 3 |
 | Rolling std | `rolling_std_3m`, `rolling_std_6m`, `rolling_std_12m` (shifted by 1) | 3 |
-| Calendar | `month` (1-12), `quarter` (1-4), `month_sin`, `month_cos` | 4 |
+| Calendar | `month` (1-12), `quarter` (1-4), `is_quarter_end`, `is_year_end`, `days_in_month` | 5 |
+| Fourier | `fourier_sin_12/6/4/3`, `fourier_cos_12/6/4/3` (sub-annual seasonality) | 8 |
 | DFU attributes | `ml_cluster`, `execution_lag`, `total_lt`, `region`, `brand`, `abc_vol` | 6 |
 | Item attributes | `case_weight`, `item_proof`, `bpc` | 3 |
 | **Total** | | **~31** |
