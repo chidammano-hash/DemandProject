@@ -420,9 +420,12 @@ def _train_single_cluster(
     params: dict,
     *,
     model_name: str,
-    registry: dict[str, Any],
-    model_class: type,
-    lib_module: Any,
+    model_class: type | str,
+    lib_module: Any | str,
+    needs_cat_dtype_cast: bool,
+    constant_target_guard: bool,
+    iter_param: str,
+    fit_extras: dict | None = None,
 ) -> tuple[str, pd.DataFrame | None, Any | None, dict | str | None]:
     """Train a single cluster model. Returns (cluster_label, result_df, model, meta).
 
@@ -430,11 +433,15 @@ def _train_single_cluster(
     or None if the cluster was skipped entirely.
 
     This function is self-contained with no shared mutable state, making it safe
-    for use in ProcessPoolExecutor.
+    for use in ProcessPoolExecutor.  Accepts only picklable arguments (no lambdas
+    or registry dicts).  model_class and lib_module can be passed as dotted-path
+    strings for picklability — they are resolved via import inside the worker.
     """
-    needs_cat_dtype_cast = registry["needs_cat_dtype_cast"]
-    constant_target_guard = registry["constant_target_guard"]
-    iter_param = registry["iter_param"]
+    # Resolve string references to actual objects (for ProcessPoolExecutor pickling)
+    if isinstance(model_class, str):
+        model_class = _import_model_class(model_class)
+    if isinstance(lib_module, str):
+        lib_module = importlib.import_module(lib_module)
 
     cat_cols_in_features = [c for c in cat_cols if c in feature_cols] if needs_cat_dtype_cast else []
 
@@ -496,7 +503,7 @@ def _train_single_cluster(
     # (cluster profiles may inject LGBM-specific keys like reg_alpha, num_leaves)
     valid_keys = set(params.keys())
     filtered_params = {k: v for k, v in resolved_params.items() if k in valid_keys}
-    fit_params = {**filtered_params, **registry["fit_extras_per_cluster"](filtered_params, iter_param)}
+    fit_params = {**filtered_params, **(fit_extras or {})}
 
     # Classify demand pattern and apply Tweedie objective for intermittent clusters
     algo_cfg = load_config("algorithm_config.yaml")
@@ -518,6 +525,13 @@ def _train_single_cluster(
             cluster_stats["zero_demand_pct"],
             fit_params.get("objective", fit_params.get("loss_function", "default")),
         )
+
+    # In parallel mode, cap per-model thread count to avoid oversubscription.
+    # With 8 workers each requesting all cores, thread contention degrades perf.
+    thread_key = "thread_count" if "thread_count" in fit_params else "n_jobs"
+    if fit_params.get(thread_key) == -1 and n_clusters > 4:
+        n_cpus = os.cpu_count() or 8
+        fit_params[thread_key] = max(2, n_cpus // 4)
 
     max_iters = fit_params.get(iter_param, 1000)
     model = model_class(**fit_params)
@@ -635,11 +649,23 @@ def train_and_predict_per_cluster(
     n_clusters = len(clusters)
     logger.info("Training %d per-cluster %s models...", n_clusters, label)
 
+    # For parallel mode, pass model_class and lib_module as importable strings
+    # so they can be pickled by ProcessPoolExecutor.  Sequential mode passes
+    # the objects directly (avoids re-import overhead).
+    _model_class_ref: type | str = model_class
+    _lib_module_ref: Any | str = lib_module
+    if parallel:
+        _model_class_ref = registry["class"]  # e.g. "lightgbm.LGBMRegressor"
+        _lib_module_ref = registry["class"].rsplit(".", 1)[0]  # e.g. "lightgbm"
+
     _worker_kwargs = {
         "model_name": model_name,
-        "registry": registry,
-        "model_class": model_class,
-        "lib_module": lib_module,
+        "model_class": _model_class_ref,
+        "lib_module": _lib_module_ref,
+        "needs_cat_dtype_cast": registry["needs_cat_dtype_cast"],
+        "constant_target_guard": registry["constant_target_guard"],
+        "iter_param": registry["iter_param"],
+        "fit_extras": registry["fit_extras_per_cluster"](params, registry["iter_param"]),
     }
 
     def _collect_result(cl: str, result: pd.DataFrame | None, model: Any, meta: dict | str | None) -> None:

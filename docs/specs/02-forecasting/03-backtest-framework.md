@@ -52,6 +52,140 @@ Each DFU (Demand Forecast Unit -- a unique item-location combination) has an `ex
 
 **Backtest loading:** Backtests still produce predictions at all 5 lags (0-4). The backtest loader (`scripts/load_backtest_forecasts.py`) retains the original dual-path logic: archive gets all lags, main table gets execution-lag rows only.
 
+## Plain-Language Overview
+
+### The Core Idea
+
+> "If I had only known the data up to date X, how accurate would my model have been?"
+
+We do this **10 times** with different cutoff dates, then measure accuracy across all of them.
+
+---
+
+### Step 1: The 10 Timeframes (Expanding Windows)
+
+Imagine you have 3 years of sales data (Jan 2023 → Dec 2025).
+
+We create 10 "training windows" — each one gets a bit more data than the last:
+
+```
+                    TRAIN DATA              →    PREDICT
+Timeframe A  [Jan 2023 ···· Feb 2025]  →  [Mar–Dec 2025]  (10 prediction months)
+Timeframe B  [Jan 2023 ···· Mar 2025]  →  [Apr–Dec 2025]  (9 prediction months)
+Timeframe C  [Jan 2023 ···· Apr 2025]  →  [May–Dec 2025]
+...
+Timeframe J  [Jan 2023 ···· Nov 2025]  →  [Dec 2025]      (1 prediction month)
+```
+
+Each timeframe trains a **real model** and makes **real predictions** — we compare against actual sales to measure accuracy.
+
+---
+
+### Step 2: Lag — How Far Ahead is the Forecast?
+
+For any given month (e.g., Dec 2025), we get a prediction from multiple timeframes:
+
+| Timeframe | Train Cutoff | Predicting Dec 2025 | Lag |
+|---|---|---|---|
+| J | Nov 2025 | 1 month ahead | **lag 0** |
+| I | Oct 2025 | 2 months ahead | **lag 1** |
+| H | Sep 2025 | 3 months ahead | **lag 2** |
+| G | Aug 2025 | 4 months ahead | **lag 3** |
+| F | Jul 2025 | 5 months ahead | **lag 4** |
+
+**lag 0** = most recent data → highest accuracy
+**lag 4** = stale data → lower accuracy
+
+All 5 lags go into the **`backtest_lag_archive`** table. This lets us answer: *"how does accuracy degrade as we forecast further out?"*
+
+---
+
+### Step 3: Execution Lag — Which Lag Actually Matters for This DFU?
+
+Each DFU has an `execution_lag` — the number of months in advance the forecast must be issued for operations.
+
+**Example:** A DFU with `execution_lag = 2` needs its December forecast ready in October → only the **lag 2** prediction matters operationally.
+
+```
+Archive table  → all 5 lags (for accuracy analysis)
+Main table     → execution_lag prediction only (for planning)
+```
+
+---
+
+### Step 4: Features the Model Trains On
+
+For a DFU like *Item A / Customer Group East / Location NYC*:
+
+```
+qty_lag_1       = sales 1 month ago
+qty_lag_2       = sales 2 months ago
+...
+qty_lag_12      = sales 12 months ago
+rolling_3m_mean = avg of last 3 months
+rolling_6m_mean = avg of last 6 months
+month_of_year   = 12 (December)
+ml_cluster      = "seasonal_high_volume"   ← always kept, never stripped
+... ~62 features total
+```
+
+---
+
+### Step 5: Per-Cluster Training
+
+Instead of one global model, we train **one model per demand cluster**:
+
+```
+Cluster "sparse_intermittent"  → tuned for lumpy, zero-heavy demand
+Cluster "seasonal_dominant"    → tuned for strong seasonality
+Cluster "high_volume_stable"   → tuned for smooth, predictable demand
+...
+```
+
+Small clusters (too few rows) fall back to **seasonal naive** (same month last year).
+
+---
+
+### Full Example End-to-End
+
+**DFU:** Widget-A / Customer Group East / Warehouse NYC
+**Execution lag:** 2
+**Cluster:** seasonal_dominant
+
+```
+1. Timeframe H trains on Jan 2023 – Sep 2025
+   → predicts Widget-A NYC for Oct–Dec 2025
+   → lag for Dec 2025 = 2 months ahead (lag 2)
+
+2. Timeframe J trains on Jan 2023 – Nov 2025
+   → predicts Widget-A NYC for Dec 2025 only
+   → lag = 0 (most recent data)
+
+3. All predictions land in backtest_lag_archive with lags 0–4
+
+4. execution_lag=2 → only lag 2 prediction goes to main table
+   (the October prediction of December demand)
+
+5. Accuracy computed across lags:
+   lag 0 WAPE = 8.2%   ← best (most data)
+   lag 2 WAPE = 14.1%  ← what operations actually uses
+   lag 4 WAPE = 22.7%  ← worst (oldest data)
+```
+
+---
+
+### Why 10 Timeframes Instead of Just One?
+
+Two reasons — one is operational necessity, one is statistical:
+
+**1. Lag coverage (the primary reason)**
+We support `execution_lag` values from 0 to 4, meaning some DFUs need their forecast issued up to 5 months in advance. To produce a lag 4 prediction for any given demand month, you need a timeframe whose training cutoff is 5 months earlier. Covering lags 0–4 for even a *single* demand month requires at least 5 distinct timeframes (F through J in the example above). 10 timeframes ensures every demand month near the planning date has full lag 0–4 coverage.
+
+**2. Statistical robustness**
+A single train/test split gives a noisy accuracy estimate that reflects one slice of market conditions. 10 expanding windows produce predictions across many months — different seasons, demand shocks, and trend inflections — so the accuracy metric reflects genuine model skill rather than a lucky or unlucky split.
+
+---
+
 ## Data Model
 
 ### Main Table: `fact_external_forecast_monthly`

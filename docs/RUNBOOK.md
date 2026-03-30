@@ -674,6 +674,121 @@ curl http://localhost:8000/competition/summary
 
 ---
 
+## Phase 6b: Expert Panel Algorithm Selection (Feature 49)
+
+Tests whether a mix of statistical + ML algorithms outperforms the current tree-only approach. Runs 12 algorithms (Holt-Winters, Simple ES, Croston SBA, Auto-ARIMA, Theta, LGBM, CatBoost, XGBoost, Random Forest-via-Ridge, Seasonal Naive, Rolling Mean) across demand archetypes classified by the Syntetos-Boylan ADI × CV² framework.
+
+### Prerequisites
+
+- Phase 5 completed (backtests loaded) — needed for baseline comparison
+- Phase 6 completed (champion selection) — needed for champion baseline
+- `statsmodels` installed (added to `pyproject.toml` dependencies)
+- Optional: `pmdarima` for Auto-ARIMA (`uv pip install pmdarima`)
+
+### Commands
+
+```bash
+# Full test: 5000 DFUs, 5 timeframes (~30 min)
+make expert-panel
+
+# Quick test: 1000 DFUs, 3 timeframes (~8 min)
+make expert-panel-quick
+
+# Minimal smoke test: 200 DFUs, 2 timeframes (~2 min)
+make expert-panel-mini
+
+# Location-scoped: all DFUs at one site (sequential, no sampling)
+make expert-panel-loc LOC=1401-BULK
+
+# Advanced panel (adds stat upgrades, DL, foundation models)
+make adv-expert-panel
+make adv-expert-panel-quick
+make adv-expert-panel-mini
+make adv-expert-panel-loc LOC=1401-BULK
+
+# Custom parameters
+uv run python -m algorithm_testing.run_expert_panel \
+    --n-dfus 2000 --n-timeframes 4 --seed 123
+
+# Location + fewer timeframes
+uv run python -m algorithm_testing.run_expert_panel \
+    --loc 1401-BULK --n-timeframes 3
+```
+
+### What It Does
+
+1. **Builds a golden set** — stratified sample from `dim_sku` by cluster, or all DFUs at a specified location (`--loc`)
+2. **Classifies demand** — Syntetos-Boylan: smooth, erratic, intermittent, lumpy × high/low volume (8 archetypes)
+3. **Runs 12 algorithms** per timeframe — statistical models fit per-DFU (parallel or sequential depending on set size), tree models fit per-cluster
+4. **Builds affinity matrix** — segment × algorithm accuracy heatmap
+5. **Optimizes portfolio** — assigns best algorithm per segment (max 6 algorithms)
+6. **Compares vs baselines** — Seasonal Naive, External Forecast, Current Tree Champion
+
+### Output
+
+All results written to `algorithm_testing/results/` (or `adv_algorithm_testing/results/`):
+
+| File | Content |
+|------|---------|
+| `experiment_report.txt` | Human-readable summary with lift numbers |
+| `comparison.json` | Portfolio vs baselines (the key result) |
+| `affinity_matrix.csv` | Segment × algorithm accuracy heatmap |
+| `assignments.csv` | Best algorithm per demand segment |
+| `classification.csv` | Per-DFU archetype classification |
+| `affinity_detail.csv` | Per-segment accuracy detail |
+| `all_predictions.parquet` | All model predictions (large) |
+| `metadata.json` | Runtime, DFU count, loc_filter, algorithm counts |
+
+### Interpreting Results
+
+The key metric is **lift in basis points (bps)** in `comparison.json`:
+
+- `lift.vs_naive_bps` — improvement over seasonal naive (should be large, 500+ bps)
+- `lift.vs_external_bps` — improvement over ERP forecast (target: positive)
+- `lift.vs_champion_bps` — improvement over current tree champion (the money number)
+
+A positive `vs_champion_bps` means the algorithm mix outperforms the tree-only approach. Each 100 bps ≈ 1% accuracy improvement ≈ ~1% safety stock reduction.
+
+### Configuration
+
+All parameters in `algorithm_testing/config.yaml` (or `adv_algorithm_testing/config.yaml`):
+
+- `experiment.n_dfus` — golden set size (default: 5000; ignored when `loc_filter` is set)
+- `experiment.n_timeframes` — backtest depth (default: 5, production uses 10)
+- `experiment.loc_filter` — run on all DFUs at a specific location instead of sampling (e.g. `1401-BULK`); also settable via `--loc` CLI flag
+- `experiment.n_workers` — parallel worker count (default: 8; sets auto auto-switch to sequential when DFU count ≤ 200)
+- `statistical_models.*` — enable/disable each statistical method
+- `portfolio_optimizer.max_algorithms` — complexity budget (default: 6)
+
+### Execution Mode
+
+Statistical models auto-select between two execution paths:
+
+| DFU count | Mode | Reason |
+|-----------|------|--------|
+| ≤ 200 | **Sequential** | Process-pool startup overhead exceeds model runtime for small sets |
+| > 200 | **Parallel** (`ProcessPoolExecutor`) | `enabled_models` and `predict_months` serialized once per worker via initializer; each task carries only compact numpy arrays |
+
+When `--loc` is used, most sites produce < 200 DFUs → sequential mode is used automatically.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `algorithm_testing/run_expert_panel.py` | Main orchestrator |
+| `algorithm_testing/golden_set.py` | Golden set sampling + loc-based selection |
+| `algorithm_testing/config.yaml` | Experiment configuration |
+| `algorithm_testing/demand_classifier.py` | Syntetos-Boylan classification |
+| `algorithm_testing/statistical_models.py` | HW, ES, Croston, ARIMA, Theta (DFU-first, all models per DFU) |
+| `algorithm_testing/tree_models.py` | LGBM/CatBoost/XGBoost wrapper |
+| `algorithm_testing/affinity_matrix.py` | Segment × algorithm matrix |
+| `algorithm_testing/portfolio_optimizer.py` | Greedy + constrained optimizer |
+| `algorithm_testing/comparison.py` | Portfolio vs baselines |
+| `adv_algorithm_testing/run_adv_expert_panel.py` | Advanced panel orchestrator (+ DL, foundation models) |
+| `docs/specs/02-forecasting/15-expert-panel-algorithm-selection.md` | Full design spec |
+
+---
+
 ## Phase 7: Production Forecast Generation (F1.1)
 
 Run after Phase 6. Generates future-period (T+1 to T+12) demand forecasts using champion ML model artifacts.

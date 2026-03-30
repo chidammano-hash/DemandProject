@@ -72,8 +72,9 @@ Predict future demand using ML models, then select the best forecast per item.
 | 12 | [Dual Promotion](02-forecasting/12-dual-promotion.md) | Two-stage promotion: config → results for tuning experiments |
 | 13 | [Production Baseline Seeding](02-forecasting/13-production-baseline-seeding.md) | Auto-seed production baselines from completed backtests |
 | 14 | [Execution Lag Filters](02-forecasting/14-execution-lag-filters.md) | Lag filter bar semantics for Algorithm and Champion experiment tabs |
+| 15 | [Expert Panel: Algorithm Selection](02-forecasting/15-expert-panel-algorithm-selection.md) | 31-expert panel tests 30+ algorithms (statistical, tree, deep learning, foundation models) across demand segments; routes each DFU to its best-fit algorithm via affinity matrix optimization |
 
-**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio)
+**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel)
 
 ---
 

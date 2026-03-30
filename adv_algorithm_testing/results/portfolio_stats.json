@@ -1,0 +1,19 @@
+{
+  "portfolio_wape": 41.9272,
+  "portfolio_accuracy": 58.07,
+  "n_dfus": 10608,
+  "n_dfu_months": 78164,
+  "n_algorithms": 2,
+  "algorithm_distribution": {
+    "mstl": {
+      "n_dfus": 2775,
+      "pct": 26.2,
+      "accuracy": 58.84
+    },
+    "nbeats": {
+      "n_dfus": 7833,
+      "pct": 73.8,
+      "accuracy": 57.92
+    }
+  }
+}

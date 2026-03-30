@@ -1,0 +1,24 @@
+competition:
+  name: default
+  metric: accuracy_pct
+  lag: execution
+  min_sku_rows: 3
+  champion_model_id: champion
+  fallback_model_id: lgbm_cluster
+  models:
+  - lgbm_cluster
+  - catboost_cluster
+  - xgboost_cluster
+  strategy: expanding
+  strategy_params:
+    window_months: 6
+    decay_factor: 0.9
+    top_k: 3
+    weight_method: inverse_wape
+    performance_window: 6
+  meta_learner:
+    model_type: random_forest
+    n_estimators: 200
+    max_depth: 15
+    test_months: 3
+    performance_window: 6

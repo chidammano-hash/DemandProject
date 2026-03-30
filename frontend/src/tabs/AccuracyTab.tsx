@@ -28,6 +28,7 @@ import { TrendChartPanel } from "./accuracy/TrendChartPanel";
 import { ChampionPanel } from "./accuracy/ChampionPanel";
 import { ShapPanel } from "./accuracy/ShapPanel";
 import { BiasCorrectionsPanel } from "./accuracy/BiasCorrectionsPanel";
+import { ExpSysPanel } from "./accuracy/ExpSysPanel";
 
 export function AccuracyTab() {
   const { filters, planningDate } = useGlobalFilterContext();
@@ -217,6 +218,7 @@ export function AccuracyTab() {
       />
 
       <BiasCorrectionsPanel />
+      <ExpSysPanel />
     </section>
   );
 }

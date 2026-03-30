@@ -292,19 +292,17 @@ class TestFitModel:
         call_kwargs = model.fit.call_args.kwargs
         assert call_kwargs["eval_metric"] == "mae"
 
-    def test_catboost_passes_mae_eval_metric(self):
-        """CatBoost eval_metric set via set_params as 'MAE'."""
+    def test_catboost_does_not_override_eval_metric(self):
+        """CatBoost must NOT pass eval_metric or custom_metric in fit() kwargs."""
         model = MagicMock()
         lib_module = MagicMock()
 
         fit_model(model, "catboost", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
                   [], ["f1"], lib_module, 3000)
 
-        model.set_params.assert_called_once()
-        sp_kwargs = model.set_params.call_args.kwargs
-        assert sp_kwargs["eval_metric"] == "MAE"
-        # eval_metric must NOT be in fit() kwargs
-        assert "eval_metric" not in model.fit.call_args.kwargs
+        fit_kwargs = model.fit.call_args.kwargs
+        assert "custom_metric" not in fit_kwargs
+        assert "eval_metric" not in fit_kwargs
 
     def test_xgboost_passes_mae_eval_metric(self):
         """XGBoost eval_metric set via set_params as 'mae'."""

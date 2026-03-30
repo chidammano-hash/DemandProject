@@ -1,0 +1,54 @@
+experiment:
+  n_timeframes: 10
+  forecast_horizon: 6         # months predicted per timeframe
+  max_lags: 4                 # lags 0–4 stored (lag 5 excluded by DB constraint)
+  algorithm_id: "ExpSys"      # model_id in backtest_lag_archive
+  plan_version: "ExpSys_v1"   # plan_version in fact_production_forecast
+  output_dir: "data/expert_system_backtest"
+  n_workers: 14               # parallel workers for mstl (statsforecast); scaled down automatically when parallel_timeframes > 1
+  parallel_timeframes: 2      # number of timeframes to run concurrently (set to 1 for serial; increase with caution when using MPS GPU — each process loads its own model copy)
+
+demand_classification:
+  adi_threshold: 1.32
+  cv2_threshold: 0.49
+  high_volume_percentile: 90
+  min_history_months: 6
+
+# Default algorithm per demand archetype.
+# Fallbacks activate per-DFU when the primary algorithm cannot produce a prediction
+# (insufficient history). The cascade is tried left-to-right until coverage is achieved.
+assignment:
+  erratic_high: nbeats
+  erratic_low:  nbeats
+  insufficient: chronos
+  smooth_low:   nbeats
+  smooth_high:  mstl
+  fallbacks:
+    nbeats:  [chronos, mstl, rolling_mean]
+    chronos: [mstl, rolling_mean]
+    mstl:    [chronos, rolling_mean]
+    default: [rolling_mean]   # catch-all for any unlisted primary algorithm
+
+nbeats:
+  variant: "generic"          # generic | interpretable
+  input_size: 24              # lookback window (months)
+  h: 6                        # forecast horizon (months)
+  max_steps: 500
+  batch_size: 1024            # large batch saturates MPS/GPU better (was 32)
+  learning_rate: 0.001
+  min_history: 24
+
+chronos:
+  model_size: "small"         # tiny | mini | small | base | large
+  device: "mps"               # Apple Silicon GPU
+  batch_size: 256             # 256 DFUs per inference call vs 32 → fewer kernel launches (was 32)
+  prediction_length: 6
+  num_samples: 20
+
+mstl:
+  season_length: 12
+  min_history: 25
+
+rolling_mean:                 # fallback for very-short history DFUs
+  window: 6
+  min_history: 3

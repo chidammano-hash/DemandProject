@@ -77,6 +77,11 @@ def compute_shap_global(
     # LGBM: use native pred_contrib (avoids shap library dtype issues)
     if module_name == "lightgbm" or hasattr(model, "booster_"):
         try:
+            # Ensure categorical columns have category dtype to match model training
+            for col in cat_cols:
+                if col in X_sample.columns and X_sample[col].dtype.name != "category":
+                    X_sample = X_sample.copy()
+                    X_sample[col] = X_sample[col].astype("category")
             full = model.predict(X_sample, pred_contrib=True)
             return np.abs(full[:, :-1])  # strip baseline column
         except Exception:
@@ -127,15 +132,33 @@ def _weighted_pool_cluster_shap(
     effective_cat_cols: list[str],
     shap_extractor_fn: ShapExtractorFn,
     sample_size: int,
+    all_feature_cols: list[str] | None = None,
+    all_cat_cols: list[str] | None = None,
 ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
     """Compute SHAP for each cluster model and pool by cluster size.
 
     Skips the "__base__" key present in transfer-learning model dicts.
 
+    When ``all_feature_cols`` is provided, the model is called with the full
+    feature set (matching its training shape) and the result is sliced to
+    ``effective_feature_cols`` indices.  This avoids the LightGBM error
+    "train and valid dataset categorical_feature do not match" that occurs
+    when ``ml_cluster`` is stripped before calling a model that was trained
+    with it.
+
     Returns:
         pooled: mean absolute SHAP values per feature, shape (n_features,).
         per_cluster: dict mapping cluster_label → mean |SHAP| array, shape (n_features,).
     """
+    # If all_feature_cols provided, call the model with full features and slice output
+    model_feature_cols = all_feature_cols or effective_feature_cols
+    model_cat_cols = all_cat_cols or effective_cat_cols
+    # Build index mask to select effective columns from the full SHAP output
+    if all_feature_cols and all_feature_cols != effective_feature_cols:
+        effective_indices = [model_feature_cols.index(c) for c in effective_feature_cols]
+    else:
+        effective_indices = None  # no slicing needed
+
     weighted_shap = np.zeros(len(effective_feature_cols))
     total_rows = 0
     per_cluster: dict[str, np.ndarray] = {}
@@ -147,9 +170,17 @@ def _weighted_pool_cluster_shap(
         if len(cluster_data) == 0:
             continue
         n = min(sample_size, len(cluster_data))
-        X_sample = cluster_data[effective_feature_cols].sample(n=n, random_state=42)
+        X_sample = cluster_data[model_feature_cols].sample(n=n, random_state=42)
+        # Ensure categorical columns have category dtype to match the model's
+        # training data (required by LightGBM's _data_from_pandas validation).
+        for col in model_cat_cols:
+            if col in X_sample.columns:
+                X_sample[col] = X_sample[col].astype("category")
         try:
-            abs_shap = shap_extractor_fn(model, X_sample, effective_feature_cols, effective_cat_cols)
+            abs_shap = shap_extractor_fn(model, X_sample, model_feature_cols, model_cat_cols)
+            # Slice to effective features if we passed extra columns to the model
+            if effective_indices is not None:
+                abs_shap = abs_shap[:, effective_indices]
             cluster_mean = abs_shap.mean(axis=0)
             per_cluster[str(cluster_label)] = cluster_mean
             weighted_shap += cluster_mean * n
@@ -271,9 +302,10 @@ def compute_timeframe_shap(
     """
     t0 = time.time()
 
-    # Per-cluster / transfer: strip ml_cluster for SHAP computation because it is
-    # constant within each cluster partition (zero variance → zero SHAP) and its
-    # presence causes dimension mismatch with per-cluster trained models.
+    # Per-cluster / transfer: strip ml_cluster from SHAP *output* because it is
+    # constant within each cluster partition (zero variance → zero SHAP).
+    # However, we must still pass the full feature set to the model since it was
+    # trained with ml_cluster (hard feature).
     if cluster_strategy in ("per_cluster", "transfer"):
         effective_feature_cols = [c for c in feature_cols if c != "ml_cluster"]
         effective_cat_cols = [c for c in cat_cols if c != "ml_cluster"]
@@ -292,6 +324,8 @@ def compute_timeframe_shap(
                 effective_cat_cols,
                 shap_extractor_fn,
                 sample_size,
+                all_feature_cols=feature_cols,
+                all_cat_cols=cat_cols,
             )
         else:
             n = min(sample_size, len(train_data))

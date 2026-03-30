@@ -6,7 +6,7 @@ POSTGRES_SERVICE := postgres
 PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
 PSQL := $(PG_EXEC) psql -U demand -d demand_mvp
 
-.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router
+.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini
 
 # ---------------------------------------------------------------------------
 # Convenience aliases
@@ -93,6 +93,17 @@ help:
 	@echo "  tune-catboost        - Bayesian hyperparameter tuning for CatBoost (50 trials)"
 	@echo "  tune-xgboost         - Bayesian hyperparameter tuning for XGBoost (50 trials)"
 	@echo "  tune-all             - Run all three tuning jobs sequentially"
+	@echo "  expert-panel         - Expert Panel algorithm selection test (5000 DFUs, 5 TFs, ~30 min)"
+	@echo "  expert-panel-quick   - Quick Expert Panel test (1000 DFUs, 3 TFs, ~8 min)"
+	@echo "  expert-panel-mini    - Minimal Expert Panel test (200 DFUs, 2 TFs, ~2 min)"
+	@echo "  expert-panel-loc     - Expert Panel for all DFUs at one location: make expert-panel-loc LOC=1401-BULK"
+	@echo "  adv-expert-panel     - Advanced Expert Panel (execution-lag accuracy, foundation models + DL + stat upgrades)"
+	@echo "  adv-expert-panel-quick - Quick Advanced Expert Panel (execution-lag accuracy, 1000 DFUs, 5 TFs)"
+	@echo "  adv-expert-panel-mini  - Minimal Advanced Expert Panel (200 DFUs, 2 TFs)"
+	@echo "  adv-expert-panel-loc   - Advanced Expert Panel for all DFUs at one location: make adv-expert-panel-loc LOC=1401-BULK"
+	@echo "  expsys-backtest        - Expert System Backtest: full population, segment-assigned algo, loads to DB (~4-5h)"
+	@echo "  expsys-backtest-dry    - ExpSys accuracy only, no DB load (--skip-load)"
+	@echo "  expsys-backtest-replace - ExpSys: delete existing rows then reload"
 	@echo "  NOTE: recursive, SHAP, and tuning are configured via config/algorithm_config.yaml"
 	@echo "  seasonality-schema   - apply DDL for seasonality columns on dim_dfu (one-time)"
 	@echo "  seasonality-detect   - run seasonality detection pipeline (detect + profile)"
@@ -502,13 +513,13 @@ ai-insights-all: ai-insights-schema ai-insights-scan
 # Options (recursive, SHAP, tuning, params) are set in config/algorithm_config.yaml
 # ---------------------------------------------------------------------------
 backtest-lgbm:
-	$(UV) python scripts/run_backtest.py $(ARGS)
+	$(UV) python scripts/run_backtest.py --parallel --workers 8 $(ARGS)
 
 backtest-catboost:
-	$(UV) python scripts/run_backtest_catboost.py $(ARGS)
+	$(UV) python scripts/run_backtest_catboost.py --parallel --workers 8 $(ARGS)
 
 backtest-xgboost:
-	$(UV) python scripts/run_backtest_xgboost.py $(ARGS)
+	$(UV) python scripts/run_backtest_xgboost.py --parallel --workers 8 $(ARGS)
 
 backtest-all: backtest-lgbm backtest-catboost backtest-xgboost
 
@@ -609,6 +620,50 @@ lgbm-auto-tune-dry-run:
 
 lgbm-auto-tune-list:
 	$(UV) python scripts/ml/auto_tune.py --list-strategies
+
+# ── Expert Panel Algorithm Selection ────────────────────────────────────────
+expert-panel:            ## Run Expert Panel test (5000 DFUs, 5 timeframes, ~30 min)
+	$(UV) python -m algorithm_testing.run_expert_panel
+
+expert-panel-quick:      ## Quick Expert Panel test (1000 DFUs, 3 timeframes, ~8 min)
+	$(UV) python -m algorithm_testing.run_expert_panel --n-dfus 1000 --n-timeframes 3
+
+expert-panel-mini:       ## Minimal Expert Panel test (200 DFUs, 2 timeframes, ~2 min)
+	$(UV) python -m algorithm_testing.run_expert_panel --n-dfus 200 --n-timeframes 2
+
+expert-panel-loc:        ## Run Expert Panel for all DFUs at a specific location: make expert-panel-loc LOC=1401-BULK
+	@if [ -z "$(LOC)" ]; then echo "Usage: make expert-panel-loc LOC=1401-BULK"; exit 1; fi
+	$(UV) python -m algorithm_testing.run_expert_panel --loc $(LOC)
+
+# ── Advanced Expert Panel (Foundation Models + Deep Learning) ───────────────
+adv-expert-panel:        ## Advanced Expert Panel (5000 DFUs, 10 TFs, execution-lag accuracy, foundation+DL+stat upgrades)
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m adv_algorithm_testing.run_adv_expert_panel --n-timeframes 10
+
+adv-expert-panel-quick:  ## Quick Advanced Expert Panel (1000 DFUs, 5 TFs, execution-lag accuracy)
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m adv_algorithm_testing.run_adv_expert_panel --n-dfus 1000 --n-timeframes 5
+
+adv-expert-panel-mini:   ## Minimal Advanced Expert Panel (200 DFUs, 2 TFs)
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m adv_algorithm_testing.run_adv_expert_panel --n-dfus 200 --n-timeframes 2
+
+adv-expert-panel-loc:    ## Advanced Expert Panel for all DFUs at a specific location: make adv-expert-panel-loc LOC=1401-BULK
+	@if [ -z "$(LOC)" ]; then echo "Usage: make adv-expert-panel-loc LOC=1401-BULK"; exit 1; fi
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m adv_algorithm_testing.run_adv_expert_panel --loc $(LOC)
+
+route-analysis:          ## Compare per-DFU routing strategies on saved predictions (no retraining, ~2 min)
+	$(UV) python -m adv_algorithm_testing.route_analysis
+
+route-analysis-min3:     ## Same as route-analysis but require 3+ timeframes of history per DFU
+	$(UV) python -m adv_algorithm_testing.route_analysis --min-history 3
+
+# ── Expert System Backtest (full population, segment-assigned algorithm) ─────
+expsys-backtest:         ## Full ExpSys backtest: all DFUs, 10 TFs, loads to DB (~4-5h)
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_expert_system_backtest
+
+expsys-backtest-dry:     ## ExpSys accuracy only — no DB loading (--skip-load)
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_expert_system_backtest --skip-load
+
+expsys-backtest-replace: ## ExpSys: delete existing rows first, then reload
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.ml.run_expert_system_backtest --replace
 
 commit:
 	@if [ -z "$(MSG)" ]; then echo "Usage: make commit MSG=\"your message\""; exit 1; fi

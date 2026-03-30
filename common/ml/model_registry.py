@@ -233,6 +233,8 @@ def fit_model(
         # Do NOT override eval_metric — CatBoost must monitor its own loss function.
         # Setting eval_metric="MAE" conflicts with Tweedie loss on intermittent clusters
         # and causes early stopping at suboptimal points for RMSE clusters.
+        # Note: custom_metric only tracks additional metrics during training — it does
+        # NOT change which metric drives early stopping, so it provides no benefit here.
         model.fit(
             X_tr, y_tr,
             cat_features=cat_indices,

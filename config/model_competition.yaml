@@ -11,14 +11,11 @@ competition:
   - xgboost_cluster
   strategy: expanding
   strategy_params:
-    window_months: 6
-    decay_factor: 0.90
-    top_k: 3
-    weight_method: inverse_wape
-    performance_window: 6
+    min_prior_months: 5
   meta_learner:
     model_type: random_forest
     n_estimators: 200
     max_depth: 15
     test_months: 3
     performance_window: 6
+  min_dfu_rows: 3

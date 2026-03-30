@@ -113,6 +113,8 @@ make backtest-all      # LGBM + CatBoost + XGBoost backtests
 make backtest-load-all # Load all backtest predictions into Postgres
 make champion-all      # Meta-learner + simulate + champion select
 make tune-all          # Bayesian hyperparameter tuning (all models)
+make expert-panel      # Expert Panel algorithm selection test (5000 DFUs, ~30 min)
+make expert-panel-quick # Quick Expert Panel test (1000 DFUs, ~8 min)
 make seasonality-all   # Detect + write seasonality profiles
 make forecast-generate # Production forecast inference
 

@@ -1,0 +1,66 @@
+{
+  "experiment": "adv_expert_panel_v1",
+  "runtime_seconds": 2051.3,
+  "n_dfus": 13747,
+  "n_predictions": 14561883,
+  "n_algorithms": 26,
+  "n_archetypes": 5,
+  "loc_filter": "1401-BULK",
+  "algorithm_prediction_counts": {
+    "lgbm_cluster": 756085,
+    "catboost_cluster": 756085,
+    "xgboost_cluster": 756085,
+    "ridge": 756085,
+    "holt_winters": 647284,
+    "simple_es": 647284,
+    "mstl": 647284,
+    "theta": 647284,
+    "seasonal_naive": 647284,
+    "rolling_mean": 647284,
+    "autoces": 647284,
+    "dynamic_theta": 647284,
+    "adida": 615406,
+    "tsb": 615406,
+    "imapa": 615406,
+    "croston_sba": 615406,
+    "nlinear": 591294,
+    "chronos": 591294,
+    "dlinear": 530165,
+    "nbeats": 358622,
+    "nhits": 358622,
+    "tft": 358622,
+    "tide": 358622,
+    "tcn": 358622,
+    "patchtst": 358622,
+    "itransformer": 33162
+  },
+  "new_algorithms": {
+    "statistical_upgrades": [
+      "autoces",
+      "dynamic_theta",
+      "imapa",
+      "tsb",
+      "adida",
+      "mstl"
+    ],
+    "deep_learning": [
+      "nbeats",
+      "nhits",
+      "tft",
+      "deepar",
+      "tide",
+      "tcn",
+      "patchtst",
+      "itransformer"
+    ],
+    "foundation_models": [
+      "chronos",
+      "moirai",
+      "lag_llama"
+    ],
+    "dl_baselines": [
+      "dlinear",
+      "nlinear"
+    ]
+  }
+}

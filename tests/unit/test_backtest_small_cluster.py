@@ -163,13 +163,13 @@ class TestComputeNaiveFallback:
 class TestTrainSingleClusterFallback:
     """Tests that _train_single_cluster returns the fallback marker for small clusters."""
 
-    def _make_registry(self) -> dict:
-        """Build a minimal mock registry for testing."""
+    def _worker_kwargs(self) -> dict:
+        """Build minimal kwargs matching _train_single_cluster's new signature."""
         return {
             "needs_cat_dtype_cast": False,
             "constant_target_guard": True,
             "iter_param": "n_estimators",
-            "fit_extras_per_cluster": lambda p, i: {},
+            "fit_extras": {},
         }
 
     def test_small_cluster_returns_fallback_marker(self):
@@ -185,9 +185,9 @@ class TestTrainSingleClusterFallback:
             train, pred,
             ["month"], [], {},
             model_name="lgbm",
-            registry=self._make_registry(),
             model_class=MagicMock,
             lib_module=MagicMock(),
+            **self._worker_kwargs(),
         )
 
         assert cl == "tiny"
@@ -212,8 +212,6 @@ class TestTrainSingleClusterFallback:
         ]
         mock_model_class = MagicMock(return_value=mock_model_instance)
 
-        registry = self._make_registry()
-
         with patch("scripts.run_backtest.fit_model"):
             with patch("scripts.run_backtest.get_best_iteration", return_value=100):
                 with patch("scripts.run_backtest.compute_cluster_demand_stats", return_value={
@@ -226,9 +224,9 @@ class TestTrainSingleClusterFallback:
                             train, pred,
                             ["month"], [], {"n_estimators": 100},
                             model_name="lgbm",
-                            registry=registry,
                             model_class=mock_model_class,
                             lib_module=MagicMock(),
+                            **self._worker_kwargs(),
                         )
 
         assert cl == "normal"
@@ -249,9 +247,9 @@ class TestTrainSingleClusterFallback:
             train, pred,
             ["month"], [], {},
             model_name="lgbm",
-            registry=self._make_registry(),
             model_class=MagicMock,
             lib_module=MagicMock(),
+            **self._worker_kwargs(),
         )
 
         assert cl == "empty_pred"
