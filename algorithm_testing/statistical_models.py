@@ -38,6 +38,12 @@ def _fill_monthly_series(
 ) -> pd.Series:
     """Create a complete monthly time series, filling missing months with 0."""
     series = group_df.set_index("startdate")["qty"].reindex(all_months, fill_value=0.0)
+    # Rebuild a contiguous month-start index to guarantee freq="MS" even when
+    # upstream preprocessing (e.g., leading-zero trim) creates gaps.
+    contiguous = pd.date_range(
+        start=series.index.min(), end=series.index.max(), freq="MS"
+    )
+    series = series.reindex(contiguous, fill_value=0.0)
     series.index = pd.DatetimeIndex(series.index, freq="MS")
     return series
 

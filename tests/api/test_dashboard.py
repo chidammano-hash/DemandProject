@@ -582,7 +582,9 @@ async def test_dashboard_kpis_uses_model_id_not_lag(mock_pool):
             resp = await client.get("/dashboard/kpis")
     assert resp.status_code == 200
     sql_current = cursor.execute.call_args_list[0][0][0]
-    assert "model_id = 'external'" in sql_current
+    assert "model_id = %s" in sql_current
+    params_current = cursor.execute.call_args_list[0][0][1]
+    assert params_current[0] == "external"
     assert "lag = 0" not in sql_current
 
 

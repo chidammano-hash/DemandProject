@@ -311,7 +311,7 @@ def _resolve_input_files(
         # Only load from canonical model directories — skip auxiliary dirs
         # like lgbm_cluster_baseline_20260322, logs, tuning_archive that
         # contain stale CSVs which would overwrite real backtest data.
-        _CANONICAL_MODEL_DIRS = {"lgbm_cluster", "catboost_cluster", "xgboost_cluster"}
+        _CANONICAL_MODEL_DIRS = {"lgbm_cluster", "catboost_cluster", "xgboost_cluster", "chronos"}
         found = sorted(
             p for p in backtest_dir.glob("*/backtest_predictions.csv")
             if p.parent.name in _CANONICAL_MODEL_DIRS

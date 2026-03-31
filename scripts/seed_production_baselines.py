@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 BASELINE_LABEL = "Production Baseline"
 TEMPLATE_ID = "production_baseline"
 
-MODEL_IDS = ["lgbm_cluster", "catboost_cluster", "xgboost_cluster"]
+MODEL_IDS = ["lgbm_cluster", "catboost_cluster", "xgboost_cluster", "chronos"]
 
 # Keys in algorithm_config.yaml that are training config, not hyperparameters
 _TRAINING_KEYS = frozenset({
@@ -737,7 +737,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--model",
-        choices=["lgbm", "catboost", "xgboost"],
+        choices=["lgbm", "catboost", "xgboost", "chronos"],
         default=None,
         help="Seed only this model (tuning scope only)",
     )
@@ -752,7 +752,8 @@ def main() -> None:
         if "tuning" in scopes:
             models = MODEL_IDS
             if args.model:
-                models = [f"{args.model}_cluster"]
+                # Chronos uses bare model_id; tree models use _cluster suffix
+                models = [args.model if args.model == "chronos" else f"{args.model}_cluster"]
             for model_id in models:
                 run_id = seed_tuning_baseline(model_id, conn)
                 results[model_id] = run_id

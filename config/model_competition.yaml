@@ -9,6 +9,7 @@ competition:
   - lgbm_cluster
   - catboost_cluster
   - xgboost_cluster
+  - chronos
   strategy: expanding
   strategy_params:
     min_prior_months: 5

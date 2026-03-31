@@ -17,6 +17,8 @@ def classify_demand(
     cv2_threshold: float = 0.49,
     high_volume_percentile: int = 90,
     min_history_months: int = 6,
+    cv2_volatile_threshold: float | None = None,
+    smooth_short_history_months: int | None = None,
 ) -> pd.DataFrame:
     """Classify each DFU into a Syntetos-Boylan demand archetype.
 
@@ -26,6 +28,11 @@ def classify_demand(
         cv2_threshold: CV² boundary (0.49 per Syntetos & Boylan 2005).
         high_volume_percentile: Percentile threshold for high/low volume split.
         min_history_months: Minimum months of history to classify (else 'insufficient').
+        cv2_volatile_threshold: When set, splits erratic into 'erratic_mild'
+            (cv2 < threshold) and 'erratic_volatile' (cv2 >= threshold),
+            replacing the high/low volume split within erratic.
+        smooth_short_history_months: When set, splits smooth_low DFUs with
+            n_periods < threshold into 'smooth_low_short' archetype.
 
     Returns:
         DataFrame with columns:
@@ -117,6 +124,20 @@ def classify_demand(
         "insufficient",
         result["segment"] + "_" + result["volume_tier"],
     )
+
+    # --- Optional: CV² sub-split within erratic --------------------------------
+    if cv2_volatile_threshold is not None:
+        erratic_rows = result["segment"] == "erratic"
+        result.loc[erratic_rows & (result["cv2"] < cv2_volatile_threshold), "archetype"] = "erratic_mild"
+        result.loc[erratic_rows & (result["cv2"] >= cv2_volatile_threshold), "archetype"] = "erratic_volatile"
+
+    # --- Optional: history sub-split within smooth_low -------------------------
+    if smooth_short_history_months is not None:
+        smooth_low_short_mask = (
+            (result["archetype"] == "smooth_low")
+            & (result["n_periods"] < smooth_short_history_months)
+        )
+        result.loc[smooth_low_short_mask, "archetype"] = "smooth_low_short"
 
     # Reset index so sku_ck becomes a column
     result = result.reset_index()

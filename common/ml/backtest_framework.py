@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 _PROFILE_PRIORITY = [
     "sparse_intermittent",
     "low_volume_volatile",
+    "volatile_large_cluster",   # large (>300k rows) + high CV + mostly continuous
     "high_volume_stable",
     "seasonal_dominant",
     "default",
@@ -103,6 +104,9 @@ def compute_cluster_demand_stats(
         "cv_demand": cv_demand,
         "zero_demand_pct": zero_demand_pct,
         "seasonal_amplitude": seasonal_amplitude,
+        # Training row count — used by profile match_criteria (n_rows_min / n_rows_max)
+        # to prevent large-cluster profiles from being overridden by small-cluster rules.
+        "n_rows": float(len(qty)),
     }
 
 
@@ -319,6 +323,18 @@ def load_backtest_data(
             f"{len(override_map):,}", cluster_override_path, f"{n_remapped:,}",
         )
 
+    # Restrict to specific cluster labels when requested (for experiments / quick runs)
+    cluster_filter = algo_config.get("cluster_filter") if algo_config else None
+    if cluster_filter:
+        cluster_filter_str = [str(c) for c in cluster_filter]
+        dfu_attrs = dfu_attrs[dfu_attrs["ml_cluster"].astype(str).isin(cluster_filter_str)].copy()
+        dfus_in_filter = set(dfu_attrs["sku_ck"])
+        sales_df = sales_df[sales_df["sku_ck"].isin(dfus_in_filter)].copy()
+        logger.info(
+            "Cluster filter applied: clusters=%s → %s DFUs, %s sales rows retained",
+            cluster_filter, f"{len(dfu_attrs):,}", f"{len(sales_df):,}",
+        )
+
     # Classify DFUs into cohorts based on sales history depth
     dfu_attrs = classify_dfu_cohorts(sales_df, dfu_attrs)
 
@@ -492,6 +508,78 @@ def assign_natural_lags(
     return df
 
 
+# ── Checkpoint manager — survives OOM / crash across all backtests ─────────
+
+
+class BacktestCheckpointer:
+    """Incremental checkpoint manager for backtest timeframes.
+
+    Saves each timeframe's predictions to a parquet file immediately after
+    inference completes.  On re-run, completed timeframes are loaded from
+    disk and skipped, so only unfinished work is retried.
+
+    Usage in any backtest script::
+
+        ckpt = BacktestCheckpointer(output_dir, model_id)
+        for tf in timeframes:
+            if ckpt.exists(tf["index"]):
+                all_predictions.append(ckpt.load(tf["index"]))
+                continue
+            preds = ...  # run inference
+            ckpt.save(preds, tf["index"])
+            all_predictions.append(preds)
+        ...
+        ckpt.cleanup()   # after successful final save
+    """
+
+    def __init__(self, output_dir: Path, model_id: str, resume: bool = False) -> None:
+        self._dir = Path(output_dir) / model_id / "_checkpoints"
+        # Default: start fresh. Only resume if explicitly requested.
+        if not resume and self._dir.exists():
+            import shutil
+            shutil.rmtree(self._dir, ignore_errors=True)
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._existing: dict[int, Path] = {
+            int(p.stem.split("_")[1]): p
+            for p in self._dir.glob("tf_*.parquet")
+        }
+        if self._existing:
+            logger.info(
+                "Checkpoint: resuming — found %d saved timeframe(s)",
+                len(self._existing),
+            )
+
+    def _path(self, idx: int) -> Path:
+        return self._dir / f"tf_{idx:03d}.parquet"
+
+    def exists(self, idx: int) -> bool:
+        return idx in self._existing
+
+    def load(self, idx: int) -> pd.DataFrame:
+        df = pd.read_parquet(self._existing[idx])
+        logger.info("  Checkpoint: loaded tf_%03d (%s rows)", idx, f"{len(df):,}")
+        return df
+
+    def save(self, df: pd.DataFrame, idx: int) -> None:
+        path = self._path(idx)
+        df.to_parquet(path, index=False)
+        self._existing[idx] = path
+
+    def load_all_existing(self) -> list[pd.DataFrame]:
+        """Load all previously saved checkpoints in index order."""
+        dfs = []
+        for idx in sorted(self._existing.keys()):
+            dfs.append(self.load(idx))
+        return dfs
+
+    def cleanup(self) -> None:
+        """Remove checkpoint directory after successful completion."""
+        import shutil
+        if self._dir.exists():
+            shutil.rmtree(self._dir, ignore_errors=True)
+            logger.info("Checkpoint: cleaned up %s", self._dir)
+
+
 # ── Post-processing: combine, dedup, attach actuals ─────────────────────────
 
 
@@ -514,45 +602,31 @@ def postprocess_predictions(
     Returns (output_df, archive_df, combined_raw).
     """
     combined = pd.concat(all_predictions, ignore_index=True)
+    # Free the input list immediately — no longer needed
+    all_predictions.clear()
+
+    # Normalize column names: some scripts use 'timeframe_label' instead of 'timeframe'
+    if "timeframe" not in combined.columns and "timeframe_label" in combined.columns:
+        combined["timeframe"] = combined["timeframe_label"]
     logger.info("Total raw predictions: %s", f"{len(combined):,}")
 
     # Ensure startdate is datetime
     combined["startdate"] = pd.to_datetime(combined["startdate"])
 
-    # Assign execution lag and compute fcstdate (one row per prediction)
-    logger.info("Assigning execution lag per DFU...")
-    expanded = assign_execution_lag(combined, exec_lag_map)
-    logger.info("Rows after execution-lag assignment: %s", f"{len(expanded):,}")
-
-    # Deduplicate: for same (forecast_ck, model_id), keep latest timeframe
-    expanded = expanded.sort_values("timeframe_idx")
-    expanded = expanded.drop_duplicates(subset=["forecast_ck", "model_id"], keep="last")
-    logger.info("After dedup: %s", f"{len(expanded):,}")
-
-    # Attach actuals via merge (vectorized — not row-by-row apply)
-    logger.info("Attaching actuals...")
-    t1 = time.time()
+    # Build actuals lookup once (small — one row per DFU×month)
+    logger.info("Building actuals lookup...")
     actuals = sales_df.drop_duplicates(subset=["sku_ck", "startdate"])[["sku_ck", "startdate", "qty"]].rename(
         columns={"qty": "tothist_dmd"}
     )
-    expanded = expanded.merge(actuals, on=["sku_ck", "startdate"], how="left")
-    logger.info("Actuals attached (%.1fs)", time.time() - t1)
 
-    # ── All-lags archive ──────────────────────────────────────────────────
+    # ── All-lags archive (compute BEFORE execution-lag to share `combined`) ──
     logger.info("Generating all-lags archive (lag 0-%d)...", MAX_ARCHIVE_LAG)
 
     if timeframes is not None:
-        # Natural lags: each prediction gets its true forecast horizon based
-        # on the gap between the timeframe's training cutoff and the demand
-        # month.  Different lags = different predictions from different
-        # timeframes = genuinely different accuracy per horizon.
         archive_expanded = assign_natural_lags(
             combined, timeframes, MAX_ARCHIVE_LAG, exec_lag_map,
         )
     else:
-        # Legacy fallback (no timeframe metadata available) — duplicates the
-        # same prediction across all lags.  This path should only be hit if
-        # postprocess_predictions is called without timeframes.
         logger.warning(
             "postprocess_predictions called without timeframes — "
             "archive will have identical predictions across all lags"
@@ -561,16 +635,26 @@ def postprocess_predictions(
             combined, MAX_ARCHIVE_LAG, exec_lag_map,
         )
 
-    # Deduplicate: each (DFU, startdate, lag) should map to exactly one
-    # timeframe with natural lags, but keep dedup as safety net.
     archive_expanded = archive_expanded.sort_values("timeframe_idx")
     archive_expanded = archive_expanded.drop_duplicates(
         subset=["forecast_ck", "model_id", "lag"], keep="last"
     )
     logger.info("Archive after dedup: %s", f"{len(archive_expanded):,}")
-
-    # Attach actuals
     archive_expanded = archive_expanded.merge(actuals, on=["sku_ck", "startdate"], how="left")
+
+    # ── Execution-lag output (single row per prediction) ──────────────────
+    logger.info("Assigning execution lag per DFU...")
+    expanded = assign_execution_lag(combined, exec_lag_map)
+    logger.info("Rows after execution-lag assignment: %s", f"{len(expanded):,}")
+
+    expanded = expanded.sort_values("timeframe_idx")
+    expanded = expanded.drop_duplicates(subset=["forecast_ck", "model_id"], keep="last")
+    logger.info("After dedup: %s", f"{len(expanded):,}")
+
+    logger.info("Attaching actuals...")
+    t1 = time.time()
+    expanded = expanded.merge(actuals, on=["sku_ck", "startdate"], how="left")
+    logger.info("Actuals attached (%.1fs)", time.time() - t1)
 
     return expanded, archive_expanded, combined
 
@@ -899,6 +983,7 @@ def run_tree_backtest(
     model_persistence_fn: Callable[[Any, list[str], str], None] | None = None,
     algo_config: dict[str, Any] | None = None,
     embargo_months: int = 0,
+    resume: bool = False,
 ) -> None:
     """Run a complete tree-based per-cluster backtest (LGBM, CatBoost, XGBoost).
 
@@ -967,13 +1052,23 @@ def run_tree_backtest(
     cat_cols = [c for c in CAT_FEATURES if c in feature_cols and c in full_grid.columns]
     logger.info("Features: %d columns, cat: %s", len(feature_cols), cat_cols)
 
+    # ── Checkpoint manager for incremental saves ──────────────────────────────
+    ckpt = BacktestCheckpointer(output_dir, model_id, resume=resume)
+
     # ── Step 4: Train & predict per timeframe ────────────────────────────────
     logger.info("Step 4: Running %d timeframe backtests...", len(timeframes))
     all_predictions = []
     shap_timeframe_reports: list[pd.DataFrame] = []
     recursive_step_metrics: list[dict[str, Any]] = []
 
+    # Resume from any existing checkpoints
+    all_predictions.extend(ckpt.load_all_existing())
+
     for ti, tf in enumerate(timeframes):
+        if ckpt.exists(tf["index"]):
+            logger.info("Timeframe %s (%d/%d) — checkpoint exists, skipping",
+                        tf["label"], ti + 1, len(timeframes))
+            continue
         label = tf["label"]
         train_end = tf["train_end"]
         predict_start = tf["predict_start"]
@@ -1051,7 +1146,7 @@ def run_tree_backtest(
             # Optionally perturb lag features in training data so the model
             # learns to be robust to the noisy inputs it will see during
             # recursive inference (where predictions replace true actuals).
-            algo_cfg_noise = load_config("algorithm_config.yaml")
+            algo_cfg_noise = algo_config or {}
             noise_enabled = algo_cfg_noise.get("recursive_noise_enabled", False)
             noise_pct = algo_cfg_noise.get("recursive_noise_pct", 0.05)
             train_data_for_fit = train_data
@@ -1196,6 +1291,7 @@ def run_tree_backtest(
         preds["model_id"] = model_id
         preds["timeframe"] = label
         preds["timeframe_idx"] = tf["index"]
+        ckpt.save(preds, tf["index"])
         all_predictions.append(preds)
 
         # Persist the most recent timeframe's models for production inference (F1.1)
@@ -1278,6 +1374,8 @@ def run_tree_backtest(
         metadata=metadata,
         artifact_paths=[str(output_path), str(archive_path), str(meta_path)] + extra_artifact_paths,
     )
+
+    ckpt.cleanup()
 
     elapsed = time.time() - t_start
     logger.info("Backtest complete in %.0fs (%.1fm)", elapsed, elapsed / 60)

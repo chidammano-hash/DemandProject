@@ -108,9 +108,10 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   // --------------- panel toggles ---------------
   const { panels: visible, toggle } = usePanelToggles("ds:aggregateAnalysis:panels", PANEL_DEFAULTS);
 
-  // --------------- KPI window ---------------
+  // --------------- KPI window + model ---------------
   const [kpiWindow, setKpiWindow] = useState(3);
   const KPI_OPTIONS = [1, 3, 6, 12];
+  const [kpiModel, setKpiModel] = useState("external");
 
   // --------------- Forecast chart state ---------------
   const [trendWindow, setTrendWindow] = useState(12);
@@ -164,14 +165,14 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   const dashFilterRecord = useMemo(() => dashFilters as unknown as Record<string, unknown>, [dashFilters]);
 
   const kpiQ = useQuery({
-    queryKey: queryKeys.dashboardKpis({ window: kpiWindow, ...dashFilterRecord }),
-    queryFn: () => fetchDashboardKpis(kpiWindow, dashFilters),
+    queryKey: queryKeys.dashboardKpis({ window: kpiWindow, model: kpiModel, ...dashFilterRecord }),
+    queryFn: () => fetchDashboardKpis(kpiWindow, dashFilters, kpiModel),
     staleTime: STALE.THIRTY_SEC,
   });
 
   const trendQ = useQuery({
-    queryKey: queryKeys.dashboardTrend({ window: trendWindow, ...dashFilterRecord }),
-    queryFn: () => fetchDashboardTrend(trendWindow, dashFilters),
+    queryKey: queryKeys.dashboardTrend({ window: trendWindow, model: kpiModel, ...dashFilterRecord }),
+    queryFn: () => fetchDashboardTrend(trendWindow, dashFilters, kpiModel),
     staleTime: STALE.THIRTY_SEC,
     enabled: visible.forecastChart,
   });
@@ -180,7 +181,7 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
     queryKey: queryKeys.forecastModels(),
     queryFn: fetchForecastModels,
     staleTime: STALE.TEN_MIN,
-    enabled: visible.heatmap,
+    enabled: visible.kpis || visible.heatmap,
   });
 
   const heatmapQ = useQuery({
@@ -396,12 +397,26 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
         <CollapsibleSection
           title="Performance KPIs"
           headerRight={
-            <div className="flex items-center gap-1">
-              {KPI_OPTIONS.map((w) => (
-                <button key={w} onClick={() => setKpiWindow(w)} className={cn("rounded px-2 py-0.5 text-[10px] transition-colors", kpiWindow === w ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
-                  {w}mo
-                </button>
-              ))}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 text-[10px]">
+                <span className="text-muted-foreground font-medium">Model</span>
+                <select
+                  className="h-6 rounded border border-input bg-background px-1.5 text-[10px]"
+                  value={kpiModel}
+                  onChange={(e) => setKpiModel(e.target.value)}
+                >
+                  {(heatmapModels ?? ["external"]).map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-1">
+                {KPI_OPTIONS.map((w) => (
+                  <button key={w} onClick={() => setKpiWindow(w)} className={cn("rounded px-2 py-0.5 text-[10px] transition-colors", kpiWindow === w ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
+                    {w}mo
+                  </button>
+                ))}
+              </div>
             </div>
           }
         >
@@ -451,12 +466,15 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
         <CollapsibleSection
           title="Forecast vs Actual"
           headerRight={
-            <div className="flex items-center gap-1">
-              {TREND_OPTIONS.map((w) => (
-                <button key={w} onClick={() => setTrendWindow(w)} className={cn("rounded px-2 py-0.5 text-[10px] transition-colors", trendWindow === w ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
-                  {w}mo
-                </button>
-              ))}
+            <div className="flex items-center gap-3">
+              <span className="rounded bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground">{kpiModel}</span>
+              <div className="flex items-center gap-1">
+                {TREND_OPTIONS.map((w) => (
+                  <button key={w} onClick={() => setTrendWindow(w)} className={cn("rounded px-2 py-0.5 text-[10px] transition-colors", trendWindow === w ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted/50")}>
+                    {w}mo
+                  </button>
+                ))}
+              </div>
             </div>
           }
         >

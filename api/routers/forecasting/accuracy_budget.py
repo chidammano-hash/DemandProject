@@ -182,7 +182,7 @@ def accuracy_budget_decomposition(
                            ) AS rn
                     FROM fact_external_forecast_monthly f
                     JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
-                    WHERE f.model_id IN ('lgbm_cluster', 'catboost_cluster', 'xgboost_cluster')
+                    WHERE f.model_id IN ('lgbm_cluster', 'catboost_cluster', 'xgboost_cluster', 'chronos')
                       AND f.lag = COALESCE(d.execution_lag, 0)
                       AND f.tothist_dmd IS NOT NULL
                 )
@@ -458,7 +458,7 @@ def accuracy_budget_model_comparison(
                            ) AS rn
                     FROM fact_external_forecast_monthly f
                     JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc
-                    WHERE f.model_id IN ('lgbm_cluster', 'catboost_cluster', 'xgboost_cluster')
+                    WHERE f.model_id IN ('lgbm_cluster', 'catboost_cluster', 'xgboost_cluster', 'chronos')
                       AND f.lag = COALESCE(d.execution_lag, 0)
                       AND f.tothist_dmd IS NOT NULL
                 )

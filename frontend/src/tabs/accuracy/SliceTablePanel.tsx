@@ -238,6 +238,7 @@ export function SliceTablePanel({
               <TableBody>
                 {sliceData.map((row) => {
                   const accValues = allModels
+                    .filter((m) => m.toLowerCase() !== "ceiling")
                     .map((m) => row.by_model[m]?.accuracy_pct)
                     .filter((v): v is number => v !== null && v !== undefined);
                   const bestAcc = accValues.length > 0 ? Math.max(...accValues) : null;

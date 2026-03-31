@@ -217,10 +217,13 @@ def fit_model(
     patience = compute_early_stop_patience(max_iterations, pct=early_stop_pct)
 
     if model_name == "lgbm":
+        # Use WAPE (not MAE) so early stopping optimises the same metric we report.
+        # Training objective is RMSE/Tweedie; stopping on MAE misaligns the stop
+        # point — WAPE drives stopping toward the actual accuracy KPI.
         model.fit(
             X_tr, y_tr,
             eval_set=[(X_val, y_val)],
-            eval_metric="mae",
+            eval_metric=_wape_lgbm,
             categorical_feature=cat_cols,
             callbacks=[
                 lib_module.early_stopping(stopping_rounds=patience, verbose=False),

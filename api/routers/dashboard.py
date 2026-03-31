@@ -122,6 +122,7 @@ def _dashboard_filter_clause(
 def dashboard_kpis(
     response: FastAPIResponse,
     window: int = Query(default=3, ge=1, le=24),
+    model: str = Query(default="external"),
     brand: str = Query(default=""),
     category: str = Query(default=""),
     market: str = Query(default=""),
@@ -144,13 +145,13 @@ def dashboard_kpis(
         join_clause += " JOIN dim_location lo ON f.loc = lo.location_id"
 
     where_base = (
-        f"f.model_id = 'external'"
+        f"f.model_id = %s"
         f" AND f.tothist_dmd IS NOT NULL AND f.tothist_dmd != 0"
         f" AND f.basefcst_pref IS NOT NULL AND f.basefcst_pref != 0"
         f" AND f.startdate >= ('{pd}'::date - (%s || ' months')::interval)"
     )
     where_prior = (
-        f"f.model_id = 'external'"
+        f"f.model_id = %s"
         f" AND f.tothist_dmd IS NOT NULL AND f.tothist_dmd != 0"
         f" AND f.basefcst_pref IS NOT NULL AND f.basefcst_pref != 0"
         f" AND f.startdate >= ('{pd}'::date - (%s || ' months')::interval)"
@@ -194,7 +195,7 @@ def dashboard_kpis(
     """
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql_current, [window] + filter_params)
+        cur.execute(sql_current, [model, window] + filter_params)
         row = cur.fetchone()
         accuracy = float(row[0]) if row and row[0] is not None else None
         wape = float(row[1]) if row and row[1] is not None else None
@@ -202,7 +203,7 @@ def dashboard_kpis(
         total_fcst = float(row[3]) if row and row[3] is not None else None
         total_act = float(row[4]) if row and row[4] is not None else None
 
-        cur.execute(sql_prior, [window * 2, window] + filter_params)
+        cur.execute(sql_prior, [model, window * 2, window] + filter_params)
         prow = cur.fetchone()
         prior_acc = float(prow[0]) if prow and prow[0] is not None else None
         prior_wape = float(prow[1]) if prow and prow[1] is not None else None

@@ -655,8 +655,9 @@ export async function fetchPlanningDate(): Promise<PlanningDateInfo> {
 export async function fetchDashboardKpis(
   window = 3,
   filters?: DashboardFilterParams,
+  model = "external",
 ): Promise<DashboardKpis> {
-  const qs = new URLSearchParams({ window: String(window) });
+  const qs = new URLSearchParams({ window: String(window), model });
   appendFilterParams(qs, filters);
   return fetchJson(`/dashboard/kpis?${qs}`);
 }
@@ -703,8 +704,9 @@ export interface TrendPoint {
 export async function fetchDashboardTrend(
   window = 12,
   filters?: DashboardFilterParams,
+  model = "external",
 ): Promise<{ months: TrendPoint[] }> {
-  const qs = new URLSearchParams({ window: String(window) });
+  const qs = new URLSearchParams({ window: String(window), model });
   appendFilterParams(qs, filters);
   return fetchJson(`/dashboard/trend?${qs}`);
 }

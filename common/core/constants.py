@@ -49,6 +49,9 @@ ENHANCED_FEATURES = FOURIER_FEATURES + CROSTON_FEATURES + CROSS_DFU_FEATURES + E
 PROTECTED_FEATURES = {
     "month", "quarter", "ml_cluster",
     *FOURIER_FEATURES,
+    # Croston decomposition features handle intermittent demand correctly;
+    # protect them so SHAP selection cannot strip them (causes bias on sparse SKUs).
+    "croston_demand_size", "croston_probability",
 }
 
 # Output column ordering for fact_external_forecast_monthly

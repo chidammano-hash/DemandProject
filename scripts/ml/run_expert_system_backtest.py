@@ -32,9 +32,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from algorithm_testing.demand_classifier import classify_demand
+from algorithm_testing.statistical_models import run_statistical_models
+from algorithm_testing.tree_models import run_tree_models
 from adv_algorithm_testing.dl_models import run_dl_models
 from adv_algorithm_testing.foundation_models import run_foundation_models
 from adv_algorithm_testing.statistical_upgrades import run_statistical_upgrades
+from common.ml.feature_engineering import build_feature_matrix
 from common.core.db import get_db_params
 from common.core.planning_date import get_planning_date
 from common.ml.backtest_framework import generate_timeframes
@@ -47,8 +50,9 @@ _MAX_LAG = 4  # DB constraint: CHECK (lag BETWEEN 0 AND 4)
 
 # Algorithms that run on CPU only — safe to run in background threads concurrently
 # with GPU-bound algorithms (nbeats / chronos use MPS/CUDA; mstl/rolling_mean do not).
-_GPU_ALGOS: frozenset[str] = frozenset({"nbeats", "chronos"})
-_CPU_ALGOS: frozenset[str] = frozenset({"mstl", "rolling_mean"})
+_GPU_ALGOS: frozenset[str] = frozenset({"nbeats", "nhits", "chronos"})
+_CPU_ALGOS: frozenset[str] = frozenset({"mstl", "tsb", "imapa", "adida", "autoces", "dynamic_theta", "holt_winters", "simple_es", "croston_sba", "theta", "rolling_mean"})
+_TREE_ALGOS: frozenset[str] = frozenset({"lgbm_cluster", "catboost_cluster", "xgboost_cluster"})
 
 _ARCHIVE_COLS = [
     "forecast_ck", "item_id", "customer_group", "loc",
@@ -66,48 +70,80 @@ _PROD_COLS = [
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_full_population() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load sales history and DFU attributes for all DFUs in the database.
+def load_full_population(
+    loc_filter: str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load sales history, DFU attributes, and item attributes.
+
+    Args:
+        loc_filter: When set, restricts to DFUs at this location only.
 
     Returns:
         sales_df  — columns: sku_ck, item_id, customer_group, loc, startdate, qty
-        dfu_attrs — columns: sku_ck, item_id, customer_group, loc, execution_lag
+        dfu_attrs — columns: sku_ck, item_id, customer_group, loc, execution_lag,
+                             ml_cluster, region, brand, abc_vol, ...
+        item_attrs — columns: item_id, category, brand_name, class, sub_class, ...
     """
     db = get_db_params()
     planning_cutoff = get_planning_date().replace(day=1)
 
-    logger.info("Loading full-population sales (cutoff=%s)...", planning_cutoff)
+    loc_clause = "AND loc = %s" if loc_filter else ""
+    loc_params: tuple = (planning_cutoff, loc_filter) if loc_filter else (planning_cutoff,)
+
+    logger.info(
+        "Loading sales (cutoff=%s%s)...",
+        planning_cutoff,
+        f", loc={loc_filter}" if loc_filter else "",
+    )
     with psycopg.connect(**db) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT item_id || '_' || customer_group || '_' || loc AS sku_ck,
                        item_id, customer_group, loc, startdate,
                        COALESCE(qty, 0) AS qty
                 FROM fact_sales_monthly
-                WHERE startdate < %s
+                WHERE startdate < %s {loc_clause}
                 ORDER BY sku_ck, startdate
                 """,
-                (planning_cutoff,),
+                loc_params,
             )
             sales_df = pd.DataFrame(cur.fetchall(), columns=[d[0] for d in cur.description])
 
         with conn.cursor() as cur:
+            dfu_where = "WHERE loc = %s" if loc_filter else ""
+            dfu_params = (loc_filter,) if loc_filter else ()
             cur.execute(
-                """
+                f"""
                 SELECT sku_ck, item_id, customer_group, loc,
-                       COALESCE(execution_lag, 0) AS execution_lag
+                       COALESCE(execution_lag, 0) AS execution_lag,
+                       COALESCE(ml_cluster, '0') AS ml_cluster,
+                       region, brand, abc_vol,
+                       seasonality_profile, variability_class, abc_xyz_segment
                 FROM dim_sku
-                """
+                {dfu_where}
+                """,
+                dfu_params,
             )
             dfu_attrs = pd.DataFrame(cur.fetchall(), columns=[d[0] for d in cur.description])
 
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT item_id, category, brand_name,
+                       class, sub_class, case_weight, bpc, item_proof
+                FROM dim_item
+                """
+            )
+            item_attrs = pd.DataFrame(cur.fetchall(), columns=[d[0] for d in cur.description])
+
     sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
+    sales_df["qty"] = sales_df["qty"].astype(float)  # psycopg3 returns Decimal; feature_engineering needs float
     logger.info(
-        "Loaded %d sales rows, %d DFUs, %d DFU-attrs",
-        len(sales_df), sales_df["sku_ck"].nunique(), len(dfu_attrs),
+        "Loaded %d sales rows, %d DFUs, %d DFU-attrs, %d item-attrs",
+        len(sales_df), sales_df["sku_ck"].nunique(), len(dfu_attrs), len(item_attrs),
     )
-    return sales_df, dfu_attrs
+    return sales_df, dfu_attrs, item_attrs
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +165,8 @@ def classify_and_assign(
         cv2_threshold=class_cfg.get("cv2_threshold", 0.49),
         high_volume_percentile=class_cfg.get("high_volume_percentile", 90),
         min_history_months=class_cfg.get("min_history_months", 6),
+        cv2_volatile_threshold=class_cfg.get("cv2_volatile_threshold"),
+        smooth_short_history_months=class_cfg.get("smooth_short_history_months"),
     )
 
     assignment_cfg = cfg.get("assignment", {})
@@ -147,6 +185,24 @@ def classify_and_assign(
     for archetype, algo in sorted(arch_to_algo.items()):
         n = (classification["archetype"] == archetype).sum()
         logger.info("  %s → %s  (%d DFUs)", archetype, algo, n)
+
+    # C10: History-length sub-routing within insufficient segment.
+    # DFUs with very short history (n_periods <= threshold) route to a simpler
+    # algorithm — any learned model will overfit or fail on 1–2 observations.
+    insufficient_short_max = class_cfg.get("insufficient_short_max_periods")
+    if insufficient_short_max is not None:
+        insufficient_short_algo = assignment_cfg.get("insufficient_short")
+        if insufficient_short_algo:
+            short_mask = (
+                (classification["archetype"] == "insufficient")
+                & (classification["n_periods"] <= insufficient_short_max)
+            )
+            if short_mask.any():
+                classification.loc[short_mask, "assigned_algorithm"] = insufficient_short_algo
+                logger.info(
+                    "  insufficient_short (n_periods≤%d) → %s  (%d DFUs)",
+                    insufficient_short_max, insufficient_short_algo, short_mask.sum(),
+                )
 
     return classification
 
@@ -179,6 +235,34 @@ def _rolling_mean_preds(
 
 
 # ---------------------------------------------------------------------------
+# Preprocessing helpers
+# ---------------------------------------------------------------------------
+
+def _trim_leading_zeros(sales_df: pd.DataFrame) -> pd.DataFrame:
+    """Remove pre-launch structural zeros before the first positive demand month.
+
+    Leading zeros are data artifacts (system recording "no product" as zero),
+    not real demand observations. They corrupt ADI, CV², seasonal indices, and
+    rolling-mean baselines for all newly launched or re-introduced items.
+    """
+    parts: list[pd.DataFrame] = []
+    for _sku, grp in sales_df.groupby("sku_ck", sort=False):
+        grp_sorted = grp.sort_values("startdate")
+        nonzero = grp_sorted["qty"] > 0
+        if nonzero.any():
+            parts.append(grp_sorted.loc[nonzero.idxmax():])
+        else:
+            parts.append(grp_sorted)
+    if not parts:
+        return sales_df.iloc[:0].copy()
+    result = pd.concat(parts, ignore_index=True)
+    trimmed = len(sales_df) - len(result)
+    if trimmed > 0:
+        logger.info("Trimmed %d leading-zero rows across %d DFUs", trimmed, len(parts))
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Per-timeframe runner
 # ---------------------------------------------------------------------------
 
@@ -193,12 +277,17 @@ def _run_model(
     if sales_df.empty:
         return empty
     params = cfg.get(model_id, {})
-    if model_id == "nbeats":
+    if model_id in ("nbeats", "nhits"):
         return run_dl_models(sales_df, predict_months, {model_id: params})
     if model_id == "chronos":
         return run_foundation_models(sales_df, predict_months, {model_id: params})
-    if model_id == "mstl":
+    if model_id in ("mstl", "tsb", "imapa", "adida", "autoces", "dynamic_theta"):
         return run_statistical_upgrades(
+            sales_df, predict_months, {model_id: params},
+            n_workers=cfg.get("experiment", {}).get("n_workers", 8),
+        )
+    if model_id in ("holt_winters", "simple_es", "croston_sba", "auto_arima", "theta"):
+        return run_statistical_models(
             sales_df, predict_months, {model_id: params},
             n_workers=cfg.get("experiment", {}).get("n_workers", 8),
         )
@@ -262,11 +351,25 @@ def _run_cascade_group(
                     tf_label, primary_algo, algo, newly_covered,
                 )
 
+    # Bug fix: DFUs with no history in train_df get zero predictions from all
+    # cascade algorithms. Produce a naive zero forecast so they are not dropped
+    # from accuracy computation (prevents selection-effect bias in results).
     if uncovered := target_skus - covered:
-        logger.warning(
-            "tf=%s %s: %d DFUs uncovered after cascade",
-            tf_label, primary_algo, len(uncovered),
-        )
+        naive_rows = []
+        for sku_ck in uncovered:
+            for month in predict_months:
+                naive_rows.append({
+                    "sku_ck": sku_ck,
+                    "startdate": month,
+                    "basefcst_pref": 0.0,
+                    "algorithm_id": "naive_zero",
+                })
+        if naive_rows:
+            parts.append(pd.DataFrame(naive_rows))
+            logger.info(
+                "tf=%s %s: %d DFUs had no history → naive_zero forecast",
+                tf_label, primary_algo, len(uncovered),
+            )
     return pd.concat(parts, ignore_index=True) if parts else empty
 
 
@@ -275,6 +378,7 @@ def run_timeframe(
     sales_df: pd.DataFrame,
     classification_df: pd.DataFrame,
     cfg: dict[str, Any],
+    grid: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Run ExpSys backtest for one timeframe.
 
@@ -297,6 +401,11 @@ def run_timeframe(
 
     train_df = sales_df[sales_df["startdate"] <= train_end].copy()
 
+    # C7: Trim pre-launch structural zeros to improve normalization and seasonal fits
+    preproc_cfg = cfg.get("preprocessing", {})
+    if preproc_cfg.get("trim_leading_zeros", False):
+        train_df = _trim_leading_zeros(train_df)
+
     assignment_cfg = cfg.get("assignment", {})
     fallback_map: dict[str, list[str]] = assignment_cfg.get("fallbacks", {})
     default_fallbacks: list[str] = fallback_map.get("default", ["rolling_mean"])
@@ -309,6 +418,54 @@ def run_timeframe(
     )
 
     all_parts: list[pd.DataFrame] = []
+    tree_covered: set[str] = set()
+    tf_label = tf["label"]
+
+    # --- Tree model pre-pass (lgbm/catboost/xgboost) ---------------------------
+    # Tree models train on the feature grid rather than raw sales, so they run
+    # outside the cascade mechanism. DFUs covered here are excluded from the
+    # regular cascade; any uncovered DFUs fall through to their cascade fallback.
+    tree_groups = {algo: skus for algo, skus in algo_to_skus.items() if algo in _TREE_ALGOS}
+    if tree_groups and grid is not None:
+        tree_model_name_map = {
+            "lgbm_cluster": "lgbm",
+            "catboost_cluster": "catboost",
+            "xgboost_cluster": "xgboost",
+        }
+        enabled_tree = {
+            tree_model_name_map[algo]: cfg.get(algo, {})
+            for algo in tree_groups
+            if algo in tree_model_name_map
+        }
+        tree_skus = {sku for skus in tree_groups.values() for sku in skus}
+        tree_clf = classification_df[classification_df["sku_ck"].isin(tree_skus)]
+        try:
+            tree_preds = run_tree_models(
+                grid=grid,
+                train_end=train_end,
+                predict_months=predict_months,
+                enabled_models=enabled_tree,
+                classification_df=tree_clf,
+            )
+            if not tree_preds.empty:
+                all_parts.append(tree_preds)
+                tree_covered = set(tree_preds["sku_ck"].unique())
+                logger.info("tf=%s tree models: %d DFUs covered", tf_label, len(tree_covered))
+        except Exception:
+            logger.exception("tf=%s tree model pre-pass failed; falling through to cascade", tf_label)
+
+    # Remove tree-covered DFUs from cascade groups; uncovered ones use their fallback
+    for algo in list(tree_groups):
+        remaining = [s for s in algo_to_skus.get(algo, []) if s not in tree_covered]
+        if remaining:
+            # Route uncovered tree DFUs through the tree algo's fallback cascade
+            fallbacks = fallback_map.get(algo, default_fallbacks)
+            first_fallback = fallbacks[0] if fallbacks else "rolling_mean"
+            algo_to_skus[first_fallback] = algo_to_skus.get(first_fallback, []) + remaining
+            logger.info(
+                "tf=%s %d uncovered tree DFUs rerouted to %s", tf_label, len(remaining), first_fallback,
+            )
+        del algo_to_skus[algo]
 
     # Separate groups into CPU-only (mstl, rolling_mean) and GPU-bound (nbeats, chronos).
     # CPU groups are launched in background threads so they overlap with GPU execution.
@@ -317,7 +474,6 @@ def run_timeframe(
     cpu_groups = [(algo, skus) for algo, skus in algo_to_skus.items() if algo in _CPU_ALGOS]
     gpu_groups = [(algo, skus) for algo, skus in algo_to_skus.items() if algo not in _CPU_ALGOS]
 
-    tf_label = tf["label"]
     cascade_kwargs = dict(
         train_df=train_df,
         predict_months=predict_months,
@@ -359,7 +515,18 @@ def run_timeframe(
         )
 
     result = pd.concat(all_parts, ignore_index=True)
-    result = result.drop_duplicates(subset=["sku_ck", "startdate"]).reset_index(drop=True)
+    # Bug fix: Sort deterministically before dedup so thread ordering doesn't
+    # affect which prediction wins. Prefer non-naive algorithms over naive_zero.
+    _algo_priority = result["algorithm_id"].map(
+        lambda a: 1 if a == "naive_zero" else 0
+    )
+    result = (
+        result.assign(_prio=_algo_priority)
+        .sort_values(["sku_ck", "startdate", "_prio"])
+        .drop(columns=["_prio"])
+        .drop_duplicates(subset=["sku_ck", "startdate"], keep="first")
+        .reset_index(drop=True)
+    )
     result["timeframe_label"] = tf["label"]
     result["train_end"] = train_end
 
@@ -381,6 +548,7 @@ def _timeframe_worker(
     dfu_attrs: pd.DataFrame,
     cfg: dict[str, Any],
     output_dir: Path,
+    grid: pd.DataFrame | None = None,
 ) -> pd.DataFrame | None:
     """Run one timeframe: load checkpoint if available, else compute and save."""
     label = tf["label"]
@@ -396,7 +564,7 @@ def _timeframe_worker(
         tf["train_end"].strftime("%Y-%m"),
         tf["predict_start"].strftime("%Y-%m"),
     )
-    preds = run_timeframe(tf, sales_df, classification_df, cfg)
+    preds = run_timeframe(tf, sales_df, classification_df, cfg, grid=grid)
 
     if preds.empty:
         logger.warning("Timeframe %s produced no predictions; skipping", label)
@@ -720,13 +888,25 @@ def run_backtest(
 
     logger.info("ExpSys backtest starting. run_id=%s", run_id)
 
+    loc_filter: str | None = exp_cfg.get("loc_filter")
+
     # 1. Full-population data
-    sales_df, dfu_attrs = load_full_population()
+    sales_df, dfu_attrs, item_attrs = load_full_population(loc_filter=loc_filter)
     tothist_map: dict[str, float] = sales_df.groupby("sku_ck")["qty"].sum().to_dict()
 
     # 2. Classify + assign
     logger.info("Classifying DFUs into archetypes...")
     classification_df = classify_and_assign(sales_df, cfg)
+
+    # 2b. Build feature grid if tree models are assigned
+    assignment_vals = {v for v in cfg.get("assignment", {}).values() if isinstance(v, str)}
+    needs_grid = bool(_TREE_ALGOS & assignment_vals)
+    grid: pd.DataFrame | None = None
+    if needs_grid:
+        all_months = sorted(sales_df["startdate"].unique())
+        logger.info("Building feature grid for tree models (%d DFUs × %d months)...",
+                    sales_df["sku_ck"].nunique(), len(all_months))
+        grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, all_months)
 
     # 3. Generate timeframes
     earliest = sales_df["startdate"].min()
@@ -769,7 +949,7 @@ def run_backtest(
             futures = {
                 executor.submit(
                     _timeframe_worker,
-                    tf, sales_df, classification_df, dfu_attrs, cfg_run, output_dir,
+                    tf, sales_df, classification_df, dfu_attrs, cfg_run, output_dir, grid,
                 ): tf["label"]
                 for tf in timeframes
             }
@@ -784,7 +964,7 @@ def run_backtest(
     else:
         for tf in timeframes:
             result = _timeframe_worker(
-                tf, sales_df, classification_df, dfu_attrs, cfg_run, output_dir,
+                tf, sales_df, classification_df, dfu_attrs, cfg_run, output_dir, grid,
             )
             if result is not None:
                 all_predictions.append(result)
@@ -849,6 +1029,10 @@ def main() -> None:
         "--workers", type=int, default=None, metavar="N",
         help="Number of parallel timeframe workers (overrides config parallel_timeframes; 1=serial)",
     )
+    parser.add_argument(
+        "--loc", type=str, default=None, metavar="LOC",
+        help="Restrict backtest to all DFUs at this location (e.g. 1401-BULK)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -862,6 +1046,9 @@ def main() -> None:
         cfg = yaml.safe_load(args.config.read_text())
     else:
         cfg = load_config("expert_system_backtest")
+
+    if args.loc:
+        cfg.setdefault("experiment", {})["loc_filter"] = args.loc
 
     run_backtest(cfg, replace=args.replace, skip_load=args.skip_load, workers=args.workers)
 

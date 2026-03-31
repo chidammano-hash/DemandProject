@@ -1,13 +1,27 @@
 # Per-cluster hyperparameter overrides for LGBM
-# Clusters with different demand patterns need different tuning
-# Profiles are matched by cluster demand characteristics computed at runtime
+# Clusters with different demand patterns need different tuning.
+# Profiles are matched by cluster demand characteristics computed at runtime.
+#
+# Available match_criteria keys (all optional, use _min / _max suffix):
+#   mean_demand       — mean of non-zero qty values per DFU-month
+#   cv_demand         — coefficient of variation (std / mean) across all rows
+#   zero_demand_pct   — fraction of rows with qty == 0
+#   seasonal_amplitude — std of monthly means / overall mean
+#   n_rows            — total training row count for the cluster
+#
+# Priority order is defined in backtest_framework._PROFILE_PRIORITY.
+# First match wins — order profiles from most-specific to most-general.
 
 cluster_profiles:
+
   sparse_intermittent:
-    description: "High zero-demand percentage (>50%), low mean demand"
+    description: >
+      High zero-demand percentage (>50%), low mean demand, small cluster (<300k rows).
+      Designed for truly intermittent SKUs — not large volatile clusters.
     match_criteria:
       zero_demand_pct_min: 0.50
       mean_demand_max: 20
+      n_rows_max: 300000        # Guard: don't apply to large clusters with per-DFU low qty
     overrides:
       num_leaves: 15
       min_child_samples: 200
@@ -16,18 +30,42 @@ cluster_profiles:
       learning_rate: 0.03
 
   low_volume_volatile:
-    description: "Low volume with high coefficient of variation"
+    description: >
+      Small cluster (<300k rows) with low per-DFU volume and high CV.
+      n_rows_max prevents this from incorrectly matching large clusters where
+      individual DFU quantities happen to be low (e.g. 59k DFUs × 21 units/month).
     match_criteria:
       mean_demand_max: 50
       cv_demand_min: 1.0
+      n_rows_max: 300000        # Guard: only for genuinely small clusters
     overrides:
       num_leaves: 31
       min_child_samples: 100
       reg_alpha: 0.5
       path_smooth: 5
 
+  volatile_large_cluster:
+    description: >
+      Large cluster (>300k rows) with high CV and mostly continuous demand (<30% zeros).
+      Represents data-rich but volatile SKU portfolios.
+      num_leaves is intentionally NOT overridden here — it controls model complexity and
+      should be set by the experiment/tuning config, not the demand pattern.
+      reg_lambda is held at 1.0: volatile spiky demand is harmed by over-smoothing
+      from strong L2 regularisation — predictions get pushed toward the mean, which
+      increases WAPE on spike months.
+    match_criteria:
+      cv_demand_min: 1.0
+      n_rows_min: 300000
+      zero_demand_pct_max: 0.30
+    overrides:
+      num_leaves: 127           # Full leaf budget — volatile demand needs fine-grained splits
+      max_depth: -1             # Unlimited depth — lots of data, expressiveness beats regularisation
+      min_child_samples: 25     # Allow finer splits given large row count
+      reg_alpha: 0.3            # Moderate L1 for volatile feature contributions
+      reg_lambda: 1.0           # Keep L2 weak — over-smoothing increases WAPE on spike months
+
   high_volume_stable:
-    description: "High volume, low CV, predictable demand"
+    description: "High per-DFU volume, low CV, predictable demand"
     match_criteria:
       mean_demand_min: 200
       cv_demand_max: 0.5
@@ -38,16 +76,16 @@ cluster_profiles:
       n_estimators: 2000
 
   seasonal_dominant:
-    description: "Strong seasonal amplitude"
+    description: "Strong seasonal amplitude (std of monthly means / overall mean > 0.3)"
     match_criteria:
       seasonal_amplitude_min: 0.3
     overrides:
       num_leaves: 63
       min_child_samples: 50
-      colsample_bytree: 0.9  # keep more features to capture seasonality
+      colsample_bytree: 0.9     # Keep more features to capture seasonal patterns
 
   default:
-    description: "Fallback for clusters not matching any profile"
+    description: "Fallback for clusters not matching any specific profile"
     match_criteria: {}
     overrides: {}
 

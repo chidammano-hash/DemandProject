@@ -1,0 +1,83 @@
+experiment:
+  n_timeframes: 10
+  forecast_horizon: 6
+  max_lags: 4
+  algorithm_id: "ExpSys"
+  plan_version: "ExpSys_v6b"
+  output_dir: "data/expert_system_backtest_v6b"
+  n_workers: 14
+  parallel_timeframes: 1       # SERIAL: prevents MPS contention
+
+# C7: Leading-zero trim (voted #2, 63pts — data quality fix).
+preprocessing:
+  trim_leading_zeros: true
+
+demand_classification:
+  adi_threshold: 1.32
+  cv2_threshold: 0.49
+  high_volume_percentile: 90
+  min_history_months: 6
+  cv2_volatile_threshold: 1.0
+  smooth_short_history_months: 18
+  insufficient_short_max_periods: 2   # C10: route 1-2 period DFUs to rolling_mean
+
+assignment:
+  # v6b — bug fixes + proven infrastructure enhancements only
+  # REVERTED: A1 (nhits→erratic_volatile regressed -6.81pp), B1 (imapa→erratic_mild regressed -8.26pp)
+  erratic_volatile:    autoces       # REVERTED to baseline (was nhits in v6)
+  erratic_mild:        nbeats        # REVERTED to baseline (was imapa in v6)
+  smooth_high:         mstl
+  smooth_low:          nbeats
+  smooth_low_short:    chronos
+  insufficient:        chronos
+  insufficient_short:  rolling_mean  # C10: 1-2 periods → rolling_mean (worked: +1pp)
+  intermittent_low:    tsb
+  lumpy_low:           tsb
+  fallbacks:
+    autoces:           [mstl, simple_es, rolling_mean]       # B8: simple_es before rolling_mean
+    nbeats:            [chronos, simple_es, rolling_mean]     # B8
+    chronos:           [mstl, simple_es, rolling_mean]        # B8
+    mstl:              [chronos, simple_es, rolling_mean]     # B8
+    tsb:               [mstl, simple_es, rolling_mean]        # B8
+    default:           [simple_es, rolling_mean]              # B8
+
+nhits:
+  input_size: 24
+  h: 6
+  max_steps: 500
+  batch_size: 64          # A4: smaller batch for better gradient signal
+  learning_rate: 0.001
+  min_history: 6
+
+nbeats:
+  variant: "generic"
+  input_size: 24
+  h: 6
+  max_steps: 500
+  batch_size: 64          # A3: was 1024 — smaller batch for erratic_mild
+  learning_rate: 0.001
+  min_history: 6
+  # REVERTED: A8 (robust scaler) removed — applies globally to ALL DFUs including smooth_low
+
+chronos:
+  model_size: "small"
+  device: "mps"
+  batch_size: 256         # REVERTED: batch_size has no quality effect (cross_learning=False)
+  prediction_length: 6
+  num_samples: 20
+
+mstl:
+  season_length: 12
+  min_history: 12
+
+tsb:
+  alpha_d: 0.1
+  alpha_p: 0.1
+  min_nonzero: 2
+
+rolling_mean:
+  window: 3               # B3: was 6 — better for short-history DFUs
+  min_history: 1
+
+simple_es:
+  min_history: 3          # B8: MLE-optimized smoothing in all fallback chains

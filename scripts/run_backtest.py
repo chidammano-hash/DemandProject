@@ -455,10 +455,9 @@ def _train_single_cluster(
             return cluster_label, result, None, "fallback_needed"
         return cluster_label, None, None, None
 
-    # Sort by startdate so the iloc-based val split is truly time-aware.
-    # Without this, row order is SKU-major (from the feature grid layout),
-    # and the last 20% would be the last few DFUs, not the latest dates.
-    train_c = train_c.sort_values("startdate")
+    # Sort by (startdate, sku_ck) — date-primary for time ordering, sku_ck
+    # as tiebreaker for reproducible row ordering when two DFUs share a date.
+    train_c = train_c.sort_values(["startdate", "sku_ck"])
 
     X_train = train_c[feature_cols].copy() if needs_cat_dtype_cast else train_c[feature_cols]
     y_train = train_c["qty"]
@@ -470,10 +469,16 @@ def _train_single_cluster(
             X_pred[col] = X_pred[col].astype("category")
 
     t0 = time.time()
-    # Time-aware train/val split — last 20% of cluster rows for validation
-    n_val = max(1, int(len(X_train) * 0.20))
-    X_tr, X_val = X_train.iloc[:-n_val], X_train.iloc[-n_val:]
-    y_tr, y_val = y_train.iloc[:-n_val], y_train.iloc[-n_val:]
+    # Calendar-month-based train/val split — last 20% of unique months as validation.
+    # More robust than row-count split for sparse/cold-start DFUs: a DFU with only
+    # 6 months of history would otherwise have its last few rows (not latest calendar
+    # months) used for validation, which can contaminate the validation window.
+    _unique_months = sorted(train_c["startdate"].unique())
+    _n_val_months = max(1, int(len(_unique_months) * 0.20))
+    _val_months = set(_unique_months[-_n_val_months:])
+    _val_mask = train_c["startdate"].isin(_val_months)
+    X_tr, X_val = X_train.loc[~_val_mask], X_train.loc[_val_mask]
+    y_tr, y_val = y_train.loc[~_val_mask], y_train.loc[_val_mask]
 
     # Guard: some models crash on constant targets
     if constant_target_guard and y_tr.nunique() <= 1:
@@ -911,12 +916,17 @@ def main() -> None:
                         help="Override n_timeframes from config")
     parser.add_argument("--cluster-override", type=str, default=None,
                         help="CSV path with sku_ck,cluster_label columns to override dim_sku.ml_cluster")
+    parser.add_argument("--clusters", type=str, default=None,
+                        help="Comma-separated cluster labels to restrict training to (e.g. '0' or '0,1,2'). "
+                             "Filters both DFU attrs and sales to matching clusters only.")
     parser.add_argument("--parallel", action="store_true",
                         help="Train clusters in parallel (only when >4 clusters)")
     parser.add_argument("--workers", type=int, default=4,
                         help="Max parallel workers (default: 4, requires --parallel)")
     parser.add_argument("--n-seeds", type=int, default=None,
                         help="Number of random seeds for variance estimation (default from config, fallback 1)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from checkpoints if a previous run crashed")
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
@@ -942,11 +952,20 @@ def main() -> None:
         algo = cfg["algorithms"][registry["config_key"]]
         backtest_cfg = cfg.get("backtest", {})
 
+        # Propagate top-level noise settings into algo dict so run_tree_backtest
+        # can access them via algo_config (algo only holds the per-algorithm sub-dict).
+        algo.setdefault("recursive_noise_enabled", cfg.get("recursive_noise_enabled", False))
+        algo.setdefault("recursive_noise_pct", cfg.get("recursive_noise_pct", 0.05))
+
     # Resolve cluster override: CLI flag takes priority, then algo_config key
     cluster_override = args.cluster_override or algo.get("cluster_override_path")
     if cluster_override:
         algo["cluster_override_path"] = cluster_override
         logger.info("Cluster override enabled: %s", cluster_override)
+
+    if args.clusters:
+        algo["cluster_filter"] = [c.strip() for c in args.clusters.split(",")]
+        logger.info("Cluster filter: restricting to clusters %s", algo["cluster_filter"])
 
     cluster_strategy = algo.get("cluster_strategy", "per_cluster")
 
@@ -1023,6 +1042,7 @@ def main() -> None:
                 model_persistence_fn=None,
                 algo_config=algo,
                 embargo_months=embargo_months,
+                resume=args.resume,
             )
         return
 
@@ -1190,6 +1210,7 @@ def main() -> None:
                 model_persistence_fn=_persistence_fn,
                 algo_config=algo,
                 embargo_months=embargo_months,
+                resume=args.resume,
             )
 
         # Read accuracy from metadata written by run_tree_backtest

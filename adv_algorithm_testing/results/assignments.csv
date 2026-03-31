@@ -1,6 +1,6 @@
-archetype,best_algorithm,accuracy_pct,runner_up_algorithm,runner_up_accuracy,margin_bps,n_dfus,confidence,selected_algorithms
-smooth_high,mstl,77.66891047347393,nbeats,76.46906393562604,119,915,high,"['chronos', 'mstl', 'nbeats']"
-smooth_low,nbeats,72.87778969562595,chronos,71.1472650389602,173,5093,high,"['chronos', 'mstl', 'nbeats']"
-erratic_high,nbeats,45.52733873465542,mstl,34.98307803077401,1054,152,high,"['chronos', 'mstl', 'nbeats']"
-erratic_low,nbeats,34.78526687547104,chronos,32.948696473775826,183,4462,high,"['chronos', 'mstl', 'nbeats']"
-insufficient,mstl,12.999437684078131,chronos,7.730943097642424,526,2592,high,"['chronos', 'mstl', 'nbeats']"
+archetype,best_algorithm,accuracy_pct,runner_up_algorithm,runner_up_accuracy,margin_bps,n_dfus,confidence
+smooth_high,mstl,80.37779815696001,holt_winters,80.06248183842575,31,914,high
+smooth_low,mstl,71.56387175147232,nhits,71.29057866848845,27,4875,high
+erratic_high,nhits,49.271737177222164,catboost_cluster,48.77420085263808,49,129,high
+erratic_low,tft,40.3793893681479,nhits,39.848476829950656,53,3158,high
+insufficient,mstl,18.46101827421863,ridge,18.192614251110726,26,1406,high

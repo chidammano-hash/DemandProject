@@ -1,0 +1,27 @@
+# External ML Forecast Loading Configuration
+# Source: data/input/df_ml_*.csv
+# Destination: fact_external_forecast_monthly + backtest_lag_archive
+
+models:
+  ext_lgbm:
+    input_file: data/input/df_ml_lgbm_l2_extract.csv
+    description: External LightGBM predictions with all lags 0-4
+  ext_cat:
+    input_file: data/input/df_ml_cat_l2_extract.csv
+    description: External CatBoost predictions with all lags 0-4
+  ext_xg:
+    input_file: data/input/df_ml_xg_l2_extract.csv
+    description: External XGBoost predictions with all lags 0-4
+  ext_best:
+    input_file: data/input/df_ml_best.csv
+    description: External best-model ensemble predictions with all lags 0-4
+
+# Batch size for DB inserts (rows per batch)
+batch_size: 2000000
+
+# timeframe label written to backtest_lag_archive (null = no label)
+timeframe: null
+
+# Lag range to accept from input CSV
+min_lag: 0
+max_lag: 4

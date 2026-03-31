@@ -82,6 +82,37 @@ def _resolve_device(device_setting: str) -> str:
 # Chronos
 # ---------------------------------------------------------------------------
 
+# Module-level pipeline cache — avoids reloading the model per timeframe.
+_chronos_pipeline_cache: dict[str, Any] = {}
+
+
+def _get_chronos_pipeline(model_name: str, device: str) -> Any:
+    """Return a cached Chronos pipeline, loading only on first call.
+
+    Automatically selects ChronosBoltPipeline for bolt models and
+    ChronosPipeline for T5 models.
+    """
+    cache_key = f"{model_name}:{device}"
+    if cache_key not in _chronos_pipeline_cache:
+        import torch
+
+        is_bolt = "bolt" in model_name
+        if is_bolt:
+            from chronos import ChronosBoltPipeline as PipelineCls
+        else:
+            from chronos import ChronosPipeline as PipelineCls
+
+        logger.info("Chronos: loading %s on %s...", model_name, device)
+        _chronos_pipeline_cache[cache_key] = PipelineCls.from_pretrained(
+            model_name,
+            device_map=device,
+            torch_dtype=torch.float32,
+        )
+    else:
+        logger.info("Chronos: reusing cached pipeline (%s on %s)", model_name, device)
+    return _chronos_pipeline_cache[cache_key]
+
+
 def _run_chronos(
     sales_df: pd.DataFrame,
     predict_months: list[pd.Timestamp],
@@ -94,7 +125,6 @@ def _run_chronos(
             columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
         )
 
-    from chronos import ChronosPipeline
     import torch
 
     model_size = params.get("model_size", "small")
@@ -107,20 +137,19 @@ def _run_chronos(
     if device == "mps":
         logger.info("Chronos: using Apple MPS GPU")
 
-    logger.info("Chronos: loading %s on %s...", model_name, device)
-    pipeline = ChronosPipeline.from_pretrained(
-        model_name,
-        device_map=device,
-        torch_dtype=torch.float32,
-    )
+    pipeline = _get_chronos_pipeline(model_name, device)
 
     sku_cks = sales_df["sku_ck"].unique()
-    all_results: list[dict] = []
+    batch_dfs: list[pd.DataFrame] = []
 
-    # Batch by DFU — Chronos handles batches of context tensors
-    grouped = sales_df.groupby("sku_ck", sort=False)
+    # Pre-sort once, then split — avoids per-SKU sort in the inner loop
+    sorted_sales = sales_df.sort_values(["sku_ck", "startdate"])
+    grouped = sorted_sales.groupby("sku_ck", sort=False)
+
     batch_size = params.get("batch_size", 32)
     sku_list = list(sku_cks)
+    month_arr = np.array(predict_months)
+    n_months = len(predict_months)
 
     for batch_start in range(0, len(sku_list), batch_size):
         batch_skus = sku_list[batch_start:batch_start + batch_size]
@@ -128,8 +157,7 @@ def _run_chronos(
         valid_skus = []
 
         for sku_ck in batch_skus:
-            group = grouped.get_group(sku_ck).sort_values("startdate")
-            values = group["qty"].values.astype(np.float32)
+            values = grouped.get_group(sku_ck)["qty"].values.astype(np.float32)
             if len(values) < 3:
                 continue
             contexts.append(torch.tensor(values))
@@ -147,14 +175,31 @@ def _run_chronos(
             # forecasts shape: (n_series, num_samples, prediction_length)
             median_forecasts = np.median(forecasts.numpy(), axis=1)
 
-            for i, sku_ck in enumerate(valid_skus):
-                for j, month in enumerate(predict_months):
-                    all_results.append({
-                        "sku_ck": sku_ck,
-                        "startdate": month,
-                        "basefcst_pref": max(float(median_forecasts[i, j]), 0.0),
-                        "algorithm_id": "chronos",
-                    })
+            # Validate NaN/Inf predictions
+            bad_mask = ~np.isfinite(median_forecasts)
+            if bad_mask.any():
+                n_bad = int(bad_mask.sum())
+                logger.warning(
+                    "Chronos batch %d: %d NaN/Inf values replaced with 0.0",
+                    batch_start, n_bad,
+                )
+                median_forecasts = np.nan_to_num(
+                    median_forecasts, nan=0.0, posinf=0.0, neginf=0.0,
+                )
+
+            # Vectorized result construction — no per-row dict append
+            n_valid = len(valid_skus)
+            median_forecasts = np.maximum(median_forecasts[:, :n_months], 0.0)
+            sku_rep = np.repeat(valid_skus, n_months)
+            month_rep = np.tile(month_arr, n_valid)
+            fcst_flat = median_forecasts.ravel()
+
+            batch_dfs.append(pd.DataFrame({
+                "sku_ck": sku_rep,
+                "startdate": month_rep,
+                "basefcst_pref": fcst_flat,
+                "algorithm_id": "chronos",
+            }))
         except (RuntimeError, ValueError) as exc:
             logger.warning("Chronos batch failed: %s", exc)
 
@@ -165,8 +210,123 @@ def _run_chronos(
                 len(sku_list),
             )
 
-    result = pd.DataFrame(all_results)
+    result = pd.concat(batch_dfs, ignore_index=True) if batch_dfs else pd.DataFrame(
+        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+    )
     logger.info("Chronos: %d predictions for %d DFUs", len(result),
+                result["sku_ck"].nunique() if not result.empty else 0)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Chronos Bolt (v2 — faster, native encoder architecture)
+# ---------------------------------------------------------------------------
+
+def _run_chronos_bolt(
+    sales_df: pd.DataFrame,
+    predict_months: list[pd.Timestamp],
+    params: dict[str, Any],
+) -> pd.DataFrame:
+    """Run Amazon Chronos Bolt foundation model (zero-shot).
+
+    Bolt uses a native encoder architecture (not T5) and is up to 250x faster
+    than Chronos-T5 Large with comparable accuracy. It returns quantile
+    forecasts directly — no sampling required.
+    """
+    if not _check_chronos():
+        logger.info("chronos-forecasting not installed; skipping Chronos Bolt")
+        return pd.DataFrame(
+            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        )
+
+    import torch
+
+    model_size = params.get("model_size", "base")
+    model_name = f"amazon/chronos-bolt-{model_size}"
+    device_setting = params.get("device", "auto")
+    prediction_length = len(predict_months)
+    # Bolt supports num_samples but defaults to quantile output (faster)
+    num_samples = params.get("num_samples", 12)
+
+    device = _resolve_device(device_setting)
+    if device == "mps":
+        logger.info("Chronos Bolt: using Apple MPS GPU")
+
+    pipeline = _get_chronos_pipeline(model_name, device)
+
+    sku_cks = sales_df["sku_ck"].unique()
+    batch_dfs: list[pd.DataFrame] = []
+
+    sorted_sales = sales_df.sort_values(["sku_ck", "startdate"])
+    grouped = sorted_sales.groupby("sku_ck", sort=False)
+
+    batch_size = params.get("batch_size", 1024)
+    sku_list = list(sku_cks)
+    month_arr = np.array(predict_months)
+    n_months = len(predict_months)
+
+    for batch_start in range(0, len(sku_list), batch_size):
+        batch_skus = sku_list[batch_start:batch_start + batch_size]
+        contexts = []
+        valid_skus = []
+
+        for sku_ck in batch_skus:
+            values = grouped.get_group(sku_ck)["qty"].values.astype(np.float32)
+            if len(values) < 3:
+                continue
+            contexts.append(torch.tensor(values))
+            valid_skus.append(sku_ck)
+
+        if not contexts:
+            continue
+
+        try:
+            forecasts = pipeline.predict(
+                contexts,
+                prediction_length=prediction_length,
+            )
+            # Bolt returns (n_series, n_quantiles, prediction_length)
+            # Take the middle quantile as the point forecast
+            mid_q = forecasts.shape[1] // 2
+            median_forecasts = forecasts[:, mid_q, :].numpy()
+
+            bad_mask = ~np.isfinite(median_forecasts)
+            if bad_mask.any():
+                n_bad = int(bad_mask.sum())
+                logger.warning(
+                    "Chronos Bolt batch %d: %d NaN/Inf values replaced with 0.0",
+                    batch_start, n_bad,
+                )
+                median_forecasts = np.nan_to_num(
+                    median_forecasts, nan=0.0, posinf=0.0, neginf=0.0,
+                )
+
+            n_valid = len(valid_skus)
+            median_forecasts = np.maximum(median_forecasts[:, :n_months], 0.0)
+            sku_rep = np.repeat(valid_skus, n_months)
+            month_rep = np.tile(month_arr, n_valid)
+            fcst_flat = median_forecasts.ravel()
+
+            batch_dfs.append(pd.DataFrame({
+                "sku_ck": sku_rep,
+                "startdate": month_rep,
+                "basefcst_pref": fcst_flat,
+                "algorithm_id": "chronos_bolt",
+            }))
+        except (RuntimeError, ValueError) as exc:
+            logger.warning("Chronos Bolt batch failed: %s", exc)
+
+        if (batch_start + batch_size) % (batch_size * 10) == 0:
+            logger.info(
+                "Chronos Bolt: %d/%d DFUs processed",
+                min(batch_start + batch_size, len(sku_list)),
+                len(sku_list),
+            )
+
+    result = pd.concat(batch_dfs, ignore_index=True) if batch_dfs else pd.DataFrame(
+        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+    )
+    logger.info("Chronos Bolt: %d predictions for %d DFUs", len(result),
                 result["sku_ck"].nunique() if not result.empty else 0)
     return result
 
@@ -536,6 +696,7 @@ def _run_lag_llama(
 
 _FOUNDATION_DISPATCH: dict[str, Any] = {
     "chronos": _run_chronos,
+    "chronos_bolt": _run_chronos_bolt,
     "timesfm": _run_timesfm,
     "timegpt": _run_timegpt,
     "moirai": _run_moirai,

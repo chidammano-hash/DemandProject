@@ -6,7 +6,7 @@ POSTGRES_SERVICE := postgres
 PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
 PSQL := $(PG_EXEC) psql -U demand -d demand_mvp
 
-.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini
+.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini load-ext-lgbm load-ext-cat load-ext-xg load-ext-best load-ext-all
 
 # ---------------------------------------------------------------------------
 # Convenience aliases
@@ -75,8 +75,12 @@ help:
 	@echo "  backtest-lgbm        - run LGBM per-cluster backtest (settings from algorithm_config.yaml)"
 	@echo "  backtest-catboost    - run CatBoost per-cluster backtest (settings from algorithm_config.yaml)"
 	@echo "  backtest-xgboost     - run XGBoost per-cluster backtest (settings from algorithm_config.yaml)"
-	@echo "  backtest-all         - run all three backtests sequentially (LGBM → CatBoost → XGBoost)"
-	@echo "  backtest-all-parallel- run all three backtests in parallel (logs in data/backtest/logs/)"
+	@echo "  backtest-chronos     - run Chronos T5 foundation model backtest"
+	@echo "  backtest-chronos-full- run Chronos T5 backtest + load predictions"
+	@echo "  backtest-bolt        - run Chronos Bolt (v2) foundation model backtest"
+	@echo "  backtest-bolt-full   - run Chronos Bolt backtest + load predictions"
+	@echo "  backtest-all         - run all five backtests sequentially (LGBM → CatBoost → XGBoost → Chronos → Bolt)"
+	@echo "  backtest-all-parallel- run all five backtests in parallel (logs in data/backtest/logs/)"
 	@echo "  backtest-load        - load one model: make backtest-load MODEL=lgbm_cluster"
 	@echo "  backtest-load-all    - load ALL models from data/backtest/*/ (run after backtest-all)"
 	@echo "  backtest-clean       - remove model predictions (MODELS='lgbm_cluster catboost_cluster')"
@@ -509,7 +513,7 @@ ai-insights-dfu:
 ai-insights-all: ai-insights-schema ai-insights-scan
 
 # ---------------------------------------------------------------------------
-# Backtesting (LGBM / CatBoost / XGBoost — per-cluster only)
+# Backtesting (LGBM / CatBoost / XGBoost / Chronos — per-cluster only)
 # Options (recursive, SHAP, tuning, params) are set in config/algorithm_config.yaml
 # ---------------------------------------------------------------------------
 backtest-lgbm:
@@ -521,21 +525,57 @@ backtest-catboost:
 backtest-xgboost:
 	$(UV) python scripts/run_backtest_xgboost.py --parallel --workers 8 $(ARGS)
 
-backtest-all: backtest-lgbm backtest-catboost backtest-xgboost
+backtest-chronos:
+	$(UV) python -m scripts.run_backtest_chronos
+
+backtest-load-chronos:
+	$(UV) python -m scripts.load_backtest_forecasts --model chronos --replace
+
+backtest-chronos-full: backtest-chronos backtest-load-chronos
+
+backtest-bolt:
+	$(UV) python -m scripts.run_backtest_chronos_bolt
+
+backtest-load-bolt:
+	$(UV) python -m scripts.load_backtest_forecasts --model chronos_bolt --replace
+
+backtest-bolt-full: backtest-bolt backtest-load-bolt
+
+backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-chronos backtest-bolt
 
 backtest-all-parallel:
 	@mkdir -p data/backtest/logs
-	@echo "[parallel] Starting LGBM, CatBoost, XGBoost concurrently — logs in data/backtest/logs/"
+	@echo "[parallel] Starting LGBM, CatBoost, XGBoost, Chronos, Bolt concurrently — logs in data/backtest/logs/"
 	$(UV) python scripts/run_backtest.py $(ARGS) > data/backtest/logs/lgbm.log 2>&1 & \
 	$(UV) python scripts/run_backtest_catboost.py $(ARGS) > data/backtest/logs/catboost.log 2>&1 & \
 	$(UV) python scripts/run_backtest_xgboost.py $(ARGS) > data/backtest/logs/xgboost.log 2>&1 & \
-	wait && echo "[parallel] All three backtests complete. Check data/backtest/logs/ for output."
+	$(UV) python -m scripts.run_backtest_chronos > data/backtest/logs/chronos.log 2>&1 & \
+	$(UV) python -m scripts.run_backtest_chronos_bolt > data/backtest/logs/chronos_bolt.log 2>&1 & \
+	wait && echo "[parallel] All five backtests complete. Check data/backtest/logs/ for output."
 
 backtest-load:
 	$(UV) python scripts/load_backtest_forecasts.py --model $(MODEL) --replace
 
 backtest-load-all:
 	$(UV) python scripts/load_backtest_forecasts.py --all --replace
+
+# ---------------------------------------------------------------------------
+# External ML forecast loading (ext_lgbm, ext_cat, ext_xg, ext_best)
+# ---------------------------------------------------------------------------
+load-ext-lgbm:   ## Load ext_lgbm from data/input/df_ml_lgbm_l2_extract.csv
+	$(UV) python scripts/etl/load_ext_ml_forecasts.py --model ext_lgbm --replace
+
+load-ext-cat:    ## Load ext_cat from data/input/df_ml_cat_l2_extract.csv
+	$(UV) python scripts/etl/load_ext_ml_forecasts.py --model ext_cat --replace
+
+load-ext-xg:     ## Load ext_xg from data/input/df_ml_xg_l2_extract.csv
+	$(UV) python scripts/etl/load_ext_ml_forecasts.py --model ext_xg --replace
+
+load-ext-best:   ## Load ext_best from data/input/df_ml_best.csv
+	$(UV) python scripts/etl/load_ext_ml_forecasts.py --model ext_best --replace
+
+load-ext-all: load-ext-lgbm load-ext-cat load-ext-xg load-ext-best  ## Load all 4 external ML forecast models
+	@echo "All external ML forecasts loaded."
 
 backtest-clean:
 	$(UV) python scripts/clean_backtest_models.py $(MODELS)
@@ -1282,7 +1322,7 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 
 clean-artifacts:                       ## Remove stale intermediate files (clean CSVs, backtest, tuning, clustering, champion)
 	rm -f data/*_clean.csv data/inventory_clean.csv
-	rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/
+	rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/ data/backtest/chronos/ data/backtest/chronos_bolt/
 	rm -rf data/backtest/logs/ data/backtest/tuning_archive/ data/tuning/ data/perf_reports/
 	rm -rf data/clustering/ data/champion/ data/models/
 	rm -f data/seasonality_results.csv data/clustering_features.csv

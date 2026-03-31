@@ -403,7 +403,18 @@ When adding a new feature end-to-end, follow these steps in order:
 3. `docs/specs/<domain>/<spec>.md` — create/update the relevant design spec
 4. `docs/specs/01-foundation/01-infrastructure.md` — add to "Implemented Features" list
 5. `CLAUDE.md` (this file) — if critical rules, entry points, or commands change
-6. `docs/RUNBOOK.md` "Database Cleanup & Fresh Recreate" + `Makefile` cleanup targets — when adding new tables, MVs, or pipeline steps:
+6. `docs/ENTERPRISE_ARCHITECTURE.md` — TOGAF-style enterprise architecture document. Update the relevant section(s) when:
+   - **New technology adopted** → update Section 6.1 (Technology Portfolio) and Section 12.2 (Technology Radar)
+   - **New API router or domain** → update Section 5.3 (Component Architecture) router table and Section 1.3 (Quantitative Scope)
+   - **Schema change (new table, MV, or fact)** → update Section 4.2 (Logical Data Model) and Section 4.4 (Data Governance)
+   - **New integration or external system** → update Section 7.4 (Integration Reference Architecture) and Section 6.4 (Network Topology)
+   - **Security change (auth, RBAC, rate limiting)** → update Section 8 (Security Architecture)
+   - **New ML model or AI agent** → update Section 7.3 (ML/AI Reference Architecture)
+   - **Architecture decision** → add new ADR in Section 9 (Architecture Decision Records)
+   - **New business capability** → update Section 3.1 (Business Capability Model)
+   - **Infrastructure change (Docker, deployment)** → update Section 6.2 (Infrastructure Architecture) and Section 6.3 (Docker Compose Services)
+   - **Gap closed from transition roadmap** → update Section 11 (Transition Architecture)
+7. `docs/RUNBOOK.md` "Database Cleanup & Fresh Recreate" + `Makefile` cleanup targets — when adding new tables, MVs, or pipeline steps:
    - **New data table** → add `TRUNCATE TABLE <name> CASCADE;` to the correct FK group in RUNBOOK SQL + Makefile `db-truncate-data`
    - **New materialized view** → add `REFRESH MATERIALIZED VIEW <name>;` to the correct tier in RUNBOOK Step 5 + Makefile `refresh-mvs-tiered`
    - **New pipeline step** → add to the appropriate RUNBOOK step + Makefile `fresh-*` dependency chain

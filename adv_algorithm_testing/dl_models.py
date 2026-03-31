@@ -92,6 +92,10 @@ def _build_model(model_id: str, params: dict[str, Any], accelerator: str = "cpu"
     # raises "Set val_size>0 if early stopping is enabled" otherwise.
     early_stop = params.get("early_stop_patience_steps", -1)
 
+    # A8: Robust scaler (median/IQR) is configurable per model. Use "robust" for
+    # erratic segments — standard z-score scaling is distorted by demand spikes.
+    scaler_type = params.get("scaler_type", "standard")
+
     common = {
         "h": h,
         "input_size": input_size,
@@ -99,7 +103,7 @@ def _build_model(model_id: str, params: dict[str, Any], accelerator: str = "cpu"
         "batch_size": batch_size,
         "learning_rate": learning_rate,
         "random_seed": 42,
-        "scaler_type": "standard",
+        "scaler_type": scaler_type,
         "early_stop_patience_steps": early_stop,
         # Pad short series with zeros so DFUs with < input_size months of
         # history can still be included rather than crashing training.
@@ -153,6 +157,9 @@ def _prepare_nf_dataframe(
     df = sales_df[["sku_ck", "startdate", "qty"]].copy()
     df = df.rename(columns={"sku_ck": "unique_id", "startdate": "ds", "qty": "y"})
     df["ds"] = pd.to_datetime(df["ds"])
+    # psycopg3 returns NUMERIC columns as Python Decimal → object dtype in pandas.
+    # NeuralForecast requires y to be float64; cast explicitly here.
+    df["y"] = df["y"].astype(float)
     df = df.sort_values(["unique_id", "ds"]).reset_index(drop=True)
     return df, predict_months
 
@@ -251,7 +258,15 @@ def run_dl_models(
                 "ds": "startdate",
                 forecast_col: "basefcst_pref",
             })
-            result["basefcst_pref"] = np.maximum(result["basefcst_pref"].values, 0.0)
+            raw_values = result["basefcst_pref"].values
+            nan_count = int(np.isnan(raw_values).sum()) + int(np.isinf(raw_values).sum())
+            if nan_count > 0:
+                logger.warning(
+                    "%s: %d/%d NaN/Inf predictions replaced with 0.0",
+                    model_id, nan_count, len(raw_values),
+                )
+                raw_values = np.nan_to_num(raw_values, nan=0.0, posinf=0.0, neginf=0.0)
+            result["basefcst_pref"] = np.maximum(raw_values, 0.0)
             result["algorithm_id"] = model_id
             result = result[["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]]
 

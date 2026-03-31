@@ -1,0 +1,127 @@
+cluster_sizing:
+  samples_per_feature: 1
+
+backtest:
+  n_timeframes: 10
+  output_dir: data/backtest
+  early_stop_pct: 0.03    # Matched to baseline for pure noise isolation test
+  shap_retrain_threshold: 0.10
+  embargo_months: 0
+  n_seeds: 1
+  tweedie_variance_power: 1.5
+  intermittent_threshold: 0.7
+  lumpy_threshold: 0.3
+
+# Fix #1 — Recursive noise injection (teacher forcing lite)
+# Adds Gaussian noise to lag features during training so the model is robust to
+# the distribution shift between training (real actuals as lags) and inference
+# (model predictions as lags).  Noise pct set to 0.12 (12% of mean |qty|) to
+# match typical recursive prediction error magnitude.
+recursive_noise_enabled: true    # Bug fixed — now properly reads from passed algo_config
+recursive_noise_pct: 0.12        # 12% of mean |qty| ≈ typical recursive prediction error
+
+algorithms:
+  lgbm:
+    enabled: true
+    model_id: lgbm_cluster_v2
+    cluster_strategy: per_cluster
+    recursive: true
+    shap_select: true
+    # Fix #2 — Tighter SHAP threshold drops noisy tail features; hard cap at 35.
+    shap_threshold: 0.95    # Reverted from 0.90 — aggressive pruning dropped lag features
+    shap_top_n: null        # No hard cap; let threshold drive selection
+    shap_sample_size: 500
+    tune_inline: false
+    params_file: null
+    # Fix #2 — Hyperparameter optimisation:
+    #   n_estimators: 1500 → 3000  (more trees to fully converge on 9.8M rows)
+    #   learning_rate: 0.02 → 0.04  (2× faster convergence, still stable)
+    #   num_leaves: 127 → 95        (reduce variance; 127 with unlimited depth overfits)
+    #   min_child_samples: 40 → 15  (allows finer splits on sparse DFU clusters)
+    #   max_depth: -1 → 10          (cap unlimited depth that causes memorisation)
+    #   min_gain_to_split: 0.005 → 0.015  (raise split threshold, prune noise splits)
+    #   subsample: 0.7 → 0.8        (more data per tree; less variance)
+    #   colsample_bytree: 0.7 → 0.8
+    #   feature_fraction_bynode: 0.5 → 0.7  (less aggressive per-split feature masking)
+    #   reg_lambda: 1.0 → 3.0       (stronger L2 regularisation)
+    #   reg_alpha: 0.1 → 0.5        (add L1 sparsity)
+    # Pure noise isolation: all params matched to baseline; only noise differs
+    n_estimators: 1500
+    learning_rate: 0.02
+    num_leaves: 127
+    min_child_samples: 40
+    max_depth: -1
+    min_gain_to_split: 0.005
+    subsample: 0.7
+    bagging_freq: 1
+    colsample_bytree: 0.7
+    feature_fraction_bynode: 0.5
+    reg_lambda: 1.0
+    reg_alpha: 0.1
+    path_smooth: 4
+    max_bin: 127
+  # Other models disabled — experiment focuses on LGBM only
+  catboost:
+    enabled: false
+    model_id: catboost_cluster
+    cluster_strategy: per_cluster
+    recursive: true
+    shap_select: true
+    shap_threshold: 0.95
+    shap_top_n: null
+    shap_sample_size: 500
+    tune_inline: false
+    params_file: null
+    iterations: 800
+    learning_rate: 0.03
+    depth: 7
+    l2_leaf_reg: 7.5
+    subsample: 0.85
+    grow_policy: Lossguide
+    border_count: 32
+    random_strength: 0.4
+    min_data_in_leaf: 28
+    colsample_bylevel: 0.85
+    bagging_temperature: 0.4
+    max_leaves: 80
+    bootstrap_type: MVS
+    model_size_reg: 0.10
+    score_function: L2
+    boost_from_average: true
+    leaf_estimation_method: Newton
+    leaf_estimation_iterations: 1
+    max_ctr_complexity: 1
+  xgboost:
+    enabled: false
+    model_id: xgboost_cluster
+    cluster_strategy: per_cluster
+    recursive: true
+    shap_select: true
+    shap_threshold: 0.95
+    shap_top_n: null
+    shap_sample_size: 500
+    tune_inline: false
+    params_file: null
+    n_estimators: 2000
+    learning_rate: 0.02
+    max_depth: 7
+    min_child_weight: 15
+    subsample: 0.8
+    colsample_bytree: 0.8
+    grow_policy: lossguide
+    max_leaves: 255
+    max_bin: 256
+    reg_lambda: 5.0
+    reg_alpha: 0.5
+    gamma: 0.1
+    colsample_bylevel: 0.8
+    booster: gbtree
+  seasonal_naive:
+    enabled: true
+    model_id: seasonal_naive
+    cluster_strategy: per_cluster
+  rolling_mean:
+    enabled: true
+    model_id: rolling_mean
+    cluster_strategy: per_cluster
+    window: 6

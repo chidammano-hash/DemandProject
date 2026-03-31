@@ -124,6 +124,24 @@ algorithms:
     enabled: true
     model_id: seasonal_naive
     cluster_strategy: per_cluster
+  chronos:
+    enabled: true
+    model_id: chronos
+    model_size: small
+    device: auto
+    batch_size: 1024
+    num_samples: 20
+    prediction_length: 6
+    num_workers: 1  # parallel timeframe workers (>1 for CPU; GPU keep at 1)
+  chronos_bolt:
+    enabled: true
+    model_id: chronos_bolt
+    model_size: base
+    device: auto
+    batch_size: 1024
+    num_samples: 12
+    prediction_length: 6
+    num_workers: 1
   rolling_mean:
     enabled: true
     model_id: rolling_mean
