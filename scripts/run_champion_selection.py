@@ -35,7 +35,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.champion_strategies import STRATEGY_REGISTRY
+from common.champion_strategies import (
+    STRATEGY_REGISTRY,
+    compute_strategy_accuracy,
+)
 from common.db import get_db_params
 from common.services.perf_profiler import profiled_section
 
@@ -55,9 +58,6 @@ _DEFAULTS = {
     "strategy_params": {},
 }
 
-_VALID_STRATEGIES = {"expanding", "rolling", "decay", "ensemble", "meta_learner"}
-
-
 def load_config(config_path: Path) -> dict[str, Any]:
     """Read and validate the competition config YAML."""
     if not config_path.exists():
@@ -75,10 +75,10 @@ def load_config(config_path: Path) -> dict[str, Any]:
         raise ValueError(f"Invalid lag '{cfg['lag']}'; must be one of {sorted(valid_lags)}")
     if len(cfg["models"]) < 2:
         raise ValueError("At least 2 models required for competition")
-    if cfg["strategy"] not in _VALID_STRATEGIES:
+    if cfg["strategy"] not in STRATEGY_REGISTRY:
         raise ValueError(
             f"Invalid strategy '{cfg['strategy']}'; "
-            f"must be one of {sorted(_VALID_STRATEGIES)}"
+            f"must be one of {sorted(STRATEGY_REGISTRY.keys())}"
         )
     return cfg
 
@@ -572,6 +572,43 @@ def insert_fallback_champions(
     return cur.rowcount
 
 
+def _load_dfu_attributes(db: dict[str, Any]) -> pd.DataFrame:
+    """Load DFU segment attributes (ml_cluster, abc_vol) from dim_sku."""
+    sql = "SELECT item_id, customer_group, loc, ml_cluster, abc_vol FROM dim_sku"
+    with psycopg.connect(**db) as conn:
+        df = pd.read_sql(sql, conn)
+    return df
+
+
+def _compute_segment_accuracy(
+    winners_df: pd.DataFrame,
+    segment_col: str,
+) -> list[dict[str, Any]]:
+    """Compute WAPE and accuracy per unique value of ``segment_col``.
+
+    Returns a list of dicts, one per segment value, sorted by accuracy
+    descending.  Each dict contains:
+        segment, wape, accuracy_pct, n_dfu_months, n_dfus
+    """
+    if winners_df.empty or segment_col not in winners_df.columns:
+        return []
+
+    results: list[dict[str, Any]] = []
+    for seg_val, seg_df in winners_df.groupby(segment_col, sort=False):
+        acc = compute_strategy_accuracy(seg_df)
+        unique_dfus = seg_df[["item_id", "customer_group", "loc"]].drop_duplicates()
+        results.append({
+            "segment": str(seg_val) if pd.notna(seg_val) else "unknown",
+            "wape": acc["wape"],
+            "accuracy_pct": acc["accuracy_pct"],
+            "n_dfu_months": acc["n_dfu_months"],
+            "n_dfus": len(unique_dfus),
+        })
+
+    results.sort(key=lambda d: d["accuracy_pct"] if d["accuracy_pct"] is not None else -1, reverse=True)
+    return results
+
+
 def generate_summary(
     winners: list[tuple[str, str, str, str, str, float, float, float]],
     champion_model_id: str,
@@ -580,6 +617,7 @@ def generate_summary(
     ceiling_rows: list[tuple] | None = None,
     ceiling_inserted: int = 0,
     fallback_inserted: int = 0,
+    per_segment_analysis: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Produce a summary dict from the winner list + optional ceiling data."""
     model_wins: dict[str, int] = {}
@@ -636,6 +674,11 @@ def generate_summary(
         summary["ceiling_model_wins"] = sorted_ceil
         summary["overall_ceiling_wape"] = round(ceil_wape, 4) if ceil_wape is not None else None
         summary["overall_ceiling_accuracy_pct"] = round(ceil_acc, 4) if ceil_acc is not None else None
+
+    # Per-segment accuracy breakdowns (cluster, ABC class)
+    if per_segment_analysis:
+        for key, value in per_segment_analysis.items():
+            summary[key] = value
 
     return summary
 
@@ -818,12 +861,80 @@ def main() -> None:
         refresh_views(db)
     print()
 
-    # Step 6: Save summary JSON
+    # Step 6: Per-segment accuracy breakdowns
+    per_segment_analysis: dict[str, Any] = {}
+    with profiled_section("per_segment_accuracy"):
+        print("Computing per-segment accuracy breakdowns...")
+        try:
+            dfu_attrs = _load_dfu_attributes(db)
+            print(f"  Loaded {len(dfu_attrs):,} DFU attribute rows from dim_sku")
+
+            # Build champion winners DataFrame for segment analysis
+            champ_df = pd.DataFrame(
+                winners,
+                columns=[
+                    "item_id", "customer_group", "loc", "startdate",
+                    "model_id", "prior_wape", "basefcst_pref", "tothist_dmd",
+                ],
+            )
+            champ_merged = champ_df.merge(
+                dfu_attrs, on=["item_id", "customer_group", "loc"], how="left",
+            )
+
+            # Build ceiling winners DataFrame for segment analysis
+            ceil_df = pd.DataFrame(
+                ceiling_rows or [],
+                columns=[
+                    "item_id", "customer_group", "loc", "startdate",
+                    "model_id", "abs_err", "basefcst_pref", "tothist_dmd",
+                ],
+            )
+            ceil_merged = ceil_df.merge(
+                dfu_attrs, on=["item_id", "customer_group", "loc"], how="left",
+            ) if not ceil_df.empty else ceil_df
+
+            for seg_col, seg_key in [
+                ("ml_cluster", "per_cluster_analysis"),
+                ("abc_vol", "per_abc_analysis"),
+            ]:
+                champ_seg = _compute_segment_accuracy(champ_merged, seg_col)
+                ceil_seg = _compute_segment_accuracy(ceil_merged, seg_col)
+
+                # Build a lookup for ceiling accuracy by segment
+                ceil_lookup = {d["segment"]: d for d in ceil_seg}
+
+                # Enrich champion segments with ceiling and gap
+                for entry in champ_seg:
+                    seg = entry["segment"]
+                    ceil_entry = ceil_lookup.get(seg)
+                    if ceil_entry and ceil_entry["accuracy_pct"] is not None:
+                        entry["ceiling_wape"] = ceil_entry["wape"]
+                        entry["ceiling_accuracy_pct"] = ceil_entry["accuracy_pct"]
+                        if entry["accuracy_pct"] is not None:
+                            entry["gap_to_ceiling_pp"] = round(
+                                ceil_entry["accuracy_pct"] - entry["accuracy_pct"], 4,
+                            )
+                        else:
+                            entry["gap_to_ceiling_pp"] = None
+                    else:
+                        entry["ceiling_wape"] = None
+                        entry["ceiling_accuracy_pct"] = None
+                        entry["gap_to_ceiling_pp"] = None
+
+                per_segment_analysis[seg_key] = champ_seg
+                print(f"  {seg_key}: {len(champ_seg)} segments")
+
+        except psycopg.Error as exc:
+            print(f"  WARNING: Could not load DFU attributes for segment analysis: {exc}")
+    print()
+
+    # Step 7: Save summary JSON
     with profiled_section("save_summary"):
         summary = generate_summary(
             winners, champion_id, inserted, cfg,
             ceiling_rows=ceiling_rows, ceiling_inserted=ceiling_inserted,
             fallback_inserted=fallback_inserted,
+            per_segment_analysis=per_segment_analysis,
         )
         summary_dir = ROOT / "data" / "champion"
         summary_dir.mkdir(parents=True, exist_ok=True)
@@ -840,6 +951,22 @@ def main() -> None:
         print(f"  Overall ceiling WAPE: {summary['overall_ceiling_wape']}%")
         gap = summary["overall_ceiling_accuracy_pct"] - summary["overall_champion_accuracy_pct"]
         print(f"  Gap to ceiling: {gap:.2f} pp")
+
+    # Print per-segment summaries
+    for seg_key in ["per_cluster_analysis", "per_abc_analysis"]:
+        seg_data = summary.get(seg_key)
+        if seg_data:
+            label = "Cluster" if "cluster" in seg_key else "ABC class"
+            print(f"\n  Per-{label} accuracy:")
+            for entry in seg_data:
+                gap_str = f", gap={entry['gap_to_ceiling_pp']:.1f}pp" if entry.get("gap_to_ceiling_pp") is not None else ""
+                print(
+                    f"    {entry['segment']:<12s}  acc={entry['accuracy_pct']:.1f}%  "
+                    f"wape={entry['wape']:.1f}%  "
+                    f"DFUs={entry['n_dfus']:,}  months={entry['n_dfu_months']:,}"
+                    f"{gap_str}"
+                )
+
     print("\nDone.")
 
 

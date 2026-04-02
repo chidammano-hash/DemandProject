@@ -493,7 +493,72 @@ make backtest-xgboost
 make backtest-load MODEL=xgboost_cluster
 ```
 
-#### Run All Three
+#### Run All Tree Models
+
+```bash
+# Sequential (safe default)
+make backtest-lgbm && make backtest-catboost && make backtest-xgboost
+make backtest-load-all
+```
+
+#### Foundation Models (Chronos)
+
+```bash
+# Chronos T5 (46M params, ~2.5h) — original zero-shot model
+make backtest-chronos
+make backtest-load-chronos
+
+# Chronos Bolt (205M params, ~12min) — fastest, comparable to T5-large accuracy
+make backtest-bolt
+make backtest-load-bolt
+
+# Chronos 2 (821M params, ~5.5h) — latest generation, zero-shot
+make backtest-chronos2
+make backtest-load-chronos2
+
+# Chronos 2 Enriched (821M + 31 covariates, ~6h) — best accuracy potential
+make backtest-chronos2e
+make backtest-load-chronos2e
+
+# Resume any crashed run (uses checkpoints — skips completed timeframes):
+uv run python -m scripts.run_backtest_chronos_bolt --resume
+uv run python -m scripts.run_backtest_chronos2_enriched --resume
+```
+
+See `docs/specs/02-forecasting/18-chronos-foundation-models.md` for full architecture comparison.
+
+#### Statistical Baselines
+
+```bash
+# Seasonal Naive — repeats last year's pattern
+make backtest-seasonal-naive
+make backtest-load-seasonal-naive
+
+# Rolling Mean — simple rolling average
+make backtest-rolling-mean
+make backtest-load-rolling-mean
+
+# MSTL (Multiple Seasonal-Trend decomposition using LOESS)
+make backtest-mstl
+make backtest-load-mstl
+
+# Run both baselines together:
+make backtest-baselines
+```
+
+#### Deep Learning Models
+
+```bash
+# N-HiTS (Neural Hierarchical Interpolation for Time Series)
+make backtest-nhits
+make backtest-load-nhits
+
+# N-BEATS (Neural Basis Expansion Analysis)
+make backtest-nbeats
+make backtest-load-nbeats
+```
+
+#### Run All (Tree + Foundation + Statistical + Deep Learning)
 
 ```bash
 # Sequential (safe default)
@@ -506,13 +571,14 @@ make backtest-all-parallel
 make backtest-load-all
 ```
 
-> **Note:** `backtest-all-parallel` fires all three processes simultaneously. LGBM and XGBoost use `n_jobs=-1` (all cores); running them in parallel fully saturates CPU and RAM. Use sequential on laptops or machines with limited resources.
+> **Note:** `backtest-all-parallel` fires all processes simultaneously. Tree models use `n_jobs=-1` (all CPU cores); foundation models use GPU. Running tree + foundation in parallel is generally safe (CPU vs GPU). Avoid running multiple foundation models simultaneously — they compete for GPU memory.
 
 ### Loading Predictions
 
 ```bash
 make backtest-load MODEL=<model_id>   # Load one model
 make backtest-load-all                # Scan data/backtest/*/ and load all models
+make backtest-load-all-bulk           # Load all models with single index cycle (~4x faster)
 ```
 
 `--replace` is built into `backtest-load` — it only deletes rows for the loaded `model_id`, leaving all other models untouched. Accuracy materialized views are refreshed automatically after every load.
@@ -521,6 +587,44 @@ Each backtest run writes to a **model-scoped subdirectory** so multiple models c
 - `data/backtest/<model_id>/backtest_predictions.csv` — execution-lag predictions (-> `fact_external_forecast_monthly`)
 - `data/backtest/<model_id>/backtest_predictions_all_lags.csv` — lag 0-4 archive (-> `backtest_lag_archive`)
 
+#### Advanced Loading Flags
+
+The `load_backtest_forecasts.py` script supports several flags for efficient multi-model loading:
+
+| Flag | Description |
+|---|---|
+| `--model M` | Load a single model by ID |
+| `--models M1 M2 ...` | Load specific models (space-separated list) |
+| `--all` | Auto-discover and load all models from `data/backtest/*/` |
+| `--replace` | Delete existing rows for each loaded `model_id` before inserting |
+| `--bulk` | With `--replace`: drop/recreate indexes ONCE across all models instead of per-model (~4x faster for multi-model loads) |
+| `--main-only` | Load only `fact_external_forecast_monthly` (skip archive table) |
+| `--archive-only` | Load only `backtest_lag_archive` (skip main table) |
+
+#### Multi-Model Loading Examples
+
+```bash
+# Load 4 models with single index cycle (fastest):
+uv run python scripts/load_backtest_forecasts.py \
+  --models lgbm_cluster catboost_cluster xgboost_cluster chronos \
+  --replace --bulk
+
+# Load main table only (skip archive):
+uv run python scripts/load_backtest_forecasts.py \
+  --models lgbm_cluster chronos --replace --bulk --main-only
+
+# Load archive only:
+uv run python scripts/load_backtest_forecasts.py \
+  --models lgbm_cluster chronos --replace --bulk --archive-only
+
+# Makefile convenience targets:
+make backtest-load-bulk                              # All 4 core models, bulk mode
+make backtest-load-main-only MODELS="lgbm_cluster chronos"   # Main table only
+make backtest-load-archive-only MODELS="lgbm_cluster chronos" # Archive only
+```
+
+> **Tip:** Use `--bulk` whenever loading 2+ models with `--replace`. It drops indexes before the first model and recreates them after the last, avoiding redundant index rebuilds. For a single model, `--bulk` has no benefit.
+
 **Available model IDs (Feature 44):**
 
 | Framework | Per-Cluster (default) | Global |
@@ -528,6 +632,15 @@ Each backtest run writes to a **model-scoped subdirectory** so multiple models c
 | LGBM | `lgbm_cluster` | `lgbm_global` |
 | CatBoost | `catboost_cluster` | `catboost_global` |
 | XGBoost | `xgboost_cluster` | `xgboost_global` |
+| Chronos T5 | `chronos` | — |
+| Chronos Bolt | `chronos_bolt` | — |
+| Chronos 2 | `chronos2` | — |
+| Chronos 2 Enriched | `chronos2_enriched` | — |
+| Seasonal Naive | `seasonal_naive` | — |
+| Rolling Mean | `rolling_mean` | — |
+| MSTL | `mstl` | — |
+| N-HiTS | `nhits` | — |
+| N-BEATS | `nbeats` | — |
 
 Verify archive data:
 ```bash
@@ -636,7 +749,7 @@ competition:
   metric: accuracy_pct
   lag: execution
   min_dfu_rows: 3
-  models: [lgbm_cluster, catboost_cluster, xgboost_cluster]
+  models: [catboost_cluster, xgboost_cluster, chronos2, chronos2_enriched, chronos_bolt, seasonal_naive, rolling_mean]
   strategy: expanding          # expanding | rolling | decay | ensemble | meta_learner
   strategy_params:
     window_months: 6
@@ -676,7 +789,7 @@ curl http://localhost:8000/competition/summary
 
 ## Phase 6b: Expert Panel Algorithm Selection (Feature 49)
 
-Tests whether a mix of statistical + ML algorithms outperforms the current tree-only approach. Runs 12 algorithms (Holt-Winters, Simple ES, Croston SBA, Auto-ARIMA, Theta, LGBM, CatBoost, XGBoost, Random Forest-via-Ridge, Seasonal Naive, Rolling Mean) across demand archetypes classified by the Syntetos-Boylan ADI × CV² framework.
+Tests whether a mix of statistical + ML + deep learning algorithms outperforms the current tree-only approach. Runs 14 algorithms (Holt-Winters, Simple ES, Croston SBA, Auto-ARIMA, Theta, MSTL, LGBM, CatBoost, XGBoost, Random Forest-via-Ridge, Seasonal Naive, Rolling Mean, N-HiTS, N-BEATS) across demand archetypes classified by the Syntetos-Boylan ADI × CV² framework.
 
 ### Prerequisites
 
@@ -1439,8 +1552,22 @@ make fresh-load             # Normalize + load + refresh MVs only (~5 min)
 | `make backtest-lgbm` | LGBM per-cluster backtest (10 timeframes) | ~30 min |
 | `make backtest-catboost` | CatBoost per-cluster backtest | ~40 min |
 | `make backtest-xgboost` | XGBoost per-cluster backtest | ~20 min |
-| `make backtest-all` | All 3 backtests sequentially | ~1.5 hours |
+| `make backtest-chronos` | Chronos T5 foundation model backtest | ~2.5 hours |
+| `make backtest-bolt` | Chronos Bolt foundation model backtest | ~12 min |
+| `make backtest-chronos2` | Chronos 2 foundation model backtest | ~5.5 hours |
+| `make backtest-chronos2e` | Chronos 2 Enriched backtest (31 covariates) | ~6 hours |
+| `make backtest-seasonal-naive` | Seasonal Naive baseline backtest | ~5 min |
+| `make backtest-rolling-mean` | Rolling Mean baseline backtest | ~5 min |
+| `make backtest-mstl` | MSTL decomposition backtest | ~15 min |
+| `make backtest-nhits` | N-HiTS deep learning backtest | ~1 hour |
+| `make backtest-nbeats` | N-BEATS deep learning backtest | ~1 hour |
+| `make backtest-baselines` | Seasonal Naive + Rolling Mean together | ~10 min |
+| `make backtest-all` | All tree + foundation backtests sequentially | ~12 hours |
 | `make backtest-load-all` | Load all backtest predictions into DB | ~5 min |
+| `make backtest-load-all-bulk` | Load all predictions with single index cycle (~4x faster) | ~1.5 min |
+| `make backtest-load-bulk` | Load 4 core models (lgbm, catboost, xgboost, chronos) in bulk | ~1 min |
+| `make backtest-load-main-only` | Load specific models to main table only (skip archive) | varies |
+| `make backtest-load-archive-only` | Load specific models to archive only (skip main table) | varies |
 | `make refresh-accuracy-mvs` | Refresh 4 accuracy MVs (after backtest load) | ~10 sec |
 | `make champion-all` | Train meta-learner + simulate strategies + select champion | ~15 min |
 | `make policy-all` | Refresh policy assignments while preserving manual overrides | ~1 min |
@@ -1465,7 +1592,7 @@ fresh-all
             ├── seasonality-all       (seasonality detection)
             ├── variability-all       (demand variability)
             └── lt-profile-all        (lead time profiles)
-        ├── backtest-all              (LGBM + CatBoost + XGBoost)
+        ├── backtest-all              (LGBM + CatBoost + XGBoost + Chronos + Bolt + Chronos2 + Chronos2e)
         ├── backtest-load-all         (load predictions → DB)
         └── refresh-accuracy-mvs      (accuracy MVs)
     └── champion-all                  (meta-learner + simulate + select)
@@ -1492,7 +1619,7 @@ make setup-all    # Phases 1-6: data → features → backtests → inv planning
 |---|---|---|---|
 | 1 | `setup-data` | Normalize + load all 10 domains (parallel pipeline) | Input CSVs |
 | 2 | `setup-features` | Clustering, seasonality, variability, lead time, ABC-XYZ, demand signals | Phase 1 |
-| 3 | `setup-backtest` | 3 backtests + load + accuracy refresh + champion selection + seed baselines | Phase 2 |
+| 3 | `setup-backtest` | All backtests (tree + foundation) + load + accuracy refresh + champion selection + seed baselines | Phase 2 |
 | 4 | `setup-inv-planning` | EOQ, policies, safety stock, exceptions, fill rate, health, supplier perf, investment, intramonth, control tower, rebalancing | Phase 1 |
 | 5 | `setup-demand-planning` | Production forecasts, projections, POs, quantiles, consensus, planned orders, replenishment plan, bias, blended, service level, lead time, echelon | Phase 3 |
 | 6 | `setup-ops` | S&OP, events, financial plan, storyboard, scenarios, DQ | Phase 1 |
@@ -1511,7 +1638,7 @@ setup-all
 │       ├── lt-profile-all
 │       ├── abc-xyz-all
 │       └── demand-signals-all
-│   ├── backtest-all           (LGBM + CatBoost + XGBoost)
+│   ├── backtest-all           (LGBM + CatBoost + XGBoost + Chronos + Bolt + Chronos2 + Chronos2e)
 │   ├── backtest-load-all      (predictions → DB)
 │   ├── accuracy-slice-refresh (accuracy MVs)
 │   ├── champion-all           (meta-learner + simulate + select)
@@ -1711,6 +1838,9 @@ Remove stale artifacts so the pipeline regenerates everything from scratch:
 ```bash
 rm -f data/*_clean.csv data/inventory_clean.csv
 rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/
+rm -rf data/backtest/chronos/ data/backtest/chronos_bolt/ data/backtest/chronos2/ data/backtest/chronos2_enriched/
+rm -rf data/backtest/seasonal_naive/ data/backtest/rolling_mean/ data/backtest/mstl/
+rm -rf data/backtest/nhits/ data/backtest/nbeats/
 rm -rf data/backtest/logs/ data/backtest/tuning_archive/ data/tuning/ data/perf_reports/
 rm -rf data/clustering/ data/champion/ data/models/
 rm -f data/seasonality_results.csv data/clustering_features.csv
@@ -1801,20 +1931,44 @@ docker compose exec -T postgres psql -U demand -d demand_mvp -c "
 ~/.local/bin/uv run python scripts/compute_lead_time_variability.py
 ```
 
-### Step 9: Run Backtests (3 Models)
+### Step 9: Run Backtests (Tree + Foundation + Statistical + Deep Learning)
 
 Sequential execution (safe for laptops). For parallel, append `&` to each and `wait` at the end.
 
 ```bash
+# Tree models
 ~/.local/bin/uv run python scripts/run_backtest.py
 ~/.local/bin/uv run python scripts/run_backtest_catboost.py
 ~/.local/bin/uv run python scripts/run_backtest_xgboost.py
+
+# Foundation models
+~/.local/bin/uv run python -m scripts.run_backtest_chronos
+~/.local/bin/uv run python -m scripts.run_backtest_chronos_bolt
+~/.local/bin/uv run python -m scripts.run_backtest_chronos2
+~/.local/bin/uv run python -m scripts.run_backtest_chronos2_enriched
+
+# Statistical baselines
+~/.local/bin/uv run python scripts/run_backtest.py --model seasonal_naive
+~/.local/bin/uv run python scripts/run_backtest.py --model rolling_mean
+~/.local/bin/uv run python scripts/run_backtest_mstl.py
+
+# Deep learning models
+~/.local/bin/uv run python scripts/run_backtest_dl.py --model nhits
+~/.local/bin/uv run python scripts/run_backtest_dl.py --model nbeats
 ```
 
 ### Step 10: Load Backtest Predictions
 
 ```bash
+# Standard load (per-model index cycle):
 ~/.local/bin/uv run python scripts/load_backtest_forecasts.py --all --replace
+
+# Bulk load (~4x faster — single index drop/recreate across all models):
+~/.local/bin/uv run python scripts/load_backtest_forecasts.py --all --replace --bulk
+
+# Load specific models only:
+~/.local/bin/uv run python scripts/load_backtest_forecasts.py \
+  --models lgbm_cluster catboost_cluster xgboost_cluster chronos --replace --bulk
 ```
 
 ### Step 11: Refresh Accuracy MVs
@@ -1878,7 +2032,10 @@ docker compose exec -T postgres psql -U demand -d demand_mvp -c "
 ```bash
 make backtest-list                                 # Row counts per model_id
 make backtest-clean MODELS="--dry-run lgbm_cluster" # Preview before deleting
-make backtest-clean MODELS="lgbm_cluster catboost_cluster"  # Delete specific models
+make backtest-clean MODELS="lgbm_cluster catboost_cluster"  # Delete specific tree models
+make backtest-clean MODELS="chronos chronos_bolt chronos2 chronos2_enriched"  # Delete all foundation models
+make backtest-clean MODELS="seasonal_naive rolling_mean mstl"  # Delete statistical baselines
+make backtest-clean MODELS="nhits nbeats"          # Delete deep learning models
 make backtest-clean MODELS="--all-backtest"        # Delete all non-external backtest models
 ```
 

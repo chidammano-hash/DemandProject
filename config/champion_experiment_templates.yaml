@@ -73,3 +73,84 @@ templates:
       max_depth: 15
       test_months: 3
       performance_window: 6
+
+  - id: optimized_decay
+    label: "Walk-Forward Optimized Decay"
+    description: "Auto-selects best decay factor via walk-forward validation"
+    strategy: optimized_decay
+    strategy_params:
+      decay_candidates: [0.75, 0.80, 0.85, 0.90, 0.95]
+      min_prior_months: 3
+      validation_months: 3
+
+  - id: seasonal_quarter
+    label: "Seasonal (Same-Quarter WAPE)"
+    description: "Selects champion using same-quarter historical accuracy"
+    strategy: seasonal
+    strategy_params:
+      min_prior_months: 2
+      fallback_strategy: expanding
+
+  - id: per_segment_sba
+    label: "Per-Segment (Syntetos-Boylan)"
+    description: "Routes smooth/erratic/intermittent/lumpy to different strategies"
+    strategy: per_segment
+    strategy_params:
+      min_prior_months: 3
+      adi_threshold: 1.32
+      cv2_threshold: 0.49
+
+  - id: learned_blend_ridge
+    label: "Learned Blend (Ridge Regression)"
+    description: "Ridge regression learns optimal model blending weights"
+    strategy: learned_blend
+    strategy_params:
+      min_prior_months: 6
+      alpha: 100.0
+
+  - id: uncertainty_aware_single
+    label: "Uncertainty-Aware (Single Model)"
+    description: "Risk-adjusted selection penalizing erratic model errors"
+    strategy: uncertainty_aware
+    strategy_params:
+      min_prior_months: 3
+      uncertainty_weight: 0.3
+
+  - id: diverse_ensemble_top3
+    label: "Diverse Ensemble (Top-3)"
+    description: "Family-penalized ensemble for model diversity"
+    strategy: diverse_ensemble
+    strategy_params:
+      top_k: 3
+      min_prior_months: 3
+      correlation_penalty: 0.5
+
+  - id: hybrid_meta_router_06
+    label: "Hybrid Meta-Router (0.6 threshold)"
+    description: "High-confidence meta prediction OR inverse-WAPE blend"
+    strategy: hybrid_meta_router
+    strategy_params:
+      min_prior_months: 3
+      confidence_threshold: 0.6
+      blend_top_k: 3
+    meta_learner_params:
+      model_type: random_forest
+      n_estimators: 200
+      max_depth: 15
+      performance_window: 6
+
+  - id: per_cluster_champion
+    label: "Per-Cluster Champion"
+    description: "Best model per ML cluster applied to all DFUs in that cluster"
+    strategy: per_cluster
+    strategy_params:
+      min_prior_months: 3
+
+  - id: ridge_blend_alpha100
+    label: "Ridge Blend (Alpha=100)"
+    description: "Ridge regression blend with alpha=100, min 6 months training"
+    strategy: ridge_blend
+    strategy_params:
+      min_prior_months: 3
+      ridge_alpha: 100.0
+      min_train_months: 6

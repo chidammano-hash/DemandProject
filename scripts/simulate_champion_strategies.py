@@ -3,10 +3,14 @@
 Diagnostic tool — reads from DB but does NOT write. Runs all configured
 strategies on historical data and prints a comparison table.
 
+Supports parallel execution via --parallel N (default: 1 = sequential).
+Results are saved incrementally after each strategy completes.
+
 Usage:
-    python scripts/simulate_champion_strategies.py \
+    python -u scripts/simulate_champion_strategies.py \
         --config config/model_competition.yaml \
-        [--strategies expanding,rolling_6m,decay_090,ensemble_top3,meta_learner]
+        [--strategies expanding,rolling_6m,decay_090,ensemble_top3,meta_learner] \
+        [--parallel 4]
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ import json
 import sys
 import time
 import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -156,7 +161,262 @@ DEFAULT_SIMULATIONS: dict[str, dict[str, Any]] = {
         "meta_model_path": str(ROOT / "data" / "champion" / "meta_learner.joblib"),
         "performance_window": 6,
     },
+    "ensemble_top5_inv": {
+        "strategy": "ensemble",
+        "top_k": 5,
+        "weight_method": "inverse_wape",
+        "min_prior_months": 3,
+    },
+    "ensemble_roll6_inv": {
+        "strategy": "ensemble_rolling",
+        "top_k": 3,
+        "window_months": 6,
+        "weight_method": "inverse_wape",
+        "min_prior_months": 3,
+    },
+    "ensemble_roll9_inv": {
+        "strategy": "ensemble_rolling",
+        "top_k": 3,
+        "window_months": 9,
+        "weight_method": "inverse_wape",
+        "min_prior_months": 3,
+    },
+    "adaptive_ensemble": {
+        "strategy": "adaptive_ensemble",
+        "min_k": 2,
+        "max_k": 5,
+        "spread_threshold": 0.15,
+        "min_prior_months": 3,
+        "weight_method": "inverse_wape",
+    },
+    "hybrid_warmup": {
+        "strategy": "hybrid_warmup",
+        "min_prior_months": 3,
+        "warmup_strategy": "rolling",
+        "warmup_window": 2,
+        "warmup_min_prior": 1,
+        "primary_strategy": "ensemble",
+        "primary_top_k": 3,
+        "primary_weight_method": "inverse_wape",
+    },
+    "hybrid_warmup_adapt": {
+        "strategy": "hybrid_warmup",
+        "min_prior_months": 3,
+        "warmup_strategy": "rolling",
+        "warmup_window": 2,
+        "warmup_min_prior": 1,
+        "primary_strategy": "expanding",
+    },
+    "learned_blend": {
+        "strategy": "learned_blend",
+        "min_prior_months": 6,
+        "train_months": 6,
+        "alpha": 100.0,
+    },
+    "seasonal": {
+        "strategy": "seasonal",
+        "min_prior_months": 2,
+        "fallback_strategy": "expanding",
+    },
+    "optimized_decay": {
+        "strategy": "optimized_decay",
+        "decay_candidates": [0.75, 0.80, 0.85, 0.90, 0.95],
+        "min_prior_months": 3,
+        "validation_months": 3,
+    },
+    "hybrid_meta_router": {
+        "strategy": "hybrid_meta_router",
+        "min_prior_months": 3,
+        "meta_model_path": str(ROOT / "data" / "champion" / "meta_learner.joblib"),
+        "performance_window": 6,
+        "confidence_threshold": 0.6,
+        "blend_top_k": 3,
+    },
+    "per_segment": {
+        "strategy": "per_segment",
+        "min_prior_months": 3,
+        "adi_threshold": 1.32,
+        "cv2_threshold": 0.49,
+    },
+    "uncertainty_aware": {
+        "strategy": "uncertainty_aware",
+        "min_prior_months": 3,
+        "uncertainty_weight": 0.3,
+    },
+    "uncertainty_ensemble": {
+        "strategy": "uncertainty_aware",
+        "min_prior_months": 3,
+        "uncertainty_weight": 0.3,
+        "use_ensemble": True,
+        "top_k": 3,
+    },
+    "ridge_blend": {
+        "strategy": "ridge_blend",
+        "min_prior_months": 3,
+        "ridge_alpha": 100.0,
+        "min_train_months": 6,
+    },
+    "diverse_ensemble": {
+        "strategy": "diverse_ensemble",
+        "min_prior_months": 3,
+        "top_k": 3,
+        "correlation_penalty": 0.5,
+    },
+    "per_cluster": {
+        "strategy": "per_cluster",
+        "min_prior_months": 3,
+    },
+    "cascade_ensemble": {
+        "strategy": "cascade_ensemble",
+        "min_prior_months": 3,
+        "solo_threshold": 0.10,
+        "mid_threshold": 0.25,
+        "mid_k": 2,
+        "wide_k": 5,
+    },
+    "adversarial_filter": {
+        "strategy": "adversarial_filter",
+        "min_prior_months": 3,
+        "outlier_z_threshold": 1.5,
+        "top_k": 3,
+    },
+    "dynamic_window": {
+        "strategy": "dynamic_window",
+        "min_prior_months": 3,
+        "window_candidates": [2, 3, 4, 6, 9, 12],
+        "cv_months": 3,
+    },
+    "regime_adaptive": {
+        "strategy": "regime_adaptive",
+        "min_prior_months": 3,
+        "variance_window": 4,
+        "variance_threshold": 2.0,
+    },
+    "bayesian_model_avg": {
+        "strategy": "bayesian_model_avg",
+        "min_prior_months": 3,
+    },
+    "error_correcting": {
+        "strategy": "error_correcting",
+        "min_prior_months": 3,
+        "correction_window": 3,
+        "correction_strength": 0.5,
+    },
+    "shrinkage_blend_050": {
+        "strategy": "shrinkage_blend",
+        "min_prior_months": 3,
+        "shrinkage_intensity": 0.5,
+    },
+    "shrinkage_blend_030": {
+        "strategy": "shrinkage_blend",
+        "min_prior_months": 3,
+        "shrinkage_intensity": 0.3,
+    },
+    "dfu_strategy_router": {
+        "strategy": "dfu_strategy_router",
+        "min_prior_months": 3,
+        "eval_months": 3,
+    },
+    "stacked_strategies": {
+        "strategy": "stacked_strategies",
+        "min_prior_months": 3,
+        "eval_months": 3,
+    },
+    "cluster_regime_hybrid": {
+        "strategy": "cluster_regime_hybrid",
+        "min_prior_months": 3,
+        "variance_window": 4,
+        "variance_threshold": 2.0,
+    },
+    "thompson_sampling": {
+        "strategy": "thompson_sampling",
+        "min_prior_months": 2,
+        "discount": 0.95,
+    },
+    "thompson_090": {
+        "strategy": "thompson_sampling",
+        "min_prior_months": 2,
+        "discount": 0.90,
+    },
+    "thompson_ensemble": {
+        "strategy": "thompson_ensemble",
+        "min_prior_months": 2,
+        "discount": 0.95,
+        "top_k": 3,
+    },
+    "linucb_10": {
+        "strategy": "linucb",
+        "min_prior_months": 3,
+        "alpha_ucb": 1.0,
+    },
+    "linucb_05": {
+        "strategy": "linucb",
+        "min_prior_months": 3,
+        "alpha_ucb": 0.5,
+    },
+    "exp3_010": {
+        "strategy": "exp3",
+        "min_prior_months": 2,
+        "gamma": 0.10,
+    },
+    "exp3_005": {
+        "strategy": "exp3",
+        "min_prior_months": 2,
+        "gamma": 0.05,
+    },
 }
+
+
+# ---------------------------------------------------------------------------
+# Worker function for parallel execution
+# ---------------------------------------------------------------------------
+
+def _run_single_strategy(
+    sim_name: str,
+    sim_cfg: dict[str, Any],
+    monthly_errors: pd.DataFrame,
+    dfu_features: pd.DataFrame | None,
+) -> dict[str, Any]:
+    """Execute a single strategy and return results dict.
+
+    Runs in a subprocess via ProcessPoolExecutor.
+    """
+    strategy_name = sim_cfg.get("strategy", sim_name)
+    strategy_fn = STRATEGY_REGISTRY.get(strategy_name)
+    if strategy_fn is None:
+        return {"sim_name": sim_name, "error": f"Unknown strategy: {strategy_name}"}
+
+    strat_kwargs = {k: v for k, v in sim_cfg.items() if k != "strategy"}
+    if strategy_name in ("meta_learner", "hybrid_meta_router", "per_cluster", "cluster_regime_hybrid"):
+        strat_kwargs["dfu_features"] = dfu_features
+
+    t0 = time.time()
+    winners = strategy_fn(monthly_errors, **strat_kwargs)
+    elapsed = time.time() - t0
+    acc = compute_strategy_accuracy(winners)
+
+    result: dict[str, Any] = {
+        "sim_name": sim_name,
+        **acc,
+        "elapsed_s": round(elapsed, 2),
+    }
+
+    if len(winners) > 0 and "model_id" in winners.columns:
+        result["model_wins"] = winners["model_id"].value_counts().to_dict()
+
+    return result
+
+
+def _flush_print(msg: str) -> None:
+    """Print and immediately flush to ensure real-time output."""
+    print(msg, flush=True)
+
+
+def _save_results(results: dict[str, Any], output_path: Path) -> None:
+    """Incrementally save results JSON after each strategy completes."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(results, f, indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -177,15 +437,21 @@ def main() -> None:
         "--output", type=str, default="data/champion/simulation_results.json",
         help="Output path for results JSON",
     )
+    parser.add_argument(
+        "--parallel", type=int, default=1,
+        help="Number of parallel workers (default: 1 = sequential). "
+             "Each worker uses ~20-30GB RAM at scale, so set based on available memory.",
+    )
     args = parser.parse_args()
 
     load_dotenv(ROOT / ".env")
     db = get_db_params()
+    output_path = ROOT / args.output
 
     # Load config
     config_path = ROOT / args.config
     if not config_path.exists():
-        print(f"Config not found: {config_path}")
+        _flush_print(f"Config not found: {config_path}")
         sys.exit(1)
     with open(config_path) as f:
         raw = yaml.safe_load(f)
@@ -194,7 +460,7 @@ def main() -> None:
     models = cfg.get("models", [])
     lag_mode = str(cfg.get("lag", "execution"))
     if len(models) < 2:
-        print("At least 2 models required for simulation")
+        _flush_print("At least 2 models required for simulation")
         sys.exit(1)
 
     # Determine which simulations to run
@@ -203,100 +469,131 @@ def main() -> None:
     else:
         sim_names = list(DEFAULT_SIMULATIONS.keys())
 
-    print(f"Champion Strategy Simulation — {len(models)} competing models")
-    print(f"  Lag: {lag_mode}  |  Models: {', '.join(models)}")
-    print(f"  Strategies: {', '.join(sim_names)}")
-    print()
+    _flush_print(f"Champion Strategy Simulation — {len(models)} competing models")
+    _flush_print(f"  Lag: {lag_mode}  |  Models: {', '.join(models)}")
+    _flush_print(f"  Strategies: {', '.join(sim_names)}")
+    _flush_print(f"  Parallel workers: {args.parallel}")
+    _flush_print("")
 
     # Load data
-    print("Loading monthly errors...")
+    _flush_print("Loading monthly errors...")
     t0 = time.time()
     with profiled_section("load_monthly_errors"):
         monthly_errors = load_monthly_errors(db, models, lag_mode)
     n_dfu_months = monthly_errors.groupby(
         ["item_id", "customer_group", "loc", "startdate"]
     ).ngroups
-    print(f"  {len(monthly_errors):,} rows, {n_dfu_months:,} DFU-months ({time.time() - t0:.1f}s)")
-    print()
+    _flush_print(f"  {len(monthly_errors):,} rows, {n_dfu_months:,} DFU-months ({time.time() - t0:.1f}s)")
+    _flush_print("")
 
-    # Load DFU features for meta-learner
+    # Load DFU features for meta-learner / per_cluster
     with profiled_section("load_dfu_features"):
         dfu_features = load_dfu_features(db)
 
     # Compute ceiling (oracle upper bound)
-    print("Computing ceiling (oracle)...")
+    _flush_print("Computing ceiling (oracle)...")
     t1 = time.time()
     with profiled_section("compute_ceiling"):
         ceiling_winners = compute_ceiling(monthly_errors)
         ceiling_acc = compute_strategy_accuracy(ceiling_winners)
-    print(f"  Ceiling: accuracy={ceiling_acc['accuracy_pct']}%, "
-          f"WAPE={ceiling_acc['wape']}%, "
-          f"DFU-months={ceiling_acc['n_dfu_months']:,} ({time.time() - t1:.1f}s)")
-    print()
+    _flush_print(f"  Ceiling: accuracy={ceiling_acc['accuracy_pct']}%, "
+                 f"WAPE={ceiling_acc['wape']}%, "
+                 f"DFU-months={ceiling_acc['n_dfu_months']:,} ({time.time() - t1:.1f}s)")
+    _flush_print("")
 
-    # Run each strategy
-    results: dict[str, dict[str, Any]] = {}
-    results["ceiling"] = ceiling_acc
+    # Prepare results dict
+    results: dict[str, dict[str, Any]] = {"ceiling": ceiling_acc}
+    _save_results(results, output_path)
 
-    print("=" * 80)
-    print(f"{'Strategy':<25s} {'Accuracy':>10s} {'WAPE':>10s} {'Gap':>10s} {'DFU-months':>12s} {'Time':>8s}")
-    print("-" * 80)
-
+    # Validate simulation configs
+    valid_sims: list[tuple[str, dict[str, Any]]] = []
     for sim_name in sim_names:
         sim_cfg = DEFAULT_SIMULATIONS.get(sim_name)
         if sim_cfg is None:
-            print(f"  Unknown simulation: {sim_name}, skipping")
+            _flush_print(f"  Unknown simulation: {sim_name}, skipping")
             continue
+        valid_sims.append((sim_name, sim_cfg))
 
-        strategy_name = sim_cfg.get("strategy", sim_name)
-        strategy_fn = STRATEGY_REGISTRY.get(strategy_name)
-        if strategy_fn is None:
-            print(f"  Unknown strategy: {strategy_name}, skipping")
-            continue
+    # Header
+    _flush_print("=" * 80)
+    _flush_print(f"{'Strategy':<25s} {'Accuracy':>10s} {'WAPE':>10s} {'Gap':>10s} {'DFU-months':>12s} {'Time':>8s}")
+    _flush_print("-" * 80)
 
-        # Build kwargs
-        strat_kwargs = {k: v for k, v in sim_cfg.items() if k != "strategy"}
-        if strategy_name == "meta_learner":
-            strat_kwargs["dfu_features"] = dfu_features
+    def _print_result(res: dict[str, Any]) -> None:
+        """Format and print a single strategy result."""
+        sim_name = res["sim_name"]
+        if "error" in res:
+            _flush_print(f"  {sim_name}: {res['error']}")
+            return
 
-        t2 = time.time()
-        with profiled_section(f"strategy_{sim_name}"):
-            winners = strategy_fn(monthly_errors, **strat_kwargs)
-            elapsed = time.time() - t2
-            acc = compute_strategy_accuracy(winners)
+        acc_pct = res.get("accuracy_pct")
+        wape = res.get("wape")
+        n_dfu = res.get("n_dfu_months", 0)
+        elapsed = res.get("elapsed_s", 0)
 
         gap = ""
-        if acc["accuracy_pct"] is not None and ceiling_acc["accuracy_pct"] is not None:
-            gap_val = ceiling_acc["accuracy_pct"] - acc["accuracy_pct"]
+        if acc_pct is not None and ceiling_acc["accuracy_pct"] is not None:
+            gap_val = ceiling_acc["accuracy_pct"] - acc_pct
             gap = f"{gap_val:.2f} pp"
 
-        print(
+        _flush_print(
             f"{sim_name:<25s} "
-            f"{acc['accuracy_pct'] or 'N/A':>10} "
-            f"{acc['wape'] or 'N/A':>10} "
+            f"{acc_pct or 'N/A':>10} "
+            f"{wape or 'N/A':>10} "
             f"{gap:>10s} "
-            f"{acc['n_dfu_months']:>12,} "
+            f"{n_dfu:>12,} "
             f"{elapsed:>7.1f}s"
         )
 
-        results[sim_name] = {
-            **acc,
+        # Store in results and save incrementally
+        result_entry = {
+            "wape": wape,
+            "accuracy_pct": acc_pct,
+            "n_dfu_months": n_dfu,
             "gap_to_ceiling": round(
-                ceiling_acc["accuracy_pct"] - acc["accuracy_pct"], 4
-            ) if acc["accuracy_pct"] and ceiling_acc["accuracy_pct"] else None,
-            "elapsed_s": round(elapsed, 2),
+                ceiling_acc["accuracy_pct"] - acc_pct, 4
+            ) if acc_pct and ceiling_acc["accuracy_pct"] else None,
+            "elapsed_s": elapsed,
         }
+        if "model_wins" in res:
+            result_entry["model_wins"] = res["model_wins"]
+        results[sim_name] = result_entry
+        _save_results(results, output_path)
 
-        # Model wins distribution
-        if len(winners) > 0 and "model_id" in winners.columns:
-            wins = winners["model_id"].value_counts().to_dict()
-            results[sim_name]["model_wins"] = wins
+    # ── Execute strategies ────────────────────────────────────────────────
+    t_start = time.time()
 
-    print("=" * 80)
+    if args.parallel <= 1:
+        # Sequential execution
+        for sim_name, sim_cfg in valid_sims:
+            res = _run_single_strategy(
+                sim_name, sim_cfg, monthly_errors, dfu_features,
+            )
+            _print_result(res)
+    else:
+        # Parallel execution via ProcessPoolExecutor
+        # Note: each worker gets a copy of monthly_errors (~2-4GB) via fork.
+        # On macOS with fork, this is copy-on-write and memory-efficient.
+        with ProcessPoolExecutor(max_workers=args.parallel) as executor:
+            future_to_name = {}
+            for sim_name, sim_cfg in valid_sims:
+                future = executor.submit(
+                    _run_single_strategy,
+                    sim_name, sim_cfg, monthly_errors, dfu_features,
+                )
+                future_to_name[future] = sim_name
+
+            for future in as_completed(future_to_name):
+                res = future.result()
+                _print_result(res)
+
+    total_elapsed = time.time() - t_start
+
+    # ── Summary ───────────────────────────────────────────────────────────
+    _flush_print("=" * 80)
     if ceiling_acc["accuracy_pct"]:
-        print(f"Ceiling accuracy: {ceiling_acc['accuracy_pct']}%")
+        _flush_print(f"Ceiling accuracy: {ceiling_acc['accuracy_pct']}%")
 
-    # Find best strategy
     best_name = None
     best_acc = -1.0
     for name, res in results.items():
@@ -306,16 +603,11 @@ def main() -> None:
             best_acc = res["accuracy_pct"]
             best_name = name
     if best_name:
-        print(f"Best strategy: {best_name} ({best_acc}%, "
-              f"gap to ceiling: {results[best_name].get('gap_to_ceiling', 'N/A')} pp)")
+        _flush_print(f"Best strategy: {best_name} ({best_acc}%, "
+                     f"gap to ceiling: {results[best_name].get('gap_to_ceiling', 'N/A')} pp)")
 
-    # Save results
-    with profiled_section("save_results"):
-        output_path = ROOT / args.output
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w") as f:
-            json.dump(results, f, indent=2, default=str)
-    print(f"\nResults saved to {output_path}")
+    _flush_print(f"\nTotal time: {total_elapsed:.1f}s ({total_elapsed / 60:.1f} min)")
+    _flush_print(f"Results saved to {output_path}")
 
 
 if __name__ == "__main__":

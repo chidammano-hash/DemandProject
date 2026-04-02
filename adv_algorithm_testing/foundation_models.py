@@ -332,6 +332,404 @@ def _run_chronos_bolt(
 
 
 # ---------------------------------------------------------------------------
+# Chronos 2 (latest generation — quantile output, built-in batching)
+# ---------------------------------------------------------------------------
+
+def _check_chronos2() -> bool:
+    try:
+        from chronos import Chronos2Pipeline  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _run_chronos2(
+    sales_df: pd.DataFrame,
+    predict_months: list[pd.Timestamp],
+    params: dict[str, Any],
+) -> pd.DataFrame:
+    """Run Amazon Chronos 2 foundation model (zero-shot).
+
+    Chronos 2 handles batching internally via its batch_size parameter,
+    returns a list of tensors (one per series) with 21 quantile forecasts.
+    """
+    if not _check_chronos2():
+        logger.info("chronos-forecasting >= 2.0 not installed; skipping Chronos 2")
+        return pd.DataFrame(
+            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        )
+
+    import torch
+    from chronos import Chronos2Pipeline
+
+    device_setting = params.get("device", "auto")
+    prediction_length = len(predict_months)
+    batch_size = params.get("batch_size", 1024)
+
+    device = _resolve_device(device_setting)
+    if device == "mps":
+        logger.info("Chronos 2: using Apple MPS GPU")
+
+    model_name = "amazon/chronos-2"
+    cache_key = f"{model_name}:{device}"
+    if cache_key not in _chronos_pipeline_cache:
+        logger.info("Chronos 2: loading %s on %s...", model_name, device)
+        _chronos_pipeline_cache[cache_key] = Chronos2Pipeline.from_pretrained(
+            model_name,
+            device_map=device,
+            torch_dtype=torch.float32,
+        )
+    else:
+        logger.info("Chronos 2: reusing cached pipeline")
+    pipeline = _chronos_pipeline_cache[cache_key]
+
+    sku_cks = sales_df["sku_ck"].unique()
+    sorted_sales = sales_df.sort_values(["sku_ck", "startdate"])
+    grouped = sorted_sales.groupby("sku_ck", sort=False)
+
+    # Build contexts — filter DFUs with < 3 months of history
+    contexts: list[torch.Tensor] = []
+    valid_skus: list[str] = []
+    for sku_ck in sku_cks:
+        values = grouped.get_group(sku_ck)["qty"].values.astype(np.float32)
+        if len(values) < 3:
+            continue
+        contexts.append(torch.tensor(values))
+        valid_skus.append(sku_ck)
+
+    if not contexts:
+        return pd.DataFrame(
+            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        )
+
+    logger.info("Chronos 2: predicting %d DFUs (batch_size=%d)...",
+                len(valid_skus), batch_size)
+
+    month_arr = np.array(predict_months)
+    n_months = len(predict_months)
+    batch_dfs: list[pd.DataFrame] = []
+    chunk_size = batch_size
+    n_chunks = (len(contexts) + chunk_size - 1) // chunk_size
+
+    for ci in range(n_chunks):
+        c_start = ci * chunk_size
+        c_end = min(c_start + chunk_size, len(contexts))
+
+        try:
+            chunk_results = pipeline.predict(
+                contexts[c_start:c_end],
+                prediction_length=prediction_length,
+                batch_size=chunk_size,
+            )
+        except (RuntimeError, ValueError) as exc:
+            logger.warning("Chronos 2 chunk %d/%d failed: %s", ci + 1, n_chunks, exc)
+            continue
+
+        for sku_ck, r in zip(valid_skus[c_start:c_end], chunk_results):
+            n_q = r.shape[1]
+            median_idx = n_q // 2
+            preds = r[0, median_idx, :n_months].numpy()
+            preds = np.maximum(preds, 0.0)
+            if not np.all(np.isfinite(preds)):
+                preds = np.nan_to_num(preds, nan=0.0, posinf=0.0, neginf=0.0)
+
+            batch_dfs.append(pd.DataFrame({
+                "sku_ck": sku_ck,
+                "startdate": month_arr[:len(preds)],
+                "basefcst_pref": preds,
+                "algorithm_id": "chronos2",
+            }))
+
+        logger.info("Chronos 2: %d/%d DFUs processed",
+                     min(c_end, len(valid_skus)), len(valid_skus))
+
+    result = pd.concat(batch_dfs, ignore_index=True) if batch_dfs else pd.DataFrame(
+        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+    )
+    logger.info("Chronos 2: %d predictions for %d DFUs", len(result),
+                result["sku_ck"].nunique() if not result.empty else 0)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Chronos 2 Enriched (with covariates from feature matrix)
+# ---------------------------------------------------------------------------
+
+# Past-only covariates: known for history, NOT known for future
+_C2E_PAST_ONLY_COVARIATES = [
+    "qty_lag_1", "qty_lag_2", "qty_lag_3", "qty_lag_6", "qty_lag_12",
+    "qty_rolling_mean_3", "qty_rolling_mean_6", "qty_rolling_mean_12",
+    "mom_growth", "demand_accel", "volatility_ratio",
+    "croston_demand_size", "croston_demand_interval", "croston_probability",
+    "cluster_mean_lag1", "cluster_total_lag1", "cluster_demand_trend",
+]
+
+# Known-future covariates: calendar/seasonal features computable for any date
+_C2E_FUTURE_COVARIATES = [
+    "month", "quarter", "is_quarter_end", "is_year_end", "days_in_month",
+    "fourier_sin_12", "fourier_cos_12", "fourier_sin_6", "fourier_cos_6",
+    "fourier_sin_4", "fourier_cos_4", "fourier_sin_3", "fourier_cos_3",
+]
+
+# Categorical past covariates (Chronos 2 supports these as numpy str arrays)
+_C2E_CAT_COVARIATES = ["ml_cluster", "brand", "region", "abc_vol"]
+
+
+def _build_future_calendar(predict_months: list[pd.Timestamp]) -> dict[str, np.ndarray]:
+    """Build known-future covariate arrays for the predict window."""
+    months = np.array([m.month for m in predict_months], dtype=np.float32)
+    quarters = np.array([m.quarter for m in predict_months], dtype=np.float32)
+    is_qtr_end = np.isin(months, [3, 6, 9, 12]).astype(np.float32)
+    is_yr_end = (months == 12).astype(np.float32)
+    days = np.array([m.days_in_month for m in predict_months], dtype=np.float32)
+
+    future: dict[str, np.ndarray] = {
+        "month": months,
+        "quarter": quarters,
+        "is_quarter_end": is_qtr_end,
+        "is_year_end": is_yr_end,
+        "days_in_month": days,
+    }
+
+    # Fourier features for predict months
+    for period in [12, 6, 4, 3]:
+        angles = 2.0 * np.pi * months / period
+        future[f"fourier_sin_{period}"] = np.sin(angles).astype(np.float32)
+        future[f"fourier_cos_{period}"] = np.cos(angles).astype(np.float32)
+
+    return future
+
+
+def _run_chronos2_enriched(
+    sales_df: pd.DataFrame,
+    predict_months: list[pd.Timestamp],
+    params: dict[str, Any],
+    feature_grid: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Run Chronos 2 with covariates from feature matrix.
+
+    Uses past_covariates (lag/rolling/croston/cluster features + categoricals)
+    and future_covariates (calendar/fourier — known for any future date).
+    """
+    if not _check_chronos2():
+        logger.info("chronos-forecasting >= 2.0 not installed; skipping Chronos 2 Enriched")
+        return pd.DataFrame(
+            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        )
+
+    import torch
+    from chronos import Chronos2Pipeline
+
+    device_setting = params.get("device", "auto")
+    prediction_length = len(predict_months)
+    batch_size = params.get("batch_size", 2048)
+
+    device = _resolve_device(device_setting)
+    if device == "mps":
+        logger.info("Chronos 2 Enriched: using Apple MPS GPU")
+
+    model_name = "amazon/chronos-2"
+    cache_key = f"{model_name}:{device}"
+    if cache_key not in _chronos_pipeline_cache:
+        logger.info("Chronos 2 Enriched: loading %s on %s...", model_name, device)
+        _chronos_pipeline_cache[cache_key] = Chronos2Pipeline.from_pretrained(
+            model_name,
+            device_map=device,
+            torch_dtype=torch.float32,
+        )
+    else:
+        logger.info("Chronos 2 Enriched: reusing cached pipeline")
+    pipeline = _chronos_pipeline_cache[cache_key]
+
+    # Build future calendar covariates (same for all DFUs)
+    future_cal = _build_future_calendar(predict_months)
+
+    sku_cks = sales_df["sku_ck"].unique()
+    sorted_sales = sales_df.sort_values(["sku_ck", "startdate"])
+    grouped_sales = sorted_sales.groupby("sku_ck", sort=False)
+
+    # Prepare feature grid lookup if provided
+    has_grid = feature_grid is not None and not feature_grid.empty
+    if has_grid:
+        grid_sorted = feature_grid.sort_values(["sku_ck", "startdate"])
+        grouped_grid = grid_sorted.groupby("sku_ck", sort=False)
+        # Determine which covariates are actually present
+        available_past = [c for c in _C2E_PAST_ONLY_COVARIATES if c in grid_sorted.columns]
+        available_future = [c for c in _C2E_FUTURE_COVARIATES if c in grid_sorted.columns]
+        available_cat = [c for c in _C2E_CAT_COVARIATES if c in grid_sorted.columns]
+        all_past_keys = available_past + available_future + available_cat
+        logger.info(
+            "Chronos 2 Enriched: %d past covariates, %d future covariates, %d categorical",
+            len(available_past), len(available_future), len(available_cat),
+        )
+    else:
+        available_past = []
+        available_future = []
+        available_cat = []
+        all_past_keys = []
+        logger.info("Chronos 2 Enriched: no feature grid — running with calendar covariates only")
+
+    # Build input dicts per DFU — vectorized approach
+    # Pre-compute per-DFU row ranges from sorted sales to avoid get_group() calls
+    t_build = time.time()
+
+    # Get row boundaries per DFU from sorted sales
+    sales_skus = sorted_sales["sku_ck"].values
+    sales_qty = sorted_sales["qty"].values.astype(np.float32)
+    sku_boundaries: dict[str, tuple[int, int]] = {}
+    prev_sku = None
+    start_idx = 0
+    for i, sku in enumerate(sales_skus):
+        if sku != prev_sku:
+            if prev_sku is not None:
+                sku_boundaries[prev_sku] = (start_idx, i)
+            start_idx = i
+            prev_sku = sku
+    if prev_sku is not None:
+        sku_boundaries[prev_sku] = (start_idx, len(sales_skus))
+
+    # Pre-extract grid covariate arrays as contiguous numpy blocks
+    grid_boundaries: dict[str, tuple[int, int]] = {}
+    grid_numeric_arrays: dict[str, np.ndarray] = {}
+    grid_cat_arrays: dict[str, np.ndarray] = {}
+    if has_grid:
+        grid_skus = grid_sorted["sku_ck"].values
+        prev_sku = None
+        start_idx = 0
+        for i, sku in enumerate(grid_skus):
+            if sku != prev_sku:
+                if prev_sku is not None:
+                    grid_boundaries[prev_sku] = (start_idx, i)
+                start_idx = i
+                prev_sku = sku
+        if prev_sku is not None:
+            grid_boundaries[prev_sku] = (start_idx, len(grid_skus))
+
+        # Extract all numeric covariate columns as contiguous arrays
+        all_numeric_cols = available_past + available_future
+        for col in all_numeric_cols:
+            arr = grid_sorted[col].values.astype(np.float32)
+            np.nan_to_num(arr, copy=False, nan=0.0)
+            grid_numeric_arrays[col] = arr
+        for col in available_cat:
+            grid_cat_arrays[col] = grid_sorted[col].fillna("__unknown__").astype(str).values
+
+    # Future covariate keys that will be present in past_covariates
+    future_keys_available = [k for k in _C2E_FUTURE_COVARIATES if k in future_cal]
+
+    inputs: list[dict[str, Any]] = []
+    valid_skus: list[str] = []
+
+    for sku_ck in sku_cks:
+        if sku_ck not in sku_boundaries:
+            continue
+        s, e = sku_boundaries[sku_ck]
+        hist_len = e - s
+        if hist_len < 3:
+            continue
+
+        entry: dict[str, Any] = {"target": torch.from_numpy(sales_qty[s:e].copy())}
+
+        # Build past_covariates via array slicing (no get_group / per-col DataFrame access)
+        past_cov: dict[str, np.ndarray] = {}
+
+        if has_grid and sku_ck in grid_boundaries:
+            gs, ge = grid_boundaries[sku_ck]
+            # Align: take last hist_len rows from grid
+            g_len = ge - gs
+            g_start = ge - hist_len if g_len >= hist_len else gs
+            g_slice_len = min(hist_len, g_len)
+
+            if g_slice_len == hist_len:
+                for col, arr in grid_numeric_arrays.items():
+                    past_cov[col] = arr[g_start:ge]
+                for col, arr in grid_cat_arrays.items():
+                    past_cov[col] = arr[g_start:ge]
+        else:
+            # Fallback: calendar covariates from sales dates
+            sale_dates = sorted_sales["startdate"].values[s:e]
+            m_arr = pd.to_datetime(sale_dates).month.values.astype(np.float32)
+            for period in [12, 6, 4, 3]:
+                angles = 2.0 * np.pi * m_arr / period
+                past_cov[f"fourier_sin_{period}"] = np.sin(angles).astype(np.float32)
+                past_cov[f"fourier_cos_{period}"] = np.cos(angles).astype(np.float32)
+            past_cov["month"] = m_arr
+            past_cov["quarter"] = np.ceil(m_arr / 3).astype(np.float32)
+
+        if past_cov:
+            entry["past_covariates"] = past_cov
+
+        # Future covariates (subset of past keys)
+        future_cov = {k: future_cal[k] for k in future_keys_available if k in past_cov}
+        if future_cov:
+            entry["future_covariates"] = future_cov
+
+        inputs.append(entry)
+        valid_skus.append(sku_ck)
+
+    logger.info("Input dicts built: %d DFUs (%.1fs)", len(valid_skus), time.time() - t_build)
+
+    if not inputs:
+        return pd.DataFrame(
+            columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+        )
+
+    logger.info("Chronos 2 Enriched: predicting %d DFUs (batch_size=%d)...",
+                len(valid_skus), batch_size)
+
+    # Feed in chunks — Chronos 2's internal collation chokes on 200K+ dicts at once
+    month_arr = np.array(predict_months)
+    n_months = len(predict_months)
+    batch_dfs: list[pd.DataFrame] = []
+    chunk_size = batch_size  # process one GPU batch worth at a time
+    n_chunks = (len(inputs) + chunk_size - 1) // chunk_size
+
+    for ci in range(n_chunks):
+        c_start = ci * chunk_size
+        c_end = min(c_start + chunk_size, len(inputs))
+        chunk_inputs = inputs[c_start:c_end]
+        chunk_skus = valid_skus[c_start:c_end]
+
+        try:
+            chunk_results = pipeline.predict(
+                chunk_inputs,
+                prediction_length=prediction_length,
+                batch_size=chunk_size,
+            )
+        except (RuntimeError, ValueError) as exc:
+            logger.warning("Chronos 2 Enriched chunk %d/%d failed: %s", ci + 1, n_chunks, exc)
+            continue
+
+        # Extract median forecasts — vectorized per chunk
+        for sku_ck, r in zip(chunk_skus, chunk_results):
+            n_q = r.shape[1]
+            median_idx = n_q // 2
+            preds = r[0, median_idx, :n_months].numpy()
+            preds = np.maximum(preds, 0.0)
+            if not np.all(np.isfinite(preds)):
+                preds = np.nan_to_num(preds, nan=0.0, posinf=0.0, neginf=0.0)
+
+            batch_dfs.append(pd.DataFrame({
+                "sku_ck": sku_ck,
+                "startdate": month_arr[:len(preds)],
+                "basefcst_pref": preds,
+                "algorithm_id": "chronos2_enriched",
+            }))
+
+        logger.info(
+            "Chronos 2 Enriched: %d/%d DFUs processed",
+            min(c_end, len(valid_skus)), len(valid_skus),
+        )
+
+    result = pd.concat(batch_dfs, ignore_index=True) if batch_dfs else pd.DataFrame(
+        columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
+    )
+    logger.info("Chronos 2 Enriched: %d predictions for %d DFUs", len(result),
+                result["sku_ck"].nunique() if not result.empty else 0)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # TimesFM
 # ---------------------------------------------------------------------------
 
@@ -697,6 +1095,8 @@ def _run_lag_llama(
 _FOUNDATION_DISPATCH: dict[str, Any] = {
     "chronos": _run_chronos,
     "chronos_bolt": _run_chronos_bolt,
+    "chronos2": _run_chronos2,
+    "chronos2_enriched": _run_chronos2_enriched,
     "timesfm": _run_timesfm,
     "timegpt": _run_timegpt,
     "moirai": _run_moirai,
@@ -712,6 +1112,7 @@ def run_foundation_models(
     sales_df: pd.DataFrame,
     predict_months: list[pd.Timestamp],
     enabled_models: dict[str, dict],
+    feature_grid: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Run all enabled foundation models.
 
@@ -723,6 +1124,7 @@ def run_foundation_models(
         sales_df: Historical sales with columns [sku_ck, startdate, qty].
         predict_months: Months to predict.
         enabled_models: {model_id: params_dict} for enabled foundation models.
+        feature_grid: Optional feature matrix for enriched models (e.g. chronos2_enriched).
 
     Returns:
         DataFrame with columns: sku_ck, startdate, basefcst_pref, algorithm_id
@@ -749,7 +1151,11 @@ def run_foundation_models(
         logger.info("Running foundation model: %s...", model_id)
 
         try:
-            result = fn(sales_df, predict_months, params)
+            # Pass feature_grid for enriched models that accept it
+            if model_id == "chronos2_enriched":
+                result = fn(sales_df, predict_months, params, feature_grid=feature_grid)
+            else:
+                result = fn(sales_df, predict_months, params)
             if not result.empty:
                 all_results.append(result)
                 logger.info(

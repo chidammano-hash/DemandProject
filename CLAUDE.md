@@ -109,8 +109,16 @@ make ui                # React dev server on :5173
 
 # ML Pipelines
 make cluster-all       # Full clustering pipeline
-make backtest-all      # LGBM + CatBoost + XGBoost backtests
+make backtest-all      # All backtests (tree + foundation models)
 make backtest-load-all # Load all backtest predictions into Postgres
+make backtest-load-all-bulk # Load all with single index cycle (~4x faster)
+make backtest-load-bulk # Load 4 core models in bulk (lgbm, catboost, xgboost, chronos)
+make backtest-load-main-only MODELS="..." # Load to main table only (skip archive)
+make backtest-load-archive-only MODELS="..." # Load to archive only (skip main)
+make backtest-chronos  # Chronos T5 (46M, ~2.5h)
+make backtest-bolt     # Chronos Bolt (205M, ~12min)
+make backtest-chronos2 # Chronos 2 zero-shot (821M, ~5.5h)
+make backtest-chronos2e # Chronos 2 Enriched with 31 covariates (~6h)
 make champion-all      # Meta-learner + simulate + champion select
 make tune-all          # Bayesian hyperparameter tuning (all models)
 make expert-panel      # Expert Panel algorithm selection test (5000 DFUs, ~30 min)

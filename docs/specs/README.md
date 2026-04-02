@@ -63,7 +63,7 @@ Predict future demand using ML models, then select the best forecast per item.
 | 04 | [Tree Models](02-forecasting/04-tree-models.md) | LGBM + CatBoost + XGBoost implementations |
 | 05 | [Advanced Backtest](02-forecasting/05-advanced-backtest.md) | Hyperparameter tuning, SHAP selection, recursive forecasting |
 | 06 | [Algorithm Config](02-forecasting/06-algorithm-config.md) | One YAML file controls all model behavior |
-| 07 | [Champion Selection](02-forecasting/07-champion-selection.md) | Pick the best model per item per month (5 strategies) |
+| 07 | [Champion Selection](02-forecasting/07-champion-selection.md) | Pick the best model per item per month (8 strategies) |
 | 08 | [Production Forecast](02-forecasting/08-production-forecast.md) | Generate real forward-looking predictions from champion models |
 | 09 | [Bias Correction](02-forecasting/09-bias-correction.md) | Detect and correct systematic over/under-forecasting |
 | 10 | [Forecast CI Bands](02-forecasting/10-forecast-ci-bands.md) | Confidence intervals showing the range of likely outcomes |
@@ -73,8 +73,9 @@ Predict future demand using ML models, then select the best forecast per item.
 | 13 | [Production Baseline Seeding](02-forecasting/13-production-baseline-seeding.md) | Auto-seed production baselines from completed backtests |
 | 14 | [Execution Lag Filters](02-forecasting/14-execution-lag-filters.md) | Lag filter bar semantics for Algorithm and Champion experiment tabs |
 | 15 | [Expert Panel: Algorithm Selection](02-forecasting/15-expert-panel-algorithm-selection.md) | 31-expert panel tests 30+ algorithms (statistical, tree, deep learning, foundation models) across demand segments; routes each DFU to its best-fit algorithm via affinity matrix optimization |
+| 18 | [Chronos Foundation Models](02-forecasting/18-chronos-foundation-models.md) | Four Chronos variants (T5, Bolt, Chronos 2, Chronos 2 Enriched) — architecture, covariates, configuration, performance benchmarks |
 
-**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel)
+**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models)
 
 ---
 
@@ -88,7 +89,7 @@ Understand demand patterns — descriptive analytics that inform forecasting and
 | 02 | [Seasonality](03-demand-intelligence/02-seasonality.md) | Detect peak/trough months and seasonal strength per item |
 | 03 | [Blended Demand](03-demand-intelligence/03-blended-demand.md) | Alpha-weighted blend of statistical forecast + demand signals |
 | 04 | [Cluster Experimentation Studio](03-demand-intelligence/04-cluster-experimentation-studio.md) | Experiment lifecycle for testing segmentation configs (create, run, compare, promote) with cluster-aware algorithm tuning |
-| 05 | [Champion Experimentation Studio](03-demand-intelligence/05-champion-experimentation-studio.md) | Experiment lifecycle for champion selection strategies (expanding, rolling, decay, ensemble, meta_learner) with 2-stage promotion |
+| 05 | [Champion Experimentation Studio](03-demand-intelligence/05-champion-experimentation-studio.md) | Experiment lifecycle for 8 champion selection strategies (expanding, rolling, decay, ensemble, meta_learner, hybrid_warmup, adaptive_ensemble, ensemble_rolling) with 2-stage promotion |
 
 ---
 

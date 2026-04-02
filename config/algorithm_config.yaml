@@ -142,8 +142,47 @@ algorithms:
     num_samples: 12
     prediction_length: 6
     num_workers: 1
+  chronos2:
+    enabled: true
+    model_id: chronos2
+    device: auto
+    batch_size: 2048
+    prediction_length: 6
+    num_workers: 1
+  chronos2_enriched:
+    enabled: true
+    model_id: chronos2_enriched
+    device: auto
+    batch_size: 1024
+    prediction_length: 6
+    num_workers: 1
   rolling_mean:
     enabled: true
     model_id: rolling_mean
     cluster_strategy: per_cluster
     window: 6
+  mstl:
+    enabled: true
+    model_id: mstl
+    season_length: 12
+    min_history: 25
+  nhits:
+    enabled: true
+    model_id: nhits
+    h: 6
+    input_size: 24
+    max_steps: 500
+    batch_size: 32
+    learning_rate: 0.001
+    scaler_type: standard
+    early_stop_patience_steps: -1
+  nbeats:
+    enabled: true
+    model_id: nbeats
+    h: 6
+    input_size: 24
+    max_steps: 500
+    batch_size: 32
+    learning_rate: 0.001
+    scaler_type: standard
+    early_stop_patience_steps: -1

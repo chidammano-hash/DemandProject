@@ -52,7 +52,7 @@ flowchart TD
     subgraph COMPUTE["Phase 3-7: Compute Pipelines"]
         CL["Clustering"]
         SEAS["Seasonality"]
-        BT["Backtesting (3 models)"]
+        BT["Backtesting (10 models)"]
         CHAMP["Champion Selection"]
         PROD["Production Forecast"]
         INVP["Inventory Planning (15)"]
@@ -275,6 +275,24 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
    - Native categorical support via `enable_categorical=True` with `tree_method="hist"`
    - GPU support via `device="cuda"`; auto-detected at runtime
    - MLflow experiment tracking (`demand_backtest`)
+11b. MSTL backtesting:
+   - MSTL (Multiple Seasonal-Trend decomposition using LOESS) from the `statsforecast` library
+   - Per-DFU fitting with parallel workers (default 8); decomposes into trend + multiple seasonal components
+   - Config in `config/algorithm_config.yaml` under `mstl` key: `season_length: 12`, `min_history: 25`
+   - Outputs to `data/backtest/mstl/`; default model ID: `mstl`
+   - CLI: `make backtest-mstl`, `make backtest-mstl-full` (backtest + load)
+11c. N-HiTS backtesting:
+   - N-HiTS deep learning model from the `neuralforecast` library
+   - Global model training (single model across all DFUs); supports Apple MPS, CUDA, and CPU
+   - Config in `config/algorithm_config.yaml` under `nhits` key: `h: 6`, `input_size: 24`, `max_steps: 500`
+   - Outputs to `data/backtest/nhits/`; default model ID: `nhits`
+   - CLI: `make backtest-nhits`, `make backtest-nhits-full` (backtest + load)
+11d. N-BEATS backtesting:
+   - N-BEATS deep learning model from the `neuralforecast` library
+   - Global model training (single model across all DFUs); supports Apple MPS, CUDA, and CPU
+   - Config in `config/algorithm_config.yaml` under `nbeats` key: `h: 6`, `input_size: 24`, `max_steps: 500`
+   - Outputs to `data/backtest/nbeats/`; default model ID: `nbeats`
+   - CLI: `make backtest-nbeats`, `make backtest-nbeats-full` (backtest + load)
 12. Multi-dimensional accuracy slicing:
    - Pre-aggregated `agg_accuracy_by_dim` view: (model_id, lag, month, cluster, supplier, abc_vol, region, brand) grain
    - Pre-aggregated `agg_accuracy_lag_archive` view: same grain for archive table + timeframe
@@ -284,12 +302,15 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
    - Views refreshed automatically by `backtest-load`; also manually via `make accuracy-slice-refresh`
 17. Champion model selection (feature15):
    - Per-DFU per-month best-model selection using Forecast Value Added (FVA) approach
-   - 5 configurable strategies via `common/champion_strategies.py` strategy registry:
+   - 8 configurable strategies via `common/champion_strategies.py` strategy registry:
      - `expanding` — cumulative WAPE, all prior months equal weight (default)
      - `rolling` — last N months only (configurable `window_months`)
      - `decay` — exponential decay weighting recent months more (`decay_factor`)
      - `ensemble` — blend top-K models by inverse-WAPE weights
      - `meta_learner` — ML classifier predicts best model from DFU features + performance stats
+     - `hybrid_warmup` — uses ensemble for months with sufficient history + rolling for warm-up months (addresses 58% coverage gap where expanding/ensemble discard DFU-months with fewer than `min_prior_months`); configurable `warmup_strategy`, `warmup_window`, `warmup_min_prior`, `primary_strategy`, `primary_top_k`
+     - `adaptive_ensemble` — varies top-K (2–5) per DFU-month based on model WAPE spread; low-spread months use `min_k` to avoid diluting the best model, high-spread months use `max_k` for robustness; configurable `spread_threshold`
+     - `ensemble_rolling` — blends top-K models using rolling window WAPE instead of expanding; combines rolling adaptiveness (reacts to regime changes) with ensemble robustness; configurable `window_months`, `top_k`, `weight_method`
    - All strategies enforce **exec-lag-aware strict causality**: selection for month T with execution_lag=L uses ONLY data from `startdate < T − L` (= `startdate < fcstdate`), implemented as `shift(exec_lag + 1)` per DFU-model group — prevents using actuals not available at forecast issuance time
    - **Fallback model** (`fallback_model_id`, default `lgbm_cluster`): fills warm-up DFU-months so every DFU-month always has a champion row
    - WAPE-based DFU-level evaluation: `SUM(ABS(F-A)) / ABS(SUM(A))` per DFU per model
@@ -298,7 +319,7 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
    - Ceiling stored as `model_id='ceiling'` — provides accuracy benchmark alongside champion
    - Gap-to-ceiling metric shows how far champion is from theoretical best (in percentage points)
    - Meta-learner trained on ceiling labels as ground truth with strict temporal train/test split
-   - Simulation script (`simulate_champion_strategies.py`) runs all strategies and compares accuracy vs ceiling
+   - Simulation script (`simulate_champion_strategies.py`) runs all strategies and compares accuracy vs ceiling; includes 16 simulation entries: expanding, rolling_3/6/9/12, decay_090/095, ensemble_top3_inv/eq, meta_learner, ensemble_top5_inv, ensemble_roll6_inv, ensemble_roll9_inv, adaptive_ensemble, hybrid_warmup, hybrid_warmup_adapt
    - YAML config (`config/model_competition.yaml`): competing models, metric, lag mode, min DFU rows, fallback_model_id, strategy, strategy_params, meta_learner config
    - CLI: `make champion-select`, `make champion-simulate`, `make champion-train-meta`, `make champion-all`
    - API endpoints: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
@@ -675,6 +696,9 @@ flowchart TD
         BT_L["backtest-lgbm<br/>→ data/backtest/lgbm_cluster/"]
         BT_C["backtest-catboost<br/>→ data/backtest/catboost_cluster/"]
         BT_X["backtest-xgboost<br/>→ data/backtest/xgboost_cluster/"]
+        BT_MSTL["backtest-mstl<br/>→ data/backtest/mstl/"]
+        BT_NHITS["backtest-nhits<br/>→ data/backtest/nhits/"]
+        BT_NBEATS["backtest-nbeats<br/>→ data/backtest/nbeats/"]
         BT_LOAD["backtest-load-all<br/>→ fact_external_forecast_monthly<br/>+ backtest_lag_archive"]
     end
 
@@ -707,7 +731,8 @@ flowchart TD
     CL --> TUNE
     TUNE -.->|params_file| BT_L & BT_C & BT_X
     CL --> BT_L & BT_C & BT_X
-    BT_L & BT_C & BT_X --> BT_LOAD
+    LOAD --> BT_MSTL & BT_NHITS & BT_NBEATS
+    BT_L & BT_C & BT_X & BT_MSTL & BT_NHITS & BT_NBEATS --> BT_LOAD
     BT_LOAD --> CHAMP
     CHAMP --> PROD
     PROD --> REPL
@@ -740,7 +765,10 @@ flowchart TD
 | **LGBM Backtest** | `run_backtest.py` | sales, forecast, `dim_sku.ml_cluster` | `data/backtest/lgbm_cluster/` | `algorithm_config.yaml` |
 | **CatBoost Backtest** | `run_backtest_catboost.py` | same | `data/backtest/catboost_cluster/` | `algorithm_config.yaml` |
 | **XGBoost Backtest** | `run_backtest_xgboost.py` | same | `data/backtest/xgboost_cluster/` | `algorithm_config.yaml` |
-| **Backtest Load** | `load_backtest_forecasts.py` | `data/backtest/*/` CSVs | `fact_external_forecast_monthly`, `backtest_lag_archive` | — |
+| **MSTL Backtest** | `run_backtest_mstl.py` | sales, forecast | `data/backtest/mstl/` | `algorithm_config.yaml` |
+| **N-HiTS Backtest** | `run_backtest_dl.py --model nhits` | sales, forecast | `data/backtest/nhits/` | `algorithm_config.yaml` |
+| **N-BEATS Backtest** | `run_backtest_dl.py --model nbeats` | sales, forecast | `data/backtest/nbeats/` | `algorithm_config.yaml` |
+| **Backtest Load** | `load_backtest_forecasts.py` | `data/backtest/*/` CSVs | `fact_external_forecast_monthly`, `backtest_lag_archive` | — (flags: `--models`, `--bulk`, `--main-only`, `--archive-only`) |
 | **Champion** | `run_champion_selection.py` | `fact_external_forecast_monthly`, archive | rows with `model_id='champion'`, `'ceiling'` | `model_competition.yaml` |
 | **Prod Forecast** | `generate_production_forecasts.py` | champion assignments, cluster `.pkl` models | `fact_production_forecast` | `production_forecast_config.yaml` |
 | **Repl Plan** | `compute_replenishment_plan.py` | `fact_production_forecast`, SS, EOQ | `fact_replenishment_plan` | — |
@@ -890,16 +918,69 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - `ml_cluster` always a hard feature; `cluster_strategy` config key selects mode
    - Algorithm options read from `config/algorithm_config.yaml`
    - Default model IDs: `xgboost_cluster` (per_cluster) or `xgboost_global` (global)
-8. **Backtest Loader** (`load_backtest_forecasts.py`):
+8. **Chronos T5 Backtest** (`run_backtest_chronos.py` → `foundation_models.py`):
+   - Amazon Chronos T5-small (46M params) — zero-shot time-series foundation model
+   - Tokenizes demand into T5 vocabulary, generates 20 sampled forecast paths, takes median
+   - Manual batching (batch_size=1024), pipeline cached across timeframes
+   - Outputs to `data/backtest/chronos/` with checkpoint/resume support
+   - Default model ID: `chronos`
+9. **Chronos Bolt Backtest** (`run_backtest_chronos_bolt.py` → `foundation_models.py`):
+   - Amazon Chronos Bolt-base (205M params) — native encoder architecture, up to 250x faster than T5
+   - Returns quantile forecasts directly (no sampling), uses `ChronosBoltPipeline`
+   - ~12x faster than Chronos T5 at comparable accuracy
+   - Default model ID: `chronos_bolt`
+10. **Chronos 2 Backtest** (`run_backtest_chronos2.py` → `foundation_models.py`):
+    - Amazon Chronos 2 (821M params) — latest generation, 21 quantile outputs
+    - Uses `Chronos2Pipeline`, chunked prediction to avoid collation OOM
+    - Supports covariates and cross-learning (used in enriched variant)
+    - Default model ID: `chronos2`
+11. **Chronos 2 Enriched Backtest** (`run_backtest_chronos2_enriched.py` → `foundation_models.py`):
+    - Same Chronos 2 model with 31 covariates from feature engineering pipeline
+    - 17 past-only numeric (lags, rolling, croston, cluster), 13 future calendar/fourier, 4 categorical
+    - Builds full feature matrix via `build_feature_matrix()`, masks per timeframe
+    - Vectorized input construction (~2.3s for 214K DFUs)
+    - Default model ID: `chronos2_enriched`
+    - See `docs/specs/02-forecasting/18-chronos-foundation-models.md` for full details
+12. **MSTL Backtest** (`run_backtest_mstl.py` → `adv_algorithm_testing/statistical_upgrades.py`):
+    - MSTL (Multiple Seasonal-Trend decomposition using LOESS) from the `statsforecast` library
+    - Per-DFU fitting with parallel workers (default 8 via `--workers` flag); decomposes into trend + multiple seasonal components
+    - Uses shared `generate_timeframes()`, `load_backtest_data()`, `postprocess_predictions()`, `save_backtest_output()` from backtest framework
+    - Checkpoint/resume support via `BacktestCheckpointer`
+    - Config: `config/algorithm_config.yaml` under `mstl` key — `season_length: 12`, `min_history: 25`
+    - Outputs to `data/backtest/mstl/` with execution-lag + all-lags CSVs + metadata JSON
+    - Default model ID: `mstl`
+    - CLI: `make backtest-mstl`, `make backtest-mstl-full`
+13. **N-HiTS Backtest** (`run_backtest_dl.py --model nhits` → `adv_algorithm_testing/dl_models.py`):
+    - N-HiTS (Neural Hierarchical Interpolation for Time Series) deep learning model from the `neuralforecast` library
+    - Global model training: single model trained across all DFUs simultaneously (cross-learning)
+    - Supports Apple MPS, CUDA, and CPU for GPU acceleration
+    - Uses shared backtest framework utilities for timeframe generation, data loading, postprocessing, and output saving
+    - Config: `config/algorithm_config.yaml` under `nhits` key — `h: 6`, `input_size: 24`, `max_steps: 500`, `batch_size: 32`, `learning_rate: 0.001`, `scaler_type: standard`
+    - Outputs to `data/backtest/nhits/`; default model ID: `nhits`
+    - CLI: `make backtest-nhits`, `make backtest-nhits-full`
+14. **N-BEATS Backtest** (`run_backtest_dl.py --model nbeats` → `adv_algorithm_testing/dl_models.py`):
+    - N-BEATS (Neural Basis Expansion Analysis for Time Series) deep learning model from the `neuralforecast` library
+    - Global model training: single model trained across all DFUs simultaneously (cross-learning)
+    - Supports Apple MPS, CUDA, and CPU for GPU acceleration
+    - Same shared backtest framework utilities as N-HiTS
+    - Config: `config/algorithm_config.yaml` under `nbeats` key — `h: 6`, `input_size: 24`, `max_steps: 500`, `batch_size: 32`, `learning_rate: 0.001`, `scaler_type: standard`
+    - Outputs to `data/backtest/nbeats/`; default model ID: `nbeats`
+    - CLI: `make backtest-nbeats`, `make backtest-nbeats-full`
+15. **Backtest Loader** (`load_backtest_forecasts.py`):
    - Loads execution-lag rows into `fact_external_forecast_monthly` via COPY + staging + upsert
    - Loads all-lag rows into `backtest_lag_archive` via same pattern
-   - Supports `--model MODEL_ID` (load from `data/backtest/<MODEL_ID>/`), `--all` (scan all model subdirs), `--input PATH` (legacy)
+   - Supports `--model MODEL_ID` (single model), `--models M1 M2 ...` (multi-model), `--all` (scan all model subdirs), `--input PATH` (legacy)
    - `--replace` scoped to `model_id` in CSV (safe for multi-model coexistence)
+   - `--bulk` with `--replace`: drops/recreates indexes ONCE across all models instead of per-model (~4x faster for multi-model loads)
+   - `--main-only`: loads only `fact_external_forecast_monthly` (skips archive table)
+   - `--archive-only`: loads only `backtest_lag_archive` (skips main table)
    - Refreshes `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` materialized views
+   - CLI: `make backtest-load-all`, `make backtest-load-all-bulk`, `make backtest-load-bulk`, `make backtest-load-main-only`, `make backtest-load-archive-only`
    - Each backtest writes to `data/backtest/<model_id>/` subdirectory (prevents CSV overwrites — PL-001 fix)
-12. **Champion Selection** (`run_champion_selection.py` + `common/champion_strategies.py`):
-   - 5 configurable strategies: expanding, rolling, decay, ensemble, meta_learner
+16. **Champion Selection** (`run_champion_selection.py` + `common/champion_strategies.py`):
+   - 8 configurable strategies: expanding, rolling, decay, ensemble, meta_learner, hybrid_warmup, adaptive_ensemble, ensemble_rolling
    - Strategy registry in `common/champion_strategies.py` — all strategies operate on pandas DataFrames (testable without DB)
+   - New strategies: `hybrid_warmup` (ensemble for stable months + rolling for warm-up; addresses 58% coverage gap), `adaptive_ensemble` (varies top-K 2–5 per DFU-month based on model WAPE spread), `ensemble_rolling` (blends top-K using rolling window WAPE instead of expanding)
    - All strategies enforce **exec-lag-aware causality** via `shift(exec_lag + 1)` per DFU-model group — selection for month T excludes last exec_lag months whose actuals weren't available at issuance time; backward compatible with exec_lag=0
    - **Fallback model** fills warm-up DFU-months (NOT EXISTS + ON CONFLICT DO NOTHING insert) so every DFU-month has a champion row
    - Bulk inserts champion rows via temp table + COPY + INSERT...SELECT with `model_id='champion'`
@@ -908,8 +989,8 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Refreshes materialized views so champion + ceiling auto-appear in all accuracy comparisons
    - Config-driven via `config/model_competition.yaml`; also callable via API
    - Meta-learner (`scripts/train_meta_learner.py`): RandomForest/XGBoost classifier trained on ceiling labels with temporal split
-   - Simulation (`scripts/simulate_champion_strategies.py`): runs all strategies, compares accuracy vs ceiling
-14. **Hyperparameter Tuning** (`scripts/tune_hyperparams.py` + `common/tuning.py`):
+   - Simulation (`scripts/simulate_champion_strategies.py`): runs all 16 strategy variants (including ensemble_top5_inv, ensemble_roll6_inv, ensemble_roll9_inv, adaptive_ensemble, hybrid_warmup, hybrid_warmup_adapt), compares accuracy vs ceiling
+17. **Hyperparameter Tuning** (`scripts/tune_hyperparams.py` + `common/tuning.py`):
    - Bayesian optimisation via Optuna (TPESampler + MedianPruner) for LGBM, CatBoost, XGBoost
    - Walk-forward expanding CV with causal masking (`mask_future_sales()` inside each fold)
    - `n_estimators` determined by early stopping (excluded from search space)
@@ -919,7 +1000,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - MLflow experiment: `hyperparameter_tuning`
    - **Per-timeframe causal inline tuning (PL-002):** `tune_for_timeframe()` in `common/tuning.py` filters the feature matrix to `months <= cutoff_date` before running a lightweight Optuna study (20 trials, 3 folds) — eliminates future leakage into backtest accuracy metrics. Enabled via `tune_inline: true` in `config/algorithm_config.yaml`. `TRAIN_FOLD_FNS` registry (`train_lgbm_fold`, `train_catboost_fold`, `train_xgboost_fold`) shared between global tuning and inline tuner. `run_tree_backtest()` accepts optional `inline_tuner_fn` callable — each timeframe gets its own causally-valid params.
    - **Two modes:** Production (`params_file` in algorithm config — global tune once, apply everywhere) vs. Honest backtesting (`tune_inline: true` in algorithm config — 600 fits vs 250, no future leakage)
-15. **SHAP Feature Selection** (`common/shap_selector.py` — Feature 42):
+18. **SHAP Feature Selection** (`common/shap_selector.py` — Feature 42):
    - Per-timeframe SHAP computation integrated into `run_tree_backtest()` via `feature_selector_fn` hook
    - LGBM/XGBoost: `shap.TreeExplainer` via `compute_shap_global`; CatBoost: native `get_feature_importance(type="ShapValues")` via `compute_shap_catboost`
    - For per_cluster/transfer strategies: SHAP pooled across cluster models weighted by cluster size via `_weighted_pool_cluster_shap`; `ml_cluster` excluded from effective feature set
@@ -930,7 +1011,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Config keys in `config/algorithm_config.yaml`: `shap_select`, `shap_top_n`, `shap_threshold`, `shap_sample_size`; composable with `tune_inline` and `params_file` (Feature 44)
    - Activated by setting `shap_select: true` in the algorithm section; run via `make backtest-lgbm`, `make backtest-catboost`, or `make backtest-xgboost`
    - Graceful degradation: SHAP failures log warning and keep all features; backtest continues uninterrupted
-16. **Recursive Multi-Step Inference** (`common/backtest_framework.py` + `common/feature_engineering.py` — Feature 43):
+19. **Recursive Multi-Step Inference** (`common/backtest_framework.py` + `common/feature_engineering.py` — Feature 43):
    - `--recursive` CLI flag on LGBM, CatBoost, and XGBoost backtest scripts; passes `recursive=True` to `run_tree_backtest()`
    - In direct mode (default), months 2+ of the prediction window use `qty_lag_1 = 0` (masked sales). In recursive mode, each predict month is scored individually, and the model's prediction for month T is written back via `update_grid_with_predictions()` before scoring month T+1
    - `update_grid_with_predictions(grid, month, predictions)` in `common/feature_engineering.py`: writes predicted `basefcst_pref` to `qty[month]` then recomputes all lag (1-12) and rolling (3m/6m/12m) features in a single vectorized `groupby().shift()` pass

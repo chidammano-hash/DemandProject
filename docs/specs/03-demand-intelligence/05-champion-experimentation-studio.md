@@ -145,7 +145,7 @@ Side-by-side comparison:
 
 ## Champion Strategies
 
-5 strategies from `common/ml/champion_strategies.py` `STRATEGY_REGISTRY`:
+8 strategies from `common/ml/champion_strategies.py` `STRATEGY_REGISTRY`:
 
 | Strategy | Key Params | Description |
 |----------|-----------|-------------|
@@ -154,6 +154,9 @@ Side-by-side comparison:
 | **decay** | `decay_factor`, `min_prior_months` | Exponential time-decay weighting |
 | **ensemble** | `top_k`, `weight_method` | Blend top-K models |
 | **meta_learner** | `model_type`, `n_estimators`, `max_depth`, `test_months` | ML model to predict best algorithm |
+| **hybrid_warmup** | `warmup_strategy`, `warmup_window`, `warmup_min_prior`, `primary_strategy`, `primary_top_k` | Fast-adapting strategy for warm-up months, then switches to ensemble/expanding once enough history accumulates |
+| **adaptive_ensemble** | `min_k`, `max_k`, `spread_threshold`, `weight_method` | Varies top-K per DFU-month based on model WAPE spread |
+| **ensemble_rolling** | `top_k`, `window_months`, `weight_method` | Blend top-K models using rolling-window WAPE instead of expanding |
 
 All strategies use `shift(exec_lag+1)` to prevent data leakage.
 

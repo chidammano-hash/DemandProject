@@ -6,7 +6,7 @@ POSTGRES_SERVICE := postgres
 PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
 PSQL := $(PG_EXEC) psql -U demand -d demand_mvp
 
-.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-load backtest-load-all backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini load-ext-lgbm load-ext-cat load-ext-xg load-ext-best load-ext-all
+.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-seasonal-naive backtest-rolling-mean backtest-mstl backtest-nhits backtest-nbeats backtest-baselines backtest-load backtest-load-all backtest-load-all-bulk backtest-load-bulk backtest-load-main-only backtest-load-archive-only backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini load-ext-lgbm load-ext-cat load-ext-xg load-ext-best load-ext-all
 
 # ---------------------------------------------------------------------------
 # Convenience aliases
@@ -77,12 +77,18 @@ help:
 	@echo "  backtest-xgboost     - run XGBoost per-cluster backtest (settings from algorithm_config.yaml)"
 	@echo "  backtest-chronos     - run Chronos T5 foundation model backtest"
 	@echo "  backtest-chronos-full- run Chronos T5 backtest + load predictions"
-	@echo "  backtest-bolt        - run Chronos Bolt (v2) foundation model backtest"
+	@echo "  backtest-bolt        - run Chronos Bolt foundation model backtest"
 	@echo "  backtest-bolt-full   - run Chronos Bolt backtest + load predictions"
-	@echo "  backtest-all         - run all five backtests sequentially (LGBM → CatBoost → XGBoost → Chronos → Bolt)"
-	@echo "  backtest-all-parallel- run all five backtests in parallel (logs in data/backtest/logs/)"
+	@echo "  backtest-chronos2    - run Chronos 2 foundation model backtest"
+	@echo "  backtest-chronos2-full - run Chronos 2 backtest + load predictions"
+	@echo "  backtest-all         - run all six backtests sequentially"
+	@echo "  backtest-all-parallel- run all six backtests in parallel (logs in data/backtest/logs/)"
 	@echo "  backtest-load        - load one model: make backtest-load MODEL=lgbm_cluster"
 	@echo "  backtest-load-all    - load ALL models from data/backtest/*/ (run after backtest-all)"
+	@echo "  backtest-load-all-bulk - load ALL models with single index cycle (~4x faster)"
+	@echo "  backtest-load-bulk   - load 4 core models (lgbm, catboost, xgboost, chronos) in bulk"
+	@echo "  backtest-load-main-only - load specific models to main table only (MODELS='...')"
+	@echo "  backtest-load-archive-only - load specific models to archive only (MODELS='...')"
 	@echo "  backtest-clean       - remove model predictions (MODELS='lgbm_cluster catboost_cluster')"
 	@echo "  backtest-list        - list model_id row counts in database"
 	@echo "  forecast-clean       - delete forecasts by date range (ARGS='--before 2025-04-01 --model external')"
@@ -541,23 +547,90 @@ backtest-load-bolt:
 
 backtest-bolt-full: backtest-bolt backtest-load-bolt
 
-backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-chronos backtest-bolt
+backtest-chronos2:
+	$(UV) python -m scripts.run_backtest_chronos2
+
+backtest-load-chronos2:
+	$(UV) python -m scripts.load_backtest_forecasts --model chronos2 --replace
+
+backtest-chronos2-full: backtest-chronos2 backtest-load-chronos2
+
+backtest-chronos2e:
+	$(UV) python -m scripts.run_backtest_chronos2_enriched
+
+backtest-load-chronos2e:
+	$(UV) python -m scripts.load_backtest_forecasts --model chronos2_enriched --replace
+
+backtest-chronos2e-full: backtest-chronos2e backtest-load-chronos2e
+
+backtest-seasonal-naive:
+	$(UV) python scripts/run_backtest.py --model seasonal_naive $(ARGS)
+
+backtest-load-seasonal-naive:
+	$(UV) python scripts/load_backtest_forecasts.py --model seasonal_naive --replace
+
+backtest-rolling-mean:
+	$(UV) python scripts/run_backtest.py --model rolling_mean $(ARGS)
+
+backtest-load-rolling-mean:
+	$(UV) python scripts/load_backtest_forecasts.py --model rolling_mean --replace
+
+backtest-mstl:
+	$(UV) python scripts/run_backtest_mstl.py $(ARGS)
+
+backtest-load-mstl:
+	$(UV) python scripts/load_backtest_forecasts.py --model mstl --replace
+
+backtest-mstl-full: backtest-mstl backtest-load-mstl
+
+backtest-nhits:
+	$(UV) python scripts/run_backtest_dl.py --model nhits $(ARGS)
+
+backtest-load-nhits:
+	$(UV) python scripts/load_backtest_forecasts.py --model nhits --replace
+
+backtest-nhits-full: backtest-nhits backtest-load-nhits
+
+backtest-nbeats:
+	$(UV) python scripts/run_backtest_dl.py --model nbeats $(ARGS)
+
+backtest-load-nbeats:
+	$(UV) python scripts/load_backtest_forecasts.py --model nbeats --replace
+
+backtest-nbeats-full: backtest-nbeats backtest-load-nbeats
+
+backtest-baselines: backtest-seasonal-naive backtest-rolling-mean
+
+backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-chronos backtest-bolt backtest-chronos2 backtest-chronos2e
 
 backtest-all-parallel:
 	@mkdir -p data/backtest/logs
-	@echo "[parallel] Starting LGBM, CatBoost, XGBoost, Chronos, Bolt concurrently — logs in data/backtest/logs/"
+	@echo "[parallel] Starting LGBM, CatBoost, XGBoost, Chronos, Bolt, Chronos2 concurrently — logs in data/backtest/logs/"
 	$(UV) python scripts/run_backtest.py $(ARGS) > data/backtest/logs/lgbm.log 2>&1 & \
 	$(UV) python scripts/run_backtest_catboost.py $(ARGS) > data/backtest/logs/catboost.log 2>&1 & \
 	$(UV) python scripts/run_backtest_xgboost.py $(ARGS) > data/backtest/logs/xgboost.log 2>&1 & \
 	$(UV) python -m scripts.run_backtest_chronos > data/backtest/logs/chronos.log 2>&1 & \
 	$(UV) python -m scripts.run_backtest_chronos_bolt > data/backtest/logs/chronos_bolt.log 2>&1 & \
-	wait && echo "[parallel] All five backtests complete. Check data/backtest/logs/ for output."
+	$(UV) python -m scripts.run_backtest_chronos2 > data/backtest/logs/chronos2.log 2>&1 & \
+	wait && echo "[parallel] All six backtests complete. Check data/backtest/logs/ for output."
 
 backtest-load:
 	$(UV) python scripts/load_backtest_forecasts.py --model $(MODEL) --replace
 
 backtest-load-all:
 	$(UV) python scripts/load_backtest_forecasts.py --all --replace
+
+backtest-load-all-bulk:
+	$(UV) python scripts/load_backtest_forecasts.py --all --replace --bulk
+
+backtest-load-bulk:  ## Load 4 core models with single index cycle (~4x faster)
+	$(UV) python scripts/load_backtest_forecasts.py --models lgbm_cluster catboost_cluster xgboost_cluster chronos --replace --bulk
+
+backtest-load-main-only:  ## Load specific models to main table only (skip archive). Usage: make backtest-load-main-only MODELS="lgbm_cluster chronos"
+	$(UV) python scripts/load_backtest_forecasts.py --models $(MODELS) --replace --bulk --main-only
+
+backtest-load-archive-only:  ## Load specific models to archive only (skip main). Usage: make backtest-load-archive-only MODELS="lgbm_cluster chronos"
+	$(UV) python scripts/load_backtest_forecasts.py --models $(MODELS) --replace --bulk --archive-only
 
 # ---------------------------------------------------------------------------
 # External ML forecast loading (ext_lgbm, ext_cat, ext_xg, ext_best)
@@ -1322,7 +1395,7 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 
 clean-artifacts:                       ## Remove stale intermediate files (clean CSVs, backtest, tuning, clustering, champion)
 	rm -f data/*_clean.csv data/inventory_clean.csv
-	rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/ data/backtest/chronos/ data/backtest/chronos_bolt/
+	rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/ data/backtest/chronos/ data/backtest/chronos_bolt/ data/backtest/chronos2/ data/backtest/chronos2_enriched/
 	rm -rf data/backtest/logs/ data/backtest/tuning_archive/ data/tuning/ data/perf_reports/
 	rm -rf data/clustering/ data/champion/ data/models/
 	rm -f data/seasonality_results.csv data/clustering_features.csv

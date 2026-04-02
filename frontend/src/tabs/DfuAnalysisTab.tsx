@@ -110,13 +110,9 @@ export function SkuAnalysisTab() {
           setSelectedModel(null);
           const allKeys = new Set(["tothist_dmd", "qty_shipped", "qty_ordered", "production_forecast", ...payload.models.map((m) => `forecast_${m}`)]);
           setSkuVisibleSeries(allKeys);
-          const measureKeys = new Set<string>();
-          for (const pt of payload.series) for (const k of Object.keys(pt)) if (k !== "month") measureKeys.add(k);
+          const fcKeys = payload.models.map((m) => `forecast_${m}`);
           let smartStart = "";
-          if (measureKeys.size > 0 && payload.series.length > 0) {
-            const keys = Array.from(measureKeys);
-            for (const pt of payload.series) { if (keys.every((k) => k in pt)) { smartStart = String(pt.month); break; } }
-          }
+          for (const pt of payload.series) { if (fcKeys.some((k) => k in pt)) { smartStart = String(pt.month); break; } }
           setSkuDefaultStart(smartStart);
           setSkuTimeStart(smartStart);
           setSkuTimeEnd("");

@@ -4,15 +4,27 @@ competition:
   lag: execution
   min_sku_rows: 3
   champion_model_id: champion
-  fallback_model_id: lgbm_cluster
+  fallback_model_id: seasonal_naive
   models:
-  - lgbm_cluster
   - catboost_cluster
   - xgboost_cluster
-  - chronos
-  strategy: expanding
+  - chronos2
+  - chronos2_enriched
+  - chronos_bolt
+  - seasonal_naive
+  - rolling_mean
+  - mstl
+  - nhits
+  - nbeats
+  strategy: hybrid_warmup
   strategy_params:
-    min_prior_months: 5
+    min_prior_months: 3
+    warmup_strategy: rolling
+    warmup_window: 2
+    warmup_min_prior: 1
+    primary_strategy: adaptive_ensemble
+    primary_top_k: 3
+    primary_weight_method: inverse_wape
   meta_learner:
     model_type: random_forest
     n_estimators: 200

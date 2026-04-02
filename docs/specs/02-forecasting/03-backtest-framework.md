@@ -287,6 +287,20 @@ Key backtest-level settings:
 - `early_stop_pct: 0.03` — early stopping patience as percentage of max iterations
 - `shap_retrain_threshold: 0.10` — retrain if >= 10% of features are dropped by SHAP
 
+## Backtest Model Coverage
+
+The backtest framework supports the full algorithm portfolio defined in `config/algorithm_config.yaml`:
+
+| Category | Models | Make Target |
+|----------|--------|-------------|
+| Tree models | `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster` | `make backtest-lgbm`, `backtest-catboost`, `backtest-xgboost` |
+| Statistical baselines | `seasonal_naive`, `rolling_mean` | `make backtest-seasonal-naive`, `backtest-rolling-mean` |
+| Decomposition | `mstl` (Multiple Seasonal-Trend via LOESS) | `make backtest-mstl` |
+| Deep learning | `nhits` (N-HiTS), `nbeats` (N-BEATS) | `make backtest-nhits`, `backtest-nbeats` |
+| Foundation models | `chronos` (T5), `chronos_bolt`, `chronos2`, `chronos2_enriched` | `make backtest-chronos`, `backtest-bolt`, `backtest-chronos2`, `backtest-chronos2e` |
+
+All models write to the same `data/backtest/<model_id>/` directory structure and are loaded through the same dual-path loader into `backtest_lag_archive` (all lags) and `fact_external_forecast_monthly` (execution lag only).
+
 ## Dependencies
 
 - [Multi-Model Support](./02-multi-model.md) -- `model_id` column in the forecast table
@@ -294,6 +308,8 @@ Key backtest-level settings:
 
 ## See Also
 
-- [Tree Models](./04-tree-models.md) -- the three algorithms that use this framework
+- [Tree Models](./04-tree-models.md) -- LightGBM, CatBoost, XGBoost implementations
 - [Advanced Backtest](./05-advanced-backtest.md) -- tuning, SHAP, and recursive extensions
 - [Algorithm Config](./06-algorithm-config.md) -- config file that controls backtest behavior
+- [Chronos Foundation Models](./18-chronos-foundation-models.md) -- Chronos T5, Bolt, Chronos 2, and Chronos 2 Enriched
+- [Champion Selection](./07-champion-selection.md) -- picks the best model per DFU-month from backtest results

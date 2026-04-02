@@ -123,28 +123,35 @@ def build_training_data(
 
     # Step 2: Compute per-model rolling performance (strictly prior)
     g = df.groupby(_DFU_MODEL_COLS, sort=False)
+    df["_bias_raw"] = df["basefcst_pref"] - df["tothist_dmd"]
     df["_roll_abs_err"] = g["abs_err"].transform(
         lambda x: x.shift(1).rolling(window=performance_window, min_periods=1).sum()
     )
     df["_roll_actual"] = g["tothist_dmd"].transform(
         lambda x: x.shift(1).rolling(window=performance_window, min_periods=1).sum()
     )
+    df["_roll_bias_num"] = g["_bias_raw"].transform(
+        lambda x: x.shift(1).rolling(window=performance_window, min_periods=1).sum()
+    )
     df["_prior_count"] = g["abs_err"].transform(
         lambda x: x.shift(1).expanding().count()
     )
     df["_roll_wape"] = df["_roll_abs_err"] / df["_roll_actual"].abs().clip(lower=1e-6)
+    df["_roll_bias"] = df["_roll_bias_num"] / df["_roll_actual"].abs().clip(lower=1e-6)
 
     # Step 3: Filter rows with enough prior history
     eligible = df[df["_prior_count"] >= min_prior_months]
     dfu_months = eligible[_DFU_MONTH_COLS].drop_duplicates()
 
-    # Step 4: Pivot per-model stats
+    # Step 4: Pivot per-model stats (single pivot_table, not K sequential merges)
     pivoted = dfu_months.copy()
-    for model_id in models:
-        model_data = df[df["model_id"] == model_id][
-            _DFU_MONTH_COLS + ["_roll_wape"]
-        ].rename(columns={"_roll_wape": f"roll_wape_{model_id}"})
-        pivoted = pivoted.merge(model_data, on=_DFU_MONTH_COLS, how="left")
+    pivot_src = df[_DFU_MONTH_COLS + ["model_id", "_roll_wape", "_roll_bias"]].copy()
+    for col, prefix in [("_roll_wape", "roll_wape"), ("_roll_bias", "roll_bias")]:
+        wide = pivot_src.pivot_table(
+            index=_DFU_MONTH_COLS, columns="model_id", values=col, aggfunc="first",
+        )
+        wide.columns = [f"{prefix}_{m}" for m in wide.columns]
+        pivoted = pivoted.merge(wide, on=_DFU_MONTH_COLS, how="left")
 
     # Step 5: Demand statistics (strictly prior)
     demand = df.drop_duplicates(subset=_DFU_MONTH_COLS).copy()
