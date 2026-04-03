@@ -135,4 +135,5 @@ Five algorithm families were also removed (Prophet, StatsForecast, NeuralProphet
 
 ## See Also
 
+- [Forecast Pipeline Config](./19-forecast-pipeline-config.md) -- master pipeline config with algorithm roster and lifecycle flags; governs WHICH models run at each stage
 - [Champion Selection](./07-champion-selection.md) -- runs after backtests complete

@@ -56,7 +56,7 @@ common/                      # Shared Python modules (backward-compat shims at r
 └── auth.py                  # Authentication helpers
 
 scripts/                     # Pipeline scripts
-├── etl/                     # normalize, load (5 scripts)
+├── etl/                     # normalize, load (7 scripts)
 ├── ml/                      # backtest, clustering, tuning, champion (16 scripts)
 ├── forecasting/             # production, quantile, blended, consensus (7 scripts)
 ├── inventory/               # safety stock, eoq, replenishment, rebalancing (18 scripts)
@@ -70,8 +70,12 @@ frontend/                    # React + Vite + TypeScript
 ├── Dockerfile               # Nginx multi-stage build
 └── nginx.conf               # SPA fallback + API reverse proxy
 
-config/                      # 54 YAML config files (one per module/pipeline)
-sql/                         # 86 DDL migration files
+config/                      # 56 YAML config files organized by concern:
+│   ├── etl_config.yaml                # ETL pipeline: domain load order, MV refresh, parallel workers
+│   ├── forecast_etl_config.yaml  # ML pipeline: algorithm roster, backtest, tuning, champion, forecast
+│   ├── algorithm_config.yaml          # Model hyperparams (LGBM, CatBoost, XGBoost, Chronos, etc.)
+│   └── ...                            # 53 more configs (clustering, inventory, ops, etc.)
+sql/                         # 87 DDL migration files
 tests/                       # 2762+ backend tests (api/ + unit/)
 docs/                        # ARCHITECTURE, PLATFORM_GUIDE, RUNBOOK, specs/
 data/                        # Generated ML artifacts + input CSVs (gitignored)
@@ -101,6 +105,10 @@ make pipeline-full     # Full reload: normalize + load + refresh MVs
 make pipeline-refresh  # Incremental: detect changes, reload only deltas
 make pipeline-inventory        # Full reload inventory domain only
 make pipeline-inventory-refresh # Incremental inventory refresh only
+make normalize-customer-demand # Normalize customer demand CSVs
+make load-customer-demand      # Load customer demand (full replace)
+make load-customer-demand-month MONTH=YYYY-MM  # Reload single partition
+make pipeline-customer-demand  # Normalize + load customer demand
 
 # Run Services
 make api               # FastAPI on :8000
@@ -145,7 +153,7 @@ make perf-pipeline         # ETL pipeline performance analysis
 
 # Full Pipeline (input CSVs -> ready app)
 make setup-all            # Everything: data + ML + planning + ops (~4-6 hours)
-make setup-data           # Data only: normalize + load all 10 domains (~30 min)
+make setup-data           # Data only: normalize + load all 11 domains (~30 min)
 make setup-planning       # Data + inventory planning, no ML (~1 hour)
 make setup-features       # Data + clustering + seasonality + variability
 make setup-backtest       # Features + 3 backtests + champion selection
@@ -176,7 +184,9 @@ See `Makefile` for the full list (130+ targets including one-time schema setup, 
 
 All datasets extend a single `DomainSpec` dataclass in `common/domain_specs.py`. Scripts and API endpoints are generic — they operate on any domain via `--dataset <name>` or `/domains/{domain}/*`.
 
-**10 Domains:** item, location, customer, time, sku (dimensions); sales, forecast (facts); inventory (dedicated pipeline); sourcing, purchase_order (procurement).
+**11 Domains:** item, location, customer, time, sku (dimensions); sales, forecast, customer_demand (facts); inventory (dedicated pipeline); sourcing, purchase_order (procurement).
+
+All domains are loaded via `make load-all` (and normalized via `make normalize-all`). New data sources MUST be added to both `normalize-all` and `load-all` targets — never as standalone pipelines.
 
 ### Data Flow
 
@@ -204,6 +214,7 @@ Source CSV → normalize_dataset_csv.py → clean CSV → load_dataset_postgres.
 - `fact_sales_monthly`: grain = item + customer_group + location + month + type
 - `fact_external_forecast_monthly`: grain = item + loc + forecast_date + actual_month; tracks lag 0–4
 - `fact_inventory_snapshot`: grain = item_id + loc + snapshot_date (~198M rows); **monthly range-partitioned** by `snapshot_date`
+- `fact_customer_demand_monthly`: grain = item_id + customer_no + location_id + month; **monthly range-partitioned** by `startdate`
 - `fact_production_forecast`: grain = item_id + loc + plan_version + month
 
 ### Archive Tables
@@ -241,6 +252,11 @@ These are hard constraints that cause bugs or test failures if violated.
 ### Code Patterns
 
 - **All config in YAML**: Every module externalizes params into `config/<name>.yaml`. No magic numbers in scripts. Load via `load_config(name)` from `common/utils.py`.
+- **Forecast pipeline master config**: `config/forecast_etl_config.yaml` is the single source of truth for the ML forecast pipeline. Use `load_forecast_pipeline_config()` from `common/utils.py` to load it. Use `get_algorithm_roster(stage=...)` to get algorithms filtered by lifecycle stage (tune/backtest/compete/forecast/expert). Use `get_competing_model_ids()` and `get_forecastable_model_ids()` for common queries. The old configs (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`) still work via backward compatibility but new code should use the master config.
+- **Cold-start DFU routing**: DFUs with < `min_history_months` (12) months of sales history are routed to `cold_start_model_id` (rolling_mean) instead of the champion tree model. DFUs with < `cold_start_min_months` (3) months are skipped entirely. Configured in `config/forecast_etl_config.yaml` under `production_forecast`.
+- **Clustering master switch**: `clustering.enabled` in `config/forecast_etl_config.yaml` is the master switch for the clustering pipeline. When `false`, all backtest scripts auto-fall back to `global` strategy regardless of per-algorithm `cluster_strategy` settings. Check via `is_clustering_enabled()` from `common/utils.py`.
+- **`cluster_strategy` resolution order**: pipeline config algorithm entry (`forecast_etl_config.yaml` `algorithms.<name>.cluster_strategy`) > `algorithm_config.yaml` > default `"per_cluster"`. Only tree/statistical models use this field; foundation/DL models always run globally.
+- **Backtest sampling config**: `forecast_etl_config.yaml` `backtest_sampling` section is the primary source for sampling settings. `common/ml/backtest_sampler.py` falls back to `backtest_sampling_config.yaml` if the section is absent from the pipeline config.
 - **DB params**: All scripts use `from common.db import get_db_params` — no inline connection helpers.
 - **Planning date**: All date-sensitive code uses `get_planning_date()` from `common/planning_date.py`, not `date.today()`. Config: `config/planning_config.yaml`. Env overrides: `PLANNING_DATE` or `USE_SYSTEM_DATE`.
 - **Timestamp helper**: Import `from common.utils import _ts` — no per-file `_ts()` definitions.
@@ -299,6 +315,8 @@ When adding a new router, also:
 - **Time dimension**: Auto-generated 2020–2035, not from a file
 - **Forecast `model_id`**: Default `'external'` for source-system forecasts. `UNIQUE(forecast_ck, model_id)` prevents duplicates.
 - **Execution-lag loading**: Dual-path insert with phase ordering (archive loaded BEFORE staging mutation). See spec `02-forecasting/03-backtest-framework.md` for details.
+- **Customer demand**: source `site` column resolved to `location_id` via `dim_location.site_id` join; `posting_prd` (YYYYMM) converted to `startdate` (YYYY-MM-01); `demand_qty = MAX(0, demand_cases)`; `sales_qty = MAX(0, demand_cases - oos_cases)`; supports `--replace` (full) and `--month YYYY-MM` (single partition drop+reload)
+- **New data sources MUST be part of the standard pipeline**: Every new input file must be added to `normalize-all` and `load-all` Makefile targets, and to `etl_config.yaml` `domain_order`. Never create standalone pipelines — `make load-all` must load everything, `make db-truncate-data` must truncate everything, `make fresh-load` must reload everything from scratch.
 
 ### Formulas
 
@@ -312,10 +330,13 @@ When adding a new router, also:
 
 When adding a new feature end-to-end, follow these steps in order:
 
-### 1. Database
+### 1. Database & Data Loading
 - [ ] Create DDL migration in `sql/` (next sequence number)
 - [ ] Add tables/MVs to `docs/RUNBOOK.md` cleanup section
-- [ ] Add `TRUNCATE` / `REFRESH` to Makefile targets if applicable
+- [ ] Add `TRUNCATE` / `REFRESH` to Makefile `db-truncate-data` target
+- [ ] If new input data source: add normalize target to `normalize-all`, load target to `load-all`
+- [ ] If new input data source: register `DomainSpec` in `common/core/domain_specs.py`
+- [ ] If new input data source: add to `etl_config.yaml` `domain_order`
 
 ### 2. Backend
 - [ ] Create router in correct `api/routers/{domain}/` subdirectory
@@ -379,6 +400,10 @@ When adding a new feature end-to-end, follow these steps in order:
 **Cause**: Too many concurrent requests with `max_size=10` (now increased to 20).
 **Fix**: Set `POOL_MAX_SIZE` env var. Check for unclosed connections in scripts.
 
+### Cold-Start DFUs Get No Forecast
+**Cause**: DFU has fewer than `cold_start_min_months` (3) months of sales history and is skipped by the production forecast pipeline.
+**Fix**: Check `cold_start_min_months` and `min_history_months` in `config/forecast_etl_config.yaml` under `production_forecast`. DFUs with 3-11 months of history are routed to `cold_start_model_id` (rolling_mean). DFUs with fewer than 3 months are skipped (absolute floor).
+
 ---
 
 ## Mandatory Testing Rules
@@ -436,7 +461,7 @@ When adding a new feature end-to-end, follow these steps in order:
 
 ## Design Specs
 
-Located in `docs/specs/` — 8 domains, 54 spec files. See [docs/specs/README.md](docs/specs/README.md) for the full index with reading order.
+Located in `docs/specs/` — 8 domains, 56 spec files. See [docs/specs/README.md](docs/specs/README.md) for the full index with reading order.
 
 Domains: Foundation, Forecasting, Demand Intelligence, Inventory Planning, Operations, AI Platform, User Experience, Integration.
 

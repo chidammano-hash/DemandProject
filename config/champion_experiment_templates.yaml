@@ -154,3 +154,165 @@ templates:
       min_prior_months: 3
       ridge_alpha: 100.0
       min_train_months: 6
+
+  - id: hybrid_warmup_default
+    label: "Hybrid Warmup"
+    description: "Rolling warmup for cold-start DFUs, then adaptive ensemble for mature DFUs"
+    strategy: hybrid_warmup
+    strategy_params:
+      min_prior_months: 3
+      warmup_strategy: rolling
+      warmup_window: 2
+      warmup_min_prior: 1
+      primary_strategy: adaptive_ensemble
+      primary_top_k: 3
+      primary_weight_method: inverse_wape
+
+  - id: adaptive_ensemble_default
+    label: "Adaptive Ensemble"
+    description: "Auto-selects top-K models based on spread — blends 2-5 models adaptively"
+    strategy: adaptive_ensemble
+    strategy_params:
+      min_k: 2
+      max_k: 5
+      spread_threshold: 0.15
+      min_prior_months: 3
+      weight_method: inverse_wape
+
+  - id: ensemble_rolling_6m
+    label: "Ensemble Rolling (6-Month)"
+    description: "Blended top-3 models using rolling 6-month inverse-WAPE weights"
+    strategy: ensemble_rolling
+    strategy_params:
+      top_k: 3
+      window_months: 6
+      weight_method: inverse_wape
+      min_prior_months: 3
+
+  - id: cascade_ensemble_default
+    label: "Cascade Ensemble"
+    description: "Tiered selection — solo model if dominant, blend 2 if moderate, blend 5 if tight"
+    strategy: cascade_ensemble
+    strategy_params:
+      min_prior_months: 3
+      solo_threshold: 0.10
+      mid_threshold: 0.25
+      mid_k: 2
+      wide_k: 5
+
+  - id: adversarial_filter_default
+    label: "Adversarial Filter"
+    description: "Removes outlier model predictions before blending top-3"
+    strategy: adversarial_filter
+    strategy_params:
+      min_prior_months: 3
+      outlier_z_threshold: 1.5
+      top_k: 3
+
+  - id: dynamic_window_default
+    label: "Dynamic Window"
+    description: "Auto-selects optimal evaluation window via cross-validation"
+    strategy: dynamic_window
+    strategy_params:
+      min_prior_months: 3
+      window_candidates: [2, 3, 4, 6, 9, 12]
+      cv_months: 3
+
+  - id: regime_adaptive_default
+    label: "Regime Adaptive"
+    description: "Detects demand regime shifts and adapts model selection accordingly"
+    strategy: regime_adaptive
+    strategy_params:
+      min_prior_months: 3
+      variance_window: 4
+      variance_threshold: 2.0
+
+  - id: bayesian_model_avg_default
+    label: "Bayesian Model Average"
+    description: "Bayesian posterior weighting of models based on observed accuracy"
+    strategy: bayesian_model_avg
+    strategy_params:
+      min_prior_months: 3
+
+  - id: error_correcting_default
+    label: "Error Correcting"
+    description: "Adjusts champion forecast by correcting systematic recent bias"
+    strategy: error_correcting
+    strategy_params:
+      min_prior_months: 3
+      correction_window: 3
+      correction_strength: 0.5
+
+  - id: shrinkage_blend_050
+    label: "Shrinkage Blend (0.50)"
+    description: "Shrinks model weights toward equal weighting — balances accuracy vs stability"
+    strategy: shrinkage_blend
+    strategy_params:
+      min_prior_months: 3
+      shrinkage_intensity: 0.5
+
+  - id: shrinkage_blend_030
+    label: "Shrinkage Blend (0.30)"
+    description: "Lighter shrinkage — keeps more accuracy-based differentiation"
+    strategy: shrinkage_blend
+    strategy_params:
+      min_prior_months: 3
+      shrinkage_intensity: 0.3
+
+  - id: dfu_strategy_router_default
+    label: "DFU Strategy Router"
+    description: "Routes each DFU to the best strategy based on recent performance"
+    strategy: dfu_strategy_router
+    strategy_params:
+      min_prior_months: 3
+      eval_months: 3
+
+  - id: stacked_strategies_default
+    label: "Stacked Strategies"
+    description: "Meta-strategy that stacks multiple selection strategies for robust routing"
+    strategy: stacked_strategies
+    strategy_params:
+      min_prior_months: 3
+      eval_months: 3
+
+  - id: cluster_regime_hybrid_default
+    label: "Cluster-Regime Hybrid"
+    description: "Per-cluster champion with regime-shift detection for adaptive switching"
+    strategy: cluster_regime_hybrid
+    strategy_params:
+      min_prior_months: 3
+      variance_window: 4
+      variance_threshold: 2.0
+
+  - id: thompson_sampling_default
+    label: "Thompson Sampling"
+    description: "Bayesian bandit — explores uncertain models, exploits proven winners"
+    strategy: thompson_sampling
+    strategy_params:
+      min_prior_months: 2
+      discount: 0.95
+
+  - id: thompson_ensemble_default
+    label: "Thompson Ensemble"
+    description: "Thompson sampling over top-K models blended by posterior probability"
+    strategy: thompson_ensemble
+    strategy_params:
+      min_prior_months: 2
+      discount: 0.95
+      top_k: 3
+
+  - id: linucb_default
+    label: "LinUCB"
+    description: "Contextual bandit — selects models using DFU features with UCB exploration"
+    strategy: linucb
+    strategy_params:
+      min_prior_months: 3
+      alpha_ucb: 1.0
+
+  - id: exp3_default
+    label: "EXP3"
+    description: "Adversarial bandit — hedges against worst-case model performance"
+    strategy: exp3
+    strategy_params:
+      min_prior_months: 2
+      gamma: 0.10

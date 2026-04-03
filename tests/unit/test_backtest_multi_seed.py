@@ -150,6 +150,18 @@ class TestSeedValues:
 class TestMultiSeedIntegration:
     """Test the multi-seed loop logic in main()."""
 
+    @pytest.fixture(autouse=True)
+    def _disable_pipeline_config(self):
+        """Disable forecast_pipeline_config.yaml so tests use their own config."""
+        with patch(
+            "scripts.run_backtest.load_forecast_pipeline_config",
+            side_effect=FileNotFoundError,
+        ), patch(
+            "scripts.run_backtest.get_algorithm_roster",
+            side_effect=FileNotFoundError,
+        ):
+            yield
+
     def _make_metadata(self, accuracy_pct: float) -> dict:
         """Build a minimal metadata dict matching backtest output format."""
         return {

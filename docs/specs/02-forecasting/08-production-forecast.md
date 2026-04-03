@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inv. Planning (Demand Forecast panel) |
-| **Key Files** | `scripts/generate_production_forecasts.py`, `api/routers/production_forecast.py`, `config/production_forecast_config.yaml`, `sql/039_create_production_forecast.sql`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
+| **Key Files** | `scripts/generate_production_forecasts.py`, `api/routers/production_forecast.py`, `config/forecast_pipeline_config.yaml` (production_forecast section), `sql/039_create_production_forecast.sql`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
 
 ---
 
@@ -16,7 +16,7 @@ Backtest models train on historical data, evaluate accuracy, and then discard th
 
 ## Solution
 
-The production forecast pipeline persists trained model weights during backtesting, loads the champion model for each DFU, and generates recursive forward-looking predictions for the next 12 months. Predictions are written to a dedicated `fact_production_forecast` table with version management, confidence interval bands, and full traceability. A scheduled job runs monthly after sales data closes.
+The production forecast pipeline persists trained model weights during backtesting, loads the champion model for each DFU, and generates recursive forward-looking predictions for the next 24 months using 36 months of lookback history. DFUs with fewer than 12 months of history are routed to a cold-start model (rolling_mean), and DFUs with fewer than 3 months are skipped entirely. Predictions are written to a dedicated `fact_production_forecast` table with version management, confidence interval bands, and full traceability. A scheduled job runs monthly after sales data closes.
 
 ## How It Works
 
@@ -83,31 +83,45 @@ Tracks persisted model weights so the inference pipeline can reload them.
 
 ## Configuration
 
-### `config/production_forecast_config.yaml`
+### `config/forecast_pipeline_config.yaml` (production_forecast section)
+
+> **Note:** Production forecast settings have been consolidated into the master `config/forecast_pipeline_config.yaml`. The legacy `config/production_forecast_config.yaml` still works via backward compatibility but new changes should go in the master config.
 
 ```yaml
-inference:
-  horizon_months: 12
+production_forecast:
+  horizon_months: 24               # Forecast T+1 through T+24 (was 12 in legacy config)
+  lookback_months: 36              # Months of sales history loaded (was 24)
+  min_history_months: 12           # Below this -> cold-start model routing
+  cold_start_model_id: rolling_mean  # Fallback for DFUs with 3-11 months history
+  cold_start_min_months: 3         # Absolute floor -- DFUs with < 3 months skipped
+  fallback_model_id: lgbm_cluster  # Default for mature DFUs without champion assignment
   recursive: true
-  confidence_interval: true
-  ci_lower_quantile: 0.10
-  ci_upper_quantile: 0.90
-
-model_selection:
-  strategy: champion
-  fallback_model_id: lgbm_cluster
-
-plan_version:
-  format: "%Y-%m"
+  plan_version_format: "%Y-%m"
   keep_last_n_versions: 3
-
-model_registry:
-  base_path: "data/models"
-
-scheduler:
-  job_type: generate_production_forecast
-  cron: "0 6 2 * *"
+  confidence_interval:
+    enabled: true
+    source_model_ids: [lgbm_cluster, catboost_cluster, xgboost_cluster]
+    residual_lag: 0
+    min_residual_months: 6
+    z_lower: 1.282                 # P10
+    z_upper: 1.282                 # P90
+    horizon_scaling: sqrt
+    sigma_floor: 1.0
+    sigma_cap_multiplier: 3.0
+  model_registry:
+    base_path: "data/models"
+  scheduler:
+    job_type: generate_production_forecast
+    cron: "0 6 2 * *"
 ```
+
+### Cold-Start Routing
+
+| History Length | Routing | Rationale |
+|---|---|---|
+| >= 12 months | Champion model (normal path) | Sufficient history for tree model features |
+| 3-11 months | `cold_start_model_id` (rolling_mean) | Too little for tree models, enough for simple average |
+| < 3 months | Skipped entirely | Not enough signal to produce meaningful forecast |
 
 ## Dependencies
 

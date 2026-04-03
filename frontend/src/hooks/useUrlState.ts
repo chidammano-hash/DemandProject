@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-const VALID_TABS = ["commandCenter", "aggregateAnalysis", "overview", "explorer", "clusters", "itemAnalysis", "skuAnalysis", "accuracy", "inventory", "invBacktest", "intel", "jobs", "chat", "settings", "aiPlanner", "controlTower", "invPlanning", "storyboard", "exceptions", "sop", "customerMap", "fva", "dataQuality", "lgbmTuning", "sqlRunner"];
+const VALID_TABS = ["commandCenter", "aggregateAnalysis", "overview", "explorer", "clusters", "itemAnalysis", "skuAnalysis", "accuracy", "inventory", "invBacktest", "intel", "jobs", "chat", "settings", "aiPlanner", "controlTower", "invPlanning", "storyboard", "exceptions", "sop", "customerMap", "customerAnalytics", "fva", "dataQuality", "lgbmTuning", "sqlRunner"];
 const ANALYTICS_TAB_DOMAINS = new Set(["sales", "forecast"]);
 const DIMENSION_DOMAINS = ["item", "location", "customer", "time", "sku", "sales", "forecast"];
 

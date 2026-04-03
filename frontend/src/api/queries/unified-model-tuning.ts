@@ -450,3 +450,81 @@ export async function fetchPromoteResultsStatus(
     `${prefix(model)}/experiments/${runId}/promote-results/status`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Pipeline Config
+// ---------------------------------------------------------------------------
+
+export interface PipelineAlgorithm {
+  type: string;
+  enabled: boolean;
+  tune: boolean;
+  backtest: boolean;
+  compete: boolean;
+  forecast: boolean;
+  expert: boolean;
+  cluster_strategy?: string;
+  config_key: string;
+  output_dir: string;
+}
+
+export interface PipelineConfig {
+  algorithms: Record<string, PipelineAlgorithm>;
+  clustering: {
+    enabled: boolean;
+    config_ref: string;
+    tuning_profiles_ref: string;
+    steps: Record<string, boolean>;
+  };
+  backtest: {
+    n_timeframes: number;
+    embargo_months: number;
+    forecast_horizon: number;
+    early_stop_pct: number;
+  };
+  tuning: {
+    n_trials: number;
+    gap_months: number;
+    n_splits: number;
+  };
+  champion: {
+    strategy: string;
+    fallback_model_id: string;
+    metric: string;
+    strategy_params: Record<string, unknown>;
+  };
+  production_forecast: {
+    horizon_months: number;
+    min_history_months: number;
+    cold_start_model_id: string;
+    cold_start_min_months: number;
+  };
+  backtest_sampling: {
+    enabled: boolean;
+    default_target_n: number;
+    default_method: string;
+  };
+  pipeline: {
+    stages: Array<{ name: string; description: string; makefile_target: string; depends_on: string[] }>;
+  };
+}
+
+export const pipelineConfigKeys = {
+  config: ["pipeline-config"] as const,
+};
+
+export async function fetchPipelineConfig(): Promise<PipelineConfig> {
+  const res = await fetch("/config/forecast_pipeline_config");
+  if (!res.ok) throw new Error(`Failed to fetch pipeline config: ${res.status}`);
+  const data = await res.json();
+  return data.values || data;
+}
+
+export async function updatePipelineConfig(values: Record<string, unknown>): Promise<void> {
+  const res = await fetch("/config/forecast_pipeline_config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ values }),
+  });
+  if (!res.ok) throw new Error(`Failed to update pipeline config: ${res.status}`);
+}

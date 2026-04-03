@@ -26,3 +26,4 @@ export * from "./unified-model-tuning";
 export * from "./cluster-experiments";
 export * from "./champion-experiments";
 export * from "./expsys";
+export * from "./customer-analytics";

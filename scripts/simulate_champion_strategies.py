@@ -42,6 +42,7 @@ from common.champion_strategies import (
 )
 from common.db import get_db_params
 from common.services.perf_profiler import profiled_section
+from common.utils import get_competing_model_ids, load_forecast_pipeline_config
 
 
 def load_monthly_errors(
@@ -404,6 +405,10 @@ def _run_single_strategy(
     if len(winners) > 0 and "model_id" in winners.columns:
         result["model_wins"] = winners["model_id"].value_counts().to_dict()
 
+    # Capture weight diagnostics if strategy provided them
+    if len(winners) > 0 and hasattr(winners, "attrs") and "weight_diagnostics" in winners.attrs:
+        result["weight_diagnostics"] = winners.attrs["weight_diagnostics"]
+
     return result
 
 
@@ -448,17 +453,29 @@ def main() -> None:
     db = get_db_params()
     output_path = ROOT / args.output
 
-    # Load config
-    config_path = ROOT / args.config
-    if not config_path.exists():
-        _flush_print(f"Config not found: {config_path}")
-        sys.exit(1)
-    with open(config_path) as f:
-        raw = yaml.safe_load(f)
-    cfg = raw.get("competition", {})
+    # Load config — try forecast_pipeline_config.yaml first, fall back to legacy
+    models: list[str] = []
+    lag_mode: str = "execution"
+    try:
+        pipeline_cfg = load_forecast_pipeline_config()
+        models = get_competing_model_ids()
+        champion_section = pipeline_cfg.get("champion", {})
+        lag_mode = str(champion_section.get("lag", "execution"))
+    except FileNotFoundError:
+        pipeline_cfg = None
 
-    models = cfg.get("models", [])
-    lag_mode = str(cfg.get("lag", "execution"))
+    if not models:
+        # Fall back to legacy model_competition.yaml
+        config_path = ROOT / args.config
+        if not config_path.exists():
+            _flush_print(f"Config not found: {config_path}")
+            sys.exit(1)
+        with open(config_path) as f:
+            raw = yaml.safe_load(f)
+        cfg = raw.get("competition", {})
+        models = cfg.get("models", [])
+        lag_mode = str(cfg.get("lag", "execution"))
+
     if len(models) < 2:
         _flush_print("At least 2 models required for simulation")
         sys.exit(1)

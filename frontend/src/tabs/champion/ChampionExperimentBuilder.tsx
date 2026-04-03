@@ -4,14 +4,15 @@
  * Template selector, strategy picker, dynamic params form, model checkboxes,
  * metric/lag selectors, and launch button.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FlaskConical, X } from "lucide-react";
+import { FlaskConical, X, Star } from "lucide-react";
 
 import {
   championExperimentKeys,
   CHAMPION_EXP_STALE,
   createChampionExperiment,
+  fetchChampionExperiments,
   fetchChampionTemplates,
   type ChampionExperimentTemplate,
 } from "@/api/queries";
@@ -29,6 +30,32 @@ const STRATEGY_DEFAULTS: Record<string, Record<string, unknown>> = {
   decay: { decay_factor: 0.9, min_prior_months: 3 },
   ensemble: { top_k: 3, weight_method: "inverse_wape", min_prior_months: 3 },
   meta_learner: { min_prior_months: 3 },
+  hybrid_warmup: { min_prior_months: 3, warmup_strategy: "rolling", warmup_window: 2, warmup_min_prior: 1, primary_strategy: "adaptive_ensemble", primary_top_k: 3 },
+  adaptive_ensemble: { min_k: 2, max_k: 5, spread_threshold: 0.15, min_prior_months: 3, weight_method: "inverse_wape" },
+  ensemble_rolling: { top_k: 3, window_months: 6, weight_method: "inverse_wape", min_prior_months: 3 },
+  optimized_decay: { decay_candidates: [0.75, 0.80, 0.85, 0.90, 0.95], min_prior_months: 3, validation_months: 3 },
+  learned_blend: { min_prior_months: 6, alpha: 100.0 },
+  ridge_blend: { min_prior_months: 3, ridge_alpha: 100.0, min_train_months: 6 },
+  shrinkage_blend: { min_prior_months: 3, shrinkage_intensity: 0.5 },
+  bayesian_model_avg: { min_prior_months: 3 },
+  per_segment: { min_prior_months: 3, adi_threshold: 1.32, cv2_threshold: 0.49 },
+  per_cluster: { min_prior_months: 3 },
+  seasonal: { min_prior_months: 2, fallback_strategy: "expanding" },
+  hybrid_meta_router: { min_prior_months: 3, confidence_threshold: 0.6, blend_top_k: 3 },
+  diverse_ensemble: { min_prior_months: 3, top_k: 3, correlation_penalty: 0.5 },
+  uncertainty_aware: { min_prior_months: 3, uncertainty_weight: 0.3 },
+  cascade_ensemble: { min_prior_months: 3, solo_threshold: 0.10, mid_threshold: 0.25, mid_k: 2, wide_k: 5 },
+  adversarial_filter: { min_prior_months: 3, outlier_z_threshold: 1.5, top_k: 3 },
+  dynamic_window: { min_prior_months: 3, window_candidates: [2, 3, 4, 6, 9, 12], cv_months: 3 },
+  regime_adaptive: { min_prior_months: 3, variance_window: 4, variance_threshold: 2.0 },
+  error_correcting: { min_prior_months: 3, correction_window: 3, correction_strength: 0.5 },
+  thompson_sampling: { min_prior_months: 2, discount: 0.95 },
+  thompson_ensemble: { min_prior_months: 2, discount: 0.95, top_k: 3 },
+  linucb: { min_prior_months: 3, alpha_ucb: 1.0 },
+  exp3: { min_prior_months: 2, gamma: 0.10 },
+  dfu_strategy_router: { min_prior_months: 3, eval_months: 3 },
+  stacked_strategies: { min_prior_months: 3, eval_months: 3 },
+  cluster_regime_hybrid: { min_prior_months: 3, variance_window: 4, variance_threshold: 2.0 },
 };
 
 const META_DEFAULTS = {
@@ -39,14 +66,58 @@ const META_DEFAULTS = {
   performance_window: 6,
 };
 
-const ALL_MODELS = ["lgbm_cluster", "catboost_cluster", "xgboost_cluster"];
+const ALL_MODELS = [
+  "lgbm_cluster", "catboost_cluster", "xgboost_cluster",
+  "chronos", "chronos_bolt", "chronos2", "chronos2_enriched",
+  "mstl", "nbeats", "nhits", "seasonal_naive", "rolling_mean",
+];
+
+const MODEL_LABELS: Record<string, string> = {
+  lgbm_cluster: "LightGBM", catboost_cluster: "CatBoost", xgboost_cluster: "XGBoost",
+  chronos: "Chronos T5", chronos_bolt: "Chronos Bolt", chronos2: "Chronos 2",
+  chronos2_enriched: "Chronos 2E", mstl: "MSTL", nbeats: "N-BEATS",
+  nhits: "N-HiTS", seasonal_naive: "Seasonal Naive", rolling_mean: "Rolling Mean",
+};
 
 const STRATEGY_LABELS: Record<string, string> = {
+  // Core
   expanding: "Expanding Window",
   rolling: "Rolling Window",
   decay: "Exponential Decay",
   ensemble: "Ensemble (Blended)",
   meta_learner: "Meta-Learner (ML)",
+  // Hybrid / Adaptive
+  hybrid_warmup: "Hybrid Warmup",
+  adaptive_ensemble: "Adaptive Ensemble",
+  ensemble_rolling: "Ensemble Rolling",
+  optimized_decay: "Walk-Forward Decay",
+  // Learning-based
+  learned_blend: "Learned Blend (Ridge)",
+  ridge_blend: "Ridge Blend",
+  shrinkage_blend: "Shrinkage Blend",
+  bayesian_model_avg: "Bayesian Model Avg",
+  // Segment / Cluster
+  per_segment: "Per-Segment (SBA)",
+  per_cluster: "Per-Cluster Champion",
+  seasonal: "Seasonal (Same-Quarter)",
+  // Advanced
+  hybrid_meta_router: "Hybrid Meta-Router",
+  diverse_ensemble: "Diverse Ensemble",
+  uncertainty_aware: "Uncertainty-Aware",
+  cascade_ensemble: "Cascade Ensemble",
+  adversarial_filter: "Adversarial Filter",
+  dynamic_window: "Dynamic Window",
+  regime_adaptive: "Regime Adaptive",
+  error_correcting: "Error Correcting",
+  // Bandit / RL
+  thompson_sampling: "Thompson Sampling",
+  thompson_ensemble: "Thompson Ensemble",
+  linucb: "LinUCB",
+  exp3: "EXP3",
+  // Meta / Routing
+  dfu_strategy_router: "DFU Strategy Router",
+  stacked_strategies: "Stacked Strategies",
+  cluster_regime_hybrid: "Cluster-Regime Hybrid",
 };
 
 // ---------------------------------------------------------------------------
@@ -83,6 +154,52 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
     staleTime: CHAMPION_EXP_STALE.TEMPLATES,
   });
   const templates = templatesData?.templates ?? [];
+
+  // Past experiments — compute best accuracy per strategy for auto-star
+  const { data: pastData } = useQuery({
+    queryKey: championExperimentKeys.experiments({ status: "completed" }),
+    queryFn: () => fetchChampionExperiments({ status: "completed", limit: 200 }),
+    staleTime: CHAMPION_EXP_STALE.TEMPLATES,
+    enabled: open,
+  });
+
+  // Auto-star: rank strategies by best accuracy, top 5 get stars
+  const strategyPerf = useMemo(() => {
+    const exps = pastData?.experiments ?? [];
+    const bestByStrategy = new Map<string, number>();
+    for (const e of exps) {
+      if (e.champion_accuracy == null) continue;
+      const prev = bestByStrategy.get(e.strategy) ?? 0;
+      if (e.champion_accuracy > prev) bestByStrategy.set(e.strategy, e.champion_accuracy);
+    }
+    // Sort by best accuracy descending
+    const sorted = [...bestByStrategy.entries()].sort((a, b) => b[1] - a[1]);
+    const result = new Map<string, { rank: number; accuracy: number; stars: number }>();
+    sorted.forEach(([strat, acc], i) => {
+      // Top 5 get 5→1 stars, rest get 0
+      const stars = i < 5 ? 5 - i : 0;
+      result.set(strat, { rank: i + 1, accuracy: acc, stars });
+    });
+    return result;
+  }, [pastData]);
+
+  // User favorites — persisted in localStorage, can override auto-stars
+  const [favorites, setFavorites] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem("champion_template_favorites");
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch { return new Set(); }
+  });
+
+  function toggleFavorite(templateId: string) {
+    setFavorites(prev => {
+      const next = new Set(prev);
+      if (next.has(templateId)) next.delete(templateId);
+      else next.add(templateId);
+      localStorage.setItem("champion_template_favorites", JSON.stringify([...next]));
+      return next;
+    });
+  }
 
   // Submit mutation
   const submitMutation = useMutation({
@@ -196,27 +313,59 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
           {/* Templates */}
           <Card>
             <CardHeader className="py-3">
-              <CardTitle className="text-sm">Template</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm">Template</CardTitle>
+                {strategyPerf.size > 0 && (
+                  <span className="text-[10px] text-muted-foreground">
+                    Stars based on {pastData?.experiments?.length ?? 0} past runs
+                  </span>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="pb-3">
               <div className="grid grid-cols-2 gap-2">
-                {templates.map((t) => (
+                {templates.map((t) => {
+                  const perf = t.strategy ? strategyPerf.get(t.strategy) : undefined;
+                  const isFav = favorites.has(t.id);
+                  return (
                   <button
                     key={t.id}
                     onClick={() => handleTemplateSelect(t)}
                     className={cn(
-                      "rounded border p-2 text-left text-xs transition-colors",
+                      "relative rounded border p-2 text-left text-xs transition-colors",
                       selectedTemplate === t.id
                         ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
                         : "hover:bg-muted",
+                      isFav && selectedTemplate !== t.id && "border-amber-300 dark:border-amber-700",
                     )}
                   >
-                    <div className="font-medium">{t.label}</div>
+                    {/* Favorite toggle */}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); toggleFavorite(t.id); }}
+                      className="absolute top-1 right-1 p-0.5 rounded hover:bg-muted"
+                      title={isFav ? "Remove favorite" : "Mark as favorite"}
+                    >
+                      <Star className={cn("h-3 w-3", isFav ? "fill-amber-400 text-amber-400" : "text-muted-foreground/40")} />
+                    </button>
+                    <div className="font-medium pr-5">{t.label}</div>
                     <div className="text-muted-foreground mt-0.5 line-clamp-1">
                       {t.description}
                     </div>
+                    {/* Auto-star performance row */}
+                    {perf && (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="text-[10px] text-amber-500 tracking-tight">
+                          {"★".repeat(perf.stars)}{"☆".repeat(5 - perf.stars)}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {perf.accuracy.toFixed(1)}% best
+                        </span>
+                      </div>
+                    )}
                   </button>
-                ))}
+                  );
+                })}
                 <button
                   onClick={() => {
                     setSelectedTemplate("custom");
@@ -383,7 +532,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
             <CardContent className="pb-3 space-y-3">
               <div>
                 <label className="text-xs font-medium">Models (min 2)</label>
-                <div className="flex gap-3 mt-1">
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-1">
                   {ALL_MODELS.map((m) => (
                     <label key={m} className="flex items-center gap-1.5 text-xs">
                       <input
@@ -391,7 +540,7 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                         checked={models.includes(m)}
                         onChange={() => toggleModel(m)}
                       />
-                      {m.replace("_cluster", "")}
+                      {MODEL_LABELS[m] ?? m.replace("_cluster", "")}
                     </label>
                   ))}
                 </div>

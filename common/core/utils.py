@@ -100,6 +100,55 @@ def load_config(name: str) -> dict:
         return result
 
 
+# ── Forecast pipeline config convenience helpers ─────────────────────────
+
+_FORECAST_PIPELINE_CFG = "forecast_pipeline_config.yaml"
+
+
+def load_forecast_pipeline_config() -> dict:
+    """Load the master forecast pipeline config (cached)."""
+    return load_config(_FORECAST_PIPELINE_CFG)
+
+
+def get_algorithm_roster(*, stage: str | None = None) -> dict[str, dict]:
+    """Return algorithm roster, optionally filtered to a lifecycle stage.
+
+    Parameters
+    ----------
+    stage : str, optional
+        One of ``"tune"``, ``"backtest"``, ``"compete"``, ``"forecast"``,
+        ``"expert"``.  When provided, only algorithms where
+        ``enabled=True`` AND ``<stage>=True`` are returned.
+        When ``None``, returns all enabled algorithms.
+    """
+    cfg = load_forecast_pipeline_config()
+    algorithms = cfg.get("algorithms", {})
+    result = {}
+    for model_id, entry in algorithms.items():
+        if not entry.get("enabled", True):
+            continue
+        if stage is not None and not entry.get(stage, False):
+            continue
+        result[model_id] = entry
+    return result
+
+
+def get_competing_model_ids() -> list[str]:
+    """Return model_ids that participate in champion selection."""
+    return sorted(get_algorithm_roster(stage="compete").keys())
+
+
+def get_forecastable_model_ids() -> list[str]:
+    """Return model_ids eligible for production forecast."""
+    return sorted(get_algorithm_roster(stage="forecast").keys())
+
+
+def is_clustering_enabled() -> bool:
+    """Check if clustering is enabled in the pipeline config."""
+    cfg = load_forecast_pipeline_config()
+    return cfg.get("clustering", {}).get("enabled", True)
+
+
 def reset_config(name: str | None = None) -> None:
     """Reset cached config(s). For use in tests only.
 

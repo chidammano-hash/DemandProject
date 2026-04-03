@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel, Field
 
 from api.core import get_conn, set_cache
+from common.utils import reset_config
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,7 @@ router = APIRouter(prefix="/champion-experiments", tags=["champion-experiments"]
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _TEMPLATES_PATH = _PROJECT_ROOT / "config" / "champion_experiment_templates.yaml"
 _COMPETITION_CONFIG_PATH = _PROJECT_ROOT / "config" / "model_competition.yaml"
+_PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecast_pipeline_config.yaml"
 
 _VALID_STRATEGIES = {"expanding", "rolling", "decay", "ensemble", "meta_learner"}
 _VALID_METRICS = {"accuracy_pct", "wape"}
@@ -845,34 +848,65 @@ def promote_experiment(experiment_id: int):
                     detail=f"Cannot promote experiment with status '{exp['status']}' (must be completed)",
                 )
 
-            # Read current config
-            if not _COMPETITION_CONFIG_PATH.exists():
-                raise HTTPException(status_code=500, detail="model_competition.yaml not found")
+            # Try pipeline config first, fall back to legacy
+            if _PIPELINE_CONFIG_PATH.exists():
+                with open(_PIPELINE_CONFIG_PATH) as f:
+                    pipeline_cfg = yaml.safe_load(f) or {}
 
-            with open(_COMPETITION_CONFIG_PATH) as f:
-                current_config = yaml.safe_load(f)
+                # Backup
+                backup_path = _PIPELINE_CONFIG_PATH.with_suffix(
+                    f".yaml.bak.{experiment_id}"
+                )
+                shutil.copy2(_PIPELINE_CONFIG_PATH, backup_path)
 
-            # Backup
-            backup_path = _COMPETITION_CONFIG_PATH.with_suffix(
-                f".yaml.bak.{experiment_id}"
-            )
-            with open(backup_path, "w") as f:
-                yaml.dump(current_config, f, default_flow_style=False, sort_keys=False)
+                # Update champion section in pipeline config
+                new_config = copy.deepcopy(pipeline_cfg)
+                champ = new_config.setdefault("champion", {})
+                champ["strategy"] = exp["strategy"]
+                champ["strategy_params"] = exp["strategy_params"] or {}
+                champ["models"] = exp["models"] or []
+                champ["metric"] = exp["metric"]
+                champ["lag"] = exp["lag_mode"]
+                champ["min_dfu_rows"] = exp["min_sku_rows"]
+                if exp["meta_learner_params"]:
+                    champ["meta_learner"] = exp["meta_learner_params"]
 
-            # Build new config
-            new_config = copy.deepcopy(current_config)
-            comp = new_config.setdefault("competition", {})
-            comp["strategy"] = exp["strategy"]
-            comp["strategy_params"] = exp["strategy_params"] or {}
-            comp["models"] = exp["models"] or []
-            comp["metric"] = exp["metric"]
-            comp["lag"] = exp["lag_mode"]
-            comp["min_dfu_rows"] = exp["min_sku_rows"]
-            if exp["meta_learner_params"]:
-                comp["meta_learner"] = exp["meta_learner_params"]
+                with open(_PIPELINE_CONFIG_PATH, "w") as f:
+                    yaml.dump(new_config, f, default_flow_style=False, sort_keys=False)
 
-            with open(_COMPETITION_CONFIG_PATH, "w") as f:
-                yaml.dump(new_config, f, default_flow_style=False, sort_keys=False)
+                reset_config("forecast_pipeline_config.yaml")
+                config_written = "forecast_pipeline_config.yaml"
+            else:
+                # Legacy path — write to model_competition.yaml
+                if not _COMPETITION_CONFIG_PATH.exists():
+                    raise HTTPException(status_code=500, detail="model_competition.yaml not found")
+
+                with open(_COMPETITION_CONFIG_PATH) as f:
+                    current_config = yaml.safe_load(f)
+
+                # Backup
+                backup_path = _COMPETITION_CONFIG_PATH.with_suffix(
+                    f".yaml.bak.{experiment_id}"
+                )
+                with open(backup_path, "w") as f:
+                    yaml.dump(current_config, f, default_flow_style=False, sort_keys=False)
+
+                # Build new config
+                new_config = copy.deepcopy(current_config)
+                comp = new_config.setdefault("competition", {})
+                comp["strategy"] = exp["strategy"]
+                comp["strategy_params"] = exp["strategy_params"] or {}
+                comp["models"] = exp["models"] or []
+                comp["metric"] = exp["metric"]
+                comp["lag"] = exp["lag_mode"]
+                comp["min_dfu_rows"] = exp["min_sku_rows"]
+                if exp["meta_learner_params"]:
+                    comp["meta_learner"] = exp["meta_learner_params"]
+
+                with open(_COMPETITION_CONFIG_PATH, "w") as f:
+                    yaml.dump(new_config, f, default_flow_style=False, sort_keys=False)
+
+                config_written = "model_competition.yaml"
 
             # Find previous promoted
             cur.execute(
@@ -897,7 +931,9 @@ def promote_experiment(experiment_id: int):
                 (experiment_id,),
             )
 
-            # Audit log
+            # Audit log — include which config file was written
+            snapshot = copy.deepcopy(new_config)
+            snapshot["_config_written"] = config_written
             cur.execute(
                 """
                 INSERT INTO champion_promotion_log
@@ -907,7 +943,7 @@ def promote_experiment(experiment_id: int):
                 """,
                 (
                     experiment_id, exp["strategy"], exp["champion_accuracy"],
-                    previous_id, json.dumps(new_config),
+                    previous_id, json.dumps(snapshot),
                 ),
             )
             conn.commit()
@@ -925,6 +961,7 @@ def promote_experiment(experiment_id: int):
         "champion_accuracy": exp["champion_accuracy"],
         "previous_experiment_id": previous_id,
         "backup_path": backup_path.name,
+        "config_written": config_written,
     }
 
 

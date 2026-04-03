@@ -678,6 +678,9 @@ def strategy_adaptive_ensemble(
     qualified = qualified[qualified["prior_wape"].notna()]
 
     results = []
+    weight_sums: dict[str, float] = {}
+    weight_count = 0
+    k_distribution: dict[int, int] = {}
     for key, month_df in qualified.groupby(_DFU_MONTH_COLS, sort=False):
         item_id, customer_group, loc, startdate = key
         if len(month_df) == 0:
@@ -701,6 +704,11 @@ def strategy_adaptive_ensemble(
         else:
             weights = pd.Series([1.0 / len(top)] * len(top), index=top.index)
 
+        for model_id_w, w in zip(top["model_id"], weights):
+            weight_sums[model_id_w] = weight_sums.get(model_id_w, 0.0) + float(w)
+        weight_count += 1
+        k_distribution[k] = k_distribution.get(k, 0) + 1
+
         blended_fcst = (top["basefcst_pref"].astype(float) * weights).sum()
         actual = float(top["tothist_dmd"].iloc[0])
         avg_wape = float((top["prior_wape"] * weights).sum())
@@ -718,7 +726,16 @@ def strategy_adaptive_ensemble(
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
-    return pd.DataFrame(results)[_OUTPUT_COLS].reset_index(drop=True)
+    result_df = pd.DataFrame(results)[_OUTPUT_COLS].reset_index(drop=True)
+    if weight_count > 0:
+        avg_weights = {m: round(s / weight_count * 100, 2) for m, s in sorted(weight_sums.items(), key=lambda x: -x[1])}
+        result_df.attrs["weight_diagnostics"] = {
+            "type": "adaptive_ensemble",
+            "avg_model_weight_pct": avg_weights,
+            "n_dfu_months_blended": weight_count,
+            "k_distribution": k_distribution,
+        }
+    return result_df
 
 
 # ---------------------------------------------------------------------------
@@ -2074,7 +2091,28 @@ def strategy_per_cluster(
 
     combined = pd.concat(parts, ignore_index=True)
     combined = combined.drop_duplicates(subset=_DFU_MONTH_COLS, keep="first")
-    return combined[_OUTPUT_COLS].reset_index(drop=True)
+    combined = combined[_OUTPUT_COLS].reset_index(drop=True)
+
+    # Build cluster diagnostics
+    cluster_diag = {}
+    for cid, group in cluster_model_stats.groupby(cluster_col, sort=False):
+        best_model = cluster_champions.get(cid, "unknown")
+        best_wape = float(group.loc[group["agg_wape"].idxmin(), "agg_wape"])
+        cluster_diag[str(cid)] = {"champion": best_model, "agg_wape": round(best_wape * 100, 2)}
+
+    # Count DFU-months per champion in the output
+    model_counts = combined["model_id"].value_counts().to_dict()
+    total = sum(model_counts.values())
+    model_pct = {m: round(c / total * 100, 2) for m, c in sorted(model_counts.items(), key=lambda x: -x[1])}
+
+    combined.attrs["weight_diagnostics"] = {
+        "type": "per_cluster",
+        "cluster_champions": {str(k): v for k, v in cluster_champions.items()},
+        "global_fallback": global_best,
+        "model_share_pct": model_pct,
+        "cluster_details": cluster_diag,
+    }
+    return combined
 
 
 # ---------------------------------------------------------------------------
@@ -2485,6 +2523,8 @@ def strategy_bayesian_model_avg(
     n_models = len(models)
 
     results: list[dict[str, Any]] = []
+    weight_sums: dict[str, float] = {}
+    weight_count = 0
 
     for dfu_key, dfu_df in df.groupby(_DFU_COLS, sort=False):
         item_id, customer_group, loc = dfu_key
@@ -2526,6 +2566,10 @@ def strategy_bayesian_model_avg(
             else:
                 weights = {m: w / total_w for m, w in raw_weights.items()}
 
+            for m_w, w_val in weights.items():
+                weight_sums[m_w] = weight_sums.get(m_w, 0.0) + w_val
+            weight_count += 1
+
             # Apply Bayesian weights to current month's forecasts
             current_rows = dfu_df[dfu_df["startdate"] == current_month]
             blended = 0.0
@@ -2549,7 +2593,15 @@ def strategy_bayesian_model_avg(
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
-    return pd.DataFrame(results)[_OUTPUT_COLS].reset_index(drop=True)
+    result_df = pd.DataFrame(results)[_OUTPUT_COLS].reset_index(drop=True)
+    if weight_count > 0:
+        avg_weights = {m: round(s / weight_count * 100, 2) for m, s in sorted(weight_sums.items(), key=lambda x: -x[1])}
+        result_df.attrs["weight_diagnostics"] = {
+            "type": "bayesian_model_avg",
+            "avg_model_weight_pct": avg_weights,
+            "n_dfu_months_blended": weight_count,
+        }
+    return result_df
 
 
 # ---------------------------------------------------------------------------
@@ -2668,6 +2720,8 @@ def strategy_shrinkage_blend(
     qualified = qualified[qualified["prior_wape"].notna()]
 
     results: list[dict[str, Any]] = []
+    weight_sums: dict[str, float] = {}
+    weight_count = 0
     for key, month_df in qualified.groupby(_DFU_MONTH_COLS, sort=False):
         item_id, customer_group, loc, startdate = key
         n_models = len(month_df)
@@ -2688,6 +2742,10 @@ def strategy_shrinkage_blend(
         )
         weights = weights / weights.sum()  # Re-normalize
 
+        for model_id_w, w in zip(month_df["model_id"], weights):
+            weight_sums[model_id_w] = weight_sums.get(model_id_w, 0.0) + float(w)
+        weight_count += 1
+
         blended = (month_df["basefcst_pref"].astype(float) * weights).sum()
         actual = float(month_df["tothist_dmd"].iloc[0])
         avg_wape = float((month_df["prior_wape"] * weights).sum())
@@ -2702,7 +2760,16 @@ def strategy_shrinkage_blend(
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
-    return pd.DataFrame(results)[_OUTPUT_COLS].reset_index(drop=True)
+    result_df = pd.DataFrame(results)[_OUTPUT_COLS].reset_index(drop=True)
+    if weight_count > 0:
+        avg_weights = {m: round(s / weight_count * 100, 2) for m, s in sorted(weight_sums.items(), key=lambda x: -x[1])}
+        result_df.attrs["weight_diagnostics"] = {
+            "type": "blend",
+            "avg_model_weight_pct": avg_weights,
+            "n_dfu_months_blended": weight_count,
+            "shrinkage_intensity": shrinkage_intensity,
+        }
+    return result_df
 
 
 # ---------------------------------------------------------------------------

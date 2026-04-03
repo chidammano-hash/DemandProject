@@ -18,7 +18,7 @@ from typing import Any
 import psycopg
 
 from common.db import get_db_params
-from common.utils import load_config
+from common.utils import load_config, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,19 @@ def _read_metadata(metadata_path: str | Path) -> dict[str, Any]:
 
 
 def _load_tuning_config() -> dict[str, Any]:
-    """Load ``config/lgbm_tuning_config.yaml`` and return the ``lgbm_tuning`` section."""
+    """Load tracking settings for tuning run comparisons.
+
+    Tries ``forecast_pipeline_config.yaml`` ``tracking`` section first,
+    then falls back to ``lgbm_tuning_config.yaml`` ``lgbm_tuning`` section.
+    """
+    try:
+        pipeline_cfg = load_forecast_pipeline_config()
+        tracking = pipeline_cfg.get("tracking", {})
+        if tracking:
+            return tracking
+    except FileNotFoundError:
+        pass
+    # Fall back to legacy config
     cfg = load_config("lgbm_tuning_config.yaml")
     return cfg.get("lgbm_tuning", {})
 

@@ -68,6 +68,32 @@ const STRATEGY_SHORT: Record<string, string> = {
   decay: "Decay",
   ensemble: "Ensemble",
   meta_learner: "Meta-Learner",
+  hybrid_warmup: "Hybrid Warmup",
+  adaptive_ensemble: "Adaptive Ens.",
+  ensemble_rolling: "Ens. Rolling",
+  optimized_decay: "Opt. Decay",
+  learned_blend: "Learned Blend",
+  ridge_blend: "Ridge Blend",
+  shrinkage_blend: "Shrinkage",
+  bayesian_model_avg: "Bayesian Avg",
+  per_segment: "Per-Segment",
+  per_cluster: "Per-Cluster",
+  seasonal: "Seasonal",
+  hybrid_meta_router: "Meta-Router",
+  diverse_ensemble: "Diverse Ens.",
+  uncertainty_aware: "Uncertainty",
+  cascade_ensemble: "Cascade Ens.",
+  adversarial_filter: "Adversarial",
+  dynamic_window: "Dynamic Win.",
+  regime_adaptive: "Regime Adapt.",
+  error_correcting: "Error Corr.",
+  thompson_sampling: "Thompson",
+  thompson_ensemble: "Thompson Ens.",
+  linucb: "LinUCB",
+  exp3: "EXP3",
+  dfu_strategy_router: "DFU Router",
+  stacked_strategies: "Stacked",
+  cluster_regime_hybrid: "Cluster-Regime",
 };
 
 // ---------------------------------------------------------------------------
@@ -143,6 +169,16 @@ export function ChampionExperimentsPanel() {
       gapToCeiling: best?.gap_bps ?? null,
       activeRuns: running.length,
     };
+  }, [experiments]);
+
+  // Auto-rank completed experiments by accuracy (highest = rank 1)
+  const rankMap = useMemo(() => {
+    const completed = experiments
+      .filter((e) => e.status === "completed" && e.champion_accuracy != null)
+      .sort((a, b) => (b.champion_accuracy ?? 0) - (a.champion_accuracy ?? 0));
+    const map = new Map<number, number>();
+    completed.forEach((e, i) => map.set(e.experiment_id, i + 1));
+    return map;
   }, [experiments]);
 
   // Row click (baseline/candidate selection)
@@ -241,6 +277,7 @@ export function ChampionExperimentsPanel() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="text-xs w-8">#</TableHead>
+                      <TableHead className="text-xs w-12 text-center">Rank</TableHead>
                       <TableHead className="text-xs">Label</TableHead>
                       <TableHead className="text-xs">Strategy</TableHead>
                       <TableHead className="text-xs text-right">Acc%</TableHead>
@@ -267,6 +304,16 @@ export function ChampionExperimentsPanel() {
                         >
                           <TableCell className="text-xs font-mono">
                             {exp.experiment_id}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {(() => {
+                              const rank = rankMap.get(exp.experiment_id);
+                              if (!rank) return <span className="text-xs text-muted-foreground">--</span>;
+                              if (rank === 1) return <span className="text-sm" title={`Rank #${rank}`}>&#x1F947;</span>;
+                              if (rank === 2) return <span className="text-sm" title={`Rank #${rank}`}>&#x1F948;</span>;
+                              if (rank === 3) return <span className="text-sm" title={`Rank #${rank}`}>&#x1F949;</span>;
+                              return <span className="text-xs font-mono text-muted-foreground" title={`Rank #${rank}`}>#{rank}</span>;
+                            })()}
                           </TableCell>
                           <TableCell className="text-xs font-medium max-w-[200px]">
                             <div className="flex items-center gap-1">

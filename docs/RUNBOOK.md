@@ -742,7 +742,11 @@ make champion-all             # train-meta + simulate + select (full pipeline)
 .venv/bin/python -m scripts.run_champion_selection --strategy rolling
 ```
 
-### Config (`config/model_competition.yaml`)
+### Config (`config/forecast_pipeline_config.yaml`, `champion` section)
+
+> **Note:** Settings have been consolidated into the master `config/forecast_pipeline_config.yaml`. The legacy `config/model_competition.yaml` still works via backward compatibility but new changes should go in the master config.
+>
+> The competing models list is now derived from `algorithms[*].compete == true` in the master config rather than an explicit list.
 
 ```yaml
 competition:
@@ -904,10 +908,12 @@ When `--loc` is used, most sites produce < 200 DFUs → sequential mode is used 
 
 ## Phase 7: Production Forecast Generation (F1.1)
 
-Run after Phase 6. Generates future-period (T+1 to T+12) demand forecasts using champion ML model artifacts.
+Run after Phase 6. Generates future-period (T+1 to T+24) demand forecasts using champion ML model artifacts. Uses 36 months of lookback history. Cold-start routing sends DFUs with < 12 months history to rolling_mean; DFUs with < 3 months are skipped entirely.
+
+Config: `config/forecast_pipeline_config.yaml` (production_forecast section). Legacy `config/production_forecast_config.yaml` still works via backward compat.
 
 ```bash
-make forecast-generate       # Generate 12-month forward forecasts → fact_production_forecast
+make forecast-generate       # Generate 24-month forward forecasts → fact_production_forecast
 # or for a single DFU:
 make forecast-generate-sku ITEM=100320 LOC=1401-BULK
 # preview without writing:
@@ -918,6 +924,11 @@ make forecast-generate-dry
 1. `data/models/lgbm_cluster/cluster_*.pkl` must exist (from Phase 5)
 2. Champion assignments with `source_model_id` must exist (from Phase 6)
 3. Recent sales history must be loaded (from Phase 2)
+
+**Cold-start routing:**
+- DFUs with >= 12 months history: use champion model (normal path)
+- DFUs with 3-11 months history: routed to `cold_start_model_id` (rolling_mean)
+- DFUs with < 3 months history: skipped (absolute floor)
 
 ---
 
@@ -986,17 +997,17 @@ curl http://localhost:8000/data-quality/catalog        # View/manage check catal
 FVA (Forecast Value Add) tracks whether human forecast interventions improve or degrade accuracy.
 
 ```bash
-make fva-schema              # fact_fva_tracking (sql/068)
+make fva-schema              # fact_intervention_metrics (sql/068_create_fva_tracking.sql)
 ```
 
 > FVA interventions are populated through user actions in the UI (override queue, manual adjustments). No batch seed step needed.
 
 API endpoints (`/fva/*`):
-- `GET /fva/waterfall` — step-by-step accuracy waterfall (statistical -> override -> consensus -> final)
-- `GET /fva/roi` — ROI dashboard: intervention count, accuracy lift, cost of touch
-- `GET /fva/detail` — per-DFU intervention history with before/after metrics
+- `GET /fva/waterfall` — staged ladder for `naive seasonal -> external -> champion`, plus planned `AI adjusted` and `planner adjusted` placeholders and a separate ceiling benchmark
+- `GET /fva/interventions` — intervention history with before/after metrics
+- `GET /fva/roi-summary` — ROI dashboard: intervention count and estimated vs. actual financial impact
 
-Dashboard: FVA tab shows waterfall chart + ROI summary. Config in `config/fva_config.yaml`.
+Dashboard: FVA tab shows the Forecast Value Ladder, ceiling benchmark, ROI summary, and recent interventions. Config in `config/fva_config.yaml`.
 
 ### S&OP Cycle (F4.2)
 
@@ -1124,7 +1135,7 @@ make pipeline-inventory-refresh      # Incremental
 | `--dry-run` | Preview what would be done without making changes |
 | `--data-dir /path` | Override source directory (default: `data/input`) |
 
-**Config:** `config/pipeline_config.yaml` — domain order, parallel workers, MV refresh mapping per domain, always-refresh list.
+**Config:** `config/etl_config.yaml` — domain load order, parallel workers, MV refresh mapping per domain, always-refresh list.
 
 **Error handling:** If normalization fails for a domain, that domain is skipped during loading (logged as `(skipped)` in the summary table). Other domains continue normally.
 
@@ -1751,6 +1762,9 @@ TRUNCATE TABLE fact_inventory_projection CASCADE;
 -- Group 11: Sales
 TRUNCATE TABLE fact_sales_monthly CASCADE;
 TRUNCATE TABLE fact_sales_monthly_original CASCADE;
+
+-- Group 11b: Customer Demand (parent CASCADE → all partitions + default)
+TRUNCATE TABLE fact_customer_demand_monthly CASCADE;
 
 -- Group 12: Inventory Planning
 TRUNCATE TABLE fact_ss_simulation_results CASCADE;

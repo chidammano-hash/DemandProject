@@ -44,7 +44,7 @@ flowchart TD
 
     subgraph PG["PostgreSQL 16"]
         DIM["Dimension Tables (5)"]
-        FACT["Fact Tables (3)"]
+        FACT["Fact Tables (4)"]
         MV["Materialized Views (13+)"]
         FEAT["Feature Tables (30+)"]
     end
@@ -92,6 +92,7 @@ flowchart TD
 | **inventory** | `data/input/Inventory_Snapshot_YYYY_MM.csv` (14 files) | CSV | `,` | `normalize_inventory_csv.py` | `data/inventory_clean.csv` | `item_id + loc + snapshot_date` |
 | **sourcing** | `data/input/sourcing.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset sourcing` | `data/sourcing_clean.csv` | `item_id + loc + source_cd` (CK) |
 | **purchase_order** | `data/input/purchase_orders.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset purchase_order` | `data/purchase_orders_clean.csv` | `po_number + item_id + loc` (CK) |
+| **customer_demand** | `data/input/{YYYY}_customer_demand.csv` or `{YYYYMM}_customer_demand.csv` | CSV | `,` | `normalize_customer_demand_csv.py` | `data/customer_demand_clean.csv` | `item_id + customer_no + location_id + startdate` |
 
 **Normalization rules applied to all domains:**
 - Null normalization: `''`, `'null'`, `'none'`, `'NA'` → `NULL`
@@ -99,6 +100,7 @@ flowchart TD
 - Sales: only `TYPE=1` rows retained
 - Forecast: `lag = month_diff(startdate, fcstdate)`, only lags 0-4
 - Inventory: `qty_on_order = qty_on_hand_on_order - qty_on_hand` (derived)
+- Customer demand: `warehouse_no` → `location_id` via `dim_location.site_id`, `posting_prd` YYYYMM → `startdate`, `demand_qty = MAX(0, demand_cases)`, `sales_qty = MAX(0, demand_cases - oos_cases)`
 
 ---
 
@@ -114,11 +116,13 @@ flowchart TD
         I5["dfu_lvl2_hist.txt"]
         I6["dfu_stat_fcst.txt"]
         I7["Inventory_Snapshot_*.csv<br/>(14 monthly files)"]
+        I8["{YYYY}_customer_demand.csv"]
     end
 
     subgraph NORM["Normalize Scripts"]
         NG["normalize_dataset_csv.py<br/>(generic, 6 domains)"]
         NI["normalize_inventory_csv.py<br/>(merge 14 → 1)"]
+        NCD["normalize_customer_demand_csv.py"]
     end
 
     subgraph CLEAN["Clean CSVs (data/)"]
@@ -130,13 +134,15 @@ flowchart TD
         C6["dfu_lvl2_hist_clean.csv"]
         C7["dfu_stat_fcst_clean.csv"]
         C8["inventory_clean.csv"]
+        C9["customer_demand_clean.csv"]
     end
 
-    subgraph LOADER["load_dataset_postgres.py"]
+    subgraph LOADER["load_dataset_postgres.py / load_customer_demand_postgres.py"]
         LP["Phase 1-2: Staging + Clean"]
         LP3b["Phase 3b: Archive Load<br/>(forecast only — all lags 0-4)"]
         LP3c["Phase 3c: Exec-Lag Mutation<br/>(forecast only)"]
         LP5["Phase 5: Main Insert<br/>(forecast: WHERE lag = exec_lag)"]
+        LCD["Customer Demand Load<br/>(--replace or --month)"]
         LPR["Refresh Materialized Views"]
     end
 
@@ -149,14 +155,17 @@ flowchart TD
         FS["fact_sales_monthly"]
         FF["fact_external_forecast_monthly"]
         FI["fact_inventory_snapshot"]
+        FCD["fact_customer_demand_monthly"]
         BA["backtest_lag_archive"]
         AGG["agg_sales_monthly<br/>agg_forecast_monthly<br/>agg_inventory_monthly"]
     end
 
     I1 & I2 & I3 & I4 & I5 & I6 --> NG
     I7 --> NI
+    I8 --> NCD
     NG --> C1 & C2 & C3 & C4 & C5 & C6 & C7
     NI --> C8
+    NCD --> C9
 
     C1 --> LP --> DI
     C2 --> LP --> DL
@@ -167,6 +176,7 @@ flowchart TD
     C7 --> LP3b --> BA
     C7 --> LP3c --> LP5 --> FF
     C8 --> LP --> FI
+    C9 --> LCD --> FCD
 
     FS & FF & FI --> LPR --> AGG
 ```
@@ -252,9 +262,12 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
    - Compound labels: `high_volume_seasonal_growing`, `low_volume_intermittent`, `very_high_volume_growing`, etc.
    - MLflow experiment tracking (`dfu_clustering`)
    - Cluster assignments stored in `dim_sku.cluster_assignment`
+   - Master switch: `clustering.enabled` in `config/forecast_pipeline_config.yaml` controls whether the clustering pipeline runs; when `false`, all backtest scripts auto-fall back to `global` strategy
+   - Pipeline config references: `clustering_config.yaml`, `cluster_tuning_profiles.yaml`, `cluster_experiment_templates.yaml`
 9. LGBM backtesting (Feature 44):
    - Expanding window backtest (10 timeframes A-J) with LightGBM regressors
    - Configurable `cluster_strategy`: `per_cluster` (default, one model per ml_cluster) or `global` (one model on all data)
+   - `cluster_strategy` resolution: `forecast_pipeline_config.yaml` algorithm entry > `algorithm_config.yaml` > default `per_cluster`; auto-falls back to `global` when `clustering.enabled` is `false`
    - `ml_cluster` is always a hard feature — never stripped from feature_cols in either strategy
    - Algorithm options controlled by `config/algorithm_config.yaml` (cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparameters)
    - Causal feature engineering: lag 1-12, rolling stats, calendar, DFU/item attributes
@@ -320,7 +333,7 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
    - Gap-to-ceiling metric shows how far champion is from theoretical best (in percentage points)
    - Meta-learner trained on ceiling labels as ground truth with strict temporal train/test split
    - Simulation script (`simulate_champion_strategies.py`) runs all strategies and compares accuracy vs ceiling; includes 16 simulation entries: expanding, rolling_3/6/9/12, decay_090/095, ensemble_top3_inv/eq, meta_learner, ensemble_top5_inv, ensemble_roll6_inv, ensemble_roll9_inv, adaptive_ensemble, hybrid_warmup, hybrid_warmup_adapt
-   - YAML config (`config/model_competition.yaml`): competing models, metric, lag mode, min DFU rows, fallback_model_id, strategy, strategy_params, meta_learner config
+   - YAML config: `config/forecast_pipeline_config.yaml` (master config — `champion` section for strategy, strategy_params, meta_learner; `algorithms` section for competing models via `compete: true` flag). Legacy `config/model_competition.yaml` still works via backward compat
    - CLI: `make champion-select`, `make champion-simulate`, `make champion-train-meta`, `make champion-all`
    - API endpoints: `GET/PUT /competition/config`, `POST /competition/run`, `GET /competition/summary`
    - UI: Champion Selection panel in Accuracy tab with model checkboxes, metric/lag selectors, strategy selector, champion + ceiling KPI cards, gap indicator, and dual model wins bar charts
@@ -392,6 +405,13 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
    - computed columns: `lead_time_planned`, `lead_time_actual`, `is_closed`, `open_qty`
    - rule: YYYYMMDD dates parsed to ISO during normalization; `source_cd` split into `supplier_id` + `plant_id`
    - materialized views: `mv_supplier_po_performance` (OTD%, lead time stats), `mv_po_lead_time_analysis` (monthly trends)
+5. `customer_demand` (`fact_customer_demand_monthly`) from `{YYYY}_customer_demand.csv` or `{YYYYMM}_customer_demand.csv`
+   - grain: `item_id` + `customer_no` + `location_id` + `startdate` (monthly)
+   - key: `demand_ck` with `_` separator
+   - measures: `demand_qty`, `sales_qty`, `oos_qty`
+   - **monthly range-partitioned** by `startdate`
+   - normalization: `warehouse_no` → `location_id` via `dim_location.site_id` join, `posting_prd` YYYYMM → `startdate` (YYYY-MM-01), `demand_qty = MAX(0, demand_cases)`, `sales_qty = MAX(0, demand_cases - oos_cases)`
+   - loading: dedicated `load_customer_demand_postgres.py`; `--replace` (full truncate + reload), `--month YYYY-MM` (single partition drop + reload)
 
 ---
 
@@ -401,7 +421,10 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
 erDiagram
     dim_item ||--o{ fact_sales_monthly : "item_id"
     dim_item ||--o{ fact_inventory_snapshot : "item_id"
+    dim_item ||--o{ fact_customer_demand_monthly : "item_id"
     dim_location ||--o{ fact_inventory_snapshot : "loc"
+    dim_location ||--o{ fact_customer_demand_monthly : "location_id"
+    dim_customer ||--o{ fact_customer_demand_monthly : "customer_no"
     dim_sku ||--o{ fact_sales_monthly : "item_id+loc"
     dim_sku ||--o{ fact_external_forecast_monthly : "item_id+loc"
     dim_customer ||--o{ fact_sales_monthly : "customer_group"
@@ -479,17 +502,28 @@ erDiagram
         numeric mtd_sales
         int lead_time_days
     }
+    fact_customer_demand_monthly {
+        text demand_ck PK
+        text item_id
+        text customer_no
+        text site
+        text location_id
+        date startdate
+        numeric demand_qty
+        numeric sales_qty
+        numeric oos_qty
+    }
 ```
 
 ---
 
-## 10. All Tables by Category (~85 tables + 15 materialized views)
+## 10. All Tables by Category (~86 tables + 15 materialized views)
 
 ### Core Tables
 
 **Core Dimensions (6):** `dim_item`, `dim_location`, `dim_customer`, `dim_time`, `dim_sku`, `dim_sourcing`
 
-**Core Facts (4):** `fact_sales_monthly`, `fact_external_forecast_monthly`, `fact_inventory_snapshot`, `fact_purchase_orders`
+**Core Facts (5):** `fact_sales_monthly`, `fact_external_forecast_monthly`, `fact_inventory_snapshot`, `fact_purchase_orders`, `fact_customer_demand_monthly`
 
 **Archive:** `backtest_lag_archive`
 
@@ -748,7 +782,8 @@ flowchart TD
 
 | Pipeline | Scripts (in order) | Reads | Writes | Config |
 |----------|--------------------|-------|--------|--------|
-| **Clustering** | `generate_clustering_features.py` → `train_clustering_model.py` → `label_clusters.py` → `update_cluster_assignments.py` | `dim_sku`, `dim_item`, `fact_sales_monthly` | `dim_sku.ml_cluster`, `data/clustering/` | `clustering_config.yaml` |
+| **Customer Demand** | `normalize_customer_demand_csv.py` → `load_customer_demand_postgres.py` | `{YYYY}_customer_demand.csv`, `dim_location` | `fact_customer_demand_monthly` | — (flags: `--replace`, `--month YYYY-MM`) |
+| **Clustering** | `generate_clustering_features.py` → `train_clustering_model.py` → `label_clusters.py` → `update_cluster_assignments.py` | `dim_sku`, `dim_item`, `fact_sales_monthly` | `dim_sku.ml_cluster`, `data/clustering/` | `forecast_pipeline_config.yaml` (`clustering` section; refs `clustering_config.yaml`) |
 | **Seasonality** | `detect_seasonality.py` → `update_seasonality_profiles.py` | `fact_sales_monthly`, `dim_sku` | `dim_sku.seasonality_*` (6 cols) | `seasonality_config.yaml` |
 | **Variability** | `compute_demand_variability.py` | `fact_sales_monthly` | `dim_sku.cv_demand` + variability cols | `variability_config.yaml` |
 | **Lead Time** | `compute_lead_time_variability.py` | `fact_inventory_snapshot` | lead time profile table | `lead_time_config.yaml` |
@@ -762,15 +797,15 @@ flowchart TD
 | **Investment** | `compute_investment_plan.py` | `fact_safety_stock_targets`, `dim_sku` | `fact_inventory_investment_plan` | — |
 | **Rebalancing** | `compute_rebalancing.py` | `agg_inventory_monthly`, SS, `dim_transfer_lane` | `fact_rebalancing_plan`, `fact_rebalancing_transfer` | `rebalancing_config.yaml` |
 | **Tuning** | `tune_hyperparams.py` | `fact_sales_monthly`, `fact_external_forecast_monthly` | `data/tuning/best_params_*.json` | `hyperparameter_tuning.yaml` |
-| **LGBM Backtest** | `run_backtest.py` | sales, forecast, `dim_sku.ml_cluster` | `data/backtest/lgbm_cluster/` | `algorithm_config.yaml` |
-| **CatBoost Backtest** | `run_backtest_catboost.py` | same | `data/backtest/catboost_cluster/` | `algorithm_config.yaml` |
-| **XGBoost Backtest** | `run_backtest_xgboost.py` | same | `data/backtest/xgboost_cluster/` | `algorithm_config.yaml` |
+| **LGBM Backtest** | `run_backtest.py` | sales, forecast, `dim_sku.ml_cluster` | `data/backtest/lgbm_cluster/` | `forecast_pipeline_config.yaml` (`cluster_strategy`, `backtest_sampling`); `algorithm_config.yaml` |
+| **CatBoost Backtest** | `run_backtest_catboost.py` | same | `data/backtest/catboost_cluster/` | `forecast_pipeline_config.yaml` (`cluster_strategy`, `backtest_sampling`); `algorithm_config.yaml` |
+| **XGBoost Backtest** | `run_backtest_xgboost.py` | same | `data/backtest/xgboost_cluster/` | `forecast_pipeline_config.yaml` (`cluster_strategy`, `backtest_sampling`); `algorithm_config.yaml` |
 | **MSTL Backtest** | `run_backtest_mstl.py` | sales, forecast | `data/backtest/mstl/` | `algorithm_config.yaml` |
 | **N-HiTS Backtest** | `run_backtest_dl.py --model nhits` | sales, forecast | `data/backtest/nhits/` | `algorithm_config.yaml` |
 | **N-BEATS Backtest** | `run_backtest_dl.py --model nbeats` | sales, forecast | `data/backtest/nbeats/` | `algorithm_config.yaml` |
 | **Backtest Load** | `load_backtest_forecasts.py` | `data/backtest/*/` CSVs | `fact_external_forecast_monthly`, `backtest_lag_archive` | — (flags: `--models`, `--bulk`, `--main-only`, `--archive-only`) |
-| **Champion** | `run_champion_selection.py` | `fact_external_forecast_monthly`, archive | rows with `model_id='champion'`, `'ceiling'` | `model_competition.yaml` |
-| **Prod Forecast** | `generate_production_forecasts.py` | champion assignments, cluster `.pkl` models | `fact_production_forecast` | `production_forecast_config.yaml` |
+| **Champion** | `run_champion_selection.py` | `fact_external_forecast_monthly`, archive | rows with `model_id='champion'`, `'ceiling'` | `forecast_pipeline_config.yaml` (champion section; legacy: `model_competition.yaml`) |
+| **Prod Forecast** | `generate_production_forecasts.py` | champion assignments, cluster `.pkl` models | `fact_production_forecast` | `forecast_pipeline_config.yaml` (production_forecast section; legacy: `production_forecast_config.yaml`). Horizon: 24 months, lookback: 36 months. Cold-start routing: < 12 mo history -> rolling_mean; < 3 mo -> skipped. Embargo: 1 month. |
 | **Repl Plan** | `compute_replenishment_plan.py` | `fact_production_forecast`, SS, EOQ | `fact_replenishment_plan` | — |
 | **AI Insights** | `generate_ai_insights.py` | multi-table queries (DFU, forecast, inventory, health) | `ai_insights`, `ai_planning_memos`, `ai_call_log` | `ai_planner_config.yaml` |
 | **Storyboard** | `generate_storyboard_exceptions.py` | forecast, inventory, accuracy views | `fact_storyboard_exceptions` | `exception_config.yaml` |
@@ -1233,13 +1268,13 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Makefile: `ext-signals-schema`, `ext-signals-fetch`, `ext-signals-decompose`
 
 44. FVA Tracking (08-07):
-   - Forecast Value Added (FVA) waterfall: measure incremental accuracy at each forecast stage (statistical → planner → consensus) with per-stage WAPE and bias comparison
+   - Forecast Value Added (FVA) ladder: measure incremental accuracy at each planning handoff (`naive seasonal -> external -> champion`) with reserved `AI adjusted` and `planner adjusted` stages for future measured interventions
    - Intervention tracking: log every planner adjustment with reason, original vs. adjusted forecast values, intervention type, and user attribution
-   - ROI measurement: quantify financial impact of forecast interventions vs. statistical baseline; computes value-added percentage per stage
-   - DDL: `sql/068_create_fva_tables.sql` — `fva_waterfall` (stage-by-stage accuracy snapshots) + `fva_interventions` (individual planner adjustments) tables
+   - ROI measurement: quantify financial impact of forecast interventions vs. the current forecast baseline; compares estimated and realized impact
+   - DDL: `sql/068_create_fva_tracking.sql` — `fact_intervention_metrics` table for intervention measurement
    - Config: `config/fva_config.yaml` (stages, metrics, ROI computation parameters)
-   - Router: `api/routers/fva.py` — `GET /fva/waterfall` (stage-by-stage accuracy), `GET /fva/interventions` (intervention log), `GET /fva/roi` (intervention ROI metrics), `POST /fva/interventions` (log new intervention)
-   - Frontend: `FVATab.tsx` — FVA waterfall chart showing value added/destroyed at each stage, intervention history table, ROI summary KPIs
+   - Router: `api/routers/fva.py` — `GET /fva/waterfall` (ordered ladder stages + ceiling benchmark), `GET /fva/interventions` (intervention log), `GET /fva/roi-summary` (aggregate ROI metrics)
+   - Frontend: `FVATab.tsx` — Forecast Value Ladder cards, ceiling benchmark card, intervention history list, ROI summary KPIs
 
 45. Reporting & Distribution (08-08):
    - Report template system: define reusable report layouts with configurable sections (KPIs, charts, tables)
@@ -1369,7 +1404,8 @@ All config files live in `config/`. Every compute script externalizes parameters
 | `production_forecast_config.yaml` | Prod forecast | Inference horizon, plan_version format |
 | `data_quality_config.yaml` | DQ engine | 12 check types across 10 domains |
 | `planning_config.yaml` | Planning date | `planning_date`, `use_system_date` |
-| `pipeline_config.yaml` | Unified pipeline | Domain order, parallel workers, MV refresh mapping |
+| `etl_config.yaml` | ETL data pipeline | Domain load order, parallel workers, MV refresh mapping |
+| `forecast_pipeline_config.yaml` | ML forecast pipeline | Algorithm roster, backtest, tuning, champion, production forecast |
 
 ---
 

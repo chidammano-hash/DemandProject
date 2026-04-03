@@ -41,8 +41,8 @@ _DIMENSION_DOMAINS = {"item", "location", "customer", "time", "sku", "sourcing"}
 
 
 def _cfg() -> dict:
-    """Load pipeline config."""
-    return load_config("pipeline")
+    """Load ETL pipeline config."""
+    return load_config("etl_config.yaml")
 
 
 def _elapsed(t0: float) -> str:
@@ -600,7 +600,7 @@ def main() -> None:
                         help="Parallelize normalization, loading (two-wave), and MV refresh")
     parser.add_argument(
         "--data-dir", default=None,
-        help="Source data directory (default: from pipeline_config.yaml)",
+        help="Source data directory (default: from etl_config.yaml)",
     )
     args = parser.parse_args()
 

@@ -18,7 +18,7 @@ Planners spend hours adjusting forecasts, changing safety stock targets, and res
 
 Two complementary views answer "Is the planning process adding value?"
 
-**FVA Waterfall** compares accuracy across model tiers (external baseline, champion selection, oracle ceiling) to show how much value each stage of the forecasting process adds.
+**FVA Ladder** compares accuracy across the planning handoff sequence to show where the process adds value: `Naive Seasonal -> External -> Champion`, with reserved placeholders for future `AI Adjusted` and `Planner Adjusted` stages.
 
 **Intervention Tracker** records every planner action (forecast override, policy change, safety stock adjustment, AI insight response, S&OP approval) with before/after metric snapshots and financial impact estimates. After a configurable measurement window, actuals are compared to show whether the intervention helped or hurt.
 
@@ -26,7 +26,7 @@ Two complementary views answer "Is the planning process adding value?"
 
 1. When a planner takes an action, the source module records it in `fact_intervention_metrics` with the current metric snapshot and estimated financial impact
 2. The intervention starts with status `pending` and a measurement window (e.g., 3 months for overrides, 6 months for policy changes)
-3. The FVA waterfall endpoint queries `fact_external_forecast_monthly`, grouping accuracy by `model_id` to compare external, champion, and ceiling tiers
+3. The FVA ladder endpoint queries `fact_external_forecast_monthly`, grouping accuracy by `model_id` to compare `seasonal_naive`, `external`, and `champion`, then appends planned `AI Adjusted` and `Planner Adjusted` stages for the UI roadmap
 4. When the measurement window expires and actuals are available, a background job computes the actual metric outcome and financial impact
 5. The intervention status flips to `measured`, and the FVA tab shows the realized ROI
 6. The ROI summary aggregates all interventions to show total estimated vs. actual financial impact
@@ -57,11 +57,11 @@ Indexes on `user_id`, `status`, `intervention_type`, and `measurement_window_end
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/fva/waterfall` | Model-tier accuracy comparison (external, champion, ceiling) |
+| GET | `/fva/waterfall` | Ordered ladder stages (`seasonal_naive`, `external`, `champion`, `ai_adjusted`, `planner_adjusted`) plus a separate `ceiling` benchmark |
 | GET | `/fva/interventions` | Paginated intervention log with before/after metrics |
 | GET | `/fva/roi-summary` | Aggregate ROI: total interventions, estimated vs. actual impact |
 
-All endpoints accept a `months` query parameter (default 12, range 1-36) for the lookback window. Accuracy uses the standard formula: `100 - (100 * SUM(|F-A|) / |SUM(A)|)`.
+`/fva/waterfall` and `/fva/roi-summary` accept a `months` query parameter (default 12, range 1-36) for the lookback window. `/fva/interventions` uses pagination and filter parameters. Accuracy uses the standard formula: `100 - (100 * SUM(|F-A|) / |SUM(A)|)`.
 
 ## Configuration
 
@@ -88,7 +88,7 @@ The FVA tab has four sections:
 
 1. **Header** -- "Forecast Value Added" title + month selector dropdown (3, 6, 12, 24 months)
 2. **ROI KPI Cards** -- Total Interventions, Measured count, Estimated Impact ($), Actual Impact ($)
-3. **Model Accuracy Waterfall** -- Recharts bar chart: External (slate), Champion (blue), Ceiling (emerald)
+3. **Forecast Value Ladder** -- ordered stage cards for `Naive Seasonal -> External -> Champion -> AI Adjusted -> Planner Adjusted`, showing stage accuracy, delta vs prior stage, and a separate **Ceiling Benchmark** card
 4. **Recent Interventions** -- Last 10 interventions with status dot (green=measured, amber=pending), type, resource, and financial impact
 
 ## Integration Points
@@ -102,6 +102,21 @@ Interventions are recorded by upstream features:
 | Safety Stock Panel | `ss_change` |
 | AI Planner (accept/resolve) | `ai_insight_action` |
 | S&OP Tab (approve plan) | `sop_approval` |
+
+## Current vs Planned Stages
+
+Currently measured ladder stages:
+
+- `seasonal_naive`
+- `external`
+- `champion`
+
+Roadmap stages already rendered in the UI as placeholders:
+
+- `ai_adjusted`
+- `planner_adjusted`
+
+The `ceiling` value is shown as a benchmark card rather than part of the main ladder so it acts as a reference target, not a production handoff.
 
 ## Dependencies
 

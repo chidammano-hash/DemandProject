@@ -254,7 +254,7 @@ normalize-sourcing:
 normalize-purchase-order:
 	$(UV) python scripts/normalize_dataset_csv.py --dataset purchase_order
 
-normalize-all: normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-sourcing normalize-purchase-order
+normalize-all: normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-sourcing normalize-purchase-order normalize-customer-demand
 
 load-item:
 	$(UV) python scripts/load_dataset_postgres.py --dataset item
@@ -297,6 +297,17 @@ load-sourcing:
 load-purchase-order:
 	$(UV) python scripts/load_dataset_postgres.py --dataset purchase_order
 
+normalize-customer-demand:  ## Normalize customer demand CSVs
+	$(UV) python scripts/etl/normalize_customer_demand_csv.py
+
+load-customer-demand:  ## Load customer demand (full replace)
+	$(UV) python scripts/etl/load_customer_demand_postgres.py --replace
+
+load-customer-demand-month:  ## Load single month: make load-customer-demand-month MONTH=2026-01
+	$(UV) python scripts/etl/load_customer_demand_postgres.py --month $(MONTH)
+
+pipeline-customer-demand: normalize-customer-demand load-customer-demand  ## Full customer demand pipeline
+
 load-all:
 	$(UV) python scripts/load_dataset_postgres.py --dataset item
 	$(UV) python scripts/load_dataset_postgres.py --dataset location
@@ -308,6 +319,7 @@ load-all:
 	$(UV) python scripts/load_dataset_postgres.py --dataset inventory
 	$(UV) python scripts/load_dataset_postgres.py --dataset sourcing
 	$(UV) python scripts/load_dataset_postgres.py --dataset purchase_order
+	$(UV) python scripts/etl/load_customer_demand_postgres.py --replace
 	$(MAKE) refresh-agg
 
 refresh-agg-sales:
@@ -1334,6 +1346,7 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	  'TRUNCATE TABLE fact_inventory_projection CASCADE;' \
 	  'TRUNCATE TABLE fact_sales_monthly CASCADE;' \
 	  'TRUNCATE TABLE fact_sales_monthly_original CASCADE;' \
+	  'TRUNCATE TABLE fact_customer_demand_monthly CASCADE;' \
 	  'TRUNCATE TABLE fact_ss_simulation_results CASCADE;' \
 	  'TRUNCATE TABLE fact_safety_stock_targets CASCADE;' \
 	  'TRUNCATE TABLE fact_eoq_targets CASCADE;' \

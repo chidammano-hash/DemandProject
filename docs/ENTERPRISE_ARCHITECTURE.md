@@ -1715,7 +1715,7 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
 | **ABC** | Volume-based classification (A=top 80% revenue, B=next 15%, C=bottom 5%) |
 | **XYZ** | Variability-based classification (X=low CV, Y=medium, Z=high) |
 | **S&OP** | Sales & Operations Planning -- monthly cross-functional planning cycle |
-| **FVA** | Forecast Value Add -- measures incremental accuracy from human overrides |
+| **FVA** | Forecast Value Add -- measures incremental accuracy across the planning ladder (`naive seasonal -> external -> champion`, later AI/planner adjustments) |
 | **SHAP** | SHapley Additive exPlanations -- ML feature attribution method |
 | **CI** | Confidence Interval -- P10/P90 bands on production forecast |
 | **ml_cluster** | KMeans cluster assignment per DFU (hard feature, never dropped) |

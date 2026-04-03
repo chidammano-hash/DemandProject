@@ -45,7 +45,7 @@ from common.ml.model_registry import (
 )
 from common.services.perf_profiler import profiled_section
 from common.tuning import TRAIN_FOLD_FNS, load_best_params, tune_for_timeframe
-from common.utils import load_config
+from common.utils import get_algorithm_roster, load_config, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 
@@ -944,13 +944,46 @@ def main() -> None:
             model_class = _import_model_class(registry["class"])
             lib_module = importlib.import_module(registry["class"].rsplit(".", 1)[0])
 
-        # Load algorithm config
+        # Load algorithm config (model-specific hyperparams always from algorithm_config)
         config_path = Path(args.config) if args.config else ROOT / "config" / "algorithm_config.yaml"
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
 
         algo = cfg["algorithms"][registry["config_key"]]
-        backtest_cfg = cfg.get("backtest", {})
+
+        # Pipeline-level backtest settings: prefer forecast_pipeline_config.yaml,
+        # fall back to algorithm_config.yaml's backtest section.
+        pipeline_cfg = None
+        try:
+            pipeline_cfg = load_forecast_pipeline_config()
+            backtest_cfg = pipeline_cfg.get("backtest", cfg.get("backtest", {}))
+        except FileNotFoundError:
+            backtest_cfg = cfg.get("backtest", {})
+
+        # Check algorithm enabled flag from the roster (skip if disabled)
+        try:
+            roster = get_algorithm_roster(stage="backtest")
+            # Find the roster entry whose config_key matches this model
+            roster_entry = None
+            for rid, rentry in roster.items():
+                if rentry.get("config_key") == registry["config_key"]:
+                    roster_entry = rentry
+                    break
+            if roster_entry is None:
+                # Not in roster with backtest=true — check if explicitly disabled
+                all_roster = get_algorithm_roster()
+                disabled = not any(
+                    e.get("config_key") == registry["config_key"]
+                    for e in all_roster.values()
+                )
+                if disabled:
+                    logger.warning(
+                        "Model '%s' is disabled in forecast_pipeline_config.yaml — skipping",
+                        model_name,
+                    )
+                    return
+        except FileNotFoundError:
+            pass  # No pipeline config — run unconditionally
 
         # Propagate top-level noise settings into algo dict so run_tree_backtest
         # can access them via algo_config (algo only holds the per-algorithm sub-dict).
@@ -967,7 +1000,18 @@ def main() -> None:
         algo["cluster_filter"] = [c.strip() for c in args.clusters.split(",")]
         logger.info("Cluster filter: restricting to clusters %s", algo["cluster_filter"])
 
-    cluster_strategy = algo.get("cluster_strategy", "per_cluster")
+    # Resolve cluster_strategy: pipeline config > algorithm config > default
+    _roster_cs = None
+    if pipeline_cfg:
+        for _rid, _rentry in pipeline_cfg.get("algorithms", {}).items():
+            if _rentry.get("config_key") == model_name:
+                _roster_cs = _rentry.get("cluster_strategy")
+                break
+    cluster_strategy = _roster_cs or algo.get("cluster_strategy") or "per_cluster"
+    # Guard: if clustering is disabled but strategy is per_cluster, fall back to global
+    if pipeline_cfg and not pipeline_cfg.get("clustering", {}).get("enabled", True) and cluster_strategy == "per_cluster":
+        logger.warning("Clustering disabled in pipeline config — falling back to global strategy")
+        cluster_strategy = "global"
 
     # Registry captures model metadata across timeframes for use in _persistence_fn.
     _model_meta_registry: dict[str, dict] = {}

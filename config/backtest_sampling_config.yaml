@@ -1,3 +1,7 @@
+# DEPRECATED: Settings consolidated into forecast_pipeline_config.yaml
+# (backtest_sampling section). This file is kept for backward compatibility.
+# If forecast_pipeline_config.yaml has a backtest_sampling section, it takes precedence.
+#
 # Backtest sampling — stratified DFU sampling for fast iteration
 sampling:
   default_target_n: 5000

@@ -91,11 +91,20 @@ def test_build_grid_lag_source_metadata():
 
 
 def test_build_grid_insufficient_history_returns_none():
-    """Returns None when fewer than max_lag months of history available."""
-    sales = _make_sales(n_months=3)  # very short history
+    """Returns None when fewer than min_months of history available."""
+    sales = _make_sales(n_months=2)  # below cold_start_min_months default of 3
     attrs = _make_dfu_attrs()
     result = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=6)
     assert result is None
+
+
+def test_build_grid_cold_start_short_history_ok():
+    """DFUs with min_months history (cold-start range) return a valid grid."""
+    sales = _make_sales(n_months=5)  # 5 months: above min_months=3, below old max_lag=12
+    attrs = _make_dfu_attrs()
+    result = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=6, min_months=3)
+    assert result is not None
+    assert len(result) == 6
 
 
 def test_build_grid_unknown_dfu_attrs():
@@ -512,6 +521,33 @@ def test_main_plan_version_uses_planning_date():
     from scripts.generate_production_forecasts import main
     source = inspect.getsource(main)
     assert "get_planning_date" in source, "plan_version must use get_planning_date()"
+
+
+# ---------------------------------------------------------------------------
+# load_config — consolidated config migration
+# ---------------------------------------------------------------------------
+
+def test_load_config_reads_pipeline_config():
+    """load_config reads from forecast_pipeline_config.yaml and maps fields correctly."""
+    from scripts.generate_production_forecasts import load_config
+    config = load_config()
+    assert config["inference"]["horizon_months"] == 24
+    assert config["model_selection"]["fallback_model_id"] == "lgbm_cluster"
+    assert config["plan_version"]["keep_last_n_versions"] == 3
+    assert config["_pipeline"]["lookback_months"] == 36
+    assert config["_pipeline"]["min_history_months"] == 12
+    assert config["_pipeline"]["cold_start_model_id"] == "rolling_mean"
+    assert config["_pipeline"]["cold_start_min_months"] == 3
+
+
+def test_load_config_ci_section():
+    """load_config preserves confidence_interval settings from pipeline config."""
+    from scripts.generate_production_forecasts import load_config
+    config = load_config()
+    ci = config["confidence_interval"]
+    assert ci["enabled"] is True
+    assert "lgbm_cluster" in ci["source_model_ids"]
+    assert ci["z_lower"] == 1.282
 
 
 # ---------------------------------------------------------------------------

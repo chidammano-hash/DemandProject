@@ -41,6 +41,7 @@ from common.champion_strategies import (
 )
 from common.db import get_db_params
 from common.services.perf_profiler import profiled_section
+from common.utils import get_competing_model_ids, load_forecast_pipeline_config
 
 
 # ---------------------------------------------------------------------------
@@ -58,13 +59,58 @@ _DEFAULTS = {
     "strategy_params": {},
 }
 
+
+def _load_config_from_pipeline() -> dict[str, Any] | None:
+    """Try to load champion config from forecast_pipeline_config.yaml.
+
+    Returns a merged config dict compatible with the old competition format,
+    or None if the pipeline config is unavailable.
+    """
+    try:
+        pipeline_cfg = load_forecast_pipeline_config()
+    except FileNotFoundError:
+        return None
+
+    champion = pipeline_cfg.get("champion", {})
+    if not champion:
+        return None
+
+    # Derive competing model list from the algorithm roster
+    models = get_competing_model_ids()
+
+    cfg: dict[str, Any] = {
+        "models": models,
+        "strategy": champion.get("strategy", "expanding"),
+        "strategy_params": champion.get("strategy_params", {}),
+        "metric": champion.get("metric", "accuracy_pct"),
+        "lag": champion.get("lag", "execution"),
+        "min_dfu_rows": champion.get("min_dfu_rows", 3),
+        "min_sku_rows": champion.get("min_sku_rows", 3),
+        "champion_model_id": champion.get("champion_model_id", "champion"),
+        "fallback_model_id": champion.get("fallback_model_id", "seasonal_naive"),
+        "meta_learner": champion.get("meta_learner", {}),
+    }
+    return cfg
+
+
 def load_config(config_path: Path) -> dict[str, Any]:
-    """Read and validate the competition config YAML."""
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config not found: {config_path}")
-    with open(config_path) as f:
-        raw = yaml.safe_load(f)
-    cfg = raw.get("competition", {})
+    """Read and validate the competition config YAML.
+
+    Tries forecast_pipeline_config.yaml first for model list and champion
+    settings, then falls back to the legacy model_competition.yaml.
+    """
+    # Try consolidated pipeline config first
+    pipeline_cfg = _load_config_from_pipeline()
+    if pipeline_cfg is not None:
+        cfg = pipeline_cfg
+    else:
+        # Fall back to legacy config
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config not found: {config_path}")
+        with open(config_path) as f:
+            raw = yaml.safe_load(f)
+        cfg = raw.get("competition", {})
+
     for k, v in _DEFAULTS.items():
         cfg.setdefault(k, v)
     # Validate

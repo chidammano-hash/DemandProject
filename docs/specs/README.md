@@ -43,11 +43,12 @@ The data layer everything else depends on.
 | # | Spec | Summary |
 |---|------|---------|
 | 01 | [Infrastructure](01-foundation/01-infrastructure.md) | Tech stack, Docker services, implemented features index |
-| 02 | [Data Models](01-foundation/02-data-models.md) | 5 dimension + 4 fact tables, materialized views, ERD |
+| 02 | [Data Models](01-foundation/02-data-models.md) | 5 dimension + 5 fact tables, materialized views, ERD |
 | 03 | [Data Quality](01-foundation/03-data-quality.md) | 12 check types, Self-Heal auto-fix, scoring dashboard |
 | 04 | [Planning Date](01-foundation/04-planning-date.md) | Configurable date replacing `date.today()` for reproducibility |
 | 05 | [Performance Profiling](01-foundation/05-performance-profiling.md) | Centralized profiling, suggestion engine, production-safe |
 | 06 | [Execution Lag](01-foundation/06-execution-lag.md) | DFU-level planning horizon, forecast lag vs execution lag, lag filter semantics |
+| 07 | [Customer Demand Fact](01-foundation/07-customer-demand-fact.md) | Customer-level demand fact table, monthly range-partitioned by startdate |
 
 ---
 
@@ -74,8 +75,9 @@ Predict future demand using ML models, then select the best forecast per item.
 | 14 | [Execution Lag Filters](02-forecasting/14-execution-lag-filters.md) | Lag filter bar semantics for Algorithm and Champion experiment tabs |
 | 15 | [Expert Panel: Algorithm Selection](02-forecasting/15-expert-panel-algorithm-selection.md) | 31-expert panel tests 30+ algorithms (statistical, tree, deep learning, foundation models) across demand segments; routes each DFU to its best-fit algorithm via affinity matrix optimization |
 | 18 | [Chronos Foundation Models](02-forecasting/18-chronos-foundation-models.md) | Four Chronos variants (T5, Bolt, Chronos 2, Chronos 2 Enriched) — architecture, covariates, configuration, performance benchmarks |
+| 19 | [Forecast Pipeline Config](02-forecasting/19-forecast-pipeline-config.md) | Master config consolidation — algorithm roster with lifecycle flags, backtest/tuning/champion/production settings in one file |
 
-**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models)
+**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config)
 
 ---
 

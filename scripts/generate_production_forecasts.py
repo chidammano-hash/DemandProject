@@ -58,7 +58,8 @@ from common.services.perf_profiler import profiled_section
 
 import psycopg
 
-CONFIG_PATH = ROOT / "config" / "production_forecast_config.yaml"
+LEGACY_CONFIG_PATH = ROOT / "config" / "production_forecast_config.yaml"
+PIPELINE_CONFIG_PATH = ROOT / "config" / "forecast_pipeline_config.yaml"
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,41 @@ def _to_cluster_id(cluster_id) -> int | str | None:
 
 
 def load_config() -> dict:
-    with open(CONFIG_PATH) as f:
+    """Load production forecast config.
+
+    Reads from the consolidated forecast_pipeline_config.yaml (production_forecast section).
+    Falls back to legacy production_forecast_config.yaml if the new config is missing.
+    """
+    if PIPELINE_CONFIG_PATH.exists():
+        with open(PIPELINE_CONFIG_PATH) as f:
+            pipeline = yaml.safe_load(f) or {}
+        pf = pipeline.get("production_forecast", {})
+        # Map to the structure the rest of the script expects
+        return {
+            "inference": {
+                "horizon_months": pf.get("horizon_months", 24),
+                "recursive": pf.get("recursive", True),
+            },
+            "confidence_interval": pf.get("confidence_interval", {}),
+            "model_selection": {
+                "strategy": "champion",
+                "fallback_model_id": pf.get("fallback_model_id", "lgbm_cluster"),
+            },
+            "plan_version": {
+                "format": pf.get("plan_version_format", "%Y-%m"),
+                "keep_last_n_versions": pf.get("keep_last_n_versions", 3),
+            },
+            "model_registry": pf.get("model_registry", {"base_path": "data/models"}),
+            # New cold-start fields (used in main loop)
+            "_pipeline": {
+                "lookback_months": pf.get("lookback_months", 36),
+                "min_history_months": pf.get("min_history_months", 12),
+                "cold_start_model_id": pf.get("cold_start_model_id", "rolling_mean"),
+                "cold_start_min_months": pf.get("cold_start_min_months", 3),
+            },
+        }
+    # Legacy fallback
+    with open(LEGACY_CONFIG_PATH) as f:
         return yaml.safe_load(f)
 
 
@@ -190,7 +225,7 @@ def get_champion_assignments(conn, item_id: str | None = None, loc: str | None =
 
 
 def load_recent_sales(conn, item_id: str | None = None, loc: str | None = None,
-                      lookback_months: int = 24) -> pd.DataFrame:
+                      lookback_months: int = 36) -> pd.DataFrame:
     """Load the last N months of sales for all DFUs (or a specific DFU).
 
     Returns DataFrame with columns: item_id, loc, startdate, qty.
@@ -425,7 +460,8 @@ def build_inference_grid(
     cluster_id: int | str,
     sales_history: pd.DataFrame | None = None,
     dfu_attrs: pd.DataFrame | None = None,
-    horizon: int = 6,
+    horizon: int = 24,
+    min_months: int = 3,
     *,
     sales_index: dict | None = None,
     attrs_index: dict | None = None,
@@ -448,7 +484,7 @@ def build_inference_grid(
         if entry is None:
             return None
         dates_arr, qty_arr = entry
-        if len(qty_arr) < max_lag:
+        if len(qty_arr) < min_months:
             return None
         qty_series = list(qty_arr)
         last_month = pd.Timestamp(dates_arr[-1])
@@ -457,7 +493,7 @@ def build_inference_grid(
         dfu_sales = sales_history[
             (sales_history["item_id"] == item_id) & (sales_history["loc"] == loc)
         ].sort_values("startdate").copy()
-        if len(dfu_sales) < max_lag:
+        if len(dfu_sales) < min_months:
             return None
         last_month = dfu_sales["startdate"].max()
         qty_series = list(dfu_sales["qty"].values)
@@ -967,9 +1003,14 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config()
+    pipeline_cfg = config.get("_pipeline", {})
     horizon = args.horizon or config["inference"]["horizon_months"]
     keep_n = config["plan_version"]["keep_last_n_versions"]
     fallback_model_id = config["model_selection"]["fallback_model_id"]
+    lookback_months = pipeline_cfg.get("lookback_months", 36)
+    min_history_months = pipeline_cfg.get("min_history_months", 12)
+    cold_start_model_id = pipeline_cfg.get("cold_start_model_id", "rolling_mean")
+    cold_start_min_months = pipeline_cfg.get("cold_start_min_months", 3)
 
     plan_version = args.plan_version or get_planning_date().strftime(config["plan_version"]["format"])
     run_id = str(uuid.uuid4())
@@ -979,6 +1020,8 @@ def main() -> None:
 
     logger.info("Production Forecast Generation -- F1.1")
     logger.info("plan_version=%s, horizon=%d, run_id=%s...", plan_version, horizon, run_id[:8])
+    logger.info("Cold-start routing: DFUs with < %d months → %s, < %d months → skip",
+                min_history_months, cold_start_model_id, cold_start_min_months)
     if args.dry_run:
         logger.info("DRY RUN -- no data will be written")
 
@@ -998,7 +1041,8 @@ def main() -> None:
                 champion_df = champion_df.head(args.max_dfus)
                 logger.info("Sampling limited to %s DFUs (--max-dfus)", f"{args.max_dfus:,}")
 
-            sales_df = load_recent_sales(conn, item_filter, loc_filter)
+            sales_df = load_recent_sales(conn, item_filter, loc_filter,
+                                         lookback_months=lookback_months)
             dfu_attrs = load_dfu_attrs(conn, item_filter, loc_filter)
             item_attrs_df = load_item_attrs(conn, item_filter)
 
@@ -1010,7 +1054,7 @@ def main() -> None:
             model_ids_needed = {args.model_id}
         else:
             src_ids = set(champion_df["source_model_id"].dropna().unique())
-            model_ids_needed = src_ids | {fallback_model_id}
+            model_ids_needed = src_ids | {fallback_model_id, cold_start_model_id}
 
         # Load model artifacts
         logger.info("Step 2: Loading model artifacts for: %s", model_ids_needed)
@@ -1072,11 +1116,29 @@ def main() -> None:
                     art = next(iter(cluster_models.values()), None)
                 return art
 
+            cold_start_count = 0
             for _, champ in champion_df.iterrows():
                 item_id = champ["item_id"]
                 loc = champ["loc"]
-                model_id = args.model_id or champ["source_model_id"] or fallback_model_id
                 cluster_id = champ["cluster_id"]
+
+                # Determine history length for cold-start routing
+                sales_entry = sales_index.get((item_id, loc))
+                n_months = len(sales_entry[1]) if sales_entry else 0
+
+                if n_months < cold_start_min_months:
+                    skipped += 1
+                    continue
+
+                if args.model_id:
+                    model_id = args.model_id
+                elif n_months < min_history_months:
+                    # Cold-start DFU: insufficient history for tree models
+                    model_id = cold_start_model_id
+                    cold_start_count += 1
+                else:
+                    # Mature DFU: use champion assignment
+                    model_id = champ["source_model_id"] or fallback_model_id
 
                 artifact = _resolve_artifact(model_id, cluster_id)
                 if artifact is None:
@@ -1088,6 +1150,7 @@ def main() -> None:
                     loc=loc,
                     cluster_id=cluster_id,
                     horizon=horizon,
+                    min_months=cold_start_min_months,
                     sales_index=sales_index,
                     attrs_index=attrs_index,
                     item_index=item_index,
@@ -1100,9 +1163,10 @@ def main() -> None:
                     ({"item_id": item_id, "loc": loc, "cluster_id": cluster_id}, grid, artifact)
                 )
 
-        logger.info("%s DFUs in %d cluster groups, %s skipped (no history/model)",
+        logger.info("%s DFUs in %d cluster groups, %s skipped, %s cold-start (→ %s)",
                     f"{sum(len(v) for v in cluster_groups.values()):,}",
-                    len(cluster_groups), f"{skipped:,}")
+                    len(cluster_groups), f"{skipped:,}",
+                    f"{cold_start_count:,}", cold_start_model_id)
 
         # Batch-predict per cluster group — parallelise across independent groups
         n_workers = min(len(cluster_groups), min(os.cpu_count() or 4, 4))

@@ -8,19 +8,66 @@ from api.core import get_conn
 router = APIRouter(prefix="/fva", tags=["fva"])
 
 
+STAGE_DEFS = [
+    ("seasonal_naive", "Naive Seasonal", "Same-month-last-year baseline for measuring planning lift.", "actual"),
+    ("external", "External", "Current ERP or external forecast before model selection.", "actual"),
+    ("champion", "Champion", "Best measured statistical or ML model for the DFU-month.", "actual"),
+    ("ai_adjusted", "AI Adjusted", "Reserved for AI-assisted forecast interventions once they are measured.", "planned"),
+    ("planner_adjusted", "Planner Adjusted", "Reserved for human overrides once measured outcomes are available.", "planned"),
+]
+
+
+def _round_or_none(value: float | None, digits: int = 2) -> float | None:
+    return round(float(value), digits) if value is not None else None
+
+
+def _build_stage(stage_id: str, label: str, description: str, default_state: str, model: dict | None) -> dict:
+    if default_state == "planned":
+        return {
+            "stage_id": stage_id,
+            "label": label,
+            "description": description,
+            "state": "planned",
+            "accuracy_pct": None,
+            "delta_vs_prev": None,
+            "n_rows": 0,
+        }
+
+    if model is None:
+        return {
+            "stage_id": stage_id,
+            "label": label,
+            "description": description,
+            "state": "missing",
+            "accuracy_pct": None,
+            "delta_vs_prev": None,
+            "n_rows": 0,
+        }
+
+    return {
+        "stage_id": stage_id,
+        "label": label,
+        "description": description,
+        "state": "actual",
+        "accuracy_pct": model["accuracy_pct"],
+        "delta_vs_prev": None,
+        "n_rows": model["n_rows"],
+    }
+
+
 @router.get("/waterfall")
 async def fva_waterfall(
     months: int = Query(12, ge=1, le=36),
 ):
-    """FVA waterfall data: naive -> statistical -> champion -> planner-adjusted accuracy."""
+    """FVA ladder data: naive seasonal -> external -> champion -> future adjustment stages."""
     with get_conn() as conn, conn.cursor() as cur:
         # Get accuracy by model_id for the FVA waterfall
         cur.execute(
-            """SELECT model_id,
+               """SELECT model_id,
                       100.0 - (100.0 * sum(abs(basefcst_pref - tothist_dmd)) / NULLIF(abs(sum(tothist_dmd)), 0)) AS accuracy_pct,
                       count(*) AS n_rows
                FROM fact_external_forecast_monthly
-               WHERE startdate >= now() - interval '%s months'
+               WHERE startdate >= current_date - (%s * interval '1 month')
                  AND lag = 0
                  AND tothist_dmd IS NOT NULL
                GROUP BY model_id
@@ -31,11 +78,38 @@ async def fva_waterfall(
 
     models = {}
     for r in rows:
-        models[r[0]] = {"model_id": r[0], "accuracy_pct": round(float(r[1]), 2) if r[1] else None, "n_rows": r[2]}
+        models[r[0]] = {
+            "model_id": r[0],
+            "accuracy_pct": _round_or_none(r[1]),
+            "n_rows": r[2],
+        }
+
+    stages = [
+        _build_stage(stage_id, label, description, default_state, models.get(stage_id))
+        for stage_id, label, description, default_state in STAGE_DEFS
+    ]
+    for idx in range(1, len(stages)):
+        prev = stages[idx - 1]
+        curr = stages[idx]
+        if prev["state"] == "actual" and curr["state"] == "actual":
+            curr["delta_vs_prev"] = _round_or_none(curr["accuracy_pct"] - prev["accuracy_pct"], 1)
+
+    ceiling_model = models.get("ceiling")
+    benchmark = {
+        "stage_id": "ceiling",
+        "label": "Ceiling Benchmark",
+        "description": "Reference best-case benchmark rather than a production handoff stage.",
+        "state": "actual" if ceiling_model else "missing",
+        "accuracy_pct": ceiling_model["accuracy_pct"] if ceiling_model else None,
+        "delta_vs_prev": None,
+        "n_rows": ceiling_model["n_rows"] if ceiling_model else 0,
+    }
 
     return {
         "months": months,
         "waterfall": {
+            "stages": stages,
+            "benchmark": benchmark,
             "external": models.get("external"),
             "champion": models.get("champion"),
             "ceiling": models.get("ceiling"),
@@ -118,7 +192,7 @@ async def roi_summary(
                  coalesce(sum(financial_impact_estimate), 0) AS total_estimated_impact,
                  coalesce(sum(actual_financial_impact) FILTER (WHERE status = 'measured'), 0) AS total_actual_impact
                FROM fact_intervention_metrics
-               WHERE created_at >= now() - interval '%s months'""",
+               WHERE created_at >= current_date - (%s * interval '1 month')""",
             (months,),
         )
         row = cur.fetchone()

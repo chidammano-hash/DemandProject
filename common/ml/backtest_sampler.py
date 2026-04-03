@@ -30,7 +30,20 @@ logger = logging.getLogger(__name__)
 
 
 def _load_sampling_config() -> dict[str, Any]:
-    """Load ``config/backtest_sampling_config.yaml`` and return the ``sampling`` section."""
+    """Load sampling config.
+
+    Reads from ``forecast_pipeline_config.yaml`` ``backtest_sampling`` section
+    first, falls back to ``backtest_sampling_config.yaml`` ``sampling`` section.
+    """
+    try:
+        from common.utils import load_forecast_pipeline_config
+        pipeline_cfg = load_forecast_pipeline_config()
+        sampling = pipeline_cfg.get("backtest_sampling", {})
+        if sampling:
+            return sampling
+    except (ImportError, FileNotFoundError):
+        pass
+    # Legacy fallback
     cfg = load_config("backtest_sampling_config.yaml")
     return cfg.get("sampling", {})
 

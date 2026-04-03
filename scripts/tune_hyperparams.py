@@ -46,7 +46,7 @@ from common.tuning import (
     save_best_params,
     suggest_params,
 )
-from common.utils import _ts
+from common.utils import _ts, get_algorithm_roster, load_forecast_pipeline_config
 
 
 # ── Objective factory ─────────────────────────────────────────────────────────
@@ -229,6 +229,44 @@ def main() -> None:
     # ── Load config ───────────────────────────────────────────────────────────
     with open(args.config) as f:
         config = yaml.safe_load(f)
+
+    # Overlay pipeline-level tuning params from forecast_pipeline_config.yaml
+    # (n_trials, n_splits, gap_months, etc.). Search spaces remain in
+    # hyperparameter_tuning.yaml.
+    try:
+        pipeline_cfg = load_forecast_pipeline_config()
+        pipeline_tuning = pipeline_cfg.get("tuning", {})
+        # Merge: pipeline values override old config for shared keys
+        for key in (
+            "n_trials", "n_splits", "gap_months", "val_months_per_fold",
+            "min_train_months", "early_stopping_rounds", "n_estimators_max",
+            "n_estimators_buffer", "random_seed", "output_dir",
+        ):
+            if key in pipeline_tuning:
+                config["tuning"][key] = pipeline_tuning[key]
+    except FileNotFoundError:
+        pass  # No pipeline config — use hyperparameter_tuning.yaml as-is
+
+    # Check algorithm tune flag from the roster
+    try:
+        roster = get_algorithm_roster(stage="tune")
+        model_in_roster = any(
+            e.get("config_key") == args.model
+            for e in roster.values()
+        )
+        if not model_in_roster:
+            # Check if the model exists but has tune=false
+            all_roster = get_algorithm_roster()
+            exists = any(
+                e.get("config_key") == args.model
+                for e in all_roster.values()
+            )
+            if exists:
+                print(f"[{_ts()}] Model '{args.model}' has tune=false in "
+                      f"forecast_pipeline_config.yaml — skipping")
+                sys.exit(0)
+    except FileNotFoundError:
+        pass  # No pipeline config — run unconditionally
 
     t_cfg = config["tuning"]
     n_trials = args.n_trials or t_cfg["n_trials"]

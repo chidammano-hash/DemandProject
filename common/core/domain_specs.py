@@ -485,6 +485,34 @@ INVENTORY_SPEC = DomainSpec(
 )
 
 
+CUSTOMER_DEMAND_SPEC = DomainSpec(
+    name="customer_demand",
+    plural="customer_demand",
+    table="fact_customer_demand_monthly",
+    ck_field="demand_ck",
+    business_key_field="item_id",
+    business_key_fields=("item_id", "customer_no", "location_id", "startdate"),
+    business_key_separator="_",
+    columns=[
+        "item_id", "customer_no", "site", "location_id", "startdate",
+        "demand_qty", "sales_qty", "oos_qty",
+    ],
+    source_file="*_customer_demand.csv",
+    clean_file="customer_demand_clean.csv",
+    search_fields=["item_id", "customer_no", "location_id", "site"],
+    int_fields=set(),
+    float_fields={"demand_qty", "sales_qty", "oos_qty"},
+    date_fields={"startdate"},
+    default_sort="startdate",
+    source_delimiter=",",
+    source_columns={
+        "item_id": "item_no",
+        "customer_no": "customer_no",
+        "site": "site",
+    },
+)
+
+
 SOURCING_SPEC = DomainSpec(
     name="sourcing",
     plural="sourcings",
@@ -589,6 +617,7 @@ DOMAIN_SPECS: dict[str, DomainSpec] = {
     SALES_SPEC.name: SALES_SPEC,
     FORECAST_SPEC.name: FORECAST_SPEC,
     INVENTORY_SPEC.name: INVENTORY_SPEC,
+    CUSTOMER_DEMAND_SPEC.name: CUSTOMER_DEMAND_SPEC,
     SOURCING_SPEC.name: SOURCING_SPEC,
     PURCHASE_ORDER_SPEC.name: PURCHASE_ORDER_SPEC,
 }

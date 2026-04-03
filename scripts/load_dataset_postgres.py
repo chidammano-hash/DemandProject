@@ -203,6 +203,67 @@ def _filter_unmatched_dfus(cur, stg_table: str, domain: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# FK orphan filter — remove staging rows referencing missing dimension values
+# ---------------------------------------------------------------------------
+
+# Map: (domain, staging_column) → (dimension_table, dimension_column)
+_FK_CHECKS: dict[str, list[tuple[str, str, str]]] = {
+    "sales":     [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
+    "forecast":  [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
+    "inventory": [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
+}
+
+
+def _filter_fk_orphans(cur, stg_table: str, domain: str) -> int:
+    """Delete staging rows that reference missing dimension values.
+
+    Prevents FK violation errors during INSERT. Returns total deleted rows.
+    """
+    checks = _FK_CHECKS.get(domain)
+    if not checks:
+        return 0
+
+    total_deleted = 0
+    for stg_col, dim_table, dim_col in checks:
+        # Check if dimension table exists
+        cur.execute("""
+            SELECT EXISTS(
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = %s AND table_schema = 'public'
+            )
+        """, (dim_table,))
+        if not cur.fetchone()[0]:
+            continue
+
+        # Check if staging table has this column
+        cur.execute(f"""
+            SELECT EXISTS(
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = %s AND column_name = %s
+            )
+        """, (stg_table, stg_col))
+        if not cur.fetchone()[0]:
+            continue
+
+        cur.execute(f"""
+            DELETE FROM {qident(stg_table)} s
+            WHERE trim(s.{qident(stg_col)}) IS NOT NULL
+              AND trim(s.{qident(stg_col)}) != ''
+              AND NOT EXISTS (
+                SELECT 1 FROM {qident(dim_table)} d
+                WHERE d.{qident(dim_col)} = trim(s.{qident(stg_col)})
+            )
+        """)
+        deleted = cur.rowcount
+        if deleted:
+            logger.info("  Removed %s staging rows: %s not in %s.%s",
+                         f"{deleted:,}", stg_col, dim_table, dim_col)
+            total_deleted += deleted
+
+    return total_deleted
+
+
+# ---------------------------------------------------------------------------
 # Forecast-specific helpers
 # ---------------------------------------------------------------------------
 
@@ -566,6 +627,15 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                                     f"{stg_rows - dfu_deleted:,}",
                                     f"{dfu_deleted:,}", _elapsed(t0))
 
+            # Phase 1b2: FK orphan filter — remove rows referencing missing dimension values
+            if spec.name in _FK_CHECKS:
+                with profiled_section("filter_fk_orphans"):
+                    t0 = time.time()
+                    fk_deleted = _filter_fk_orphans(cur, stg_table, spec.name)
+                    if fk_deleted:
+                        logger.info("  FK orphan filter: removed %s rows (%s)",
+                                    f"{fk_deleted:,}", _elapsed(t0))
+
             # Phase 1c: Forecast-specific — 12-month filter + execution lag
             archive_count = 0
             if is_forecast:
@@ -611,7 +681,7 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                         saved_constraints = _get_unique_constraints(cur, spec.table)
                         _drop_unique_constraints(cur, spec.table, saved_constraints)
                         _drop_indexes(cur, saved_indexes)
-                        cur.execute(f"TRUNCATE TABLE {qident(spec.table)}")
+                        cur.execute(f"TRUNCATE TABLE {qident(spec.table)} CASCADE")
                         logger.info("  Truncated + dropped %d indexes (%s)",
                                     len(saved_indexes) + len(saved_constraints), _elapsed(t0))
             else:
@@ -636,7 +706,7 @@ def load_domain(spec: DomainSpec, csv_path: Path,
                     logger.info("  Incremental delete + dropped %d indexes (%s)",
                                 len(saved_indexes) + len(saved_constraints), _elapsed(t0))
                 else:
-                    cur.execute(f"TRUNCATE TABLE {qident(spec.table)}")
+                    cur.execute(f"TRUNCATE TABLE {qident(spec.table)} CASCADE")
                     logger.info("  Truncated + dropped %d indexes (%s)",
                                 len(saved_indexes) + len(saved_constraints), _elapsed(t0))
 

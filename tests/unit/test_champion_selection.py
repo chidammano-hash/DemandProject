@@ -3,6 +3,7 @@
 import pytest
 import pandas as pd
 from datetime import date
+from unittest.mock import patch
 from scripts.run_champion_selection import generate_summary, _compute_segment_accuracy
 
 
@@ -158,7 +159,19 @@ class TestGenerateSummaryFallback:
 
 
 class TestLoadConfig:
-    """Test config loading and validation."""
+    """Test config loading and validation.
+
+    These tests exercise the legacy config path (model_competition.yaml).
+    Mock _load_config_from_pipeline to return None so the fallback is used.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _disable_pipeline_config(self):
+        with patch(
+            "scripts.run_champion_selection._load_config_from_pipeline",
+            return_value=None,
+        ):
+            yield
 
     def test_load_config_missing_file(self, tmp_path):
         from scripts.run_champion_selection import load_config

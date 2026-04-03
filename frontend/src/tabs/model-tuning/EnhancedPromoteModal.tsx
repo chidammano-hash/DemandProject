@@ -233,6 +233,13 @@ export function EnhancedPromoteModal({
             </div>
           )}
 
+          {/* Config target note */}
+          <div className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+            <span className="font-medium">Target:</span> Hyperparameters will be written to{" "}
+            <code className="font-mono">algorithm_config.yaml</code>. Champion strategy
+            changes go to <code className="font-mono">forecast_pipeline_config.yaml</code>.
+          </div>
+
           {/* Two promotion cards */}
           <div className="grid gap-4 md:grid-cols-2">
             {/* Card 1: Promote Parameters */}

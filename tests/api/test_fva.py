@@ -14,11 +14,12 @@ from tests.api.conftest import make_pool as _make_pool
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_fva_waterfall():
-    """GET /fva/waterfall returns model accuracy waterfall."""
+    """GET /fva/waterfall returns staged FVA ladder plus benchmark."""
     rows = [
-        ("ceiling", 85.1, 1000),
-        ("champion", 78.3, 1000),
+        ("seasonal_naive", 60.2, 1000),
         ("external", 72.5, 1000),
+        ("champion", 78.3, 1000),
+        ("ceiling", 85.1, 1000),
     ]
     pool, conn, cursor = _make_pool(fetchall_return=rows)
     with patch("api.core._get_pool", return_value=pool):
@@ -30,16 +31,39 @@ async def test_fva_waterfall():
     data = resp.json()
     assert data["months"] == 12
     wf = data["waterfall"]
+    stages = wf["stages"]
+    assert [stage["stage_id"] for stage in stages] == [
+        "seasonal_naive",
+        "external",
+        "champion",
+        "ai_adjusted",
+        "planner_adjusted",
+    ]
+    assert stages[0]["label"] == "Naive Seasonal"
+    assert stages[0]["accuracy_pct"] == 60.2
+    assert stages[0]["delta_vs_prev"] is None
+    assert stages[1]["accuracy_pct"] == 72.5
+    assert stages[1]["delta_vs_prev"] == 12.3
+    assert stages[2]["accuracy_pct"] == 78.3
+    assert stages[2]["delta_vs_prev"] == 5.8
+    assert stages[3]["state"] == "planned"
+    assert stages[3]["accuracy_pct"] is None
+    assert stages[4]["state"] == "planned"
+    assert stages[4]["accuracy_pct"] is None
+    assert wf["benchmark"]["stage_id"] == "ceiling"
+    assert wf["benchmark"]["accuracy_pct"] == 85.1
     assert wf["external"]["model_id"] == "external"
     assert wf["external"]["accuracy_pct"] == 72.5
     assert wf["champion"]["accuracy_pct"] == 78.3
     assert wf["ceiling"]["accuracy_pct"] == 85.1
-    assert len(wf["models"]) == 3
+    assert len(wf["models"]) == 4
+    executed_sql = cursor.execute.call_args_list[0].args[0]
+    assert "current_date - (%s * interval '1 month')" in executed_sql
 
 
 @pytest.mark.asyncio
 async def test_fva_waterfall_empty():
-    """GET /fva/waterfall returns empty waterfall when no data."""
+    """GET /fva/waterfall returns placeholder stages when no data is available."""
     pool, conn, cursor = _make_pool(fetchall_return=[])
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -48,6 +72,10 @@ async def test_fva_waterfall_empty():
             resp = await client.get("/fva/waterfall")
     assert resp.status_code == 200
     data = resp.json()
+    stages = data["waterfall"]["stages"]
+    assert [stage["state"] for stage in stages[:3]] == ["missing", "missing", "missing"]
+    assert [stage["state"] for stage in stages[3:]] == ["planned", "planned"]
+    assert data["waterfall"]["benchmark"]["state"] == "missing"
     assert data["waterfall"]["external"] is None
     assert data["waterfall"]["champion"] is None
     assert data["waterfall"]["models"] == []
@@ -65,6 +93,8 @@ async def test_fva_waterfall_custom_months():
             resp = await client.get("/fva/waterfall", params={"months": 6})
     assert resp.status_code == 200
     assert resp.json()["months"] == 6
+    executed_sql = cursor.execute.call_args_list[0].args[0]
+    assert "current_date - (%s * interval '1 month')" in executed_sql
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +165,8 @@ async def test_fva_roi_summary():
     assert data["pending"] == 6
     assert data["total_estimated_impact"] == 50000.0
     assert data["total_actual_impact"] == 20000.0
+    executed_sql = cursor.execute.call_args_list[0].args[0]
+    assert "current_date - (%s * interval '1 month')" in executed_sql
 
 
 @pytest.mark.asyncio

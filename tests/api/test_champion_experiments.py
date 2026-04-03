@@ -394,6 +394,8 @@ async def test_promote_experiment():
         patch("api.core._get_pool", return_value=pool),
         patch("builtins.open", mock_open(read_data=yaml_content)),
         patch("pathlib.Path.exists", return_value=True),
+        patch("shutil.copy2"),
+        patch("common.utils.reset_config"),
     ):
         from api.main import app
         transport = ASGITransport(app=app)
