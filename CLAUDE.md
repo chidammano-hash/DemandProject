@@ -127,8 +127,12 @@ make backtest-chronos  # Chronos T5 (46M, ~2.5h)
 make backtest-bolt     # Chronos Bolt (205M, ~12min)
 make backtest-chronos2 # Chronos 2 zero-shot (821M, ~5.5h)
 make backtest-chronos2e # Chronos 2 Enriched with 31 covariates (~6h)
+make customer-features # Pre-compute 34 customer-derived features from customer demand
+make backtest-cust-enriched-all # LGBM/CatBoost/XGBoost with customer features
+make backtest-bolt-hier # Chronos Bolt hierarchical (customer bottom-up + reconciliation)
 make champion-all      # Meta-learner + simulate + champion select
 make tune-all          # Bayesian hyperparameter tuning (all models)
+make tune-cust-enriched-all # Bayesian tuning for customer-enriched tree models
 make expert-panel      # Expert Panel algorithm selection test (5000 DFUs, ~30 min)
 make expert-panel-quick # Quick Expert Panel test (1000 DFUs, ~8 min)
 make seasonality-all   # Detect + write seasonality profiles

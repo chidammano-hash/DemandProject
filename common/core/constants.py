@@ -40,6 +40,43 @@ CROSS_DFU_FEATURES = ["cluster_mean_lag1", "cluster_total_lag1",
 # External forecast signal features — optional enrichment
 EXTERNAL_FORECAST_FEATURES = ["ext_fcst_ratio", "ext_fcst_lag1_ratio"]
 
+# Customer-derived features (from customer_features_monthly table)
+CUSTOMER_CONCENTRATION_FEATURES = [
+    "n_active_cust", "n_active_cust_6m", "hhi_demand",
+    "top1_cust_share", "top3_cust_share", "cust_gini",
+]
+CUSTOMER_DYNAMICS_FEATURES = [
+    "new_cust_demand_share", "churned_cust_demand_share",
+    "cust_count_mom", "cust_retention_rate", "cust_tenure_mean",
+]
+CUSTOMER_TRUE_DEMAND_FEATURES = [
+    "true_demand_ratio", "oos_rate", "oos_cust_pct",
+    "demand_sales_gap_3m", "oos_trend",
+    "demand_qty_lag1", "demand_qty_lag3_mean",
+]
+CUSTOMER_CHANNEL_MIX_FEATURES = [
+    "channel_entropy", "dominant_channel_share",
+    "channel_mix_shift", "on_premise_share",
+]
+CUSTOMER_CROSS_FEATURES = [
+    "cust_demand_cv_mean", "cust_demand_sync", "max_cust_share_delta",
+]
+CUSTOMER_ATTRIBUTE_MIX_FEATURES = [
+    "store_type_entropy", "dominant_store_type_share",
+    "chain_ratio", "top_chain_share",
+    "sub_channel_entropy",
+    "active_cust_pct", "avg_delivery_freq",
+    "on_premise_acct_share", "premise_diversity",
+]
+CUSTOMER_FEATURE_COLS = (
+    CUSTOMER_CONCENTRATION_FEATURES
+    + CUSTOMER_DYNAMICS_FEATURES
+    + CUSTOMER_TRUE_DEMAND_FEATURES
+    + CUSTOMER_CHANNEL_MIX_FEATURES
+    + CUSTOMER_CROSS_FEATURES
+    + CUSTOMER_ATTRIBUTE_MIX_FEATURES
+)
+
 # All enhanced features from the four new feature groups
 ENHANCED_FEATURES = FOURIER_FEATURES + CROSTON_FEATURES + CROSS_DFU_FEATURES + EXTERNAL_FORECAST_FEATURES
 
@@ -52,6 +89,8 @@ PROTECTED_FEATURES = {
     # Croston decomposition features handle intermittent demand correctly;
     # protect them so SHAP selection cannot strip them (causes bias on sparse SKUs).
     "croston_demand_size", "croston_probability",
+    # Customer enrichment — core signals that should never be SHAP-pruned
+    "true_demand_ratio", "n_active_cust", "hhi_demand",
 }
 
 # Output column ordering for fact_external_forecast_monthly

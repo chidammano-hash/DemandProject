@@ -24,6 +24,7 @@ from common.constants import (
     CAT_FEATURES,
     CROSTON_FEATURES,
     CROSS_DFU_FEATURES,
+    CUSTOMER_FEATURE_COLS,
     ENHANCED_FEATURES,
     EXTERNAL_FORECAST_FEATURES,
     FOURIER_FEATURES,
@@ -514,6 +515,7 @@ def build_feature_matrix(
     item_attrs: pd.DataFrame,
     all_months: list[pd.Timestamp],
     cat_dtype: str = "category",
+    customer_features: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build FULL feature matrix: one row per (sku_ck, month).
 
@@ -523,6 +525,8 @@ def build_feature_matrix(
     Args:
         cat_dtype: Dtype for categorical features.
             "category" for LightGBM/XGBoost, "str" for CatBoost.
+        customer_features: Optional customer-derived features at item×loc×month
+            grain from customer_features_monthly table. Left-joined and NaN-filled.
     """
     t0 = time.time()
     dfu_keys = dfu_attrs[["sku_ck", "item_id", "customer_group", "loc"]].drop_duplicates()
@@ -607,6 +611,16 @@ def build_feature_matrix(
     t1 = time.time()
     _compute_cross_dfu_features(grid)
     logger.debug("Cross-DFU cluster features done (%.1fs)", time.time() - t1)
+
+    # Customer-derived features (optional — enriched models only)
+    if customer_features is not None and len(customer_features) > 0:
+        t1 = time.time()
+        # customer_features is at (item_id, loc, startdate) grain
+        grid = grid.merge(customer_features, on=["item_id", "loc", "startdate"], how="left")
+        for col in CUSTOMER_FEATURE_COLS:
+            if col in grid.columns:
+                grid[col] = pd.to_numeric(grid[col], errors="coerce").fillna(0).astype(np.float32)
+        logger.info("Customer features joined: %d cols (%.1fs)", len(CUSTOMER_FEATURE_COLS), time.time() - t1)
 
     # Fill missing numerics (including enhanced features)
     for col in NUMERIC_SKU_FEATURES + NUMERIC_ITEM_FEATURES + ENHANCED_FEATURES:

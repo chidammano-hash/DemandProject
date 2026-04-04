@@ -10,6 +10,156 @@ export interface CustomerAnalyticsFilters {
   date_to?: string;
   channel?: string;
   store_type?: string;
+  state?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Channel Mix extended payload
+// ---------------------------------------------------------------------------
+
+export interface ChannelMixPayloadExtended extends ChannelMixPayload {
+  grand_total?: number;
+  total_customers?: number;
+  top_channel?: string;
+}
+
+// ---------------------------------------------------------------------------
+// KPI types
+// ---------------------------------------------------------------------------
+
+export interface KpiMetric {
+  value: number;
+  delta: number;
+}
+
+export interface KpiPayload {
+  total_demand: KpiMetric;
+  fill_rate: KpiMetric;
+  lost_sales_oos: KpiMetric;
+  active_customers: KpiMetric;
+  demand_concentration: KpiMetric;
+  order_to_demand_ratio: KpiMetric;
+}
+
+// ---------------------------------------------------------------------------
+// Filter options
+// ---------------------------------------------------------------------------
+
+export interface FilterOptionsPayload {
+  channels: string[];
+  store_types: string[];
+  states: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle types
+// ---------------------------------------------------------------------------
+
+export interface CohortCell {
+  cohort_month: string;
+  months_since: number;
+  retention_pct: number;
+}
+
+export interface WaterfallBar {
+  label: string;
+  value: number;
+  type: "new" | "churned" | "net";
+}
+
+export interface LifecyclePayload {
+  cohort_heatmap: CohortCell[];
+  cohort_months: string[];
+  max_months_since: number;
+  waterfall: WaterfallBar[];
+}
+
+// ---------------------------------------------------------------------------
+// Demand at risk
+// ---------------------------------------------------------------------------
+
+export interface RiskBar {
+  label: string;
+  value: number;
+  type: "total" | "risk" | "secure";
+}
+
+export interface DemandAtRiskPayload {
+  bars: RiskBar[];
+}
+
+// ---------------------------------------------------------------------------
+// Customer-item affinity
+// ---------------------------------------------------------------------------
+
+export interface AffinityCell {
+  customer: string;
+  item: string;
+  demand_qty: number;
+}
+
+export interface AffinityPayload {
+  customers: string[];
+  items: string[];
+  cells: AffinityCell[];
+}
+
+// ---------------------------------------------------------------------------
+// Order patterns
+// ---------------------------------------------------------------------------
+
+export interface FrequencyBin {
+  bin: string;
+  count: number;
+}
+
+export interface RegularityPoint {
+  customer: string;
+  avg_interval: number;
+  cv: number;
+  total_orders: number;
+}
+
+export interface OrderPatternsPayload {
+  frequency: FrequencyBin[];
+  regularity: RegularityPoint[];
+}
+
+// ---------------------------------------------------------------------------
+// Demand flow sankey
+// ---------------------------------------------------------------------------
+
+export interface SankeyNode {
+  name: string;
+}
+
+export interface SankeyLink {
+  source: string;
+  target: string;
+  value: number;
+}
+
+export interface DemandFlowPayload {
+  nodes: SankeyNode[];
+  links: SankeyLink[];
+}
+
+// ---------------------------------------------------------------------------
+// Alerts
+// ---------------------------------------------------------------------------
+
+export interface AlertEntry {
+  alert_type: string;
+  severity: "red" | "amber";
+  message: string;
+  item_id: string | null;
+  loc: string | null;
+  value: number;
+  threshold: number;
+}
+
+export interface AlertsPayload {
+  alerts: AlertEntry[];
 }
 
 export interface MapLocation {
@@ -158,6 +308,7 @@ function filterParams(f?: CustomerAnalyticsFilters): Record<string, string | und
     date_to: f.date_to || undefined,
     channel: f.channel || undefined,
     store_type: f.store_type || undefined,
+    state: f.state || undefined,
   };
 }
 
@@ -181,6 +332,21 @@ export const customerAnalyticsKeys = {
   oosImpact: (grain: string, f?: CustomerAnalyticsFilters) =>
     ["customer-analytics-oos-impact", grain, f] as const,
   items: (search: string) => ["customer-analytics-items", search] as const,
+  kpis: (f?: CustomerAnalyticsFilters) =>
+    ["customer-analytics-kpis", f] as const,
+  filterOptions: () => ["customer-analytics-filter-options"] as const,
+  lifecycle: (f?: CustomerAnalyticsFilters) =>
+    ["customer-analytics-lifecycle", f] as const,
+  demandAtRisk: (f?: CustomerAnalyticsFilters) =>
+    ["customer-analytics-demand-at-risk", f] as const,
+  affinity: (f?: CustomerAnalyticsFilters) =>
+    ["customer-analytics-affinity", f] as const,
+  orderPatterns: (f?: CustomerAnalyticsFilters) =>
+    ["customer-analytics-order-patterns", f] as const,
+  demandFlow: (f?: CustomerAnalyticsFilters) =>
+    ["customer-analytics-demand-flow", f] as const,
+  alerts: (f?: CustomerAnalyticsFilters) =>
+    ["customer-analytics-alerts", f] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -249,4 +415,57 @@ export function fetchCustomerAnalyticsItems(
 ): Promise<ItemsPayload> {
   const qs = buildQuerySuffix({ search });
   return fetchJson(`/customer-analytics/items${qs}`);
+}
+
+export function fetchCustomerAnalyticsKpis(
+  filters?: CustomerAnalyticsFilters,
+): Promise<KpiPayload> {
+  const qs = buildQuerySuffix(filterParams(filters));
+  return fetchJson(`/customer-analytics/kpis${qs}`);
+}
+
+export function fetchCustomerAnalyticsFilterOptions(): Promise<FilterOptionsPayload> {
+  return fetchJson("/customer-analytics/filter-options");
+}
+
+export function fetchCustomerAnalyticsLifecycle(
+  filters?: CustomerAnalyticsFilters,
+): Promise<LifecyclePayload> {
+  const qs = buildQuerySuffix(filterParams(filters));
+  return fetchJson(`/customer-analytics/lifecycle${qs}`);
+}
+
+export function fetchCustomerAnalyticsDemandAtRisk(
+  filters?: CustomerAnalyticsFilters,
+): Promise<DemandAtRiskPayload> {
+  const qs = buildQuerySuffix(filterParams(filters));
+  return fetchJson(`/customer-analytics/demand-at-risk${qs}`);
+}
+
+export function fetchCustomerAnalyticsAffinity(
+  filters?: CustomerAnalyticsFilters,
+): Promise<AffinityPayload> {
+  const qs = buildQuerySuffix(filterParams(filters));
+  return fetchJson(`/customer-analytics/affinity${qs}`);
+}
+
+export function fetchCustomerAnalyticsOrderPatterns(
+  filters?: CustomerAnalyticsFilters,
+): Promise<OrderPatternsPayload> {
+  const qs = buildQuerySuffix(filterParams(filters));
+  return fetchJson(`/customer-analytics/order-patterns${qs}`);
+}
+
+export function fetchCustomerAnalyticsDemandFlow(
+  filters?: CustomerAnalyticsFilters,
+): Promise<DemandFlowPayload> {
+  const qs = buildQuerySuffix(filterParams(filters));
+  return fetchJson(`/customer-analytics/demand-flow${qs}`);
+}
+
+export function fetchCustomerAnalyticsAlerts(
+  filters?: CustomerAnalyticsFilters,
+): Promise<AlertsPayload> {
+  const qs = buildQuerySuffix(filterParams(filters));
+  return fetchJson(`/customer-analytics/alerts${qs}`);
 }

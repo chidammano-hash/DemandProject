@@ -10,6 +10,8 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters, MapLocation } from "@/api/queries/customer-analytics";
 import usStatesGeo from "@/assets/us-states.json";
+import { useDashboardFilter } from "./DashboardFilterContext";
+import { ExportButtons } from "./ExportButtons";
 
 const statesGeoJSON = usStatesGeo as unknown as GeoJSON.FeatureCollection;
 
@@ -79,6 +81,7 @@ interface Props {
 }
 
 export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, onGroupByChange }: Props) {
+  const { dispatch } = useDashboardFilter();
   const geoRef = useRef(0);
 
   const { data, isLoading } = useQuery({
@@ -109,11 +112,15 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
       const loc = stateLookup.get(code.toUpperCase());
       if (loc) {
         layer.bindTooltip(
-          `<b>${name}</b><br/>Customers: ${fmtNum(loc.customer_count)}<br/>Demand: ${fmtNum(loc.demand_qty)}<br/>Fill Rate: ${loc.fill_rate}%`,
+          `<b>${name}</b><br/>Customers: ${fmtNum(loc.customer_count)}<br/>Demand: ${fmtNum(loc.demand_qty)}<br/>Sales: ${fmtNum(loc.sales_qty)}<br/>OOS: ${fmtNum(loc.oos_qty)}<br/>Fill Rate: ${loc.fill_rate}%`,
         );
       }
+      layer.on("click", () => {
+        const stateCode = STATE_NAME_TO_CODE[name] || name;
+        dispatch({ type: "SET_STATE", payload: stateCode.toUpperCase() });
+      });
     },
-    [stateLookup],
+    [stateLookup, dispatch],
   );
 
   const geoStyle = useCallback(
@@ -138,9 +145,12 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
   const bubbles = locations.filter((l) => l.lat != null && l.lon != null);
 
   return (
-    <Card>
+    <Card aria-label="Customer demand map">
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Customer Demand Map</CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">Customer Demand Map</CardTitle>
+          <ExportButtons panelId="demand-map" getData={() => locations} />
+        </div>
         <div className="flex gap-2 flex-wrap mt-1">
           <div className="flex gap-1">
             {(["state", "city", "zip"] as const).map((g) => (

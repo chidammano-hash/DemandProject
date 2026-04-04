@@ -59,6 +59,8 @@ const DIMENSION_DOMAINS = [
   "sku",
   "sales",
   "forecast",
+  "customer_demand",
+  "customer_features",
 ];
 
 // ---------------------------------------------------------------------------

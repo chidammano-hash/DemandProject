@@ -513,6 +513,55 @@ CUSTOMER_DEMAND_SPEC = DomainSpec(
 )
 
 
+CUSTOMER_FEATURES_SPEC = DomainSpec(
+    name="customer_features",
+    plural="customer_features",
+    table="customer_features_monthly",
+    ck_field="item_id",
+    business_key_field="item_id",
+    business_key_fields=("item_id", "loc", "startdate"),
+    business_key_separator="_",
+    columns=[
+        "item_id", "loc", "startdate",
+        "n_active_cust", "n_active_cust_6m", "hhi_demand",
+        "top1_cust_share", "top3_cust_share", "cust_gini",
+        "new_cust_demand_share", "churned_cust_demand_share",
+        "cust_count_mom", "cust_retention_rate", "cust_tenure_mean",
+        "true_demand_ratio", "oos_rate", "oos_cust_pct",
+        "demand_sales_gap_3m", "oos_trend",
+        "demand_qty_lag1", "demand_qty_lag3_mean",
+        "channel_entropy", "dominant_channel_share",
+        "channel_mix_shift", "on_premise_share",
+        "cust_demand_cv_mean", "cust_demand_sync", "max_cust_share_delta",
+        "store_type_entropy", "dominant_store_type_share",
+        "chain_ratio", "top_chain_share", "sub_channel_entropy",
+        "active_cust_pct", "avg_delivery_freq",
+        "on_premise_acct_share", "premise_diversity",
+    ],
+    source_file="",
+    clean_file="",
+    search_fields=["item_id", "loc"],
+    int_fields={"n_active_cust", "n_active_cust_6m"},
+    float_fields={
+        "hhi_demand", "top1_cust_share", "top3_cust_share", "cust_gini",
+        "new_cust_demand_share", "churned_cust_demand_share",
+        "cust_count_mom", "cust_retention_rate", "cust_tenure_mean",
+        "true_demand_ratio", "oos_rate", "oos_cust_pct",
+        "demand_sales_gap_3m", "oos_trend",
+        "demand_qty_lag1", "demand_qty_lag3_mean",
+        "channel_entropy", "dominant_channel_share",
+        "channel_mix_shift", "on_premise_share",
+        "cust_demand_cv_mean", "cust_demand_sync", "max_cust_share_delta",
+        "store_type_entropy", "dominant_store_type_share",
+        "chain_ratio", "top_chain_share", "sub_channel_entropy",
+        "active_cust_pct", "avg_delivery_freq",
+        "on_premise_acct_share", "premise_diversity",
+    },
+    date_fields={"startdate"},
+    default_sort="startdate",
+)
+
+
 SOURCING_SPEC = DomainSpec(
     name="sourcing",
     plural="sourcings",
@@ -618,6 +667,7 @@ DOMAIN_SPECS: dict[str, DomainSpec] = {
     FORECAST_SPEC.name: FORECAST_SPEC,
     INVENTORY_SPEC.name: INVENTORY_SPEC,
     CUSTOMER_DEMAND_SPEC.name: CUSTOMER_DEMAND_SPEC,
+    CUSTOMER_FEATURES_SPEC.name: CUSTOMER_FEATURES_SPEC,
     SOURCING_SPEC.name: SOURCING_SPEC,
     PURCHASE_ORDER_SPEC.name: PURCHASE_ORDER_SPEC,
 }

@@ -76,8 +76,10 @@ Predict future demand using ML models, then select the best forecast per item.
 | 15 | [Expert Panel: Algorithm Selection](02-forecasting/15-expert-panel-algorithm-selection.md) | 31-expert panel tests 30+ algorithms (statistical, tree, deep learning, foundation models) across demand segments; routes each DFU to its best-fit algorithm via affinity matrix optimization |
 | 18 | [Chronos Foundation Models](02-forecasting/18-chronos-foundation-models.md) | Four Chronos variants (T5, Bolt, Chronos 2, Chronos 2 Enriched) — architecture, covariates, configuration, performance benchmarks |
 | 19 | [Forecast Pipeline Config](02-forecasting/19-forecast-pipeline-config.md) | Master config consolidation — algorithm roster with lifecycle flags, backtest/tuning/champion/production settings in one file |
+| 20 | [Bolt Hierarchical](02-forecasting/20-bolt-hierarchical.md) | Customer-level bottom-up Chronos Bolt with top-down reconciliation — uses true demand from `fact_customer_demand_monthly` to correct stockout bias |
+| 21 | [Customer-Enriched Features](02-forecasting/21-customer-enriched-features.md) | 34 customer-derived features (concentration, churn, OOS, channel mix, customer attribute mix) for tree model enrichment |
 
-**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config)
+**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config) → 20-21 (customer-enriched)
 
 ---
 

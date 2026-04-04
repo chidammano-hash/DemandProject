@@ -598,7 +598,53 @@ def build_inference_grid(
     if not rows:
         return None
 
-    return pd.DataFrame(rows)
+    grid_df = pd.DataFrame(rows)
+
+    # Enrich with customer features for enriched model variants
+    if _customer_features_cache is not None and not _customer_features_cache.empty:
+        cf = _customer_features_cache
+        # Get latest available customer features for this item×loc
+        item_cf = cf[(cf["item_id"] == item_id) & (cf["loc"] == loc)]
+        if not item_cf.empty:
+            # Use the most recent feature row and apply to all horizon months
+            latest = item_cf.sort_values("startdate").iloc[-1]
+            from common.core.constants import CUSTOMER_FEATURE_COLS
+            for col in CUSTOMER_FEATURE_COLS:
+                if col in latest.index:
+                    grid_df[col] = float(latest[col])
+                else:
+                    grid_df[col] = 0.0
+
+    return grid_df
+
+
+# Customer features cache (loaded once, used across all DFUs)
+_customer_features_cache: pd.DataFrame | None = None
+
+
+def _load_customer_features_for_inference(db: dict) -> pd.DataFrame:
+    """Load customer_features_monthly table for production inference."""
+    global _customer_features_cache
+    if _customer_features_cache is not None:
+        return _customer_features_cache
+    try:
+        with psycopg.connect(**db) as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM customer_features_monthly")
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+        df = pd.DataFrame(rows, columns=cols)
+        if not df.empty:
+            df["startdate"] = pd.to_datetime(df["startdate"])
+            for drop_col in ["load_ts"]:
+                if drop_col in df.columns:
+                    df = df.drop(columns=[drop_col])
+            logger.info("Customer features loaded for inference: %s rows", f"{len(df):,}")
+        _customer_features_cache = df
+        return df
+    except Exception as exc:
+        logger.warning("Could not load customer_features_monthly: %s", exc)
+        _customer_features_cache = pd.DataFrame()
+        return _customer_features_cache
 
 
 # ---------------------------------------------------------------------------
@@ -1071,6 +1117,12 @@ def main() -> None:
             logger.info("Run 'make backtest-lgbm' (or backtest-catboost / backtest-xgboost) "
                         "to train and persist model weights, then re-run this script.")
             return
+
+        # Pre-load customer features if any enriched model is in the set
+        enriched_ids = {m for m in model_ids_needed if "cust_enriched" in m or "hierarchical" in m}
+        if enriched_ids:
+            logger.info("Enriched models detected (%s); loading customer features...", enriched_ids)
+            _load_customer_features_for_inference(db)
 
         # Pre-index data structures for O(1) per-DFU lookups
         logger.info("Step 2b: Pre-indexing data structures...")

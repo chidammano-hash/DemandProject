@@ -7,6 +7,7 @@ import {
   fetchCustomerAnalyticsOosImpact,
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
+import { ExportButtons } from "./ExportButtons";
 
 type Grain = "customer" | "state";
 
@@ -40,11 +41,18 @@ export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
     staleTime: 5 * 60_000,
   });
 
+  const totalOos = useMemo(() => {
+    const bubbles = data?.bubbles ?? [];
+    return bubbles.reduce((sum, b) => sum + b.oos_qty, 0);
+  }, [data]);
+
   const option = useMemo(() => {
     const bubbles = data?.bubbles ?? [];
     if (!bubbles.length) return {};
 
     const maxOos = Math.max(...bubbles.map((b) => b.oos_qty), 1);
+    const maxDemand = Math.max(...bubbles.map((b) => b.demand_qty), 1);
+    const midDemand = maxDemand / 2;
 
     const seriesMap: Record<string, Array<[number, number, number, string]>> = {};
     for (const b of bubbles) {
@@ -53,7 +61,7 @@ export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
       seriesMap[ch].push([b.demand_qty, b.fill_rate, b.oos_qty, b.label]);
     }
 
-    const series = Object.entries(seriesMap).map(([ch, pts]) => ({
+    const scatterSeries = Object.entries(seriesMap).map(([ch, pts]) => ({
       name: ch,
       type: "scatter" as const,
       data: pts,
@@ -79,20 +87,47 @@ export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
         axisLabel: { formatter: (v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}K` : String(v) },
       },
       yAxis: { name: "Fill Rate %", nameLocation: "center" as const, nameGap: 40, type: "value" as const, min: 0, max: 105 },
-      series,
-      // Quadrant reference lines
-      markLine: {
-        silent: true,
-        lineStyle: { type: "dashed" as const, color: "#94a3b8" },
-        data: [{ yAxis: 90 }],
-      },
+      series: [
+        // Quadrant shading: bottom-right = critical zone (high demand, low fill rate)
+        {
+          type: "scatter" as const,
+          data: [],
+          silent: true,
+          markArea: {
+            silent: true,
+            data: [
+              [
+                { xAxis: midDemand, yAxis: 0, itemStyle: { color: "rgba(239,68,68,0.08)" } },
+                { xAxis: maxDemand * 1.1, yAxis: 90 },
+              ],
+            ],
+            label: {
+              show: true,
+              position: "insideBottomRight" as const,
+              formatter: "Critical",
+              fontSize: 11,
+              color: "#dc2626",
+              fontStyle: "italic" as const,
+            },
+          },
+          markLine: {
+            silent: true,
+            lineStyle: { type: "dashed" as const, color: "#94a3b8" },
+            data: [{ yAxis: 90 }],
+          },
+        },
+        ...scatterSeries,
+      ],
     };
   }, [data]);
 
   return (
-    <Card>
+    <Card aria-label="OOS impact bubble chart">
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">OOS Impact Analysis</CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">OOS Impact Analysis</CardTitle>
+          <ExportButtons panelId="oos-impact" getData={() => data?.bubbles ?? []} />
+        </div>
         <div className="flex gap-1 mt-1">
           {(["customer", "state"] as const).map((g) => (
             <button
@@ -105,12 +140,19 @@ export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
           ))}
         </div>
         <p className="text-xs text-muted-foreground mt-1">Bubble size = OOS volume. Below the line = action needed.</p>
+        {totalOos > 0 && (
+          <div className="mt-1 px-2 py-1 bg-red-50 rounded text-xs font-medium text-red-700">
+            Total OOS Volume: {totalOos.toLocaleString()} cases
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         {isLoading ? (
           <div className="h-[400px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
         ) : (
-          <ReactECharts option={option} style={{ height: 400 }} />
+          <div role="img" aria-roledescription="OOS impact bubble scatter chart">
+            <ReactECharts option={option} style={{ height: 400 }} />
+          </div>
         )}
       </CardContent>
     </Card>

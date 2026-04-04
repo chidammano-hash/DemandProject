@@ -238,13 +238,16 @@ def load_backtest_data(
     db: dict[str, Any],
     include_item_attrs: bool = True,
     algo_config: dict[str, Any] | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    include_customer_features: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Load sales, DFU attributes, and item attributes from Postgres.
 
     Sales are capped at the planning date (first of month) to ensure
     no future data leaks into backtesting.
 
-    Returns (sales_df, dfu_attrs, item_attrs).
+    When include_customer_features=True, also loads customer_features_monthly
+    and returns a 4-tuple: (sales_df, dfu_attrs, item_attrs, customer_features).
+    Otherwise returns 3-tuple: (sales_df, dfu_attrs, item_attrs).
     """
     t1 = time.time()
     planning_cutoff = get_planning_date().replace(day=1)
@@ -341,7 +344,29 @@ def load_backtest_data(
     logger.info("Sales: %s rows, %s DFUs (%.1fs)", f"{len(sales_df):,}", f"{len(dfus_with_sales):,}", time.time() - t1)
     logger.info("DFU attrs: %s, Item attrs: %s", f"{len(dfu_attrs):,}", f"{len(item_attrs):,}")
 
-    return sales_df, dfu_attrs, item_attrs
+    if not include_customer_features:
+        return sales_df, dfu_attrs, item_attrs
+
+    # Load customer-derived features from customer_features_monthly
+    customer_features = pd.DataFrame()
+    try:
+        with psycopg.connect(**db) as conn, conn.cursor() as _cur:
+            _cur.execute("SELECT * FROM customer_features_monthly ORDER BY item_id, loc, startdate")
+            _cols = [d[0] for d in _cur.description]
+            customer_features = pd.DataFrame(_cur.fetchall(), columns=_cols)
+        if not customer_features.empty:
+            customer_features["startdate"] = pd.to_datetime(customer_features["startdate"])
+            # Drop non-feature columns that would conflict
+            for drop_col in ["load_ts"]:
+                if drop_col in customer_features.columns:
+                    customer_features = customer_features.drop(columns=[drop_col])
+            logger.info("Customer features: %s rows", f"{len(customer_features):,}")
+        else:
+            logger.warning("customer_features_monthly is empty; enriched models will use zeros")
+    except Exception as exc:
+        logger.warning("Could not load customer_features_monthly: %s", exc)
+
+    return sales_df, dfu_attrs, item_attrs, customer_features
 
 
 # ── DFU cohort classification ───────────────────────────────────────────────

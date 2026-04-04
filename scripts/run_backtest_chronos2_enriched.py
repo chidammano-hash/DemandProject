@@ -98,7 +98,9 @@ def main() -> None:
     db = get_db_params()
 
     with profiled_section("load_data"):
-        sales_df, dfu_attrs, item_attrs = load_backtest_data(db)
+        result = load_backtest_data(db, include_customer_features=True)
+        sales_df, dfu_attrs, item_attrs = result[0], result[1], result[2]
+        customer_features = result[3] if len(result) > 3 else None
 
     if args.loc:
         loc_filter = args.loc.strip()
@@ -160,6 +162,7 @@ def main() -> None:
     with profiled_section("build_features"):
         full_grid = build_feature_matrix(
             sales_df, dfu_attrs, item_attrs, all_months, cat_dtype="str",
+            customer_features=customer_features,
         )
     logger.info("Feature matrix: %s", full_grid.shape)
 

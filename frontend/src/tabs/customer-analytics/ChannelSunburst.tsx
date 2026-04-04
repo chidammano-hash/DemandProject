@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import ReactECharts from "echarts-for-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,6 +7,9 @@ import {
   fetchCustomerAnalyticsChannelMix,
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
+import { ExportButtons } from "./ExportButtons";
+
+type SunburstMetric = "demand" | "customers";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
@@ -31,25 +34,50 @@ function fmtNum(n: number): string {
 }
 
 export function ChannelSunburst({ filters }: Props) {
+  const [sunburstMetric, setSunburstMetric] = useState<SunburstMetric>("demand");
+
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.channelMix(filters),
     queryFn: () => fetchCustomerAnalyticsChannelMix(filters),
     staleTime: 5 * 60_000,
   });
 
+  const topChannelName = useMemo(() => {
+    const tree = data?.tree ?? [];
+    if (tree.length === 0) return "";
+    const sorted = [...tree].sort((a, b) => b.value - a.value);
+    return sorted[0].name;
+  }, [data]);
+
   const option = useMemo(() => {
     const tree = data?.tree ?? [];
     const grandTotal = data?.grand_total ?? 0;
+    const totalCustomers = data?.total_customers ?? 0;
+
+    // For customer count metric, use customer_count values if available
+    const mapNodeForMetric = (node: Record<string, unknown>): Record<string, unknown> => {
+      if (sunburstMetric === "customers" && node.customer_count != null) {
+        return {
+          ...node,
+          value: node.customer_count,
+          children: ((node.children ?? []) as Record<string, unknown>[]).map(mapNodeForMetric),
+        };
+      }
+      return {
+        ...node,
+        children: ((node.children ?? []) as Record<string, unknown>[]).map(mapNodeForMetric),
+      };
+    };
 
     // Assign colors to top-level channels
     const coloredTree = tree.map((ch, i) => ({
-      ...ch,
+      ...mapNodeForMetric(ch as unknown as Record<string, unknown>),
       itemStyle: { color: CHANNEL_PALETTE[i % CHANNEL_PALETTE.length] },
-      children: (ch.children ?? []).map((st: Record<string, unknown>) => ({
-        ...st,
-        // Store type children don't need explicit color — ECharts will derive
-      })),
     }));
+
+    const centerLabel = sunburstMetric === "demand"
+      ? `${fmtNum(grandTotal)} cases`
+      : `${fmtNum(totalCustomers)} customers`;
 
     return {
       tooltip: {
@@ -66,6 +94,21 @@ export function ChannelSunburst({ filters }: Props) {
           </div>`;
         },
       },
+      graphic: [
+        {
+          type: "text",
+          left: "center",
+          top: "center",
+          style: {
+            text: `${centerLabel}\n${topChannelName ? topChannelName : ""}`,
+            textAlign: "center",
+            fontSize: 13,
+            fontWeight: "bold",
+            fill: "#333",
+            lineHeight: 18,
+          },
+        },
+      ],
       series: [
         {
           type: "sunburst",
@@ -131,21 +174,37 @@ export function ChannelSunburst({ filters }: Props) {
         },
       ],
     };
-  }, [data]);
+  }, [data, sunburstMetric, topChannelName]);
 
   return (
-    <Card>
+    <Card aria-label="Channel mix sunburst chart">
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Channel Mix</CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">Channel Mix</CardTitle>
+          <ExportButtons panelId="channel-mix" getData={() => data?.tree ?? []} />
+        </div>
         <p className="text-xs text-muted-foreground">
-          Channel &gt; Store Type &gt; Sub-Channel by demand. Click a segment to zoom in.
+          Channel &gt; Store Type &gt; Sub-Channel. Click a segment to zoom in.
         </p>
+        <div className="flex gap-1 mt-1">
+          {(["demand", "customers"] as SunburstMetric[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => setSunburstMetric(m)}
+              className={`px-2 py-0.5 text-xs rounded ${sunburstMetric === m ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600"}`}
+            >
+              {m === "demand" ? "Demand Volume" : "Customer Count"}
+            </button>
+          ))}
+        </div>
       </CardHeader>
       <CardContent>
         {isLoading ? (
           <div className="h-[420px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
         ) : (
-          <ReactECharts option={option} style={{ height: 420 }} />
+          <div role="img" aria-roledescription="Channel mix sunburst chart">
+            <ReactECharts option={option} style={{ height: 420 }} />
+          </div>
         )}
       </CardContent>
     </Card>

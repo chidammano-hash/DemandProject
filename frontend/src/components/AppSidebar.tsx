@@ -41,15 +41,13 @@ const NAV_ITEMS: NavItem[] = [
   { key: "dataQuality",      label: "Data Quality",   icon: Shield,          section: "operations" },
   // Supply — inventory & replenishment
   { key: "invPlanning",  label: "Inv. Planning", icon: Brain,        section: "supply",  shortcut: "4" },
-  { key: "clusters",     label: "Clusters",      icon: Network,      section: "supply",  shortcut: "5" },
   { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,     section: "supply" },
   // Demand — analysis & forecasting
   { key: "aggregateAnalysis", label: "Portfolio",      icon: LayoutDashboard, section: "demand",   shortcut: "6" },
   { key: "itemAnalysis",      label: "Item Analysis",  icon: TrendingUp,      section: "demand",   shortcut: "7" },
   { key: "fva",               label: "FVA & ROI",      icon: BarChart3,       section: "demand" },
   { key: "lgbmTuning",        label: "Model Tuning",  icon: Activity,        section: "demand" },
-  { key: "customerMap",       label: "Customer Map",   icon: MapPin,          section: "demand" },
-  { key: "customerAnalytics", label: "Customer Analytics", icon: BarChart3,    section: "demand" },
+  { key: "customerAnalytics", label: "Customer Analytics", icon: MapPin,       section: "demand" },
   // System — data tools
   { key: "explorer",     label: "Explorer",      icon: Database,     section: "system" },
   { key: "sqlRunner",    label: "SQL Runner",    icon: TerminalSquare, section: "system" },

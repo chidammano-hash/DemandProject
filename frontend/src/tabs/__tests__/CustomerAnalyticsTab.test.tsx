@@ -25,6 +25,19 @@ vi.mock("echarts-for-react", () => ({
   ),
 }));
 
+// Mock recharts
+vi.mock("recharts", () => ({
+  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
+  Bar: () => null,
+  XAxis: () => null,
+  YAxis: () => null,
+  Tooltip: () => null,
+  Cell: () => null,
+  AreaChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Area: () => null,
+}));
+
 // Mock US states GeoJSON
 vi.mock("@/assets/us-states.json", () => ({
   default: {
@@ -46,6 +59,13 @@ vi.mock("@/api/queries/customer-analytics", () => ({
     ranking: (...args: unknown[]) => ["customer-analytics-ranking", ...args],
     oosImpact: (...args: unknown[]) => ["customer-analytics-oos-impact", ...args],
     items: (...args: unknown[]) => ["customer-analytics-items", ...args],
+    kpis: (...args: unknown[]) => ["customer-analytics-kpis", ...args],
+    filterOptions: () => ["customer-analytics-filter-options"],
+    lifecycle: (...args: unknown[]) => ["customer-analytics-lifecycle", ...args],
+    demandAtRisk: (...args: unknown[]) => ["customer-analytics-demand-at-risk", ...args],
+    affinity: (...args: unknown[]) => ["customer-analytics-affinity", ...args],
+    orderPatterns: (...args: unknown[]) => ["customer-analytics-order-patterns", ...args],
+    demandFlow: (...args: unknown[]) => ["customer-analytics-demand-flow", ...args],
   },
   fetchCustomerAnalyticsMap: vi.fn().mockResolvedValue({
     locations: [
@@ -57,7 +77,7 @@ vi.mock("@/api/queries/customer-analytics", () => ({
     total_customers: 500,
   }),
   fetchCustomerAnalyticsTreemap: vi.fn().mockResolvedValue({
-    tree: [{ name: "CA", value: 10000, children: [{ name: "On Premise", value: 6000, children: [] }] }],
+    tree: [{ name: "CA", value: 10000, fill_rate: 90, children: [{ name: "On Premise", value: 6000, fill_rate: 92, children: [] }] }],
   }),
   fetchCustomerAnalyticsHeatmap: vi.fn().mockResolvedValue({
     items: [{ item_id: "ITEM001", item_desc: "Widget A" }],
@@ -66,7 +86,10 @@ vi.mock("@/api/queries/customer-analytics", () => ({
     metric: "demand_qty",
   }),
   fetchCustomerAnalyticsChannelMix: vi.fn().mockResolvedValue({
-    tree: [{ name: "On Premise", value: 8000, children: [] }],
+    tree: [{ name: "On Premise", value: 8000, customer_count: 200, children: [] }],
+    grand_total: 8000,
+    total_customers: 200,
+    top_channel: "On Premise",
   }),
   fetchCustomerAnalyticsSegmentTrends: vi.fn().mockResolvedValue({
     segments: [
@@ -97,6 +120,70 @@ vi.mock("@/api/queries/customer-analytics", () => ({
   fetchCustomerAnalyticsItems: vi.fn().mockResolvedValue({
     items: [{ item_id: "ITEM001", item_desc: "Widget A" }],
   }),
+  fetchCustomerAnalyticsKpis: vi.fn().mockResolvedValue({
+    total_demand: { value: 500000, delta: 3.2 },
+    fill_rate: { value: 91.5, delta: -0.8 },
+    lost_sales_oos: { value: 42000, delta: -5.1 },
+    active_customers: { value: 1250, delta: 1.3 },
+    demand_concentration: { value: 78.5, delta: 0.5 },
+    order_to_demand_ratio: { value: 0.95, delta: 0.02 },
+  }),
+  fetchCustomerAnalyticsFilterOptions: vi.fn().mockResolvedValue({
+    channels: ["On Premise", "Off Premise"],
+    store_types: ["Chain", "Independent"],
+    states: ["CA", "TX", "NY"],
+  }),
+  fetchCustomerAnalyticsLifecycle: vi.fn().mockResolvedValue({
+    cohort_heatmap: [
+      { cohort_month: "2025-01", months_since: 0, retention_pct: 100 },
+      { cohort_month: "2025-01", months_since: 1, retention_pct: 85 },
+    ],
+    cohort_months: ["2025-01", "2025-02"],
+    max_months_since: 3,
+    waterfall: [
+      { label: "New", value: 120, type: "new" },
+      { label: "Churned", value: -30, type: "churned" },
+      { label: "Net", value: 90, type: "net" },
+    ],
+  }),
+  fetchCustomerAnalyticsDemandAtRisk: vi.fn().mockResolvedValue({
+    bars: [
+      { label: "Total Demand", value: 500000, type: "total" },
+      { label: "Concentration Risk", value: -50000, type: "risk" },
+      { label: "OOS Risk", value: -42000, type: "risk" },
+      { label: "Churn Risk", value: -18000, type: "risk" },
+      { label: "Secure Demand", value: 390000, type: "secure" },
+    ],
+  }),
+  fetchCustomerAnalyticsAffinity: vi.fn().mockResolvedValue({
+    customers: ["Acme Corp", "Beta Inc"],
+    items: ["Widget A", "Widget B"],
+    cells: [
+      { customer: "Acme Corp", item: "Widget A", demand_qty: 5000 },
+      { customer: "Beta Inc", item: "Widget B", demand_qty: 3000 },
+    ],
+  }),
+  fetchCustomerAnalyticsOrderPatterns: vi.fn().mockResolvedValue({
+    frequency: [
+      { bin: "1-5", count: 50 },
+      { bin: "6-10", count: 30 },
+      { bin: "11+", count: 20 },
+    ],
+    regularity: [
+      { customer: "Acme Corp", avg_interval: 14.5, cv: 0.3, total_orders: 24 },
+    ],
+  }),
+  fetchCustomerAnalyticsDemandFlow: vi.fn().mockResolvedValue({
+    nodes: [
+      { name: "Warehouse A" },
+      { name: "CA" },
+      { name: "On Premise" },
+    ],
+    links: [
+      { source: "Warehouse A", target: "CA", value: 10000 },
+      { source: "CA", target: "On Premise", value: 8000 },
+    ],
+  }),
 }));
 
 const { CustomerAnalyticsTab } = await import("@/tabs/CustomerAnalyticsTab");
@@ -124,10 +211,36 @@ describe("CustomerAnalyticsTab", () => {
     });
   });
 
+  it("renders filter dropdowns", async () => {
+    renderTab();
+    await waitFor(() => {
+      // State dropdown
+      expect(screen.getByText("All states")).toBeDefined();
+      // Channel dropdown
+      expect(screen.getByText("All channels")).toBeDefined();
+      // Store Type dropdown
+      expect(screen.getByText("All types")).toBeDefined();
+    });
+  });
+
+  it("renders KPI cards", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByText("Total Demand")).toBeDefined();
+      // "Fill Rate" appears in KPI, heatmap, and ranking — use getAllByText
+      expect(screen.getAllByText("Fill Rate").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText("Lost Sales (OOS)")).toBeDefined();
+      expect(screen.getByText("Active Customers")).toBeDefined();
+      expect(screen.getByText("Demand Concentration")).toBeDefined();
+      expect(screen.getByText("Order-to-Demand Ratio")).toBeDefined();
+    });
+  });
+
   it("renders map panel with metric buttons", async () => {
     renderTab();
     await waitFor(() => {
-      expect(screen.getByText("Customers")).toBeDefined();
+      // "Customers" appears in map buttons, heatmap headers, and segment table
+      expect(screen.getAllByText("Customers").length).toBeGreaterThanOrEqual(1);
       expect(screen.getByText("Demand (cases)")).toBeDefined();
     });
   });
@@ -157,7 +270,6 @@ describe("CustomerAnalyticsTab", () => {
     renderTab();
     await waitFor(() => {
       expect(screen.getByText("Segment Trends")).toBeDefined();
-      // "Channel" and "Store Type" appear both as filter labels and segment buttons
       expect(screen.getAllByText("Channel").length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText("Store Type").length).toBeGreaterThanOrEqual(1);
     });
@@ -179,6 +291,41 @@ describe("CustomerAnalyticsTab", () => {
     });
   });
 
+  it("renders lifecycle panel", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByText("Customer Lifecycle")).toBeDefined();
+    });
+  });
+
+  it("renders demand at risk", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByText("Demand at Risk")).toBeDefined();
+    });
+  });
+
+  it("renders affinity heatmap", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByText("Customer-Item Affinity")).toBeDefined();
+    });
+  });
+
+  it("renders order patterns", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByText("Order Patterns")).toBeDefined();
+    });
+  });
+
+  it("renders demand flow sankey", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByText("Demand Flow")).toBeDefined();
+    });
+  });
+
   it("renders map container", async () => {
     renderTab();
     await waitFor(() => {
@@ -190,7 +337,7 @@ describe("CustomerAnalyticsTab", () => {
     renderTab();
     await waitFor(() => {
       const charts = screen.getAllByTestId("echart");
-      // treemap + heatmap + sunburst + oos bubble = 4
+      // treemap + heatmap + sunburst + oos bubble + lifecycle + affinity + order patterns scatter + sankey = 8
       expect(charts.length).toBeGreaterThanOrEqual(4);
     });
   });
@@ -214,6 +361,28 @@ describe("CustomerAnalyticsTab", () => {
     await waitFor(() => {
       expect(screen.getByText("From")).toBeDefined();
       expect(screen.getByText("To")).toBeDefined();
+    });
+  });
+
+  it("renders KPI summary cards container with aria-label", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByLabelText("KPI summary cards")).toBeDefined();
+    });
+  });
+
+  it("renders sunburst metric toggle buttons", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByText("Demand Volume")).toBeDefined();
+      expect(screen.getByText("Customer Count")).toBeDefined();
+    });
+  });
+
+  it("renders customer search in ranking panel", async () => {
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("Search customer...")).toBeDefined();
     });
   });
 });

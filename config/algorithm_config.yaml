@@ -120,6 +120,77 @@ algorithms:
     gamma: 0.1
     colsample_bylevel: 0.8
     booster: gbtree
+  lgbm_cust_enriched:
+    enabled: true
+    model_id: lgbm_cust_enriched
+    cluster_strategy: per_cluster
+    recursive: true
+    shap_select: true
+    shap_threshold: 0.95
+    shap_sample_size: 500
+    customer_features: true
+    n_estimators: 1500
+    learning_rate: 0.02
+    num_leaves: 127
+    min_child_samples: 40
+    max_depth: -1
+    min_gain_to_split: 0.005
+    subsample: 0.7
+    bagging_freq: 1
+    colsample_bytree: 0.65
+    feature_fraction_bynode: 0.45
+    reg_lambda: 1.5
+    reg_alpha: 0.15
+    path_smooth: 4
+    max_bin: 127
+  catboost_cust_enriched:
+    enabled: true
+    model_id: catboost_cust_enriched
+    cluster_strategy: per_cluster
+    recursive: true
+    shap_select: true
+    shap_threshold: 0.95
+    shap_sample_size: 500
+    customer_features: true
+    iterations: 800
+    learning_rate: 0.03
+    depth: 7
+    l2_leaf_reg: 9.0
+    subsample: 0.85
+    grow_policy: Lossguide
+    border_count: 32
+    random_strength: 0.4
+    min_data_in_leaf: 28
+    colsample_bylevel: 0.80
+    bagging_temperature: 0.4
+    max_leaves: 80
+    bootstrap_type: MVS
+    model_size_reg: 0.10
+    score_function: L2
+    boost_from_average: true
+  xgboost_cust_enriched:
+    enabled: true
+    model_id: xgboost_cust_enriched
+    cluster_strategy: per_cluster
+    recursive: true
+    shap_select: true
+    shap_threshold: 0.95
+    shap_sample_size: 500
+    customer_features: true
+    n_estimators: 2000
+    learning_rate: 0.02
+    max_depth: 7
+    min_child_weight: 15
+    subsample: 0.8
+    colsample_bytree: 0.75
+    grow_policy: lossguide
+    max_leaves: 255
+    max_bin: 256
+    reg_lambda: 6.0
+    reg_alpha: 0.6
+    gamma: 0.1
+    colsample_bylevel: 0.75
+    booster: gbtree
   seasonal_naive:
     enabled: true
     model_id: seasonal_naive
@@ -156,6 +227,20 @@ algorithms:
     batch_size: 1024
     prediction_length: 6
     num_workers: 1
+  bolt_hierarchical:
+    enabled: true
+    model_id: bolt_hierarchical
+    model_size: base
+    device: auto
+    batch_size: 1024
+    prediction_length: 6
+    n_timeframes: 10
+    # Hierarchy config
+    min_nonzero_months: 3
+    max_customers_per_item_loc: 100
+    # Reconciliation: "weighted_average" (fast) or "mint_shrink" (optimal)
+    reconciliation_method: mint_shrink
+    bu_weight: 0.6
   rolling_mean:
     enabled: true
     model_id: rolling_mean

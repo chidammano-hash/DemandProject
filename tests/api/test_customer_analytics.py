@@ -349,3 +349,323 @@ async def test_ranking_invalid_sort():
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/customer-analytics/ranking?sort=badval")
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# /customer-analytics/kpis
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_kpis_returns_six_metrics():
+    pool, _, cursor = _make_pool()
+    # Row: c_demand, c_sales, c_oos, c_cust, p_demand, p_sales, p_oos, p_cust, top10_demand
+    cursor.fetchone.return_value = (10000.0, 9000.0, 1000.0, 50, 8000.0, 7000.0, 1000.0, 45, 4000.0)
+    with patch("api.core._get_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/kpis")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "kpis" in data
+    assert len(data["kpis"]) == 6
+    keys = [k["key"] for k in data["kpis"]]
+    assert "total_demand" in keys
+    assert "fill_rate" in keys
+    assert "oos_volume" in keys
+    assert "active_customers" in keys
+    assert "concentration_top10" in keys
+    assert "order_demand_ratio" in keys
+    # total_demand should be 10000
+    td = next(k for k in data["kpis"] if k["key"] == "total_demand")
+    assert td["value"] == 10000.0
+    # delta = (10000-8000)/8000 * 100 = 25.0
+    assert td["delta"] == 25.0
+
+
+@pytest.mark.asyncio
+async def test_kpis_empty():
+    pool, _, cursor = _make_pool()
+    cursor.fetchone.return_value = None
+    with patch("api.core._get_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/kpis")
+    assert resp.status_code == 200
+    assert resp.json()["kpis"] == []
+
+
+# ---------------------------------------------------------------------------
+# /customer-analytics/lifecycle
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_lifecycle_returns_cohorts_and_waterfall():
+    pool, _, cursor = _make_pool()
+    # First query = cohort rows: (cohort_month, months_since, active, size)
+    cohort_rows = [
+        (date(2025, 6, 1), 0, 10, 10),
+        (date(2025, 6, 1), 1, 8, 10),
+        (date(2025, 7, 1), 0, 5, 5),
+    ]
+    # Second query = waterfall rows: (month, new_customers, churned_customers)
+    waterfall_rows = [
+        (date(2025, 6, 1), 10, 0),
+        (date(2025, 7, 1), 5, 2),
+    ]
+    cursor.fetchall.side_effect = [cohort_rows, waterfall_rows]
+    with patch("api.core._get_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/lifecycle")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "cohorts" in data
+    assert "waterfall" in data
+    assert len(data["cohorts"]) == 2
+    assert data["cohorts"][0]["cohort_month"] == "2025-06-01"
+    assert data["cohorts"][0]["retention_pct"] == [100.0, 80.0]
+    assert len(data["waterfall"]) == 2
+    assert data["waterfall"][1]["net_change"] == 3  # 5 - 2
+
+
+# ---------------------------------------------------------------------------
+# /customer-analytics/demand-at-risk
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_demand_at_risk_waterfall():
+    pool, _, cursor = _make_pool()
+    # Row: total_demand, concentration_risk, oos_loss, churn_risk
+    cursor.fetchone.return_value = (100000.0, 20000.0, 5000.0, 3000.0)
+    with patch("api.core._get_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/demand-at-risk")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "waterfall" in data
+    assert len(data["waterfall"]) == 5
+    cats = [w["category"] for w in data["waterfall"]]
+    assert cats == ["total_demand", "concentration_risk", "oos_loss", "churn_risk", "secure_demand"]
+    assert data["waterfall"][0]["value"] == 100000.0
+    # secure = 100000 - 20000 - 5000 - 3000 = 72000
+    assert data["waterfall"][4]["value"] == 72000.0
+
+
+@pytest.mark.asyncio
+async def test_demand_at_risk_empty():
+    pool, _, cursor = _make_pool()
+    cursor.fetchone.return_value = None
+    with patch("api.core._get_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/demand-at-risk")
+    assert resp.status_code == 200
+    assert resp.json()["waterfall"] == []
+
+
+# ---------------------------------------------------------------------------
+# /customer-analytics/affinity
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_affinity_returns_matrix():
+    pool, _, cursor = _make_pool()
+    cursor.fetchall.return_value = [
+        ("C001", "Acme Corp", "ITEM001", "Widget A", 5000.0),
+        ("C001", "Acme Corp", "ITEM002", "Gadget B", 3000.0),
+        ("C002", "Beta LLC", "ITEM001", "Widget A", 2000.0),
+    ]
+    with patch("api.core._get_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/affinity?top_n=10")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "customers" in data
+    assert "items" in data
+    assert "cells" in data
+    assert len(data["customers"]) == 2
+    assert len(data["items"]) == 2
+    assert len(data["cells"]) == 3
+    assert data["cells"][0]["demand_qty"] == 5000.0
+
+
+# ---------------------------------------------------------------------------
+# /customer-analytics/order-patterns
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_order_patterns_returns_histogram_and_scatter():
+    pool, _, cursor = _make_pool()
+    # Rows: customer_no, customer_name, avg_interval, cv, order_count, total_demand
+    cursor.fetchall.return_value = [
+        ("C001", "Acme Corp", 1.0, 0.2, 12, 50000.0),
+        ("C002", "Beta LLC", 3.0, 0.5, 4, 20000.0),
+        ("C003", "Gamma Inc", 6.0, 1.2, 2, 5000.0),
+    ]
+    with patch("api.core._get_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/order-patterns")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "frequency_histogram" in data
+    assert "regularity_scatter" in data
+    hist = {h["bucket"]: h["count"] for h in data["frequency_histogram"]}
+    assert hist["monthly"] == 1
+    assert hist["quarterly"] == 1
+    assert hist["sporadic"] == 1
+    assert len(data["regularity_scatter"]) == 3
+
+
+# ---------------------------------------------------------------------------
+# /customer-analytics/demand-flow
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_demand_flow_returns_sankey():
+    pool, _, cursor = _make_pool()
+    cursor.fetchall.return_value = [
+        ("LOC01", "CA", "On Premise", 5000.0),
+        ("LOC01", "TX", "Off Premise", 3000.0),
+        ("LOC02", "CA", "On Premise", 2000.0),
+    ]
+    with patch("api.core._get_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/demand-flow")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "nodes" in data
+    assert "links" in data
+    # Should have warehouse nodes, state nodes, and channel nodes
+    node_names = {n["name"] for n in data["nodes"]}
+    assert "WH_LOC01" in node_names
+    assert "CA" in node_names
+    assert "On Premise" in node_names
+    # Links: 3 warehouse->state + 2 unique state->channel
+    assert len(data["links"]) >= 4
+
+
+# ---------------------------------------------------------------------------
+# /customer-analytics/filter-options
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_filter_options_returns_lists():
+    pool, _, cursor = _make_pool()
+    cursor.fetchone.return_value = (
+        ["Off Premise", "On Premise"],
+        ["Bar", "Grocery", "Restaurant"],
+        ["CA", "FL", "TX"],
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/filter-options")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["channels"] == ["Off Premise", "On Premise"]
+    assert data["store_types"] == ["Bar", "Grocery", "Restaurant"]
+    assert data["states"] == ["CA", "FL", "TX"]
+
+
+@pytest.mark.asyncio
+async def test_filter_options_empty():
+    pool, _, cursor = _make_pool()
+    cursor.fetchone.return_value = (None, None, None)
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/filter-options")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["channels"] == []
+    assert data["store_types"] == []
+    assert data["states"] == []
+
+
+# ---------------------------------------------------------------------------
+# /customer-analytics/alerts
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_alerts_returns_low_fill_rate():
+    pool, _, cursor = _make_pool()
+    # fill rate query returns rows; hhi returns empty; mom returns None
+    fr_rows = [("ITEM001", "LOC01", 65.0), ("ITEM002", "LOC02", 80.0)]
+    hhi_rows = []
+    cursor.fetchall.side_effect = [fr_rows, hhi_rows]
+    cursor.fetchone.return_value = None  # mom query
+    with patch("api.core._get_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/alerts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "alerts" in data
+    assert len(data["alerts"]) == 2
+    # 65% < 70 => red, 80% < 85 => amber
+    severities = {a["value"]: a["severity"] for a in data["alerts"]}
+    assert severities[65.0] == "red"
+    assert severities[80.0] == "amber"
+
+
+@pytest.mark.asyncio
+async def test_alerts_hhi_and_churn():
+    pool, _, cursor = _make_pool()
+    fr_rows = []
+    hhi_rows = [("ITEM005", "LOC03", 0.85)]
+    cursor.fetchall.side_effect = [fr_rows, hhi_rows]
+    # mom: startdate, cur_cust, prev_cust, cur_demand, prev_demand
+    # churn = (100-70)/100 = 30% > 10% => alert
+    cursor.fetchone.return_value = (date(2026, 2, 1), 70, 100, 50000.0, 35000.0)
+    with patch("api.core._get_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/alerts")
+    assert resp.status_code == 200
+    data = resp.json()
+    types = [a["alert_type"] for a in data["alerts"]]
+    assert "high_concentration" in types
+    assert "high_churn" in types
+    # demand surge: (50000-35000)/35000 = 42.9% > 30%
+    assert "demand_surge" in types
+
+
+@pytest.mark.asyncio
+async def test_alerts_no_alerts():
+    pool, _, cursor = _make_pool()
+    cursor.fetchall.side_effect = [[], []]  # no fill-rate or hhi alerts
+    cursor.fetchone.return_value = None
+    with patch("api.core._get_pool", return_value=pool), \
+         _patch_planning_date():
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/customer-analytics/alerts")
+    assert resp.status_code == 200
+    assert resp.json()["alerts"] == []

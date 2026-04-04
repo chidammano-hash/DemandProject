@@ -288,7 +288,18 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
    - Native categorical support via `enable_categorical=True` with `tree_method="hist"`
    - GPU support via `device="cuda"`; auto-detected at runtime
    - MLflow experiment tracking (`demand_backtest`)
-11b. MSTL backtesting:
+11b. Customer-Enriched Tree Model Backtesting:
+   - LGBM, CatBoost, and XGBoost variants with 34 customer-derived features from `fact_customer_demand_monthly`
+   - Same per-cluster expanding-window framework as standard tree models — identical `fit_model()` call
+   - Feature groups: concentration (HHI, top-customer share, Gini), dynamics (churn, retention, acquisition), true demand (demand/sales ratio, OOS rate), channel mix (entropy, shift), cross-customer (CV, sync), customer attribute mix (store type entropy, chain ratio, premise diversity, delivery frequency, sub-channel entropy)
+   - Features pre-computed by `scripts/ml/generate_customer_features.py` → `customer_features_monthly` table at item × location × month grain
+   - Left-joined to DFU feature matrix; NaN filled with 0 for item-locs without customer data
+   - 3 SHAP-protected features (true_demand_ratio, n_active_cust, hhi_demand); remaining 31 subject to SHAP pruning
+   - Regularization bumped vs base models (lower colsample_bytree, higher L1/L2) to counteract wider feature set
+   - model_ids: `lgbm_cust_enriched`, `catboost_cust_enriched`, `xgboost_cust_enriched`
+   - CLI: `make customer-features && make backtest-cust-enriched-all`
+   - See `docs/specs/02-forecasting/21-customer-enriched-features.md` for full spec
+11c. MSTL backtesting:
    - MSTL (Multiple Seasonal-Trend decomposition using LOESS) from the `statsforecast` library
    - Per-DFU fitting with parallel workers (default 8); decomposes into trend + multiple seasonal components
    - Config in `config/algorithm_config.yaml` under `mstl` key: `season_length: 12`, `min_history: 25`
@@ -976,7 +987,17 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
     - Vectorized input construction (~2.3s for 214K DFUs)
     - Default model ID: `chronos2_enriched`
     - See `docs/specs/02-forecasting/18-chronos-foundation-models.md` for full details
-12. **MSTL Backtest** (`run_backtest_mstl.py` → `adv_algorithm_testing/statistical_upgrades.py`):
+12. **Bolt Hierarchical Backtest** (`run_backtest_bolt_hierarchical.py` → `foundation_models.py`):
+    - Customer-level bottom-up Chronos Bolt forecasting with top-down reconciliation
+    - Data source: `fact_customer_demand_monthly` (`demand_qty` = unconstrained true demand)
+    - Two-level hierarchy: customer×item×loc (bottom) → item×loc (top), both inferred by Bolt
+    - Reconciliation: weighted average (Phase 1) → MinTrace shrinkage (Phase 2) via `hierarchicalforecast`
+    - Reconciled forecasts mapped to DFU grain (item×customer_group×loc) for champion competition
+    - Key advantage: uses true demand signal (not inventory-constrained sales) to correct stockout bias
+    - Default model ID: `bolt_hierarchical`
+    - CLI: `make backtest-bolt-hier`, `make backtest-bolt-hier-full`
+    - See `docs/specs/02-forecasting/20-bolt-hierarchical.md` for full design
+13. **MSTL Backtest** (`run_backtest_mstl.py` → `adv_algorithm_testing/statistical_upgrades.py`):
     - MSTL (Multiple Seasonal-Trend decomposition using LOESS) from the `statsforecast` library
     - Per-DFU fitting with parallel workers (default 8 via `--workers` flag); decomposes into trend + multiple seasonal components
     - Uses shared `generate_timeframes()`, `load_backtest_data()`, `postprocess_predictions()`, `save_backtest_output()` from backtest framework

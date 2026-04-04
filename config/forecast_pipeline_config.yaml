@@ -59,6 +59,42 @@ algorithms:
     config_key: xgboost
     output_dir: data/backtest/xgboost_cluster
 
+  lgbm_cust_enriched:
+    type: tree
+    enabled: true
+    tune: true
+    backtest: true
+    compete: true
+    forecast: true
+    expert: false
+    cluster_strategy: per_cluster
+    config_key: lgbm_cust_enriched
+    output_dir: data/backtest/lgbm_cust_enriched
+
+  catboost_cust_enriched:
+    type: tree
+    enabled: true
+    tune: true
+    backtest: true
+    compete: true
+    forecast: true
+    expert: false
+    cluster_strategy: per_cluster
+    config_key: catboost_cust_enriched
+    output_dir: data/backtest/catboost_cust_enriched
+
+  xgboost_cust_enriched:
+    type: tree
+    enabled: true
+    tune: true
+    backtest: true
+    compete: true
+    forecast: true
+    expert: false
+    cluster_strategy: per_cluster
+    config_key: xgboost_cust_enriched
+    output_dir: data/backtest/xgboost_cust_enriched
+
   chronos:
     type: foundation
     enabled: true
@@ -102,6 +138,18 @@ algorithms:
     expert: false
     config_key: chronos2_enriched
     output_dir: data/backtest/chronos2_enriched
+
+  bolt_hierarchical:
+    type: foundation
+    enabled: true
+    tune: false
+    backtest: true
+    compete: true
+    forecast: true
+    expert: false
+    config_key: bolt_hierarchical
+    output_dir: data/backtest/bolt_hierarchical
+    notes: "Customer-level bottom-up Bolt + top-down reconciliation using true demand"
 
   mstl:
     type: statistical

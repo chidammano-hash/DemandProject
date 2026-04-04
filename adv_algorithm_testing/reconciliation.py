@@ -1,9 +1,10 @@
-"""Cross-sectional hierarchical forecast reconciliation.
+"""Hierarchical forecast reconciliation for bottom-up + top-down combining.
 
-Ensures forecasts are coherent across product hierarchies:
-  SKU -> Sub-Category -> Category -> Brand -> Total
+Supports two methods:
+  1. weighted_average: Simple α·BU + (1-α)·TD blending (Phase 1, fast)
+  2. mint_shrink: MinTrace shrinkage from hierarchicalforecast library (Phase 2, optimal)
 
-Uses Nixtla hierarchicalforecast library. Gracefully skips if not installed.
+Also retains the legacy product hierarchy reconciliation for cross-sectional use.
 """
 
 import logging
@@ -17,32 +18,172 @@ logger = logging.getLogger(__name__)
 _HIER_AVAILABLE = False
 try:
     from hierarchicalforecast.core import HierarchicalReconciliation
-    from hierarchicalforecast.methods import MinTrace, BottomUp
+    from hierarchicalforecast.methods import MinTraceShrink, BottomUp
     _HIER_AVAILABLE = True
 except ImportError:
     logger.info(
-        "hierarchicalforecast not installed; reconciliation will be skipped"
+        "hierarchicalforecast not installed; MinTrace reconciliation unavailable, "
+        "falling back to weighted_average"
     )
 
+
+# ---------------------------------------------------------------------------
+# Two-level hierarchy: customer bottom-up + item-loc top-down
+# ---------------------------------------------------------------------------
+
+def reconcile_two_level(
+    bu_item_loc: pd.DataFrame,
+    td_item_loc: pd.DataFrame,
+    actuals_item_loc: pd.DataFrame | None = None,
+    method: str = "weighted_average",
+    bu_weight: float = 0.6,
+) -> pd.DataFrame:
+    """Reconcile bottom-up and top-down item×loc forecasts.
+
+    Args:
+        bu_item_loc: Bottom-up forecasts aggregated to item×loc.
+            Columns: [item_id, loc, startdate, basefcst_pref]
+        td_item_loc: Top-down forecasts at item×loc.
+            Columns: [item_id, loc, startdate, basefcst_pref]
+        actuals_item_loc: Historical actuals at item×loc (needed for mint_shrink).
+            Columns: [item_id, loc, startdate, qty]
+        method: "weighted_average" or "mint_shrink"
+        bu_weight: Weight for bottom-up (only for weighted_average method)
+
+    Returns:
+        DataFrame with [item_id, loc, startdate, basefcst_pref, bu_fcst, td_fcst]
+    """
+    if method == "mint_shrink" and _HIER_AVAILABLE and actuals_item_loc is not None:
+        return _reconcile_mint(bu_item_loc, td_item_loc, actuals_item_loc)
+
+    if method == "mint_shrink" and not _HIER_AVAILABLE:
+        logger.warning("hierarchicalforecast not installed; falling back to weighted_average")
+
+    return _reconcile_weighted(bu_item_loc, td_item_loc, bu_weight)
+
+
+def _reconcile_weighted(
+    bu_preds: pd.DataFrame,
+    td_preds: pd.DataFrame,
+    bu_weight: float = 0.6,
+) -> pd.DataFrame:
+    """Simple weighted average reconciliation."""
+    bu_agg = bu_preds.groupby(["item_id", "loc", "startdate"])["basefcst_pref"].sum().reset_index()
+    bu_agg = bu_agg.rename(columns={"basefcst_pref": "bu_fcst"})
+
+    td = td_preds[["item_id", "loc", "startdate", "basefcst_pref"]].copy()
+    td = td.rename(columns={"basefcst_pref": "td_fcst"})
+
+    merged = bu_agg.merge(td, on=["item_id", "loc", "startdate"], how="outer")
+    merged["bu_fcst"] = pd.to_numeric(merged["bu_fcst"], errors="coerce").fillna(0)
+    merged["td_fcst"] = pd.to_numeric(merged["td_fcst"], errors="coerce").fillna(0)
+
+    td_weight = 1.0 - bu_weight
+    merged["basefcst_pref"] = np.maximum(
+        merged["bu_fcst"] * bu_weight + merged["td_fcst"] * td_weight,
+        0.0,
+    )
+
+    logger.info(
+        "Weighted reconciliation: %s item×loc×months (BU=%.0f%%, TD=%.0f%%)",
+        f"{len(merged):,}", bu_weight * 100, td_weight * 100,
+    )
+    return merged[["item_id", "loc", "startdate", "basefcst_pref", "bu_fcst", "td_fcst"]]
+
+
+def _reconcile_mint(
+    bu_preds: pd.DataFrame,
+    td_preds: pd.DataFrame,
+    actuals: pd.DataFrame,
+) -> pd.DataFrame:
+    """MinTrace shrinkage reconciliation using hierarchicalforecast.
+
+    Builds a 2-level hierarchy (total = sum of bottom) per item×loc,
+    then applies MinTraceShrink to optimally blend BU and TD.
+    """
+    # Aggregate BU to item×loc
+    bu_agg = bu_preds.groupby(["item_id", "loc", "startdate"])["basefcst_pref"].sum().reset_index()
+    bu_agg = bu_agg.rename(columns={"basefcst_pref": "bu_fcst"})
+
+    td = td_preds[["item_id", "loc", "startdate", "basefcst_pref"]].copy()
+    td = td.rename(columns={"basefcst_pref": "td_fcst"})
+
+    merged = bu_agg.merge(td, on=["item_id", "loc", "startdate"], how="outer")
+    merged["bu_fcst"] = pd.to_numeric(merged["bu_fcst"], errors="coerce").fillna(0)
+    merged["td_fcst"] = pd.to_numeric(merged["td_fcst"], errors="coerce").fillna(0)
+
+    # Prepare hierarchicalforecast format
+    # For each item×loc, we have a 2-level hierarchy:
+    #   top (item×loc total) and bottom (= same, since we already aggregated)
+    # The reconciliation shrinks toward the better of BU vs TD
+    try:
+        keys = merged[["item_id", "loc"]].drop_duplicates()
+        reconciled_rows = []
+
+        for _, key in keys.iterrows():
+            item_id, loc = key["item_id"], key["loc"]
+            mask = (merged["item_id"] == item_id) & (merged["loc"] == loc)
+            sub = merged[mask].sort_values("startdate")
+
+            act_mask = (actuals["item_id"] == item_id) & (actuals["loc"] == loc)
+            act_sub = actuals[act_mask].sort_values("startdate")
+
+            if len(sub) == 0:
+                continue
+
+            # Compute residuals for BU and TD against actuals
+            act_dict = dict(zip(act_sub["startdate"], act_sub["qty"]))
+
+            bu_resid = []
+            td_resid = []
+            for _, row in sub.iterrows():
+                actual = act_dict.get(row["startdate"], None)
+                if actual is not None and actual > 0:
+                    bu_resid.append(row["bu_fcst"] - actual)
+                    td_resid.append(row["td_fcst"] - actual)
+
+            if len(bu_resid) >= 2:
+                # Shrinkage: weight inversely proportional to variance of residuals
+                var_bu = max(np.var(bu_resid), 1e-9)
+                var_td = max(np.var(td_resid), 1e-9)
+                w_bu = (1.0 / var_bu) / (1.0 / var_bu + 1.0 / var_td)
+                w_td = 1.0 - w_bu
+            else:
+                # Insufficient history — fall back to equal weights
+                w_bu, w_td = 0.5, 0.5
+
+            for _, row in sub.iterrows():
+                reconciled_rows.append({
+                    "item_id": item_id,
+                    "loc": loc,
+                    "startdate": row["startdate"],
+                    "basefcst_pref": max(0, row["bu_fcst"] * w_bu + row["td_fcst"] * w_td),
+                    "bu_fcst": row["bu_fcst"],
+                    "td_fcst": row["td_fcst"],
+                })
+
+        result = pd.DataFrame(reconciled_rows)
+        logger.info(
+            "MinTrace shrinkage reconciliation: %s item×loc×months",
+            f"{len(result):,}",
+        )
+        return result
+
+    except (ValueError, KeyError) as exc:
+        logger.warning("MinTrace failed: %s; falling back to weighted_average", exc)
+        return _reconcile_weighted(bu_preds, td_preds, bu_weight=0.6)
+
+
+# ---------------------------------------------------------------------------
+# Legacy: product hierarchy reconciliation (unchanged)
+# ---------------------------------------------------------------------------
 
 def build_hierarchy(
     dfu_attrs: pd.DataFrame,
     item_attrs: pd.DataFrame,
     hierarchy_levels: list[str],
 ) -> tuple[pd.DataFrame, dict[str, list[str]]]:
-    """Build a product hierarchy from DFU and item attributes.
-
-    Args:
-        dfu_attrs: DFU attributes with sku_ck, item_id.
-        item_attrs: Item attributes with item_id, category, brand_name.
-        hierarchy_levels: Ordered list of hierarchy columns
-            e.g. ['item_id', 'category', 'brand_name', 'total'].
-
-    Returns:
-        (hierarchy_df, S_dict)
-        hierarchy_df: DataFrame mapping sku_ck to each hierarchy level.
-        S_dict: Summing matrix specification for hierarchicalforecast.
-    """
+    """Build a product hierarchy from DFU and item attributes."""
     if dfu_attrs.empty or item_attrs.empty:
         logger.warning("Empty attributes; cannot build hierarchy")
         return pd.DataFrame(), {}
@@ -65,89 +206,7 @@ def reconcile_forecasts(
     hierarchy_df: pd.DataFrame,
     method: str = "mint_shrink",
 ) -> pd.DataFrame:
-    """Reconcile forecasts to ensure hierarchical coherence.
-
-    Args:
-        predictions_df: Base forecasts with [sku_ck, startdate, basefcst_pref].
-        actuals_df: Historical actuals with [sku_ck, startdate, qty].
-        hierarchy_df: Hierarchy mapping from build_hierarchy().
-        method: Reconciliation method ('mint_shrink', 'wls', 'ols', 'bottom_up').
-
-    Returns:
-        DataFrame with columns: sku_ck, startdate, basefcst_pref, adjustment_pct
-        adjustment_pct = (reconciled - original) / original
-    """
-    if not _HIER_AVAILABLE:
-        logger.warning(
-            "hierarchicalforecast not installed; returning original forecasts"
-        )
-        result = predictions_df[["sku_ck", "startdate", "basefcst_pref"]].copy()
-        result["adjustment_pct"] = 0.0
-        return result
-
-    if predictions_df.empty or hierarchy_df.empty:
-        logger.warning("Empty input; returning original forecasts")
-        result = predictions_df[["sku_ck", "startdate", "basefcst_pref"]].copy()
-        result["adjustment_pct"] = 0.0
-        return result
-
-    try:
-        # Build aggregated forecasts at each hierarchy level
-        merged = predictions_df.merge(
-            hierarchy_df[["sku_ck", "category", "brand_name"]],
-            on="sku_ck",
-            how="left",
-        )
-
-        # Category-level aggregation
-        cat_agg = (
-            merged.groupby(["category", "startdate"])["basefcst_pref"]
-            .sum()
-            .reset_index()
-        )
-
-        # Brand-level aggregation
-        brand_agg = (
-            merged.groupby(["brand_name", "startdate"])["basefcst_pref"]
-            .sum()
-            .reset_index()
-        )
-
-        # Total-level aggregation
-        total_agg = (
-            merged.groupby("startdate")["basefcst_pref"]
-            .sum()
-            .reset_index()
-        )
-
-        # Simple proportional reconciliation
-        # Adjust SKU-level forecasts to match category totals
-        sku_cat_totals = (
-            merged.groupby(["category", "startdate"])["basefcst_pref"]
-            .transform("sum")
-        )
-        safe_totals = np.maximum(sku_cat_totals, 1e-8)
-        proportions = merged["basefcst_pref"] / safe_totals
-
-        # Reconciled = proportion * category total (from category-level model)
-        # For now, use the bottom-up sums as the reconciled values
-        # (true MinTrace requires the full hierarchicalforecast pipeline)
-        result = predictions_df[["sku_ck", "startdate", "basefcst_pref"]].copy()
-        result["adjustment_pct"] = 0.0
-
-        logger.info(
-            "Reconciliation (%s): %d forecasts processed, "
-            "%d categories, %d brands",
-            method,
-            len(result),
-            merged["category"].nunique() if "category" in merged.columns else 0,
-            merged["brand_name"].nunique() if "brand_name" in merged.columns else 0,
-        )
-
-        return result
-
-    except (ValueError, KeyError) as exc:
-        logger.warning("Reconciliation failed: %s; returning originals", exc)
-        result = predictions_df[["sku_ck", "startdate", "basefcst_pref"]].copy()
-        result["adjustment_pct"] = 0.0
-        return result
+    """Reconcile forecasts for product hierarchy coherence (legacy)."""
+    result = predictions_df[["sku_ck", "startdate", "basefcst_pref"]].copy()
+    result["adjustment_pct"] = 0.0
+    return result

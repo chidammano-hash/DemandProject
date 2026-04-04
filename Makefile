@@ -559,6 +559,36 @@ backtest-load-bolt:
 
 backtest-bolt-full: backtest-bolt backtest-load-bolt
 
+backtest-bolt-hier:
+	$(UV) python -m scripts.run_backtest_bolt_hierarchical
+
+backtest-load-bolt-hier:
+	$(UV) python -m scripts.load_backtest_forecasts --model bolt_hierarchical --replace
+
+backtest-bolt-hier-full: backtest-bolt-hier backtest-load-bolt-hier
+
+customer-features:
+	$(UV) python -m scripts.ml.generate_customer_features_sql
+
+customer-features-python:
+	$(UV) python -m scripts.ml.generate_customer_features
+
+backtest-lgbm-cust:
+	$(UV) python -m scripts.run_backtest --model lgbm --model-id lgbm_cust_enriched
+
+backtest-catboost-cust:
+	$(UV) python -m scripts.run_backtest --model catboost --model-id catboost_cust_enriched
+
+backtest-xgboost-cust:
+	$(UV) python -m scripts.run_backtest --model xgboost --model-id xgboost_cust_enriched
+
+backtest-cust-enriched-all: backtest-lgbm-cust backtest-catboost-cust backtest-xgboost-cust
+
+backtest-load-cust-enriched:
+	$(UV) python -m scripts.load_backtest_forecasts --model lgbm_cust_enriched --replace
+	$(UV) python -m scripts.load_backtest_forecasts --model catboost_cust_enriched --replace
+	$(UV) python -m scripts.load_backtest_forecasts --model xgboost_cust_enriched --replace
+
 backtest-chronos2:
 	$(UV) python -m scripts.run_backtest_chronos2
 

@@ -773,3 +773,771 @@ def customer_analytics_items(
 
     items = [{"item_id": r[0], "item_desc": r[1] or r[0]} for r in rows]
     return {"items": items}
+
+
+# ---------------------------------------------------------------------------
+# 9. KPI Summary
+# ---------------------------------------------------------------------------
+
+@router.get("/customer-analytics/kpis")
+def customer_analytics_kpis(
+    response: FastAPIResponse,
+    item_id: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    channel: str | None = Query(default=None),
+    store_type: str | None = Query(default=None),
+):
+    """Six KPI values with MoM deltas."""
+    set_cache(response, max_age=300)
+    params: list[Any] = []
+    where = _build_where(params, item_id, date_from, date_to, channel, store_type)
+
+    sql = f"""
+        WITH base AS (
+            SELECT f.startdate,
+                   f.customer_no,
+                   f.demand_qty,
+                   f.sales_qty,
+                   f.oos_qty
+            FROM fact_customer_demand_monthly f
+            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            WHERE {where}
+        ),
+        bounds AS (
+            SELECT MAX(startdate) AS cur_month,
+                   MAX(startdate) - INTERVAL '1 month' AS prev_month
+            FROM base
+        ),
+        cur AS (
+            SELECT COALESCE(SUM(b.demand_qty), 0) AS demand,
+                   COALESCE(SUM(b.sales_qty), 0) AS sales,
+                   COALESCE(SUM(b.oos_qty), 0) AS oos,
+                   COUNT(DISTINCT b.customer_no) AS active_cust
+            FROM base b, bounds
+            WHERE b.startdate = bounds.cur_month
+        ),
+        prev AS (
+            SELECT COALESCE(SUM(b.demand_qty), 0) AS demand,
+                   COALESCE(SUM(b.sales_qty), 0) AS sales,
+                   COALESCE(SUM(b.oos_qty), 0) AS oos,
+                   COUNT(DISTINCT b.customer_no) AS active_cust
+            FROM base b, bounds
+            WHERE b.startdate = bounds.prev_month
+        ),
+        top10 AS (
+            SELECT COALESCE(SUM(sub.demand), 0) AS top10_demand
+            FROM (
+                SELECT b.customer_no, SUM(b.demand_qty) AS demand
+                FROM base b, bounds
+                WHERE b.startdate = bounds.cur_month
+                GROUP BY b.customer_no
+                ORDER BY SUM(b.demand_qty) DESC
+                LIMIT 10
+            ) sub
+        )
+        SELECT cur.demand, cur.sales, cur.oos, cur.active_cust,
+               prev.demand, prev.sales, prev.oos, prev.active_cust,
+               top10.top10_demand
+        FROM cur, prev, top10
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+
+    if not row:
+        return {"kpis": []}
+
+    c_demand, c_sales, c_oos, c_cust, p_demand, p_sales, p_oos, p_cust, top10_d = (
+        float(v or 0) for v in row
+    )
+    c_cust = int(row[3] or 0)
+    p_cust = int(row[7] or 0)
+    top10_d = float(row[8] or 0)
+
+    def _delta(cur_val: float, prev_val: float) -> float:
+        if prev_val == 0:
+            return 0.0
+        return round((cur_val - prev_val) / prev_val * 100, 1)
+
+    c_fr = round(c_sales / c_demand * 100, 1) if c_demand > 0 else 100.0
+    p_fr = round(p_sales / p_demand * 100, 1) if p_demand > 0 else 100.0
+    conc = round(top10_d / c_demand * 100, 1) if c_demand > 0 else 0.0
+    odr = round(c_sales / c_demand, 3) if c_demand > 0 else 0.0
+
+    kpis = [
+        {"key": "total_demand", "value": round(c_demand, 1), "delta": _delta(c_demand, p_demand)},
+        {"key": "fill_rate", "value": c_fr, "delta": round(c_fr - p_fr, 1)},
+        {"key": "oos_volume", "value": round(c_oos, 1), "delta": _delta(c_oos, p_oos)},
+        {"key": "active_customers", "value": c_cust, "delta": _delta(float(c_cust), float(p_cust))},
+        {"key": "concentration_top10", "value": conc, "delta": 0.0},
+        {"key": "order_demand_ratio", "value": odr, "delta": 0.0},
+    ]
+    return {"kpis": kpis}
+
+
+# ---------------------------------------------------------------------------
+# 10. Customer Lifecycle
+# ---------------------------------------------------------------------------
+
+@router.get("/customer-analytics/lifecycle")
+def customer_analytics_lifecycle(
+    response: FastAPIResponse,
+    item_id: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+):
+    """Cohort retention + waterfall (new vs churned)."""
+    set_cache(response, max_age=300)
+    params: list[Any] = []
+    where = _build_where(params, item_id, date_from, date_to, None, None)
+
+    # --- cohort retention ---
+    cohort_sql = f"""
+        WITH base AS (
+            SELECT DISTINCT f.customer_no, f.startdate
+            FROM fact_customer_demand_monthly f
+            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            WHERE {where}
+        ),
+        first_order AS (
+            SELECT customer_no, MIN(startdate) AS cohort_month
+            FROM base
+            GROUP BY customer_no
+        ),
+        cohort_activity AS (
+            SELECT fo.cohort_month,
+                   EXTRACT(YEAR FROM age(b.startdate, fo.cohort_month)) * 12
+                     + EXTRACT(MONTH FROM age(b.startdate, fo.cohort_month)) AS months_since,
+                   COUNT(DISTINCT b.customer_no) AS active_customers
+            FROM base b
+            JOIN first_order fo ON fo.customer_no = b.customer_no
+            GROUP BY fo.cohort_month, months_since
+        ),
+        cohort_size AS (
+            SELECT cohort_month, COUNT(*) AS size
+            FROM first_order
+            GROUP BY cohort_month
+        )
+        SELECT ca.cohort_month, ca.months_since::int, ca.active_customers, cs.size
+        FROM cohort_activity ca
+        JOIN cohort_size cs ON cs.cohort_month = ca.cohort_month
+        ORDER BY ca.cohort_month, ca.months_since
+    """
+
+    # --- waterfall (new / churned) ---
+    params2: list[Any] = []
+    where2 = _build_where(params2, item_id, date_from, date_to, None, None)
+    waterfall_sql = f"""
+        WITH base AS (
+            SELECT DISTINCT f.customer_no, f.startdate
+            FROM fact_customer_demand_monthly f
+            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            WHERE {where2}
+        ),
+        months AS (
+            SELECT DISTINCT startdate AS month FROM base ORDER BY startdate
+        ),
+        first_order AS (
+            SELECT customer_no, MIN(startdate) AS first_month
+            FROM base GROUP BY customer_no
+        ),
+        new_per_month AS (
+            SELECT first_month AS month, COUNT(*) AS new_customers
+            FROM first_order GROUP BY first_month
+        ),
+        active_prev AS (
+            SELECT m.month,
+                   b.customer_no
+            FROM months m
+            JOIN base b ON b.startdate >= m.month - INTERVAL '6 months'
+                       AND b.startdate < m.month - INTERVAL '0 months'
+        ),
+        active_recent AS (
+            SELECT m.month,
+                   b.customer_no
+            FROM months m
+            JOIN base b ON b.startdate >= m.month - INTERVAL '3 months'
+                       AND b.startdate < m.month
+        ),
+        churned AS (
+            SELECT ap.month,
+                   COUNT(DISTINCT ap.customer_no) AS churned_customers
+            FROM active_prev ap
+            LEFT JOIN active_recent ar ON ar.month = ap.month AND ar.customer_no = ap.customer_no
+            WHERE ar.customer_no IS NULL
+            GROUP BY ap.month
+        )
+        SELECT m.month,
+               COALESCE(n.new_customers, 0) AS new_customers,
+               COALESCE(ch.churned_customers, 0) AS churned_customers
+        FROM months m
+        LEFT JOIN new_per_month n ON n.month = m.month
+        LEFT JOIN churned ch ON ch.month = m.month
+        ORDER BY m.month
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(cohort_sql, params)
+        cohort_rows = cur.fetchall()
+        cur.execute(waterfall_sql, params2)
+        waterfall_rows = cur.fetchall()
+
+    # Build cohort response
+    cohort_map: dict[str, dict[str, Any]] = {}
+    for cm, ms, active, size in cohort_rows:
+        key = cm.isoformat() if hasattr(cm, "isoformat") else str(cm)
+        if key not in cohort_map:
+            cohort_map[key] = {"cohort_month": key, "months_since": [], "retention_pct": []}
+        cohort_map[key]["months_since"].append(int(ms))
+        pct = round(int(active) / int(size) * 100, 1) if int(size) > 0 else 0.0
+        cohort_map[key]["retention_pct"].append(pct)
+
+    cohorts = sorted(cohort_map.values(), key=lambda x: x["cohort_month"])
+
+    waterfall = []
+    for month, new_c, churned_c in waterfall_rows:
+        m_str = month.isoformat() if hasattr(month, "isoformat") else str(month)
+        n = int(new_c)
+        ch = int(churned_c)
+        waterfall.append({
+            "month": m_str,
+            "new_customers": n,
+            "churned_customers": ch,
+            "net_change": n - ch,
+        })
+
+    return {"cohorts": cohorts, "waterfall": waterfall}
+
+
+# ---------------------------------------------------------------------------
+# 11. Demand at Risk
+# ---------------------------------------------------------------------------
+
+@router.get("/customer-analytics/demand-at-risk")
+def customer_analytics_demand_at_risk(
+    response: FastAPIResponse,
+    item_id: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+):
+    """Waterfall breakdown of demand risk categories."""
+    set_cache(response, max_age=300)
+    params: list[Any] = []
+    where = _build_where(params, item_id, date_from, date_to, None, None)
+
+    sql = f"""
+        WITH base AS (
+            SELECT f.customer_no,
+                   f.item_id,
+                   f.location_id,
+                   f.startdate,
+                   f.demand_qty,
+                   f.sales_qty,
+                   f.oos_qty
+            FROM fact_customer_demand_monthly f
+            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            WHERE {where}
+        ),
+        totals AS (
+            SELECT COALESCE(SUM(demand_qty), 0) AS total_demand
+            FROM base
+        ),
+        -- concentration risk: customers whose share > 40%
+        cust_share AS (
+            SELECT customer_no, SUM(demand_qty) AS cust_demand
+            FROM base GROUP BY customer_no
+        ),
+        conc_risk AS (
+            SELECT COALESCE(SUM(cs.cust_demand), 0) AS concentration_risk
+            FROM cust_share cs, totals t
+            WHERE t.total_demand > 0
+              AND cs.cust_demand / t.total_demand > 0.4
+        ),
+        -- oos loss: demand * oos_rate at item-loc level
+        oos_agg AS (
+            SELECT item_id, location_id,
+                   SUM(demand_qty) AS d, SUM(oos_qty) AS o
+            FROM base GROUP BY item_id, location_id
+            HAVING SUM(demand_qty) > 0
+        ),
+        oos_loss AS (
+            SELECT COALESCE(SUM(d * (o / NULLIF(d, 0))), 0) AS oos_loss
+            FROM oos_agg
+            WHERE o > 0
+        ),
+        -- churn risk: customers in [-6,-3] but not [-3,0]
+        bounds AS (
+            SELECT MAX(startdate) AS max_dt FROM base
+        ),
+        recent AS (
+            SELECT DISTINCT customer_no FROM base, bounds
+            WHERE startdate > bounds.max_dt - INTERVAL '3 months'
+        ),
+        older AS (
+            SELECT DISTINCT customer_no FROM base, bounds
+            WHERE startdate <= bounds.max_dt - INTERVAL '3 months'
+              AND startdate > bounds.max_dt - INTERVAL '6 months'
+        ),
+        churned_custs AS (
+            SELECT o.customer_no
+            FROM older o
+            LEFT JOIN recent r ON r.customer_no = o.customer_no
+            WHERE r.customer_no IS NULL
+        ),
+        churn_risk AS (
+            SELECT COALESCE(SUM(b.demand_qty), 0) AS churn_risk
+            FROM base b
+            JOIN churned_custs cc ON cc.customer_no = b.customer_no
+        )
+        SELECT t.total_demand,
+               cr.concentration_risk,
+               ol.oos_loss,
+               chr.churn_risk
+        FROM totals t, conc_risk cr, oos_loss ol, churn_risk chr
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+
+    if not row:
+        return {"waterfall": []}
+
+    total = float(row[0] or 0)
+    conc = float(row[1] or 0)
+    oos = float(row[2] or 0)
+    churn = float(row[3] or 0)
+    secure = max(total - conc - oos - churn, 0)
+
+    waterfall = [
+        {"category": "total_demand", "value": round(total, 1)},
+        {"category": "concentration_risk", "value": round(conc, 1)},
+        {"category": "oos_loss", "value": round(oos, 1)},
+        {"category": "churn_risk", "value": round(churn, 1)},
+        {"category": "secure_demand", "value": round(secure, 1)},
+    ]
+    return {"waterfall": waterfall}
+
+
+# ---------------------------------------------------------------------------
+# 12. Customer-Item Affinity
+# ---------------------------------------------------------------------------
+
+@router.get("/customer-analytics/affinity")
+def customer_analytics_affinity(
+    response: FastAPIResponse,
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    top_n: int = Query(default=20, ge=5, le=50),
+):
+    """Heatmap of top N customers x top N items."""
+    set_cache(response, max_age=300)
+    params: list[Any] = []
+    where = _build_where(params, None, date_from, date_to, None, None)
+
+    sql = f"""
+        WITH base AS (
+            SELECT f.customer_no,
+                   c.customer_name,
+                   f.item_id,
+                   COALESCE(i.item_desc, f.item_id) AS item_desc,
+                   SUM(f.demand_qty) AS demand_qty
+            FROM fact_customer_demand_monthly f
+            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            LEFT JOIN dim_item i ON i.item_id = f.item_id
+            WHERE {where}
+            GROUP BY f.customer_no, c.customer_name, f.item_id, i.item_desc
+        ),
+        top_customers AS (
+            SELECT customer_no, customer_name
+            FROM base
+            GROUP BY customer_no, customer_name
+            ORDER BY SUM(demand_qty) DESC
+            LIMIT %s
+        ),
+        top_items AS (
+            SELECT item_id, item_desc
+            FROM base
+            GROUP BY item_id, item_desc
+            ORDER BY SUM(demand_qty) DESC
+            LIMIT %s
+        )
+        SELECT b.customer_no, tc.customer_name,
+               b.item_id, ti.item_desc,
+               b.demand_qty
+        FROM base b
+        JOIN top_customers tc ON tc.customer_no = b.customer_no
+        JOIN top_items ti ON ti.item_id = b.item_id
+        ORDER BY b.demand_qty DESC
+    """
+    params.extend([top_n, top_n])
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+    cust_set: dict[str, str] = {}
+    item_set: dict[str, str] = {}
+    cells: list[dict[str, Any]] = []
+    for cno, cname, iid, idesc, dq in rows:
+        cust_set[cno] = cname or cno
+        item_set[iid] = idesc or iid
+        cells.append({
+            "customer_no": cno,
+            "item_id": iid,
+            "demand_qty": round(float(dq or 0), 1),
+        })
+
+    return {
+        "customers": [{"customer_no": k, "customer_name": v} for k, v in cust_set.items()],
+        "items": [{"item_id": k, "item_desc": v} for k, v in item_set.items()],
+        "cells": cells,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 13. Order Patterns
+# ---------------------------------------------------------------------------
+
+@router.get("/customer-analytics/order-patterns")
+def customer_analytics_order_patterns(
+    response: FastAPIResponse,
+    item_id: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+):
+    """Frequency histogram + regularity scatter for ordering cadence."""
+    set_cache(response, max_age=300)
+    params: list[Any] = []
+    where = _build_where(params, item_id, date_from, date_to, None, None)
+
+    sql = f"""
+        WITH base AS (
+            SELECT f.customer_no,
+                   c.customer_name,
+                   f.startdate,
+                   SUM(f.demand_qty) AS demand_qty
+            FROM fact_customer_demand_monthly f
+            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            WHERE {where}
+            GROUP BY f.customer_no, c.customer_name, f.startdate
+        ),
+        intervals AS (
+            SELECT customer_no,
+                   customer_name,
+                   startdate,
+                   EXTRACT(YEAR FROM age(startdate, LAG(startdate) OVER (PARTITION BY customer_no ORDER BY startdate))) * 12
+                     + EXTRACT(MONTH FROM age(startdate, LAG(startdate) OVER (PARTITION BY customer_no ORDER BY startdate))) AS gap_months
+            FROM base
+        ),
+        cust_stats AS (
+            SELECT customer_no,
+                   MAX(customer_name) AS customer_name,
+                   AVG(gap_months) AS avg_interval,
+                   CASE WHEN AVG(gap_months) > 0
+                        THEN STDDEV(gap_months) / AVG(gap_months)
+                        ELSE 0 END AS interval_cv,
+                   COUNT(*) AS order_count
+            FROM intervals
+            WHERE gap_months IS NOT NULL
+            GROUP BY customer_no
+        ),
+        total_demand AS (
+            SELECT customer_no, SUM(demand_qty) AS total_demand
+            FROM base GROUP BY customer_no
+        )
+        SELECT cs.customer_no, cs.customer_name,
+               cs.avg_interval, cs.interval_cv, cs.order_count,
+               td.total_demand
+        FROM cust_stats cs
+        JOIN total_demand td ON td.customer_no = cs.customer_no
+        ORDER BY td.total_demand DESC
+        LIMIT 200
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+    buckets = {"monthly": 0, "bimonthly": 0, "quarterly": 0, "sporadic": 0}
+    scatter: list[dict[str, Any]] = []
+
+    for cno, cname, avg_int, cv, _oc, total_d in rows:
+        avg_i = float(avg_int or 0)
+        cv_val = float(cv or 0)
+        td_val = float(total_d or 0)
+        scatter.append({
+            "customer_no": cno,
+            "customer_name": cname or cno,
+            "avg_interval_months": round(avg_i, 2),
+            "interval_cv": round(cv_val, 2),
+            "total_demand": round(td_val, 1),
+        })
+        if avg_i <= 1.5:
+            buckets["monthly"] += 1
+        elif avg_i <= 2.5:
+            buckets["bimonthly"] += 1
+        elif avg_i <= 4.0:
+            buckets["quarterly"] += 1
+        else:
+            buckets["sporadic"] += 1
+
+    total_custs = max(sum(buckets.values()), 1)
+    histogram = [
+        {"bucket": k, "count": v, "pct": round(v / total_custs * 100, 1)}
+        for k, v in buckets.items()
+    ]
+
+    return {"frequency_histogram": histogram, "regularity_scatter": scatter}
+
+
+# ---------------------------------------------------------------------------
+# 14. Demand Flow Sankey
+# ---------------------------------------------------------------------------
+
+@router.get("/customer-analytics/demand-flow")
+def customer_analytics_demand_flow(
+    response: FastAPIResponse,
+    item_id: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+):
+    """Sankey nodes + links: warehouse -> state -> channel."""
+    set_cache(response, max_age=300)
+    params: list[Any] = []
+    where = _build_where(params, item_id, date_from, date_to, None, None)
+
+    sql = f"""
+        SELECT f.location_id,
+               COALESCE(c.state, 'Unknown') AS state,
+               COALESCE(c.rpt_channel_desc, 'Unknown') AS channel,
+               COALESCE(SUM(f.demand_qty), 0) AS demand_qty
+        FROM fact_customer_demand_monthly f
+        JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+        WHERE {where}
+        GROUP BY f.location_id, c.state, c.rpt_channel_desc
+        HAVING SUM(f.demand_qty) > 0
+        ORDER BY SUM(f.demand_qty) DESC
+        LIMIT 500
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+    node_set: set[str] = set()
+    links_wh_state: dict[tuple[str, str], float] = {}
+    links_state_ch: dict[tuple[str, str], float] = {}
+
+    for loc, state, ch, dq in rows:
+        wh_name = f"WH_{loc}" if loc else "WH_Unknown"
+        st_name = str(state).strip() or "Unknown"
+        ch_name = str(ch).strip() or "Unknown"
+        val = float(dq or 0)
+
+        node_set.update([wh_name, st_name, ch_name])
+
+        key_ws = (wh_name, st_name)
+        links_wh_state[key_ws] = links_wh_state.get(key_ws, 0) + val
+
+        key_sc = (st_name, ch_name)
+        links_state_ch[key_sc] = links_state_ch.get(key_sc, 0) + val
+
+    nodes = [{"name": n} for n in sorted(node_set)]
+    links: list[dict[str, Any]] = []
+    for (src, tgt), val in sorted(links_wh_state.items(), key=lambda x: -x[1]):
+        links.append({"source": src, "target": tgt, "value": round(val, 1)})
+    for (src, tgt), val in sorted(links_state_ch.items(), key=lambda x: -x[1]):
+        links.append({"source": src, "target": tgt, "value": round(val, 1)})
+
+    return {"nodes": nodes, "links": links}
+
+
+# ---------------------------------------------------------------------------
+# 15. Filter Options
+# ---------------------------------------------------------------------------
+
+@router.get("/customer-analytics/filter-options")
+def customer_analytics_filter_options(
+    response: FastAPIResponse,
+):
+    """Distinct dropdown values for channel, store type, state."""
+    set_cache(response, max_age=600)
+
+    sql = """
+        SELECT
+            ARRAY_AGG(DISTINCT c.rpt_channel_desc ORDER BY c.rpt_channel_desc)
+                FILTER (WHERE c.rpt_channel_desc IS NOT NULL AND TRIM(c.rpt_channel_desc) != ''),
+            ARRAY_AGG(DISTINCT c.store_type_desc ORDER BY c.store_type_desc)
+                FILTER (WHERE c.store_type_desc IS NOT NULL AND TRIM(c.store_type_desc) != ''),
+            ARRAY_AGG(DISTINCT c.state ORDER BY c.state)
+                FILTER (WHERE c.state IS NOT NULL AND TRIM(c.state) != '')
+        FROM dim_customer c
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql)
+        row = cur.fetchone()
+
+    channels = row[0] if row and row[0] else []
+    store_types = row[1] if row and row[1] else []
+    states = row[2] if row and row[2] else []
+
+    return {"channels": channels, "store_types": store_types, "states": states}
+
+
+# ---------------------------------------------------------------------------
+# 16. Alerts
+# ---------------------------------------------------------------------------
+
+@router.get("/customer-analytics/alerts")
+def customer_analytics_alerts(
+    response: FastAPIResponse,
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+):
+    """Evaluate threshold rules and return active alerts."""
+    set_cache(response, max_age=300)
+    params: list[Any] = []
+    where = _build_where(params, None, date_from, date_to, None, None)
+
+    # 1) fill rate < 85% per item-loc
+    fr_sql = f"""
+        SELECT f.item_id, f.location_id,
+               CASE WHEN SUM(f.demand_qty) > 0
+                    THEN SUM(f.sales_qty)::float / SUM(f.demand_qty) * 100
+                    ELSE 100 END AS fill_rate
+        FROM fact_customer_demand_monthly f
+        JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+        WHERE {where}
+        GROUP BY f.item_id, f.location_id
+        HAVING SUM(f.demand_qty) > 0
+           AND SUM(f.sales_qty)::float / SUM(f.demand_qty) * 100 < 85
+        ORDER BY SUM(f.sales_qty)::float / SUM(f.demand_qty) ASC
+        LIMIT 50
+    """
+
+    # 2) HHI > 0.6 per item-loc
+    params2: list[Any] = []
+    where2 = _build_where(params2, None, date_from, date_to, None, None)
+    hhi_sql = f"""
+        WITH item_loc AS (
+            SELECT f.item_id, f.location_id, f.customer_no,
+                   SUM(f.demand_qty) AS cust_demand
+            FROM fact_customer_demand_monthly f
+            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            WHERE {where2}
+            GROUP BY f.item_id, f.location_id, f.customer_no
+        ),
+        il_total AS (
+            SELECT item_id, location_id, SUM(cust_demand) AS total_demand
+            FROM item_loc GROUP BY item_id, location_id
+            HAVING SUM(cust_demand) > 0
+        ),
+        hhi AS (
+            SELECT il.item_id, il.location_id,
+                   SUM(POWER(il.cust_demand / t.total_demand, 2)) AS hhi
+            FROM item_loc il
+            JOIN il_total t ON t.item_id = il.item_id AND t.location_id = il.location_id
+            GROUP BY il.item_id, il.location_id
+            HAVING SUM(POWER(il.cust_demand / t.total_demand, 2)) > 0.6
+        )
+        SELECT item_id, location_id, ROUND(hhi::numeric, 3)
+        FROM hhi
+        ORDER BY hhi DESC
+        LIMIT 50
+    """
+
+    # 3) churn rate > 10% MoM + 4) demand surge > 30% MoM
+    params3: list[Any] = []
+    where3 = _build_where(params3, None, date_from, date_to, None, None)
+    mom_sql = f"""
+        WITH base AS (
+            SELECT f.startdate,
+                   COUNT(DISTINCT f.customer_no) AS active_cust,
+                   SUM(f.demand_qty) AS demand
+            FROM fact_customer_demand_monthly f
+            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            WHERE {where3}
+            GROUP BY f.startdate
+            ORDER BY f.startdate
+        ),
+        lagged AS (
+            SELECT startdate, active_cust, demand,
+                   LAG(active_cust) OVER (ORDER BY startdate) AS prev_cust,
+                   LAG(demand) OVER (ORDER BY startdate) AS prev_demand
+            FROM base
+        )
+        SELECT startdate, active_cust, prev_cust, demand, prev_demand
+        FROM lagged
+        WHERE prev_cust IS NOT NULL
+        ORDER BY startdate DESC
+        LIMIT 1
+    """
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(fr_sql, params)
+        fr_rows = cur.fetchall()
+        cur.execute(hhi_sql, params2)
+        hhi_rows = cur.fetchall()
+        cur.execute(mom_sql, params3)
+        mom_row = cur.fetchone()
+
+    alerts: list[dict[str, Any]] = []
+
+    for item_id_val, loc, fill_rate_val in fr_rows:
+        alerts.append({
+            "alert_type": "low_fill_rate",
+            "severity": "red" if float(fill_rate_val) < 70 else "amber",
+            "message": f"Fill rate {round(float(fill_rate_val), 1)}% for {item_id_val} at {loc}",
+            "item_id": item_id_val,
+            "loc": loc,
+            "value": round(float(fill_rate_val), 1),
+            "threshold": 85,
+        })
+
+    for item_id_val, loc, hhi_val in hhi_rows:
+        alerts.append({
+            "alert_type": "high_concentration",
+            "severity": "red" if float(hhi_val) > 0.8 else "amber",
+            "message": f"HHI {hhi_val} for {item_id_val} at {loc}",
+            "item_id": item_id_val,
+            "loc": loc,
+            "value": float(hhi_val),
+            "threshold": 0.6,
+        })
+
+    if mom_row:
+        _sd, cur_cust, prev_cust, cur_demand, prev_demand = mom_row
+        cur_c = int(cur_cust or 0)
+        prev_c = int(prev_cust or 0)
+        if prev_c > 0:
+            churn_rate = round((prev_c - cur_c) / prev_c * 100, 1)
+            if churn_rate > 10:
+                alerts.append({
+                    "alert_type": "high_churn",
+                    "severity": "red" if churn_rate > 20 else "amber",
+                    "message": f"Customer churn rate {churn_rate}% MoM",
+                    "item_id": None,
+                    "loc": None,
+                    "value": churn_rate,
+                    "threshold": 10,
+                })
+        cur_d = float(cur_demand or 0)
+        prev_d = float(prev_demand or 0)
+        if prev_d > 0:
+            surge = round((cur_d - prev_d) / prev_d * 100, 1)
+            if surge > 30:
+                alerts.append({
+                    "alert_type": "demand_surge",
+                    "severity": "amber",
+                    "message": f"New demand surge {surge}% MoM",
+                    "item_id": None,
+                    "loc": None,
+                    "value": surge,
+                    "threshold": 30,
+                })
+
+    return {"alerts": alerts}

@@ -35,6 +35,7 @@ import ChatPanel from "./tabs/ChatPanel";
 // ---------------------------------------------------------------------------
 const AggregateAnalysisTab = lazy(() => import("./tabs/AggregateAnalysisTab").then((m) => ({ default: m.AggregateAnalysisTab })));
 const ExplorerTab = lazy(() => import("./tabs/ExplorerTab").then((m) => ({ default: m.ExplorerTab })));
+// ClustersTab removed from sidebar — still importable if needed via URL
 const ClustersTab = lazy(() => import("./tabs/ClustersTab"));
 const ItemAnalysisTab = lazy(() => import("./tabs/ItemAnalysisTab").then((m) => ({ default: m.ItemAnalysisTab })));
 const MarketIntelTab = lazy(() => import("./tabs/MarketIntelTab"));
@@ -48,7 +49,6 @@ const ExceptionsTab = StoryboardTab; // alias — PL-003 rename
 const SopTab = lazy(() => import("./tabs/SopTab"));
 const FVATab = lazy(() => import("./tabs/FVATab"));
 const DataQualityTab = lazy(() => import("./tabs/DataQualityTab"));
-const CustomerMapTab = lazy(() => import("./tabs/CustomerMapTab").then((m) => ({ default: m.CustomerMapTab })));
 const CustomerAnalyticsTab = lazy(() => import("./tabs/CustomerAnalyticsTab").then((m) => ({ default: m.CustomerAnalyticsTab })));
 const CommandCenterTab = lazy(() => import("./tabs/CommandCenterTab"));
 const SqlRunnerTab = lazy(() => import("./tabs/SqlRunnerTab").then((m) => ({ default: m.SqlRunnerTab })));
@@ -272,11 +272,6 @@ export default function App() {
                 {activeTab === "dataQuality" && (
                   <TabPanel tabKey="dataQuality" resetKeys={[activeTab]}>
                     <DataQualityTab />
-                  </TabPanel>
-                )}
-                {activeTab === "customerMap" && (
-                  <TabPanel tabKey="customerMap" resetKeys={[activeTab]}>
-                    <CustomerMapTab />
                   </TabPanel>
                 )}
                 {activeTab === "customerAnalytics" && (
