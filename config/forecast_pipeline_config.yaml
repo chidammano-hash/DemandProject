@@ -345,7 +345,7 @@ algorithms:
       window: 6
 backtest:
   n_timeframes: 10
-  embargo_months: 1
+  embargo_months: 2
   forecast_horizon: 6
   early_stop_pct: 0.03
   shap_retrain_threshold: 0.1
@@ -354,12 +354,12 @@ backtest:
   intermittent_threshold: 0.7
   lumpy_threshold: 0.3
   output_dir: data/backtest
-  recursive_noise_enabled: false
-  recursive_noise_pct: 0.05
+  recursive_noise_enabled: true
+  recursive_noise_pct: 0.08
 tuning:
   n_trials: 50
   n_splits: 5
-  gap_months: 1
+  gap_months: 2
   val_months_per_fold: 3
   min_train_months: 13
   early_stopping_rounds: 50
