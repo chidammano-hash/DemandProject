@@ -25,7 +25,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecast_pipeline_config.yaml"
 _CHAMPION_SUMMARY_PATH = _PROJECT_ROOT / "data" / "champion" / "champion_summary.json"
 
-_VALID_STRATEGIES = {"expanding", "rolling", "decay", "ensemble", "meta_learner"}
+from common.ml.champion_strategies import STRATEGY_REGISTRY as _STRAT_REG
+
+_VALID_STRATEGIES = set(_STRAT_REG.keys())
 
 
 class CompetitionConfigUpdate(BaseModel):

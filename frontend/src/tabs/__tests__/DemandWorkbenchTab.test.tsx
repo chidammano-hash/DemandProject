@@ -31,11 +31,8 @@ vi.mock("@/api/queries/demand-history", () => ({
           ],
         },
       ],
-      hierarchy_children: [
-        { key: "LOC_1", label: "Location 1", total_demand: 3000 },
-        { key: "LOC_2", label: "Location 2", total_demand: 2000 },
-      ],
-      total_count: 2,
+      hierarchy_children: "item_loc",
+      total: 2,
     },
     isLoading: false,
     isError: false,

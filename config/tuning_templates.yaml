@@ -1,12 +1,12 @@
 templates:
   lgbm:
     - id: production_baseline
-      label: "Production Baseline (Run 16)"
-      description: "Current production parameters"
+      label: "Current Production Settings"
+      description: "The parameters currently running in production"
       source: algorithm_config  # read live from algorithm_config.yaml
     - id: expert_aggressive_depth
-      label: "Expert: Aggressive Depth + Heavy Reg"
-      description: "Cap depth at 10, halve leaves, increase L2 to 3.5"
+      label: "Conservative (Stable Demand)"
+      description: "Best for stable, low-variability items with strong regularization"
       params:
         max_depth: 10
         num_leaves: 63
@@ -15,16 +15,16 @@ templates:
         path_smooth: 8.0
         min_child_samples: 60
     - id: expert_ultra_slow_lr
-      label: "Expert: Ultra-Slow LR + Max Trees"
-      description: "LR=0.008 with 3000 trees for residual capture"
+      label: "High Precision (Long Training)"
+      description: "Maximizes accuracy with extended training for subtle patterns"
       params:
         learning_rate: 0.008
         n_estimators: 3000
         subsample: 0.85
         colsample_bytree: 0.85
     - id: expert_sparse_demand
-      label: "Expert: Feature Fraction + Sparse Campaign"
-      description: "High node-level features with sparse demand regularization"
+      label: "Intermittent Demand"
+      description: "Optimized for sparse or intermittent demand patterns"
       params:
         feature_fraction_bynode: 0.9
         colsample_bytree: 0.9
@@ -33,8 +33,8 @@ templates:
         reg_alpha: 1.0
         path_smooth: 12.0
     - id: expert_balanced_champion
-      label: "Expert: Balanced Champion Candidate"
-      description: "Moderate depth cap, slower LR, balanced regularization"
+      label: "Balanced (Best All-Around)"
+      description: "Well-rounded settings combining top findings from prior experiments"
       params:
         learning_rate: 0.015
         n_estimators: 2000
@@ -48,11 +48,11 @@ templates:
 
   catboost:
     - id: production_baseline
-      label: "Production Baseline"
+      label: "Current Production Settings"
       source: algorithm_config
     - id: expert_ordered_symmetric
-      label: "Expert: Ordered Boosting + Symmetric Trees"
-      description: "Symmetric trees with ordered boosting for temporal data"
+      label: "Temporal Optimized"
+      description: "Best for time-series data with strong seasonal patterns"
       params:
         grow_policy: SymmetricTree
         depth: 8
@@ -61,8 +61,8 @@ templates:
         learning_rate: 0.006
         random_strength: 1.0
     - id: expert_high_border
-      label: "Expert: High Border Count + Reduced Leaf Reg"
-      description: "Finer split resolution with 128 borders"
+      label: "Fine-Grained Splits"
+      description: "Higher resolution splits for nuanced demand signals"
       params:
         border_count: 128
         l2_leaf_reg: 3.0
@@ -70,8 +70,8 @@ templates:
         bagging_temperature: 0.6
         model_size_reg: 0.02
     - id: expert_langevin
-      label: "Expert: Langevin Gradient Boosting"
-      description: "Diffusion noise for implicit regularization"
+      label: "Noise-Resistant (Exploratory)"
+      description: "Uses diffusion noise to handle noisy demand data"
       params:
         langevin: true
         diffusion_temperature: 10000
@@ -81,8 +81,8 @@ templates:
         bootstrap_type: Bayesian
         bagging_temperature: 1.0
     - id: expert_ensemble_optimized
-      label: "Expert: Ensemble-Optimized Blend"
-      description: "Low-bias params to complement LGBM in meta-learner"
+      label: "Ensemble Complement"
+      description: "Designed to work alongside other models in blended forecasts"
       params:
         iterations: 3500
         learning_rate: 0.01
@@ -96,11 +96,11 @@ templates:
 
   xgboost:
     - id: production_baseline
-      label: "Production Baseline"
+      label: "Current Production Settings"
       source: algorithm_config
     - id: expert_lossguide_heavy_reg
-      label: "Expert: Lossguide + Heavy Regularization"
-      description: "Leaf-wise splitting with L1/L2 regularization"
+      label: "Conservative (Heavy Guardrails)"
+      description: "Strong regularization for stable, predictable forecasts"
       params:
         grow_policy: lossguide
         max_leaves: 127
@@ -114,8 +114,8 @@ templates:
         max_bin: 256
         colsample_bylevel: 0.8
     - id: expert_dart
-      label: "Expert: DART Booster + Conservative Dropout"
-      description: "Tree dropout for balanced ensemble generalization"
+      label: "Balanced Diversity"
+      description: "Uses tree dropout for robust, well-generalized forecasts"
       params:
         booster: dart
         rate_drop: 0.08
@@ -127,8 +127,8 @@ templates:
         colsample_bytree: 0.85
         reg_lambda: 3.0
     - id: expert_ultra_high_trees
-      label: "Expert: Ultra-High Trees + Micro LR"
-      description: "3000 trees at 0.008 LR — close the gap with LGBM"
+      label: "High Precision (Long Training)"
+      description: "Extended training to capture fine-grained demand patterns"
       params:
         n_estimators: 3000
         learning_rate: 0.008
@@ -141,8 +141,8 @@ templates:
         reg_lambda: 4.0
         gamma: 0.15
     - id: expert_champion_blend
-      label: "Expert: Champion Candidate Blend"
-      description: "DART + lossguide + 256 bins + balanced reg"
+      label: "Balanced (Best All-Around)"
+      description: "Top findings combined for a well-rounded candidate"
       params:
         booster: dart
         rate_drop: 0.05

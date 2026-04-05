@@ -6,7 +6,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FlaskConical, X, Star } from "lucide-react";
+import { FlaskConical, X, Star, ChevronDown, ChevronRight, Pencil } from "lucide-react";
 
 import {
   championExperimentKeys,
@@ -21,6 +21,7 @@ import {
 } from "@/api/queries/unified-model-tuning";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MODEL_LABELS } from "@/lib/model-labels";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -72,18 +73,12 @@ const META_DEFAULTS = {
 /** Fallback model IDs used before pipeline config loads */
 const DEFAULT_MODELS = [
   "lgbm_cluster", "catboost_cluster", "xgboost_cluster",
-  "chronos", "chronos_bolt", "chronos2", "chronos2_enriched",
+  "lgbm_cust_enriched", "catboost_cust_enriched", "xgboost_cust_enriched",
+  "chronos", "chronos_bolt", "chronos2", "chronos2_enriched", "bolt_hierarchical",
   "mstl", "nbeats", "nhits", "seasonal_naive", "rolling_mean",
 ];
 
-const MODEL_LABELS: Record<string, string> = {
-  lgbm_cluster: "LightGBM", catboost_cluster: "CatBoost", xgboost_cluster: "XGBoost",
-  lgbm_cust_enriched: "LightGBM (Cust)", catboost_cust_enriched: "CatBoost (Cust)", xgboost_cust_enriched: "XGBoost (Cust)",
-  chronos: "Chronos T5", chronos_bolt: "Chronos Bolt", chronos2: "Chronos 2",
-  chronos2_enriched: "Chronos 2E", bolt_hierarchical: "Bolt Hierarchical",
-  mstl: "MSTL", nbeats: "N-BEATS", nhits: "N-HiTS",
-  seasonal_naive: "Seasonal Naive", rolling_mean: "Rolling Mean",
-};
+/* MODEL_LABELS imported from @/lib/model-labels */
 
 const STRATEGY_LABELS: Record<string, string> = {
   // Core
@@ -124,6 +119,28 @@ const STRATEGY_LABELS: Record<string, string> = {
   dfu_strategy_router: "DFU Strategy Router",
   stacked_strategies: "Stacked Strategies",
   cluster_regime_hybrid: "Cluster-Regime Hybrid",
+};
+
+// ---------------------------------------------------------------------------
+// Strategy tiers & descriptions
+// ---------------------------------------------------------------------------
+
+const RECOMMENDED_STRATEGIES = ["expanding", "rolling", "adaptive_ensemble", "per_cluster", "hybrid_warmup"];
+const ADVANCED_STRATEGIES = [
+  "decay", "ensemble", "meta_learner", "optimized_decay", "ridge_blend",
+  "per_segment", "diverse_ensemble", "seasonal", "ensemble_rolling",
+];
+// Everything else is "Expert"
+const EXPERT_STRATEGIES = Object.keys(STRATEGY_LABELS).filter(
+  (k) => !RECOMMENDED_STRATEGIES.includes(k) && !ADVANCED_STRATEGIES.includes(k),
+);
+
+const STRATEGY_DESCRIPTIONS: Record<string, string> = {
+  expanding: "Uses all available history. Best for stable demand.",
+  rolling: "Uses last N months only. Better for changing trends.",
+  adaptive_ensemble: "Blends top models. Best general-purpose choice.",
+  per_cluster: "Picks best model per demand cluster.",
+  hybrid_warmup: "Expanding for mature DFUs, rolling for new ones.",
 };
 
 // ---------------------------------------------------------------------------
@@ -168,6 +185,13 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
   const [metric, setMetric] = useState("accuracy_pct");
   const [lagMode, setLagMode] = useState("execution");
   const [minSkuRows, setMinSkuRows] = useState(3);
+
+  // Strategy tier collapse state
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showExpert, setShowExpert] = useState(false);
+
+  // Model editing state — collapsed by default to show pipeline config summary
+  const [modelsExpanded, setModelsExpanded] = useState(false);
 
   // Sync model selection when dynamic model list loads
   useEffect(() => {
@@ -264,6 +288,9 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
     setMetric("accuracy_pct");
     setLagMode("execution");
     setMinSkuRows(3);
+    setShowAdvanced(false);
+    setShowExpert(false);
+    setModelsExpanded(false);
   }
 
   function handleTemplateSelect(tmpl: ChampionExperimentTemplate) {
@@ -414,21 +441,105 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
             </CardContent>
           </Card>
 
-          {/* Strategy selector */}
+          {/* Strategy selector — tiered */}
           <Card>
             <CardHeader className="py-3">
               <CardTitle className="text-sm">Strategy</CardTitle>
             </CardHeader>
             <CardContent className="pb-3 space-y-4">
-              <select
-                className="w-full rounded border px-3 py-2 text-sm"
-                value={strategy}
-                onChange={(e) => setStrategy(e.target.value)}
-              >
-                {Object.entries(STRATEGY_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
-                ))}
-              </select>
+              <div className="space-y-2">
+                {/* Recommended tier — always visible */}
+                <div className="space-y-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Recommended</span>
+                  {RECOMMENDED_STRATEGIES.map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setStrategy(k)}
+                      className={cn(
+                        "w-full rounded border px-3 py-2 text-left text-sm transition-colors",
+                        strategy === k
+                          ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                          : "hover:bg-muted",
+                      )}
+                    >
+                      <div className="font-medium">{STRATEGY_LABELS[k]}</div>
+                      {STRATEGY_DESCRIPTIONS[k] && (
+                        <div className="text-[11px] text-muted-foreground mt-0.5">{STRATEGY_DESCRIPTIONS[k]}</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Advanced tier — collapsed */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvanced((p) => !p)}
+                    className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors py-1"
+                  >
+                    {showAdvanced ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                    Show more strategies ({ADVANCED_STRATEGIES.length})
+                  </button>
+                  {showAdvanced && (
+                    <div className="space-y-1 mt-1">
+                      {ADVANCED_STRATEGIES.map((k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => setStrategy(k)}
+                          className={cn(
+                            "w-full rounded border px-3 py-1.5 text-left text-sm transition-colors",
+                            strategy === k
+                              ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                              : "hover:bg-muted",
+                          )}
+                        >
+                          {STRATEGY_LABELS[k]}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Expert tier — collapsed */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowExpert((p) => !p)}
+                    className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors py-1"
+                  >
+                    {showExpert ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                    Show all strategies ({EXPERT_STRATEGIES.length})
+                  </button>
+                  {showExpert && (
+                    <div className="space-y-1 mt-1">
+                      {EXPERT_STRATEGIES.map((k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => setStrategy(k)}
+                          className={cn(
+                            "w-full rounded border px-3 py-1.5 text-left text-sm transition-colors",
+                            strategy === k
+                              ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                              : "hover:bg-muted",
+                          )}
+                        >
+                          {STRATEGY_LABELS[k]}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Show current selection if it's in a collapsed tier */}
+                {!RECOMMENDED_STRATEGIES.includes(strategy) && (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Selected: <span className="font-medium text-foreground">{STRATEGY_LABELS[strategy] ?? strategy}</span>
+                  </div>
+                )}
+              </div>
 
               {/* Dynamic strategy params */}
               <div className="grid grid-cols-2 gap-3">
@@ -560,19 +671,45 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
             </CardHeader>
             <CardContent className="pb-3 space-y-3">
               <div>
-                <label className="text-xs font-medium">Models (min 2)</label>
-                <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-1">
-                  {ALL_MODELS.map((m) => (
-                    <label key={m} className="flex items-center gap-1.5 text-xs">
-                      <input
-                        type="checkbox"
-                        checked={models.includes(m)}
-                        onChange={() => toggleModel(m)}
-                      />
-                      {MODEL_LABELS[m] ?? m.replace("_cluster", "")}
-                    </label>
-                  ))}
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-medium">Models (min 2)</label>
+                  {!modelsExpanded && (
+                    <span className="text-[11px] text-muted-foreground">
+                      Using {models.length} models from pipeline config
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setModelsExpanded((p) => !p)}
+                    className="flex items-center gap-0.5 text-[11px] text-primary hover:underline"
+                  >
+                    {modelsExpanded ? (
+                      <>
+                        <ChevronDown className="h-3 w-3" />
+                        Collapse
+                      </>
+                    ) : (
+                      <>
+                        <Pencil className="h-3 w-3" />
+                        Edit
+                      </>
+                    )}
+                  </button>
                 </div>
+                {modelsExpanded && (
+                  <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-1">
+                    {ALL_MODELS.map((m) => (
+                      <label key={m} className="flex items-center gap-1.5 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={models.includes(m)}
+                          onChange={() => toggleModel(m)}
+                        />
+                        {MODEL_LABELS[m] ?? m.replace("_cluster", "")}
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>

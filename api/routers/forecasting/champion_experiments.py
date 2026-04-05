@@ -36,7 +36,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _TEMPLATES_PATH = _PROJECT_ROOT / "config" / "champion_experiment_templates.yaml"
 _PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecast_pipeline_config.yaml"
 
-_VALID_STRATEGIES = {"expanding", "rolling", "decay", "ensemble", "meta_learner"}
+from common.ml.champion_strategies import STRATEGY_REGISTRY as _STRAT_REG
+
+_VALID_STRATEGIES = set(_STRAT_REG.keys())
 _VALID_METRICS = {"accuracy_pct", "wape"}
 _VALID_LAG_MODES = {"execution", "0", "1", "2", "3", "4"}
 

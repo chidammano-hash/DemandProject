@@ -227,8 +227,8 @@ function getTemplates(model: ModelType): TemplateOption[] {
   const defaults = getDefaults(model);
   const baseTemplate: TemplateOption = {
     id: "production",
-    label: "Production Baseline",
-    description: "Current production hyperparameters",
+    label: "Current Production Settings",
+    description: "The parameters currently running in production",
     params: { ...defaults },
     config: { ...DEFAULT_CONFIG },
   };
@@ -237,26 +237,26 @@ function getTemplates(model: ModelType): TemplateOption[] {
     return [
       baseTemplate,
       {
-        id: "aggressive_depth", label: "Aggressive Depth + Heavy Reg",
-        description: "Capped depth at 10, increased regularization for sparse clusters",
+        id: "aggressive_depth", label: "Conservative (Stable Demand)",
+        description: "Best for stable, low-variability items with strong regularization",
         params: { ...defaults, max_depth: 10, num_leaves: 63, reg_lambda: 3.5, reg_alpha: 0.5, path_smooth: 8.0, min_child_samples: 60 },
         config: { ...DEFAULT_CONFIG },
       },
       {
-        id: "ultra_slow_lr", label: "Ultra-Slow LR + Max Trees",
-        description: "0.008 LR with 3000 trees for subtle residual patterns",
+        id: "ultra_slow_lr", label: "High Precision (Long Training)",
+        description: "Maximizes accuracy with extended training for subtle patterns",
         params: { ...defaults, learning_rate: 0.008, n_estimators: 3000, subsample: 0.85, colsample_bytree: 0.85 },
         config: { ...DEFAULT_CONFIG },
       },
       {
-        id: "feature_boost", label: "Feature Fraction Boost + Sparse Campaign",
-        description: "High feature retention + aggressive sparse-demand regularization",
+        id: "feature_boost", label: "Intermittent Demand",
+        description: "Optimized for sparse or intermittent demand patterns",
         params: { ...defaults, feature_fraction_bynode: 0.9, colsample_bytree: 0.9, min_child_samples: 100, min_gain_to_split: 0.05, reg_alpha: 1.0, path_smooth: 12.0 },
         config: { ...DEFAULT_CONFIG },
       },
       {
-        id: "balanced_champion", label: "Balanced Champion Candidate",
-        description: "Best elements from prior experiments combined",
+        id: "balanced_champion", label: "Balanced (Best All-Around)",
+        description: "Well-rounded settings combining top findings from prior experiments",
         params: { ...defaults, learning_rate: 0.015, n_estimators: 2000, max_depth: 12, num_leaves: 95, reg_lambda: 2.5, reg_alpha: 0.3, feature_fraction_bynode: 0.8, path_smooth: 6.0, min_child_samples: 50 },
         config: { ...DEFAULT_CONFIG },
       },
@@ -273,26 +273,26 @@ function getTemplates(model: ModelType): TemplateOption[] {
     return [
       baseTemplate,
       {
-        id: "symmetric_ordered", label: "Ordered Boosting + Symmetric Trees",
-        description: "SymmetricTree with Ordered bootstrap for temporal data",
+        id: "symmetric_ordered", label: "Temporal Optimized",
+        description: "Best for time-series data with strong seasonal patterns",
         params: { ...defaults, grow_policy: "SymmetricTree", depth: 8, bootstrap_type: "Ordered", iterations: 4000, learning_rate: 0.006, random_strength: 1.0 },
         config: { ...DEFAULT_CONFIG },
       },
       {
-        id: "high_border", label: "High Border Count + Reduced Leaf Reg",
-        description: "128 borders for finer splits, reduced L2 leaf reg",
+        id: "high_border", label: "Fine-Grained Splits",
+        description: "Higher resolution splits for nuanced demand signals",
         params: { ...defaults, border_count: 128, l2_leaf_reg: 3.0, min_data_in_leaf: 40, bagging_temperature: 0.6, model_size_reg: 0.02 },
         config: { ...DEFAULT_CONFIG },
       },
       {
-        id: "langevin", label: "Langevin Gradient Boosting",
-        description: "Diffusion noise as implicit regularization",
+        id: "langevin", label: "Noise-Resistant (Exploratory)",
+        description: "Uses diffusion noise to handle noisy demand data",
         params: { ...defaults, langevin: true, diffusion_temperature: 10000, learning_rate: 0.005, iterations: 5000, l2_leaf_reg: 5.0, bootstrap_type: "Bayesian", bagging_temperature: 1.0 },
         config: { ...DEFAULT_CONFIG },
       },
       {
-        id: "ensemble_optimized", label: "Ensemble-Optimized Blend",
-        description: "Designed to complement LGBM champion in meta-learner",
+        id: "ensemble_optimized", label: "Ensemble Complement",
+        description: "Designed to work alongside other models in blended forecasts",
         params: { ...defaults, iterations: 3500, learning_rate: 0.01, depth: 12, l2_leaf_reg: 4.0, max_leaves: 191, subsample: 0.9, colsample_bylevel: 0.9, reg_lambda: 2.0, model_size_reg: 0.04 },
         config: { ...DEFAULT_CONFIG },
       },
@@ -309,26 +309,26 @@ function getTemplates(model: ModelType): TemplateOption[] {
   return [
     baseTemplate,
     {
-      id: "lossguide_heavy_reg", label: "Lossguide + Heavy Regularization",
-      description: "Leaf-wise splitting with heavy L1/L2 regularization",
+      id: "lossguide_heavy_reg", label: "Conservative (Heavy Guardrails)",
+      description: "Strong regularization for stable, predictable forecasts",
       params: { ...defaults, grow_policy: "lossguide", max_leaves: 127, max_depth: 10, n_estimators: 2000, learning_rate: 0.015, reg_lambda: 5.0, reg_alpha: 0.5, gamma: 0.2, min_child_weight: 15, max_bin: 256, colsample_bylevel: 0.8 },
       config: { ...DEFAULT_CONFIG },
     },
     {
-      id: "dart_conservative", label: "DART + Conservative Dropout",
-      description: "Dropout regularization for balanced ensemble",
+      id: "dart_conservative", label: "Balanced Diversity",
+      description: "Uses tree dropout for robust, well-generalized forecasts",
       params: { ...defaults, booster: "dart", rate_drop: 0.08, skip_drop: 0.5, n_estimators: 2500, learning_rate: 0.012, max_depth: 8, subsample: 0.85, colsample_bytree: 0.85, reg_lambda: 3.0 },
       config: { ...DEFAULT_CONFIG },
     },
     {
-      id: "ultra_high_trees", label: "Ultra-High Trees + Micro LR",
-      description: "3000 trees at 0.008 LR to close gap with LGBM",
+      id: "ultra_high_trees", label: "High Precision (Long Training)",
+      description: "Extended training to capture fine-grained demand patterns",
       params: { ...defaults, n_estimators: 3000, learning_rate: 0.008, max_depth: 10, max_leaves: 95, grow_policy: "lossguide", max_bin: 256, subsample: 0.82, colsample_bylevel: 0.85, reg_lambda: 4.0, gamma: 0.15 },
       config: { ...DEFAULT_CONFIG },
     },
     {
-      id: "champion_blend", label: "Champion Candidate Blend",
-      description: "Best findings from prior runs combined",
+      id: "champion_blend", label: "Balanced (Best All-Around)",
+      description: "Top findings combined for a well-rounded candidate",
       params: { ...defaults, booster: "dart", rate_drop: 0.05, skip_drop: 0.6, n_estimators: 2800, learning_rate: 0.01, grow_policy: "lossguide", max_leaves: 127, max_depth: 10, max_bin: 256, min_child_weight: 12, subsample: 0.85, colsample_bylevel: 0.85, reg_lambda: 5.0, reg_alpha: 0.3, gamma: 0.12 },
       config: { ...DEFAULT_CONFIG },
     },
@@ -472,6 +472,8 @@ export function ExperimentBuilder({
   const [config, setConfig] = useState<TrainingConfig>({ ...DEFAULT_CONFIG });
   const [errors, setErrors] = useState<ValidationError[]>([]);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [paramsExpanded, setParamsExpanded] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [clusterSource, setClusterSource] = useState<"production" | "experimental">("production");
   const [clusterExperimentId, setClusterExperimentId] = useState<number | null>(null);
 
@@ -501,6 +503,8 @@ export function ExperimentBuilder({
     setNotes("");
     setErrors([]);
     setConfig({ ...DEFAULT_CONFIG });
+    setParamsExpanded(false);
+    setAdvancedOpen(false);
     setClusterSource("production");
     setClusterExperimentId(null);
   }, [model]);
@@ -517,6 +521,8 @@ export function ExperimentBuilder({
           setRunLabel(tmpl.label);
         }
       }
+      // Auto-expand parameter table for Custom; collapse for named templates
+      setParamsExpanded(templateId === "custom");
       setErrors([]);
     },
     [templates],
@@ -693,13 +699,37 @@ export function ExperimentBuilder({
             </div>
           </div>
 
-          {/* Hyperparameters */}
+          {/* Hyperparameters — collapsed disclosure for named templates */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-              Hyperparameters
-            </p>
+            {selectedTemplate !== "custom" && !paramsExpanded ? (
+              <button
+                onClick={() => setParamsExpanded(true)}
+                className="w-full flex items-center justify-between rounded-md border border-border px-3 py-2 hover:bg-muted/30 transition-colors text-left"
+              >
+                <span className="text-xs font-medium text-foreground">
+                  View Parameters ({paramSpecs.length} configured, {changedCount} differ from production)
+                </span>
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+              </button>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Hyperparameters
+                  </p>
+                  {selectedTemplate !== "custom" && (
+                    <button
+                      onClick={() => setParamsExpanded(false)}
+                      className="text-[10px] text-muted-foreground hover:text-foreground underline"
+                    >
+                      Collapse
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
 
-            {Object.entries(groupedParams).map(([group, specs]) => {
+            {(paramsExpanded || selectedTemplate === "custom") && Object.entries(groupedParams).map(([group, specs]) => {
               const isCollapsed = collapsedGroups[group] ?? false;
               return (
                 <div
@@ -871,12 +901,22 @@ export function ExperimentBuilder({
             })}
           </div>
 
-          {/* Training config */}
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-              Training Configuration
-            </p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {/* Advanced Training Options (collapsed by default) */}
+          <div className="border rounded-md overflow-hidden">
+            <button
+              onClick={() => setAdvancedOpen((prev) => !prev)}
+              className="w-full flex items-center justify-between px-3 py-2 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+            >
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Advanced Training Options
+              </span>
+              {advancedOpen ? (
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+            </button>
+            {advancedOpen && <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 px-3 py-3">
               {/* Cluster Source selector */}
               <div>
                 <label className="text-[10px] text-muted-foreground mb-1 block">
@@ -1020,7 +1060,7 @@ export function ExperimentBuilder({
                   </div>
                 </>
               )}
-            </div>
+            </div>}
           </div>
 
           {/* Warnings */}

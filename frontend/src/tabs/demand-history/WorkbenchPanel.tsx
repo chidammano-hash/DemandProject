@@ -151,22 +151,15 @@ export function DemandWorkbenchPanel() {
           )}
         </div>
 
-        {/* Children for drill-down */}
-        {data?.hierarchy_children && data.hierarchy_children.length > 0 && selectedKey && grain !== "item_loc_customer" && (
+        {/* Drill-down button */}
+        {data?.hierarchy_children && selectedKey && grain !== "item_loc_customer" && (
           <div className="mt-3 pt-3 border-t dark:border-gray-700">
-            <p className="text-xs text-gray-500 mb-2 font-medium">Drill down</p>
-            <div className="space-y-0.5 max-h-40 overflow-y-auto">
-              {data.hierarchy_children.map((c) => (
-                <button
-                  key={c.key}
-                  onClick={() => handleDrillDown(c.key)}
-                  className="w-full text-left px-3 py-1.5 text-xs rounded hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 flex justify-between"
-                >
-                  <span className="truncate">{c.label || c.key}</span>
-                  <span>{c.total_demand.toLocaleString()}</span>
-                </button>
-              ))}
-            </div>
+            <button
+              onClick={() => handleDrillDown(selectedKey)}
+              className="w-full text-left px-3 py-2 text-xs rounded bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-medium"
+            >
+              Drill down to {data.hierarchy_children.replace(/_/g, " + ")} →
+            </button>
           </div>
         )}
       </div>

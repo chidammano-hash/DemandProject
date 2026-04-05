@@ -18,7 +18,7 @@ vi.mock("@/api/queries/demand-history", () => ({
   useDecomposition: vi.fn().mockReturnValue({ data: null, isLoading: false, isError: false }),
   useComparison: vi.fn().mockReturnValue({ data: null, isLoading: false, isError: false }),
   useWorkbench: vi.fn().mockReturnValue({
-    data: { grain: "item", series: [], hierarchy_children: [], total_count: 0 },
+    data: { grain: "item", series: [], hierarchy_children: null, total: 0 },
     isLoading: false,
     isError: false,
   }),

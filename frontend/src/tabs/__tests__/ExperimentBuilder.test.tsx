@@ -7,26 +7,26 @@ import { TestQueryWrapper } from "./test-utils";
 // ---------------------------------------------------------------------------
 const mockTemplatesLgbm = {
   templates: [
-    { id: "production_baseline", label: "Production Baseline (Run 16)", description: "Current production parameters", params: { n_estimators: 1500, learning_rate: 0.02, num_leaves: 127, max_depth: -1, reg_lambda: 1.0 }, config: { cluster_strategy: "per_cluster", recursive: true, shap_select: true }, source: "algorithm_config" },
-    { id: "expert_aggressive_depth", label: "Expert: Aggressive Depth", description: "Cap depth at 10, halve leaves to 63, increase L2 to 3.5", params: { n_estimators: 1500, learning_rate: 0.02, num_leaves: 63, max_depth: 10, reg_lambda: 3.5, reg_alpha: 0.5, path_smooth: 8.0, min_child_samples: 60 }, config: { cluster_strategy: "per_cluster", recursive: true, shap_select: true }, source: "expert" },
-    { id: "expert_ultra_slow_lr", label: "Expert: Ultra-Slow LR + Max Trees", description: "LR=0.008 with 3000 trees", params: { n_estimators: 3000, learning_rate: 0.008, subsample: 0.85, colsample_bytree: 0.85 }, config: { cluster_strategy: "per_cluster", recursive: true }, source: "expert" },
-    { id: "expert_sparse_demand", label: "Expert: Feature Fraction + Sparse Campaign", description: "High node-level features with sparse demand reg", params: { feature_fraction_bynode: 0.9, colsample_bytree: 0.9, min_child_samples: 100 }, config: {}, source: "expert" },
-    { id: "expert_balanced", label: "Expert: Balanced Champion Candidate", description: "Moderate depth cap, slower LR, balanced reg", params: { learning_rate: 0.015, n_estimators: 2000 }, config: {}, source: "expert" },
+    { id: "production_baseline", label: "Current Production Settings", description: "The parameters currently running in production", params: { n_estimators: 1500, learning_rate: 0.02, num_leaves: 127, max_depth: -1, reg_lambda: 1.0 }, config: { cluster_strategy: "per_cluster", recursive: true, shap_select: true }, source: "algorithm_config" },
+    { id: "expert_aggressive_depth", label: "Conservative (Stable Demand)", description: "Best for stable, low-variability items with strong regularization", params: { n_estimators: 1500, learning_rate: 0.02, num_leaves: 63, max_depth: 10, reg_lambda: 3.5, reg_alpha: 0.5, path_smooth: 8.0, min_child_samples: 60 }, config: { cluster_strategy: "per_cluster", recursive: true, shap_select: true }, source: "expert" },
+    { id: "expert_ultra_slow_lr", label: "High Precision (Long Training)", description: "Maximizes accuracy with extended training for subtle patterns", params: { n_estimators: 3000, learning_rate: 0.008, subsample: 0.85, colsample_bytree: 0.85 }, config: { cluster_strategy: "per_cluster", recursive: true }, source: "expert" },
+    { id: "expert_sparse_demand", label: "Intermittent Demand", description: "Optimized for sparse or intermittent demand patterns", params: { feature_fraction_bynode: 0.9, colsample_bytree: 0.9, min_child_samples: 100 }, config: {}, source: "expert" },
+    { id: "expert_balanced", label: "Balanced (Best All-Around)", description: "Well-rounded settings combining top findings from prior experiments", params: { learning_rate: 0.015, n_estimators: 2000 }, config: {}, source: "expert" },
     { id: "custom", label: "Custom", description: "Start from scratch", params: {}, config: {}, source: "custom" },
   ],
 };
 
 const mockTemplatesCatboost = {
   templates: [
-    { id: "production_baseline", label: "Production Baseline", description: "Current CatBoost parameters", params: { iterations: 3000, learning_rate: 0.008, depth: 10, l2_leaf_reg: 7.5 }, config: {}, source: "algorithm_config" },
-    { id: "expert_ordered_symmetric", label: "Expert: Ordered Boosting", description: "Symmetric trees with ordered boosting", params: { grow_policy: "SymmetricTree", depth: 8, bootstrap_type: "Ordered", iterations: 4000 }, config: {}, source: "expert" },
+    { id: "production_baseline", label: "Current Production Settings", description: "Current CatBoost parameters", params: { iterations: 3000, learning_rate: 0.008, depth: 10, l2_leaf_reg: 7.5 }, config: {}, source: "algorithm_config" },
+    { id: "expert_ordered_symmetric", label: "Temporal Optimized", description: "Best for time-series data with strong seasonal patterns", params: { grow_policy: "SymmetricTree", depth: 8, bootstrap_type: "Ordered", iterations: 4000 }, config: {}, source: "expert" },
   ],
 };
 
 const mockTemplatesXgboost = {
   templates: [
-    { id: "production_baseline", label: "Production Baseline", description: "Current XGBoost parameters", params: { n_estimators: 1500, learning_rate: 0.02, max_depth: 8 }, config: {}, source: "algorithm_config" },
-    { id: "expert_dart", label: "Expert: DART Booster", description: "Tree dropout for balanced generalization", params: { booster: "dart", rate_drop: 0.08, skip_drop: 0.5 }, config: {}, source: "expert" },
+    { id: "production_baseline", label: "Current Production Settings", description: "Current XGBoost parameters", params: { n_estimators: 1500, learning_rate: 0.02, max_depth: 8 }, config: {}, source: "algorithm_config" },
+    { id: "expert_dart", label: "Balanced Diversity", description: "Uses tree dropout for robust, well-generalized forecasts", params: { booster: "dart", rate_drop: 0.08, skip_drop: 0.5 }, config: {}, source: "expert" },
   ],
 };
 
@@ -224,11 +224,11 @@ describe("ExperimentBuilder", () => {
     // The experiment builder is accessed through the tuning tab's AI chat panel
     // Templates are loaded from the API and displayed as selectable options
     expect(mockTemplatesLgbm.templates).toHaveLength(6);
-    expect(mockTemplatesLgbm.templates[0].label).toBe("Production Baseline (Run 16)");
-    expect(mockTemplatesLgbm.templates[1].label).toBe("Expert: Aggressive Depth");
-    expect(mockTemplatesLgbm.templates[2].label).toBe("Expert: Ultra-Slow LR + Max Trees");
-    expect(mockTemplatesLgbm.templates[3].label).toBe("Expert: Feature Fraction + Sparse Campaign");
-    expect(mockTemplatesLgbm.templates[4].label).toBe("Expert: Balanced Champion Candidate");
+    expect(mockTemplatesLgbm.templates[0].label).toBe("Current Production Settings");
+    expect(mockTemplatesLgbm.templates[1].label).toBe("Conservative (Stable Demand)");
+    expect(mockTemplatesLgbm.templates[2].label).toBe("High Precision (Long Training)");
+    expect(mockTemplatesLgbm.templates[3].label).toBe("Intermittent Demand");
+    expect(mockTemplatesLgbm.templates[4].label).toBe("Balanced (Best All-Around)");
     expect(mockTemplatesLgbm.templates[5].label).toBe("Custom");
   });
 

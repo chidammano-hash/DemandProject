@@ -72,9 +72,9 @@ help:
 	@echo "  api                  - run unified FastAPI service on :8000"
 	@echo "  ui-init              - install frontend dependencies"
 	@echo "  ui                   - run shadcn React UI on :5173"
-	@echo "  backtest-lgbm        - run LGBM per-cluster backtest (settings from algorithm_config.yaml)"
-	@echo "  backtest-catboost    - run CatBoost per-cluster backtest (settings from algorithm_config.yaml)"
-	@echo "  backtest-xgboost     - run XGBoost per-cluster backtest (settings from algorithm_config.yaml)"
+	@echo "  backtest-lgbm        - run LGBM per-cluster backtest (settings from forecast_pipeline_config.yaml)"
+	@echo "  backtest-catboost    - run CatBoost per-cluster backtest (settings from forecast_pipeline_config.yaml)"
+	@echo "  backtest-xgboost     - run XGBoost per-cluster backtest (settings from forecast_pipeline_config.yaml)"
 	@echo "  backtest-chronos     - run Chronos T5 foundation model backtest"
 	@echo "  backtest-chronos-full- run Chronos T5 backtest + load predictions"
 	@echo "  backtest-bolt        - run Chronos Bolt foundation model backtest"
@@ -114,7 +114,7 @@ help:
 	@echo "  expsys-backtest        - Expert System Backtest: full population, segment-assigned algo, loads to DB (~4-5h)"
 	@echo "  expsys-backtest-dry    - ExpSys accuracy only, no DB load (--skip-load)"
 	@echo "  expsys-backtest-replace - ExpSys: delete existing rows then reload"
-	@echo "  NOTE: recursive, SHAP, and tuning are configured via config/algorithm_config.yaml"
+	@echo "  NOTE: recursive, SHAP, and tuning are configured via config/forecast_pipeline_config.yaml"
 	@echo "  seasonality-schema   - apply DDL for seasonality columns on dim_dfu (one-time)"
 	@echo "  seasonality-detect   - run seasonality detection pipeline (detect + profile)"
 	@echo "  seasonality-update   - write seasonality profiles to dim_dfu"
@@ -148,7 +148,7 @@ help:
 	@echo "  replplan-compute-dry - preview replenishment plan without writing to DB"
 	@echo "  replplan-all         - replplan-schema + replplan-compute (full pipeline)"
 	@echo "  lgbm-auto-tune       - auto-tune LGBM with N strategies (RUNS=3 default, max 10)"
-	@echo "  lgbm-auto-tune-promote - auto-tune + promote best params to algorithm_config.yaml"
+	@echo "  lgbm-auto-tune-promote - auto-tune + promote best params to forecast_pipeline_config.yaml"
 	@echo "  lgbm-auto-tune-dry-run - preview all strategies without running backtests"
 	@echo "  lgbm-auto-tune-list  - list available auto-tune strategies"
 	@echo "  test                 - run all Python tests"
@@ -400,7 +400,23 @@ check-api:
 	curl -s "http://localhost:8000/forecasts?limit=3" && echo
 
 check-db:
-	$(PSQL) -c "SELECT 'dim_item' AS table_name, count(*) AS cnt FROM dim_item UNION ALL SELECT 'dim_location' AS table_name, count(*) AS cnt FROM dim_location UNION ALL SELECT 'dim_customer' AS table_name, count(*) AS cnt FROM dim_customer UNION ALL SELECT 'dim_time' AS table_name, count(*) AS cnt FROM dim_time UNION ALL SELECT 'dim_dfu' AS table_name, count(*) AS cnt FROM dim_dfu UNION ALL SELECT 'fact_sales_monthly' AS table_name, count(*) AS cnt FROM fact_sales_monthly UNION ALL SELECT 'fact_external_forecast_monthly' AS table_name, count(*) AS cnt FROM fact_external_forecast_monthly;"
+	@$(PSQL) -c " \
+	SELECT t.tbl AS table_name, \
+	  COALESCE(( \
+	    SELECT reltuples::bigint::text FROM pg_class c \
+	    JOIN pg_namespace n ON n.oid=c.relnamespace \
+	    WHERE n.nspname='public' AND c.relname=t.tbl \
+	  ), '—') AS est_rows \
+	FROM (VALUES \
+	  ('dim_item'),('dim_location'),('dim_customer'),('dim_time'),('dim_sku'), \
+	  ('fact_sales_monthly'),('fact_external_forecast_monthly'),('fact_customer_demand_monthly'), \
+	  ('fact_inventory_snapshot'),('fact_production_forecast'),('fact_purchase_orders'), \
+	  ('backtest_lag_archive'),('champion_experiment'),('cluster_experiment'), \
+	  ('lgbm_tuning_run'),('job_history') \
+	) AS t(tbl) ORDER BY tbl;"
+	@echo ""
+	@echo "── Model Coverage ──"
+	@$(PSQL) -c "SELECT model_id, count(*) AS rows FROM fact_external_forecast_monthly GROUP BY model_id ORDER BY count(*) DESC;" 2>/dev/null || echo "  (no backtest data loaded yet)"
 
 cluster-features:
 	$(UV) python scripts/generate_clustering_features.py
@@ -532,7 +548,7 @@ ai-insights-all: ai-insights-schema ai-insights-scan
 
 # ---------------------------------------------------------------------------
 # Backtesting (LGBM / CatBoost / XGBoost / Chronos — per-cluster only)
-# Options (recursive, SHAP, tuning, params) are set in config/algorithm_config.yaml
+# Options (recursive, SHAP, tuning, params) are set in config/forecast_pipeline_config.yaml
 # ---------------------------------------------------------------------------
 backtest-lgbm:
 	$(UV) python scripts/run_backtest.py --parallel --workers 8 $(ARGS)
@@ -1444,32 +1460,20 @@ clean-artifacts:                       ## Remove stale intermediate files (clean
 	rm -f data/seasonality_results.csv data/clustering_features.csv
 	@echo "✓ Intermediate artifacts cleaned."
 
-refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4 tiers, CONCURRENTLY where possible)
-	@echo "Refreshing materialized views (tier-ordered, concurrent where supported)..."
-	@echo "  Tier 1: Base aggregates (no dependencies)"
-	@echo "  Tier 2: Derived views (depend on Tier 1)"
-	@echo "  Tier 3: Cross-domain views (depend on Tier 2)"
-	@echo "  Tier 4: Dashboard views (depend on all above)"
-	$(PSQL) -v ON_ERROR_STOP=1 -c " \
-	  /* --- Tier 1: Base aggregates (source: fact tables only) --- */ \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_sales_monthly; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_forecast_monthly; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_inventory_monthly; \
-	  /* --- Tier 2: Derived views (depend on Tier 1 aggregates) --- */ \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY mv_inventory_forecast_monthly; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY mv_fill_rate_monthly; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY mv_intramonth_stockout; \
-	  /* --- Tier 3: Supplier / procurement views --- */ \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY mv_supplier_performance; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY mv_supplier_po_performance; \
-	  REFRESH MATERIALIZED VIEW mv_po_lead_time_analysis; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_accuracy_by_dim; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY agg_dfu_coverage; \
-	  /* --- Tier 4: Dashboard / composite views (depend on all above) --- */ \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY mv_inventory_health_score; \
-	  REFRESH MATERIALIZED VIEW CONCURRENTLY mv_control_tower_kpis; \
-	"
-	@echo "✓ All materialized views refreshed (concurrent, zero read downtime)."
+refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4 tiers, auto-detects first run)
+	@echo "Refreshing materialized views (tier-ordered)..."
+	@for mv in \
+	  agg_sales_monthly agg_forecast_monthly agg_inventory_monthly \
+	  mv_inventory_forecast_monthly mv_fill_rate_monthly mv_intramonth_stockout \
+	  mv_supplier_performance mv_supplier_po_performance mv_po_lead_time_analysis \
+	  agg_accuracy_by_dim agg_dfu_coverage \
+	  mv_inventory_health_score mv_control_tower_kpis; do \
+	  echo "  Refreshing $$mv ..."; \
+	  $(PSQL) -c "REFRESH MATERIALIZED VIEW CONCURRENTLY $$mv;" 2>/dev/null \
+	    || $(PSQL) -c "REFRESH MATERIALIZED VIEW $$mv;" 2>/dev/null \
+	    || echo "    ⚠ $$mv skipped (does not exist)"; \
+	done
+	@echo "✓ All materialized views refreshed."
 
 refresh-accuracy-mvs:                  ## Refresh accuracy MVs (after backtest load)
 	$(PSQL) -v ON_ERROR_STOP=1 -c " \

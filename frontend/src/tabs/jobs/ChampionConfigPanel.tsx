@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { modelLabel } from "@/lib/model-labels";
 import {
   queryKeys,
   STALE,
@@ -117,7 +118,7 @@ export function ChampionConfigPanel({ onJobSubmitted }: ChampionConfigPanelProps
                     disabled={isLast || running}
                     onChange={() => handleModelToggle(m)}
                   />
-                  <span className="font-mono text-xs">{m}</span>
+                  <span className="text-xs">{modelLabel(m)}</span>
                 </label>
               );
             })}

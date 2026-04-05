@@ -153,9 +153,6 @@ vi.mock("../clusters/ClusterExperimentsPanel", () => ({
 vi.mock("../champion/ChampionExperimentsPanel", () => ({
   ChampionExperimentsPanel: () => <div data-testid="champion-panel">ChampionExperimentsPanel</div>,
 }));
-vi.mock("../model-tuning/PipelineConfigPanel", () => ({
-  PipelineConfigPanel: () => <div data-testid="pipeline-config-panel">PipelineConfigPanel</div>,
-}));
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -175,25 +172,21 @@ describe("ModelTuningTab", () => {
     expect(screen.getByText("Clustering")).toBeInTheDocument();
     expect(screen.getByText("Backtest & Tune")).toBeInTheDocument();
     expect(screen.getByText("Champion")).toBeInTheDocument();
-    expect(screen.getByText("Forecast")).toBeInTheDocument();
-    expect(screen.getByText("Pipeline Config")).toBeInTheDocument();
   });
 
-  it("renders all 12 models in model grid", async () => {
+  it("renders tunable model cards and other models summary", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
     await waitFor(() => {
-      // LightGBM appears in grid + selected model header, use getAllByText
+      // Tunable models appear as clickable cards
       expect(screen.getAllByText("LightGBM").length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText("CatBoost").length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText("XGBoost").length).toBeGreaterThanOrEqual(1);
-      expect(screen.getByText("Chronos T5")).toBeInTheDocument();
-      expect(screen.getByText("Chronos Bolt")).toBeInTheDocument();
-      expect(screen.getByText("Chronos 2")).toBeInTheDocument();
-      expect(screen.getByText("MSTL")).toBeInTheDocument();
-      expect(screen.getByText("N-BEATS")).toBeInTheDocument();
-      expect(screen.getByText("Seasonal Naive")).toBeInTheDocument();
-      expect(screen.getByText("Rolling Mean")).toBeInTheDocument();
+      // Non-tunable models appear in the compact summary row
+      expect(screen.getByTestId("other-models-row")).toBeInTheDocument();
+      expect(screen.getByText(/Chronos T5/)).toBeInTheDocument();
+      expect(screen.getByText(/Chronos Bolt/)).toBeInTheDocument();
+      expect(screen.getByText(/MSTL/)).toBeInTheDocument();
     });
   });
 
@@ -218,18 +211,6 @@ describe("ModelTuningTab", () => {
     fireEvent.click(screen.getByText("Clustering"));
     await waitFor(() => {
       expect(screen.getByTestId("cluster-experiments-panel")).toBeInTheDocument();
-    });
-  });
-
-  it("switches to Pipeline Config panel on stage click", async () => {
-    const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
-    await waitFor(() => {
-      expect(screen.getByText("Pipeline Config")).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByText("Pipeline Config"));
-    await waitFor(() => {
-      expect(screen.getByTestId("pipeline-config-panel")).toBeInTheDocument();
     });
   });
 
@@ -340,16 +321,14 @@ describe("ModelTuningTab", () => {
     });
   });
 
-  it("shows non-tunable model info when foundation model selected", async () => {
+  it("shows non-tunable models in compact summary row", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
     await waitFor(() => {
-      expect(screen.getByText("Chronos 2")).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByText("Chronos 2"));
-    await waitFor(() => {
-      // Multiple elements may match "foundation model" — use getAllByText
-      expect(screen.getAllByText(/foundation model/i).length).toBeGreaterThanOrEqual(1);
+      const otherRow = screen.getByTestId("other-models-row");
+      expect(otherRow).toBeInTheDocument();
+      expect(otherRow.textContent).toContain("Chronos 2");
+      expect(otherRow.textContent).toContain("backtest only");
     });
   });
 

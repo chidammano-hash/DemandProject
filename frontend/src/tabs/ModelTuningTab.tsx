@@ -2,10 +2,10 @@
  * ModelTuningTab -- Model Experimentation Studio.
  *
  * Pipeline-aligned layout:
- *   Clustering → Backtest & Tune → Champion → Forecast → Config
+ *   Clustering → Backtest & Tune → Champion
  *
- * The "Backtest & Tune" stage shows a 12-model grid with per-model
- * experiment history, feature lab, and cluster EDA nested underneath.
+ * The "Backtest & Tune" stage shows tunable models as clickable cards
+ * and non-tunable models as a compact summary row.
  */
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
@@ -21,9 +21,6 @@ import {
   Database,
   Plus,
   FileText,
-  Settings2,
-  Workflow,
-  TrendingUp,
   Layers,
 } from "lucide-react";
 
@@ -34,6 +31,7 @@ import {
 } from "@/api/queries";
 import { useChartColors } from "@/hooks/useChartColors";
 import { formatPct, formatFixed, formatInt } from "@/lib/formatters";
+import { MODEL_LABELS as MODEL_LABEL_FALLBACK } from "@/lib/model-labels";
 import { cn } from "@/lib/utils";
 
 import {
@@ -78,7 +76,6 @@ import { EnhancedPromoteModal } from "./model-tuning/EnhancedPromoteModal";
 import { LogViewer } from "./model-tuning/LogViewer";
 import { ClusterExperimentsPanel } from "./clusters/ClusterExperimentsPanel";
 import { ChampionExperimentsPanel } from "./champion/ChampionExperimentsPanel";
-import { PipelineConfigPanel } from "./model-tuning/PipelineConfigPanel";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -86,33 +83,29 @@ import { PipelineConfigPanel } from "./model-tuning/PipelineConfigPanel";
 
 /** Fallback model list for initial render before pipeline config loads */
 const DEFAULT_MODELS: { id: string; label: string; type: string; tunable: boolean; modelType?: ModelType }[] = [
-  { id: "lgbm_cluster",       label: "LightGBM",       type: "tree",          tunable: true,  modelType: "lgbm" },
-  { id: "catboost_cluster",   label: "CatBoost",       type: "tree",          tunable: true,  modelType: "catboost" },
-  { id: "xgboost_cluster",    label: "XGBoost",        type: "tree",          tunable: true,  modelType: "xgboost" },
-  { id: "chronos",            label: "Chronos T5",     type: "foundation",    tunable: false },
-  { id: "chronos_bolt",       label: "Chronos Bolt",   type: "foundation",    tunable: false },
-  { id: "chronos2",           label: "Chronos 2",      type: "foundation",    tunable: false },
-  { id: "chronos2_enriched",  label: "Chronos 2E",     type: "foundation",    tunable: false },
-  { id: "mstl",               label: "MSTL",           type: "statistical",   tunable: false },
-  { id: "nbeats",             label: "N-BEATS",        type: "deep_learning", tunable: false },
-  { id: "nhits",              label: "N-HiTS",         type: "deep_learning", tunable: false },
-  { id: "seasonal_naive",     label: "Seasonal Naive", type: "statistical",   tunable: false },
-  { id: "rolling_mean",       label: "Rolling Mean",   type: "statistical",   tunable: false },
+  { id: "lgbm_cluster",          label: "LightGBM",          type: "tree",          tunable: true,  modelType: "lgbm" },
+  { id: "catboost_cluster",      label: "CatBoost",          type: "tree",          tunable: true,  modelType: "catboost" },
+  { id: "xgboost_cluster",      label: "XGBoost",           type: "tree",          tunable: true,  modelType: "xgboost" },
+  { id: "lgbm_cust_enriched",   label: "LightGBM (Cust)",   type: "tree",          tunable: true,  modelType: "lgbm" },
+  { id: "catboost_cust_enriched", label: "CatBoost (Cust)", type: "tree",          tunable: true,  modelType: "catboost" },
+  { id: "xgboost_cust_enriched", label: "XGBoost (Cust)",   type: "tree",          tunable: true,  modelType: "xgboost" },
+  { id: "chronos",              label: "Chronos T5",         type: "foundation",    tunable: false },
+  { id: "chronos_bolt",         label: "Chronos Bolt",       type: "foundation",    tunable: false },
+  { id: "chronos2",             label: "Chronos 2",          type: "foundation",    tunable: false },
+  { id: "chronos2_enriched",    label: "Chronos 2E",         type: "foundation",    tunable: false },
+  { id: "bolt_hierarchical",    label: "Bolt Hierarchical",  type: "foundation",    tunable: false },
+  { id: "mstl",                 label: "MSTL",               type: "statistical",   tunable: false },
+  { id: "nbeats",               label: "N-BEATS",            type: "deep_learning", tunable: false },
+  { id: "nhits",                label: "N-HiTS",             type: "deep_learning", tunable: false },
+  { id: "seasonal_naive",       label: "Seasonal Naive",     type: "statistical",   tunable: false },
+  { id: "rolling_mean",         label: "Rolling Mean",       type: "statistical",   tunable: false },
 ];
 
-/** Fallback display names for algorithms not yet known */
-const MODEL_LABEL_FALLBACK: Record<string, string> = {
-  lgbm_cluster: "LightGBM", catboost_cluster: "CatBoost", xgboost_cluster: "XGBoost",
-  lgbm_cust_enriched: "LightGBM (Cust)", catboost_cust_enriched: "CatBoost (Cust)", xgboost_cust_enriched: "XGBoost (Cust)",
-  chronos: "Chronos T5", chronos_bolt: "Chronos Bolt", chronos2: "Chronos 2",
-  chronos2_enriched: "Chronos 2E", bolt_hierarchical: "Bolt Hierarchical",
-  mstl: "MSTL", nbeats: "N-BEATS", nhits: "N-HiTS",
-  seasonal_naive: "Seasonal Naive", rolling_mean: "Rolling Mean",
-};
+/* MODEL_LABEL_FALLBACK imported from @/lib/model-labels */
 
-/** Map config_key to ModelType for tunable models (used for experiment API routing) */
-const CONFIG_KEY_TO_MODEL_TYPE: Record<string, ModelType> = {
-  lgbm: "lgbm", catboost: "catboost", xgboost: "xgboost",
+/** Map algorithm id to ModelType for tunable models (used for experiment API routing) */
+const ID_TO_MODEL_TYPE: Record<string, ModelType> = {
+  lgbm_cluster: "lgbm", catboost_cluster: "catboost", xgboost_cluster: "xgboost",
   lgbm_cust_enriched: "lgbm", catboost_cust_enriched: "catboost", xgboost_cust_enriched: "xgboost",
 };
 
@@ -129,7 +122,7 @@ function deriveModelsFromConfig(
         || id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
       type: algo.type,
       tunable: algo.tune,
-      modelType: CONFIG_KEY_TO_MODEL_TYPE[algo.config_key] as ModelType | undefined,
+      modelType: ID_TO_MODEL_TYPE[id] as ModelType | undefined,
     }));
 }
 
@@ -149,14 +142,12 @@ const MODEL_PREFIX: Record<ModelType, string> = {
 // ---------------------------------------------------------------------------
 // Pipeline stage tabs
 // ---------------------------------------------------------------------------
-type PipelineStage = "clustering" | "backtest" | "champion" | "forecast" | "config";
+type PipelineStage = "clustering" | "backtest" | "champion";
 
 const STAGE_TABS: { key: PipelineStage; label: string; icon: typeof FlaskConical }[] = [
   { key: "clustering", label: "Clustering",       icon: Target },
   { key: "backtest",   label: "Backtest & Tune",  icon: FlaskConical },
   { key: "champion",   label: "Champion",         icon: Crown },
-  { key: "forecast",   label: "Forecast",         icon: TrendingUp },
-  { key: "config",     label: "Pipeline Config",  icon: Settings2 },
 ];
 
 // Model detail sub-tabs (shown when a model is selected)
@@ -389,86 +380,78 @@ export default function ModelTuningTab() {
       {stage === "champion" && <ChampionExperimentsPanel />}
 
       {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* FORECAST stage — production forecast summary                        */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {stage === "forecast" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Production Forecast</CardTitle>
-            <CardDescription>Production forecast settings are managed in Pipeline Config.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Switch to the <button className="underline text-primary" onClick={() => setStage("config")}>Pipeline Config</button> tab
-              to configure horizon (24 months), cold-start routing, confidence intervals, and model registry.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* CONFIG stage                                                        */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {stage === "config" && <PipelineConfigPanel />}
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
       {/* BACKTEST & TUNE stage — 12-model grid + selected model detail       */}
       {/* ════════════════════════════════════════════════════════════════════ */}
       {stage === "backtest" && (
         <>
           {/* ---- Model Grid ---- */}
-          <div>
-            <h3 className="text-sm font-medium text-muted-foreground mb-2">Select a model to view experiments</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-              {ALL_MODELS.map((m) => {
-                const summary = modelSummaries[m.id];
-                const isSelected = selectedModelId === m.id;
-                return (
-                  <button
-                    key={m.id}
-                    onClick={() => handleModelSelect(m.id)}
-                    className={cn(
-                      "rounded-lg border p-3 text-left transition-all",
-                      isSelected
-                        ? "border-primary bg-primary/5 ring-1 ring-primary shadow-sm"
-                        : "hover:bg-muted/50 hover:border-foreground/20",
-                    )}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-semibold truncate">{m.label}</span>
-                      {m.tunable && summary && summary.promoted != null && (
-                        <Crown className="h-3 w-3 text-amber-500 shrink-0" />
+          <div className="space-y-3">
+            {/* Tunable Models — clickable cards */}
+            <div>
+              <h3 className="text-sm font-medium text-muted-foreground mb-2">Tunable Models</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                {ALL_MODELS.filter((m) => m.tunable).map((m) => {
+                  const summary = modelSummaries[m.id];
+                  const isSelected = selectedModelId === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => handleModelSelect(m.id)}
+                      className={cn(
+                        "rounded-lg border p-3 text-left transition-all",
+                        isSelected
+                          ? "border-primary bg-primary/5 ring-1 ring-primary shadow-sm"
+                          : "hover:bg-muted/50 hover:border-foreground/20",
                       )}
-                    </div>
-                    <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${TYPE_COLORS[m.type] ?? ""}`}>
-                      {m.type.replace("_", " ")}
-                    </Badge>
-                    {m.tunable && summary ? (
-                      <div className="mt-2 space-y-0.5">
-                        <div className="text-xs tabular-nums">
-                          {summary.best != null ? (
-                            <span className="font-semibold">{summary.best.toFixed(1)}%</span>
-                          ) : (
-                            <span className="text-muted-foreground">--</span>
-                          )}
-                          <span className="text-muted-foreground ml-1 text-[10px]">best</span>
-                        </div>
-                        <div className="text-[10px] text-muted-foreground">
-                          {summary.runs} run{summary.runs !== 1 ? "s" : ""}
-                          {summary.active > 0 && (
-                            <span className="text-amber-500 ml-1">({summary.active} active)</span>
-                          )}
-                        </div>
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-semibold truncate">{m.label}</span>
+                        {summary && summary.promoted != null && (
+                          <Crown className="h-3 w-3 text-amber-500 shrink-0" />
+                        )}
                       </div>
-                    ) : (
-                      <div className="mt-2 text-[10px] text-muted-foreground">
-                        {m.tunable ? "No runs yet" : "Zero-shot / statistical"}
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
+                      <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${TYPE_COLORS[m.type] ?? ""}`}>
+                        {m.type.replace("_", " ")}
+                      </Badge>
+                      {summary ? (
+                        <div className="mt-2 space-y-0.5">
+                          <div className="text-xs tabular-nums">
+                            {summary.best != null ? (
+                              <span className="font-semibold">{summary.best.toFixed(1)}%</span>
+                            ) : (
+                              <span className="text-muted-foreground">--</span>
+                            )}
+                            <span className="text-muted-foreground ml-1 text-[10px]">best</span>
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {summary.runs} run{summary.runs !== 1 ? "s" : ""}
+                            {summary.active > 0 && (
+                              <span className="text-amber-500 ml-1">({summary.active} active)</span>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-2 text-[10px] text-muted-foreground">No runs yet</div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+
+            {/* Other Models — compact summary row */}
+            {ALL_MODELS.some((m) => !m.tunable) && (
+              <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-2.5" data-testid="other-models-row">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Other models (backtest only):{" "}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {ALL_MODELS.filter((m) => !m.tunable)
+                    .map((m) => m.label)
+                    .join(", ")}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* ---- Selected Model Detail ---- */}

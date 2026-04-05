@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 
 // ---------------------------------------------------------------------------
@@ -10,24 +10,24 @@ const mockPipelineConfig = {
     lgbm_cluster: {
       type: "tree", enabled: true, tune: true, backtest: true,
       compete: true, forecast: true, expert: false,
-      cluster_strategy: "per_cluster", config_key: "lgbm",
+      cluster_strategy: "per_cluster",
       output_dir: "data/backtest/lgbm_cluster",
     },
     catboost_cluster: {
       type: "tree", enabled: true, tune: true, backtest: true,
       compete: true, forecast: true, expert: false,
-      cluster_strategy: "per_cluster", config_key: "catboost",
+      cluster_strategy: "per_cluster",
       output_dir: "data/backtest/catboost_cluster",
     },
     chronos2: {
       type: "foundation", enabled: true, tune: false, backtest: true,
       compete: true, forecast: false, expert: false,
-      config_key: "chronos2", output_dir: "data/backtest/chronos2",
+      output_dir: "data/backtest/chronos2",
     },
     mstl: {
       type: "statistical", enabled: true, tune: false, backtest: true,
       compete: true, forecast: false, expert: true,
-      config_key: "mstl", output_dir: "data/backtest/mstl",
+      output_dir: "data/backtest/mstl",
     },
   },
   clustering: {
@@ -78,7 +78,7 @@ describe("PipelineConfigPanel", () => {
     vi.clearAllMocks();
   });
 
-  it("renders algorithm roster table with algorithm names", async () => {
+  it("renders algorithm names in the card grid", async () => {
     const { PipelineConfigPanel } = await import("../model-tuning/PipelineConfigPanel");
     render(<TestQueryWrapper><PipelineConfigPanel /></TestQueryWrapper>);
     await waitFor(() => {
@@ -89,35 +89,13 @@ describe("PipelineConfigPanel", () => {
     });
   });
 
-  it("renders pipeline stages in order", async () => {
-    const { PipelineConfigPanel } = await import("../model-tuning/PipelineConfigPanel");
-    render(<TestQueryWrapper><PipelineConfigPanel /></TestQueryWrapper>);
-    await waitFor(() => {
-      expect(screen.getByText("clustering")).toBeInTheDocument();
-      expect(screen.getByText("backtest")).toBeInTheDocument();
-      expect(screen.getByText("champion")).toBeInTheDocument();
-      expect(screen.getByText("forecast")).toBeInTheDocument();
-    });
-  });
-
   it("renders algorithm type badges", async () => {
     const { PipelineConfigPanel } = await import("../model-tuning/PipelineConfigPanel");
     render(<TestQueryWrapper><PipelineConfigPanel /></TestQueryWrapper>);
     await waitFor(() => {
-      // Multiple tree badges exist (lgbm + catboost), use getAllByText
       expect(screen.getAllByText("tree").length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText("foundation").length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText("statistical").length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  it("renders backtest settings with correct values", async () => {
-    const { PipelineConfigPanel } = await import("../model-tuning/PipelineConfigPanel");
-    render(<TestQueryWrapper><PipelineConfigPanel /></TestQueryWrapper>);
-    await waitFor(() => {
-      // "Backtest" may appear in multiple places (heading + sampling), use getAllByText
-      expect(screen.getAllByText(/Backtest/i).length).toBeGreaterThanOrEqual(1);
-      expect(screen.getByText("Timeframes")).toBeInTheDocument();
     });
   });
 
@@ -129,11 +107,11 @@ describe("PipelineConfigPanel", () => {
     });
   });
 
-  it("renders production forecast settings", async () => {
+  it("renders forecast settings with cold-start model", async () => {
     const { PipelineConfigPanel } = await import("../model-tuning/PipelineConfigPanel");
     render(<TestQueryWrapper><PipelineConfigPanel /></TestQueryWrapper>);
     await waitFor(() => {
-      expect(screen.getByText("Production Forecast")).toBeInTheDocument();
+      expect(screen.getByText("Forecast Settings")).toBeInTheDocument();
       expect(screen.getByText("Cold-Start Model")).toBeInTheDocument();
     });
   });
@@ -146,12 +124,42 @@ describe("PipelineConfigPanel", () => {
     });
   });
 
-  it("renders backtest sampling section", async () => {
+  it("shows advanced settings when expanded", async () => {
     const { PipelineConfigPanel } = await import("../model-tuning/PipelineConfigPanel");
     render(<TestQueryWrapper><PipelineConfigPanel /></TestQueryWrapper>);
     await waitFor(() => {
+      expect(screen.getByText("Advanced Settings")).toBeInTheDocument();
+    });
+
+    // Advanced content should be hidden by default
+    expect(screen.queryByText("Backtest Sampling")).not.toBeInTheDocument();
+
+    // Click to expand
+    fireEvent.click(screen.getByText("Advanced Settings"));
+
+    await waitFor(() => {
       expect(screen.getByText("Backtest Sampling")).toBeInTheDocument();
-      expect(screen.getByText("Target DFUs")).toBeInTheDocument();
+      expect(screen.getByText("Sample Size (items)")).toBeInTheDocument();
+      expect(screen.getByText("Tuning Iterations")).toBeInTheDocument();
+      expect(screen.getByText("Validation Gap (months)")).toBeInTheDocument();
+      expect(screen.getByText("Data Holdout (months)")).toBeInTheDocument();
+      expect(screen.getByText("Timeframes")).toBeInTheDocument();
+    });
+  });
+
+  it("shows configure options when a model card is clicked", async () => {
+    const { PipelineConfigPanel } = await import("../model-tuning/PipelineConfigPanel");
+    render(<TestQueryWrapper><PipelineConfigPanel /></TestQueryWrapper>);
+    await waitFor(() => {
+      expect(screen.getByText("LightGBM")).toBeInTheDocument();
+    });
+
+    // Click "Configure" on first model
+    const configureButtons = screen.getAllByText("Configure");
+    fireEvent.click(configureButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText("Cluster Strategy")).toBeInTheDocument();
     });
   });
 });

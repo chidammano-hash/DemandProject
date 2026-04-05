@@ -50,16 +50,6 @@ CONFIG_REGISTRY: dict[str, dict[str, Any]] = {
     # ═══════════════════════════════════════════════════════════════════════
     # FORECASTING & MODELS
     # ═══════════════════════════════════════════════════════════════════════
-    # NOTE: algorithm_config has been consolidated into forecast_pipeline_config.
-    # This entry is kept for backward compatibility with the config manager UI
-    # and redirects to forecast_pipeline_config.yaml.
-    "algorithm_config": {
-        "label": "Algorithm Configuration (deprecated — use forecast_pipeline_config)",
-        "category": "forecasting",
-        "description": "DEPRECATED: Algorithm hyperparameters are now managed in forecast_pipeline_config.yaml under each algorithm's 'params' key. This entry is retained for backward compatibility.",
-        "redirect": "forecast_pipeline_config",
-        "fields": {},
-    },
     "hyperparameter_tuning": {
         "label": "Hyperparameter Tuning",
         "category": "forecasting",
@@ -89,51 +79,39 @@ CONFIG_REGISTRY: dict[str, dict[str, Any]] = {
         "category": "forecasting",
         "description": "Master pipeline configuration controlling the full ML forecast lifecycle: algorithm roster with lifecycle flags, clustering, backtest, tuning, champion selection, production forecast, and run tracking.",
         "fields": {
-            # Algorithm lifecycle flags (representative subset — full roster has 12 algorithms)
-            "algorithms.lgbm_cluster.enabled": {"label": "LGBM Enabled", "description": "Enable LightGBM across all pipeline stages.", "type": "boolean"},
-            "algorithms.lgbm_cluster.tune": {"label": "LGBM Tunable", "description": "Include LGBM in hyperparameter tuning.", "type": "boolean"},
-            "algorithms.lgbm_cluster.backtest": {"label": "LGBM Backtest", "description": "Include LGBM in expanding-window backtests.", "type": "boolean"},
-            "algorithms.lgbm_cluster.compete": {"label": "LGBM Compete", "description": "Include LGBM in champion model selection.", "type": "boolean"},
-            "algorithms.lgbm_cluster.forecast": {"label": "LGBM Forecast", "description": "LGBM eligible for production forecast.", "type": "boolean"},
-            "algorithms.lgbm_cluster.cluster_strategy": {"label": "LGBM Cluster Strategy", "description": "per_cluster trains separate models per demand cluster; global trains one model.", "type": "select", "options": ["per_cluster", "global"]},
-            "algorithms.catboost_cluster.enabled": {"label": "CatBoost Enabled", "description": "Enable CatBoost across all pipeline stages.", "type": "boolean"},
-            "algorithms.catboost_cluster.tune": {"label": "CatBoost Tunable", "description": "Include CatBoost in hyperparameter tuning.", "type": "boolean"},
-            "algorithms.catboost_cluster.compete": {"label": "CatBoost Compete", "description": "Include CatBoost in champion selection.", "type": "boolean"},
-            "algorithms.catboost_cluster.cluster_strategy": {"label": "CatBoost Cluster Strategy", "description": "per_cluster or global training approach.", "type": "select", "options": ["per_cluster", "global"]},
-            "algorithms.xgboost_cluster.enabled": {"label": "XGBoost Enabled", "description": "Enable XGBoost across all pipeline stages.", "type": "boolean"},
-            "algorithms.xgboost_cluster.tune": {"label": "XGBoost Tunable", "description": "Include XGBoost in hyperparameter tuning.", "type": "boolean"},
-            "algorithms.xgboost_cluster.compete": {"label": "XGBoost Compete", "description": "Include XGBoost in champion selection.", "type": "boolean"},
-            "algorithms.xgboost_cluster.cluster_strategy": {"label": "XGBoost Cluster Strategy", "description": "per_cluster or global training approach.", "type": "select", "options": ["per_cluster", "global"]},
-            "algorithms.chronos2.enabled": {"label": "Chronos 2 Enabled", "description": "Enable Chronos 2 foundation model.", "type": "boolean"},
-            "algorithms.chronos2.compete": {"label": "Chronos 2 Compete", "description": "Include Chronos 2 in champion selection.", "type": "boolean"},
-            "algorithms.mstl.enabled": {"label": "MSTL Enabled", "description": "Enable MSTL statistical model.", "type": "boolean"},
-            "algorithms.nbeats.enabled": {"label": "N-BEATS Enabled", "description": "Enable N-BEATS deep learning model.", "type": "boolean"},
-            # Clustering
-            "clustering.enabled": {"label": "Clustering Enabled", "description": "Master switch for DFU clustering. When disabled, backtests use global strategy.", "type": "boolean"},
-            # Backtest
-            "backtest.n_timeframes": {"label": "Backtest Timeframes", "description": "Number of expanding-window timeframes.", "type": "integer", "min": 1, "max": 30},
-            "backtest.embargo_months": {"label": "Embargo Gap", "description": "Months between train_end and predict_start. Must match tuning gap_months.", "type": "integer", "min": 0, "max": 6},
-            "backtest.forecast_horizon": {"label": "Backtest Forecast Horizon", "description": "Months predicted per timeframe.", "type": "integer", "min": 1, "max": 24, "unit": "months"},
-            "backtest.early_stop_pct": {"label": "Early Stop Patience %", "description": "Early stopping patience as % of max iterations.", "type": "number", "min": 0.01, "max": 0.20, "step": 0.01},
-            # Tuning
-            "tuning.n_trials": {"label": "Optuna Trials", "description": "Number of Bayesian optimization trials.", "type": "integer", "min": 10, "max": 500, "step": 10},
-            "tuning.gap_months": {"label": "Tuning CV Gap", "description": "Causality gap in CV splits. Must match backtest embargo_months.", "type": "integer", "min": 0, "max": 6},
-            # Champion
-            "champion.strategy": {"label": "Champion Strategy", "description": "Model selection strategy for champion assignment.", "type": "select", "options": ["expanding", "rolling", "decay", "ensemble", "meta_learner", "hybrid_warmup", "adaptive_ensemble"]},
-            "champion.fallback_model_id": {"label": "Champion Fallback Model", "description": "Model used when no champion can be determined.", "type": "text"},
-            "champion.metric": {"label": "Champion Metric", "description": "Metric used for model comparison.", "type": "select", "options": ["accuracy_pct", "wape"]},
-            "champion.strategy_params.min_prior_months": {"label": "Min Prior Months", "description": "Minimum historical months before trusting a model's accuracy.", "type": "integer", "min": 1, "max": 12},
-            # Production Forecast
-            "production_forecast.horizon_months": {"label": "Production Horizon", "description": "Months ahead for production forecast.", "type": "integer", "min": 6, "max": 36, "unit": "months"},
-            "production_forecast.min_history_months": {"label": "Min History for Champion", "description": "DFUs below this threshold routed to cold-start model.", "type": "integer", "min": 3, "max": 24, "unit": "months"},
-            "production_forecast.cold_start_model_id": {"label": "Cold-Start Model", "description": "Model for DFUs with insufficient history.", "type": "text"},
-            "production_forecast.cold_start_min_months": {"label": "Cold-Start Floor", "description": "DFUs below this get no forecast.", "type": "integer", "min": 1, "max": 12, "unit": "months"},
-            # Backtest Sampling
-            "backtest_sampling.enabled": {"label": "Sampling Enabled", "description": "Enable stratified DFU sampling for fast backtests.", "type": "boolean"},
-            "backtest_sampling.default_target_n": {"label": "Sample Size", "description": "Target number of DFUs to sample.", "type": "integer", "min": 100, "max": 50000, "step": 100},
-            # Tracking
-            "tracking.auto_register": {"label": "Auto-Register Runs", "description": "Automatically register backtest runs for comparison.", "type": "boolean"},
-            "tracking.improvement_threshold_bps": {"label": "Improvement Threshold (bps)", "description": "Minimum accuracy improvement in basis points to mark as 'improved'.", "type": "integer", "min": 1, "max": 100},
+            # ── Forecast Settings (always visible) ───────────────────────────
+            "production_forecast.horizon_months": {"label": "Forecast Horizon", "description": "How many months ahead to generate forecasts.", "type": "integer", "min": 6, "max": 36, "unit": "months", "group": "Forecast Settings"},
+            "production_forecast.min_history_months": {"label": "Min History Required", "description": "Items with fewer months of sales get routed to the cold-start model.", "type": "integer", "min": 3, "max": 24, "unit": "months", "group": "Forecast Settings"},
+            "production_forecast.cold_start_model_id": {"label": "New Product Model", "description": "Model used for items with limited sales history.", "type": "text", "group": "Forecast Settings"},
+            "production_forecast.cold_start_min_months": {"label": "New Product Min Data", "description": "Items with fewer months than this get no forecast at all.", "type": "integer", "min": 1, "max": 12, "unit": "months", "group": "Forecast Settings"},
+            # ── Champion Selection ────────────────────────────────────────────
+            "champion.strategy": {"label": "Model Selection Strategy", "description": "How the best model is chosen per item.", "type": "select", "options": ["expanding", "rolling", "adaptive_ensemble", "hybrid_warmup", "per_cluster", "decay", "ensemble", "meta_learner"], "group": "Champion Selection"},
+            "champion.metric": {"label": "Evaluation Metric", "description": "Metric used to compare model accuracy.", "type": "select", "options": ["accuracy_pct", "wape"], "group": "Champion Selection"},
+            "champion.fallback_model_id": {"label": "Default Model", "description": "Model used when no champion can be determined.", "type": "text", "group": "Champion Selection"},
+            # ── Active Models ────────────────────────────────────────────────
+            # These use a special "model_toggle" type rendered as a compact table
+            "algorithms.lgbm_cluster.enabled": {"label": "LightGBM", "description": "Tree-based gradient boosting", "type": "model_toggle", "group": "Active Models", "model_type": "tree"},
+            "algorithms.catboost_cluster.enabled": {"label": "CatBoost", "description": "Tree-based gradient boosting", "type": "model_toggle", "group": "Active Models", "model_type": "tree"},
+            "algorithms.xgboost_cluster.enabled": {"label": "XGBoost", "description": "Tree-based gradient boosting", "type": "model_toggle", "group": "Active Models", "model_type": "tree"},
+            "algorithms.lgbm_cust_enriched.enabled": {"label": "LightGBM (Cust)", "description": "LightGBM with customer features", "type": "model_toggle", "group": "Active Models", "model_type": "tree"},
+            "algorithms.catboost_cust_enriched.enabled": {"label": "CatBoost (Cust)", "description": "CatBoost with customer features", "type": "model_toggle", "group": "Active Models", "model_type": "tree"},
+            "algorithms.xgboost_cust_enriched.enabled": {"label": "XGBoost (Cust)", "description": "XGBoost with customer features", "type": "model_toggle", "group": "Active Models", "model_type": "tree"},
+            "algorithms.chronos.enabled": {"label": "Chronos T5", "description": "Foundation model (zero-shot)", "type": "model_toggle", "group": "Active Models", "model_type": "foundation"},
+            "algorithms.chronos_bolt.enabled": {"label": "Chronos Bolt", "description": "Fast foundation model", "type": "model_toggle", "group": "Active Models", "model_type": "foundation"},
+            "algorithms.chronos2.enabled": {"label": "Chronos 2", "description": "Foundation model v2", "type": "model_toggle", "group": "Active Models", "model_type": "foundation"},
+            "algorithms.chronos2_enriched.enabled": {"label": "Chronos 2E", "description": "Chronos 2 with covariates", "type": "model_toggle", "group": "Active Models", "model_type": "foundation"},
+            "algorithms.bolt_hierarchical.enabled": {"label": "Bolt Hierarchical", "description": "Bottom-up reconciliation", "type": "model_toggle", "group": "Active Models", "model_type": "foundation"},
+            "algorithms.mstl.enabled": {"label": "MSTL", "description": "Statistical decomposition", "type": "model_toggle", "group": "Active Models", "model_type": "statistical"},
+            "algorithms.nbeats.enabled": {"label": "N-BEATS", "description": "Deep learning", "type": "model_toggle", "group": "Active Models", "model_type": "deep_learning"},
+            "algorithms.nhits.enabled": {"label": "N-HiTS", "description": "Deep learning", "type": "model_toggle", "group": "Active Models", "model_type": "deep_learning"},
+            "algorithms.seasonal_naive.enabled": {"label": "Seasonal Naive", "description": "Statistical baseline", "type": "model_toggle", "group": "Active Models", "model_type": "statistical"},
+            "algorithms.rolling_mean.enabled": {"label": "Rolling Mean", "description": "Statistical baseline", "type": "model_toggle", "group": "Active Models", "model_type": "statistical"},
+            # ── Clustering ────────────────────────────────────────────────────
+            "clustering.enabled": {"label": "DFU Clustering", "description": "Segment items by demand pattern before training.", "type": "boolean", "group": "Clustering & Backtest"},
+            "backtest.n_timeframes": {"label": "Backtest Windows", "description": "Number of historical evaluation windows.", "type": "integer", "min": 1, "max": 30, "group": "Clustering & Backtest"},
+            "backtest.forecast_horizon": {"label": "Backtest Horizon", "description": "Months predicted per evaluation window.", "type": "integer", "min": 1, "max": 24, "unit": "months", "group": "Clustering & Backtest"},
+            "backtest_sampling.enabled": {"label": "Fast Sampling", "description": "Sample a subset of items for quick iteration.", "type": "boolean", "group": "Clustering & Backtest"},
+            "backtest_sampling.default_target_n": {"label": "Sample Size", "description": "Number of items to include when sampling.", "type": "integer", "min": 100, "max": 50000, "step": 100, "group": "Clustering & Backtest"},
         },
     },
     "forecast_domain_config": {
@@ -179,6 +157,13 @@ CONFIG_REGISTRY: dict[str, dict[str, Any]] = {
             "bias_correction.segment_priority": {"label": "Segment Priority", "description": "Priority order for segment-level fallback when DFU has insufficient history.", "type": "array"},
             "bias_correction.lookback_months": {"label": "Lookback Months", "description": "Number of recent months to analyze for bias detection.", "type": "integer", "min": 1, "max": 24, "unit": "months"},
         },
+    },
+
+    "tune_strategies": {
+        "label": "Tuning Strategies",
+        "category": "forecasting",
+        "description": "Per-model auto-tune strategy definitions for Bayesian hyperparameter optimization. Each model type has a list of named strategies with parameter overrides.",
+        "fields": {},
     },
 
     # ═══════════════════════════════════════════════════════════════════════

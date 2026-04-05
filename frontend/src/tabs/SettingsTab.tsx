@@ -174,14 +174,73 @@ function FieldRow({
 }
 
 // ---------------------------------------------------------------------------
-// Group fields by their top-level prefix (e.g., "lgbm", "catboost")
+// Model toggle renderer — compact grid of on/off switches for algorithms
+// ---------------------------------------------------------------------------
+const MODEL_TYPE_BADGE: Record<string, string> = {
+  tree: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+  foundation: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+  statistical: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+  deep_learning: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
+};
+
+function ModelToggleGrid({
+  fields,
+  editValues,
+  onChange,
+}: {
+  fields: ConfigField[];
+  editValues: Record<string, unknown>;
+  onChange: (path: string, value: unknown) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+      {fields.map((f) => {
+        const isOn = !!editValues[f.path];
+        const modelType = (f as unknown as Record<string, unknown>).model_type as string | undefined;
+        return (
+          <button
+            key={f.path}
+            type="button"
+            onClick={() => onChange(f.path, !isOn)}
+            className={cn(
+              "flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-all",
+              isOn
+                ? "border-primary/30 bg-primary/5 shadow-sm"
+                : "border-border/50 bg-muted/30 opacity-60",
+            )}
+          >
+            <div className={cn(
+              "h-2.5 w-2.5 rounded-full shrink-0 transition-colors",
+              isOn ? "bg-primary" : "bg-muted-foreground/30",
+            )} />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium truncate">{f.label}</div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                {modelType && (
+                  <span className={cn("rounded px-1 py-px text-[9px] font-medium", MODEL_TYPE_BADGE[modelType] || "")}>
+                    {modelType === "deep_learning" ? "DL" : modelType}
+                  </span>
+                )}
+                <span className="text-[10px] text-muted-foreground truncate">{f.description}</span>
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Group fields by explicit "group" metadata or top-level path prefix
 // ---------------------------------------------------------------------------
 function groupFields(fields: ConfigField[]): Map<string, ConfigField[]> {
   const groups = new Map<string, ConfigField[]>();
   for (const f of fields) {
-    const prefix = f.path.includes(".") ? f.path.split(".")[0] : "_general";
-    if (!groups.has(prefix)) groups.set(prefix, []);
-    groups.get(prefix)!.push(f);
+    const group = (f as unknown as Record<string, unknown>).group as string | undefined;
+    const key = group || (f.path.includes(".") ? f.path.split(".")[0] : "_general");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(f);
   }
   return groups;
 }
@@ -457,28 +516,46 @@ export function SettingsTab() {
                 </div>
               </CardHeader>
               <CardContent className="p-2">
-                {Array.from(fieldGroups.entries()).map(([group, fields]) => (
-                  <div key={group} className="mb-4">
-                    {fieldGroups.size > 1 && (
-                      <div className="sticky top-[76px] z-[5] bg-card px-3 py-1.5 border-b border-border/30">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          {formatGroupLabel(group)}
-                        </span>
-                      </div>
-                    )}
-                    <div className="divide-y divide-border/30">
-                      {fields.map((field) => (
-                        <FieldRow
-                          key={field.path}
-                          field={field}
-                          value={editValues[field.path]}
-                          originalValue={field.value}
-                          onChange={handleFieldChange}
-                        />
-                      ))}
+                {Array.from(fieldGroups.entries()).map(([group, fields]) => {
+                  const isModelToggleGroup = fields.every((f) => f.type === "model_toggle");
+                  return (
+                    <div key={group} className="mb-5">
+                      {fieldGroups.size > 1 && (
+                        <div className="sticky top-[76px] z-[5] bg-card px-3 py-2 border-b border-border/30">
+                          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            {formatGroupLabel(group)}
+                          </span>
+                          {isModelToggleGroup && (
+                            <span className="ml-2 text-[10px] text-muted-foreground/60">
+                              {fields.filter((f) => !!editValues[f.path]).length} of {fields.length} active
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {isModelToggleGroup ? (
+                        <div className="px-3 py-3">
+                          <ModelToggleGrid
+                            fields={fields}
+                            editValues={editValues}
+                            onChange={handleFieldChange}
+                          />
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-border/30">
+                          {fields.map((field) => (
+                            <FieldRow
+                              key={field.path}
+                              field={field}
+                              value={editValues[field.path]}
+                              originalValue={field.value}
+                              onChange={handleFieldChange}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </CardContent>
             </>
           ) : null}

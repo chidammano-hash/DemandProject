@@ -3,7 +3,7 @@ Run tree-model backtesting with per-cluster strategy and expanding-window timefr
 
 Supports LGBM (default), CatBoost, and XGBoost via the --model flag.
 All run options (recursive, SHAP, tuning) are controlled via
-config/algorithm_config.yaml rather than CLI flags.
+config/forecast_pipeline_config.yaml rather than CLI flags.
 
 Produces two CSVs under data/backtest/<model_id>/:
   - backtest_predictions.csv          (execution-lag row for DB load)

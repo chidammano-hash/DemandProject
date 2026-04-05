@@ -464,8 +464,9 @@ export interface PipelineAlgorithm {
   forecast: boolean;
   expert: boolean;
   cluster_strategy?: string;
-  config_key: string;
   output_dir: string;
+  params?: Record<string, unknown>;
+  notes?: string;
 }
 
 export interface PipelineConfig {
@@ -517,7 +518,7 @@ export async function fetchPipelineConfig(): Promise<PipelineConfig> {
   const res = await fetch("/config/forecast_pipeline_config");
   if (!res.ok) throw new Error(`Failed to fetch pipeline config: ${res.status}`);
   const data = await res.json();
-  return data.values || data;
+  return data.raw || data.values || data;
 }
 
 export async function updatePipelineConfig(values: Record<string, unknown>): Promise<void> {

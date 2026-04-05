@@ -89,7 +89,7 @@ def demand_reference(
     """
 
     sql_inventory = """
-        SELECT qty_on_hand, lead_time_days
+        SELECT eom_qty_on_hand, latest_lead_time_days
         FROM agg_inventory_monthly
         WHERE item_id = %s AND loc = %s
         ORDER BY month_start DESC
@@ -103,8 +103,12 @@ def demand_reference(
         cur.execute(sql_top_customers, [item_id, loc, cutoff, top_n])
         top_cust_rows = cur.fetchall()
 
-        cur.execute(sql_inventory, [item_id, loc])
-        inv_row = cur.fetchone()
+        try:
+            cur.execute(sql_inventory, [item_id, loc])
+            inv_row = cur.fetchone()
+        except Exception:
+            conn.rollback()
+            inv_row = None
 
     history = [
         {"month": r[0], "demand_qty": _f(r[1]), "sales_qty": _f(r[2])}
@@ -344,7 +348,7 @@ _GRAIN_COLUMNS = {
         "group": "f.item_id",
         "key_expr": "f.item_id",
         "label_join": "LEFT JOIN dim_item di ON di.item_id = f.item_id",
-        "label_expr": "COALESCE(di.description, f.item_id)",
+        "label_expr": "COALESCE(di.item_desc, f.item_id)",
     },
     "item_loc": {
         "group": "f.item_id, f.location_id",
@@ -354,8 +358,8 @@ _GRAIN_COLUMNS = {
             "LEFT JOIN dim_location dl ON dl.location_id = f.location_id"
         ),
         "label_expr": (
-            "COALESCE(di.description, f.item_id) || ' @ ' || "
-            "COALESCE(dl.city, f.location_id)"
+            "COALESCE(di.item_desc, f.item_id) || ' @ ' || "
+            "COALESCE(dl.site_desc, f.location_id)"
         ),
     },
     "item_loc_customer": {
@@ -497,12 +501,12 @@ _DIM_CONFIG = {
     "item": {
         "col": "f.item_id",
         "label_join": "LEFT JOIN dim_item di ON di.item_id = f.item_id",
-        "label_expr": "COALESCE(di.description, f.item_id)",
+        "label_expr": "COALESCE(di.item_desc, f.item_id)",
     },
     "location": {
         "col": "f.location_id",
         "label_join": "LEFT JOIN dim_location dl ON dl.location_id = f.location_id",
-        "label_expr": "COALESCE(dl.city, f.location_id)",
+        "label_expr": "COALESCE(dl.site_desc, f.location_id)",
     },
     "customer": {
         "col": "f.customer_no",

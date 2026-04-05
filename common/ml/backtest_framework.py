@@ -1022,7 +1022,7 @@ def run_tree_backtest(
     """Run a complete tree-based per-cluster backtest (LGBM, CatBoost, XGBoost).
 
     All algorithms use per-cluster strategy. Options (recursive, SHAP, tuning)
-    are passed via closures rather than CLI flags; see algorithm_config.yaml.
+    are passed via closures rather than CLI flags; see forecast_pipeline_config.yaml.
     """
     from common.feature_engineering import (
         build_feature_matrix,
@@ -1216,7 +1216,7 @@ def run_tree_backtest(
             shap_timeframe_reports.append(shap_df)
             logger.info("SHAP done (%.1fs)", time.time() - t_shap)
 
-            # Retrain if SHAP dropped >= threshold of features (configurable via algorithm_config.yaml)
+            # Retrain if SHAP dropped >= threshold of features (configurable via forecast_pipeline_config.yaml)
             retrain_threshold = algo_config.get("shap_retrain_threshold", 0.10) if algo_config else 0.10
             features_dropped = len(feature_cols) - len(selected_features)
             drop_pct = features_dropped / len(feature_cols) if feature_cols else 0

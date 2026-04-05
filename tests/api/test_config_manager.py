@@ -57,19 +57,18 @@ async def test_list_configs_categories_have_required_fields():
 
 @pytest.mark.asyncio
 async def test_get_config_detail_returns_fields():
-    """GET /config/algorithm_config returns deprecated entry (fields may be empty)."""
+    """GET /config/tune_strategies returns entry (fields may be empty)."""
     pool = _make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/config/algorithm_config")
+            resp = await client.get("/config/tune_strategies")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["name"] == "algorithm_config"
+    assert data["name"] == "tune_strategies"
     assert data["category"] == "forecasting"
     assert "fields" in data
-    # algorithm_config is deprecated — fields may be empty (consolidated into pipeline config)
 
 
 @pytest.mark.asyncio
@@ -124,7 +123,7 @@ async def test_update_config_invalid_field_returns_400():
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                "/config/algorithm_config",
+                "/config/tune_strategies",
                 json={"values": {"nonexistent.field": 42}},
             )
     assert resp.status_code == 400
@@ -204,10 +203,10 @@ async def test_reset_config_restores_backup(tmp_path):
     import yaml
 
     # Create config + backup
-    cfg_file = tmp_path / "algorithm_config.yaml"
-    bak_file = tmp_path / "algorithm_config.yaml.bak"
-    cfg_file.write_text(yaml.dump({"algorithms": {"lgbm": {"recursive": False}}}))  # modified
-    bak_file.write_text(yaml.dump({"algorithms": {"lgbm": {"recursive": True}}}))  # original
+    cfg_file = tmp_path / "tune_strategies.yaml"
+    bak_file = tmp_path / "tune_strategies.yaml.bak"
+    cfg_file.write_text(yaml.dump({"lgbm": {"strategies": [{"label": "modified"}]}}))  # modified
+    bak_file.write_text(yaml.dump({"lgbm": {"strategies": [{"label": "original"}]}}))  # original
 
     pool = _make_pool()
     with patch("api.core._get_pool", return_value=pool), \
@@ -216,11 +215,11 @@ async def test_reset_config_restores_backup(tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/config/algorithm_config/reset")
+            resp = await client.post("/config/tune_strategies/reset")
     assert resp.status_code == 200
     # Verify config was restored
     restored = yaml.safe_load(cfg_file.read_text())
-    assert restored["algorithms"]["lgbm"]["recursive"] is True
+    assert restored["lgbm"]["strategies"][0]["label"] == "original"
 
 
 # ===========================================================================

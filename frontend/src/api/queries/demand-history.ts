@@ -89,8 +89,8 @@ export interface WorkbenchChild {
 export interface WorkbenchData {
   grain: string;
   series: WorkbenchSeries[];
-  hierarchy_children: WorkbenchChild[];
-  total_count: number;
+  hierarchy_children: string | null;
+  total: number;
 }
 
 export interface MatrixData {
