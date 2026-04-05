@@ -31,6 +31,7 @@ _MODEL_CONFIGS: dict[str, dict[str, Any]] = {
     "catboost": {
         "default_model_id": "catboost_cluster",
         "algo_section": "catboost",
+        "pipeline_key": "catboost_cluster",
         "param_keys": {
             "iterations", "learning_rate", "depth", "l2_leaf_reg",
             "border_count", "bagging_temperature", "random_strength",
@@ -45,6 +46,7 @@ _MODEL_CONFIGS: dict[str, dict[str, Any]] = {
     "xgboost": {
         "default_model_id": "xgboost_cluster",
         "algo_section": "xgboost",
+        "pipeline_key": "xgboost_cluster",
         "param_keys": {
             "n_estimators", "learning_rate", "max_depth", "min_child_weight",
             "subsample", "colsample_bytree", "colsample_bylevel",
@@ -56,7 +58,7 @@ _MODEL_CONFIGS: dict[str, dict[str, Any]] = {
     },
 }
 
-_ALGO_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "algorithm_config.yaml"
+_PIPELINE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "forecast_pipeline_config.yaml"
 
 # Config keys to compare (non-hyperparameter settings from metadata)
 _CONFIG_KEYS = [
@@ -632,21 +634,25 @@ def _promote_run_impl(model_type: str, run_id: int) -> dict[str, Any]:
             detail=f"Run params contain no recognized {model_type} hyperparameters",
         )
 
-    # Write to algorithm_config.yaml
-    algo_section = cfg["algo_section"]
+    # Write to forecast_pipeline_config.yaml (algorithms.<pipeline_key>.params)
+    pipeline_key = cfg.get("pipeline_key", f"{cfg['algo_section']}_cluster")
     try:
-        with open(_ALGO_CONFIG_PATH) as f:
+        with open(_PIPELINE_CONFIG_PATH) as f:
             algo_cfg = yaml.safe_load(f)
 
-        section = algo_cfg["algorithms"][algo_section]
-        old_params = {k: section.get(k) for k in overrides}
+        entry = algo_cfg["algorithms"][pipeline_key]
+        params_section = entry.setdefault("params", {})
+        old_params = {k: params_section.get(k) for k in overrides}
         for key, value in overrides.items():
-            section[key] = value
+            params_section[key] = value
 
-        with open(_ALGO_CONFIG_PATH, "w") as f:
+        with open(_PIPELINE_CONFIG_PATH, "w") as f:
             yaml.dump(algo_cfg, f, default_flow_style=False, sort_keys=False)
+
+        from common.utils import reset_config
+        reset_config("forecast_pipeline_config.yaml")
     except (OSError, KeyError, yaml.YAMLError) as exc:
-        logger.exception("Failed to write algorithm_config.yaml during %s promote", model_type)
+        logger.exception("Failed to write forecast_pipeline_config.yaml during %s promote", model_type)
         raise HTTPException(status_code=500, detail=f"Failed to update config: {exc}")
 
     # Atomically clear previous promoted run for this model and set new one

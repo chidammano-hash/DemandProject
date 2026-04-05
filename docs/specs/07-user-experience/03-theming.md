@@ -1,13 +1,12 @@
 # Theming
 
-A single professional theme ("Supply Chain Command Center") with light and dark color modes, implemented via CSS custom properties and toggled from the sidebar footer or keyboard shortcut.
+> A single professional theme ("Supply Chain Command Center") with light and dark color modes, implemented via CSS custom properties and toggled from the sidebar footer or keyboard shortcut.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 07-user-experience/03-theming |
-| Frontend | `hooks/useTheme.ts`, `context/ThemeContext.tsx`, `components/ThemeSelector.tsx`, `constants/themes/general.ts` |
-| Config | `tailwind.config.ts` (custom `pulse-glow` animation) |
+| **Status** | Implemented |
+| **UI Tab** | N/A (platform-wide) |
+| **Key Files** | `hooks/useTheme.ts`, `context/ThemeContext.tsx`, `components/ThemeSelector.tsx`, `constants/themes/general.ts`, `tailwind.config.ts` |
 
 ---
 

@@ -30,11 +30,11 @@ export function ChampionPanel({ championSummary }: ChampionPanelProps) {
           {/* Champion KPI cards */}
           <div className="flex flex-wrap gap-4 text-sm">
             <KpiCard
-              label="SKUs Evaluated"
-              value={championSummary.total_skus.toLocaleString()}
+              label="DFUs Evaluated"
+              value={championSummary.total_dfus.toLocaleString()}
               sublabel={
-                championSummary.total_sku_months
-                  ? `${championSummary.total_sku_months.toLocaleString()} DFU-months`
+                championSummary.total_dfu_months
+                  ? `${championSummary.total_dfu_months.toLocaleString()} DFU-months`
                   : undefined
               }
             />
@@ -103,7 +103,7 @@ export function ChampionPanel({ championSummary }: ChampionPanelProps) {
               Champion Model Wins (best model per DFU per month, before-the-fact)
             </p>
             {Object.entries(championSummary.model_wins).map(([model, wins]) => {
-              const total = championSummary.total_sku_months ?? championSummary.total_skus;
+              const total = championSummary.total_dfu_months ?? championSummary.total_dfus;
               const pct = total > 0 ? (wins / total) * 100 : 0;
               return (
                 <div key={model} className="flex items-center gap-2 text-sm">

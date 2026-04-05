@@ -1,15 +1,12 @@
 # Scenario Planning
 
-A what-if simulation engine that models supply chain disruptions -- demand shocks, lead time delays, supplier failures, and budget changes -- to quantify financial and service-level impact before they happen.
+> A what-if simulation engine that models supply chain disruptions -- demand shocks, lead time delays, supplier failures, and budget changes -- to quantify financial and service-level impact before they happen.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 05-operations/04-scenario-planning |
-| Frontend | `inv-planning/ScenarioPlanningPanel.tsx` |
-| Backend | `api/routers/supply_scenarios.py`, `scripts/run_supply_chain_scenario.py` |
-| Config | `config/supply_scenario_config.yaml` |
-| SQL | `sql/059_create_supply_scenarios.sql` |
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning (ScenarioPlanningPanel) |
+| **Key Files** | `inv-planning/ScenarioPlanningPanel.tsx`, `api/routers/supply_scenarios.py`, `scripts/run_supply_chain_scenario.py`, `config/supply_scenario_config.yaml`, `sql/059_create_supply_scenarios.sql` |
 
 ---
 

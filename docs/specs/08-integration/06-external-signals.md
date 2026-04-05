@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
+| **Status** | Implemented |
 | **UI Tab** | Demand Signals panel (within Inventory Planning tab) |
 | **Key Files** | `api/routers/external_signals.py` |
 

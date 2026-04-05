@@ -35,3 +35,19 @@ role_level:
   planner: 2
   manager: 3
   admin: 4
+
+# API Governance (merged from api_governance_config.yaml — Spec 08-09)
+governance:
+  rate_limit_tiers:
+    free:
+      requests_per_minute: 60
+    standard:
+      requests_per_minute: 300
+    premium:
+      requests_per_minute: 1000
+  deprecation:
+    sunset_header: true
+  versioning:
+    current_version: v1
+    supported_versions:
+      - v1

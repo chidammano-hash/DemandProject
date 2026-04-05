@@ -11,7 +11,7 @@ The ceiling (oracle) picks the best model per DFU per month using that
 month's actual error — the theoretical upper bound with perfect foresight.
 
 Usage:
-    python scripts/run_champion_selection.py [--config config/model_competition.yaml]
+    python scripts/run_champion_selection.py [--config config/forecast_pipeline_config.yaml]
 """
 
 import argparse
@@ -96,20 +96,14 @@ def _load_config_from_pipeline() -> dict[str, Any] | None:
 def load_config(config_path: Path) -> dict[str, Any]:
     """Read and validate the competition config YAML.
 
-    Tries forecast_pipeline_config.yaml first for model list and champion
-    settings, then falls back to the legacy model_competition.yaml.
+    Loads champion settings from forecast_pipeline_config.yaml.
     """
-    # Try consolidated pipeline config first
     pipeline_cfg = _load_config_from_pipeline()
-    if pipeline_cfg is not None:
-        cfg = pipeline_cfg
-    else:
-        # Fall back to legacy config
-        if not config_path.exists():
-            raise FileNotFoundError(f"Config not found: {config_path}")
-        with open(config_path) as f:
-            raw = yaml.safe_load(f)
-        cfg = raw.get("competition", {})
+    if pipeline_cfg is None:
+        raise FileNotFoundError(
+            "forecast_pipeline_config.yaml not found or missing 'champion' section"
+        )
+    cfg = pipeline_cfg
 
     for k, v in _DEFAULTS.items():
         cfg.setdefault(k, v)
@@ -640,7 +634,7 @@ def _compute_segment_accuracy(
         return []
 
     results: list[dict[str, Any]] = []
-    for seg_val, seg_df in winners_df.groupby(segment_col, sort=False):
+    for seg_val, seg_df in winners_df.groupby(segment_col, sort=False, dropna=False):
         acc = compute_strategy_accuracy(seg_df)
         unique_dfus = seg_df[["item_id", "customer_group", "loc"]].drop_duplicates()
         results.append({
@@ -760,7 +754,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=str,
-        default="config/model_competition.yaml",
+        default="config/forecast_pipeline_config.yaml",
         help="Path to competition config YAML",
     )
     parser.add_argument(

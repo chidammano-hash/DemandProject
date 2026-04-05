@@ -31,14 +31,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
-from common.planning_date import get_planning_date
-from common.utils import _ts, load_config
+from common.utils import _ts
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
-
-CONFIG_NAME = "lgbm_tuning_config.yaml"
 DEFAULT_BACKTEST_DIR = ROOT / "data" / "backtest" / "lgbm_cluster"
 METADATA_FILENAME = "backtest_metadata.json"
 
@@ -73,9 +70,10 @@ def _box_sep(widths: list[int], left: str, mid: str, right: str) -> str:
 
 
 def _get_config() -> dict[str, Any]:
-    """Load lgbm_tuning_config.yaml and return the lgbm_tuning section."""
-    cfg = load_config(CONFIG_NAME)
-    return cfg.get("lgbm_tuning", {})
+    """Load tracking config from forecast_pipeline_config.yaml."""
+    from common.utils import load_forecast_pipeline_config
+    cfg = load_forecast_pipeline_config()
+    return cfg.get("tracking", {})
 
 
 def _get_backup_dir(cfg: dict[str, Any]) -> Path:

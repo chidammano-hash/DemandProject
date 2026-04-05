@@ -1,6 +1,14 @@
-# 03-02 Seasonality Detection
+# Seasonality Detection
 
-> **Status:** Implemented | **Features:** 30, 32
+> Classifies demand patterns across calendar cycles into named seasonality profiles per DFU, feeding forecasting models, accuracy views, and inventory planning as filter dimensions.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | DFU Analysis (filter dimension) |
+| **Key Files** | `scripts/detect_seasonality.py`, `scripts/update_seasonality_profiles.py`, `config/seasonality_config.yaml`, `sql/005_create_dim_dfu.sql` |
+
+---
 
 ## Why This Moved Here
 

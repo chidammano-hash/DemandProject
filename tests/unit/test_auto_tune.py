@@ -28,23 +28,25 @@ from scripts.ml.auto_tune import (
 
 @pytest.fixture()
 def base_config():
-    """Minimal algorithm_config.yaml structure."""
+    """Minimal forecast_pipeline_config.yaml structure."""
     return {
         "backtest": {"n_timeframes": 10, "output_dir": "data/backtest"},
         "algorithms": {
-            "lgbm": {
+            "lgbm_cluster": {
+                "type": "tree",
                 "enabled": True,
-                "model_id": "lgbm_cluster",
                 "cluster_strategy": "per_cluster",
-                "recursive": True,
-                "n_estimators": 1500,
-                "learning_rate": 0.02,
-                "num_leaves": 63,
-                "min_child_samples": 20,
-                "max_depth": 10,
-                "subsample": 0.80,
-                "colsample_bytree": 0.80,
-                "reg_lambda": 1.0,
+                "params": {
+                    "n_estimators": 1500,
+                    "learning_rate": 0.02,
+                    "num_leaves": 63,
+                    "min_child_samples": 20,
+                    "max_depth": 10,
+                    "subsample": 0.80,
+                    "colsample_bytree": 0.80,
+                    "reg_lambda": 1.0,
+                    "recursive": True,
+                },
             },
         },
     }
@@ -110,16 +112,16 @@ class TestLoadStrategies:
 class TestApplyOverrides:
     def test_overrides_learning_rate(self, base_config):
         result = apply_overrides(base_config, {"learning_rate": 0.05})
-        assert result["algorithms"]["lgbm"]["learning_rate"] == 0.05
+        assert result["algorithms"]["lgbm_cluster"]["params"]["learning_rate"] == 0.05
         # Original unchanged
-        assert base_config["algorithms"]["lgbm"]["learning_rate"] == 0.02
+        assert base_config["algorithms"]["lgbm_cluster"]["params"]["learning_rate"] == 0.02
 
     def test_overrides_multiple_params(self, base_config):
         result = apply_overrides(
             base_config,
             {"max_depth": 14, "num_leaves": 127, "reg_lambda": 5.0},
         )
-        lgbm = result["algorithms"]["lgbm"]
+        lgbm = result["algorithms"]["lgbm_cluster"]["params"]
         assert lgbm["max_depth"] == 14
         assert lgbm["num_leaves"] == 127
         assert lgbm["reg_lambda"] == 5.0
@@ -128,13 +130,13 @@ class TestApplyOverrides:
         assert lgbm["n_estimators"] == 1500
 
     def test_does_not_mutate_original(self, base_config):
-        original_lr = base_config["algorithms"]["lgbm"]["learning_rate"]
+        original_lr = base_config["algorithms"]["lgbm_cluster"]["params"]["learning_rate"]
         apply_overrides(base_config, {"learning_rate": 0.99})
-        assert base_config["algorithms"]["lgbm"]["learning_rate"] == original_lr
+        assert base_config["algorithms"]["lgbm_cluster"]["params"]["learning_rate"] == original_lr
 
     def test_empty_overrides(self, base_config):
         result = apply_overrides(base_config, {})
-        assert result["algorithms"]["lgbm"] == base_config["algorithms"]["lgbm"]
+        assert result["algorithms"]["lgbm_cluster"] == base_config["algorithms"]["lgbm_cluster"]
 
 
 # ---------------------------------------------------------------------------
@@ -259,32 +261,44 @@ class TestPrintLeaderboard:
 
 
 class TestProductionStrategies:
-    """Validate the actual config/auto_tune_strategies.yaml file."""
+    """Validate the actual config/tune_strategies.yaml file."""
 
     def test_strategies_file_exists(self):
         from scripts.ml.auto_tune import STRATEGIES_FILE
         assert STRATEGIES_FILE.exists()
 
-    def test_has_13_strategies(self):
+    def test_has_13_lgbm_strategies(self):
         from scripts.ml.auto_tune import STRATEGIES_FILE
-        strategies = load_strategies(STRATEGIES_FILE)
+        strategies = load_strategies(STRATEGIES_FILE, model="lgbm")
         assert len(strategies) == 13
+
+    def test_has_15_catboost_strategies(self):
+        from scripts.ml.auto_tune import STRATEGIES_FILE
+        strategies = load_strategies(STRATEGIES_FILE, model="catboost")
+        assert len(strategies) == 15
+
+    def test_has_15_xgboost_strategies(self):
+        from scripts.ml.auto_tune import STRATEGIES_FILE
+        strategies = load_strategies(STRATEGIES_FILE, model="xgboost")
+        assert len(strategies) == 15
 
     def test_all_have_required_fields(self):
         from scripts.ml.auto_tune import STRATEGIES_FILE
-        strategies = load_strategies(STRATEGIES_FILE)
-        for s in strategies:
-            assert "label" in s, f"Strategy missing label: {s}"
-            assert "description" in s, f"Strategy missing description: {s}"
-            assert "overrides" in s, f"Strategy missing overrides: {s}"
-            assert isinstance(s["overrides"], dict)
-            assert len(s["overrides"]) > 0, f"Strategy has empty overrides: {s['label']}"
+        for model in ("lgbm", "catboost", "xgboost"):
+            strategies = load_strategies(STRATEGIES_FILE, model=model)
+            for s in strategies:
+                assert "label" in s, f"Strategy missing label: {s}"
+                assert "description" in s, f"Strategy missing description: {s}"
+                assert "overrides" in s, f"Strategy missing overrides: {s}"
+                assert isinstance(s["overrides"], dict)
+                assert len(s["overrides"]) > 0, f"Strategy has empty overrides: {s['label']}"
 
-    def test_all_labels_unique(self):
+    def test_all_labels_unique_per_model(self):
         from scripts.ml.auto_tune import STRATEGIES_FILE
-        strategies = load_strategies(STRATEGIES_FILE)
-        labels = [s["label"] for s in strategies]
-        assert len(labels) == len(set(labels)), f"Duplicate labels: {labels}"
+        for model in ("lgbm", "catboost", "xgboost"):
+            strategies = load_strategies(STRATEGIES_FILE, model=model)
+            labels = [s["label"] for s in strategies]
+            assert len(labels) == len(set(labels)), f"Duplicate labels for {model}: {labels}"
 
     def test_overrides_are_valid_lgbm_params(self):
         from scripts.ml.auto_tune import STRATEGIES_FILE
@@ -294,7 +308,7 @@ class TestProductionStrategies:
             "reg_alpha", "path_smooth", "feature_fraction_bynode", "min_gain_to_split",
             "cluster_strategy", "recursive", "shap_select", "shap_threshold",
         }
-        strategies = load_strategies(STRATEGIES_FILE)
+        strategies = load_strategies(STRATEGIES_FILE, model="lgbm")
         for s in strategies:
             for key in s["overrides"]:
                 assert key in valid_keys, (

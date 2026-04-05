@@ -25,18 +25,7 @@ vi.mock("echarts-for-react", () => ({
   ),
 }));
 
-// Mock recharts
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
-  Bar: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  Tooltip: () => null,
-  Cell: () => null,
-  AreaChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Area: () => null,
-}));
+vi.mock("recharts");
 
 // Mock US states GeoJSON
 vi.mock("@/assets/us-states.json", () => ({

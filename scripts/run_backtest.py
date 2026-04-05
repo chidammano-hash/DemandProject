@@ -26,7 +26,6 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 import yaml
-from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -37,12 +36,12 @@ from common.backtest_framework import (
     resolve_cluster_params,
     run_tree_backtest,
 )
-from common.constants import MIN_CLUSTER_ROWS, compute_min_cluster_rows
+from common.constants import compute_min_cluster_rows
 from common.ml.model_registry import (
-    compute_early_stop_patience,
     fit_model,
     get_best_iteration,
 )
+from common.scripts_base import load_project_env, setup_logging
 from common.services.perf_profiler import profiled_section
 from common.tuning import TRAIN_FOLD_FNS, load_best_params, tune_for_timeframe
 from common.utils import get_algorithm_roster, load_config, load_forecast_pipeline_config
@@ -511,8 +510,8 @@ def _train_single_cluster(
     fit_params = {**filtered_params, **(fit_extras or {})}
 
     # Classify demand pattern and apply Tweedie objective for intermittent clusters
-    algo_cfg = load_config("algorithm_config.yaml")
-    backtest_cfg = algo_cfg.get("backtest", {})
+    pcfg = load_forecast_pipeline_config()
+    backtest_cfg = pcfg.get("backtest", {})
     intermittent_threshold = backtest_cfg.get("intermittent_threshold", 0.5)
     lumpy_threshold = backtest_cfg.get("lumpy_threshold", 0.3)
     tweedie_vp = backtest_cfg.get("tweedie_variance_power", 1.5)
@@ -558,6 +557,10 @@ def _train_single_cluster(
     n_est_used = get_best_iteration(model, model_name)
     if n_est_used is None:
         n_est_used = fit_params[iter_param]
+    # val_wape and train_rows are consumed by persist_cluster_models().
+    # cluster_profile, demand_pattern, and cluster_stats are diagnostic — they
+    # ride along in model_meta for inspection/logging but are not read back
+    # by any downstream function.
     meta = {
         "val_wape": val_wape,
         "train_rows": len(X_tr),
@@ -840,7 +843,7 @@ def persist_cluster_models(
         feature_cols: Ordered feature column names used during training.
         model_id: e.g. 'lgbm_cluster'.
         timeframe_label: Backtest timeframe label (e.g. 'J' = most recent).
-        prod_config: Loaded production_forecast_config.yaml dict (optional).
+        prod_config: Loaded production_forecast section from forecast_pipeline_config.yaml (optional).
         model_meta: {cluster_label: {val_wape, train_rows}} from training functions.
         feature_importance_fn: Callable that extracts importance array from a model.
         model_name: One of 'lgbm', 'catboost', 'xgboost' (for get_best_iteration).
@@ -903,13 +906,13 @@ def persist_cluster_models(
 def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(
-        description="Run tree-model per-cluster backtest (settings from algorithm_config.yaml)",
+        description="Run tree-model per-cluster backtest (settings from forecast_pipeline_config.yaml)",
     )
     parser.add_argument("--model", type=str, default="lgbm",
                         choices=list(MODEL_REGISTRY.keys()),
                         help="Model type to run (default: lgbm)")
     parser.add_argument("--config", type=str, default=None,
-                        help="Path to algorithm_config.yaml (default: config/algorithm_config.yaml)")
+                        help="Path to config YAML (default: config/forecast_pipeline_config.yaml)")
     parser.add_argument("--model-id", type=str, default=None,
                         help="Override model_id from config")
     parser.add_argument("--n-timeframes", type=int, default=None,
@@ -929,7 +932,7 @@ def main() -> None:
                         help="Resume from checkpoints if a previous run crashed")
     args = parser.parse_args()
 
-    load_dotenv(ROOT / ".env")
+    load_project_env()
 
     model_name = args.model
     registry = MODEL_REGISTRY[model_name]
@@ -944,38 +947,60 @@ def main() -> None:
             model_class = _import_model_class(registry["class"])
             lib_module = importlib.import_module(registry["class"].rsplit(".", 1)[0])
 
-        # Load algorithm config (model-specific hyperparams always from algorithm_config)
-        config_path = Path(args.config) if args.config else ROOT / "config" / "algorithm_config.yaml"
-        with open(config_path) as f:
-            cfg = yaml.safe_load(f)
+        # Load config: prefer CLI --config path, else forecast_pipeline_config.yaml.
+        # When a temp config is passed via --config (from tuning), it uses the
+        # pipeline config format (algorithms.<model_id>.params).
+        if args.config:
+            config_path = Path(args.config)
+            with open(config_path) as f:
+                cfg = yaml.safe_load(f)
+        else:
+            cfg = load_forecast_pipeline_config()
 
-        algo = cfg["algorithms"][registry["config_key"]]
+        # Resolve algorithm params from pipeline config structure.
+        # In pipeline config, model_id IS the key (e.g. "lgbm_cluster")
+        # and params live under algorithms.<model_id>.params.
+        # Also support legacy format where config_key maps model_name -> section.
+        _config_key = registry["config_key"]
+        _config_section = registry.get("config_section", f"{_config_key}_cluster")
+        algo_entry = cfg.get("algorithms", {}).get(_config_section, {})
+        if not algo_entry:
+            # Fallback: try config_key directly (legacy format)
+            algo_entry = cfg.get("algorithms", {}).get(_config_key, {})
+        # Extract params sub-dict if present (pipeline config format)
+        if "params" in algo_entry:
+            algo = dict(algo_entry["params"])
+            # Merge lifecycle/meta keys the script needs
+            for mk in ("enabled", "model_id", "cluster_strategy", "recursive",
+                        "shap_select", "shap_threshold", "shap_top_n",
+                        "shap_sample_size", "tune_inline", "params_file",
+                        "customer_features", "cluster_override_path"):
+                if mk in algo_entry:
+                    algo.setdefault(mk, algo_entry[mk])
+        else:
+            # Legacy format: all keys flat in the section
+            algo = dict(algo_entry)
 
-        # Pipeline-level backtest settings: prefer forecast_pipeline_config.yaml,
-        # fall back to algorithm_config.yaml's backtest section.
-        pipeline_cfg = None
+        # Pipeline-level backtest settings from pipeline config
+        pipeline_cfg = cfg if not args.config else None
+        if pipeline_cfg is None:
+            try:
+                pipeline_cfg = load_forecast_pipeline_config()
+            except FileNotFoundError:
+                pipeline_cfg = None
+        backtest_cfg = (pipeline_cfg or cfg).get("backtest", {})
+
+        # Check algorithm enabled flag from the roster (skip if disabled).
+        # Match by config_section (pipeline model_id, e.g. "lgbm_cluster")
+        # or by config_key (base name, e.g. "lgbm") as prefix of roster keys.
         try:
-            pipeline_cfg = load_forecast_pipeline_config()
-            backtest_cfg = pipeline_cfg.get("backtest", cfg.get("backtest", {}))
-        except FileNotFoundError:
-            backtest_cfg = cfg.get("backtest", {})
-
-        # Check algorithm enabled flag from the roster (skip if disabled)
-        try:
+            _config_section_id = registry.get("config_section", f"{_config_key}_cluster")
             roster = get_algorithm_roster(stage="backtest")
-            # Find the roster entry whose config_key matches this model
-            roster_entry = None
-            for rid, rentry in roster.items():
-                if rentry.get("config_key") == registry["config_key"]:
-                    roster_entry = rentry
-                    break
+            roster_entry = roster.get(_config_section_id)
             if roster_entry is None:
                 # Not in roster with backtest=true — check if explicitly disabled
                 all_roster = get_algorithm_roster()
-                disabled = not any(
-                    e.get("config_key") == registry["config_key"]
-                    for e in all_roster.values()
-                )
+                disabled = _config_section_id not in all_roster
                 if disabled:
                     logger.warning(
                         "Model '%s' is disabled in forecast_pipeline_config.yaml — skipping",
@@ -985,10 +1010,10 @@ def main() -> None:
         except FileNotFoundError:
             pass  # No pipeline config — run unconditionally
 
-        # Propagate top-level noise settings into algo dict so run_tree_backtest
+        # Propagate backtest-level noise settings into algo dict so run_tree_backtest
         # can access them via algo_config (algo only holds the per-algorithm sub-dict).
-        algo.setdefault("recursive_noise_enabled", cfg.get("recursive_noise_enabled", False))
-        algo.setdefault("recursive_noise_pct", cfg.get("recursive_noise_pct", 0.05))
+        algo.setdefault("recursive_noise_enabled", backtest_cfg.get("recursive_noise_enabled", cfg.get("recursive_noise_enabled", False)))
+        algo.setdefault("recursive_noise_pct", backtest_cfg.get("recursive_noise_pct", cfg.get("recursive_noise_pct", 0.05)))
 
     # Resolve cluster override: CLI flag takes priority, then algo_config key
     cluster_override = args.cluster_override or algo.get("cluster_override_path")
@@ -1000,14 +1025,17 @@ def main() -> None:
         algo["cluster_filter"] = [c.strip() for c in args.clusters.split(",")]
         logger.info("Cluster filter: restricting to clusters %s", algo["cluster_filter"])
 
-    # Resolve cluster_strategy: pipeline config > algorithm config > default
-    _roster_cs = None
-    if pipeline_cfg:
-        for _rid, _rentry in pipeline_cfg.get("algorithms", {}).items():
-            if _rentry.get("config_key") == model_name:
-                _roster_cs = _rentry.get("cluster_strategy")
-                break
-    cluster_strategy = _roster_cs or algo.get("cluster_strategy") or "per_cluster"
+    # Resolve cluster_strategy: pipeline config entry > algo dict > default
+    _roster_cs = algo.get("cluster_strategy")
+    if not _roster_cs and pipeline_cfg:
+        # Look up by config_section (pipeline model_id), then fall back to model_name
+        _section_id = registry.get("config_section", f"{model_name}_cluster")
+        _algo_entry = pipeline_cfg.get("algorithms", {}).get(_section_id)
+        if _algo_entry is None:
+            _algo_entry = pipeline_cfg.get("algorithms", {}).get(model_name)
+        if _algo_entry:
+            _roster_cs = _algo_entry.get("cluster_strategy")
+    cluster_strategy = _roster_cs or "per_cluster"
     # Guard: if clustering is disabled but strategy is per_cluster, fall back to global
     if pipeline_cfg and not pipeline_cfg.get("clustering", {}).get("enabled", True) and cluster_strategy == "per_cluster":
         logger.warning("Clustering disabled in pipeline config — falling back to global strategy")
@@ -1206,11 +1234,12 @@ def main() -> None:
                     shap_threshold, shap_top_n, shap_sample_size)
 
     # Load production forecast config for model persistence (F1.1)
-    prod_config_path = ROOT / "config" / "production_forecast_config.yaml"
+    pipeline_config_path = ROOT / "config" / "forecast_pipeline_config.yaml"
     prod_config = None
-    if prod_config_path.exists():
-        with open(prod_config_path) as f:
-            prod_config = yaml.safe_load(f)
+    if pipeline_config_path.exists():
+        with open(pipeline_config_path) as f:
+            raw = yaml.safe_load(f)
+        prod_config = raw.get("production_forecast", {})
 
     _fi_fn = registry["feature_importance_fn"]
 
@@ -1294,5 +1323,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    setup_logging()
     main()

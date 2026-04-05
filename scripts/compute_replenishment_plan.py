@@ -40,6 +40,7 @@ if str(_ROOT) not in sys.path:
 
 from common.db import get_db_params
 from common.services.perf_profiler import profiled_section
+from common.utils import load_config as _load_config
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -806,8 +807,7 @@ def _parse_args() -> argparse.Namespace:
 
 def run(dry_run: bool = False) -> int:
     """Entry point for profiler and CLI usage."""
-    with open(CONFIG_PATH) as fh:
-        config = yaml.safe_load(fh)
+    config = _load_config(Path(CONFIG_PATH).stem)
 
     with psycopg.connect(**get_db_params()) as conn:
         plan_version = get_latest_plan_version(conn)
@@ -833,8 +833,7 @@ def run(dry_run: bool = False) -> int:
 if __name__ == "__main__":
     args = _parse_args()
 
-    with open(args.config) as fh:
-        config = yaml.safe_load(fh)
+    config = _load_config(Path(args.config).stem)
 
     with psycopg.connect(**get_db_params()) as conn:
         plan_version = args.plan_version or get_latest_plan_version(conn)

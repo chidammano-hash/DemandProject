@@ -8,7 +8,7 @@ Usage:
     uv run python scripts/update_lead_time_actuals.py --input data/po_receipts.csv
     uv run python scripts/update_lead_time_actuals.py --supplier-id "ABC Trading Co." --dry-run
 
-Config: config/lead_time_config.yaml
+Config: config/inventory_planning_config.yaml (lead_time section)
 """
 
 from __future__ import annotations
@@ -27,22 +27,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
+from common.utils import load_config as _load_config
 
-CONFIG_PATH = "config/lead_time_config.yaml"
 
-
-def load_config(path: str = CONFIG_PATH) -> dict:
-    try:
-        with open(path) as f:
-            return yaml.safe_load(f)
-    except FileNotFoundError:
-        return {
-            "window_months": 12,
-            "min_sample_size": 3,
-            "mean_lt_change_threshold_days": 5,
-            "stddev_change_threshold_pct": 0.30,
-            "otdr_degradation_threshold": 0.10,
-        }
+def load_config() -> dict:
+    cfg = _load_config("inventory_planning_config")
+    return cfg.get("lead_time", {})
 
 
 def compute_lt_statistics(lt_days_series: list[float]) -> Optional[dict]:

@@ -16,7 +16,7 @@ Default hyperparameters are rarely optimal. With ~40 engineered features, many a
 
 ## Solution
 
-Three composable capabilities address these gaps: (1) Bayesian hyperparameter tuning finds optimal model parameters, (2) SHAP-based feature selection removes noise features, and (3) recursive multi-step forecasting simulates real deployment conditions. All three are activated via config keys in `algorithm_config.yaml` -- no code changes required.
+Three composable capabilities address these gaps: (1) Bayesian hyperparameter tuning finds optimal model parameters, (2) SHAP-based feature selection removes noise features, and (3) recursive multi-step forecasting simulates real deployment conditions. All three are activated via config keys in `forecast_pipeline_config.yaml` -- no code changes required.
 
 ---
 
@@ -48,7 +48,7 @@ Global tuning is faster (50 trials, ~20-40 min). Inline tuning is slower (~600 m
 
 ### Output
 
-`data/tuning/best_params_<model>.json` containing optimal parameters, per-cluster WAPEs, and `best_n_estimators`. Applied via `params_file` key in `algorithm_config.yaml`.
+`data/tuning/best_params_<model>.json` containing optimal parameters, per-cluster WAPEs, and `best_n_estimators`. Applied via `params_file` key in `forecast_pipeline_config.yaml`.
 
 ---
 
@@ -125,7 +125,7 @@ No API, frontend, or database changes. The `"recursive": true` flag in `backtest
 | `make tune-xgboost` | Tune XGBoost (~25-50 min) |
 | `make tune-all` | Tune all three sequentially |
 
-All three capabilities are activated via `config/algorithm_config.yaml`:
+All three capabilities are activated via `config/forecast_pipeline_config.yaml`:
 
 ```yaml
 lgbm:
@@ -141,7 +141,7 @@ lgbm:
 
 Controls search spaces, CV settings, and trial budgets for all three algorithms.
 
-### Algorithm Config: `config/algorithm_config.yaml`
+### Algorithm Config: `config/forecast_pipeline_config.yaml`
 
 | Key | Default | Description |
 |-----|---------|-------------|

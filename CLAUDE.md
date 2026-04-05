@@ -70,11 +70,13 @@ frontend/                    # React + Vite + TypeScript
 ├── Dockerfile               # Nginx multi-stage build
 └── nginx.conf               # SPA fallback + API reverse proxy
 
-config/                      # 56 YAML config files organized by concern:
+config/                      # ~45 YAML config files organized by concern:
 │   ├── etl_config.yaml                # ETL pipeline: domain load order, MV refresh, parallel workers
-│   ├── forecast_etl_config.yaml  # ML pipeline: algorithm roster, backtest, tuning, champion, forecast
-│   ├── algorithm_config.yaml          # Model hyperparams (LGBM, CatBoost, XGBoost, Chronos, etc.)
-│   └── ...                            # 53 more configs (clustering, inventory, ops, etc.)
+│   ├── forecast_pipeline_config.yaml  # ML pipeline: algorithm roster + params, backtest, tuning, champion, forecast
+│   ├── shared_constants.yaml          # Shared constants (service levels, z-table, financial defaults, guard rails)
+│   ├── inventory_planning_config.yaml # Merged inventory planning (lead time, simulation, projection)
+│   ├── tune_strategies.yaml           # Merged tune strategies (LGBM, CatBoost, XGBoost)
+│   └── ...                            # ~40 more configs (clustering, inventory, ops, etc.)
 sql/                         # 87 DDL migration files
 tests/                       # 2762+ backend tests (api/ + unit/)
 docs/                        # ARCHITECTURE, PLATFORM_GUIDE, RUNBOOK, specs/
@@ -249,18 +251,19 @@ These are hard constraints that cause bugs or test failures if violated.
 
 ### Frontend Patterns
 
-- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`.
+- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`, `/demand-history`.
 - **Theme context, not props**: Use `useThemeContext()` or `useChartColors()` — never pass `theme` as a prop from `App.tsx`.
 - **Test wrappers**: Wrap components with `TestQueryWrapper` from `src/tabs/__tests__/test-utils.tsx`. Mock API with `vi.mock("../api/queries")`. Mock `echarts-for-react` for chart tests. Mock `@tanstack/react-virtual` for virtualized row tests.
 
 ### Code Patterns
 
 - **All config in YAML**: Every module externalizes params into `config/<name>.yaml`. No magic numbers in scripts. Load via `load_config(name)` from `common/utils.py`.
-- **Forecast pipeline master config**: `config/forecast_etl_config.yaml` is the single source of truth for the ML forecast pipeline. Use `load_forecast_pipeline_config()` from `common/utils.py` to load it. Use `get_algorithm_roster(stage=...)` to get algorithms filtered by lifecycle stage (tune/backtest/compete/forecast/expert). Use `get_competing_model_ids()` and `get_forecastable_model_ids()` for common queries. The old configs (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`) still work via backward compatibility but new code should use the master config.
-- **Cold-start DFU routing**: DFUs with < `min_history_months` (12) months of sales history are routed to `cold_start_model_id` (rolling_mean) instead of the champion tree model. DFUs with < `cold_start_min_months` (3) months are skipped entirely. Configured in `config/forecast_etl_config.yaml` under `production_forecast`.
-- **Clustering master switch**: `clustering.enabled` in `config/forecast_etl_config.yaml` is the master switch for the clustering pipeline. When `false`, all backtest scripts auto-fall back to `global` strategy regardless of per-algorithm `cluster_strategy` settings. Check via `is_clustering_enabled()` from `common/utils.py`.
-- **`cluster_strategy` resolution order**: pipeline config algorithm entry (`forecast_etl_config.yaml` `algorithms.<name>.cluster_strategy`) > `algorithm_config.yaml` > default `"per_cluster"`. Only tree/statistical models use this field; foundation/DL models always run globally.
-- **Backtest sampling config**: `forecast_etl_config.yaml` `backtest_sampling` section is the primary source for sampling settings. `common/ml/backtest_sampler.py` falls back to `backtest_sampling_config.yaml` if the section is absent from the pipeline config.
+- **Forecast pipeline master config**: `config/forecast_pipeline_config.yaml` is the single source of truth for the ML forecast pipeline. It contains the algorithm roster with inline hyperparameters (under `algorithms.<model_id>.params`), backtest settings, tuning settings, champion selection, production forecast config, and run tracking. Use `load_forecast_pipeline_config()` from `common/utils.py` to load it. Use `get_algorithm_roster(stage=...)` to get algorithms filtered by lifecycle stage (tune/backtest/compete/forecast/expert). Use `get_competing_model_ids()` and `get_forecastable_model_ids()` for common queries. Use `get_algorithm_params(model_id)` to retrieve hyperparameters for a specific algorithm. The old separate configs (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`, `backtest_sampling_config.yaml`, `algorithm_config.yaml`) have been deleted -- all settings now live in the master config.
+- **Cold-start DFU routing**: DFUs with < `min_history_months` (12) months of sales history are routed to `cold_start_model_id` (rolling_mean) instead of the champion tree model. DFUs with < `cold_start_min_months` (3) months are skipped entirely. Configured in `config/forecast_pipeline_config.yaml` under `production_forecast`.
+- **Clustering master switch**: `clustering.enabled` in `config/forecast_pipeline_config.yaml` is the master switch for the clustering pipeline. When `false`, all backtest scripts auto-fall back to `global` strategy regardless of per-algorithm `cluster_strategy` settings. Check via `is_clustering_enabled()` from `common/utils.py`.
+- **Config `_includes` directive**: `load_config(name)` supports an `_includes` key at the top of any YAML file. Listed files are loaded first and merged as defaults, allowing shared constants (e.g., `shared_constants.yaml`) to be inherited without duplication.
+- **`cluster_strategy` resolution order**: `forecast_pipeline_config.yaml` algorithm entry (`algorithms.<name>.cluster_strategy`) > default `"per_cluster"`. Only tree/statistical models use this field; foundation/DL models always run globally.
+- **Backtest sampling config**: `forecast_pipeline_config.yaml` `backtest_sampling` section is the sole source for sampling settings (the legacy `backtest_sampling_config.yaml` has been deleted).
 - **DB params**: All scripts use `from common.db import get_db_params` — no inline connection helpers.
 - **Planning date**: All date-sensitive code uses `get_planning_date()` from `common/planning_date.py`, not `date.today()`. Config: `config/planning_config.yaml`. Env overrides: `PLANNING_DATE` or `USE_SYSTEM_DATE`.
 - **Timestamp helper**: Import `from common.utils import _ts` — no per-file `_ts()` definitions.
@@ -406,7 +409,7 @@ When adding a new feature end-to-end, follow these steps in order:
 
 ### Cold-Start DFUs Get No Forecast
 **Cause**: DFU has fewer than `cold_start_min_months` (3) months of sales history and is skipped by the production forecast pipeline.
-**Fix**: Check `cold_start_min_months` and `min_history_months` in `config/forecast_etl_config.yaml` under `production_forecast`. DFUs with 3-11 months of history are routed to `cold_start_model_id` (rolling_mean). DFUs with fewer than 3 months are skipped (absolute floor).
+**Fix**: Check `cold_start_min_months` and `min_history_months` in `config/forecast_pipeline_config.yaml` under `production_forecast`. DFUs with 3-11 months of history are routed to `cold_start_model_id` (rolling_mean). DFUs with fewer than 3 months are skipped (absolute floor).
 
 ---
 

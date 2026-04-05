@@ -31,24 +31,14 @@ if str(ROOT) not in sys.path:
 from common.db import get_db_params
 from common.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
-
-CONFIG_PATH = "config/financial_plan_config.yaml"
+from common.utils import load_config as _load_config
 
 DEFAULT_CARRYING_COST_PCT = 0.25   # 25% annually
 DEFAULT_MONTHS_AHEAD = 6
 
 
-def load_config(path: str = CONFIG_PATH) -> dict:
-    try:
-        with open(path) as f:
-            return yaml.safe_load(f).get("financial_plan", {})
-    except FileNotFoundError:
-        return {
-            "carrying_cost_pct": DEFAULT_CARRYING_COST_PCT,
-            "months_ahead": DEFAULT_MONTHS_AHEAD,
-            "excess_dos_threshold": 180,
-            "budget_breach_alert_pct": 0.90,
-        }
+def load_config() -> dict:
+    return _load_config("financial_plan_config.yaml").get("financial_plan", {})
 
 
 def compute_inventory_value(qty: float, unit_cost: float) -> float:

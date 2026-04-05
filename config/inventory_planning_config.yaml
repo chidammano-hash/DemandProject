@@ -1,0 +1,59 @@
+# Unified inventory planning configuration.
+# Merged from: lead_time_config.yaml, simulation_config.yaml, projection_config.yaml
+
+lead_time:
+  history:
+    history_months: 12          # rolling window of daily snapshot data to analyse
+
+  change_point:
+    min_observations: 3         # minimum number of distinct LT change-points required
+
+  cv_thresholds:
+    stable: 0.15                # lt_cv < 0.15 -> stable
+    moderate: 0.40              # 0.15 <= lt_cv < 0.40 -> moderate; >= 0.40 -> volatile
+
+  batch:
+    batch_size: 500             # rows per upsert batch
+
+simulation:
+  n_simulations: 10000
+  demand_distribution: empirical      # use actual demand obs as pool
+  lt_distribution: empirical          # use observed LT change-points
+  ss_levels_to_test: 20               # test 20 SS levels from 0 to 2x analytical_SS
+  random_seed: 42
+  min_demand_days: 90                 # need 90+ days of demand obs to use empirical
+  max_skus_per_batch: 500             # process in batches to manage memory
+  target_csl: null                    # null = use per-SKU from safety_stock_config
+
+projection:
+  projection:
+    horizon_days: 90                    # days forward to project
+    scenarios:
+      - no_order
+      - with_open_po
+      - with_planned_orders
+    daily_demand_method: calendar_days  # 'calendar_days' or 'business_days'
+    fallback_history_months: 3          # months of history to average if no production forecast
+
+  thresholds:
+    reorder_point_source: safety_stock  # 'safety_stock' or 'reorder_point_config'
+    excess_coverage_months: 6           # projected_qty > 6 months avg demand = excess_risk
+
+  scheduler:
+    job_type: compute_inventory_projection
+    cron: "0 7 * * *"                   # Run after production forecast (06:00)
+    horizon_days: 90
+
+# Demand History Workbench (merged from demand_history_config.yaml)
+demand_history:
+  default_months: 24
+  max_months: 60
+  pareto_top_n: 5
+  matrix_max_rows: 100
+  matrix_max_cols: 50
+  workbench_default_limit: 50
+  cache_ttl_seconds: 120
+  hierarchical_model_ids:
+    - bolt_hierarchical
+  top_down_model_ids:
+    - chronos_bolt

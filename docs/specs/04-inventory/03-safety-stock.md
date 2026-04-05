@@ -1,6 +1,14 @@
-# 04-03 Safety Stock & Monte Carlo Simulation
+# Safety Stock & Monte Carlo Simulation
 
-> **Status:** Implemented | **Features:** IPfeature3, IPfeature10
+> Analytical safety stock calculator using the combined variability formula with ABC-differentiated Z-scores, validated by a Monte Carlo simulator that runs 10,000 demand/lead-time scenarios to produce empirical service-level probability curves.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning |
+| **Key Files** | `scripts/compute_safety_stock.py`, `scripts/run_ss_simulation.py`, `config/safety_stock_config.yaml`, `sql/037_create_safety_stock_targets.sql` |
+
+---
 
 ## Problem
 
@@ -118,7 +126,7 @@ guard_rails:
   max_ss_months_supply: 6
 ```
 
-File: `config/simulation_config.yaml`
+File: `config/inventory_planning_config.yaml` (simulation section)
 
 ```yaml
 n_simulations: 10000

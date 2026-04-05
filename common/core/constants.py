@@ -128,10 +128,11 @@ def compute_min_cluster_rows(
     """Minimum training rows for a cluster, scaled by feature count.
 
     Uses a ratio of ``samples_per_feature`` per feature (default from
-    ``config/algorithm_config.yaml`` ``cluster_sizing.samples_per_feature``,
-    falling back to 3), with a *floor* of 50 rows regardless.  Accounts for
-    the 80/20 train/val split by inflating by 1.25x so that the *training*
-    partition alone has enough rows.
+    ``config/forecast_pipeline_config.yaml``
+    ``clustering.samples_per_feature``, falling back to 3), with a *floor*
+    of 50 rows regardless.  Accounts for the 80/20 train/val split by
+    inflating by 1.25x so that the *training* partition alone has enough
+    rows.
 
     Parameters
     ----------
@@ -139,14 +140,15 @@ def compute_min_cluster_rows(
         Number of features used for model training.
     samples_per_feature:
         Minimum samples per feature before the split inflation.
-        When *None*, reads from ``algorithm_config.yaml``.
+        When *None*, reads from ``forecast_pipeline_config.yaml``.
     floor:
         Absolute minimum regardless of feature count.
     """
     if samples_per_feature is None:
-        cfg = load_config("algorithm_config.yaml")
+        from common.utils import load_forecast_pipeline_config
+        pcfg = load_forecast_pipeline_config()
         samples_per_feature = (
-            cfg.get("cluster_sizing", {}).get("samples_per_feature", 3)
+            pcfg.get("clustering", {}).get("samples_per_feature", 3)
         )
     min_for_features = int(n_features * samples_per_feature * 1.25)  # 1.25x for 80/20 split
     result = max(floor, min_for_features)

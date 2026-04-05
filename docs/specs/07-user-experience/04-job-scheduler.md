@@ -1,15 +1,12 @@
 # Job Scheduler
 
-An APScheduler-powered background job engine with per-group concurrency control, FIFO queueing, cron/interval scheduling, job pipelines, and a frontend automation dashboard with live progress monitoring.
+> An APScheduler-powered background job engine with per-group concurrency control, FIFO queueing, cron/interval scheduling, job pipelines, and a frontend automation dashboard with live progress monitoring.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 07-user-experience/04-job-scheduler |
-| Frontend | `JobsTab.tsx`, `jobs/` panels, `context/JobNotificationContext.tsx` |
-| Backend | `api/routers/jobs.py`, `common/job_registry.py`, `common/job_state.py`, `common/job_scheduler.py` |
-| Config | None (job types defined in `JOB_TYPE_REGISTRY`) |
-| SQL | `sql/020_create_job_history.sql`, `sql/097_add_job_pid_and_log.sql` |
+| **Status** | Implemented |
+| **UI Tab** | JobsTab |
+| **Key Files** | `JobsTab.tsx`, `api/routers/jobs.py`, `common/job_registry.py`, `common/job_scheduler.py`, `sql/020_create_job_history.sql` |
 
 ---
 

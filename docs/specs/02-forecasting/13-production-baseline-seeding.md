@@ -1,8 +1,15 @@
-# Spec 13 — Production Baseline Seeding
+# Production Baseline Seeding
 
 > Seed production backtest runs as promoted experiments in Model Tuning, Champion, and Clustering tabs so users always have a baseline to compare against.
 
-**Status:** Draft
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Model Tuning, Champion Experiments, Clustering Experiments |
+| **Key Files** | `scripts/ml/seed_production_baselines.py` |
+
+---
+
 **Depends on:** Spec 11 (Unified Model Tuning), Spec 12 (Dual Promotion), Spec 04-cluster-experimentation-studio, Spec 05-champion-experimentation-studio
 
 ---
@@ -39,9 +46,9 @@ After any production pipeline run completes, the system **automatically register
 - `backtest_metadata.json` — portfolio accuracy, WAPE, bias, n_predictions, n_dfus, per-timeframe breakdowns
 - `backtest_predictions.csv` — raw predictions for per-cluster and per-month aggregation
 
-**Source config** (`config/algorithm_config.yaml`):
+**Source config** (`config/forecast_pipeline_config.yaml`):
 - `algorithms.{model}.params` — production hyperparameters
-- `algorithms.{model}.training` — cluster_strategy, recursive, shap_select, shap_threshold, etc.
+- `algorithms.{model}` — cluster_strategy, recursive, shap_select, shap_threshold, etc.
 
 **Target tables:**
 
@@ -60,8 +67,8 @@ After any production pipeline run completes, the system **automatically register
 **Source artifacts** (`data/champion/`):
 - `champion_summary.json` — strategy, champion_accuracy, ceiling_accuracy, gap_bps, model_distribution, per-lag and per-month breakdowns
 
-**Source config** (`config/model_competition.yaml`):
-- `strategy`, `metric`, `lag_mode`, `min_sku_rows`, `models`
+**Source config** (`config/forecast_pipeline_config.yaml` champion section):
+- `strategy`, `metric`, `lag`, `min_sku_rows`; competing models derived from `algorithms[*].compete == true`
 
 **Target tables:**
 
@@ -214,10 +221,12 @@ cluster-all: cluster-train cluster-label seed-baselines-clustering
 setup-backtest: ... seed-baselines
 ```
 
-### 4.4 Config: `config/baseline_seeding.yaml`
+### 4.4 Config
+
+> The `config/baseline_seeding.yaml` file has been deleted (dead config, no consumers). Seeding configuration is hard-coded in `scripts/ml/seed_production_baselines.py` with sensible defaults:
 
 ```yaml
-# Production baseline seeding configuration
+# Effective defaults (not a file — hard-coded in the script)
 baseline_label: "Production Baseline"
 template_id: "production_baseline"
 
@@ -231,7 +240,7 @@ tuning:
 
 champion:
   artifact_path: "data/champion/champion_summary.json"
-  config_source: "model_competition"
+  config_source: "forecast_pipeline_config"  # reads champion section
 
 clustering:
   metadata_path: "data/clustering/cluster_metadata.json"

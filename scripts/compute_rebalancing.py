@@ -24,14 +24,13 @@ import yaml
 import psycopg
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.scripts_base import add_common_args, setup_logging
 from common.services.perf_profiler import profiled_section
-
-CONFIG_PATH = Path(__file__).parent.parent / "config" / "rebalancing_config.yaml"
+from common.utils import load_config as _load_config
 
 
 def load_config() -> dict:
-    with open(CONFIG_PATH) as f:
-        return yaml.safe_load(f)
+    return _load_config("rebalancing_config.yaml")
 
 
 def load_network(conn) -> list[dict]:
@@ -537,13 +536,13 @@ def run(
 
 
 if __name__ == "__main__":
+    setup_logging()
     parser = argparse.ArgumentParser(description="Compute inventory rebalancing plan")
     parser.add_argument("--solver", choices=["greedy", "lp"], default=None,
                         help="Solver method (default: from config)")
     parser.add_argument("--horizon", type=int, default=None,
                         help="Planning horizon in weeks (default: from config)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Preview without writing to DB")
+    add_common_args(parser)
     parser.add_argument("--item", type=str, default=None,
                         help="Filter to a single item")
     parser.add_argument("--budget-cap", type=float, default=None,

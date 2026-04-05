@@ -20,21 +20,19 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import psycopg
-import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.db import get_db_params
 from common.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
-
-CONFIG_PATH = "config/projection_config.yaml"
+from common.utils import load_config as _load_config
 
 log = logging.getLogger(__name__)
 
 
 def load_config() -> dict:
-    with open(CONFIG_PATH) as f:
-        return yaml.safe_load(f)
+    cfg = _load_config("inventory_planning_config")
+    return cfg.get("projection", {})
 
 
 # ---------------------------------------------------------------------------

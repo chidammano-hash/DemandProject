@@ -4,8 +4,9 @@
  * 5-zone command center: KPI strip, health overview, exception queue,
  * top-critical items, and 6-month trend chart.
  */
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTabVisibility } from "@/hooks/useTabVisibility";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer,
@@ -67,12 +68,7 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
   };
 
   // Reduce auto-refresh interval when tab is hidden (10 min instead of 2 min)
-  const [isTabVisible, setIsTabVisible] = useState(!document.hidden);
-  useEffect(() => {
-    const handler = () => setIsTabVisible(!document.hidden);
-    document.addEventListener("visibilitychange", handler);
-    return () => document.removeEventListener("visibilitychange", handler);
-  }, []);
+  const isTabVisible = useTabVisibility();
   const refreshInterval = isTabVisible ? 120_000 : 600_000;
 
   const { data: kpis, isLoading: kpisLoading } = useQuery({

@@ -8,7 +8,7 @@ Strict temporal train/test split prevents data leakage — no random splitting.
 
 Usage:
     python scripts/train_meta_learner.py \
-        --config config/model_competition.yaml \
+        --config config/forecast_pipeline_config.yaml \
         [--model-type random_forest] \
         [--output data/champion/meta_learner.joblib]
 """
@@ -27,7 +27,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import psycopg
-import yaml
 from dotenv import load_dotenv
 
 warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy connectable")
@@ -38,6 +37,7 @@ if str(ROOT) not in sys.path:
 
 from common.db import get_db_params
 from common.services.perf_profiler import profiled_section
+from common.utils import load_forecast_pipeline_config, get_competing_model_ids
 
 
 def _load_monthly_errors(
@@ -247,7 +247,7 @@ def train_classifier(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train meta-learner for champion selection")
     parser.add_argument(
-        "--config", type=str, default="config/model_competition.yaml",
+        "--config", type=str, default="config/forecast_pipeline_config.yaml",
     )
     parser.add_argument(
         "--model-type", type=str, default=None,
@@ -261,16 +261,14 @@ def main() -> None:
     load_dotenv(ROOT / ".env")
     db = get_db_params()
 
-    # Load config
-    config_path = ROOT / args.config
-    with open(config_path) as f:
-        raw = yaml.safe_load(f)
-    cfg = raw.get("competition", {})
-    meta_cfg = cfg.get("meta_learner", {})
+    # Load config from forecast_pipeline_config.yaml
+    pipeline_cfg = load_forecast_pipeline_config()
+    champion_section = pipeline_cfg.get("champion", {})
+    meta_cfg = champion_section.get("meta_learner", {})
 
-    models = cfg.get("models", [])
-    lag_mode = str(cfg.get("lag", "execution"))
-    min_rows = int(cfg.get("min_dfu_rows", 3))
+    models = get_competing_model_ids()
+    lag_mode = str(champion_section.get("lag", "execution"))
+    min_rows = int(champion_section.get("min_dfu_rows", 3))
     model_type = args.model_type or meta_cfg.get("model_type", "random_forest")
     performance_window = int(meta_cfg.get("performance_window", 6))
     test_months = int(meta_cfg.get("test_months", 3))

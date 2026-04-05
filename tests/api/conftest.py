@@ -1,6 +1,7 @@
 """Shared fixtures for API tests."""
 
 import pytest
+import pytest_asyncio
 from unittest.mock import MagicMock, patch, AsyncMock
 from contextlib import contextmanager
 
@@ -55,6 +56,26 @@ def mock_pool():
 @pytest.fixture
 async def client(mock_pool):
     """Async test client with mocked DB pool."""
+    pool, _, _ = mock_pool
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+
+
+@pytest_asyncio.fixture
+async def async_client(mock_pool):
+    """Shared async test client with mocked DB pool.
+
+    Inject alongside ``mock_pool`` to configure cursor return values before
+    making requests::
+
+        async def test_something(mock_pool, async_client):
+            _, _, cursor = mock_pool
+            cursor.fetchall.return_value = [(...)]
+            resp = await async_client.get("/some/endpoint")
+    """
     pool, _, _ = mock_pool
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app

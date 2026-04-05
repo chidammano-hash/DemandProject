@@ -8,7 +8,7 @@ Results are saved incrementally after each strategy completes.
 
 Usage:
     python -u scripts/simulate_champion_strategies.py \
-        --config config/model_competition.yaml \
+        --config config/forecast_pipeline_config.yaml \
         [--strategies expanding,rolling_6m,decay_090,ensemble_top3,meta_learner] \
         [--parallel 4]
 """
@@ -431,7 +431,7 @@ def _save_results(results: dict[str, Any], output_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Simulate champion strategies")
     parser.add_argument(
-        "--config", type=str, default="config/model_competition.yaml",
+        "--config", type=str, default="config/forecast_pipeline_config.yaml",
         help="Path to competition config YAML",
     )
     parser.add_argument(
@@ -465,16 +465,8 @@ def main() -> None:
         pipeline_cfg = None
 
     if not models:
-        # Fall back to legacy model_competition.yaml
-        config_path = ROOT / args.config
-        if not config_path.exists():
-            _flush_print(f"Config not found: {config_path}")
-            sys.exit(1)
-        with open(config_path) as f:
-            raw = yaml.safe_load(f)
-        cfg = raw.get("competition", {})
-        models = cfg.get("models", [])
-        lag_mode = str(cfg.get("lag", "execution"))
+        _flush_print("ERROR: forecast_pipeline_config.yaml not found or returned no competing models")
+        sys.exit(1)
 
     if len(models) < 2:
         _flush_print("At least 2 models required for simulation")

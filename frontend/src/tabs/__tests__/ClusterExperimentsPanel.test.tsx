@@ -152,21 +152,7 @@ const mockDeleteClusterExperiment = vi.fn().mockResolvedValue({ deleted: true })
 const mockPromoteClusterExperiment = vi.fn().mockResolvedValue({ status: "ok", dfus_updated: 50602 });
 const mockFetchClusterTemplates = vi.fn().mockResolvedValue(mockTemplates);
 
-// Mock recharts
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
-  Bar: () => null,
-  Cell: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  Legend: () => null,
-  ReferenceLine: () => null,
-  LineChart: ({ children }: { children: React.ReactNode }) => <div data-testid="line-chart">{children}</div>,
-  Line: () => null,
-}));
+vi.mock("recharts");
 
 vi.mock("@/api/queries", () => ({
   // Core query keys and stale times

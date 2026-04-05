@@ -32,21 +32,11 @@ if str(ROOT) not in sys.path:
 from common.db import get_db_params
 from common.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
+from common.utils import load_config as _load_config
 
-CONFIG_PATH = "config/echelon_config.yaml"
 
-
-def load_config(path: str = CONFIG_PATH) -> dict:
-    try:
-        with open(path) as f:
-            return yaml.safe_load(f).get("echelon", {})
-    except FileNotFoundError:
-        return {
-            "default_service_level": 0.95,
-            "z_score_default": 1.645,
-            "min_downstream_nodes": 1,
-            "cascade_risk_multiplier": 1.0,
-        }
+def load_config() -> dict:
+    return _load_config("echelon_config.yaml").get("echelon", {})
 
 
 def compute_pooled_sigma(downstream_sigmas: list[float]) -> float:

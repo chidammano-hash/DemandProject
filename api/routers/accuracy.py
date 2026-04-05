@@ -6,7 +6,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from api.core import get_conn, set_cache, compute_kpis
+from api.core import add_cross_dim_filters, compute_kpis, get_conn, set_cache
 
 router = APIRouter(tags=["accuracy"])
 
@@ -62,43 +62,6 @@ def _add_item_location_filters(
         if values:
             ph = ",".join(["%s"] * len(values))
             where_parts.append(f"{loc_col} IN ({ph})")
-            params.extend(values)
-
-
-def _add_cross_dim_filters(
-    where_parts: list[str],
-    params: list[Any],
-    *,
-    item_id_col: str,
-    loc_col: str,
-    brand: Optional[str] = None,
-    category: Optional[str] = None,
-    market: Optional[str] = None,
-) -> None:
-    """Append EXISTS subquery filters for brand (dim_item), category (dim_item), market (dim_location)."""
-    if brand:
-        values = [v.strip() for v in brand.split(",") if v.strip()]
-        if values:
-            ph = ",".join(["%s"] * len(values))
-            where_parts.append(
-                f"EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = {item_id_col} AND di.brand_name = ANY(ARRAY[{ph}]))"
-            )
-            params.extend(values)
-    if category:
-        values = [v.strip() for v in category.split(",") if v.strip()]
-        if values:
-            ph = ",".join(["%s"] * len(values))
-            where_parts.append(
-                f'EXISTS (SELECT 1 FROM dim_item di WHERE di.item_id = {item_id_col} AND di."class" = ANY(ARRAY[{ph}]))'
-            )
-            params.extend(values)
-    if market:
-        values = [v.strip() for v in market.split(",") if v.strip()]
-        if values:
-            ph = ",".join(["%s"] * len(values))
-            where_parts.append(
-                f"EXISTS (SELECT 1 FROM dim_location dl WHERE dl.loc = {loc_col} AND dl.state_id = ANY(ARRAY[{ph}]))"
-            )
             params.extend(values)
 
 
@@ -209,9 +172,9 @@ def forecast_accuracy_slice(
         _add_item_location_filters(where_parts, main_params,
                                    item_id_col="f.item_id", loc_col="f.loc",
                                    item=item, location=location)
-        _add_cross_dim_filters(where_parts, main_params,
-                               item_id_col="f.item_id", loc_col="f.loc",
-                               brand=brand, category=category, market=market)
+        add_cross_dim_filters(where_parts, main_params,
+                              item_col="f.item_id", loc_col="f.loc",
+                              brand=brand, category=category, market=market)
 
         where_sql = " AND ".join(where_parts)
         cte_params: list[Any] = list(model_list) + [len(model_list)]
@@ -331,9 +294,9 @@ def forecast_accuracy_slice(
         _add_item_location_filters(where_parts_raw, raw_params,
                                    item_id_col="f.item_id", loc_col="f.loc",
                                    item=item, location=location)
-        _add_cross_dim_filters(where_parts_raw, raw_params,
-                               item_id_col="f.item_id", loc_col="f.loc",
-                               brand=brand, category=category, market=market)
+        add_cross_dim_filters(where_parts_raw, raw_params,
+                              item_col="f.item_id", loc_col="f.loc",
+                              brand=brand, category=category, market=market)
 
         where_sql_raw = " AND ".join(where_parts_raw)
 
@@ -526,9 +489,9 @@ def forecast_accuracy_lag_curve(
         _add_item_location_filters(where_parts, main_params,
                                    item_id_col="a.item_id", loc_col="a.loc",
                                    item=item, location=location)
-        _add_cross_dim_filters(where_parts, main_params,
-                               item_id_col="a.item_id", loc_col="a.loc",
-                               brand=brand, category=category, market=market)
+        add_cross_dim_filters(where_parts, main_params,
+                              item_col="a.item_id", loc_col="a.loc",
+                              brand=brand, category=category, market=market)
 
         where_sql = " AND ".join(where_parts)
         cte_params: list[Any] = list(model_list) + [len(model_list)]
@@ -613,9 +576,9 @@ def forecast_accuracy_lag_curve(
         _add_item_location_filters(where_parts_raw, raw_params,
                                    item_id_col="a.item_id", loc_col="a.loc",
                                    item=item, location=location)
-        _add_cross_dim_filters(where_parts_raw, raw_params,
-                               item_id_col="a.item_id", loc_col="a.loc",
-                               brand=brand, category=category, market=market)
+        add_cross_dim_filters(where_parts_raw, raw_params,
+                              item_col="a.item_id", loc_col="a.loc",
+                              brand=brand, category=category, market=market)
 
         where_sql_raw = " AND ".join(where_parts_raw)
 

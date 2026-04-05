@@ -340,7 +340,7 @@ def _run_seasonality(
     job_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the seasonality detection + update pipeline."""
-    config = params.get("config", "config/seasonality_config.yaml")
+    config = params.get("config", "config/forecast_domain_config.yaml")
     steps = [
         (40, "Detecting seasonality patterns",
          [_UV, "run", "python", "scripts/detect_seasonality.py", "--config", config]),
@@ -635,7 +635,7 @@ def _run_compute_variability(
     if progress_cb:
         progress_cb(pct=10, msg="Computing demand variability")
     cmd = [_UV, "run", "python", "scripts/compute_demand_variability.py",
-           "--config", "config/variability_config.yaml"]
+           "--config", "config/forecast_domain_config.yaml"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Demand variability computation completed"}
 
@@ -759,16 +759,22 @@ def _run_tuning_backtest(
     if progress_cb:
         progress_cb(pct=5, msg=f"Starting tuning backtest #{run_id} ({strategy_label})")
 
-    # 1. Build temp config with overrides
-    algo_path = ROOT / "config" / "algorithm_config.yaml"
-    with open(algo_path) as f:
+    # 1. Build temp config with overrides (pipeline config format)
+    from common.utils import get_pipeline_config_path
+    pipeline_path = get_pipeline_config_path()
+    with open(pipeline_path) as f:
         base_config = yaml.safe_load(f)
 
     cfg = copy.deepcopy(base_config)
-    cfg["algorithms"]["lgbm"].update(overrides)
+    # Apply overrides to lgbm_cluster params in pipeline config
+    lgbm_entry = cfg.get("algorithms", {}).get("lgbm_cluster", {})
+    if "params" in lgbm_entry:
+        lgbm_entry["params"].update(overrides)
+    else:
+        lgbm_entry.update(overrides)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="tuning_chat_"))
-    tmp_path = tmp_dir / f"algorithm_config_{strategy_label}.yaml"
+    tmp_path = tmp_dir / f"pipeline_config_{strategy_label}.yaml"
     with open(tmp_path, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 

@@ -18,7 +18,7 @@ from common.domain_specs import (
 
 class TestDomainSpecs:
     def test_all_domains_defined(self):
-        expected = {"item", "location", "customer", "time", "sku", "sales", "forecast", "inventory", "sourcing", "purchase_order", "customer_demand"}
+        expected = {"item", "location", "customer", "time", "sku", "sales", "forecast", "inventory", "sourcing", "purchase_order", "customer_demand", "customer_features"}
         assert set(DOMAIN_SPECS.keys()) == expected
 
     def test_get_spec_valid(self):

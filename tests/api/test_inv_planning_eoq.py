@@ -185,19 +185,24 @@ async def test_eoq_sensitivity_200():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (100.0,)
 
-    import yaml
-    import os
-
-    config_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "config", "eoq_config.yaml"
-    )
-    with open(config_path) as fh:
-        cfg = yaml.safe_load(fh)
+    mock_cfg = {
+        "costs": {
+            "default_ordering_cost": 50.0,
+            "default_holding_cost_pct": 0.25,
+            "default_unit_cost": 1.0,
+            "default_moq": 1,
+        },
+        "constraints": {"max_eoq_months_supply": 6, "min_annual_demand": 0.001},
+        "sensitivity": {
+            "ordering_cost_min": 5.0,
+            "ordering_cost_max": 200.0,
+            "ordering_cost_steps": 20,
+        },
+        "batch": {"batch_size": 500},
+    }
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.inv_planning.open", create=True,
-               side_effect=lambda p, **kw: open(config_path)), \
-         patch("yaml.safe_load", return_value=cfg):
+         patch("api.routers.inv_planning_eoq.load_config", return_value=mock_cfg):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -212,17 +217,24 @@ async def test_eoq_sensitivity_response_structure():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.return_value = (100.0,)
 
-    import yaml
-    import os
-
-    config_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "config", "eoq_config.yaml"
-    )
-    with open(config_path) as fh:
-        cfg = yaml.safe_load(fh)
+    mock_cfg = {
+        "costs": {
+            "default_ordering_cost": 50.0,
+            "default_holding_cost_pct": 0.25,
+            "default_unit_cost": 1.0,
+            "default_moq": 1,
+        },
+        "constraints": {"max_eoq_months_supply": 6, "min_annual_demand": 0.001},
+        "sensitivity": {
+            "ordering_cost_min": 5.0,
+            "ordering_cost_max": 200.0,
+            "ordering_cost_steps": 20,
+        },
+        "batch": {"batch_size": 500},
+    }
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("yaml.safe_load", return_value=cfg):
+         patch("api.routers.inv_planning_eoq.load_config", return_value=mock_cfg):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

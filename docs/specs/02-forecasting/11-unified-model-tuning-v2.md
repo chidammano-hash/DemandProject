@@ -1,4 +1,4 @@
-# Unified Model Tuning Studio (Feature 46)
+# Unified Model Tuning Studio
 
 > A production-grade, UI-driven hyperparameter tuning platform for LightGBM, CatBoost, and XGBoost. Users configure experiment parameters directly in the browser, launch backtest runs that survive API restarts, monitor real-time logs in the Jobs tab, compare results with execution-lag filtering (lags 0-4), and promote winners to the champion pipeline — all without touching the command line.
 
@@ -11,6 +11,7 @@
 | **Router** | `api/routers/forecasting/unified_model_tuning.py` |
 | **Frontend** | `frontend/src/api/queries/unified-model-tuning.ts`, `frontend/src/tabs/LgbmTuningTab.tsx` |
 | **Tests** | `tests/api/test_unified_model_tuning.py` (40 tests), `frontend/src/tabs/__tests__/ModelTuningTab.test.tsx` |
+| **Key Files** | `api/routers/forecasting/unified_model_tuning.py`, `frontend/src/tabs/LgbmTuningTab.tsx`, `frontend/src/api/queries/unified-model-tuning.ts` |
 | **Depends On** | Feature 3 (Backtest Framework), Feature 44 (Resilient Jobs), Feature 45 (Tuning Registry) |
 
 ---
@@ -47,7 +48,7 @@ The current tuning system (Feature 45) has critical gaps:
 
 3. **Confusing Jobs integration** — The existing `tuning_backtest` job type is only triggered by the AI chat advisor. There is no dedicated "Launch Experiment" flow. When a tuning job appears in the Jobs tab, it is labeled generically ("AI Tuning Backtest") with no model type indicator, making it hard to distinguish LGBM vs CatBoost vs XGBoost runs.
 
-4. **Promotion is opaque** — The promote modal writes to `algorithm_config.yaml` but does not record which champion pipeline version will use the promoted params. Users cannot see promoted parameters alongside champion selection results.
+4. **Promotion is opaque** — The promote modal writes to `forecast_pipeline_config.yaml` but does not record which champion pipeline version will use the promoted params. Users cannot see promoted parameters alongside champion selection results.
 
 5. **No experiment templates** — Each experiment requires manually typing every hyperparameter. There are no "start from current production" or "start from recommended strategy" shortcuts.
 
@@ -66,7 +67,7 @@ Build a **Unified Model Tuning Studio** with these capabilities:
 | **Real-Time Monitoring** | Live log streaming in Jobs tab with model-specific labels and progress indicators |
 | **Execution-Lag Analysis** | Filter all metrics (accuracy, WAPE, bias) by execution lag 0-4 across runs, comparisons, and charts |
 | **Side-by-Side Comparison** | Enhanced comparison panel with lag-level breakdown, cluster heatmaps, and parameter diffs |
-| **Promote & Deploy** | Promote winning params to `algorithm_config.yaml` + record in `fact_production_forecast` lineage |
+| **Promote & Deploy** | Promote winning params to `forecast_pipeline_config.yaml` + record in `fact_production_forecast` lineage |
 | **Leaderboard** | Sortable run table with filters by model, status, lag, and date range |
 
 ---
@@ -75,7 +76,7 @@ Build a **Unified Model Tuning Studio** with these capabilities:
 
 ### LightGBM — 5 Runs (Run 16 as Baseline)
 
-The current production LGBM parameters (from `algorithm_config.yaml`) are designated as **Run 1** (baseline). These represent the culmination of 16 prior experiments.
+The current production LGBM parameters (from `forecast_pipeline_config.yaml`) are designated as **Run 1** (baseline). These represent the culmination of 16 prior experiments.
 
 #### Run 1 — Production Baseline (Run 16 Params)
 
@@ -159,7 +160,7 @@ The current production LGBM parameters (from `algorithm_config.yaml`) are design
 
 #### Run 1 — Current Production Baseline
 
-Uses current `algorithm_config.yaml` CatBoost section as-is (champion_v2 params from Phase 3).
+Uses current `forecast_pipeline_config.yaml` CatBoost section as-is (champion_v2 params from Phase 3).
 
 | Parameter | Value |
 |-----------|-------|
@@ -246,7 +247,7 @@ Uses current `algorithm_config.yaml` CatBoost section as-is (champion_v2 params 
 
 #### Run 1 — Current Production Baseline
 
-Uses current `algorithm_config.yaml` XGBoost section as-is.
+Uses current `forecast_pipeline_config.yaml` XGBoost section as-is.
 
 | Parameter | Value |
 |-----------|-------|
@@ -497,7 +498,7 @@ A full-screen modal (or slide-over panel) for configuring and launching a new ex
 
 **Template Selection:**
 - Selecting a template pre-fills all hyperparameters and training config
-- "Start from Production Baseline" loads current `algorithm_config.yaml` values
+- "Start from Production Baseline" loads current `forecast_pipeline_config.yaml` values
 - Expert templates load the recommended Run 2-5 configurations from this spec
 - "Custom (from Production)" pre-fills with current production baseline values but marks all fields as "unchanged" (gray text, no delta). When the user edits a field, it becomes "changed" (bold text, delta shown). This avoids an empty form with validation errors.
 - After selecting a template, users can modify any individual parameter
@@ -642,7 +643,7 @@ When user clicks "Promote" on a run:
 │  Lag 3: 65.8% | Lag 4: 62.1%                                   │
 │                                                                 │
 │  ── What This Does ────────────────────────────────────────────│
-│  1. Writes 14 hyperparameters to algorithm_config.yaml          │
+│  1. Writes 14 hyperparameters to forecast_pipeline_config.yaml          │
 │  2. Marks this run as the promoted champion for lgbm_cluster    │
 │  3. Clears previous champion (Run #12)                          │
 │  4. Records promotion in tuning_promotion_log                   │
@@ -673,7 +674,7 @@ When user clicks "View Logs" on any run:
 │  [2026-03-24 10:30:01] Starting LightGBM     │
 │  backtest with per_cluster strategy           │
 │  [2026-03-24 10:30:02] Loading config from    │
-│  /tmp/tuning_run_15/algorithm_config.yaml     │
+│  /tmp/tuning_run_15/forecast_pipeline_config.yaml     │
 │  [2026-03-24 10:30:05] Generating 10          │
 │  expanding-window timeframes (A-J)            │
 │  [2026-03-24 10:30:08] Timeframe A:           │
@@ -813,7 +814,7 @@ Replace the current split between `lgbm_tuning.py` and `model_tuning.py` with a 
 1. Validate `model` path parameter
 2. Validate all params against model-specific schema (ranges, types)
 3. INSERT into `lgbm_tuning_run` with status='queued', params=JSONB, model_id='{model}_cluster'
-4. Build temp `algorithm_config.yaml` with overrides
+4. Build temp `forecast_pipeline_config.yaml` with overrides
 5. Submit job: `JobManager.submit_job("model_tuning_run", {run_id, model, config_path, run_label})`
 6. Return 201 with run_id and job_id
 
@@ -891,7 +892,7 @@ Replace the current split between `lgbm_tuning.py` and `model_tuning.py` with a 
 ```
 
 **Template Source:**
-- `"algorithm_config"`: Reads live from `config/algorithm_config.yaml`
+- `"algorithm_config"`: Reads live from `config/forecast_pipeline_config.yaml`
 - `"expert"`: Reads from `config/tuning_templates.yaml` (new file, contains the 5 runs per model from this spec)
 - `"custom"`: Empty — user fills everything manually
 
@@ -1008,7 +1009,7 @@ Register in `JOB_TYPE_REGISTRY`:
     params_schema={
         "run_id": 0,
         "model": "",          # "lgbm", "catboost", "xgboost"
-        "config_path": "",    # path to temp algorithm_config.yaml
+        "config_path": "",    # path to temp forecast_pipeline_config.yaml
         "run_label": "",
     },
 )
@@ -1101,9 +1102,9 @@ Any authenticated user (or unauthenticated if API_KEY is unset). No role-based r
    - Clear description of what promotion does
 4. User clicks "Confirm Promote"
 5. **API performs atomic transaction:**
-   a. Load current `algorithm_config.yaml`
+   a. Load current `forecast_pipeline_config.yaml`
    b. Record current promoted run_id as `previous_run_id` in promotion log
-   c. Update `algorithm_config.yaml` with new params (model-specific section only)
+   c. Update `forecast_pipeline_config.yaml` with new params (model-specific section only)
    d. Clear `is_promoted` on previous champion (same model_id)
    e. Set `is_promoted=true, promoted_at=NOW()` on new champion
    f. INSERT into `tuning_promotion_log` with full audit trail
@@ -1127,7 +1128,7 @@ This is queryable via `GET /model-tuning/{model}/promotions` (returns ordered li
 ### 8.4 Champion Pipeline Integration
 
 After promotion, the next `make champion-all` run will:
-1. Read `algorithm_config.yaml` (which now has promoted params)
+1. Read `forecast_pipeline_config.yaml` (which now has promoted params)
 2. Run backtests with the new params
 3. Meta-learner selects per-DFU winners using the updated model
 4. Production forecasts reflect the promoted champion
@@ -1216,9 +1217,9 @@ The experiment system is designed to survive API restarts at any point:
 
 - Per-model group concurrency prevents two LGBM experiments from running simultaneously
 - Different models can run in parallel (LGBM + CatBoost)
-- Each experiment writes to a unique temp config path: `/tmp/tuning_run_{run_id}/algorithm_config.yaml`
+- Each experiment writes to a unique temp config path: `/tmp/tuning_run_{run_id}/forecast_pipeline_config.yaml`
 - Backtest output goes to model-specific dirs: `data/backtest/{model_id}/`
-- File locking on `algorithm_config.yaml` during promotion prevents race conditions
+- File locking on `forecast_pipeline_config.yaml` during promotion prevents race conditions
 
 ---
 
@@ -1235,7 +1236,7 @@ The experiment system is designed to survive API restarts at any point:
 │                        API: Unified Router                            │
 │  1. Validate params against model schema                              │
 │  2. INSERT lgbm_tuning_run (status='queued', params=JSONB)           │
-│  3. Write temp algorithm_config.yaml with overrides                   │
+│  3. Write temp forecast_pipeline_config.yaml with overrides                   │
 │  4. JobManager.submit_job("model_tuning_run", {...})                 │
 │  5. Return 201 {run_id, job_id}                                      │
 └───────────────────────────┬──────────────────────────────────────────┘
@@ -1271,7 +1272,7 @@ The experiment system is designed to survive API restarts at any point:
 │  2. View per-lag, per-cluster, per-month deltas                      │
 │  3. Click Promote → modal → confirm                                  │
 │  4. POST /model-tuning/{model}/experiments/{id}/promote              │
-│  5. API writes to algorithm_config.yaml + DB flags                   │
+│  5. API writes to forecast_pipeline_config.yaml + DB flags                   │
 │  6. Promotion logged in tuning_promotion_log                         │
 │  7. Next champion pipeline uses promoted params                       │
 └──────────────────────────────────────────────────────────────────────┘
@@ -1291,7 +1292,7 @@ templates:
     - id: production_baseline
       label: "Production Baseline (Run 16)"
       description: "Current production parameters"
-      source: algorithm_config  # read live from algorithm_config.yaml
+      source: algorithm_config  # read live from forecast_pipeline_config.yaml
     - id: expert_aggressive_depth
       label: "Expert: Aggressive Depth + Heavy Reg"
       description: "Cap depth at 10, halve leaves, increase L2 to 3.5"
@@ -1813,7 +1814,7 @@ vi.mock("@/api/queries", () => ({
 - [ ] Real-time log streaming viewable in both Model Tuning tab and Jobs tab
 - [ ] All metrics (accuracy, WAPE, bias) filterable by execution lag (0-4)
 - [ ] Side-by-side comparison with per-lag, per-cluster, per-month, and per-timeframe breakdowns
-- [ ] Promote winning run to production (writes to algorithm_config.yaml + DB audit log)
+- [ ] Promote winning run to production (writes to forecast_pipeline_config.yaml + DB audit log)
 - [ ] Jobs tab clearly distinguishes tuning experiments from other job types
 - [ ] Expert-recommended templates pre-loaded for all 3 models (5 per model)
 - [ ] Parameter validation with inline error messages
@@ -1872,7 +1873,7 @@ These must be resolved **before** any spec implementation begins.
 
 **File:** `scripts/run_backtest.py` (CatBoost model registry entry)
 
-The CatBoost `default_params` lambda in the MODEL_REGISTRY only extracts 6 parameters (`iterations`, `learning_rate`, `depth`, `l2_leaf_reg`, `border_count`, `max_ctr_complexity`). All other CatBoost parameters in `algorithm_config.yaml` are **silently discarded** before reaching `CatBoostRegressor`. This means:
+The CatBoost `default_params` lambda in the MODEL_REGISTRY only extracts 6 parameters (`iterations`, `learning_rate`, `depth`, `l2_leaf_reg`, `border_count`, `max_ctr_complexity`). All other CatBoost parameters in `forecast_pipeline_config.yaml` are **silently discarded** before reaching `CatBoostRegressor`. This means:
 
 - `grow_policy`, `max_leaves`, `subsample`, `reg_lambda`, `random_strength`, `min_data_in_leaf`, `colsample_bylevel`, `bagging_temperature`, `bootstrap_type`, `model_size_reg`, `score_function`, `boost_from_average`, `leaf_estimation_method`, `leaf_estimation_iterations` are all **ignored**
 - All prior CatBoost tuning experiments may have tested parameters that never reached the model
@@ -1972,7 +1973,7 @@ The following test cases were identified as missing from Section 13 and must be 
 - `test_delete_running_experiment_blocked` — Returns 400 "Cancel first"
 - `test_promote_idempotent` — Promoting already-promoted run is no-op
 - `test_compare_same_run_id_rejected` — Returns 400
-- `test_promotion_rollback` — Restores previous champion params to algorithm_config.yaml
+- `test_promotion_rollback` — Restores previous champion params to forecast_pipeline_config.yaml
 - `test_promotions_audit_trail` — GET /promotions returns ordered list
 - `test_legacy_redirect_catboost` — /catboost-tuning/runs returns same as /model-tuning/catboost/experiments
 - `test_legacy_redirect_xgboost` — Same for XGBoost

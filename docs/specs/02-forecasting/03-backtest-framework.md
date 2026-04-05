@@ -281,7 +281,7 @@ All models use `compute_early_stop_patience(max_iterations, pct=0.03)`:
 
 ## Configuration
 
-Backtest behavior is controlled by `config/algorithm_config.yaml`. See [Algorithm Config](./06-algorithm-config.md) for details.
+Backtest behavior is controlled by `config/forecast_pipeline_config.yaml`. See [Algorithm Config](./06-algorithm-config.md) for details.
 
 Key backtest-level settings:
 - `early_stop_pct: 0.03` — early stopping patience as percentage of max iterations
@@ -289,7 +289,7 @@ Key backtest-level settings:
 
 ## Backtest Model Coverage
 
-The backtest framework supports the full algorithm portfolio defined in `config/algorithm_config.yaml`:
+The backtest framework supports the full algorithm portfolio defined in `config/forecast_pipeline_config.yaml`:
 
 | Category | Models | Make Target |
 |----------|--------|-------------|

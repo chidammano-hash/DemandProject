@@ -41,17 +41,7 @@ const mockCreateClusterExperiment = vi.fn().mockResolvedValue(mockCreateResponse
 const mockOnClose = vi.fn();
 const mockOnSubmitted = vi.fn();
 
-// Mock recharts
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  BarChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Bar: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  Legend: () => null,
-}));
+vi.mock("recharts");
 
 vi.mock("@/api/queries", () => ({
   STALE: { FOREVER: Infinity, TEN_MIN: 600000, FIVE_MIN: 300000, TWO_MIN: 120000, ONE_MIN: 60000, THIRTY_SEC: 30000, NONE: 0 },

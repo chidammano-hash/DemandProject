@@ -2,13 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  PieChart: ({ children }: { children: React.ReactNode }) => <div data-testid="pie-chart">{children}</div>,
-  Pie: () => null,
-  Cell: () => null,
-  Tooltip: () => null,
-}));
+vi.mock("recharts");
 
 vi.mock("@/api/queries", async () => {
   const actual = await vi.importActual("@/api/queries");

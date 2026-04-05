@@ -12,22 +12,28 @@
 
 ## Problem
 
-Pipeline configuration was fragmented across 4 separate YAML files, each governing a different stage of the ML pipeline. When adding a new algorithm or changing pipeline behavior, developers had to update multiple files and cross-reference settings between them. Misalignment between files (e.g., an algorithm listed in `model_competition.yaml` but missing from `algorithm_config.yaml`) caused silent failures. There was no single place to see which algorithms participate in which pipeline stages.
+Pipeline configuration was fragmented across 4 separate YAML files, each governing a different stage of the ML pipeline. When adding a new algorithm or changing pipeline behavior, developers had to update multiple files and cross-reference settings between them. Misalignment between files caused silent failures. There was no single place to see which algorithms participate in which pipeline stages.
 
-### Legacy Config Files (Deprecated)
+### Legacy Config Files (REMOVED)
 
 | File | What it governed | Status |
 |---|---|---|
-| `config/model_competition.yaml` | Champion selection strategy, competing models, metric, lag mode | Deprecated -- settings moved to `forecast_pipeline_config.yaml` `champion` section. Still loaded via backward compat. |
-| `config/lgbm_tuning_config.yaml` | Tuning run tracking, backup dir, comparison thresholds | Deprecated -- settings moved to `forecast_pipeline_config.yaml` `tracking` section. Still loaded via backward compat. |
-| `config/production_forecast_config.yaml` | Production forecast horizon, CI bands, model registry, scheduler | Deprecated -- settings moved to `forecast_pipeline_config.yaml` `production_forecast` section. Still loaded via backward compat. |
+| `config/model_competition.yaml` | Champion selection strategy, competing models, metric, lag mode | **REMOVED** -- settings now in `forecast_pipeline_config.yaml` `champion` section. |
+| `config/lgbm_tuning_config.yaml` | Tuning run tracking, backup dir, comparison thresholds | **REMOVED** -- settings now in `forecast_pipeline_config.yaml` `tracking` section. |
+| `config/production_forecast_config.yaml` | Production forecast horizon, CI bands, model registry, scheduler | **REMOVED** -- settings now in `forecast_pipeline_config.yaml` `production_forecast` section. |
+| `config/backtest_sampling_config.yaml` | DFU sampling for backtests | **REMOVED** -- settings now in `forecast_pipeline_config.yaml` `backtest_sampling` section. |
+| `config/algorithm_config.yaml` | Model hyperparameters (LGBM, CatBoost, XGBoost, Chronos, etc.) | **REMOVED** -- hyperparameters now inline under `algorithms.<model_id>.params` in `forecast_pipeline_config.yaml`. |
 | `config/model_tuning_config.yaml` | Unused -- was never loaded by any script | Deleted. |
+| `config/baseline_seeding.yaml` | Unused -- was never loaded by any script | Deleted. |
+| `config/fva_config.yaml` | Unused -- was never loaded by any script | Deleted. |
+| `config/reporting_config.yaml` | Unused -- was never loaded by any script | Deleted. |
+| `config/demand_signals_external_config.yaml` | Unused -- was never loaded by any script | Deleted. |
 
 ## Solution
 
 A single master config file (`config/forecast_pipeline_config.yaml`) consolidates all pipeline settings. It introduces a new `algorithms` section -- a master roster of all 12 algorithms with per-algorithm lifecycle flags that control which pipeline stages each algorithm participates in. Helper functions in `common/core/utils.py` provide filtered access to the roster.
 
-Model-specific hyperparameters (learning_rate, n_estimators, etc.) remain in `config/algorithm_config.yaml` to keep the master config focused on pipeline orchestration rather than per-model tuning knobs.
+Model-specific hyperparameters (learning_rate, n_estimators, etc.) are now inline under `algorithms.<model_id>.params` in the master config. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve them.
 
 ---
 
@@ -47,7 +53,7 @@ algorithms:
     compete: true      # Include in champion model selection
     forecast: true     # Eligible for production forecast (has .pkl artifacts)
     expert: false      # Available for expert system archetype routing
-    config_key: lgbm   # Key in algorithm_config.yaml
+    params:            # Inline hyperparameters (formerly in algorithm_config.yaml)
     output_dir: data/backtest/lgbm_cluster
 ```
 
@@ -83,7 +89,7 @@ algorithms:
 | `per_cluster` | Train one model per `ml_cluster` value. Default for tree/statistical algorithms. |
 | `global` | Train a single model on all data. Used when clustering is disabled or explicitly configured. |
 
-**Resolution order**: `forecast_pipeline_config.yaml` algorithm entry > `algorithm_config.yaml` > default `"per_cluster"`.
+**Resolution order**: `forecast_pipeline_config.yaml` algorithm entry > default `"per_cluster"`.
 
 When `clustering.enabled` is `false` (see below), backtest scripts auto-fall back to `global` regardless of the per-algorithm `cluster_strategy` setting.
 
@@ -255,7 +261,7 @@ clustering:
 
 ### Backtest Sampling
 
-The `backtest_sampling` section consolidates sampling configuration that was previously in a separate `backtest_sampling_config.yaml` file. It controls how DFUs are sampled for backtesting.
+The `backtest_sampling` section is the sole source for sampling configuration (the legacy `backtest_sampling_config.yaml` has been deleted). It controls how DFUs are sampled for backtesting.
 
 ```yaml
 backtest_sampling:
@@ -278,7 +284,7 @@ backtest_sampling:
 | `seed` | Random seed for reproducibility. |
 | `representativeness_threshold` | Maximum acceptable deviation from true cluster proportions. |
 
-**Fallback behavior**: `common/ml/backtest_sampler.py` reads sampling config from `forecast_pipeline_config.yaml` `backtest_sampling` first, then falls back to `backtest_sampling_config.yaml` if the section is absent.
+**No fallback**: `common/ml/backtest_sampler.py` reads sampling config exclusively from `forecast_pipeline_config.yaml` `backtest_sampling`.
 
 ### Pipeline Stages
 
@@ -345,7 +351,7 @@ else:
 
 ### For existing code
 
-The deprecated config files (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`) continue to work via backward compatibility. No code changes are required for existing scripts that load these files.
+The legacy config files (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`, `backtest_sampling_config.yaml`, `algorithm_config.yaml`) have been **deleted**. All code now reads from the master `forecast_pipeline_config.yaml`.
 
 ### For new code
 
@@ -376,22 +382,19 @@ models = get_competing_model_ids()
 
 ## Backward Compatibility
 
-The old config files remain in `config/` and are still loaded by legacy code paths. The master config takes precedence when both are present. No existing imports or `load_config()` calls break.
-
-The `config/model_tuning_config.yaml` file was deleted because it was never loaded by any script.
+All legacy config files have been deleted. The master `forecast_pipeline_config.yaml` is the sole source for all pipeline settings. The `config_key` field has been removed from algorithm entries; hyperparameters are now inline under `algorithms.<model_id>.params`. Use `get_algorithm_params(model_id)` to retrieve them programmatically.
 
 ---
 
 ## Dependencies
 
-- [Algorithm Configuration](./06-algorithm-config.md) -- per-model hyperparameters (learning_rate, n_estimators, etc.) remain here
+- [Algorithm Configuration](./06-algorithm-config.md) -- per-model hyperparameters now inline under `algorithms.<model_id>.params`
 - [Champion Selection](./07-champion-selection.md) -- champion strategy governed by `champion` section
 - [Production Forecast](./08-production-forecast.md) -- inference settings governed by `production_forecast` section
-- [LGBM Tuning](./10-lgbm-tuning.md) -- tracking settings governed by `tracking` section
+- [LGBM Tuning](./10b-lgbm-tuning.md) -- tracking settings governed by `tracking` section
 - `config/clustering_config.yaml` -- detailed clustering hyperparameters, referenced by `clustering.config_ref`
 - `config/cluster_tuning_profiles.yaml` -- cluster tuning profiles, referenced by `clustering.tuning_profiles_ref`
 - `config/cluster_experiment_templates.yaml` -- experiment templates, referenced by `clustering.experiment_templates_ref`
-- `config/backtest_sampling_config.yaml` -- legacy sampling config, superseded by `backtest_sampling` section (still used as fallback)
 
 ## See Also
 

@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from common.core.constants import CAT_FEATURES
-from common.core.utils import load_config
+from common.core.utils import get_algorithm_params, load_config, load_forecast_pipeline_config
 from common.ml.feature_engineering import get_feature_columns
 from common.ml.model_registry import (
     fit_model,
@@ -125,8 +125,8 @@ def run_tree_models(
         predict_months: Months to predict.
         enabled_models: {model_name: config_dict} for enabled tree models.
             model_name is 'lgbm', 'catboost', or 'xgboost'.
-        algo_config: Optional override for algorithm_config.yaml.
-            If None, loads from config/algorithm_config.yaml.
+        algo_config: Optional override for algorithm_config (legacy format).
+            If None, builds a compat dict from forecast_pipeline_config.yaml.
         classification_df: Optional DFU demand classification with columns
             [sku_ck, archetype]. When provided, partitions by archetype instead
             of ml_cluster and adds archetype as a categorical feature.
@@ -136,7 +136,18 @@ def run_tree_models(
         algorithm_id matches the model_id from algo_config (e.g. 'lgbm_cluster').
     """
     if algo_config is None:
-        algo_config = load_config("algorithm_config")
+        # Build a legacy-compatible dict from pipeline config
+        pcfg = load_forecast_pipeline_config()
+        algo_config = {"algorithms": {}}
+        for mid, entry in pcfg.get("algorithms", {}).items():
+            config_key = entry.get("config_key", mid)
+            params = entry.get("params", {})
+            algo_config["algorithms"][config_key] = {
+                **params,
+                "model_id": mid,
+                "enabled": entry.get("enabled", True),
+                "cluster_strategy": entry.get("cluster_strategy", "per_cluster"),
+            }
 
     # Merge archetype into grid when classification_df is provided
     working_grid = grid.copy()

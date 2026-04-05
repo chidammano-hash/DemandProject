@@ -16,20 +16,8 @@ if (typeof globalThis.localStorage === "undefined" || typeof globalThis.localSto
   });
 }
 
-// Mock recharts
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  LineChart: ({ children }: { children: React.ReactNode }) => <div data-testid="line-chart">{children}</div>,
-  Line: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  Legend: () => null,
-  ReferenceLine: () => null,
-  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
-  Bar: () => null,
-}));
+// Mock recharts — uses shared mock at frontend/__mocks__/recharts.tsx
+vi.mock("recharts");
 
 vi.mock("@/api/queries", () => ({
   queryKeys: {

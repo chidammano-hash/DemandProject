@@ -1,0 +1,49 @@
+# Database maintenance configuration
+# Used by scripts/db/db_maintenance.py
+
+# -------------------------------------------------------------------
+# Retention policies
+# -------------------------------------------------------------------
+# type: partition  → drops old monthly partitions (partitioned tables)
+# type: delete     → deletes rows older than cutoff + VACUUM ANALYZE
+retention_policies:
+  fact_customer_demand_monthly:
+    months: 36          # Keep 3 years of customer demand
+    type: partition
+  fact_inventory_snapshot:
+    months: 24          # Keep 2 years of daily inventory snapshots
+    type: partition
+  job_history:
+    months: 3           # Keep 90 days of job execution history
+    type: delete
+    date_column: submitted_at
+  ai_call_log:
+    months: 2           # Keep 60 days of AI call logs
+    type: delete
+    date_column: created_at
+  fact_audit_log:
+    months: 12          # Keep 1 year of audit trail
+    type: delete
+    date_column: created_at
+  fact_query_performance:
+    months: 1           # Keep 30 days of query perf data
+    type: delete
+    date_column: created_at
+
+# -------------------------------------------------------------------
+# Health check thresholds
+# -------------------------------------------------------------------
+thresholds:
+  cache_hit_ratio_warning: 90     # % — below this triggers WARNING
+  cache_hit_ratio_critical: 70    # % — below this triggers CRITICAL
+  dead_tuple_ratio_warning: 10    # % — dead / live tuple ratio
+  partition_size_warning_gb: 2    # GB — alert if any partition exceeds this
+  seq_scan_ratio_warning: 2       # seq_scan / idx_scan ratio threshold
+  long_query_seconds: 30          # Alert on queries running longer
+  connection_utilization_pct: 80  # % of max_connections
+
+# -------------------------------------------------------------------
+# ANALYZE schedule guidance
+# -------------------------------------------------------------------
+# Run ANALYZE after bulk loads, or weekly via cron.
+# The db_maintenance.py analyze command updates statistics for all tables.

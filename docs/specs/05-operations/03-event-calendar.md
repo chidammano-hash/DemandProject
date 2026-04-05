@@ -1,15 +1,12 @@
 # Event Calendar
 
-A structured calendar of promotions, product launches, phase-outs, and seasonal events that applies uplift or dampening adjustments to the statistical demand forecast before it enters the S&OP cycle.
+> A structured calendar of promotions, product launches, phase-outs, and seasonal events that applies uplift or dampening adjustments to the statistical demand forecast before it enters the S&OP cycle.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 05-operations/03-event-calendar |
-| Frontend | `inv-planning/EventCalendarPanel.tsx` |
-| Backend | `api/routers/events.py`, `scripts/apply_event_adjustments.py` |
-| Config | `config/event_planning_config.yaml` |
-| SQL | `sql/058_create_event_calendar.sql` |
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning (EventCalendarPanel) |
+| **Key Files** | `inv-planning/EventCalendarPanel.tsx`, `api/routers/events.py`, `scripts/apply_event_adjustments.py`, `config/event_planning_config.yaml`, `sql/058_create_event_calendar.sql` |
 
 ---
 

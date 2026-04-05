@@ -6,29 +6,24 @@ data from months < T.
 """
 from __future__ import annotations
 
-from typing import Any
 import io
 import json
-import os
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from api.core import get_conn
 from api.auth import require_api_key
+from api.core import get_conn
+from common.utils import load_forecast_pipeline_config, get_competing_model_ids, reset_config
 
 router = APIRouter(tags=["competition"])
 
-_COMPETITION_CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "config", "model_competition.yaml",
-)
-
-_CHAMPION_SUMMARY_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data", "champion", "champion_summary.json",
-)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecast_pipeline_config.yaml"
+_CHAMPION_SUMMARY_PATH = _PROJECT_ROOT / "data" / "champion" / "champion_summary.json"
 
 _VALID_STRATEGIES = {"expanding", "rolling", "decay", "ensemble", "meta_learner"}
 
@@ -82,13 +77,21 @@ def _load_monthly_errors(
 @router.get("/competition/config")
 def get_competition_config():
     """Return current model competition config + available models in DB."""
-    import yaml
+    pipeline_cfg = load_forecast_pipeline_config()
+    champion = pipeline_cfg.get("champion", {})
 
-    if not os.path.exists(_COMPETITION_CONFIG_PATH):
-        raise HTTPException(404, "Competition config not found")
-    with open(_COMPETITION_CONFIG_PATH) as f:
-        raw = yaml.safe_load(f)
-    cfg = raw.get("competition", {})
+    # Build config dict matching the legacy response shape
+    cfg = {
+        "strategy": champion.get("strategy", "expanding"),
+        "strategy_params": champion.get("strategy_params", {}),
+        "metric": champion.get("metric", "wape"),
+        "lag": champion.get("lag", "execution"),
+        "min_dfu_rows": champion.get("min_dfu_rows", 3),
+        "champion_model_id": champion.get("champion_model_id", "champion"),
+        "fallback_model_id": champion.get("fallback_model_id"),
+        "models": get_competing_model_ids(),
+        "meta_learner": champion.get("meta_learner", {}),
+    }
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
@@ -101,7 +104,7 @@ def get_competition_config():
 
 @router.put("/competition/config", dependencies=[Depends(require_api_key)])
 def update_competition_config(body: CompetitionConfigUpdate):
-    """Update model competition config (writes YAML to disk)."""
+    """Update model competition config (writes to forecast_pipeline_config.yaml champion section)."""
     import yaml
 
     if body.metric not in ("wape", "accuracy_pct"):
@@ -114,23 +117,25 @@ def update_competition_config(body: CompetitionConfigUpdate):
     if body.strategy not in _VALID_STRATEGIES:
         raise HTTPException(422, f"strategy must be one of: {sorted(_VALID_STRATEGIES)}")
 
-    cfg = {
-        "competition": {
-            "name": "default",
-            "metric": body.metric,
-            "lag": body.lag,
-            "min_dfu_rows": body.min_dfu_rows,
-            "champion_model_id": body.champion_model_id,
-            "models": body.models,
-            "strategy": body.strategy,
-            "strategy_params": body.strategy_params,
-        }
-    }
-    os.makedirs(os.path.dirname(_COMPETITION_CONFIG_PATH), exist_ok=True)
-    with open(_COMPETITION_CONFIG_PATH, "w") as f:
-        yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
+    # Read existing pipeline config
+    with _PIPELINE_CONFIG_PATH.open() as f:
+        pipeline_cfg = yaml.safe_load(f) or {}
 
-    return {"status": "ok", "config": cfg["competition"]}
+    # Update champion section
+    champion = pipeline_cfg.setdefault("champion", {})
+    champion["metric"] = body.metric
+    champion["lag"] = body.lag
+    champion["min_dfu_rows"] = body.min_dfu_rows
+    champion["champion_model_id"] = body.champion_model_id
+    champion["strategy"] = body.strategy
+    champion["strategy_params"] = body.strategy_params
+
+    with _PIPELINE_CONFIG_PATH.open("w") as f:
+        yaml.dump(pipeline_cfg, f, default_flow_style=False, sort_keys=False)
+
+    reset_config("forecast_pipeline_config.yaml")
+
+    return {"status": "ok", "config": champion}
 
 
 @router.post("/competition/run", dependencies=[Depends(require_api_key)])
@@ -141,21 +146,20 @@ def run_competition():
     All strategies enforce strict causality: selection for month T uses only
     data from months < T.
     """
-    import yaml
     from datetime import datetime, timezone
+
+    import yaml
+
     from common.champion_strategies import (
         STRATEGY_REGISTRY,
         compute_ceiling,
         compute_strategy_accuracy,
     )
 
-    if not os.path.exists(_COMPETITION_CONFIG_PATH):
-        raise HTTPException(404, "Competition config not found")
-    with open(_COMPETITION_CONFIG_PATH) as f:
-        raw = yaml.safe_load(f)
-    cfg = raw.get("competition", {})
+    pipeline_cfg = load_forecast_pipeline_config()
+    cfg = pipeline_cfg.get("champion", {})
 
-    models = cfg.get("models", [])
+    models = get_competing_model_ids()
     lag_mode = str(cfg.get("lag", "execution"))
     min_rows = int(cfg.get("min_dfu_rows", 3))
     champion_id = cfg.get("champion_model_id", "champion")
@@ -383,9 +387,8 @@ def run_competition():
         summary["overall_ceiling_accuracy_pct"] = ceiling_acc.get("accuracy_pct")
 
     # Save summary to disk
-    summary_dir = os.path.dirname(_CHAMPION_SUMMARY_PATH)
-    os.makedirs(summary_dir, exist_ok=True)
-    with open(_CHAMPION_SUMMARY_PATH, "w") as f:
+    _CHAMPION_SUMMARY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _CHAMPION_SUMMARY_PATH.open("w") as f:
         json.dump(summary, f, indent=2, default=str)
 
     return summary
@@ -394,7 +397,7 @@ def run_competition():
 @router.get("/competition/summary")
 def get_competition_summary():
     """Return the last champion selection summary, if available."""
-    if not os.path.exists(_CHAMPION_SUMMARY_PATH):
+    if not _CHAMPION_SUMMARY_PATH.exists():
         return {"status": "not_run", "summary": None}
-    with open(_CHAMPION_SUMMARY_PATH) as f:
+    with _CHAMPION_SUMMARY_PATH.open() as f:
         return {"status": "ok", "summary": json.load(f)}

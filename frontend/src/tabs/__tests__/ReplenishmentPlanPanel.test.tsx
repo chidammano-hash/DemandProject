@@ -10,25 +10,7 @@ const { mockFetchSummary, mockFetchDetail, mockFetchComparison, mockFetchDfu } =
   mockFetchDfu: vi.fn(),
 }));
 
-// Mock recharts to avoid jsdom layout issues
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
-  ),
-  BarChart: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="bar-chart">{children}</div>
-  ),
-  LineChart: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="line-chart">{children}</div>
-  ),
-  Bar: () => null,
-  Line: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  Legend: () => null,
-}));
+vi.mock("recharts");
 
 const mockSummary = {
   plan_version: "2026-03-01",

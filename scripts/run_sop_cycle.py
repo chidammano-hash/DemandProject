@@ -33,9 +33,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
+from common.scripts_base import add_common_args, setup_logging
 from common.services.perf_profiler import profiled_section
-
-CONFIG_PATH = "config/sop_config.yaml"
+from common.utils import load_config as _load_config
 
 STAGE_ORDER = [
     "demand_review",
@@ -47,18 +47,8 @@ STAGE_ORDER = [
 ]
 
 
-def load_config(path: str = CONFIG_PATH) -> dict:
-    try:
-        with open(path) as f:
-            return yaml.safe_load(f).get("sop", {})
-    except FileNotFoundError:
-        return {
-            "planning_horizon_months": 12,
-            "demand_review_day": 5,
-            "supply_review_day": 10,
-            "pre_sop_day": 15,
-            "executive_sop_day": 20,
-        }
+def load_config() -> dict:
+    return _load_config("sop_config.yaml").get("sop", {})
 
 
 def next_stage(current: str) -> str:
@@ -428,13 +418,14 @@ def run(
 
 
 if __name__ == "__main__":
+    setup_logging()
     parser = argparse.ArgumentParser(description="Run S&OP cycle operations")
     parser.add_argument("--action", required=True,
                         choices=["create", "advance", "populate-demand"])
     parser.add_argument("--cycle-id", type=int)
     parser.add_argument("--cycle-month", help="YYYY-MM-DD (first of month)")
     parser.add_argument("--performed-by", default="system")
-    parser.add_argument("--dry-run", action="store_true")
+    add_common_args(parser)
     args = parser.parse_args()
 
     result = run(

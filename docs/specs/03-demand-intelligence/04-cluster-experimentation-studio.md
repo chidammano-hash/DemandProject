@@ -1,12 +1,15 @@
-# 03-04 Cluster Experimentation Studio
+# Cluster Experimentation Studio
 
-> **Status:** Planned | **Feature:** 47
-
-A standalone experiment lifecycle for testing DFU segmentation configurations (create, run, compare, promote) with a one-directional connection to algorithm tuning: algorithm experiments can reference a cluster experiment, but cluster experiments know nothing about algorithm experiments.
+> A standalone experiment lifecycle for testing DFU segmentation configurations (create, run, compare, promote) with a one-directional connection to algorithm tuning: algorithm experiments can reference a cluster experiment, but cluster experiments know nothing about algorithm experiments.
 
 | | |
 |---|---|
+| **Status** | Planned |
 | **UI Tab** | Clusters (new "Experiments" sub-tab) |
+| **Key Files** | `api/routers/forecasting/cluster_experiments.py`, `frontend/src/tabs/clusters/ClusterExperimentsPanel.tsx`, `sql/101_cluster_experiments.sql`, `config/cluster_experiment_templates.yaml` |
+
+| | |
+|---|---|
 | **API Prefix** | `/cluster-experiments` |
 | **Router** | `api/routers/forecasting/cluster_experiments.py` |
 | **Frontend** | `frontend/src/api/queries/cluster-experiments.ts`, `frontend/src/tabs/clusters/ClusterExperimentsPanel.tsx` |
@@ -300,7 +303,7 @@ cluster_experiment_id: int | None = None  # FK to cluster_experiment (required w
 When `cluster_source == "experimental"`:
 - Validate `cluster_experiment_id` exists and has `status='completed'`
 - Read `artifacts_path` from `cluster_experiment` table
-- Build `cluster_override_path` into the temp `algorithm_config.yaml`
+- Build `cluster_override_path` into the temp `forecast_pipeline_config.yaml`
 - Store `cluster_source` and `cluster_experiment_id` on `lgbm_tuning_run`
 
 List/detail/compare responses include `cluster_source`, `cluster_experiment_id`, and `cluster_experiment_label` (joined from `cluster_experiment.label`).

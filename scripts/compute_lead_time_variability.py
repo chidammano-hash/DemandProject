@@ -6,7 +6,7 @@ and upserts results into dim_item_lead_time_profile.
 
 Usage:
     uv run python scripts/compute_lead_time_variability.py
-    uv run python scripts/compute_lead_time_variability.py --config config/lead_time_config.yaml
+    uv run python scripts/compute_lead_time_variability.py --config config/inventory_planning_config.yaml
     uv run python scripts/compute_lead_time_variability.py --dry-run
 """
 from __future__ import annotations
@@ -243,14 +243,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute lead time variability profiles.")
     parser.add_argument(
         "--config",
-        default="config/lead_time_config.yaml",
-        help="Path to YAML config (default: config/lead_time_config.yaml)",
+        default="config/inventory_planning_config.yaml",
+        help="Path to YAML config (default: config/inventory_planning_config.yaml)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Skip DB writes")
     args = parser.parse_args()
 
     with open(args.config) as fh:
-        cfg = yaml.safe_load(fh)
+        raw = yaml.safe_load(fh)
+
+    # Support both merged (lead_time section) and legacy flat format
+    cfg = raw.get("lead_time", raw)
 
     summary = run(cfg, dry_run=args.dry_run)
     print(

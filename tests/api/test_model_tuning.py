@@ -309,16 +309,24 @@ async def test_catboost_get_months_returns_200(mock_pool):
 
 _FAKE_CONFIG = {
     "algorithms": {
-        "catboost": {
-            "iterations": 500,
-            "learning_rate": 0.05,
-            "depth": 6,
-            "l2_leaf_reg": 3.0,
+        "catboost_cluster": {
+            "type": "tree",
+            "enabled": True,
+            "params": {
+                "iterations": 500,
+                "learning_rate": 0.05,
+                "depth": 6,
+                "l2_leaf_reg": 3.0,
+            },
         },
-        "xgboost": {
-            "n_estimators": 500,
-            "learning_rate": 0.05,
-            "max_depth": 6,
+        "xgboost_cluster": {
+            "type": "tree",
+            "enabled": True,
+            "params": {
+                "n_estimators": 500,
+                "learning_rate": 0.05,
+                "max_depth": 6,
+            },
         },
     },
 }

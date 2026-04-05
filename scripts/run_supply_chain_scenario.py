@@ -33,8 +33,7 @@ if str(ROOT) not in sys.path:
 from common.db import get_db_params
 from common.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
-
-CONFIG_PATH = "config/supply_scenario_config.yaml"
+from common.utils import load_config as _load_config
 
 DISRUPTION_TYPES = {
     "supplier_delay",       # Supplier lead time extended by N weeks
@@ -45,17 +44,8 @@ DISRUPTION_TYPES = {
 }
 
 
-def load_config(path: str = CONFIG_PATH) -> dict:
-    try:
-        with open(path) as f:
-            return yaml.safe_load(f).get("supply_scenario", {})
-    except FileNotFoundError:
-        return {
-            "simulation_horizon_weeks": 13,
-            "service_level_target": 0.95,
-            "stockout_cost_per_unit": 10.0,
-            "excess_holding_cost_pct": 0.25,
-        }
+def load_config() -> dict:
+    return _load_config("supply_scenario_config.yaml").get("supply_scenario", {})
 
 
 def compute_adjusted_lead_time(

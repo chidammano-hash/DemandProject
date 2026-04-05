@@ -1,7 +1,7 @@
 /**
  * ChampionPromoteModal — 2-stage promotion dialog.
  *
- * Stage 1: Promote config to model_competition.yaml
+ * Stage 1: Promote config to forecast_pipeline_config.yaml
  * Stage 2: Load champion results into fact_external_forecast_monthly
  */
 import { useState } from "react";
@@ -121,7 +121,7 @@ export function ChampionPromoteModal({ experiment, open, onClose }: Props) {
             <div className="flex-1">
               <div className="text-sm font-medium">Promote Config</div>
               <div className="text-xs text-muted-foreground">
-                Write strategy and params to model_competition.yaml (with backup)
+                Write strategy and params to forecast_pipeline_config.yaml (with backup)
               </div>
               {stage === 1 && !isAlreadyPromoted && (
                 <Button

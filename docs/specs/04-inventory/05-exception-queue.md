@@ -1,6 +1,14 @@
-# 04-05 Exception Queue
+# Exception Queue
 
-> **Status:** Implemented | **Feature:** IPfeature7
+> Scans inventory, forecast, and policy data to detect 6 anomaly types, scores them 0-100 by severity, deduplicates within a 7-day window, and presents a prioritized work queue with recommended actions and a 4-state workflow.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning |
+| **Key Files** | `scripts/generate_replenishment_exceptions.py`, `api/routers/inventory/inv_planning_exceptions.py`, `config/exception_config.yaml`, `sql/027_create_replenishment_exceptions.sql` |
+
+---
 
 ## Problem
 

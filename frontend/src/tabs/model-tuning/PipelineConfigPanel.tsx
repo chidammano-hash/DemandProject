@@ -28,21 +28,35 @@ import {
   pipelineConfigKeys, type PipelineConfig, type PipelineAlgorithm,
 } from "@/api/queries/unified-model-tuning";
 
-// Algorithm display names
-const ALGO_LABELS: Record<string, string> = {
+// Fallback algorithm display names — used when config does not include a display_name
+const ALGO_LABEL_FALLBACK: Record<string, string> = {
   lgbm_cluster: "LightGBM",
   catboost_cluster: "CatBoost",
   xgboost_cluster: "XGBoost",
+  lgbm_cust_enriched: "LightGBM (Cust)",
+  catboost_cust_enriched: "CatBoost (Cust)",
+  xgboost_cust_enriched: "XGBoost (Cust)",
   chronos: "Chronos T5",
   chronos_bolt: "Chronos Bolt",
   chronos2: "Chronos 2",
   chronos2_enriched: "Chronos 2E",
+  bolt_hierarchical: "Bolt Hierarchical",
   mstl: "MSTL",
   nbeats: "N-BEATS",
   nhits: "N-HiTS",
   seasonal_naive: "Seasonal Naive",
   rolling_mean: "Rolling Mean",
 };
+
+/** Derive a display label for an algorithm ID. */
+function algoLabel(id: string, algo?: PipelineAlgorithm): string {
+  // Prefer display_name from config if available, then fallback map, then humanized ID
+  const raw = algo as unknown as Record<string, unknown> | undefined;
+  if (raw?.display_name) {
+    return raw.display_name as string;
+  }
+  return ALGO_LABEL_FALLBACK[id] || id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
 
 const TYPE_COLORS: Record<string, string> = {
   tree: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
@@ -172,7 +186,7 @@ export function PipelineConfigPanel() {
                   const a = algo as PipelineAlgorithm;
                   return (
                     <TableRow key={id}>
-                      <TableCell className="font-medium text-sm">{ALGO_LABELS[id] || id}</TableCell>
+                      <TableCell className="font-medium text-sm">{algoLabel(id, a)}</TableCell>
                       <TableCell>
                         <Badge variant="outline" className={`text-[10px] ${TYPE_COLORS[a.type] || ""}`}>
                           {a.type}

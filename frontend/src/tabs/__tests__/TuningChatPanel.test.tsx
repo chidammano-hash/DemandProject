@@ -2,18 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 
-// Mock recharts (needed by RunStatusCard indirectly through barrel)
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  BarChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Bar: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  Legend: () => null,
-  ReferenceLine: () => null,
-}));
+vi.mock("recharts");
 
 vi.mock("@/api/queries", () => ({
   tuningChatKeys: {

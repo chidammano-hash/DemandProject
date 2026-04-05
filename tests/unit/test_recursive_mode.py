@@ -4,7 +4,7 @@ Tests cover:
 - Per-step WAPE computation (_compute_step_wape)
 - Noise injection helper (_inject_recursive_noise)
 - Per-step metrics collection during recursive prediction
-- Noise injection configuration via algorithm_config.yaml
+- Noise injection configuration via forecast_pipeline_config.yaml
 - Metadata output includes recursive_step_metrics
 """
 
@@ -366,19 +366,19 @@ class TestRecursiveStepMetrics:
 
 class TestNoiseInjectionConfig:
     def test_noise_disabled_by_default(self):
-        """Noise injection is disabled by default in algorithm_config.yaml."""
+        """Noise injection is disabled by default in forecast_pipeline_config.yaml."""
         from common.utils import load_config, reset_config
 
-        reset_config("algorithm_config.yaml")
-        cfg = load_config("algorithm_config.yaml")
+        reset_config("forecast_pipeline_config.yaml")
+        cfg = load_config("forecast_pipeline_config.yaml")
         assert cfg.get("recursive_noise_enabled", False) is False
 
     def test_noise_pct_default(self):
         """Default noise_pct is 0.05 in config."""
         from common.utils import load_config, reset_config
 
-        reset_config("algorithm_config.yaml")
-        cfg = load_config("algorithm_config.yaml")
+        reset_config("forecast_pipeline_config.yaml")
+        cfg = load_config("forecast_pipeline_config.yaml")
         assert cfg.get("recursive_noise_pct", 0.05) == pytest.approx(0.05)
 
     def test_noise_not_applied_when_disabled(self):

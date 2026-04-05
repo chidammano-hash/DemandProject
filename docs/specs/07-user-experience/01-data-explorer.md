@@ -1,14 +1,12 @@
 # Data Explorer
 
-A paginated, filterable data grid for browsing all eight domain tables (items, locations, customers, time, DFUs, sales, forecasts, inventory) plus a unified Item Analysis tab that overlays multi-model forecasts against actuals for any DFU with interactive SHAP explanations.
+> A paginated, filterable data grid for browsing all eight domain tables (items, locations, customers, time, DFUs, sales, forecasts, inventory) plus a unified Item Analysis tab that overlays multi-model forecasts against actuals for any DFU with interactive SHAP explanations.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 07-user-experience/01-data-explorer |
-| Frontend | `ExplorerTab.tsx`, `ItemAnalysisTab.tsx`, `sku-analysis/` panels, `inventory/` panels |
-| Backend | `api/routers/domains.py`, `api/routers/analysis.py`, `api/routers/inventory.py` |
-| Config | None (behavior driven by `common/domain_specs.py`) |
+| **Status** | Implemented |
+| **UI Tab** | ExplorerTab, ItemAnalysisTab |
+| **Key Files** | `ExplorerTab.tsx`, `ItemAnalysisTab.tsx`, `api/routers/domains.py`, `api/routers/analysis.py`, `api/routers/inventory.py` |
 
 ---
 

@@ -1,6 +1,6 @@
 """IPfeature1: Compute demand variability statistics per DFU.
 
-Reads config/variability_config.yaml for all thresholds.
+Reads config/forecast_domain_config.yaml (variability section) for all thresholds.
 Queries fact_sales_monthly (type=1, 24-month rolling window).
 Winsorizes outliers, computes CV/MAD/skewness/kurtosis/intermittency.
 Classifies each DFU into variability_class: low | medium | high | lumpy.
@@ -8,7 +8,7 @@ Upserts results back into dim_sku.
 
 Usage:
     uv run python scripts/compute_demand_variability.py
-    uv run python scripts/compute_demand_variability.py --config config/variability_config.yaml
+    uv run python scripts/compute_demand_variability.py --config config/forecast_domain_config.yaml
     uv run python scripts/compute_demand_variability.py --dry-run
 """
 from __future__ import annotations
@@ -58,7 +58,7 @@ def compute_variability_metrics(
     Args:
         monthly_qty: Series of monthly demand quantities (type=1 sales).
                      May contain zeros. Should be sorted chronologically.
-        config: Loaded variability_config.yaml dict.
+        config: Loaded variability section from forecast_domain_config.yaml.
 
     Returns:
         Dict with all computed metrics; None values when insufficient data.
@@ -159,7 +159,11 @@ def classify_variability_class(cv: float | None, intermittency_ratio: float, con
 
 def load_config(path: str) -> dict:
     with open(path) as f:
-        return yaml.safe_load(f)
+        raw = yaml.safe_load(f)
+    # Support merged forecast_domain_config.yaml (variability section)
+    if "variability" in raw:
+        return raw["variability"]
+    return raw
 
 
 def run(config: dict, dry_run: bool = False) -> dict:
@@ -293,8 +297,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Compute demand variability per DFU")
     parser.add_argument(
         "--config",
-        default="config/variability_config.yaml",
-        help="Path to variability_config.yaml",
+        default="config/forecast_domain_config.yaml",
+        help="Path to forecast_domain_config.yaml",
     )
     parser.add_argument("--dry-run", action="store_true", help="Compute but do not write to DB")
     args = parser.parse_args()

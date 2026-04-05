@@ -430,10 +430,10 @@ def _compute_cross_dfu_features(df: pd.DataFrame) -> None:
         cluster_stats["cluster_demand_trend"] = np.float32(0)
 
     # Cluster zero percentage
-    zero_pct = grp.apply(
-        lambda g: (g["qty_lag_1"].fillna(0) == 0).mean(),
-        include_groups=False,
-    ).reset_index(name="cluster_zero_pct")
+    zero_pct_raw = grp["qty_lag_1"].apply(
+        lambda s: (s.fillna(0) == 0).mean(),
+    )
+    zero_pct = zero_pct_raw.reset_index(name="cluster_zero_pct")
     cluster_stats = cluster_stats.merge(zero_pct, on=group_keys, how="left")
 
     # Merge back — drop old columns first to avoid suffixes on recompute

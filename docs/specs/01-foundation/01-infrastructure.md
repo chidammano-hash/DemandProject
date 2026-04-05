@@ -102,13 +102,14 @@ The central schema registry is `DomainSpec` in `common/domain_specs.py`, coverin
 | UI Architecture + Theming | [../06-ui/01-ui-architecture.md](../06-ui/01-ui-architecture.md) | UI |
 | Job Scheduler (APScheduler) | [../06-ui/02-job-scheduler.md](../06-ui/02-job-scheduler.md) | UI |
 | Testing Strategy (pytest + Vitest + Playwright) | [../06-ui/03-testing.md](../06-ui/03-testing.md) | UI |
-| LGBM Tuning Tracker (experiment tracking, A/B comparison) | [../02-forecasting/10-lgbm-tuning.md](../02-forecasting/10-lgbm-tuning.md) | Forecasting |
+| LGBM Tuning Tracker (experiment tracking, A/B comparison) | [../02-forecasting/10b-lgbm-tuning.md](../02-forecasting/10b-lgbm-tuning.md) | Forecasting |
 | Performance Profiling (decorator, suggestions, production-safe) | [05-performance-profiling.md](05-performance-profiling.md) | Foundation |
 | Unified Model Tuning Studio (LGBM, CatBoost, XGBoost) | [../02-forecasting/11-unified-model-tuning-v2.md](../02-forecasting/11-unified-model-tuning-v2.md) | Forecasting |
 | Unified Pipeline Orchestrator (full/incremental modes) | — | Integration |
 | RBAC + User Management | [../07-integration/02-rbac.md](../07-integration/02-rbac.md) | Integration |
 | Notifications + Webhooks | [../07-integration/03-notifications.md](../07-integration/03-notifications.md) | Integration |
 | FVA + ROI Measurement | [../07-integration/04-fva.md](../07-integration/04-fva.md) | Integration |
+| Demand History Workbench (5 endpoints) | [../03-demand-intelligence/06-demand-history-workbench.md](../03-demand-intelligence/06-demand-history-workbench.md) | Demand Intelligence |
 
 ## Quick Start
 

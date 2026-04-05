@@ -2,36 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 
-// ---------------------------------------------------------------------------
-// Mock recharts to avoid canvas rendering issues in tests
-// ---------------------------------------------------------------------------
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="responsive-container">{children}</div>
-  ),
-  LineChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  ComposedChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Line: () => <div />,
-  BarChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Bar: () => <div />,
-  RadarChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Radar: () => <div />,
-  PieChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Pie: () => <div />,
-  ScatterChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Scatter: () => <div />,
-  ZAxis: () => <div />,
-  XAxis: () => <div />,
-  YAxis: () => <div />,
-  CartesianGrid: () => <div />,
-  Tooltip: () => <div />,
-  Legend: () => <div />,
-  PolarGrid: () => <div />,
-  PolarAngleAxis: () => <div />,
-  PolarRadiusAxis: () => <div />,
-  ReferenceLine: () => <div />,
-  Cell: () => <div />,
-}));
+vi.mock("recharts");
 
 // ---------------------------------------------------------------------------
 // Mock data

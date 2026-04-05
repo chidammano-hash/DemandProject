@@ -7,13 +7,23 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-demand}
     command: >
       postgres
-      -c shared_buffers=512MB
-      -c work_mem=64MB
-      -c effective_cache_size=1536MB
-      -c max_connections=50
+      -c shared_buffers=4GB
+      -c work_mem=128MB
+      -c maintenance_work_mem=1GB
+      -c effective_cache_size=12GB
+      -c max_connections=100
       -c checkpoint_completion_target=0.9
       -c random_page_cost=1.1
-    shm_size: 512mb
+      -c effective_io_concurrency=200
+      -c wal_buffers=64MB
+      -c max_parallel_workers_per_gather=4
+      -c max_parallel_workers=8
+      -c max_worker_processes=12
+      -c huge_pages=try
+      -c log_min_duration_statement=5000
+      -c track_io_timing=on
+      -c default_statistics_target=200
+    shm_size: 5gb
     ports:
       - "${POSTGRES_HOST_PORT:-5440}:5432"
     volumes:

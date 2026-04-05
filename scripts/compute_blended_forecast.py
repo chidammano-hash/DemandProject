@@ -9,7 +9,7 @@ Usage:
     uv run python scripts/compute_blended_forecast.py --item-no 100320 --loc 1401-BULK
     uv run python scripts/compute_blended_forecast.py --dry-run
 
-Config: config/quantile_forecast_config.yaml
+Config: config/forecast_domain_config.yaml (quantile_forecast section)
 """
 
 from __future__ import annotations
@@ -30,23 +30,14 @@ if str(ROOT) not in sys.path:
 from common.db import get_db_params
 from common.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
+from common.utils import load_config as _load_config
 
-CONFIG_PATH = "config/quantile_forecast_config.yaml"
 SENSING_HORIZON_WEEKS = 4
 OUTLIER_THRESHOLD = 3.0
 
 
-def load_config(path: str = CONFIG_PATH) -> dict:
-    try:
-        with open(path) as f:
-            data = yaml.safe_load(f)
-            return data.get("sensing", {})
-    except FileNotFoundError:
-        return {
-            "sensing_horizon_weeks": SENSING_HORIZON_WEEKS,
-            "outlier_threshold": OUTLIER_THRESHOLD,
-            "min_days_elapsed": 3,
-        }
+def load_config() -> dict:
+    return _load_config("forecast_domain_config.yaml").get("sensing", {})
 
 
 def compute_alpha(week_offset: int, sensing_horizon_weeks: int = SENSING_HORIZON_WEEKS) -> float:

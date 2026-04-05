@@ -1,6 +1,14 @@
-# 04-08 Investment Optimization
+# Investment Optimization
 
-> **Status:** Implemented | **Feature:** IPfeature13
+> Computes an efficient frontier of maximum achievable service level at each budget level by ranking DFUs by marginal return on safety stock investment and allocating capital greedily to highest-ROI units first.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning |
+| **Key Files** | `scripts/compute_investment_plan.py`, `api/routers/inventory/inv_planning_investment.py`, `sql/033_create_investment_plan.sql` |
+
+---
 
 ## Problem
 

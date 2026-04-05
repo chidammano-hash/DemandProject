@@ -26,20 +26,11 @@ if str(ROOT) not in sys.path:
 
 from common.db import get_db_params
 from common.services.perf_profiler import profiled_section
+from common.utils import load_config as _load_config
 
-CONFIG_PATH = "config/service_level_config.yaml"
 
-
-def load_config(path: str = CONFIG_PATH) -> dict:
-    try:
-        with open(path) as f:
-            return yaml.safe_load(f)
-    except FileNotFoundError:
-        return {
-            "default_target_by_class": {"A": 0.975, "B": 0.950, "C": 0.900},
-            "on_target_tolerance": 0.002,
-            "streak_miss_threshold": 2,
-        }
+def load_config() -> dict:
+    return _load_config("service_level_config.yaml")
 
 
 def resolve_target(

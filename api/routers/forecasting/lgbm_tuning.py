@@ -570,12 +570,12 @@ _LGBM_PARAM_KEYS = {
     "path_smooth", "max_bin",
 }
 
-_ALGO_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "algorithm_config.yaml"
+_PIPELINE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "forecast_pipeline_config.yaml"
 
 
 @router.post("/lgbm-tuning/runs/{run_id}/promote")
 def promote_run(run_id: int):
-    """Promote a tuning run to production — writes params to algorithm_config.yaml."""
+    """Promote a tuning run to production — writes params to forecast_pipeline_config.yaml."""
     # 1. Fetch run (only LGBM runs)
     sql = """
         SELECT run_id, run_label, status, params, accuracy_pct, backup_path
@@ -604,20 +604,24 @@ def promote_run(run_id: int):
     if not lgbm_overrides:
         raise HTTPException(status_code=400, detail="Run params contain no recognized LGBM hyperparameters")
 
-    # 3. Write to algorithm_config.yaml
+    # 3. Write to forecast_pipeline_config.yaml (algorithms.lgbm_cluster.params)
     try:
-        with open(_ALGO_CONFIG_PATH) as f:
+        with open(_PIPELINE_CONFIG_PATH) as f:
             cfg = yaml.safe_load(f)
 
-        lgbm_section = cfg["algorithms"]["lgbm"]
-        old_params = {k: lgbm_section.get(k) for k in lgbm_overrides}
+        lgbm_entry = cfg["algorithms"]["lgbm_cluster"]
+        params_section = lgbm_entry.setdefault("params", {})
+        old_params = {k: params_section.get(k) for k in lgbm_overrides}
         for key, value in lgbm_overrides.items():
-            lgbm_section[key] = value
+            params_section[key] = value
 
-        with open(_ALGO_CONFIG_PATH, "w") as f:
+        with open(_PIPELINE_CONFIG_PATH, "w") as f:
             yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
+
+        from common.utils import reset_config
+        reset_config("forecast_pipeline_config.yaml")
     except (OSError, KeyError, yaml.YAMLError) as exc:
-        logger.exception("Failed to write algorithm_config.yaml during promote")
+        logger.exception("Failed to write forecast_pipeline_config.yaml during promote")
         raise HTTPException(status_code=500, detail=f"Failed to update config: {exc}")
 
     # 4. Atomically clear previous promoted run and set new one

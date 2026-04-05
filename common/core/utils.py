@@ -39,10 +39,25 @@ def _ts() -> str:
 # ---------------------------------------------------------------------------
 
 _config_store: dict[str, dict] = {}
-_config_lock = threading.Lock()
+_config_lock = threading.RLock()
 
 # Base directory for config files: config/
 _CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Deep merge *override* into *base*.  Override values take precedence.
+
+    For nested dicts, merging is recursive.  For all other types (lists,
+    scalars) the override value replaces the base value entirely.
+    """
+    result = base.copy()
+    for key, val in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
 
 
 def load_config(name: str) -> dict:
@@ -51,14 +66,26 @@ def load_config(name: str) -> dict:
     Parameters
     ----------
     name : str
-        Config file name with extension, e.g. ``"notification_config.yaml"``.
+        Config file name, e.g. ``"notification_config.yaml"`` or
+        ``"notification_config"`` (``.yaml`` is appended automatically
+        when no ``.yaml`` / ``.yml`` extension is present).
         Resolved relative to ``config/``.
+
+    Supports an ``_includes`` directive: when the YAML root contains an
+    ``_includes`` key whose value is a list of config names, each listed
+    config is loaded (recursively) and deep-merged as a base layer.
+    The current file's own values take precedence over included values.
+    The ``_includes`` key is stripped from the returned dict.
 
     Returns
     -------
     dict
         Parsed YAML content (empty dict if file is missing or empty).
     """
+    # Auto-append .yaml when the caller omits the extension
+    if not (name.endswith(".yaml") or name.endswith(".yml")):
+        name = f"{name}.yaml"
+
     cached = _config_store.get(name)
     if cached is not None:
         return cached
@@ -76,25 +103,46 @@ def load_config(name: str) -> dict:
         else:
             raw = {}
 
+        # Extract _includes directive before validation (strip from raw).
+        includes = raw.pop("_includes", None)
+
+        # Process _includes FIRST so that inherited values are available
+        # during Pydantic validation.  The file's own explicit values
+        # override shared constants (deep-merge with raw on top).
+        if includes:
+            merged_base: dict = {}
+            for inc_name in includes:
+                inc_cfg = load_config(inc_name)
+                merged_base = _deep_merge(merged_base, inc_cfg)
+            combined = _deep_merge(merged_base, raw)
+        else:
+            combined = raw
+
         # Optional Pydantic validation — import lazily to avoid circular deps
         try:
             from common.core.config_models import _config_validators
 
             validator = _config_validators.get(name)
             if validator is not None:
-                validated = validator(**raw)
+                validated = validator(**combined)
                 result = validated.model_dump()
+                # Re-add keys from the combined dict that Pydantic may
+                # have stripped (e.g. top-level shared constant keys not
+                # in the model schema).
+                for key, val in combined.items():
+                    if key not in result:
+                        result[key] = val
             else:
-                result = raw
+                result = combined
         except ImportError:
             # config_models not available — skip validation
-            result = raw
+            result = combined
         except Exception:
             logger.warning(
                 "Config validation failed for %s; returning raw dict", name,
                 exc_info=True,
             )
-            result = raw
+            result = combined
 
         _config_store[name] = result
         return result
@@ -147,6 +195,45 @@ def is_clustering_enabled() -> bool:
     """Check if clustering is enabled in the pipeline config."""
     cfg = load_forecast_pipeline_config()
     return cfg.get("clustering", {}).get("enabled", True)
+
+
+def get_algorithm_params(model_id: str) -> dict:
+    """Get hyperparameters for a model from the pipeline config.
+
+    Returns the ``params`` sub-dict for the given *model_id* from the
+    ``algorithms`` section of ``forecast_pipeline_config.yaml``.
+
+    For backward compatibility, if the algorithm entry has no ``params``
+    key, falls back to returning all non-lifecycle keys from the entry
+    (i.e., everything except type/enabled/tune/backtest/compete/forecast/
+    expert/output_dir/notes/cluster_strategy).
+    """
+    cfg = load_forecast_pipeline_config()
+    algo = cfg.get("algorithms", {}).get(model_id, {})
+    params = algo.get("params")
+    if params is not None:
+        return dict(params)
+    # Fallback: return all non-lifecycle keys from the entry itself
+    _lifecycle_keys = {
+        "type", "enabled", "tune", "backtest", "compete", "forecast",
+        "expert", "output_dir", "notes", "cluster_strategy",
+    }
+    return {k: v for k, v in algo.items() if k not in _lifecycle_keys}
+
+
+def get_algorithm_config_key(model_id: str) -> str:
+    """Get the config key for backward compatibility.
+
+    After consolidation of ``algorithm_config.yaml`` into
+    ``forecast_pipeline_config.yaml``, this simply returns *model_id*
+    (the pipeline algorithm ID is now the canonical key).
+    """
+    return model_id
+
+
+def get_pipeline_config_path() -> Path:
+    """Return the absolute path to forecast_pipeline_config.yaml."""
+    return _CONFIG_DIR / _FORECAST_PIPELINE_CFG
 
 
 def reset_config(name: str | None = None) -> None:

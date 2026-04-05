@@ -5,6 +5,7 @@ Each supports zero-shot forecasting — no training required.
 Gracefully skips models whose libraries are not installed.
 """
 
+import gc
 import logging
 import os
 import time
@@ -86,6 +87,20 @@ def _resolve_device(device_setting: str) -> str:
 _chronos_pipeline_cache: dict[str, Any] = {}
 
 
+def _clear_pipeline_cache() -> None:
+    """Release all cached models and reclaim GPU/CPU memory."""
+    _chronos_pipeline_cache.clear()
+    gc.collect()
+    try:
+        import torch
+        if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+            torch.mps.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+
+
 def _get_chronos_pipeline(model_name: str, device: str) -> Any:
     """Return a cached Chronos pipeline, loading only on first call.
 
@@ -102,11 +117,14 @@ def _get_chronos_pipeline(model_name: str, device: str) -> Any:
         else:
             from chronos import ChronosPipeline as PipelineCls
 
-        logger.info("Chronos: loading %s on %s...", model_name, device)
+        # Use bfloat16 to halve memory footprint (MPS/CUDA support it well)
+        model_dtype = torch.bfloat16 if device != "cpu" else torch.float32
+
+        logger.info("Chronos: loading %s on %s (dtype=%s)...", model_name, device, model_dtype)
         _chronos_pipeline_cache[cache_key] = PipelineCls.from_pretrained(
             model_name,
             device_map=device,
-            torch_dtype=torch.float32,
+            torch_dtype=model_dtype,
         )
     else:
         logger.info("Chronos: reusing cached pipeline (%s on %s)", model_name, device)
@@ -245,8 +263,6 @@ def _run_chronos_bolt(
     model_name = f"amazon/chronos-bolt-{model_size}"
     device_setting = params.get("device", "auto")
     prediction_length = len(predict_months)
-    # Bolt supports num_samples but defaults to quantile output (faster)
-    num_samples = params.get("num_samples", 12)
 
     device = _resolve_device(device_setting)
     if device == "mps":
@@ -254,31 +270,40 @@ def _run_chronos_bolt(
 
     pipeline = _get_chronos_pipeline(model_name, device)
 
-    sku_cks = sales_df["sku_ck"].unique()
-    batch_dfs: list[pd.DataFrame] = []
+    # --- Vectorized context building via boundary scan (no get_group) ---
+    # Sort index only — avoids full DataFrame copy
+    sort_idx = np.lexsort((sales_df["startdate"].values, sales_df["sku_ck"].values))
+    sku_arr = sales_df["sku_ck"].values[sort_idx]
+    qty_arr = sales_df["qty"].values[sort_idx].astype(np.float32)
 
-    sorted_sales = sales_df.sort_values(["sku_ck", "startdate"])
-    grouped = sorted_sales.groupby("sku_ck", sort=False)
+    # Find boundaries of each SKU in the sorted array
+    change_mask = np.empty(len(sku_arr), dtype=bool)
+    change_mask[0] = True
+    change_mask[1:] = sku_arr[1:] != sku_arr[:-1]
+    starts = np.nonzero(change_mask)[0]
+    ends = np.append(starts[1:], len(sku_arr))
+    boundary_skus = sku_arr[starts]
 
-    batch_size = params.get("batch_size", 1024)
-    sku_list = list(sku_cks)
+    # Filter to series with >= 3 data points
+    lengths = ends - starts
+    valid_mask = lengths >= 3
+    valid_starts = starts[valid_mask]
+    valid_ends = ends[valid_mask]
+    valid_sku_arr = boundary_skus[valid_mask]
+
+    batch_size = params.get("batch_size", 512)
     month_arr = np.array(predict_months)
     n_months = len(predict_months)
+    n_valid = len(valid_sku_arr)
+    batch_dfs: list[pd.DataFrame] = []
 
-    for batch_start in range(0, len(sku_list), batch_size):
-        batch_skus = sku_list[batch_start:batch_start + batch_size]
-        contexts = []
-        valid_skus = []
-
-        for sku_ck in batch_skus:
-            values = grouped.get_group(sku_ck)["qty"].values.astype(np.float32)
-            if len(values) < 3:
-                continue
-            contexts.append(torch.tensor(values))
-            valid_skus.append(sku_ck)
-
-        if not contexts:
-            continue
+    for batch_start in range(0, n_valid, batch_size):
+        batch_end = min(batch_start + batch_size, n_valid)
+        contexts = [
+            torch.from_numpy(qty_arr[valid_starts[i]:valid_ends[i]])
+            for i in range(batch_start, batch_end)
+        ]
+        batch_skus = valid_sku_arr[batch_start:batch_end]
 
         try:
             forecasts = pipeline.predict(
@@ -286,41 +311,40 @@ def _run_chronos_bolt(
                 prediction_length=prediction_length,
             )
             # Bolt returns (n_series, n_quantiles, prediction_length)
-            # Take the middle quantile as the point forecast
             mid_q = forecasts.shape[1] // 2
             median_forecasts = forecasts[:, mid_q, :].numpy()
 
             bad_mask = ~np.isfinite(median_forecasts)
             if bad_mask.any():
-                n_bad = int(bad_mask.sum())
                 logger.warning(
-                    "Chronos Bolt batch %d: %d NaN/Inf values replaced with 0.0",
-                    batch_start, n_bad,
+                    "Chronos Bolt: %d NaN/Inf values at offset %d — replaced with 0.0",
+                    int(bad_mask.sum()), batch_start,
                 )
                 median_forecasts = np.nan_to_num(
                     median_forecasts, nan=0.0, posinf=0.0, neginf=0.0,
                 )
 
-            n_valid = len(valid_skus)
+            n_batch = len(batch_skus)
             median_forecasts = np.maximum(median_forecasts[:, :n_months], 0.0)
-            sku_rep = np.repeat(valid_skus, n_months)
-            month_rep = np.tile(month_arr, n_valid)
-            fcst_flat = median_forecasts.ravel()
 
             batch_dfs.append(pd.DataFrame({
-                "sku_ck": sku_rep,
-                "startdate": month_rep,
-                "basefcst_pref": fcst_flat,
+                "sku_ck": np.repeat(batch_skus, n_months),
+                "startdate": np.tile(month_arr, n_batch),
+                "basefcst_pref": median_forecasts.ravel(),
                 "algorithm_id": "chronos_bolt",
             }))
         except (RuntimeError, ValueError) as exc:
+            if "out of memory" in str(exc).lower():
+                logger.error("OOM on Bolt batch at offset %d — aborting: %s", batch_start, exc)
+                raise
             logger.warning("Chronos Bolt batch failed: %s", exc)
 
-        if (batch_start + batch_size) % (batch_size * 10) == 0:
+        progress = batch_start + batch_size
+        log_interval = max(n_valid // 4, batch_size)
+        if progress % log_interval < batch_size or progress >= n_valid:
             logger.info(
                 "Chronos Bolt: %d/%d DFUs processed",
-                min(batch_start + batch_size, len(sku_list)),
-                len(sku_list),
+                min(progress, n_valid), n_valid,
             )
 
     result = pd.concat(batch_dfs, ignore_index=True) if batch_dfs else pd.DataFrame(
@@ -374,10 +398,11 @@ def _run_chronos2(
     cache_key = f"{model_name}:{device}"
     if cache_key not in _chronos_pipeline_cache:
         logger.info("Chronos 2: loading %s on %s...", model_name, device)
+        model_dtype = torch.bfloat16 if device != "cpu" else torch.float32
         _chronos_pipeline_cache[cache_key] = Chronos2Pipeline.from_pretrained(
             model_name,
             device_map=device,
-            torch_dtype=torch.float32,
+            dtype=model_dtype,
         )
     else:
         logger.info("Chronos 2: reusing cached pipeline")
@@ -522,7 +547,7 @@ def _run_chronos2_enriched(
 
     device_setting = params.get("device", "auto")
     prediction_length = len(predict_months)
-    batch_size = params.get("batch_size", 2048)
+    batch_size = params.get("batch_size", 512)
 
     device = _resolve_device(device_setting)
     if device == "mps":
@@ -532,10 +557,11 @@ def _run_chronos2_enriched(
     cache_key = f"{model_name}:{device}"
     if cache_key not in _chronos_pipeline_cache:
         logger.info("Chronos 2 Enriched: loading %s on %s...", model_name, device)
+        model_dtype = torch.bfloat16 if device != "cpu" else torch.float32
         _chronos_pipeline_cache[cache_key] = Chronos2Pipeline.from_pretrained(
             model_name,
             device_map=device,
-            torch_dtype=torch.float32,
+            dtype=model_dtype,
         )
     else:
         logger.info("Chronos 2 Enriched: reusing cached pipeline")
@@ -617,59 +643,18 @@ def _run_chronos2_enriched(
     # Future covariate keys that will be present in past_covariates
     future_keys_available = [k for k in _C2E_FUTURE_COVARIATES if k in future_cal]
 
-    inputs: list[dict[str, Any]] = []
+    # Pre-filter valid SKUs (>= 3 months history) WITHOUT building input dicts
     valid_skus: list[str] = []
-
     for sku_ck in sku_cks:
         if sku_ck not in sku_boundaries:
             continue
         s, e = sku_boundaries[sku_ck]
-        hist_len = e - s
-        if hist_len < 3:
-            continue
+        if (e - s) >= 3:
+            valid_skus.append(sku_ck)
 
-        entry: dict[str, Any] = {"target": torch.from_numpy(sales_qty[s:e].copy())}
+    logger.info("SKU filtering done: %d valid DFUs (%.1fs)", len(valid_skus), time.time() - t_build)
 
-        # Build past_covariates via array slicing (no get_group / per-col DataFrame access)
-        past_cov: dict[str, np.ndarray] = {}
-
-        if has_grid and sku_ck in grid_boundaries:
-            gs, ge = grid_boundaries[sku_ck]
-            # Align: take last hist_len rows from grid
-            g_len = ge - gs
-            g_start = ge - hist_len if g_len >= hist_len else gs
-            g_slice_len = min(hist_len, g_len)
-
-            if g_slice_len == hist_len:
-                for col, arr in grid_numeric_arrays.items():
-                    past_cov[col] = arr[g_start:ge]
-                for col, arr in grid_cat_arrays.items():
-                    past_cov[col] = arr[g_start:ge]
-        else:
-            # Fallback: calendar covariates from sales dates
-            sale_dates = sorted_sales["startdate"].values[s:e]
-            m_arr = pd.to_datetime(sale_dates).month.values.astype(np.float32)
-            for period in [12, 6, 4, 3]:
-                angles = 2.0 * np.pi * m_arr / period
-                past_cov[f"fourier_sin_{period}"] = np.sin(angles).astype(np.float32)
-                past_cov[f"fourier_cos_{period}"] = np.cos(angles).astype(np.float32)
-            past_cov["month"] = m_arr
-            past_cov["quarter"] = np.ceil(m_arr / 3).astype(np.float32)
-
-        if past_cov:
-            entry["past_covariates"] = past_cov
-
-        # Future covariates (subset of past keys)
-        future_cov = {k: future_cal[k] for k in future_keys_available if k in past_cov}
-        if future_cov:
-            entry["future_covariates"] = future_cov
-
-        inputs.append(entry)
-        valid_skus.append(sku_ck)
-
-    logger.info("Input dicts built: %d DFUs (%.1fs)", len(valid_skus), time.time() - t_build)
-
-    if not inputs:
+    if not valid_skus:
         return pd.DataFrame(
             columns=["sku_ck", "startdate", "basefcst_pref", "algorithm_id"]
         )
@@ -677,18 +662,57 @@ def _run_chronos2_enriched(
     logger.info("Chronos 2 Enriched: predicting %d DFUs (batch_size=%d)...",
                 len(valid_skus), batch_size)
 
-    # Feed in chunks — Chronos 2's internal collation chokes on 200K+ dicts at once
+    # Process in chunks — build input dicts lazily per chunk to avoid massive memory spike
     month_arr = np.array(predict_months)
     n_months = len(predict_months)
     batch_dfs: list[pd.DataFrame] = []
-    chunk_size = batch_size  # process one GPU batch worth at a time
-    n_chunks = (len(inputs) + chunk_size - 1) // chunk_size
+    chunk_size = batch_size
+    n_chunks = (len(valid_skus) + chunk_size - 1) // chunk_size
 
     for ci in range(n_chunks):
         c_start = ci * chunk_size
-        c_end = min(c_start + chunk_size, len(inputs))
-        chunk_inputs = inputs[c_start:c_end]
+        c_end = min(c_start + chunk_size, len(valid_skus))
         chunk_skus = valid_skus[c_start:c_end]
+
+        # Build input dicts for THIS chunk only
+        chunk_inputs: list[dict[str, Any]] = []
+        for sku_ck in chunk_skus:
+            s, e = sku_boundaries[sku_ck]
+            hist_len = e - s
+
+            entry: dict[str, Any] = {"target": torch.from_numpy(sales_qty[s:e].copy())}
+
+            past_cov: dict[str, np.ndarray] = {}
+
+            if has_grid and sku_ck in grid_boundaries:
+                gs, ge = grid_boundaries[sku_ck]
+                g_len = ge - gs
+                g_start = ge - hist_len if g_len >= hist_len else gs
+                g_slice_len = min(hist_len, g_len)
+
+                if g_slice_len == hist_len:
+                    for col, arr in grid_numeric_arrays.items():
+                        past_cov[col] = arr[g_start:ge]
+                    for col, arr in grid_cat_arrays.items():
+                        past_cov[col] = arr[g_start:ge]
+            else:
+                sale_dates = sorted_sales["startdate"].values[s:e]
+                m_arr = pd.to_datetime(sale_dates).month.values.astype(np.float32)
+                for period in [12, 6, 4, 3]:
+                    angles = 2.0 * np.pi * m_arr / period
+                    past_cov[f"fourier_sin_{period}"] = np.sin(angles).astype(np.float32)
+                    past_cov[f"fourier_cos_{period}"] = np.cos(angles).astype(np.float32)
+                past_cov["month"] = m_arr
+                past_cov["quarter"] = np.ceil(m_arr / 3).astype(np.float32)
+
+            if past_cov:
+                entry["past_covariates"] = past_cov
+
+            future_cov = {k: future_cal[k] for k in future_keys_available if k in past_cov}
+            if future_cov:
+                entry["future_covariates"] = future_cov
+
+            chunk_inputs.append(entry)
 
         try:
             chunk_results = pipeline.predict(
@@ -698,6 +722,7 @@ def _run_chronos2_enriched(
             )
         except (RuntimeError, ValueError) as exc:
             logger.warning("Chronos 2 Enriched chunk %d/%d failed: %s", ci + 1, n_chunks, exc)
+            del chunk_inputs
             continue
 
         # Extract median forecasts — vectorized per chunk
@@ -715,6 +740,9 @@ def _run_chronos2_enriched(
                 "basefcst_pref": preds,
                 "algorithm_id": "chronos2_enriched",
             }))
+
+        # Free chunk inputs immediately
+        del chunk_inputs, chunk_results
 
         logger.info(
             "Chronos 2 Enriched: %d/%d DFUs processed",
@@ -1037,6 +1065,7 @@ def _run_lag_llama(
             batch_size=batch_size,
             nonnegative_pred_samples=True,
             device=torch.device(device),
+            trainer_kwargs={"logger": False, "enable_progress_bar": False},
         )
         lightning_module = estimator.load_from_checkpoint(checkpoint_path=ckpt_path)
         predictor = estimator.create_lightning_predictor(
@@ -1113,6 +1142,7 @@ def run_foundation_models(
     predict_months: list[pd.Timestamp],
     enabled_models: dict[str, dict],
     feature_grid: pd.DataFrame | None = None,
+    keep_model_loaded: bool = False,
 ) -> pd.DataFrame:
     """Run all enabled foundation models.
 
@@ -1125,6 +1155,8 @@ def run_foundation_models(
         predict_months: Months to predict.
         enabled_models: {model_id: params_dict} for enabled foundation models.
         feature_grid: Optional feature matrix for enriched models (e.g. chronos2_enriched).
+        keep_model_loaded: If True, skip cache cleanup between models (faster
+            when calling repeatedly with the same model, e.g. hierarchical backtest).
 
     Returns:
         DataFrame with columns: sku_ck, startdate, basefcst_pref, algorithm_id
@@ -1166,6 +1198,10 @@ def run_foundation_models(
                 logger.info("%s: no predictions produced", model_id)
         except (RuntimeError, ValueError, ImportError) as exc:
             logger.warning("Foundation model %s failed: %s", model_id, exc)
+        finally:
+            if not keep_model_loaded:
+                # Unload model after each run to free memory for the next one
+                _clear_pipeline_cache()
 
     if not all_results:
         return empty

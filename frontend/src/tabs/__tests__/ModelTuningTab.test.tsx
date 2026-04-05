@@ -76,23 +76,7 @@ function mockFetchWith(experiments: typeof mockRuns, total?: number) {
   } as Response);
 }
 
-// ---------------------------------------------------------------------------
-// Mock recharts
-// ---------------------------------------------------------------------------
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
-  Bar: () => null,
-  Cell: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  Legend: () => null,
-  ReferenceLine: () => null,
-  LineChart: ({ children }: { children: React.ReactNode }) => <div data-testid="line-chart">{children}</div>,
-  Line: () => null,
-}));
+vi.mock("recharts");
 
 // ---------------------------------------------------------------------------
 // Mock @/api/queries — ModelTuningTab imports STALE, TuningRun, ModelType

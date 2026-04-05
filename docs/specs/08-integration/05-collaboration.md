@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
+| **Status** | Implemented |
 | **UI Tab** | Embedded panels in DFU Analysis, Storyboard, and AI Planner tabs |
 | **Key Files** | `api/routers/collaboration.py` |
 

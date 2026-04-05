@@ -1,10 +1,12 @@
-# Spec: Customer-Enriched Tree Model Forecasting
+# Customer-Enriched Tree Model Forecasting
 
-**Status:** Draft
-**Author:** Auto-generated
-**Date:** 2026-04-03
-**Domain:** Forecasting / ML Pipeline
-**Spec ID:** 02-21
+> Adds 34 customer-derived features (unconstrained demand, OOS volume, customer concentration) to LGBM, CatBoost, and XGBoost as new model variants that compete in champion selection alongside existing models trained only on inventory-constrained sales.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Accuracy |
+| **Key Files** | `scripts/compute_customer_features.py`, `scripts/run_backtest_cust_enriched.py`, `config/forecast_pipeline_config.yaml` |
 
 ---
 
@@ -551,7 +553,7 @@ cumulative threshold.
     notes: "XGBoost with 34 customer-derived features"
 ```
 
-### 6.2 `config/algorithm_config.yaml` — Hyperparameters
+### 6.2 `config/forecast_pipeline_config.yaml` — Hyperparameters
 
 Start with the same hyperparameters as the base models, with two changes:
 
@@ -648,17 +650,17 @@ customer-features:
 backtest-lgbm-cust:
 	$(UV) python -m scripts.run_backtest --model lgbm \
 		--model-id lgbm_cust_enriched \
-		--config config/algorithm_config.yaml
+		--config config/forecast_pipeline_config.yaml
 
 backtest-catboost-cust:
 	$(UV) python -m scripts.run_backtest --model catboost \
 		--model-id catboost_cust_enriched \
-		--config config/algorithm_config.yaml
+		--config config/forecast_pipeline_config.yaml
 
 backtest-xgboost-cust:
 	$(UV) python -m scripts.run_backtest --model xgboost \
 		--model-id xgboost_cust_enriched \
-		--config config/algorithm_config.yaml
+		--config config/forecast_pipeline_config.yaml
 
 backtest-cust-enriched-all: backtest-lgbm-cust backtest-catboost-cust backtest-xgboost-cust
 
@@ -840,7 +842,7 @@ def test_production_forecast_enriched_model():
 ### Phase 3: Model Configuration (1 day)
 
 - [ ] Add 3 enriched entries to `forecast_pipeline_config.yaml`
-- [ ] Add 3 enriched hyperparameter blocks to `algorithm_config.yaml`
+- [ ] Add 3 enriched hyperparameter blocks to `forecast_pipeline_config.yaml`
 - [ ] Add Makefile targets for backtest, load, tune
 
 ### Phase 4: Backtest & Competition (2 days)
@@ -904,7 +906,7 @@ Enriched models expected to win champion selection for **30-45% of DFUs**.
 | Backtest script | `scripts/run_backtest.py` | Modify |
 | Production forecast | `scripts/generate_production_forecasts.py` | Modify |
 | Pipeline config | `config/forecast_pipeline_config.yaml` | Modify |
-| Algorithm config | `config/algorithm_config.yaml` | Modify |
+| Algorithm config | `config/forecast_pipeline_config.yaml` | Modify |
 | Makefile | `Makefile` | Modify |
 | Unit tests (features) | `tests/unit/test_customer_features.py` | New |
 | Unit tests (integration) | `tests/unit/test_feature_engineering_enriched.py` | New |

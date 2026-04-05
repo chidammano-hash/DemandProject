@@ -10,14 +10,15 @@ from collections import defaultdict
 
 from common.utils import load_config
 
-_CONFIG_NAME = "api_governance_config.yaml"
+_CONFIG_NAME = "auth_config.yaml"
 
 
 # ---------------------------------------------------------------------------
 # Config (thread-safe via common.utils.load_config)
 # ---------------------------------------------------------------------------
 def _load_config() -> dict:
-    return load_config(_CONFIG_NAME)
+    full = load_config(_CONFIG_NAME)
+    return full.get("governance", {})
 
 
 # ---------------------------------------------------------------------------

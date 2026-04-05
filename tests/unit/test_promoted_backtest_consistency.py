@@ -3,8 +3,8 @@
 Ensures the parameters shown as "promoted" in the UI are exactly the
 parameters used when running a backtest.  The data-flow is:
 
-    Promote endpoint -> writes to algorithm_config.yaml
-    Backtest script  -> reads  from algorithm_config.yaml -> MODEL_REGISTRY default_params
+    Promote endpoint -> writes to forecast_pipeline_config.yaml algorithms.<model_id>.params
+    Backtest script  -> reads  from forecast_pipeline_config.yaml -> MODEL_REGISTRY default_params
 
 These tests catch drift between the promote-side allowed keys, the
 config file contents, and the backtest-side keys for LGBM, CatBoost,
@@ -12,16 +12,9 @@ and XGBoost.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-import yaml
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_ALGO_CONFIG = _PROJECT_ROOT / "config" / "algorithm_config.yaml"
+from common.utils import load_forecast_pipeline_config
 
 # ---------------------------------------------------------------------------
 # Promote-side key sets  (authoritative source: API routers)
@@ -58,15 +51,8 @@ BACKTEST_TUNABLE_KEYS: dict[str, set[str]] = {
     },
 }
 
-# Non-hyperparameter keys in algorithm_config.yaml that are NOT model params
-_CONFIG_META_KEYS = {
-    "enabled", "model_id", "cluster_strategy", "recursive",
-    "shap_select", "shap_threshold", "shap_top_n", "shap_sample_size",
-    "tune_inline", "params_file",
-}
-
-# Algo section names in algorithm_config.yaml per model
-_ALGO_SECTIONS = {"lgbm": "lgbm", "catboost": "catboost", "xgboost": "xgboost"}
+# Pipeline config algorithm IDs for each model family
+_PIPELINE_ALGO_IDS = {"lgbm": "lgbm_cluster", "catboost": "catboost_cluster", "xgboost": "xgboost_cluster"}
 
 
 # ---------------------------------------------------------------------------
@@ -74,14 +60,15 @@ _ALGO_SECTIONS = {"lgbm": "lgbm", "catboost": "catboost", "xgboost": "xgboost"}
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def algo_config() -> dict:
-    """Load algorithm_config.yaml once for the module."""
-    with open(_ALGO_CONFIG) as f:
-        return yaml.safe_load(f)
+    """Load forecast_pipeline_config.yaml once for the module."""
+    return load_forecast_pipeline_config()
 
 
-def _config_param_keys(section: dict) -> set[str]:
-    """Return only the hyperparameter keys from a config section (exclude meta keys)."""
-    return {k for k in section if k not in _CONFIG_META_KEYS}
+def _get_params(cfg: dict, model: str) -> dict:
+    """Extract the params sub-dict for a model from pipeline config."""
+    algo_id = _PIPELINE_ALGO_IDS[model]
+    entry = cfg.get("algorithms", {}).get(algo_id, {})
+    return dict(entry.get("params", {}))
 
 
 # ===========================================================================
@@ -99,34 +86,41 @@ def test_promote_keys_cover_backtest_keys(model: str):
 
 
 # ===========================================================================
-# 2. algorithm_config.yaml has values for every backtest-tunable key
+# 2. forecast_pipeline_config.yaml has values for every backtest-tunable key
 #    If the config is missing a key the backtest reads, the backtest would
 #    silently fall back to a hardcoded default -- not the promoted value.
 # ===========================================================================
 @pytest.mark.parametrize("model", ["lgbm", "catboost", "xgboost"])
 def test_config_has_all_backtest_keys(algo_config, model: str):
-    """algorithm_config.yaml must contain all keys the backtest reads."""
-    section = algo_config["algorithms"][_ALGO_SECTIONS[model]]
-    missing = BACKTEST_TUNABLE_KEYS[model] - set(section.keys())
+    """forecast_pipeline_config.yaml must contain all keys the backtest reads."""
+    params = _get_params(algo_config, model)
+    missing = BACKTEST_TUNABLE_KEYS[model] - set(params.keys())
     assert not missing, (
-        f"{model}: algorithm_config.yaml is missing keys {sorted(missing)} "
+        f"{model}: forecast_pipeline_config.yaml is missing keys {sorted(missing)} "
         f"that the backtest reads -- backtest would use hardcoded defaults instead"
     )
 
 
 # ===========================================================================
-# 3. Every hyperparam in algorithm_config.yaml is promotable
+# 3. Every hyperparam in the config params section is promotable
 #    If someone adds a new key to the YAML but not to the promote endpoint,
 #    the UI can never update that key.
 # ===========================================================================
+# Non-hyperparameter keys inside params that are NOT model-tunable params
+_PARAMS_META_KEYS = {
+    "recursive", "shap_select", "shap_threshold", "shap_top_n",
+    "shap_sample_size", "tune_inline", "params_file", "customer_features",
+}
+
+
 @pytest.mark.parametrize("model", ["lgbm", "catboost", "xgboost"])
 def test_config_params_are_all_promotable(algo_config, model: str):
-    """Every hyperparameter in algorithm_config.yaml must be in the promote allow-list."""
-    section = algo_config["algorithms"][_ALGO_SECTIONS[model]]
-    param_keys = _config_param_keys(section)
+    """Every hyperparameter in config params must be in the promote allow-list."""
+    params = _get_params(algo_config, model)
+    param_keys = {k for k in params if k not in _PARAMS_META_KEYS}
     not_promotable = param_keys - PROMOTE_KEYS[model]
     assert not not_promotable, (
-        f"{model}: algorithm_config.yaml has keys {sorted(not_promotable)} "
+        f"{model}: forecast_pipeline_config.yaml has keys {sorted(not_promotable)} "
         f"that the promote endpoint will NOT write -- UI can never set them"
     )
 
@@ -162,16 +156,16 @@ _SAMPLE_PROMOTED_PARAMS = {
 def test_promote_roundtrip_matches_backtest(algo_config, model: str):
     """After promoting, the backtest must read the promoted values, not defaults."""
     promoted_params = _SAMPLE_PROMOTED_PARAMS[model]
+    params = _get_params(algo_config, model)
 
     # Step 1: Filter through promote allow-list (same as endpoint does)
     allowed = PROMOTE_KEYS[model]
     written = {k: v for k, v in promoted_params.items() if k in allowed}
     assert written, f"No params survived filtering for {model}"
 
-    # Step 2: Merge into a copy of algorithm_config (same as endpoint does)
+    # Step 2: Merge into a copy of the params (same as endpoint does)
     import copy
-    cfg = copy.deepcopy(algo_config)
-    section = cfg["algorithms"][_ALGO_SECTIONS[model]]
+    section = copy.deepcopy(params)
     for k, v in written.items():
         section[k] = v
 

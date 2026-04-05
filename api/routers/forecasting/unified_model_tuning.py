@@ -36,7 +36,7 @@ MODEL_ID_MAP: dict[str, str] = {
     "xgboost": "xgboost_cluster",
 }
 
-_ALGO_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "algorithm_config.yaml"
+_PIPELINE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "forecast_pipeline_config.yaml"
 
 # CatBoost synonym pairs — only one of each pair can be set at a time.
 # When both appear, keep the first (CatBoost-native) name and drop the alias.
@@ -76,11 +76,11 @@ _MODEL_PARAM_KEYS: dict[str, set[str]] = {
     },
 }
 
-# algorithm_config.yaml section name per model
+# forecast_pipeline_config.yaml model_id per model short name
 _ALGO_SECTION: dict[str, str] = {
-    "lgbm": "lgbm",
-    "catboost": "catboost",
-    "xgboost": "xgboost",
+    "lgbm": "lgbm_cluster",
+    "catboost": "catboost_cluster",
+    "xgboost": "xgboost_cluster",
 }
 
 # Config keys for comparison (non-hyperparameter settings from metadata)
@@ -550,41 +550,40 @@ def _build_temp_config(
     params: dict[str, Any] | None,
     config: dict[str, Any] | None,
 ) -> Path:
-    """Create a temporary algorithm_config.yaml with experiment overrides.
+    """Create a temporary forecast_pipeline_config.yaml with experiment overrides.
 
     Returns the path to the temp config file.
     """
     try:
-        with open(_ALGO_CONFIG_PATH) as f:
+        with open(_PIPELINE_CONFIG_PATH) as f:
             cfg = yaml.safe_load(f)
     except (OSError, yaml.YAMLError) as exc:
-        logger.exception("Failed to read algorithm_config.yaml for temp config")
+        logger.exception("Failed to read forecast_pipeline_config.yaml for temp config")
         raise HTTPException(status_code=500, detail=f"Failed to read config: {exc}")
 
-    algo_section = _ALGO_SECTION[model]
+    pipeline_key = _ALGO_SECTION[model]
+    entry = cfg.get("algorithms", {}).get(pipeline_key, {})
+    params_section = entry.setdefault("params", {})
 
-    # Apply hyperparameter overrides
+    # Apply hyperparameter overrides into the params sub-dict
     if params:
-        section = cfg.get("algorithms", {}).get(algo_section, {})
         for key, value in params.items():
-            section[key] = value
-        cfg.setdefault("algorithms", {})[algo_section] = section
+            params_section[key] = value
 
-    # Apply config overrides (cluster_strategy, recursive, etc.)
+    # Apply config overrides (cluster_strategy, recursive, etc.) at entry level
     if config:
-        section = cfg.get("algorithms", {}).get(algo_section, {})
         for key, value in config.items():
-            section[key] = value
-        cfg.setdefault("algorithms", {})[algo_section] = section
+            entry[key] = value
+
+    cfg.setdefault("algorithms", {})[pipeline_key] = entry
 
     # Strip CatBoost synonym conflicts before writing
     if model == "catboost":
-        section = cfg.get("algorithms", {}).get(algo_section, {})
-        cfg["algorithms"][algo_section] = _sanitize_catboost_synonyms(section)
+        cfg["algorithms"][pipeline_key]["params"] = _sanitize_catboost_synonyms(params_section)
 
     # Write to a temp directory
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"tuning_{model}_"))
-    tmp_path = tmp_dir / "algorithm_config.yaml"
+    tmp_path = tmp_dir / "forecast_pipeline_config.yaml"
     with open(tmp_path, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
@@ -1152,7 +1151,7 @@ def _parse_month_rows(rows: list[tuple]) -> list[dict[str, Any]]:
 
 @router.post("/{model}/experiments/{run_id}/promote")
 def promote_experiment(model: str, run_id: int):
-    """Promote a completed experiment to production — writes params to algorithm_config.yaml."""
+    """Promote a completed experiment to production — writes params to forecast_pipeline_config.yaml."""
     _validate_model(model)
     mid = _model_id(model)
     algo_section = _ALGO_SECTION[model]
@@ -1196,24 +1195,28 @@ def promote_experiment(model: str, run_id: int):
             detail=f"Experiment params contain no recognized {model} hyperparameters",
         )
 
-    # 3. Backup and write to algorithm_config.yaml
+    # 3. Backup and write to forecast_pipeline_config.yaml (algorithms.<model_id>.params)
     try:
-        with open(_ALGO_CONFIG_PATH) as f:
+        with open(_PIPELINE_CONFIG_PATH) as f:
             cfg = yaml.safe_load(f)
 
         # Create backup
-        backup_path = _ALGO_CONFIG_PATH.with_suffix(f".yaml.bak.{run_id}")
-        shutil.copy2(_ALGO_CONFIG_PATH, backup_path)
+        backup_path = _PIPELINE_CONFIG_PATH.with_suffix(f".yaml.bak.{run_id}")
+        shutil.copy2(_PIPELINE_CONFIG_PATH, backup_path)
 
-        section = cfg["algorithms"][algo_section]
-        old_params = {k: section.get(k) for k in overrides}
+        entry = cfg["algorithms"][algo_section]
+        params_section = entry.setdefault("params", {})
+        old_params = {k: params_section.get(k) for k in overrides}
         for key, value in overrides.items():
-            section[key] = value
+            params_section[key] = value
 
-        with open(_ALGO_CONFIG_PATH, "w") as f:
+        with open(_PIPELINE_CONFIG_PATH, "w") as f:
             yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
+
+        from common.utils import reset_config
+        reset_config("forecast_pipeline_config.yaml")
     except (OSError, KeyError, yaml.YAMLError) as exc:
-        logger.exception("Failed to write algorithm_config.yaml during %s promote", model)
+        logger.exception("Failed to write forecast_pipeline_config.yaml during %s promote", model)
         raise HTTPException(status_code=500, detail=f"Failed to update config: {exc}")
 
     # 4. Atomically update DB: clear previous, set new, log to promotion table
@@ -1367,7 +1370,7 @@ def promote_results(model: str, run_id: int):
 
     # Check prediction files exist
     output_dir = MODEL_ID_MAP[model]
-    pred_path = _ALGO_CONFIG_PATH.parent.parent / "data" / "backtest" / output_dir / "backtest_predictions.csv"
+    pred_path = _PIPELINE_CONFIG_PATH.parent.parent / "data" / "backtest" / output_dir / "backtest_predictions.csv"
     if not pred_path.exists():
         raise HTTPException(
             status_code=400,
@@ -1601,21 +1604,21 @@ def get_templates(model: str, response: FastAPIResponse):
 
     try:
         from common.utils import load_config
-        tmpl_cfg = load_config("tuning_templates")
+        tmpl_cfg = load_config("tuning_templates.yaml")
     except (FileNotFoundError, OSError) as exc:
         logger.exception("Failed to load tuning_templates.yaml")
         raise HTTPException(status_code=500, detail=f"Failed to load templates: {exc}")
 
     model_templates = tmpl_cfg.get("templates", {}).get(model, [])
 
-    # For templates with source='algorithm_config', load live params
+    # For templates with source='algorithm_config' or 'pipeline_config', load live params
     enriched: list[dict[str, Any]] = []
     live_params: dict[str, Any] | None = None
 
     for tmpl in model_templates:
         entry = dict(tmpl)
-        if entry.get("source") == "algorithm_config":
-            # Lazy-load live params from algorithm_config.yaml
+        if entry.get("source") in ("algorithm_config", "pipeline_config"):
+            # Lazy-load live params from forecast_pipeline_config.yaml
             if live_params is None:
                 live_params = _load_live_params(model)
             entry["params"] = live_params
@@ -1625,16 +1628,19 @@ def get_templates(model: str, response: FastAPIResponse):
 
 
 def _load_live_params(model: str) -> dict[str, Any]:
-    """Load the current production params from algorithm_config.yaml for a model."""
+    """Load the current production params from forecast_pipeline_config.yaml for a model."""
     try:
-        with open(_ALGO_CONFIG_PATH) as f:
+        with open(_PIPELINE_CONFIG_PATH) as f:
             cfg = yaml.safe_load(f)
-        section = cfg.get("algorithms", {}).get(_ALGO_SECTION[model], {})
+        pipeline_key = _ALGO_SECTION[model]
+        entry = cfg.get("algorithms", {}).get(pipeline_key, {})
+        # Support pipeline config format (params sub-dict) or flat format
+        section = entry.get("params", entry)
         # Filter to known param keys
         param_keys = _MODEL_PARAM_KEYS[model]
         return {k: v for k, v in section.items() if k in param_keys}
     except (OSError, yaml.YAMLError):
-        logger.warning("Failed to load live params from algorithm_config.yaml for %s", model)
+        logger.warning("Failed to load live params from forecast_pipeline_config.yaml for %s", model)
         return {}
 
 

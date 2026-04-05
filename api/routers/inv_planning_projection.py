@@ -240,14 +240,15 @@ class ProjectionRefreshRequest(BaseModel):
 @router.post("/inv-planning/projection/refresh")
 async def refresh_projection(body: ProjectionRefreshRequest, api_key: str = Depends(require_api_key)):
     """Trigger a synchronous projection recompute for one DFU."""
-    import yaml
+    from common.utils import load_config as _load_config
     from scripts.compute_inventory_projection import (
-        compute_dfu_projection, refresh_summary_view,
+        compute_dfu_projection,
+        refresh_summary_view,
     )
 
     try:
-        with open("config/projection_config.yaml") as f:
-            config = yaml.safe_load(f)
+        full_cfg = _load_config("inventory_planning_config")
+        config = full_cfg.get("projection", {})
     except FileNotFoundError:
         config = {
             "projection": {"horizon_days": 90, "scenarios": ["no_order", "with_open_po", "with_planned_orders"]},

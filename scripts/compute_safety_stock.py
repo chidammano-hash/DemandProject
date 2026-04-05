@@ -42,16 +42,14 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from common.db import get_db_params
+from common.scripts_base import setup_logging
 from common.services.perf_profiler import profiled_section
+from common.utils import load_config as _load_config
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    datefmt="%H:%M:%S",
-)
+setup_logging()
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -494,10 +492,10 @@ def run(
     Returns:
         dict with inserted_count, skipped_count, zero_demand_count.
     """
-    # -- Load config ----------------------------------------------------------
+    # -- Load config (via load_config for _includes support) -----------------
     with profiled_section("load_config"):
-        with open(config_path) as fh:
-            cfg = yaml.safe_load(fh)
+        cfg_name = Path(config_path).stem
+        cfg = _load_config(cfg_name)
         ss_cfg = cfg["safety_stock"]
 
         pv = policy_version or ss_cfg.get("policy_version", "v1")

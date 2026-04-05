@@ -958,7 +958,7 @@ class TestAlgoConfigOverride:
         assert len(result) > 0
 
     def test_none_algo_config_triggers_load_config(self, monkeypatch):
-        """When algo_config=None, load_config must be called exactly once.
+        """When algo_config=None, load_forecast_pipeline_config must be called.
 
         We clear the _config_store cache first so that load_config is not
         short-circuited by a cached value from a previous test run.
@@ -969,11 +969,21 @@ class TestAlgoConfigOverride:
         grid = _make_grid(sku_to_cluster, predict_month=predict_month)
 
         lib_module = _fake_lib_module()
-        mock_load_config = MagicMock(return_value=_ALGO_CONFIG)
+        # Pipeline config format: params nested under algorithms.<model_id>.params
+        _PIPELINE_CONFIG = {
+            "algorithms": {
+                "lgbm_cluster": {
+                    "type": "tree",
+                    "enabled": True,
+                    "cluster_strategy": "per_cluster",
+                    "params": {"n_estimators": 100},
+                },
+            },
+        }
+        mock_load_pipeline = MagicMock(return_value=_PIPELINE_CONFIG)
 
-        # Patch load_config in the module under test
-        # Use monkeypatch to ensure it's active before importlib patch takes effect
-        monkeypatch.setattr(_tree_models_mod, "load_config", mock_load_config)
+        # Patch load_forecast_pipeline_config in the module under test
+        monkeypatch.setattr(_tree_models_mod, "load_forecast_pipeline_config", mock_load_pipeline)
 
         with (
             patch("algorithm_testing.tree_models.fit_model"),
@@ -990,7 +1000,7 @@ class TestAlgoConfigOverride:
                 algo_config=None,
             )
 
-        mock_load_config.assert_called_once_with("algorithm_config")
+        mock_load_pipeline.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

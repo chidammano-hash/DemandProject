@@ -1,8 +1,12 @@
-# 07 — Customer-Level Demand Fact Table
+# Customer-Level Demand Fact Table
 
-**Status:** Draft
-**Author:** Mano
-**Created:** 2026-04-02
+> Adds a monthly range-partitioned fact table at item + customer + location grain so the platform can track unconstrained customer demand, out-of-stock impact, and customer contribution analysis separately from inventory-constrained sales.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | N/A (backend only) |
+| **Key Files** | `sql/110_create_fact_customer_demand_monthly.sql`, `scripts/etl/normalize_customer_demand_csv.py`, `scripts/etl/load_customer_demand_postgres.py`, `common/core/domain_specs.py` |
 
 ---
 

@@ -1,6 +1,15 @@
-# Spec 14 — Execution Lag Filters for Experiment Tabs
+# Execution Lag Filters for Experiment Tabs
 
-**Status:** Implemented
+> Adds a LagFilterBar segmented control to the Algorithm Experiments and Champion Experiments tabs so planners can evaluate model accuracy at each forecast horizon (lags 0–4) rather than only at the portfolio level.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Model Tuning, Champion Experiments |
+| **Key Files** | `scripts/run_champion_experiment.py`, `common/ml/backtest_framework.py`, `frontend/src/components/LagFilterBar.tsx` |
+
+---
+
 **Affects:** Algorithm Experiments (Model Tuning), Champion Experiments
 **Does not affect:** Cluster Experiments (no forecast accuracy dimension)
 

@@ -68,8 +68,8 @@ Predict future demand using ML models, then select the best forecast per item.
 | 08 | [Production Forecast](02-forecasting/08-production-forecast.md) | Generate real forward-looking predictions from champion models |
 | 09 | [Bias Correction](02-forecasting/09-bias-correction.md) | Detect and correct systematic over/under-forecasting |
 | 10 | [Forecast CI Bands](02-forecasting/10-forecast-ci-bands.md) | Confidence intervals showing the range of likely outcomes |
+| 10b | [LGBM Tuning](02-forecasting/10b-lgbm-tuning.md) | Systematic A/B testing and run registry for tree model hyperparameter experiments |
 | 11 | [Unified Model Tuning Studio](02-forecasting/11-unified-model-tuning-v2.md) | UI-driven experiment launch, comparison, and promotion for LGBM/CatBoost/XGBoost |
-
 | 12 | [Dual Promotion](02-forecasting/12-dual-promotion.md) | Two-stage promotion: config → results for tuning experiments |
 | 13 | [Production Baseline Seeding](02-forecasting/13-production-baseline-seeding.md) | Auto-seed production baselines from completed backtests |
 | 14 | [Execution Lag Filters](02-forecasting/14-execution-lag-filters.md) | Lag filter bar semantics for Algorithm and Champion experiment tabs |
@@ -78,8 +78,9 @@ Predict future demand using ML models, then select the best forecast per item.
 | 19 | [Forecast Pipeline Config](02-forecasting/19-forecast-pipeline-config.md) | Master config consolidation — algorithm roster with lifecycle flags, backtest/tuning/champion/production settings in one file |
 | 20 | [Bolt Hierarchical](02-forecasting/20-bolt-hierarchical.md) | Customer-level bottom-up Chronos Bolt with top-down reconciliation — uses true demand from `fact_customer_demand_monthly` to correct stockout bias |
 | 21 | [Customer-Enriched Features](02-forecasting/21-customer-enriched-features.md) | 34 customer-derived features (concentration, churn, OOS, channel mix, customer attribute mix) for tree model enrichment |
+| 22 | [Expert Panel Flow](02-forecasting/22-expert-panel-flow.md) | Mermaid process flow diagram for the advanced expert panel algorithm selection pipeline |
 
-**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config) → 20-21 (customer-enriched)
+**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 10b (LGBM tuning) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config) → 20-21 (customer-enriched) → 22 (expert panel flow)
 
 ---
 
@@ -94,6 +95,8 @@ Understand demand patterns — descriptive analytics that inform forecasting and
 | 03 | [Blended Demand](03-demand-intelligence/03-blended-demand.md) | Alpha-weighted blend of statistical forecast + demand signals |
 | 04 | [Cluster Experimentation Studio](03-demand-intelligence/04-cluster-experimentation-studio.md) | Experiment lifecycle for testing segmentation configs (create, run, compare, promote) with cluster-aware algorithm tuning |
 | 05 | [Champion Experimentation Studio](03-demand-intelligence/05-champion-experimentation-studio.md) | Experiment lifecycle for 8 champion selection strategies (expanding, rolling, decay, ensemble, meta_learner, hybrid_warmup, adaptive_ensemble, ensemble_rolling) with 2-stage promotion |
+| 06 | [Demand History Workbench](03-demand-intelligence/06-demand-history-workbench.md) | 5-endpoint customer demand analysis API — reference panel, proportional decomposition, hierarchical drill-down, cross-reference matrix |
+| 07 | [Customer Analytics](03-demand-intelligence/07-customer-analytics.md) | Demand-aware customer map with volume, OOS hotspots, channel mix, and concentration analytics |
 
 ---
 
@@ -176,6 +179,18 @@ Connect Supply Chain Command Center to the rest of the enterprise.
 | 08 | [Reporting](08-integration/08-reporting.md) | Scheduled report generation and delivery |
 | 09 | [API Governance](08-integration/09-api-governance.md) | Rate limiting, versioning, usage tracking |
 | 10 | [Webhooks](08-integration/10-webhooks.md) | Event-driven outbound notifications with retry |
+
+---
+
+## PRD — Product Requirements (Draft / Planned Work)
+
+Specs for features that are designed but not yet fully implemented. Kept separate from numbered implemented specs.
+
+| File | Domain | Summary |
+|------|--------|---------|
+| [PRD-bolt-bottom-up-reconciled](PRD/PRD-bolt-bottom-up-reconciled.md) | Forecasting | Hierarchical Bolt — customer-level bottom-up Chronos Bolt with MinTrace reconciliation |
+| [PRD-customer-enriched-forecasting](PRD/PRD-customer-enriched-forecasting.md) | Forecasting | Customer-enriched tree models with 34 customer-derived features added to competition roster |
+| [PRD-customer-analytics-visuals](PRD/PRD-customer-analytics-visuals.md) | Demand Intelligence | Enhanced customer map with demand volume, OOS hotspots, channel mix, and supply chain visuals |
 
 ---
 

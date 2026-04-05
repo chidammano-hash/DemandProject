@@ -174,13 +174,13 @@ def _analyze_cluster_patterns(limit_runs: int = 10) -> dict[str, Any]:
 
 def _get_current_config() -> dict[str, Any]:
     """Return current LGBM algorithm config and tried strategies."""
-    algo_cfg = load_config("algorithm_config.yaml")
-    lgbm_params = algo_cfg.get("algorithms", {}).get("lgbm", {})
+    from common.utils import get_algorithm_params
+    lgbm_params = get_algorithm_params("lgbm_cluster")
 
     strategies: list[dict[str, Any]] = []
     try:
-        strat_cfg = load_config("auto_tune_strategies.yaml")
-        strategies = strat_cfg.get("strategies", [])
+        strat_cfg = load_config("tune_strategies.yaml")
+        strategies = strat_cfg.get("lgbm", {}).get("strategies", [])
     except FileNotFoundError:
         pass
 
@@ -314,8 +314,8 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "get_current_config",
         "description": (
             "Return the current production LGBM hyperparameters from "
-            "algorithm_config.yaml and the list of available tuning strategies "
-            "from auto_tune_strategies.yaml."
+            "forecast_pipeline_config.yaml and the list of available tuning strategies "
+            "from tune_strategies.yaml."
         ),
         "input_schema": {
             "type": "object",
@@ -459,13 +459,13 @@ Each run produces: overall accuracy%, WAPE, bias, plus per-cluster and per-month
 class TuningAdvisorAgent:
     """LLM tool-use agent for interactive LGBM hyperparameter tuning.
 
-    Supports OpenAI and Anthropic providers (configured via tuning_advisor_config.yaml).
+    Supports OpenAI and Anthropic providers (configured via ai_planner_config.yaml, tuning_advisor section).
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         if config is None:
-            raw = load_config("tuning_advisor_config.yaml")
-            config = raw
+            raw = load_config("ai_planner_config.yaml")
+            config = raw.get("tuning_advisor", raw)
 
         self.config = config
         self.provider = config.get("provider", "openai").lower()

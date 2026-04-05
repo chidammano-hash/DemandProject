@@ -1,27 +1,3 @@
-# ═══════════════════════════════════════════════════════════════════════════
-# forecast_pipeline_config.yaml — Single source of truth for the ML forecast pipeline
-# ═══════════════════════════════════════════════════════════════════════════
-#
-# Consolidates settings from (now deprecated):
-#   - model_competition.yaml     → champion section
-#   - lgbm_tuning_config.yaml    → tracking section
-#   - production_forecast_config.yaml → production_forecast section
-#
-# Model-specific hyperparams remain in algorithm_config.yaml.
-# This file governs WHICH models run and HOW the pipeline operates.
-#
-# Pipeline stages:  cluster → tune → backtest → load → compete → forecast
-
-# ── Algorithm Roster ──────────────────────────────────────────────────────
-# Master list. `enabled: false` disables across ALL pipeline stages.
-#
-# Lifecycle flags:
-#   tune:     Include in hyperparameter tuning (Bayesian/Optuna)
-#   backtest: Include in expanding-window backtest
-#   compete:  Include in champion model selection horse race
-#   forecast: Eligible for production forecast (has .pkl artifacts)
-#   expert:   Available for expert system archetype routing
-
 algorithms:
   lgbm_cluster:
     type: tree
@@ -31,10 +7,30 @@ algorithms:
     compete: true
     forecast: true
     expert: false
-    cluster_strategy: per_cluster             # per_cluster | global
-    config_key: lgbm                          # key in algorithm_config.yaml#algorithms
+    cluster_strategy: per_cluster
     output_dir: data/backtest/lgbm_cluster
-
+    params:
+      recursive: true
+      shap_select: true
+      shap_threshold: 0.95
+      shap_top_n: null
+      shap_sample_size: 500
+      tune_inline: false
+      params_file: null
+      n_estimators: 1500
+      learning_rate: 0.02
+      num_leaves: 127
+      min_child_samples: 40
+      max_depth: -1
+      min_gain_to_split: 0.005
+      subsample: 0.7
+      bagging_freq: 1
+      colsample_bytree: 0.7
+      feature_fraction_bynode: 0.5
+      reg_lambda: 1.0
+      reg_alpha: 0.1
+      path_smooth: 4
+      max_bin: 127
   catboost_cluster:
     type: tree
     enabled: true
@@ -44,9 +40,34 @@ algorithms:
     forecast: true
     expert: false
     cluster_strategy: per_cluster
-    config_key: catboost
     output_dir: data/backtest/catboost_cluster
-
+    params:
+      recursive: true
+      shap_select: true
+      shap_threshold: 0.95
+      shap_top_n: null
+      shap_sample_size: 500
+      tune_inline: false
+      params_file: null
+      iterations: 800
+      learning_rate: 0.03
+      depth: 7
+      l2_leaf_reg: 7.5
+      subsample: 0.85
+      grow_policy: Lossguide
+      border_count: 32
+      random_strength: 0.4
+      min_data_in_leaf: 28
+      colsample_bylevel: 0.85
+      bagging_temperature: 0.4
+      max_leaves: 80
+      bootstrap_type: MVS
+      model_size_reg: 0.1
+      score_function: L2
+      boost_from_average: true
+      leaf_estimation_method: Newton
+      leaf_estimation_iterations: 1
+      max_ctr_complexity: 1
   xgboost_cluster:
     type: tree
     enabled: true
@@ -56,9 +77,29 @@ algorithms:
     forecast: true
     expert: false
     cluster_strategy: per_cluster
-    config_key: xgboost
     output_dir: data/backtest/xgboost_cluster
-
+    params:
+      recursive: true
+      shap_select: true
+      shap_threshold: 0.95
+      shap_top_n: null
+      shap_sample_size: 500
+      tune_inline: false
+      params_file: null
+      n_estimators: 2000
+      learning_rate: 0.02
+      max_depth: 7
+      min_child_weight: 15
+      subsample: 0.8
+      colsample_bytree: 0.8
+      grow_policy: lossguide
+      max_leaves: 255
+      max_bin: 256
+      reg_lambda: 5.0
+      reg_alpha: 0.5
+      gamma: 0.1
+      colsample_bylevel: 0.8
+      booster: gbtree
   lgbm_cust_enriched:
     type: tree
     enabled: true
@@ -68,9 +109,27 @@ algorithms:
     forecast: true
     expert: false
     cluster_strategy: per_cluster
-    config_key: lgbm_cust_enriched
     output_dir: data/backtest/lgbm_cust_enriched
-
+    params:
+      recursive: true
+      shap_select: true
+      shap_threshold: 0.95
+      shap_sample_size: 500
+      customer_features: true
+      n_estimators: 1500
+      learning_rate: 0.02
+      num_leaves: 127
+      min_child_samples: 40
+      max_depth: -1
+      min_gain_to_split: 0.005
+      subsample: 0.7
+      bagging_freq: 1
+      colsample_bytree: 0.65
+      feature_fraction_bynode: 0.45
+      reg_lambda: 1.5
+      reg_alpha: 0.15
+      path_smooth: 4
+      max_bin: 127
   catboost_cust_enriched:
     type: tree
     enabled: true
@@ -80,9 +139,29 @@ algorithms:
     forecast: true
     expert: false
     cluster_strategy: per_cluster
-    config_key: catboost_cust_enriched
     output_dir: data/backtest/catboost_cust_enriched
-
+    params:
+      recursive: true
+      shap_select: true
+      shap_threshold: 0.95
+      shap_sample_size: 500
+      customer_features: true
+      iterations: 800
+      learning_rate: 0.03
+      depth: 7
+      l2_leaf_reg: 9.0
+      subsample: 0.85
+      grow_policy: Lossguide
+      border_count: 32
+      random_strength: 0.4
+      min_data_in_leaf: 28
+      colsample_bylevel: 0.8
+      bagging_temperature: 0.4
+      max_leaves: 80
+      bootstrap_type: MVS
+      model_size_reg: 0.1
+      score_function: L2
+      boost_from_average: true
   xgboost_cust_enriched:
     type: tree
     enabled: true
@@ -92,20 +171,43 @@ algorithms:
     forecast: true
     expert: false
     cluster_strategy: per_cluster
-    config_key: xgboost_cust_enriched
     output_dir: data/backtest/xgboost_cust_enriched
-
+    params:
+      recursive: true
+      shap_select: true
+      shap_threshold: 0.95
+      shap_sample_size: 500
+      customer_features: true
+      n_estimators: 2000
+      learning_rate: 0.02
+      max_depth: 7
+      min_child_weight: 15
+      subsample: 0.8
+      colsample_bytree: 0.75
+      grow_policy: lossguide
+      max_leaves: 255
+      max_bin: 256
+      reg_lambda: 6.0
+      reg_alpha: 0.6
+      gamma: 0.1
+      colsample_bylevel: 0.75
+      booster: gbtree
   chronos:
     type: foundation
     enabled: true
     tune: false
     backtest: true
-    compete: false                            # superseded by chronos2
-    forecast: false                           # zero-shot, no .pkl
+    compete: false
+    forecast: false
     expert: true
-    config_key: chronos
     output_dir: data/backtest/chronos
-
+    params:
+      model_size: small
+      device: auto
+      batch_size: 1024
+      num_samples: 20
+      prediction_length: 6
+      num_workers: 1
   chronos_bolt:
     type: foundation
     enabled: true
@@ -114,9 +216,14 @@ algorithms:
     compete: true
     forecast: false
     expert: false
-    config_key: chronos_bolt
     output_dir: data/backtest/chronos_bolt
-
+    params:
+      model_size: large
+      device: auto
+      batch_size: 512
+      num_samples: 12
+      prediction_length: 6
+      num_workers: 1
   chronos2:
     type: foundation
     enabled: true
@@ -125,9 +232,12 @@ algorithms:
     compete: true
     forecast: false
     expert: false
-    config_key: chronos2
     output_dir: data/backtest/chronos2
-
+    params:
+      device: auto
+      batch_size: 2048
+      prediction_length: 6
+      num_workers: 1
   chronos2_enriched:
     type: foundation
     enabled: true
@@ -136,9 +246,12 @@ algorithms:
     compete: true
     forecast: false
     expert: false
-    config_key: chronos2_enriched
     output_dir: data/backtest/chronos2_enriched
-
+    params:
+      device: auto
+      batch_size: 1024
+      prediction_length: 6
+      num_workers: 1
   bolt_hierarchical:
     type: foundation
     enabled: true
@@ -147,10 +260,20 @@ algorithms:
     compete: true
     forecast: true
     expert: false
-    config_key: bolt_hierarchical
     output_dir: data/backtest/bolt_hierarchical
-    notes: "Customer-level bottom-up Bolt + top-down reconciliation using true demand"
-
+    notes: Customer-level bottom-up Bolt + top-down reconciliation using true demand
+    params:
+      model_size: base
+      device: auto
+      batch_size: 2048
+      prediction_length: 6
+      n_timeframes: 10
+      bu_chunk_size: 200000
+      min_nonzero_months: 6
+      min_history_months: 6
+      max_customers_per_item_loc: 100
+      reconciliation_method: weighted_average
+      bu_weight: 0.6
   mstl:
     type: statistical
     enabled: true
@@ -159,9 +282,10 @@ algorithms:
     compete: true
     forecast: false
     expert: true
-    config_key: mstl
     output_dir: data/backtest/mstl
-
+    params:
+      season_length: 12
+      min_history: 25
   nbeats:
     type: deep_learning
     enabled: true
@@ -170,9 +294,15 @@ algorithms:
     compete: true
     forecast: false
     expert: true
-    config_key: nbeats
     output_dir: data/backtest/nbeats
-
+    params:
+      h: 6
+      input_size: 24
+      max_steps: 500
+      batch_size: 32
+      learning_rate: 0.001
+      scaler_type: standard
+      early_stop_patience_steps: -1
   nhits:
     type: deep_learning
     enabled: true
@@ -181,9 +311,15 @@ algorithms:
     compete: true
     forecast: false
     expert: false
-    config_key: nhits
     output_dir: data/backtest/nhits
-
+    params:
+      h: 6
+      input_size: 24
+      max_steps: 500
+      batch_size: 32
+      learning_rate: 0.001
+      scaler_type: standard
+      early_stop_patience_steps: -1
   seasonal_naive:
     type: statistical
     enabled: true
@@ -193,9 +329,8 @@ algorithms:
     forecast: false
     expert: false
     cluster_strategy: per_cluster
-    config_key: seasonal_naive
     output_dir: data/backtest/seasonal_naive
-
+    params: {}
   rolling_mean:
     type: statistical
     enabled: true
@@ -205,28 +340,26 @@ algorithms:
     forecast: false
     expert: true
     cluster_strategy: per_cluster
-    config_key: rolling_mean
     output_dir: data/backtest/rolling_mean
-
-
-# ── Backtest Settings ─────────────────────────────────────────────────────
+    params:
+      window: 6
 backtest:
   n_timeframes: 10
-  embargo_months: 1                # ALIGNED with tuning gap_months (was 0)
-  forecast_horizon: 6              # months predicted per timeframe
+  embargo_months: 1
+  forecast_horizon: 6
   early_stop_pct: 0.03
-  shap_retrain_threshold: 0.10
+  shap_retrain_threshold: 0.1
   n_seeds: 1
   tweedie_variance_power: 1.5
   intermittent_threshold: 0.7
   lumpy_threshold: 0.3
   output_dir: data/backtest
-
-# ── Tuning Settings ───────────────────────────────────────────────────────
+  recursive_noise_enabled: false
+  recursive_noise_pct: 0.05
 tuning:
   n_trials: 50
   n_splits: 5
-  gap_months: 1                    # ALIGNED with backtest embargo_months
+  gap_months: 1
   val_months_per_fold: 3
   min_train_months: 13
   early_stopping_rounds: 50
@@ -234,65 +367,51 @@ tuning:
   n_estimators_buffer: 1.1
   random_seed: 42
   output_dir: data/tuning
-  # Optuna search spaces remain in hyperparameter_tuning.yaml
   search_space_ref: hyperparameter_tuning.yaml
-
-# ── Champion Selection ────────────────────────────────────────────────────
-# Competing models are derived from algorithms[*].compete == true
 champion:
-  strategy: hybrid_warmup
+  strategy: rolling
   strategy_params:
-    min_prior_months: 3
-    warmup_strategy: rolling
-    warmup_window: 2
-    warmup_min_prior: 1
-    primary_strategy: adaptive_ensemble
-    primary_top_k: 3
-    primary_weight_method: inverse_wape
+    window_months: 6
   fallback_model_id: seasonal_naive
-  metric: accuracy_pct
+  metric: wape
   lag: execution
   min_sku_rows: 3
   min_dfu_rows: 3
-  champion_model_id: champion       # model_id written to fact table for winners
+  champion_model_id: champion
   meta_learner:
     model_type: random_forest
     n_estimators: 200
     max_depth: 15
     test_months: 3
     performance_window: 6
-
-# ── Production Forecast ───────────────────────────────────────────────────
 production_forecast:
-  horizon_months: 24               # Forecast T+1 through T+24 (was 18)
-  lookback_months: 36              # Months of sales history loaded (was 24)
-  min_history_months: 12           # Below this → cold-start model routing
-  cold_start_model_id: rolling_mean  # Fallback for DFUs with 3-11 months history
-  cold_start_min_months: 3         # Absolute floor — DFUs with < 3 months skipped
-  fallback_model_id: lgbm_cluster  # Default for mature DFUs without champion assignment
+  horizon_months: 24
+  lookback_months: 36
+  min_history_months: 12
+  cold_start_model_id: rolling_mean
+  cold_start_min_months: 3
+  fallback_model_id: lgbm_cluster
   recursive: true
-  plan_version_format: "%Y-%m"
+  plan_version_format: '%Y-%m'
   keep_last_n_versions: 3
   confidence_interval:
     enabled: true
     source_model_ids:
-      - lgbm_cluster
-      - catboost_cluster
-      - xgboost_cluster
+    - lgbm_cluster
+    - catboost_cluster
+    - xgboost_cluster
     residual_lag: 0
     min_residual_months: 6
-    z_lower: 1.282                 # P10
-    z_upper: 1.282                 # P90
+    z_lower: 1.282
+    z_upper: 1.282
     horizon_scaling: sqrt
     sigma_floor: 1.0
     sigma_cap_multiplier: 3.0
   model_registry:
-    base_path: "data/models"
+    base_path: data/models
   scheduler:
     job_type: generate_production_forecast
-    cron: "0 6 2 * *"
-
-# ── Run Tracking ──────────────────────────────────────────────────────────
+    cron: 0 6 2 * *
 tracking:
   backup_dir: data/backtest/tuning_archive
   auto_register: true
@@ -302,14 +421,10 @@ tracking:
     improved_min_delta_accuracy: 0.05
     degraded_max_delta_accuracy: -0.05
   max_archive_runs: 50
-
-# ── Clustering ────────────────────────────────────────────────────────────
-# DFU clustering: segments DFUs by demand patterns into ml_cluster groups.
-# Must run BEFORE backtest (backtest reads ml_cluster from dim_sku).
-# Detailed ML params (k_range, labeling thresholds) stay in clustering_config.yaml.
-# Per-cluster hyperparameter profiles stay in cluster_tuning_profiles.yaml.
 clustering:
-  enabled: true                        # false → skip clustering; backtest falls back to global
+  enabled: true
+  cluster_sizing:
+    samples_per_feature: 1
   config_ref: clustering_config.yaml
   tuning_profiles_ref: cluster_tuning_profiles.yaml
   experiment_templates_ref: cluster_experiment_templates.yaml
@@ -324,54 +439,49 @@ clustering:
   db_target:
     table: dim_sku
     column: ml_cluster
-
-# ── Backtest Sampling ────────────────────────────────────────────────────
-# Stratified DFU sampling for fast backtest iteration (~5K of ~50K DFUs).
-# Sampling is stratified BY CLUSTER — requires clustering first.
-# Replaces backtest_sampling_config.yaml (kept for backward compat).
 backtest_sampling:
-  enabled: true                        # false → always run full population backtest
+  enabled: true
   default_target_n: 5000
-  default_method: proportional         # proportional | equal | sqrt
+  default_method: proportional
   min_per_cluster: 10
   max_target_n: 20000
   seed: 42
-  representativeness_threshold: 0.05   # KS stat threshold for sample quality
-
-# ── Pipeline Stages ──────────────────────────────────────────────────────
-# Documents the dependency chain and execution order.
-# Consumed by Makefile targets. See `make setup-backtest` for full chain.
+  representativeness_threshold: 0.05
 pipeline:
   stages:
-    - name: clustering
-      description: "Segment DFUs into demand-pattern clusters"
-      makefile_target: cluster-all
-      depends_on: []
-      enabled_by: clustering.enabled
-    - name: backtest
-      description: "Expanding-window backtest for all enabled algorithms"
-      makefile_target: backtest-all
-      depends_on: [clustering]
-      enabled_by: "always"
-    - name: load
-      description: "Load backtest predictions into Postgres"
-      makefile_target: backtest-load-all-bulk
-      depends_on: [backtest]
-      enabled_by: "always"
-    - name: champion
-      description: "Select best model per DFU from backtest results"
-      makefile_target: champion-all
-      depends_on: [load]
-      enabled_by: "always"
-    - name: forecast
-      description: "Generate production forecasts using champion models"
-      makefile_target: forecast-generate
-      depends_on: [champion]
-      enabled_by: "always"
+  - name: clustering
+    description: Segment DFUs into demand-pattern clusters
+    makefile_target: cluster-all
+    depends_on: []
+    enabled_by: clustering.enabled
+  - name: backtest
+    description: Expanding-window backtest for all enabled algorithms
+    makefile_target: backtest-all
+    depends_on:
+    - clustering
+    enabled_by: always
+  - name: load
+    description: Load backtest predictions into Postgres
+    makefile_target: backtest-load-all-bulk
+    depends_on:
+    - backtest
+    enabled_by: always
+  - name: champion
+    description: Select best model per DFU from backtest results
+    makefile_target: champion-all
+    depends_on:
+    - load
+    enabled_by: always
+  - name: forecast
+    description: Generate production forecasts using champion models
+    makefile_target: forecast-generate
+    depends_on:
+    - champion
+    enabled_by: always
   auxiliary:
-    - name: seasonality
-      description: "Detect per-DFU seasonality profiles"
-      makefile_target: seasonality-all
-    - name: variability
-      description: "Compute per-DFU demand variability class"
-      makefile_target: variability-all
+  - name: seasonality
+    description: Detect per-DFU seasonality profiles
+    makefile_target: seasonality-all
+  - name: variability
+    description: Compute per-DFU demand variability class
+    makefile_target: variability-all

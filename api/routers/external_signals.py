@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.auth import require_api_key
-from api.core import get_conn
+from api.core import add_item_loc_filters, get_conn
 from common.auth import CurrentUser, require_role
 
 router = APIRouter(prefix="/demand-signals/external", tags=["demand-signals"])
@@ -20,12 +20,7 @@ async def list_external_signals(
     """List external demand signals."""
     where = ["signal_date >= now() - interval '%s days'" % days]
     params: list = []
-    if item_id:
-        where.append("item_id ILIKE %s")
-        params.append(f"%{item_id}%")
-    if loc:
-        where.append("loc ILIKE %s")
-        params.append(f"%{loc}%")
+    add_item_loc_filters(where, params, item_id or None, loc or None, table_alias="s")
 
     where_sql = "WHERE " + " AND ".join(where)
 

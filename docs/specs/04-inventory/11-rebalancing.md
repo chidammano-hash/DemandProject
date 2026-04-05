@@ -1,6 +1,14 @@
-# 04-11 Inventory Rebalancing
+# Inventory Rebalancing
 
-> **Status:** Implemented
+> Detects cross-location inventory imbalances using DOS CV, builds transfer candidates between excess and shortage locations, solves for optimal transfers via greedy or LP solver, and manages execution through a 4-state approval workflow.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning |
+| **Key Files** | `scripts/compute_rebalancing.py`, `api/routers/inventory/inv_planning_rebalancing.py`, `config/rebalancing_config.yaml`, `sql/071_create_transfer_network.sql` |
+
+---
 
 ## Problem
 

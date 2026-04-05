@@ -1,6 +1,6 @@
 # Claude Code Skills, Agents & Commands — Developer Guide
 
-This guide covers the 9 skills, 5 agents, and 6 commands installed in `.claude/` for the DemandProject. These are sourced from [Everything Claude Code](./everything-claude-code-main/README.md) and tailored for the Python + FastAPI + React + PostgreSQL stack used here.
+This guide covers the 9 skills, 5 agents, and 6 commands installed in `.claude/` for the DemandProject. These are tailored for the Python + FastAPI + React + PostgreSQL stack used here.
 
 ---
 

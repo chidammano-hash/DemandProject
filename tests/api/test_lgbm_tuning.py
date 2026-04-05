@@ -407,10 +407,14 @@ async def test_list_comparisons_returns_200(mock_pool):
 
 _FAKE_CONFIG = {
     "algorithms": {
-        "lgbm": {
-            "n_estimators": 1500,
-            "learning_rate": 0.02,
-            "num_leaves": 63,
+        "lgbm_cluster": {
+            "type": "tree",
+            "enabled": True,
+            "params": {
+                "n_estimators": 1500,
+                "learning_rate": 0.02,
+                "num_leaves": 63,
+            },
         },
     },
 }

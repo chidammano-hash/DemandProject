@@ -16,23 +16,7 @@ vi.mock("@/api/queries", async () => {
   };
 });
 
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: any) => <div>{children}</div>,
-  BarChart: ({ children }: any) => (
-    <div data-testid="bar-chart">{children}</div>
-  ),
-  Bar: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  ScatterChart: ({ children }: any) => (
-    <div data-testid="scatter-chart">{children}</div>
-  ),
-  Scatter: () => null,
-  ZAxis: () => null,
-  ReferenceLine: () => null,
-}));
+vi.mock("recharts");
 
 vi.mock("@/context/GlobalFilterContext", async () => {
   const actual = await vi.importActual("@/context/GlobalFilterContext");

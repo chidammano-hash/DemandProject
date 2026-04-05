@@ -1,4 +1,14 @@
-# Expert System Backtest (ExpSys)
+# Expert System Backtest
+
+> Produces a canonical production forecast by directly assigning the empirically best algorithm per demand archetype (smooth, erratic, intermittent) and running a deterministic backtest across the full DFU population — bypassing the multi-algorithm competition.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | N/A (backend only) |
+| **Key Files** | `scripts/run_expert_system_backtest.py`, `config/expert_system_backtest.yaml` |
+
+---
 
 ## 1. Purpose
 

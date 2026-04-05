@@ -1,10 +1,10 @@
+_includes: [shared_constants]
+
 service_level:
-  # Default service level targets by ABC class
+  # A, B, C, default inherited from shared_constants.yaml via _includes.
+  # X is a local override for unclassified items.
   targets_by_abc:
-    A: 0.98
-    B: 0.95
-    C: 0.90
-    X: 0.92   # default when class not assigned
+    X: 0.92   # override: default when class not assigned
 
   # Minimum data points required for reliable service level calculation
   min_months_history: 3

@@ -1,6 +1,14 @@
-# 04-04 EOQ, Replenishment Policies & Health Scores
+# EOQ, Replenishment Policies & Health Scores
 
-> **Status:** Implemented | **Features:** IPfeature4, IPfeature5, IPfeature6
+> Three interconnected modules: an EOQ calculator using the Wilson formula, a policy engine that auto-assigns Fixed Quantity/Min-Max/Periodic Review/DDMRP policies by ABC-XYZ segment, and a 4-component 100-point health score surfacing the weakest inventory positions.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning |
+| **Key Files** | `scripts/compute_eoq.py`, `scripts/assign_replenishment_policy.py`, `config/eoq_config.yaml`, `sql/026_create_inventory_health_score.sql` |
+
+---
 
 ## Problem
 

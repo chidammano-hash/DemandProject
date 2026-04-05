@@ -1,6 +1,14 @@
-# 01-05 Performance Profiling
+# Performance Profiling
 
-> **Status:** Implemented | **Feature:** Performance Profiler
+> Instruments pipeline scripts and API endpoints with zero-friction decorators and context managers to collect timing, memory, and query data, then generates rule-based suggestions for fixing detected bottlenecks.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | N/A (backend only) |
+| **Key Files** | `common/services/perf_profiler.py`, `scripts/ops/run_perf_analysis.py`, `config/perf_config.yaml` |
+
+---
 
 ## Problem
 

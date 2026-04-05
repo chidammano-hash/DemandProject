@@ -31,23 +31,13 @@ if str(ROOT) not in sys.path:
 
 from common.db import get_db_params
 from common.services.perf_profiler import profiled_section
-
-CONFIG_PATH = "config/event_planning_config.yaml"
+from common.utils import load_config as _load_config
 
 EVENT_TYPES = {"PROMOTION", "HOLIDAY", "PRODUCT_LAUNCH", "PHASE_OUT", "DISRUPTION", "TRADE_SHOW"}
 
 
-def load_config(path: str = CONFIG_PATH) -> dict:
-    try:
-        with open(path) as f:
-            return yaml.safe_load(f).get("event_planning", {})
-    except FileNotFoundError:
-        return {
-            "max_uplift_multiplier": 5.0,
-            "min_uplift_multiplier": 0.0,
-            "require_approval_above_impact_value": 5000.0,
-            "post_event_lag_weeks": 2,
-        }
+def load_config() -> dict:
+    return _load_config("event_planning_config.yaml").get("event_planning", {})
 
 
 def apply_event_uplift(

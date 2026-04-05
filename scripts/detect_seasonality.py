@@ -48,7 +48,7 @@ from common.db import get_db_params
 from common.services.perf_profiler import profiled_section
 
 
-def load_config(config_path: str = "config/seasonality_config.yaml") -> dict:
+def load_config(config_path: str = "config/forecast_domain_config.yaml") -> dict:
     """Load seasonality configuration."""
     path = ROOT / config_path
     with open(path) as f:
@@ -225,7 +225,7 @@ def _compute_seasonality_for_group(args: tuple) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Detect seasonality patterns in DFU sales")
-    parser.add_argument("--config", type=str, default="config/seasonality_config.yaml", help="Config file path")
+    parser.add_argument("--config", type=str, default="config/forecast_domain_config.yaml", help="Config file path")
     parser.add_argument("--min-months", type=int, default=None, help="Override minimum months required")
     parser.add_argument("--output", type=str, default=None, help="Output CSV path")
     parser.add_argument("--verbose", action="store_true", help="Print per-DFU diagnostics")

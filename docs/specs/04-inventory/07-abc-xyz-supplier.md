@@ -1,6 +1,14 @@
-# 04-07 ABC-XYZ Classification & Supplier Performance
+# ABC-XYZ Classification & Supplier Performance
 
-> **Status:** Implemented | **Features:** IPfeature11, IPfeature12
+> Two complementary segmentation systems: an ABC-XYZ 3x3 matrix combining volume ranking with demand variability to drive differentiated replenishment policies, and supplier delivery KPIs quantifying reliability for lead time assumptions.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning |
+| **Key Files** | `scripts/classify_abc_xyz.py`, `api/routers/inventory/inv_planning_abc_xyz.py`, `sql/032_create_supplier_performance.sql` |
+
+---
 
 ## Problem
 

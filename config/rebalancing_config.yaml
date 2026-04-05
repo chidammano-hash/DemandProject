@@ -1,5 +1,7 @@
 # Inventory Rebalancing Configuration
 
+_includes: [shared_constants]
+
 network:
   default_transfer_lt_days: 3
   default_cost_per_unit: 0.50
@@ -23,7 +25,7 @@ costs:
   default_freight_cost: 0.30     # $/unit inter-location
   default_receiving_cost: 0.10   # $/unit at destination
   stockout_cost_multiplier: 5.0  # revenue multiplier for missed sales
-  carrying_cost_annual_pct: 0.25 # annual holding cost as % of unit value
+  # carrying_cost_annual_pct inherited from shared_constants.yaml via _includes
 
 constraints:
   frozen_period_days: 7          # no transfers in first N days of approved plan

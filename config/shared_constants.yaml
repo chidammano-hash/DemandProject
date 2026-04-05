@@ -1,0 +1,82 @@
+# Shared constants referenced by multiple config files.
+# Change values here once — all consuming configs inherit automatically
+# via the _includes mechanism in load_config().
+#
+# YAML anchors (&name / *name) avoid duplication within this file.
+# "Distribution paths" replicate canonical values into the nested key paths
+# that each consumer config expects after deep-merge.
+
+# ── Canonical definitions ────────────────────────────────────────────────
+
+service_levels_by_abc: &sla
+  A: 0.98
+  B: 0.95
+  C: 0.90
+  default: 0.95
+
+z_table: &ztable
+  0.85: 1.036
+  0.90: 1.282
+  0.95: 1.645
+  0.97: 1.881
+  0.98: 2.054
+  0.99: 2.326
+
+financial_defaults: &fin
+  carrying_cost_pct: &carrying_pct 0.25
+  default_ordering_cost: &ordering_cost 50.0
+  default_unit_cost: &unit_cost 1.0
+  default_moq: &moq 1
+  stockout_cost_per_unit: 50
+
+safety_stock_guard_rails: &ss_rails
+  min_ss_days: &min_ss 3
+  max_ss_days: &max_ss 120
+  lt_std_fallback_pct: &lt_fb 0.20
+
+# ── Distribution paths ──────────────────────────────────────────────────
+# These nested keys deep-merge into consumer configs so values are
+# available at the exact key paths each consumer script expects.
+# DO NOT edit values here — update the canonical anchors above.
+
+# safety_stock_config.yaml expects: safety_stock.{service_levels, z_table, ...}
+safety_stock:
+  service_levels: *sla
+  z_table: *ztable
+  min_ss_days: *min_ss
+  max_ss_days: *max_ss
+  lt_std_fallback_pct: *lt_fb
+
+# replenishment_plan_config.yaml expects: replenishment_plan.{service_levels, z_table, costs, ...}
+replenishment_plan:
+  service_levels: *sla
+  z_table: *ztable
+  min_ss_days: *min_ss
+  max_ss_days: *max_ss
+  lt_std_fallback_pct: *lt_fb
+  costs:
+    default_ordering_cost: *ordering_cost
+    default_holding_cost_pct: *carrying_pct
+    default_unit_cost: *unit_cost
+    default_moq: *moq
+
+# eoq_config.yaml expects: costs.{default_ordering_cost, ...}
+# rebalancing_config.yaml also uses costs.carrying_cost_annual_pct
+costs:
+  default_ordering_cost: *ordering_cost
+  default_holding_cost_pct: *carrying_pct
+  default_unit_cost: *unit_cost
+  default_moq: *moq
+  carrying_cost_annual_pct: *carrying_pct
+
+# financial_plan_config.yaml expects: financial_plan.carrying_cost_pct
+financial_plan:
+  carrying_cost_pct: *carrying_pct
+
+# ai_planner_config.yaml expects: carrying_cost_rate (top-level)
+carrying_cost_rate: *carrying_pct
+
+# service_level_config.yaml expects: service_level.targets_by_abc
+# NOTE: consumer may override with extra classes (e.g. X: 0.92)
+service_level:
+  targets_by_abc: *sla

@@ -6,20 +6,7 @@ import { GlobalFilterProvider } from "@/context/GlobalFilterContext";
 import type { GlobalFilterContextValue } from "@/context/GlobalFilterContext";
 import type { GlobalFilters } from "@/types/theme";
 
-// Mock recharts
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  LineChart: ({ children }: { children: React.ReactNode }) => <div data-testid="line-chart">{children}</div>,
-  Line: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  Legend: () => null,
-  ReferenceLine: () => null,
-  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
-  Bar: () => null,
-}));
+vi.mock("recharts");
 
 vi.mock("@/api/queries/core", () => ({
   fetchSkuShap: vi.fn().mockResolvedValue(null),

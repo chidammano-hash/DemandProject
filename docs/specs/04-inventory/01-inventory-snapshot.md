@@ -1,6 +1,14 @@
-# 04-01 Inventory Snapshot & Backtest
+# Inventory Snapshot & Backtest
 
-> **Status:** Implemented | **Features:** 33, 37
+> Two-layer architecture that loads raw daily inventory snapshots into a partitioned fact table and aggregates them into a monthly materialized view, with a bridge view attributing stockout and excess events to specific forecast models.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory |
+| **Key Files** | `scripts/normalize_inventory_csv.py`, `scripts/load_dataset_postgres.py`, `sql/017_create_fact_inventory_snapshot.sql`, `sql/019_inventory_forecast_view.sql` |
+
+---
 
 ## Problem
 

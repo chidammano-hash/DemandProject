@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
+| **Status** | Implemented |
 | **UI Tab** | N/A (sidebar badge for unread count) |
 | **Key Files** | `common/notification_engine.py`, `api/routers/notifications.py`, `config/notification_config.yaml` |
 

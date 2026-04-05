@@ -473,7 +473,7 @@ def generate_report(
 def _load_perf_config() -> dict[str, Any]:
     """Load perf_config.yaml with fallback to empty dict."""
     try:
-        return load_config("perf_config")
+        return load_config("perf_config.yaml")
     except FileNotFoundError:
         return {}
 

@@ -18,24 +18,36 @@ from tests.api.conftest import make_pool as _make_pool
 
 _ALGO_CONFIG = {
     "algorithms": {
-        "lgbm": {
-            "n_estimators": 1500,
-            "learning_rate": 0.02,
-            "num_leaves": 127,
-            "max_depth": -1,
-            "min_child_samples": 40,
+        "lgbm_cluster": {
+            "type": "tree",
+            "enabled": True,
+            "params": {
+                "n_estimators": 1500,
+                "learning_rate": 0.02,
+                "num_leaves": 127,
+                "max_depth": -1,
+                "min_child_samples": 40,
+            },
         },
-        "catboost": {
-            "iterations": 3000,
-            "learning_rate": 0.008,
-            "depth": 10,
-            "l2_leaf_reg": 7.5,
+        "catboost_cluster": {
+            "type": "tree",
+            "enabled": True,
+            "params": {
+                "iterations": 3000,
+                "learning_rate": 0.008,
+                "depth": 10,
+                "l2_leaf_reg": 7.5,
+            },
         },
-        "xgboost": {
-            "n_estimators": 500,
-            "learning_rate": 0.05,
-            "max_depth": 6,
-            "min_child_weight": 5,
+        "xgboost_cluster": {
+            "type": "tree",
+            "enabled": True,
+            "params": {
+                "n_estimators": 500,
+                "learning_rate": 0.05,
+                "max_depth": 6,
+                "min_child_weight": 5,
+            },
         },
     },
 }

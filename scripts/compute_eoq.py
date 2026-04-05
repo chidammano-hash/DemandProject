@@ -23,6 +23,7 @@ import yaml
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from common.db import get_db_params
 from common.services.perf_profiler import profiled_section
+from common.utils import load_config as _load_config
 
 
 # ---------------------------------------------------------------------------
@@ -284,8 +285,8 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true", help="Skip DB writes")
     args = parser.parse_args()
 
-    with open(args.config) as fh:
-        cfg = yaml.safe_load(fh)
+    cfg_name = os.path.splitext(os.path.basename(args.config))[0]
+    cfg = _load_config(cfg_name)
 
     summary = run(cfg, dry_run=args.dry_run)
     print(

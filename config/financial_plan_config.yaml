@@ -1,6 +1,7 @@
+_includes: [shared_constants]
+
 financial_plan:
-  # Annual carrying cost as fraction of inventory value (20-35% typical)
-  carrying_cost_pct: 0.25
+  # carrying_cost_pct inherited from shared_constants.yaml via _includes
 
   # Forward projection horizon
   months_ahead: 6

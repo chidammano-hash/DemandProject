@@ -121,6 +121,6 @@ class SafetyStockConfig(BaseModel):
 # Register models
 # ---------------------------------------------------------------------------
 
-register_config_model("algorithm_config.yaml", AlgorithmConfig)
+# algorithm_config.yaml consolidated into forecast_pipeline_config.yaml
 register_config_model("planning_config.yaml", PlanningConfig)
 register_config_model("safety_stock_config.yaml", SafetyStockConfig)

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
+| **Status** | Implemented |
 | **UI Tab** | N/A (infrastructure layer) |
 | **Key Files** | `common/cache.py`, `common/query_tracker.py`, `config/cache_config.yaml` |
 

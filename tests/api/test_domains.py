@@ -40,7 +40,7 @@ async def test_list_domains(mock_pool):
             assert "location" in domains
             assert "sales" in domains
             assert "forecast" in domains
-            assert len(domains) == 10
+            assert len(domains) == 12
             assert "inventory" in domains
 
 

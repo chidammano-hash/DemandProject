@@ -281,9 +281,10 @@ class TestLoadDomain:
         csv_file.write_text("col1,col2\na,b\n")
 
         cur = MagicMock()
-        # fetchone calls: staging count, DFU filter EXISTS check (False=skip),
-        # then _is_partitioned check (False)
-        cur.fetchone.side_effect = [(1,), (False,), (False,)]
+        # fetchone calls: staging count, _is_partitioned (False),
+        # DFU filter EXISTS check (False=skip),
+        # FK orphan filter: dim_location EXISTS (False), dim_item EXISTS (False)
+        cur.fetchone.side_effect = [(1,), (False,), (False,), (False,), (False,)]
         cur.fetchall.return_value = []    # no indexes/constraints
         cur.rowcount = 1
 

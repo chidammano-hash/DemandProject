@@ -1,10 +1,11 @@
 """
 Auto-tune LGBM: run N hyperparameter strategies, register, compare, and promote the best.
 
-Reads strategy definitions from config/auto_tune_strategies.yaml, generates a
-temporary algorithm_config.yaml for each, runs the backtest, registers the run,
-and produces a ranked leaderboard.  The best run's hyperparameters can be
-promoted into the production algorithm_config.yaml automatically.
+Reads strategy definitions from config/tune_strategies.yaml (model-keyed),
+generates a temporary forecast_pipeline_config.yaml for each, runs the backtest,
+registers the run, and produces a ranked leaderboard.  The best run's
+hyperparameters can be promoted into the production forecast_pipeline_config.yaml
+automatically.
 
 Usage:
     uv run python scripts/ml/auto_tune.py --runs 5
@@ -37,8 +38,8 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-STRATEGIES_FILE = ROOT / "config" / "auto_tune_strategies.yaml"
-ALGO_CONFIG_FILE = ROOT / "config" / "algorithm_config.yaml"
+STRATEGIES_FILE = ROOT / "config" / "tune_strategies.yaml"
+PIPELINE_CONFIG_FILE = ROOT / "config" / "forecast_pipeline_config.yaml"
 MAX_RUNS = 10
 UV = str(Path.home() / ".local" / "bin" / "uv")
 
@@ -46,40 +47,51 @@ UV = str(Path.home() / ".local" / "bin" / "uv")
 _MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
     "lgbm": {
         "algo_section": "lgbm",
+        "pipeline_key": "lgbm_cluster",
         "model_id": "lgbm_cluster",
-        "strategies_file": ROOT / "config" / "auto_tune_strategies.yaml",
     },
     "catboost": {
         "algo_section": "catboost",
+        "pipeline_key": "catboost_cluster",
         "model_id": "catboost_cluster",
-        "strategies_file": ROOT / "config" / "catboost_tune_strategies.yaml",
     },
     "xgboost": {
         "algo_section": "xgboost",
+        "pipeline_key": "xgboost_cluster",
         "model_id": "xgboost_cluster",
-        "strategies_file": ROOT / "config" / "xgboost_tune_strategies.yaml",
     },
 }
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def load_strategies(path: Path | None = None) -> list[dict[str, Any]]:
-    """Load strategy definitions from YAML."""
+def load_strategies(path: Path | None = None, model: str = "lgbm") -> list[dict[str, Any]]:
+    """Load strategy definitions from YAML.
+
+    The unified ``tune_strategies.yaml`` has model-level top keys (lgbm,
+    catboost, xgboost) each containing a ``strategies`` list.  For backward
+    compatibility, if the file has a bare ``strategies`` key at the root it
+    is used directly.
+    """
     p = path or STRATEGIES_FILE
     if not p.exists():
         raise FileNotFoundError(f"Strategy file not found: {p}")
     with open(p) as f:
         data = yaml.safe_load(f)
-    strategies = data.get("strategies", [])
+    # Unified format: model-keyed sections
+    if model in data and isinstance(data[model], dict):
+        strategies = data[model].get("strategies", [])
+    else:
+        # Fallback: bare strategies key (legacy single-model files)
+        strategies = data.get("strategies", [])
     if not strategies:
-        raise ValueError("No strategies defined in %s" % p)
+        raise ValueError(f"No strategies defined in {p} for model {model}")
     return strategies
 
 
 def load_algo_config(path: Path | None = None) -> dict[str, Any]:
-    """Load the base algorithm_config.yaml."""
-    p = path or ALGO_CONFIG_FILE
+    """Load the base forecast_pipeline_config.yaml."""
+    p = path or PIPELINE_CONFIG_FILE
     with open(p) as f:
         return yaml.safe_load(f)
 
@@ -91,17 +103,22 @@ def apply_overrides(
 ) -> dict[str, Any]:
     """Deep-copy base config and apply strategy overrides to the model section."""
     cfg = copy.deepcopy(base_config)
-    algo_section = _MODEL_DEFAULTS[model]["algo_section"]
-    section = cfg["algorithms"][algo_section]
-    for key, value in overrides.items():
-        section[key] = value
+    pipeline_key = _MODEL_DEFAULTS[model]["pipeline_key"]
+    entry = cfg["algorithms"][pipeline_key]
+    # Support pipeline config format (params sub-dict) or flat format
+    if "params" in entry:
+        for key, value in overrides.items():
+            entry["params"][key] = value
+    else:
+        for key, value in overrides.items():
+            entry[key] = value
     return cfg
 
 
 def write_temp_config(cfg: dict[str, Any], label: str) -> Path:
-    """Write a temporary algorithm_config.yaml and return its path."""
+    """Write a temporary forecast_pipeline_config.yaml and return its path."""
     safe_label = label.replace("/", "_").replace(" ", "_")
-    tmp = Path(tempfile.mkdtemp(prefix="autotune_")) / f"algorithm_config_{safe_label}.yaml"
+    tmp = Path(tempfile.mkdtemp(prefix="autotune_")) / f"pipeline_config_{safe_label}.yaml"
     tmp.parent.mkdir(parents=True, exist_ok=True)
     with open(tmp, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
@@ -304,15 +321,16 @@ def promote_params(
     algo_config_path: Path | None = None,
     model: str = "lgbm",
 ) -> None:
-    """Write the winning strategy's overrides into the production algorithm_config.yaml."""
-    p = algo_config_path or ALGO_CONFIG_FILE
+    """Write the winning strategy's overrides into the production forecast_pipeline_config.yaml."""
+    p = algo_config_path or PIPELINE_CONFIG_FILE
     with open(p) as f:
         cfg = yaml.safe_load(f)
 
-    algo_section = _MODEL_DEFAULTS[model]["algo_section"]
-    section = cfg["algorithms"][algo_section]
+    pipeline_key = _MODEL_DEFAULTS[model]["pipeline_key"]
+    entry = cfg["algorithms"][pipeline_key]
+    params_section = entry.setdefault("params", {})
     for key, value in overrides.items():
-        section[key] = value
+        params_section[key] = value
 
     with open(p, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
@@ -328,17 +346,20 @@ def export_best_params(
 ) -> Path:
     """Export the best run's full params as a JSON file for production use.
 
-    This file can be referenced via ``params_file`` in algorithm_config.yaml
+    This file can be referenced via ``params_file`` in forecast_pipeline_config.yaml
     or passed to ``run_backtest.py`` directly, and is consumed by champion
     selection and production forecast pipelines.
     """
-    algo_section = _MODEL_DEFAULTS[model]["algo_section"]
-    model_base = base_config["algorithms"][algo_section]
+    pipeline_key = _MODEL_DEFAULTS[model]["pipeline_key"]
+    entry = base_config["algorithms"][pipeline_key]
+    # Get params from the params sub-dict or from the flat entry
+    model_base = dict(entry.get("params", entry))
     full_params = dict(model_base)
-    # Remove non-hyperparameter keys
+    # Remove non-hyperparameter keys that may appear in flat format
     for k in ("enabled", "model_id", "cluster_strategy", "recursive",
               "shap_select", "shap_threshold", "shap_top_n", "shap_sample_size",
-              "tune_inline", "params_file"):
+              "tune_inline", "params_file", "type", "tune", "backtest", "compete",
+              "forecast", "expert", "config_key", "output_dir", "notes"):
         full_params.pop(k, None)
     full_params.update(overrides)
 
@@ -389,7 +410,7 @@ def main() -> None:
     parser.add_argument("--strategies-file", type=str, default=None,
                         help="Path to strategies YAML (default: model-specific)")
     parser.add_argument("--promote", action="store_true",
-                        help="Promote best run's params into algorithm_config.yaml")
+                        help="Promote best run's params into forecast_pipeline_config.yaml")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be run without executing backtests")
     parser.add_argument("--list-strategies", action="store_true",
@@ -400,9 +421,9 @@ def main() -> None:
 
     model = args.model
     n_runs = min(max(args.runs, 1), MAX_RUNS)
-    strat_path = Path(args.strategies_file) if args.strategies_file else _MODEL_DEFAULTS[model]["strategies_file"]
+    strat_path = Path(args.strategies_file) if args.strategies_file else STRATEGIES_FILE
 
-    strategies = load_strategies(strat_path)
+    strategies = load_strategies(strat_path, model=model)
 
     if args.list_strategies:
         cmd_list_strategies(strategies)
@@ -427,10 +448,11 @@ def main() -> None:
     if args.dry_run:
         print("  DRY RUN — showing configs that would be generated:\n")
         base_config = load_algo_config()
-        algo_section = _MODEL_DEFAULTS[model]["algo_section"]
+        pipeline_key = _MODEL_DEFAULTS[model]["pipeline_key"]
         for s in selected:
             cfg = apply_overrides(base_config, s.get("overrides", {}), model=model)
-            section = cfg["algorithms"][algo_section]
+            entry = cfg["algorithms"][pipeline_key]
+            section = entry.get("params", entry)
             print(f"  Strategy: {s['label']}")
             for k, v in s.get("overrides", {}).items():
                 print(f"    {k}: {section.get(k)}")
@@ -524,7 +546,7 @@ def main() -> None:
     # ── Export best params JSON (always) ─────────────────────────────────
     params_path = export_best_params(best, base_config, best["overrides"], model=model)
     print(f"  Best params exported to: {params_path}")
-    print(f"  Use in algorithm_config.yaml:  params_file: {params_path.relative_to(ROOT)}")
+    print(f"  Use in forecast_pipeline_config.yaml:  params_file: {params_path.relative_to(ROOT)}")
 
     # ── Promote if requested ─────────────────────────────────────────────
     if args.promote:
@@ -533,7 +555,7 @@ def main() -> None:
             print("  Skipping promotion.")
         else:
             promote_params(best["overrides"], model=model)
-            print(f"\n  PROMOTED: {best['label']} params written to algorithm_config.yaml")
+            print(f"\n  PROMOTED: {best['label']} params written to forecast_pipeline_config.yaml")
             print(f"  Run `make backtest-{model}` to verify with production config.")
 
 

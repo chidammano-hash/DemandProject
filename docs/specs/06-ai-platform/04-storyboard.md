@@ -1,15 +1,12 @@
 # Storyboard
 
-An exception-based planner workflow that detects supply chain anomalies using configurable rules, presents them as causal-chain cards with root cause and recommended action, and tracks planner decisions through acknowledgment to resolution.
+> An exception-based planner workflow that detects supply chain anomalies using configurable rules, presents them as causal-chain cards with root cause and recommended action, and tracks planner decisions through acknowledgment to resolution.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 06-ai-platform/04-storyboard |
-| Frontend | `StoryboardTab.tsx` |
-| Backend | `api/routers/storyboard.py`, `common/exception_engine.py`, `scripts/generate_storyboard_exceptions.py` |
-| Config | `config/exception_config.yaml` |
-| SQL | `sql/038_create_storyboard.sql` |
+| **Status** | Implemented |
+| **UI Tab** | StoryboardTab |
+| **Key Files** | `StoryboardTab.tsx`, `api/routers/storyboard.py`, `common/exception_engine.py`, `scripts/generate_storyboard_exceptions.py`, `config/exception_config.yaml`, `sql/038_create_storyboard.sql` |
 
 ---
 

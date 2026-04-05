@@ -1,4 +1,8 @@
 // Barrel export — all existing imports from "@/api/queries" continue to work
+// NOTE: ./core re-exports from the domain-specific modules (domains, clustering,
+// accuracy, competition, sku-analysis, chat, inventory, dashboard,
+// inventory-backtest, seasonality, jobs, shap), so they are NOT listed here
+// separately to avoid duplicate-export TS2308 errors.
 export * from "./helpers";
 export * from "./core";
 export * from "./inv-planning";

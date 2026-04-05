@@ -170,8 +170,15 @@ deep_learning:
 
 # --- NEW: Foundation models ---
 foundation_models:
+  chronos_bolt:
+    enabled: true               # fast native encoder — 250x faster than T5
+    model_size: "base"          # small | base
+    device: "mps"               # Apple Silicon GPU
+    batch_size: 512
+    prediction_length: 6
+    num_samples: 12
   chronos:
-    enabled: true
+    enabled: false              # T5-based — slower, higher memory
     model_size: "small"         # tiny | mini | small | base | large
     device: "mps"               # Apple Silicon GPU
     batch_size: 32
@@ -183,7 +190,7 @@ foundation_models:
     prediction_length: 6
     device: "auto"
   moirai:
-    enabled: true               # local, no API key — pip install 'uni2ts[torch]'
+    enabled: false              # local, no API key — pip install 'uni2ts[torch]'
     model_size: "small"         # small | base | large
     prediction_length: 6
     context_length: 200
@@ -195,7 +202,7 @@ foundation_models:
     prediction_length: 6
     level: [90]                 # prediction interval levels
   lag_llama:
-    enabled: true               # local, no API key — pip install lag-llama from GitHub
+    enabled: false              # local, no API key — pip install lag-llama from GitHub
     prediction_length: 6
     context_length: 32
     device: "mps"               # Apple Silicon GPU

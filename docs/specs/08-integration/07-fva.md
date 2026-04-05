@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
+| **Status** | Implemented |
 | **UI Tab** | FVA |
-| **Key Files** | `api/routers/fva.py`, `frontend/src/tabs/FVATab.tsx`, `config/fva_config.yaml`, `sql/068_create_fva_tracking.sql`, `frontend/src/api/queries/platform.ts` |
+| **Key Files** | `api/routers/fva.py`, `frontend/src/tabs/FVATab.tsx`, `sql/068_create_fva_tracking.sql`, `frontend/src/api/queries/platform.ts` |
 
 ---
 
@@ -65,7 +65,7 @@ Indexes on `user_id`, `status`, `intervention_type`, and `measurement_window_end
 
 ## Configuration
 
-`config/fva_config.yaml`:
+> `config/fva_config.yaml` has been deleted (dead config, no consumers). The following defaults are hard-coded in the router:
 
 ```yaml
 measurement_windows:

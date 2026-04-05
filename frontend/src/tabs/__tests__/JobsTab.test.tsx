@@ -40,7 +40,7 @@ vi.mock("@/api/queries", () => ({
   submitPipeline: vi.fn(),
   fetchJobLogs: vi.fn().mockResolvedValue({ job_id: "test", log: "", total_length: 0, offset: 0 }),
   fetchCompetitionConfig: vi.fn().mockResolvedValue({
-    config: { models: ["lgbm_cluster", "catboost_cluster"], metric: "wape", lag: "execution", min_sku_rows: 3, champion_model_id: "champion", strategy: "expanding", strategy_params: {} },
+    config: { models: ["lgbm_cluster", "catboost_cluster"], metric: "wape", lag: "execution", min_dfu_rows: 3, champion_model_id: "champion", strategy: "expanding", strategy_params: {} },
     available_models: ["lgbm_cluster", "catboost_cluster", "xgboost_cluster", "external"],
   }),
   saveCompetitionConfig: vi.fn().mockResolvedValue(undefined),

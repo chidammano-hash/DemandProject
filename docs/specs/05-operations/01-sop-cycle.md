@@ -1,15 +1,12 @@
 # S&OP Cycle
 
-A six-stage state machine that guides cross-functional teams through monthly Sales & Operations Planning from demand review to executive approval.
+> A six-stage state machine that guides cross-functional teams through monthly Sales & Operations Planning from demand review to executive approval.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 05-operations/01-sop-cycle |
-| Frontend | `SopTab.tsx` |
-| Backend | `api/routers/sop.py`, `scripts/run_sop_cycle.py` |
-| Config | `config/sop_config.yaml` |
-| SQL | `sql/056_create_sop_module.sql` |
+| **Status** | Implemented |
+| **UI Tab** | SopTab |
+| **Key Files** | `SopTab.tsx`, `api/routers/sop.py`, `scripts/run_sop_cycle.py`, `config/sop_config.yaml`, `sql/056_create_sop_module.sql` |
 
 ---
 

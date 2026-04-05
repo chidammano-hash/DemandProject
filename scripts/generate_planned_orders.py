@@ -35,14 +35,13 @@ if str(ROOT) not in sys.path:
 
 from common.db import get_db_params
 from common.planning_date import get_planning_date
+from common.scripts_base import add_common_args, setup_logging
 from common.services.perf_profiler import profiled_section
-
-CONFIG_PATH = "config/order_recommendation_config.yaml"
+from common.utils import load_config as _load_config
 
 
 def load_config() -> dict:
-    with open(CONFIG_PATH) as f:
-        return yaml.safe_load(f)
+    return _load_config("order_recommendation_config.yaml")
 
 
 def round_to_moq(qty: float, moq: float, strategy: str = "ceil_to_moq") -> float:
@@ -483,11 +482,11 @@ def write_planned_orders(orders: list, dry_run: bool, conn) -> int:
 
 
 def main():
+    setup_logging()
     parser = argparse.ArgumentParser(description="Generate planned order recommendations")
     parser.add_argument("--dfu", nargs=2, metavar=("ITEM", "LOC"),
                         help="Generate for a single DFU")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Compute without writing to DB")
+    add_common_args(parser)
     args = parser.parse_args()
 
     config = load_config()

@@ -64,6 +64,10 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 
+import {
+  fetchPipelineConfig, pipelineConfigKeys, type PipelineAlgorithm,
+} from "@/api/queries/unified-model-tuning";
+
 import { TuningChatPanel } from "./lgbm-tuning/TuningChatPanel";
 import { ClusterEDAPanel } from "./lgbm-tuning/ClusterEDAPanel";
 import { FeatureLabPanel } from "./lgbm-tuning/FeatureLabPanel";
@@ -80,8 +84,8 @@ import { PipelineConfigPanel } from "./model-tuning/PipelineConfigPanel";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** All 12 models in the pipeline roster */
-const ALL_MODELS: { id: string; label: string; type: string; tunable: boolean; modelType?: ModelType }[] = [
+/** Fallback model list for initial render before pipeline config loads */
+const DEFAULT_MODELS: { id: string; label: string; type: string; tunable: boolean; modelType?: ModelType }[] = [
   { id: "lgbm_cluster",       label: "LightGBM",       type: "tree",          tunable: true,  modelType: "lgbm" },
   { id: "catboost_cluster",   label: "CatBoost",       type: "tree",          tunable: true,  modelType: "catboost" },
   { id: "xgboost_cluster",    label: "XGBoost",        type: "tree",          tunable: true,  modelType: "xgboost" },
@@ -95,6 +99,39 @@ const ALL_MODELS: { id: string; label: string; type: string; tunable: boolean; m
   { id: "seasonal_naive",     label: "Seasonal Naive", type: "statistical",   tunable: false },
   { id: "rolling_mean",       label: "Rolling Mean",   type: "statistical",   tunable: false },
 ];
+
+/** Fallback display names for algorithms not yet known */
+const MODEL_LABEL_FALLBACK: Record<string, string> = {
+  lgbm_cluster: "LightGBM", catboost_cluster: "CatBoost", xgboost_cluster: "XGBoost",
+  lgbm_cust_enriched: "LightGBM (Cust)", catboost_cust_enriched: "CatBoost (Cust)", xgboost_cust_enriched: "XGBoost (Cust)",
+  chronos: "Chronos T5", chronos_bolt: "Chronos Bolt", chronos2: "Chronos 2",
+  chronos2_enriched: "Chronos 2E", bolt_hierarchical: "Bolt Hierarchical",
+  mstl: "MSTL", nbeats: "N-BEATS", nhits: "N-HiTS",
+  seasonal_naive: "Seasonal Naive", rolling_mean: "Rolling Mean",
+};
+
+/** Map config_key to ModelType for tunable models (used for experiment API routing) */
+const CONFIG_KEY_TO_MODEL_TYPE: Record<string, ModelType> = {
+  lgbm: "lgbm", catboost: "catboost", xgboost: "xgboost",
+  lgbm_cust_enriched: "lgbm", catboost_cust_enriched: "catboost", xgboost_cust_enriched: "xgboost",
+};
+
+/** Derive the model grid from pipeline config algorithms */
+function deriveModelsFromConfig(
+  algorithms: Record<string, PipelineAlgorithm>,
+): { id: string; label: string; type: string; tunable: boolean; modelType?: ModelType }[] {
+  return Object.entries(algorithms)
+    .filter(([, algo]) => algo.enabled)
+    .map(([id, algo]) => ({
+      id,
+      label: ((algo as unknown as Record<string, unknown>).display_name as string)
+        || MODEL_LABEL_FALLBACK[id]
+        || id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+      type: algo.type,
+      tunable: algo.tune,
+      modelType: CONFIG_KEY_TO_MODEL_TYPE[algo.config_key] as ModelType | undefined,
+    }));
+}
 
 const TYPE_COLORS: Record<string, string> = {
   tree: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
@@ -185,6 +222,20 @@ export default function ModelTuningTab() {
   const [sortCol, setSortCol] = useState<string>("run_id");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const pageSize = 25;
+
+  // ---- Fetch pipeline config for dynamic model roster ----------------------
+  const { data: pipelineConfig } = useQuery({
+    queryKey: pipelineConfigKeys.config,
+    queryFn: fetchPipelineConfig,
+    staleTime: 60_000, // 1 min — config rarely changes
+  });
+
+  // Derive model grid from pipeline config, falling back to hardcoded defaults
+  const ALL_MODELS = useMemo(() => {
+    if (!pipelineConfig?.algorithms) return DEFAULT_MODELS;
+    const derived = deriveModelsFromConfig(pipelineConfig.algorithms);
+    return derived.length > 0 ? derived : DEFAULT_MODELS;
+  }, [pipelineConfig]);
 
   // Resolve selected model info
   const selectedModelInfo = ALL_MODELS.find(m => m.id === selectedModelId) ?? ALL_MODELS[0];

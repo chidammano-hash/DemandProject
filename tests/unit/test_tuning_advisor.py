@@ -198,13 +198,14 @@ class TestGetCurrentConfig:
     """Test the get_current_config tool."""
 
     @patch("common.ai.tuning_advisor.load_config")
-    def test_returns_config(self, mock_load_config):
+    @patch("common.utils.get_algorithm_params")
+    def test_returns_config(self, mock_get_algo, mock_load_config):
         from common.ai.tuning_advisor import _get_current_config
 
-        mock_load_config.side_effect = [
-            {"algorithms": {"lgbm": {"learning_rate": 0.02, "n_estimators": 1500}}},
-            {"strategies": [{"label": "test", "overrides": {}}]},
-        ]
+        mock_get_algo.return_value = {"learning_rate": 0.02, "n_estimators": 1500}
+        mock_load_config.return_value = {
+            "lgbm": {"strategies": [{"label": "test", "overrides": {}}]},
+        }
         result = _get_current_config()
         assert "current_lgbm_params" in result
         assert result["current_lgbm_params"]["learning_rate"] == 0.02

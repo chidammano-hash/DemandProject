@@ -1,10 +1,16 @@
-# 02-15 Expert Panel: Intelligent Algorithm Selection Engine
+# Expert Panel: Intelligent Algorithm Selection Engine
 
-> **Status:** Implemented (Advanced Panel + Per-DFU Hybrid Ensemble) | **Features:** 49 + 50 + 51
-> **Priority:** Critical — Directly impacts forecast accuracy and bottom line
-> **Note:** This spec supersedes and absorbs `02-16-advanced-ml-foundation-model-extension.md`
+> Tests 30+ forecasting algorithms against a stratified sample of DFUs, builds a score matrix per demand archetype, and routes each SKU to its empirically best-fit algorithm — replacing the single-model approach with a segment-aware ensemble.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Expert Panel |
+| **Key Files** | `adv_algorithm_testing/foundation_models.py`, `adv_algorithm_testing/config.yaml`, `scripts/run_backtest_bolt_hierarchical.py` |
 
 ---
+
+> **Note:** This spec supersedes and absorbs `02-16-advanced-ml-foundation-model-extension.md`
 
 ## Plain-Language Overview
 

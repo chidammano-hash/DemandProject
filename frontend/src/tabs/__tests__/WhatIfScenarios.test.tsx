@@ -54,32 +54,7 @@ vi.mock("@/hooks/useUrlState", async (importOriginal) => {
 
 const { fetchScenarioStatus: mockFetchStatus } = await import("@/api/queries") as unknown as { fetchScenarioStatus: ReturnType<typeof vi.fn> };
 
-// Mock recharts to avoid rendering issues in test env
-vi.mock("recharts", () => ({
-  LineChart: ({ children }: { children: React.ReactNode }) => <div data-testid="line-chart">{children}</div>,
-  Line: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  Legend: () => null,
-  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
-  Bar: () => null,
-  Cell: () => null,
-  ReferenceLine: () => null,
-  PieChart: ({ children }: { children: React.ReactNode }) => <div data-testid="pie-chart">{children}</div>,
-  Pie: () => null,
-  RadarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="radar-chart">{children}</div>,
-  Radar: () => null,
-  ComposedChart: ({ children }: { children: React.ReactNode }) => <div data-testid="composed-chart">{children}</div>,
-  ScatterChart: ({ children }: { children: React.ReactNode }) => <div data-testid="scatter-chart">{children}</div>,
-  Scatter: () => null,
-  ZAxis: () => null,
-  PolarGrid: () => null,
-  PolarAngleAxis: () => null,
-  PolarRadiusAxis: () => null,
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}));
+vi.mock("recharts");
 
 const ClustersTab = (await import("@/tabs/ClustersTab")).default;
 

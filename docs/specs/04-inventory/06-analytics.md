@@ -1,6 +1,14 @@
-# 04-06 Fill Rate, Demand Signals & Intramonth Stockouts
+# Fill Rate, Demand Signals & Intramonth Stockouts
 
-> **Status:** Implemented | **Features:** IPfeature8, IPfeature9, IPfeature14
+> Three materialized views and a computation script that provide historical fill rate analytics, short-horizon demand signals from intra-month sales patterns, and detection of mid-month stockout events invisible in end-of-month snapshots.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning |
+| **Key Files** | `scripts/compute_demand_signals.py`, `api/routers/inventory/fill_rate.py`, `sql/028_create_fill_rate_monthly.sql`, `sql/034_create_intramonth_stockout.sql` |
+
+---
 
 ## Problem
 

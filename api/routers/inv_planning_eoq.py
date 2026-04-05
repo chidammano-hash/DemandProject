@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Query
 
 from api.core import add_cross_dim_filters, get_conn
+from common.utils import load_config
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -180,13 +181,9 @@ async def eoq_detail(
 @router.get("/inv-planning/eoq/sensitivity")
 async def eoq_sensitivity(item: str | None = None, loc: str | None = None):
     """EOQ sensitivity curve: how EOQ changes as ordering_cost varies."""
-    import yaml
-    import os
     from scripts.compute_eoq import sensitivity_curve
 
-    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "eoq_config.yaml")
-    with open(config_path) as fh:
-        config = yaml.safe_load(fh)
+    config = load_config("eoq_config")
 
     if item and loc:
         sql = "SELECT demand_mean_monthly FROM fact_eoq_targets WHERE item_id = %s AND loc = %s LIMIT 1"

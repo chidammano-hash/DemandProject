@@ -248,18 +248,20 @@ def main() -> None:
         pass  # No pipeline config — use hyperparameter_tuning.yaml as-is
 
     # Check algorithm tune flag from the roster
+    # Roster keys use pipeline model_ids (e.g. "lgbm_cluster"), while
+    # args.model is the base name ("lgbm"). Match by key prefix.
     try:
         roster = get_algorithm_roster(stage="tune")
         model_in_roster = any(
-            e.get("config_key") == args.model
-            for e in roster.values()
+            rid == args.model or rid.startswith(f"{args.model}_")
+            for rid in roster
         )
         if not model_in_roster:
             # Check if the model exists but has tune=false
             all_roster = get_algorithm_roster()
             exists = any(
-                e.get("config_key") == args.model
-                for e in all_roster.values()
+                rid == args.model or rid.startswith(f"{args.model}_")
+                for rid in all_roster
             )
             if exists:
                 print(f"[{_ts()}] Model '{args.model}' has tune=false in "

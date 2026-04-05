@@ -1,15 +1,12 @@
-# Spec 06 — Execution Lag
+# Execution Lag
 
-> Defines what execution lag is, how it flows through every layer of the system
-> (source data, ETL, backtesting, champion selection, accuracy reporting, and UI),
-> and the critical distinction between a DFU's **execution lag** and a prediction's
-> **forecast lag**.
+> Defines what execution lag is, how it flows through every layer of the system — source data, ETL, backtesting, champion selection, accuracy reporting, and UI — and the critical distinction between a DFU's execution lag and a prediction's forecast lag.
 
 | | |
 |---|---|
 | **Status** | Implemented |
+| **UI Tab** | Accuracy, Algorithm Experiments, Champion Experiments, DFU Analysis, Inventory Backtest |
 | **Key Files** | `dim_sku.execution_lag`, `backtest_framework.py`, `run_champion_selection.py`, `seed_production_baselines.py`, `accuracy_budget.py`, `LagFilterBar.tsx` |
-| **UI Surfaces** | Accuracy Tab, Algorithm Experiments, Champion Experiments, DFU Analysis, Inventory Backtest |
 
 ---
 

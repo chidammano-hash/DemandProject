@@ -49,7 +49,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--config", type=str, default=None,
-        help="Path to algorithm_config.yaml (default: config/algorithm_config.yaml)",
+        help="Path to config YAML (default: config/forecast_pipeline_config.yaml)",
     )
     parser.add_argument(
         "--output-dir", type=str, default=None,
@@ -73,15 +73,18 @@ def main() -> None:
 
     # ── Load config ─────────────────────────────────────────────────────────
     with profiled_section("load_config"):
-        config_path = (
-            Path(args.config) if args.config
-            else ROOT / "config" / "algorithm_config.yaml"
-        )
-        with open(config_path) as f:
-            cfg = yaml.safe_load(f)
+        if args.config:
+            config_path = Path(args.config)
+            with open(config_path) as f:
+                cfg = yaml.safe_load(f)
+        else:
+            from common.utils import load_forecast_pipeline_config
+            cfg = load_forecast_pipeline_config()
 
-        mstl_cfg = cfg.get("algorithms", {}).get(CONFIG_KEY, {})
-        if not mstl_cfg.get("enabled", True):
+        algo_entry = cfg.get("algorithms", {}).get(CONFIG_KEY, {})
+        # Support pipeline config format (params sub-dict) or flat legacy format
+        mstl_cfg = algo_entry.get("params", algo_entry)
+        if not algo_entry.get("enabled", True):
             logger.info("MSTL is disabled in config; exiting")
             return
 
@@ -94,7 +97,7 @@ def main() -> None:
             else ROOT / backtest_cfg.get("output_dir", "data/backtest")
         )
 
-        model_id = mstl_cfg.get("model_id", MODEL_ID)
+        model_id = algo_entry.get("model_id", mstl_cfg.get("model_id", MODEL_ID))
         mstl_params = {
             "season_length": mstl_cfg.get("season_length", 12),
             "min_history": mstl_cfg.get("min_history", 25),
@@ -284,7 +287,7 @@ def main() -> None:
             earliest_month=earliest_month,
             latest_month=latest_month,
             extra_metadata={
-                "params_source": "algorithm_config",
+                "params_source": "forecast_pipeline_config",
                 "model_type": "statistical_upgrade",
                 "architecture": "mstl",
                 "per_dfu": True,

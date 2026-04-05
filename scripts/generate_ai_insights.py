@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import yaml
 
 from common.services.perf_profiler import profiled_section
+from common.utils import load_config as _load_config_shared
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,9 +38,10 @@ log = logging.getLogger("generate_ai_insights")
 
 
 def _load_config(path: str = "config/ai_planner_config.yaml") -> dict:
+    """Load AI planner config via load_config() for _includes support."""
     try:
-        with open(path) as f:
-            return yaml.safe_load(f) or {}
+        cfg_name = os.path.splitext(os.path.basename(path))[0]
+        return _load_config_shared(cfg_name)
     except FileNotFoundError:
         log.warning("Config file not found at %s — using defaults", path)
         return {

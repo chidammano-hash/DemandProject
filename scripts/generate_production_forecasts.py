@@ -51,14 +51,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
-from common.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS, TS_PROFILE_FEATURES
+from common.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
 from common.forecast_ci import build_sigma_lookup, compute_ci_bounds
 from common.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
 
 import psycopg
 
-LEGACY_CONFIG_PATH = ROOT / "config" / "production_forecast_config.yaml"
 PIPELINE_CONFIG_PATH = ROOT / "config" / "forecast_pipeline_config.yaml"
 
 logger = logging.getLogger(__name__)
@@ -99,39 +98,38 @@ def load_config() -> dict:
     """Load production forecast config.
 
     Reads from the consolidated forecast_pipeline_config.yaml (production_forecast section).
-    Falls back to legacy production_forecast_config.yaml if the new config is missing.
     """
-    if PIPELINE_CONFIG_PATH.exists():
-        with open(PIPELINE_CONFIG_PATH) as f:
-            pipeline = yaml.safe_load(f) or {}
-        pf = pipeline.get("production_forecast", {})
-        # Map to the structure the rest of the script expects
-        return {
-            "inference": {
-                "horizon_months": pf.get("horizon_months", 24),
-                "recursive": pf.get("recursive", True),
-            },
-            "confidence_interval": pf.get("confidence_interval", {}),
-            "model_selection": {
-                "strategy": "champion",
-                "fallback_model_id": pf.get("fallback_model_id", "lgbm_cluster"),
-            },
-            "plan_version": {
-                "format": pf.get("plan_version_format", "%Y-%m"),
-                "keep_last_n_versions": pf.get("keep_last_n_versions", 3),
-            },
-            "model_registry": pf.get("model_registry", {"base_path": "data/models"}),
-            # New cold-start fields (used in main loop)
-            "_pipeline": {
-                "lookback_months": pf.get("lookback_months", 36),
-                "min_history_months": pf.get("min_history_months", 12),
-                "cold_start_model_id": pf.get("cold_start_model_id", "rolling_mean"),
-                "cold_start_min_months": pf.get("cold_start_min_months", 3),
-            },
-        }
-    # Legacy fallback
-    with open(LEGACY_CONFIG_PATH) as f:
-        return yaml.safe_load(f)
+    if not PIPELINE_CONFIG_PATH.exists():
+        raise FileNotFoundError(
+            f"Pipeline config not found: {PIPELINE_CONFIG_PATH}"
+        )
+    with open(PIPELINE_CONFIG_PATH) as f:
+        pipeline = yaml.safe_load(f) or {}
+    pf = pipeline.get("production_forecast", {})
+    # Map to the structure the rest of the script expects
+    return {
+        "inference": {
+            "horizon_months": pf.get("horizon_months", 24),
+            "recursive": pf.get("recursive", True),
+        },
+        "confidence_interval": pf.get("confidence_interval", {}),
+        "model_selection": {
+            "strategy": "champion",
+            "fallback_model_id": pf.get("fallback_model_id", "lgbm_cluster"),
+        },
+        "plan_version": {
+            "format": pf.get("plan_version_format", "%Y-%m"),
+            "keep_last_n_versions": pf.get("keep_last_n_versions", 3),
+        },
+        "model_registry": pf.get("model_registry", {"base_path": "data/models"}),
+        # New cold-start fields (used in main loop)
+        "_pipeline": {
+            "lookback_months": pf.get("lookback_months", 36),
+            "min_history_months": pf.get("min_history_months", 12),
+            "cold_start_model_id": pf.get("cold_start_model_id", "rolling_mean"),
+            "cold_start_min_months": pf.get("cold_start_min_months", 3),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

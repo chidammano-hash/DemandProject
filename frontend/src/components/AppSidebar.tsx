@@ -12,6 +12,7 @@ import {
   Shield, BarChart3, MapPin,
   Settings2,
   TerminalSquare,
+  History,
   PanelLeftClose,
   PanelLeft,
   Menu,
@@ -48,6 +49,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "fva",               label: "FVA & ROI",      icon: BarChart3,       section: "demand" },
   { key: "lgbmTuning",        label: "Model Tuning",  icon: Activity,        section: "demand" },
   { key: "customerAnalytics", label: "Customer Analytics", icon: MapPin,       section: "demand" },
+  { key: "demandHistory",     label: "Demand History",     icon: History,      section: "demand" },
   // System — data tools
   { key: "explorer",     label: "Explorer",      icon: Database,     section: "system" },
   { key: "sqlRunner",    label: "SQL Runner",    icon: TerminalSquare, section: "system" },

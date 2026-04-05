@@ -91,5 +91,5 @@ class TestNormalizeFunctions:
         assert result == ["col_a", "col_b", "col_a_2"]
 
     def test_domain_count(self):
-        """Ensure we have 10 domains registered."""
-        assert len(DOMAIN_SPECS) == 10
+        """Ensure we have 12 domains registered."""
+        assert len(DOMAIN_SPECS) == 12

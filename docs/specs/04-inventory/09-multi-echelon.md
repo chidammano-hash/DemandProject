@@ -1,6 +1,14 @@
-# 04-09 Multi-Echelon Safety Stock
+# Multi-Echelon Safety Stock
 
-> **Status:** Implemented | **Feature:** F3.5
+> 2-echelon optimization that computes safety stock across DC and downstream locations jointly using risk pooling, reducing total network inventory while maintaining end-customer service levels, with cascade risk badges for upstream shortage propagation.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning |
+| **Key Files** | `scripts/compute_echelon_targets.py`, `api/routers/inventory/echelon_planning.py`, `config/echelon_config.yaml` |
+
+---
 
 ## Problem
 

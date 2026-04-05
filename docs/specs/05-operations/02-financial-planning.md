@@ -1,15 +1,12 @@
 # Financial Planning
 
-Translates inventory positions and demand forecasts into financial terms -- inventory value, carrying cost, and budget utilization -- so finance teams can plan capital allocation alongside supply chain operations.
+> Translates inventory positions and demand forecasts into financial terms -- inventory value, carrying cost, and budget utilization -- so finance teams can plan capital allocation alongside supply chain operations.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 05-operations/02-financial-planning |
-| Frontend | `inv-planning/FinancialPlanPanel.tsx` |
-| Backend | `api/routers/financial_plan.py`, `scripts/compute_financial_plan.py` |
-| Config | `config/financial_plan_config.yaml` |
-| SQL | `sql/057_create_financial_plan.sql` |
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning (FinancialPlanPanel) |
+| **Key Files** | `inv-planning/FinancialPlanPanel.tsx`, `api/routers/financial_plan.py`, `scripts/compute_financial_plan.py`, `config/financial_plan_config.yaml`, `sql/057_create_financial_plan.sql` |
 
 ---
 

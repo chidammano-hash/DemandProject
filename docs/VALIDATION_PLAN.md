@@ -7,6 +7,33 @@ Validate every functionality end-to-end by picking specific SKUs and asserting e
 
 ---
 
+## Table of Contents
+
+- [Step 1: Data Load & Row Counts](#step-1-data-load--row-counts)
+- [Step 2: Explorer & Domain API](#step-2-explorer--domain-api-pick-1-sku-per-domain)
+- [Step 3: Clustering](#step-3-clustering-assert-cluster-assignments-for-5-skus)
+- [Step 4: LGBM Backtest](#step-4-lgbm-backtest-deep-validation-of-10-skus)
+- [Step 5: CatBoost + XGBoost Backtests](#step-5-catboost--xgboost-backtests-same-10-skus)
+- [Step 6: Champion Selection](#step-6-champion-selection-assert-correct-winner-for-10-skus)
+- [Step 7: Accuracy & SHAP API](#step-7-accuracy--shap-api-assert-api-returns-for-10-skus)
+- [Step 8: Safety Stock](#step-8-safety-stock-assert-formulas-for-5-skus)
+- [Step 9: EOQ](#step-9-eoq-assert-formulas-for-same-5-skus)
+- [Step 10: Replenishment Policies](#step-10-replenishment-policies-assert-policy-assignments-for-5-skus)
+- [Step 11: Production Forecast & CI](#step-11-production-forecast--ci-assert-for-5-skus)
+- [Step 12: Inventory Projection](#step-12-inventory-projection-assert-for-3-skus)
+- [Step 13: Planned Orders](#step-13-planned-orders-assert-for-3-skus)
+- [Step 14: Replenishment Plan](#step-14-replenishment-plan-assert-for-3-skus)
+- [Step 15: Exceptions & Storyboard](#step-15-exceptions--storyboard-assert-for-3-skus)
+- [Step 16: Fill Rate & Service Level](#step-16-fill-rate--service-level-assert-for-3-skus)
+- [Step 17: Bias Corrections](#step-17-bias-corrections-assert-for-3-skus)
+- [Step 18: S&OP Cycle](#step-18-sop-cycle-assert-stage-machine)
+- [Step 19: Control Tower KPIs](#step-19-control-tower-kpis-assert-aggregation)
+- [Step 20: Full Test Suite](#step-20-full-test-suite)
+- [Step 21: Demand Variability](#step-21-demand-variability-assert-for-5-skus)
+- [Gap Ticket Template](#gap-ticket-template)
+
+---
+
 ## Step 1: Data Load & Row Counts
 
 ### 1.1 Normalize + Load
@@ -843,10 +870,10 @@ print(f'PASS: Control tower KPIs valid. {d[\"health\"][\"total_dfus\"]} DFUs tra
 ## Step 20: Full Test Suite
 
 ```bash
-# Backend: 2273 tests
+# Backend: 3042 tests
 ~/.local/bin/uv run pytest tests/ -q
 
-# Frontend: 741 tests
+# Frontend: 874 tests
 cd frontend && PATH="/opt/homebrew/bin:$PATH" /opt/homebrew/bin/node node_modules/.bin/vitest run --reporter=dot
 ```
 

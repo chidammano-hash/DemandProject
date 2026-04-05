@@ -1,14 +1,12 @@
 # UI Architecture
 
-The React single-page application architecture: Vite build tooling, TanStack Query for server state, lazy-loaded tabs, collapsible sidebar navigation, global filter bar, dashboard overview, and the component library powering all frontend features.
+> The React single-page application architecture: Vite build tooling, TanStack Query for server state, lazy-loaded tabs, collapsible sidebar navigation, global filter bar, dashboard overview, and the component library powering all frontend features.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 07-user-experience/02-ui-architecture |
-| Frontend | `App.tsx`, `AppSidebar.tsx`, `GlobalFilterBar.tsx`, all `tabs/`, all `components/` |
-| Backend | All API routers (frontend consumes every endpoint) |
-| Config | `vite.config.ts`, `tailwind.config.ts` |
+| **Status** | Implemented |
+| **UI Tab** | N/A (platform-wide) |
+| **Key Files** | `App.tsx`, `AppSidebar.tsx`, `GlobalFilterBar.tsx`, `vite.config.ts`, `tailwind.config.ts` |
 
 ---
 

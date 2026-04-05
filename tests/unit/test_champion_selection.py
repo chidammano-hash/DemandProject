@@ -3,6 +3,7 @@
 import pytest
 import pandas as pd
 from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 from scripts.run_champion_selection import generate_summary, _compute_segment_accuracy
 
@@ -159,125 +160,125 @@ class TestGenerateSummaryFallback:
 
 
 class TestLoadConfig:
-    """Test config loading and validation.
+    """Test config loading and validation via forecast_pipeline_config.yaml."""
 
-    These tests exercise the legacy config path (model_competition.yaml).
-    Mock _load_config_from_pipeline to return None so the fallback is used.
-    """
-
-    @pytest.fixture(autouse=True)
-    def _disable_pipeline_config(self):
+    def test_load_config_missing_pipeline_config(self, tmp_path):
+        from scripts.run_champion_selection import load_config
         with patch(
             "scripts.run_champion_selection._load_config_from_pipeline",
             return_value=None,
         ):
-            yield
+            with pytest.raises(FileNotFoundError):
+                load_config(tmp_path / "unused.yaml")
 
-    def test_load_config_missing_file(self, tmp_path):
+    def test_load_config_invalid_metric(self):
         from scripts.run_champion_selection import load_config
-        with pytest.raises(FileNotFoundError):
-            load_config(tmp_path / "nonexistent.yaml")
+        with patch(
+            "scripts.run_champion_selection._load_config_from_pipeline",
+            return_value={
+                "metric": "bad_metric",
+                "models": ["a", "b"],
+            },
+        ):
+            with pytest.raises(ValueError, match="Invalid metric"):
+                load_config(Path("unused.yaml"))
 
-    def test_load_config_invalid_metric(self, tmp_path):
-        import yaml
+    def test_load_config_too_few_models(self):
         from scripts.run_champion_selection import load_config
-        cfg_path = tmp_path / "test.yaml"
-        cfg_path.write_text(yaml.dump({"competition": {
-            "metric": "bad_metric",
-            "models": ["a", "b"],
-        }}))
-        with pytest.raises(ValueError, match="Invalid metric"):
-            load_config(cfg_path)
+        with patch(
+            "scripts.run_champion_selection._load_config_from_pipeline",
+            return_value={
+                "metric": "wape",
+                "models": ["only_one"],
+            },
+        ):
+            with pytest.raises(ValueError, match="At least 2 models"):
+                load_config(Path("unused.yaml"))
 
-    def test_load_config_too_few_models(self, tmp_path):
-        import yaml
+    def test_load_config_valid(self):
         from scripts.run_champion_selection import load_config
-        cfg_path = tmp_path / "test.yaml"
-        cfg_path.write_text(yaml.dump({"competition": {
-            "metric": "wape",
-            "models": ["only_one"],
-        }}))
-        with pytest.raises(ValueError, match="At least 2 models"):
-            load_config(cfg_path)
+        with patch(
+            "scripts.run_champion_selection._load_config_from_pipeline",
+            return_value={
+                "metric": "wape",
+                "lag": "execution",
+                "min_dfu_rows": 5,
+                "models": ["lgbm_global", "catboost_global"],
+            },
+        ):
+            cfg = load_config(Path("unused.yaml"))
+            assert cfg["metric"] == "wape"
+            assert cfg["min_dfu_rows"] == 5
+            assert len(cfg["models"]) == 2
+            assert cfg["champion_model_id"] == "champion"  # default
 
-    def test_load_config_valid(self, tmp_path):
-        import yaml
+    def test_load_config_default_strategy(self):
         from scripts.run_champion_selection import load_config
-        cfg_path = tmp_path / "test.yaml"
-        cfg_path.write_text(yaml.dump({"competition": {
-            "metric": "wape",
-            "lag": "execution",
-            "min_dfu_rows": 5,
-            "models": ["lgbm_global", "catboost_global"],
-        }}))
-        cfg = load_config(cfg_path)
-        assert cfg["metric"] == "wape"
-        assert cfg["min_dfu_rows"] == 5
-        assert len(cfg["models"]) == 2
-        assert cfg["champion_model_id"] == "champion"  # default
+        with patch(
+            "scripts.run_champion_selection._load_config_from_pipeline",
+            return_value={
+                "metric": "wape",
+                "models": ["a", "b"],
+            },
+        ):
+            cfg = load_config(Path("unused.yaml"))
+            assert cfg["strategy"] == "expanding"  # default
+            assert cfg["strategy_params"] == {}  # default
 
-    def test_load_config_default_strategy(self, tmp_path):
-        import yaml
+    def test_load_config_valid_strategy(self):
         from scripts.run_champion_selection import load_config
-        cfg_path = tmp_path / "test.yaml"
-        cfg_path.write_text(yaml.dump({"competition": {
-            "metric": "wape",
-            "models": ["a", "b"],
-        }}))
-        cfg = load_config(cfg_path)
-        assert cfg["strategy"] == "expanding"  # default
-        assert cfg["strategy_params"] == {}  # default
+        with patch(
+            "scripts.run_champion_selection._load_config_from_pipeline",
+            return_value={
+                "metric": "wape",
+                "models": ["a", "b"],
+                "strategy": "rolling",
+                "strategy_params": {"window_months": 6},
+            },
+        ):
+            cfg = load_config(Path("unused.yaml"))
+            assert cfg["strategy"] == "rolling"
+            assert cfg["strategy_params"]["window_months"] == 6
 
-    def test_load_config_valid_strategy(self, tmp_path):
-        import yaml
+    def test_load_config_invalid_strategy(self):
         from scripts.run_champion_selection import load_config
-        cfg_path = tmp_path / "test.yaml"
-        cfg_path.write_text(yaml.dump({"competition": {
-            "metric": "wape",
-            "models": ["a", "b"],
-            "strategy": "rolling",
-            "strategy_params": {"window_months": 6},
-        }}))
-        cfg = load_config(cfg_path)
-        assert cfg["strategy"] == "rolling"
-        assert cfg["strategy_params"]["window_months"] == 6
+        with patch(
+            "scripts.run_champion_selection._load_config_from_pipeline",
+            return_value={
+                "metric": "wape",
+                "models": ["a", "b"],
+                "strategy": "invalid_strategy",
+            },
+        ):
+            with pytest.raises(ValueError, match="Invalid strategy"):
+                load_config(Path("unused.yaml"))
 
-    def test_load_config_invalid_strategy(self, tmp_path):
-        import yaml
-        from scripts.run_champion_selection import load_config
-        cfg_path = tmp_path / "test.yaml"
-        cfg_path.write_text(yaml.dump({"competition": {
-            "metric": "wape",
-            "models": ["a", "b"],
-            "strategy": "invalid_strategy",
-        }}))
-        with pytest.raises(ValueError, match="Invalid strategy"):
-            load_config(cfg_path)
-
-    def test_load_config_fallback_model_id_default(self, tmp_path):
+    def test_load_config_fallback_model_id_default(self):
         """fallback_model_id defaults to lgbm_cluster when not specified."""
-        import yaml
         from scripts.run_champion_selection import load_config
-        cfg_path = tmp_path / "test.yaml"
-        cfg_path.write_text(yaml.dump({"competition": {
-            "metric": "wape",
-            "models": ["lgbm_cluster", "catboost_cluster"],
-        }}))
-        cfg = load_config(cfg_path)
-        assert cfg["fallback_model_id"] == "lgbm_cluster"
+        with patch(
+            "scripts.run_champion_selection._load_config_from_pipeline",
+            return_value={
+                "metric": "wape",
+                "models": ["lgbm_cluster", "catboost_cluster"],
+            },
+        ):
+            cfg = load_config(Path("unused.yaml"))
+            assert cfg["fallback_model_id"] == "lgbm_cluster"
 
-    def test_load_config_fallback_model_id_custom(self, tmp_path):
+    def test_load_config_fallback_model_id_custom(self):
         """fallback_model_id can be overridden in the YAML."""
-        import yaml
         from scripts.run_champion_selection import load_config
-        cfg_path = tmp_path / "test.yaml"
-        cfg_path.write_text(yaml.dump({"competition": {
-            "metric": "wape",
-            "models": ["lgbm_cluster", "catboost_cluster"],
-            "fallback_model_id": "catboost_cluster",
-        }}))
-        cfg = load_config(cfg_path)
-        assert cfg["fallback_model_id"] == "catboost_cluster"
+        with patch(
+            "scripts.run_champion_selection._load_config_from_pipeline",
+            return_value={
+                "metric": "wape",
+                "models": ["lgbm_cluster", "catboost_cluster"],
+                "fallback_model_id": "catboost_cluster",
+            },
+        ):
+            cfg = load_config(Path("unused.yaml"))
+            assert cfg["fallback_model_id"] == "catboost_cluster"
 
 
 class TestComputeSegmentAccuracy:

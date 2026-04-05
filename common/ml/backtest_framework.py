@@ -64,11 +64,20 @@ def compute_cluster_demand_stats(
 ) -> dict[str, float]:
     """Compute demand characteristics for a single cluster from training data.
 
-    Returns a dict with:
-    - mean_demand: mean of non-zero qty values
-    - cv_demand: coefficient of variation (std / mean) of qty
-    - zero_demand_pct: fraction of rows with qty == 0
+    All five keys are consumed by ``resolve_cluster_params`` via ``_matches_profile``,
+    which reads them dynamically using the ``_min`` / ``_max`` suffix convention
+    defined in ``config/cluster_tuning_profiles.yaml``:
+
+    - mean_demand:        mean of non-zero qty values
+    - cv_demand:          coefficient of variation (std / mean) of qty
+    - zero_demand_pct:    fraction of rows with qty == 0
     - seasonal_amplitude: std of monthly means / overall mean (proxy for seasonality)
+    - n_rows:             total training row count — used by n_rows_min / n_rows_max
+                          criteria to guard large-cluster profiles from matching
+                          small clusters (e.g. sparse_intermittent, low_volume_volatile).
+
+    The returned dict is also stored as ``meta["cluster_stats"]`` in the per-cluster
+    training result for diagnostic purposes (visible in model metadata JSON).
     """
     cluster_data = train_df[train_df["ml_cluster"] == cluster_id]
     qty = cluster_data["qty"] if "qty" in cluster_data.columns else pd.Series(dtype=float)

@@ -202,7 +202,7 @@ class TestYAMLConfigIntegration:
         """The YAML config must contain the Tweedie keys."""
         from common.utils import load_config
 
-        cfg = load_config("algorithm_config.yaml")
+        cfg = load_config("forecast_pipeline_config.yaml")
         backtest = cfg["backtest"]
         assert "tweedie_variance_power" in backtest
         assert "intermittent_threshold" in backtest
@@ -211,7 +211,7 @@ class TestYAMLConfigIntegration:
     def test_config_default_values(self) -> None:
         from common.utils import load_config
 
-        cfg = load_config("algorithm_config.yaml")
+        cfg = load_config("forecast_pipeline_config.yaml")
         backtest = cfg["backtest"]
         assert backtest["tweedie_variance_power"] == 1.5
         assert backtest["intermittent_threshold"] == 0.7

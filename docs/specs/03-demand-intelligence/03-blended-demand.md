@@ -1,6 +1,14 @@
-# 03-03 Blended Demand
+# Blended Demand
 
-> **Status:** Implemented | **Feature:** F3.4
+> Combines statistical forecast output with demand sensing signals into a single alpha-weighted blended demand quantity per DFU per month, with per-segment alpha overrides and near-horizon decay.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning (Sensing group) |
+| **Key Files** | `scripts/compute_blended_forecast.py`, `api/routers/blended_forecast.py`, `config/blended_demand_config.yaml` |
+
+---
 
 ## Why This Moved Here
 

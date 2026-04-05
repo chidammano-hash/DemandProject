@@ -1,6 +1,14 @@
-# 03-01 DFU Clustering
+# DFU Clustering
 
-> **Status:** Implemented | **Features:** 7, 29, 38
+> Groups Demand Forecast Units by shared demand patterns across 14 features and 6 dimensions, with automatic K selection, taxonomy labeling, and a What-If scenario UI for planners.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Clusters |
+| **Key Files** | `scripts/generate_clustering_features.py`, `scripts/train_clustering_model.py`, `api/routers/clusters.py`, `config/clustering_config.yaml` |
+
+---
 
 ## Why This Moved Here
 

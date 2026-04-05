@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from api.auth import require_api_key
 from api.core import _f, add_cross_dim_filters, get_conn, set_cache
+from common.utils import load_config
 
 router = APIRouter(tags=["inv-planning"])
 
@@ -423,25 +424,13 @@ def override_safety_stock(
 def get_ss_config(
     response: FastAPIResponse,
 ) -> dict:
-    """Return the current safety_stock_config.yaml as JSON.
+    """Return the current safety_stock_config.yaml as JSON (with _includes merged).
 
     Cache: 600s.
     """
-    import os as _os
-
     set_cache(response, max_age=600)
 
-    config_path = _os.path.join(
-        _os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))),
-        "config",
-        "safety_stock_config.yaml",
-    )
-
-    try:
-        import yaml as _yaml
-
-        with open(config_path) as fh:
-            cfg = _yaml.safe_load(fh)
-        return cfg
-    except FileNotFoundError:
+    cfg = load_config("safety_stock_config")
+    if not cfg:
         raise HTTPException(status_code=404, detail="safety_stock_config.yaml not found")
+    return cfg

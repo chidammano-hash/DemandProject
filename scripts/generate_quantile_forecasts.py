@@ -15,7 +15,7 @@ Usage:
         --horizon 6 \\
         --plan-version 2026-04-01_test
 
-Config: config/quantile_forecast_config.yaml
+Config: config/forecast_domain_config.yaml (quantile_forecast section)
 """
 
 import argparse
@@ -405,7 +405,7 @@ def run(
     import pandas as pd
     import numpy as np
 
-    cfg = yaml.safe_load(open("config/quantile_forecast_config.yaml"))
+    cfg = yaml.safe_load(open("config/forecast_domain_config.yaml"))
     model_cfg = cfg["quantile_forecast"]["model"]
     model_id = "lgbm_quantile_cluster"
 

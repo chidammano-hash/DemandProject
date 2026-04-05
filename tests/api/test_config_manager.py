@@ -57,7 +57,7 @@ async def test_list_configs_categories_have_required_fields():
 
 @pytest.mark.asyncio
 async def test_get_config_detail_returns_fields():
-    """GET /config/algorithm_config returns fields with metadata."""
+    """GET /config/algorithm_config returns deprecated entry (fields may be empty)."""
     pool = _make_pool()
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -69,13 +69,7 @@ async def test_get_config_detail_returns_fields():
     assert data["name"] == "algorithm_config"
     assert data["category"] == "forecasting"
     assert "fields" in data
-    assert len(data["fields"]) > 0
-    # Fields have required metadata
-    for f in data["fields"]:
-        assert "path" in f
-        assert "label" in f
-        assert "description" in f
-        assert "type" in f
+    # algorithm_config is deprecated — fields may be empty (consolidated into pipeline config)
 
 
 @pytest.mark.asyncio
@@ -141,14 +135,14 @@ async def test_update_config_no_changes():
     """PUT with no actual changes returns no-change response."""
     pool = _make_pool()
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.config_manager.load_config", return_value={"algorithms": {"lgbm": {"recursive": True}}}), \
+         patch("api.routers.config_manager.load_config", return_value={"tuning": {"n_trials": 50}}), \
          patch("api.routers.config_manager.reset_config"):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                "/config/algorithm_config",
-                json={"values": {"algorithms.lgbm.recursive": True}},
+                "/config/hyperparameter_tuning",
+                json={"values": {"tuning.n_trials": 50}},
             )
     assert resp.status_code == 200
     data = resp.json()
@@ -160,30 +154,30 @@ async def test_update_config_writes_changes(tmp_path):
     """PUT with valid changes writes the YAML file."""
     import yaml
 
-    # Create a temp config file
-    cfg_file = tmp_path / "algorithm_config.yaml"
-    cfg_file.write_text(yaml.dump({"algorithms": {"lgbm": {"recursive": True, "n_estimators": 500}}}))
+    # Create a temp config file (use hyperparameter_tuning which still has fields)
+    cfg_file = tmp_path / "hyperparameter_tuning.yaml"
+    cfg_file.write_text(yaml.dump({"tuning": {"n_trials": 50, "n_splits": 5}}))
 
     pool = _make_pool()
     with patch("api.core._get_pool", return_value=pool), \
          patch("api.routers.config_manager._CONFIG_DIR", tmp_path), \
-         patch("api.routers.config_manager.load_config", return_value={"algorithms": {"lgbm": {"recursive": True, "n_estimators": 500}}}), \
+         patch("api.routers.config_manager.load_config", return_value={"tuning": {"n_trials": 50, "n_splits": 5}}), \
          patch("api.routers.config_manager.reset_config"):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.put(
-                "/config/algorithm_config",
-                json={"values": {"algorithms.lgbm.recursive": False}},
+                "/config/hyperparameter_tuning",
+                json={"values": {"tuning.n_trials": 100}},
             )
     assert resp.status_code == 200
     data = resp.json()
-    assert "algorithms.lgbm.recursive" in data["changed"]
+    assert "tuning.n_trials" in data["changed"]
     # Verify file was written
     written = yaml.safe_load(cfg_file.read_text())
-    assert written["algorithms"]["lgbm"]["recursive"] is False
+    assert written["tuning"]["n_trials"] == 100
     # Backup was created
-    assert (tmp_path / "algorithm_config.yaml.bak").exists()
+    assert (tmp_path / "hyperparameter_tuning.yaml.bak").exists()
 
 
 # ===========================================================================

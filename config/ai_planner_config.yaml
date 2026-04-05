@@ -1,6 +1,8 @@
 # AI Planning Agent configuration
 # IPAIfeature1 — config for common/ai_planner.py and scripts/generate_ai_insights.py
 
+_includes: [shared_constants]
+
 # provider: "openai" (uses OPENAI_API_KEY) or "anthropic" (uses ANTHROPIC_API_KEY)
 provider: "openai"
 model: "gpt-4o-mini"
@@ -36,9 +38,10 @@ insight_thresholds:
 
 # ---------------------------------------------------------------------------
 # Financial impact estimation parameters
+# carrying_cost_rate inherited from shared_constants.yaml via _includes
+# Note: default_unit_cost intentionally overrides shared_constants (10.0 vs 1.0 — AI planner uses higher estimate)
 # ---------------------------------------------------------------------------
 default_unit_cost: 10.0
-carrying_cost_rate: 0.25
 stockout_cost_multiplier: 3.0
 
 # ---------------------------------------------------------------------------
@@ -46,3 +49,27 @@ stockout_cost_multiplier: 3.0
 # ---------------------------------------------------------------------------
 scheduled: true
 cron: "0 6 * * 1"   # Monday 06:00 UTC
+
+# ---------------------------------------------------------------------------
+# Tuning Advisor — AI-powered LGBM hyperparameter tuning chat
+# Merged from tuning_advisor_config.yaml
+# Used by common/ai/tuning_advisor.py
+# ---------------------------------------------------------------------------
+tuning_advisor:
+  # LLM provider and model
+  provider: "openai"         # "openai" or "anthropic"
+  model: "gpt-4o"            # needs function-calling / tool_use support
+  max_tokens: 4096
+  temperature: 0.3
+
+  # Agentic loop limits
+  max_turns: 20
+  token_budget: 50000
+
+  # Safety limits — prevent runaway experimentation
+  max_concurrent_runs: 1            # max active runs at once
+  require_confirmation: true        # AI cannot auto-start runs
+  min_seconds_between_runs: 300     # 5-minute cooldown
+
+  # Conversation context
+  max_history_messages: 40          # sliding window for LLM context

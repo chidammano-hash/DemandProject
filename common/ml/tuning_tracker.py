@@ -38,21 +38,9 @@ def _read_metadata(metadata_path: str | Path) -> dict[str, Any]:
 
 
 def _load_tuning_config() -> dict[str, Any]:
-    """Load tracking settings for tuning run comparisons.
-
-    Tries ``forecast_pipeline_config.yaml`` ``tracking`` section first,
-    then falls back to ``lgbm_tuning_config.yaml`` ``lgbm_tuning`` section.
-    """
-    try:
-        pipeline_cfg = load_forecast_pipeline_config()
-        tracking = pipeline_cfg.get("tracking", {})
-        if tracking:
-            return tracking
-    except FileNotFoundError:
-        pass
-    # Fall back to legacy config
-    cfg = load_config("lgbm_tuning_config.yaml")
-    return cfg.get("lgbm_tuning", {})
+    """Load tracking settings from ``forecast_pipeline_config.yaml`` ``tracking`` section."""
+    pipeline_cfg = load_forecast_pipeline_config()
+    return pipeline_cfg.get("tracking", {})
 
 
 def _fetch_run(cur: psycopg.Cursor, run_id: int) -> dict[str, Any] | None:  # type: ignore[type-arg]
@@ -427,7 +415,7 @@ def compare_runs(baseline_id: int, candidate_id: int) -> dict[str, Any]:
     Steps:
     1. Fetch both runs from the DB
     2. Compute deltas (candidate - baseline) for accuracy, WAPE, and bias
-    3. Determine verdict using thresholds from ``config/lgbm_tuning_config.yaml``
+    3. Determine verdict using thresholds from tuning config
     4. Compute per-timeframe deltas where both runs have matching timeframes
     5. Insert a row into ``lgbm_tuning_comparison``
     6. Return the full comparison dict

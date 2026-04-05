@@ -58,12 +58,12 @@ The **Supply Chain Command Center** consolidates demand forecasting, inventory o
 | Database Tables | ~85 (6 dimension, 4 fact, 35+ materialized views, 40+ planning/config) |
 | Total Database Rows | 349.8M+ (198M in inventory snapshots alone) |
 | DFU Count | 112,000+ demand forecast units |
-| API Routers | 68 mounted routers across 6 domain groups |
+| API Routers | 72 mounted routers across 6 domain groups |
 | UI Tabs | 25 lazy-loaded dashboard tabs |
 | ML Models | 3 tree-based + 30+ statistical algorithms |
-| Config Files | 54 YAML configuration files |
-| Design Specs | 54 specifications across 8 business domains |
-| DDL Migrations | 103 sequential SQL migration files |
+| Config Files | 57 YAML configuration files |
+| Design Specs | 75 specifications across 8 business domains |
+| DDL Migrations | 89 sequential SQL migration files |
 | Automated Tests | 3,916 (3,042 backend + 874 frontend) |
 | Make Targets | 130+ build/deploy/test/pipeline targets |
 
@@ -90,7 +90,7 @@ graph TB
 
     subgraph Supply Chain Command Center
         UI[React UI<br>25 Tabs]
-        API[FastAPI Backend<br>68 Routers]
+        API[FastAPI Backend<br>72 Routers]
         ML[ML Pipeline<br>LGBM/CatBoost/XGBoost]
         ETL[ETL Pipeline<br>Normalize + Load]
         DB[(PostgreSQL 16<br>349M+ Rows)]
@@ -151,12 +151,12 @@ graph TB
 
 | # | Principle | Rationale | Implication | Codebase Evidence |
 |---|---|---|---|---|
-| AP-1 | **Configuration over Code** | Zero hardcoded thresholds; all parameters must be tunable without code changes | Every module has a corresponding YAML config file loaded via `load_config(name)` | 54 YAML files in `config/` |
+| AP-1 | **Configuration over Code** | Zero hardcoded thresholds; all parameters must be tunable without code changes | Every module has a corresponding YAML config file loaded via `load_config(name)` | 57 YAML files in `config/` |
 | AP-2 | **Domain-Driven Generic Design** | Reduce per-dataset duplication; single code path for new domains | All datasets extend `DomainSpec` dataclass (frozen, immutable) in `common/core/domain_specs.py` | 10 domain specs driving generic CRUD |
 | AP-3 | **Explicit over Implicit** | Planning date must be reproducible, not derived from system clock | All date-sensitive code uses `get_planning_date()`, never `date.today()` | `common/core/planning_date.py` |
 | AP-4 | **Test-First Development** | 3,916 tests ensure regression safety across 174 backend + 111 frontend test files | Every feature ships with tests; every removed feature removes its tests | `tests/` (pytest), `frontend/src/**/__tests__/` (vitest) |
 | AP-5 | **Raw SQL over ORM** | Full control over PostgreSQL features (partitions, MVs, CTEs, window functions) | psycopg3 with `%s` placeholders; no SQLAlchemy ORM layer | `api/core.py`, all router files |
-| AP-6 | **Separation of Compute and Serve** | Heavy ML pipelines must not block API request paths | Scripts populate tables; API reads from pre-computed tables and materialized views | `scripts/` (55+ scripts) vs `api/routers/` (68 routers) |
+| AP-6 | **Separation of Compute and Serve** | Heavy ML pipelines must not block API request paths | Scripts populate tables; API reads from pre-computed tables and materialized views | `scripts/` (55+ scripts) vs `api/routers/` (72 routers) |
 | AP-7 | **Graceful Degradation** | Optional features (GPU, Redis, AI APIs) must not crash the system when unavailable | Feature detection with fallback paths for every optional dependency | `DEMAND_GPU` env var, Redis optional in cache, Google Search fallback |
 
 ### 2.4 Key Requirements and Constraints
@@ -721,7 +721,7 @@ All data mutations are logged to `fact_audit_log` with: user_id, action, resourc
 
 | # | Component | Technology | Purpose | Key Files |
 |---|---|---|---|---|
-| 1 | **FastAPI Backend** | Python, FastAPI, Uvicorn | REST API serving 68 routers | `api/main.py`, `api/routers/` |
+| 1 | **FastAPI Backend** | Python, FastAPI, Uvicorn | REST API serving 72 routers | `api/main.py`, `api/routers/` |
 | 2 | **React Frontend** | React 18, Vite, TypeScript | 25 lazy-loaded interactive tabs | `frontend/src/` |
 | 3 | **ETL Pipeline** | Python scripts, Make | Data normalization + loading for 10 domains | `scripts/etl/` |
 | 4 | **ML Pipeline** | scikit-learn, LightGBM, CatBoost, XGBoost | Training, backtesting, champion selection | `scripts/ml/`, `common/ml/` |
@@ -752,11 +752,11 @@ Cache Layer         -      via      -         -      R/W      -          -      
 
 ### 5.3 Component Architecture
 
-#### API Layer (68 Routers)
+#### API Layer (72 Routers)
 
 | Domain Group | Router Count | Path Prefix Examples | Key Responsibilities |
 |---|---|---|---|
-| `api/routers/inventory/` | 22 | `/inv-planning/*`, `/inventory/*`, `/fill-rate/*` | Safety stock, EOQ, policies, exceptions, health, rebalancing |
+| `api/routers/inventory/` | 23 | `/inv-planning/*`, `/inventory/*`, `/fill-rate/*`, `/demand-history/*` | Safety stock, EOQ, policies, exceptions, health, rebalancing |
 | `api/routers/forecasting/` | 10 | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*` | Accuracy KPIs, SHAP, tuning, champion, model competition |
 | `api/routers/operations/` | 10 | `/sop/*`, `/control-tower/*`, `/storyboard/*`, `/events/*` | S&OP cycle, control tower, storyboard, financial planning |
 | `api/routers/platform/` | 10 | `/auth/*`, `/users/*`, `/notifications/*`, `/webhooks/*` | Auth, RBAC, DQ, config, notifications, collaboration |
@@ -813,7 +813,7 @@ Cache Layer         -      via      -         -      R/W      -          -      
 
 | Pattern | Implementation | Details |
 |---|---|---|
-| **REST API** | Primary integration | 68 routers serve JSON; pagination offset/limit (50-1000 rows); JWT Bearer or X-API-Key auth |
+| **REST API** | Primary integration | 72 routers serve JSON; pagination offset/limit (50-1000 rows); JWT Bearer or X-API-Key auth |
 | **Webhooks (Outbound)** | HMAC-SHA256 signed | 8 event types: job_completed, forecast_published, insight_created, exception_generated, stockout_alert, threshold_breach, approval_required, data_loaded |
 | **Event-Driven** | Notification engine | Routes events to Slack/Teams/Email/PagerDuty based on severity rules |
 | **File-Based ETL** | CSV ingestion | Source CSVs from ERP dropped to `data/input/`, normalized and loaded via Make targets |
@@ -908,7 +908,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  │  Vite Dev Server    │     │  FastAPI + Uvicorn   │           │
 │  │  localhost:5173     │────>│  localhost:8000      │           │
 │  │                     │proxy│                      │           │
-│  │  React App + HMR    │     │  68 routers          │           │
+│  │  React App + HMR    │     │  72 routers          │           │
 │  │  25 lazy tabs       │     │  GZip + CORS + Auth  │           │
 │  └─────────────────────┘     └──────────┬───────────┘           │
 │                                          │                       │
@@ -1066,7 +1066,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │  APPLICATION LAYER                                          │  │
 │  │                                                             │  │
-│  │  FastAPI + Uvicorn (:8000), 68 routers                     │  │
+│  │  FastAPI + Uvicorn (:8000), 72 routers                     │  │
 │  │  Middleware: GZip → CORS → Rate Limiting → Request Logging │  │
 │  │  Auth: JWT Bearer + API Key fallback + RBAC (4 roles)      │  │
 │  │  Validation: Pydantic v2 request/response models           │  │
@@ -1269,7 +1269,7 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | Vector | Status | Components | Protocol |
 |---|---|---|---|
 | **1. Notifications & Alerting** | Implemented | Slack, Teams, Email, PagerDuty | HTTPS webhooks, SMTP |
-| **2. REST API Consumers** | Implemented | 68 routers, JWT auth, rate limiting | REST/JSON over HTTPS |
+| **2. REST API Consumers** | Implemented | 72 routers, JWT auth, rate limiting | REST/JSON over HTTPS |
 | **3. Cloud Data Pipelines** | Planned | Snowflake, BigQuery, S3, Databricks | Abstract `CloudConnector` |
 | **4. ERP/WMS Integration** | Planned | SAP S/4HANA, Oracle Fusion, NetSuite, Manhattan WMS | Abstract `ERPAdapter` |
 
@@ -1450,10 +1450,10 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | Attribute | Value |
 |---|---|
 | **Status** | Accepted |
-| **Context** | 54 modules each need tunable parameters -- thresholds, feature flags, algorithm hyperparameters, model settings |
+| **Context** | 57 modules each need tunable parameters -- thresholds, feature flags, algorithm hyperparameters, model settings |
 | **Decision** | All config externalized to YAML files in `config/`, loaded via `load_config(name)`. Secrets use environment variables. |
 | **Rationale** | YAML is human-readable, supports nested structures (algorithm parameter sets, cluster tuning profiles), and is version-controllable. Env vars alone cannot express complex config. YAML with env var substitution provides the best of both worlds. |
-| **Consequences** | 54 config files to maintain. Config changes require no code changes. All parameters are documentable and auditable. Slight startup cost loading YAML. |
+| **Consequences** | 57 config files to maintain. Config changes require no code changes. All parameters are documentable and auditable. Slight startup cost loading YAML. |
 
 ### ADR-004: APScheduler over Celery
 

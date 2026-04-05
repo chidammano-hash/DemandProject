@@ -1,6 +1,14 @@
-# 04-02 Demand & Lead Time Variability
+# Demand & Lead Time Variability
 
-> **Status:** Implemented | **Features:** IPfeature1, IPfeature2
+> Two profiling pipelines that quantify demand variability (CV, MAD, skewness) and lead time variability (LT CV, reliability) per DFU, classifying each into a volatility or reliability profile for use in safety stock formulas.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning |
+| **Key Files** | `scripts/compute_demand_variability.py`, `scripts/compute_lead_time_variability.py`, `config/variability_config.yaml`, `sql/022_create_demand_variability.sql` |
+
+---
 
 ## Problem
 
@@ -114,7 +122,7 @@ cv_thresholds:
   high: 1.0
 ```
 
-File: `config/lead_time_config.yaml`
+File: `config/inventory_planning_config.yaml` (lead_time section)
 
 ```yaml
 lt_cv_thresholds:

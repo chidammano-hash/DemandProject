@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| **Status** | ✅ Implemented |
+| **Status** | Implemented |
 | **UI Tab** | N/A (API-driven) |
-| **Key Files** | `api/routers/reports.py`, `config/reporting_config.yaml` |
+| **Key Files** | `api/routers/reports.py` |
 
 ---
 
@@ -96,7 +96,7 @@ A report generation engine with built-in templates for common planning reports. 
 
 ## Configuration
 
-`config/reporting_config.yaml` controls output directory, retention policy, and delivery settings. Reports are stored in `data/reports/` (auto-created, gitignored). Auto-purge removes reports older than 90 days by default.
+> `config/reporting_config.yaml` has been deleted (dead config, no consumers). Report configuration (output directory, retention policy, delivery settings) is managed via DB tables (`dim_report_template`, `fact_report_schedule`). Reports are stored in `data/reports/` (auto-created, gitignored). Auto-purge removes reports older than 90 days by default.
 
 ## Dependencies
 

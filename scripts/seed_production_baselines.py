@@ -31,7 +31,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params
-from common.utils import load_config
+from common.utils import load_config, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ TEMPLATE_ID = "production_baseline"
 
 MODEL_IDS = ["lgbm_cluster", "catboost_cluster", "xgboost_cluster", "chronos"]
 
-# Keys in algorithm_config.yaml that are training config, not hyperparameters
+# Keys in pipeline config algorithm entries that are training config, not hyperparameters
 _TRAINING_KEYS = frozenset({
     "enabled", "model_id", "cluster_strategy", "recursive",
     "shap_select", "shap_threshold", "shap_top_n",
@@ -313,10 +313,11 @@ def seed_tuning_baseline(model_id: str, conn: psycopg.Connection) -> int | None:
     meta = json.loads(meta_path.read_text())
     acc = meta.get("accuracy_at_execution_lag", {})
 
-    # Read production params from algorithm_config.yaml
-    config = load_config("algorithm_config.yaml")
-    model_key = model_id.replace("_cluster", "")
-    algo_section = config.get("algorithms", {}).get(model_key, {})
+    # Read production params from forecast_pipeline_config.yaml
+    from common.utils import get_algorithm_params
+    pcfg = load_forecast_pipeline_config()
+    algo_entry = pcfg.get("algorithms", {}).get(model_id, {})
+    algo_section = algo_entry.get("params", algo_entry)
     params = _extract_params(algo_section)
     training = _extract_training_config(algo_section)
 
@@ -409,7 +410,8 @@ def seed_champion_baseline(conn: psycopg.Connection) -> int | None:  # type: ign
         return None
 
     summary = json.loads(summary_path.read_text())
-    comp_config = load_config("model_competition.yaml").get("competition", {})
+    pipeline_cfg = load_forecast_pipeline_config()
+    comp_config = pipeline_cfg.get("champion", {})
 
     champion_acc = summary.get("overall_champion_accuracy_pct")
     ceiling_acc = summary.get("overall_ceiling_accuracy_pct")

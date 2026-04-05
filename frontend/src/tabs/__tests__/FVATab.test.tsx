@@ -2,17 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 
-// Mock recharts
-vi.mock("recharts", () => ({
-  BarChart: ({ children }: any) => <div data-testid="bar-chart">{children}</div>,
-  Bar: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  ResponsiveContainer: ({ children }: any) => <div>{children}</div>,
-  Cell: () => null,
-}));
+// Mock recharts — uses shared mock at frontend/__mocks__/recharts.tsx
+vi.mock("recharts");
 
 vi.mock("@/api/queries", () => ({
   fetchFVAWaterfall: vi.fn().mockResolvedValue({

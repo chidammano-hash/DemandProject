@@ -16,22 +16,18 @@ from pydantic import BaseModel, Field
 
 from api.auth import require_api_key
 from api.core import get_conn
-from common.utils import load_config
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sql-runner", tags=["sql-runner"])
 
 # ---------------------------------------------------------------------------
-# Config
+# Config — inlined (was sql_runner_config.yaml, only 3 fields)
 # ---------------------------------------------------------------------------
-_DEFAULT_CFG = {"max_rows": 1000, "statement_timeout_ms": 30000, "enabled": True}
+_SQL_RUNNER_CONFIG = {"max_rows": 1000, "statement_timeout_ms": 30000, "enabled": True}
 
 
 def _cfg() -> dict:
-    try:
-        return load_config("sql_runner_config")
-    except Exception:
-        return _DEFAULT_CFG
+    return _SQL_RUNNER_CONFIG
 
 
 # ---------------------------------------------------------------------------

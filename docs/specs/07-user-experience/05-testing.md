@@ -1,14 +1,12 @@
 # Testing
 
-The full-stack testing strategy: pytest for backend (1636+ tests), Vitest + React Testing Library for frontend (457+ tests), and Playwright for end-to-end browser smoke tests (8 test files). All three layers run without external infrastructure -- the database is mocked in backend and frontend tests; only E2E tests require running services.
+> The full-stack testing strategy: pytest for backend (1636+ tests), Vitest + React Testing Library for frontend (457+ tests), and Playwright for end-to-end browser smoke tests (8 test files). All three layers run without external infrastructure -- the database is mocked in backend and frontend tests; only E2E tests require running services.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 07-user-experience/05-testing |
-| Frontend Tests | `frontend/src/**/__tests__/` (Vitest), `frontend/e2e/tests/` (Playwright) |
-| Backend Tests | `tests/unit/`, `tests/api/` (pytest) |
-| Config | `vitest.config.ts`, `e2e/playwright.config.ts`, `pytest` in `pyproject.toml` |
+| **Status** | Implemented |
+| **UI Tab** | N/A (backend only) |
+| **Key Files** | `tests/unit/`, `tests/api/`, `frontend/src/**/__tests__/`, `frontend/e2e/tests/`, `vitest.config.ts`, `e2e/playwright.config.ts` |
 
 ---
 

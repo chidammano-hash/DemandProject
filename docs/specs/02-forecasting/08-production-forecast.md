@@ -85,7 +85,7 @@ Tracks persisted model weights so the inference pipeline can reload them.
 
 ### `config/forecast_pipeline_config.yaml` (production_forecast section)
 
-> **Note:** Production forecast settings have been consolidated into the master `config/forecast_pipeline_config.yaml`. The legacy `config/production_forecast_config.yaml` still works via backward compatibility but new changes should go in the master config.
+> **Note:** Production forecast settings live in `config/forecast_pipeline_config.yaml` under the `production_forecast` section. The legacy `config/production_forecast_config.yaml` has been deleted.
 
 ```yaml
 production_forecast:

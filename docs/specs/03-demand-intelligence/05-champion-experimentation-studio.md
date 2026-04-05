@@ -1,12 +1,15 @@
-# 03-05 Champion Experimentation Studio
+# Champion Experimentation Studio
 
-> **Status:** Implemented | **Feature:** 48
-
-A full experiment lifecycle for champion selection strategies — create, run, compare, promote config, and load results — integrated as a sub-tab within the Model Tuning tab.
+> A full experiment lifecycle for champion selection strategies — create, run, compare, promote config, and load results — integrated as a sub-tab within the Model Tuning tab.
 
 | | |
 |---|---|
+| **Status** | Implemented |
 | **UI Tab** | Model Tuning > Champion sub-tab |
+| **Key Files** | `api/routers/forecasting/champion_experiments.py`, `frontend/src/tabs/champion/*.tsx`, `sql/102_champion_experiments.sql`, `common/ml/champion_strategies.py` |
+
+| | |
+|---|---|
 | **API Prefix** | `/champion-experiments` |
 | **Router** | `api/routers/forecasting/champion_experiments.py` |
 | **Frontend** | `frontend/src/api/queries/champion-experiments.ts`, `frontend/src/tabs/champion/*.tsx` |
@@ -137,7 +140,7 @@ Side-by-side comparison:
 
 ### ChampionPromoteModal
 2-stage promotion dialog:
-- Stage 1: Promote config to `model_competition.yaml` (with backup)
+- Stage 1: Promote config to `forecast_pipeline_config.yaml` champion section (with backup)
 - Stage 2: Run champion selection → load results to `fact_external_forecast_monthly`
 - Progress polling for Stage 2
 
@@ -166,14 +169,14 @@ All strategies use `shift(exec_lag+1)` to prevent data leakage.
 
 ### Stage 1: Promote Config
 1. Verify experiment is completed
-2. Backup `config/model_competition.yaml` → `.bak.<experiment_id>`
-3. Write new strategy, params, models, metric, lag_mode, min_sku_rows
+2. Backup `config/forecast_pipeline_config.yaml` → `.bak.<experiment_id>`
+3. Write new champion strategy, params, metric, lag_mode, min_sku_rows to `champion` section
 4. Clear previous `is_promoted` flags
 5. Set `is_promoted=TRUE`, insert into `champion_promotion_log`
 
 ### Stage 2: Load Results
 1. Submit `champion_results_load` job via `JobManager`
-2. Job runs `scripts/run_champion_selection.py` (reads updated `model_competition.yaml`)
+2. Job runs `scripts/run_champion_selection.py` (reads updated `forecast_pipeline_config.yaml` champion section)
 3. On completion: sets `is_results_promoted=TRUE`
 4. Frontend polls via `/promote-results/status`
 

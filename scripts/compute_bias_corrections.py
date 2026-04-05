@@ -10,7 +10,7 @@ Usage:
         --plan-version 2026-04-01_production \\
         [--apply-to-plan] [--dry-run] [--segment dfu|cluster|abc_seasonality]
 
-Config: config/bias_correction_config.yaml
+Config: config/forecast_domain_config.yaml (bias_correction section)
 """
 
 from __future__ import annotations
@@ -33,8 +33,7 @@ if str(ROOT) not in sys.path:
 from common.db import get_db_params
 from common.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
-
-CONFIG_PATH = "config/bias_correction_config.yaml"
+from common.utils import load_config as _load_config
 
 DEFAULT_WEIGHTS = [0.50, 0.30, 0.20]
 CORRECTION_MIN = 0.70
@@ -42,9 +41,8 @@ CORRECTION_MAX = 1.30
 REVIEW_THRESHOLD = 0.20
 
 
-def load_config(path: str = CONFIG_PATH) -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f)["bias_correction"]
+def load_config() -> dict:
+    return _load_config("forecast_domain_config.yaml").get("bias_correction", {})
 
 
 def compute_rolling_bias(

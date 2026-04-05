@@ -16,6 +16,9 @@ import {
   fetchChampionTemplates,
   type ChampionExperimentTemplate,
 } from "@/api/queries";
+import {
+  fetchPipelineConfig, pipelineConfigKeys,
+} from "@/api/queries/unified-model-tuning";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -66,7 +69,8 @@ const META_DEFAULTS = {
   performance_window: 6,
 };
 
-const ALL_MODELS = [
+/** Fallback model IDs used before pipeline config loads */
+const DEFAULT_MODELS = [
   "lgbm_cluster", "catboost_cluster", "xgboost_cluster",
   "chronos", "chronos_bolt", "chronos2", "chronos2_enriched",
   "mstl", "nbeats", "nhits", "seasonal_naive", "rolling_mean",
@@ -74,9 +78,11 @@ const ALL_MODELS = [
 
 const MODEL_LABELS: Record<string, string> = {
   lgbm_cluster: "LightGBM", catboost_cluster: "CatBoost", xgboost_cluster: "XGBoost",
+  lgbm_cust_enriched: "LightGBM (Cust)", catboost_cust_enriched: "CatBoost (Cust)", xgboost_cust_enriched: "XGBoost (Cust)",
   chronos: "Chronos T5", chronos_bolt: "Chronos Bolt", chronos2: "Chronos 2",
-  chronos2_enriched: "Chronos 2E", mstl: "MSTL", nbeats: "N-BEATS",
-  nhits: "N-HiTS", seasonal_naive: "Seasonal Naive", rolling_mean: "Rolling Mean",
+  chronos2_enriched: "Chronos 2E", bolt_hierarchical: "Bolt Hierarchical",
+  mstl: "MSTL", nbeats: "N-BEATS", nhits: "N-HiTS",
+  seasonal_naive: "Seasonal Naive", rolling_mean: "Rolling Mean",
 };
 
 const STRATEGY_LABELS: Record<string, string> = {
@@ -133,6 +139,22 @@ interface Props {
 export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props) {
   const queryClient = useQueryClient();
 
+  // Fetch pipeline config to get dynamic model list
+  const { data: pipelineConfig } = useQuery({
+    queryKey: pipelineConfigKeys.config,
+    queryFn: fetchPipelineConfig,
+    staleTime: 60_000,
+  });
+
+  // Derive competing models from pipeline config (those with compete: true)
+  const ALL_MODELS = useMemo(() => {
+    if (!pipelineConfig?.algorithms) return DEFAULT_MODELS;
+    const competing = Object.entries(pipelineConfig.algorithms)
+      .filter(([, algo]) => algo.enabled && algo.compete)
+      .map(([id]) => id);
+    return competing.length > 0 ? competing : DEFAULT_MODELS;
+  }, [pipelineConfig]);
+
   // Form state
   const [label, setLabel] = useState("");
   const [notes, setNotes] = useState("");
@@ -142,10 +164,17 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
     STRATEGY_DEFAULTS.expanding,
   );
   const [metaLearnerParams, setMetaLearnerParams] = useState(META_DEFAULTS);
-  const [models, setModels] = useState<string[]>([...ALL_MODELS]);
+  const [models, setModels] = useState<string[]>([...DEFAULT_MODELS]);
   const [metric, setMetric] = useState("accuracy_pct");
   const [lagMode, setLagMode] = useState("execution");
   const [minSkuRows, setMinSkuRows] = useState(3);
+
+  // Sync model selection when dynamic model list loads
+  useEffect(() => {
+    if (ALL_MODELS !== DEFAULT_MODELS) {
+      setModels([...ALL_MODELS]);
+    }
+  }, [ALL_MODELS]);
 
   // Templates query
   const { data: templatesData } = useQuery({

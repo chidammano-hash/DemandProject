@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `scripts/run_champion_selection.py`, `common/champion_strategies.py`, `config/forecast_pipeline_config.yaml` (champion section; legacy: `config/model_competition.yaml`), `api/routers/competition.py`, `frontend/src/tabs/AccuracyTab.tsx` |
+| **Key Files** | `scripts/run_champion_selection.py`, `common/champion_strategies.py`, `config/forecast_pipeline_config.yaml` (champion section), `api/routers/competition.py`, `frontend/src/tabs/AccuracyTab.tsx` |
 
 ---
 
@@ -202,15 +202,12 @@ No new tables. Champion and ceiling predictions are stored in the existing `fact
 
 ## Configuration
 
-### `config/model_competition.yaml`
+### `config/forecast_pipeline_config.yaml` (champion section)
+
+> The legacy `config/model_competition.yaml` has been deleted. All settings now live in the master config.
 
 ```yaml
-competition:
-  metric: accuracy_pct               # wape (lowest wins) or accuracy_pct
-  lag: execution                     # "execution" (per-DFU) or fixed 0-4
-  min_dfu_rows: 3                    # Minimum prior months before selection
-  fallback_model_id: seasonal_naive  # Used for warm-up gaps
-  champion_model_id: champion        # model_id for stored champion rows
+champion:
   strategy: hybrid_warmup            # Any registered strategy name (17 available)
   strategy_params:
     min_prior_months: 3              # For all strategies
@@ -220,18 +217,15 @@ competition:
     primary_strategy: adaptive_ensemble  # Phase 2: once enough history
     primary_top_k: 3                 # Top-K models for ensemble blending
     primary_weight_method: inverse_wape  # Weighting: inverse_wape | equal
-  models:
-    - catboost_cluster
-    - xgboost_cluster
-    - chronos2
-    - chronos2_enriched
-    - chronos_bolt
-    - seasonal_naive
-    - rolling_mean
-    - mstl
-    - nhits
-    - nbeats
+  fallback_model_id: seasonal_naive  # Used for warm-up gaps
+  metric: accuracy_pct               # wape (lowest wins) or accuracy_pct
+  lag: execution                     # "execution" (per-DFU) or fixed 0-4
+  min_sku_rows: 3
+  min_dfu_rows: 3                    # Minimum prior months before selection
+  champion_model_id: champion        # model_id for stored champion rows
 ```
+
+The competing models list is derived from `algorithms[*].compete == true` in the master config rather than an explicit list.
 
 ### Strategy-Specific Parameters
 

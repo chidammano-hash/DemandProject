@@ -1,10 +1,12 @@
-# PRD: Hierarchical Bolt — Customer-Level Bottom-Up with Reconciliation
+# Hierarchical Bolt — Customer-Level Bottom-Up with Reconciliation
 
-**Status:** Draft
-**Author:** Auto-generated
-**Date:** 2026-04-03
-**Spec ID:** 02-20
-**Domain:** Forecasting / ML Pipeline
+> Forecasts demand at the individual customer level using Chronos Bolt zero-shot inference, then reconciles bottom-up customer forecasts with a top-down item-location forecast to produce an unconstrained demand signal that corrects for inventory-driven bias in historical sales.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | N/A (backend only) |
+| **Key Files** | `scripts/run_backtest_bolt_hierarchical.py`, `tests/unit/test_bolt_hierarchical.py` |
 
 ---
 
@@ -332,7 +334,7 @@ algorithms:
     notes: "Chronos Bolt hierarchical: customer-level bottom-up + top-down reconciliation"
 ```
 
-### 6.2 `algorithm_config.yaml` — Hyperparameters
+### 6.2 `forecast_pipeline_config.yaml` — Hyperparameters
 
 ```yaml
 bolt_hierarchical:
@@ -378,7 +380,7 @@ backtest-bolt-hier-full: backtest-bolt-hier backtest-load-bolt-hier
   - Map reconciled item-loc predictions to DFU grain (item + customer_group + loc)
   - Attach actuals from `fact_sales_monthly` for fair comparison
   - Write CSV in standard backtest format
-- [ ] **Config**: Add `bolt_hierarchical` to `forecast_pipeline_config.yaml` and `algorithm_config.yaml`
+- [ ] **Config**: Add `bolt_hierarchical` to `forecast_pipeline_config.yaml` and `forecast_pipeline_config.yaml`
 - [ ] **Makefile**: Add `backtest-bolt-hier`, `backtest-load-bolt-hier` targets
 - [ ] **Tests**: Unit tests for aggregation, reconciliation, DFU mapping logic
 

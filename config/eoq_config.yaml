@@ -1,11 +1,10 @@
 # IPfeature4: EOQ & Cycle Stock Calculator
 # All defaults for compute_eoq.py
 
-costs:
-  default_ordering_cost: 50.00       # $ per order (setup/procurement cost)
-  default_holding_cost_pct: 0.25     # fraction of unit value per year
-  default_unit_cost: 1.00            # $ per unit (placeholder; override per item when available)
-  default_moq: 1                     # minimum order quantity (units)
+_includes: [shared_constants]
+
+# costs.{default_ordering_cost, default_holding_cost_pct, default_unit_cost, default_moq}
+# inherited from shared_constants.yaml via _includes
 
 constraints:
   max_eoq_months_supply: 6           # cap EOQ at this many months of avg demand

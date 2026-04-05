@@ -105,7 +105,7 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         description="Detect seasonality patterns and update DFU profiles",
         group="seasonality",
         callable=_run_seasonality,
-        params_schema={"config": "config/seasonality_config.yaml"},
+        params_schema={"config": "config/forecast_domain_config.yaml"},
     ),
     "backtest_lgbm": JobTypeDef(
         type_id="backtest_lgbm",

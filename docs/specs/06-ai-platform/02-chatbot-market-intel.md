@@ -1,15 +1,12 @@
 # Chatbot & Market Intelligence
 
-Two AI-powered features: (1) a natural-language-to-SQL chatbot that lets planners query the database conversationally, and (2) a market intelligence briefing that combines web search results with GPT-4o narrative synthesis for any item-location pair.
+> Two AI-powered features: (1) a natural-language-to-SQL chatbot that lets planners query the database conversationally, and (2) a market intelligence briefing that combines web search results with GPT-4o narrative synthesis for any item-location pair.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 06-ai-platform/02-chatbot-market-intel |
-| Frontend | `ChatPanel.tsx` (chatbot), Market Intel tab |
-| Backend | `api/main.py` (`POST /chat`, `POST /market-intelligence`) |
-| Config | Requires `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID` in `.env` |
-| SQL | `sql/011_create_embeddings.sql` |
+| **Status** | Implemented |
+| **UI Tab** | ChatPanel, Market Intel tab |
+| **Key Files** | `ChatPanel.tsx`, `api/main.py`, `sql/011_create_embeddings.sql` |
 
 ---
 

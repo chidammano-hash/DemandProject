@@ -1,15 +1,12 @@
 # AI Planning Agent
 
-A proactive exception work-queue powered by Claude that scans the portfolio for inventory and forecast anomalies, generates structured insights with causal reasoning, and presents them to planners for acceptance or resolution -- not a chatbot.
+> A proactive exception work-queue powered by Claude that scans the portfolio for inventory and forecast anomalies, generates structured insights with causal reasoning, and presents them to planners for acceptance or resolution -- not a chatbot.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 06-ai-platform/01-ai-planning-agent |
-| Frontend | `AIPlannerTab.tsx` |
-| Backend | `api/routers/ai_planner.py`, `common/ai_planner.py`, `scripts/generate_ai_insights.py` |
-| Config | `config/ai_planner_config.yaml` |
-| SQL | `sql/036_create_ai_insights.sql`, `sql/039_create_ai_call_log.sql`, `sql/040_create_ai_recommendation_outcomes.sql` |
+| **Status** | Implemented |
+| **UI Tab** | AIPlannerTab |
+| **Key Files** | `AIPlannerTab.tsx`, `api/routers/ai_planner.py`, `common/ai_planner.py`, `scripts/generate_ai_insights.py`, `config/ai_planner_config.yaml`, `sql/036_create_ai_insights.sql` |
 
 ---
 

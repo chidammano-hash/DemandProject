@@ -55,7 +55,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--config", type=str, default=None,
-        help="Path to algorithm_config.yaml (default: config/algorithm_config.yaml)",
+        help="Path to config YAML (default: config/forecast_pipeline_config.yaml)",
     )
     parser.add_argument(
         "--output-dir", type=str, default=None,
@@ -77,15 +77,18 @@ def main() -> None:
 
     # ── Load config ─────────────────────────────────────────────────────────
     with profiled_section("load_config"):
-        config_path = (
-            Path(args.config) if args.config
-            else ROOT / "config" / "algorithm_config.yaml"
-        )
-        with open(config_path) as f:
-            cfg = yaml.safe_load(f)
+        if args.config:
+            config_path = Path(args.config)
+            with open(config_path) as f:
+                cfg = yaml.safe_load(f)
+        else:
+            from common.utils import load_forecast_pipeline_config
+            cfg = load_forecast_pipeline_config()
 
-        dl_cfg = cfg.get("algorithms", {}).get(model_name, {})
-        if not dl_cfg.get("enabled", True):
+        algo_entry = cfg.get("algorithms", {}).get(model_name, {})
+        # Support pipeline config format (params sub-dict) or flat legacy format
+        dl_cfg = algo_entry.get("params", algo_entry)
+        if not algo_entry.get("enabled", True):
             logger.info("%s is disabled in config; exiting", model_name)
             return
 
@@ -98,7 +101,7 @@ def main() -> None:
             else ROOT / backtest_cfg.get("output_dir", "data/backtest")
         )
 
-        model_id = dl_cfg.get("model_id", model_name)
+        model_id = algo_entry.get("model_id", dl_cfg.get("model_id", model_name))
         dl_params = {
             "h": dl_cfg.get("h", 6),
             "input_size": dl_cfg.get("input_size", 24),
@@ -292,7 +295,7 @@ def main() -> None:
             earliest_month=earliest_month,
             latest_month=latest_month,
             extra_metadata={
-                "params_source": "algorithm_config",
+                "params_source": "forecast_pipeline_config",
                 "model_type": "deep_learning",
                 "architecture": model_name,
                 "global_model": True,

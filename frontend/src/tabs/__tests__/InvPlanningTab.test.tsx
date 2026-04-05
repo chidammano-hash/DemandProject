@@ -55,25 +55,7 @@ vi.mock("@/api/queries/inv-planning-insights", () => ({
   fetchProactiveRebalancing: vi.fn().mockResolvedValue({ opportunities: [], total_opportunities: 0 }),
 }));
 
-// Mock recharts
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
-  LineChart: ({ children }: { children: React.ReactNode }) => <div data-testid="line-chart">{children}</div>,
-  ComposedChart: ({ children }: { children: React.ReactNode }) => <div data-testid="composed-chart">{children}</div>,
-  PieChart: ({ children }: { children: React.ReactNode }) => <div data-testid="pie-chart">{children}</div>,
-  Pie: () => null,
-  Cell: () => null,
-  Bar: () => null,
-  Line: () => null,
-  Area: () => null,
-  ReferenceLine: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-  CartesianGrid: () => null,
-  Tooltip: () => null,
-  Legend: () => null,
-}));
+vi.mock("recharts");
 
 vi.mock("@/api/queries", () => ({
   queryKeys: {

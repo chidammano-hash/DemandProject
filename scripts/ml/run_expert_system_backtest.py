@@ -1045,7 +1045,7 @@ def main() -> None:
         import yaml
         cfg = yaml.safe_load(args.config.read_text())
     else:
-        cfg = load_config("expert_system_backtest")
+        cfg = load_config("expert_system_backtest.yaml")
 
     if args.loc:
         cfg.setdefault("experiment", {})["loc_filter"] = args.loc

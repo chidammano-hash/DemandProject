@@ -1,15 +1,12 @@
 # Control Tower
 
-A unified operational dashboard that aggregates KPIs (Key Performance Indicators) from across all supply chain domains -- inventory health, forecast accuracy, fill rate, demand signals, and stockout events -- into a single command-center view with active alerts and top-critical items.
+> A unified operational dashboard that aggregates KPIs (Key Performance Indicators) from across all supply chain domains -- inventory health, forecast accuracy, fill rate, demand signals, and stockout events -- into a single command-center view with active alerts and top-critical items.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 06-ai-platform/03-control-tower |
-| Frontend | `ControlTowerTab.tsx` |
-| Backend | `api/routers/control_tower.py` |
-| Config | None (KPIs derived from existing materialized views) |
-| SQL | `sql/035_create_control_tower_kpis.sql` |
+| **Status** | Implemented |
+| **UI Tab** | ControlTowerTab |
+| **Key Files** | `ControlTowerTab.tsx`, `api/routers/control_tower.py`, `sql/035_create_control_tower_kpis.sql` |
 
 ---
 

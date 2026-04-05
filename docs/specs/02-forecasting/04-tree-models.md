@@ -20,7 +20,7 @@ Three gradient-boosted tree algorithms -- LightGBM, CatBoost, and XGBoost -- are
 
 ## How It Works
 
-1. Each algorithm reads its configuration from `config/algorithm_config.yaml`
+1. Each algorithm reads its configuration from `config/forecast_pipeline_config.yaml`
 2. The shared framework loads sales data, builds the feature matrix, and generates timeframes
 3. The algorithm-specific script provides `train_and_predict_per_cluster()` and `train_and_predict_global()` functions
 4. The framework calls the appropriate function based on the `cluster_strategy` config key
@@ -117,7 +117,7 @@ Requires XGBoost >= 2.0 for native categorical support.
 
 ## Configuration
 
-All algorithm options are in `config/algorithm_config.yaml`. See [Algorithm Config](./06-algorithm-config.md) for the complete reference. Each script accepts only `--config`, `--model-id`, and `--n-timeframes` as CLI arguments.
+All algorithm options are in `config/forecast_pipeline_config.yaml`. See [Algorithm Config](./06-algorithm-config.md) for the complete reference. Each script accepts only `--config`, `--model-id`, and `--n-timeframes` as CLI arguments.
 
 ## Dependencies
 

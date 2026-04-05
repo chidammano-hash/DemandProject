@@ -1,13 +1,12 @@
 # Backtest Cleanup
 
-Two cleanup utilities for removing forecast data from PostgreSQL: one deletes by model identity (e.g., remove all LightGBM predictions), the other deletes by date range (e.g., remove forecasts before January 2025). Both refresh dependent materialized views after deletion.
+> Two cleanup utilities for removing forecast data from PostgreSQL: one deletes by model identity (e.g., remove all LightGBM predictions), the other deletes by date range (e.g., remove forecasts before January 2025). Both refresh dependent materialized views after deletion.
 
-| Field | Value |
+| | |
 |---|---|
-| Status | Implemented |
-| Spec | 07-user-experience/06-backtest-cleanup |
-| Backend | `scripts/clean_backtest_models.py`, `scripts/clean_forecasts_by_date.py` |
-| Config | None (CLI-driven) |
+| **Status** | Implemented |
+| **UI Tab** | N/A (backend only) |
+| **Key Files** | `scripts/clean_backtest_models.py`, `scripts/clean_forecasts_by_date.py` |
 
 ---
 

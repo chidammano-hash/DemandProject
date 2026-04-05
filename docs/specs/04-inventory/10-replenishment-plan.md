@@ -1,6 +1,14 @@
-# 04-10 Replenishment Plan
+# Replenishment Plan
 
-> **Status:** Implemented
+> Forward-looking replenishment plan generator that combines production forecast confidence intervals, safety stock targets, current inventory positions, and policy parameters to produce a month-by-month order schedule per DFU with baseline deviation flagging.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | Inventory Planning |
+| **Key Files** | `scripts/compute_replenishment_plan.py`, `api/routers/inventory/inv_planning_replenishment.py`, `config/inventory_planning_config.yaml` (projection section) |
+
+---
 
 ## Problem
 
@@ -82,10 +90,10 @@ Router: `inv_planning_replenishment.py`
 
 ## Configuration
 
-The replenishment plan reads policy parameters from `config/replenishment_policy_config.yaml` and projection settings from `config/projection_config.yaml`. Planning horizon length and CI band usage rules are configurable.
+The replenishment plan reads policy parameters from `config/replenishment_policy_config.yaml` and projection settings from `config/inventory_planning_config.yaml` (projection section). Planning horizon length and CI band usage rules are configurable.
 
 ```yaml
-# In projection_config.yaml
+# In inventory_planning_config.yaml, projection section
 planning_horizon_months: 6
 ci_conservative_months: 3    # Use upper CI for months 1-3
 baseline_lookback_months: 6

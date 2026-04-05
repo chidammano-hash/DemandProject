@@ -38,7 +38,7 @@ from common.db import get_db_params  # noqa: E402
 from common.planning_date import get_planning_date  # noqa: E402
 from common.services.perf_profiler import profiled_section  # noqa: E402
 
-CONFIG_PATH = Path(__file__).parent.parent / "config" / "simulation_config.yaml"
+CONFIG_PATH = Path(__file__).parent.parent / "config" / "inventory_planning_config.yaml"
 
 
 def compute_service_level_curve(
