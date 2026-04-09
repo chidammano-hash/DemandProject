@@ -67,7 +67,9 @@ class TestFillPredictNans:
         assert result["b"].isna().sum() == 0
 
     def test_skips_categorical_columns(self):
-        df = pd.DataFrame({"a": [None, None], "cat": [None, None]})
+        # Column "a" must be numeric dtype (float) for fillna to apply.
+        # Pure-None columns are object dtype, which is_numeric_dtype skips.
+        df = pd.DataFrame({"a": [1.0, np.nan], "cat": [None, None]})
         result = _fill_predict_nans(df.copy(), feature_cols=["a", "cat"], cat_cols=["cat"])
         assert result["a"].isna().sum() == 0
         assert result["cat"].isna().sum() == 2

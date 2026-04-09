@@ -338,13 +338,40 @@ class TestResolveClusterParams:
         "cluster_profiles": {
             "sparse_intermittent": {
                 "description": "Sparse",
-                "match_criteria": {"zero_demand_pct_min": 0.5, "mean_demand_max": 20},
-                "overrides": {"num_leaves": 15, "min_child_samples": 200},
+                "match_criteria": {"zero_demand_pct_min": 0.6, "mean_demand_max": 20},
+                "overrides": {"num_leaves": 15, "min_child_samples": 50},
+            },
+            "low_volume_volatile": {
+                "description": "Low vol volatile",
+                "match_criteria": {
+                    "mean_demand_max": 20,
+                    "cv_demand_min": 1.5,
+                    "zero_demand_pct_min": 0.15,
+                },
+                "overrides": {"num_leaves": 31, "min_child_samples": 50},
+            },
+            "medium_volume_periodic": {
+                "description": "Medium volume periodic",
+                "match_criteria": {
+                    "mean_demand_min": 5,
+                    "mean_demand_max": 100,
+                    "zero_demand_pct_max": 0.30,
+                },
+                "overrides": {"num_leaves": 47, "learning_rate": 0.015, "min_child_samples": 30},
+            },
+            "seasonal_dominant": {
+                "description": "Seasonal",
+                "match_criteria": {"seasonal_amplitude_min": 0.50},
+                "overrides": {"num_leaves": 63, "colsample_bytree": 0.9},
             },
             "high_volume_stable": {
                 "description": "Stable",
-                "match_criteria": {"mean_demand_min": 200, "cv_demand_max": 0.5},
-                "overrides": {"num_leaves": 127, "learning_rate": 0.01},
+                "match_criteria": {
+                    "mean_demand_min": 50,
+                    "cv_demand_max": 0.5,
+                    "zero_demand_pct_max": 0.10,
+                },
+                "overrides": {"num_leaves": 127, "learning_rate": 0.01, "min_child_samples": 40, "n_estimators": 2000},
             },
             "default": {
                 "description": "Default",
@@ -361,7 +388,7 @@ class TestResolveClusterParams:
             resolved, profile = resolve_cluster_params("c0", stats, base)
         assert profile == "sparse_intermittent"
         assert resolved["num_leaves"] == 15
-        assert resolved["min_child_samples"] == 200
+        assert resolved["min_child_samples"] == 50
         assert resolved["learning_rate"] == 0.02  # unchanged from base
 
     def test_stable_match(self):
@@ -375,7 +402,11 @@ class TestResolveClusterParams:
 
     def test_default_fallback(self):
         base = {"num_leaves": 63}
-        stats = {"mean_demand": 80.0, "cv_demand": 0.6, "zero_demand_pct": 0.1, "seasonal_amplitude": 0.05}
+        # mean_demand=150 exceeds medium_volume_periodic max (100),
+        # cv_demand=0.6 exceeds high_volume_stable max (0.5),
+        # seasonal_amplitude=0.05 below seasonal_dominant min (0.50),
+        # zero_demand_pct=0.05 below sparse/volatile thresholds → falls to default
+        stats = {"mean_demand": 150.0, "cv_demand": 0.6, "zero_demand_pct": 0.05, "seasonal_amplitude": 0.05}
         with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
             resolved, profile = resolve_cluster_params("c2", stats, base)
         assert profile == "default"
@@ -417,3 +448,186 @@ class TestResolveClusterParams:
         with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
             resolve_cluster_params("c0", stats, base)
         assert base == base_copy
+
+    def test_medium_volume_periodic_catches_periodic_cluster(self):
+        """Regression: cluster 'medium_volume_periodic_seasonal' with mean_demand=6.6,
+        cv=4.37, zero_pct=0.23 should now match 'medium_volume_periodic' profile
+        (mean 5-100, zero_pct < 0.30) — not low_volume_volatile or sparse."""
+        base = {"num_leaves": 63, "learning_rate": 0.02, "min_child_samples": 20}
+        # Real stats from the bug: continuous periodic demand with low zeros
+        stats = {
+            "mean_demand": 6.6,
+            "cv_demand": 4.37,
+            "zero_demand_pct": 0.23,  # Below 0.30 → matches medium_volume_periodic
+            "seasonal_amplitude": 0.24,
+            "n_rows": 50000.0,
+        }
+        with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
+            resolved, profile = resolve_cluster_params("medium_volume_periodic_seasonal", stats, base)
+        # medium_volume_periodic has higher priority than low_volume_volatile
+        assert profile == "medium_volume_periodic"
+        assert resolved["num_leaves"] == 47
+        assert resolved["learning_rate"] == 0.015
+        assert resolved["min_child_samples"] == 30
+
+    def test_continuous_periodic_matches_medium_volume_periodic(self):
+        """A continuous periodic cluster with near-zero intermittency and medium
+        demand should match medium_volume_periodic — not volatile or sparse."""
+        base = {"num_leaves": 63, "learning_rate": 0.02, "min_child_samples": 20}
+        stats = {
+            "mean_demand": 15.0,
+            "cv_demand": 2.0,
+            "zero_demand_pct": 0.05,  # Almost fully continuous
+            "seasonal_amplitude": 0.20,
+            "n_rows": 50000.0,
+        }
+        with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
+            resolved, profile = resolve_cluster_params("continuous_periodic", stats, base)
+        # mean=15 in [5,100] and zero_pct=0.05 < 0.30 → matches medium_volume_periodic
+        assert profile == "medium_volume_periodic"
+        assert resolved["num_leaves"] == 47
+        assert resolved["learning_rate"] == 0.015
+        assert resolved["min_child_samples"] == 30
+
+    def test_mild_seasonal_does_not_match_seasonal_dominant(self):
+        """Regression: cluster with seasonal_amp=0.38 must NOT match
+        'seasonal_dominant' (threshold raised from 0.30 to 0.50).
+        With medium_volume_periodic profile, this now matches that instead."""
+        base = {"num_leaves": 63}
+        stats = {
+            "mean_demand": 79.8,
+            "cv_demand": 5.48,
+            "zero_demand_pct": 0.26,
+            "seasonal_amplitude": 0.38,  # Below the 0.50 threshold
+            "n_rows": 100000.0,
+        }
+        with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
+            _, profile = resolve_cluster_params("medium_volume_periodic_c7", stats, base)
+        assert profile != "seasonal_dominant"
+        # mean=79.8 in [5,100] and zero_pct=0.26 < 0.30 → matches medium_volume_periodic
+        assert profile == "medium_volume_periodic"
+
+    def test_strong_seasonal_matches_seasonal_dominant(self):
+        """A cluster with genuinely strong seasonality (amp >= 0.50) should match.
+        mean_demand=150 is above medium_volume_periodic max (100), cv=1.5 is above
+        high_volume_stable max (0.5), so seasonal_dominant is the first match."""
+        base = {"num_leaves": 63}
+        stats = {
+            "mean_demand": 150.0,
+            "cv_demand": 1.5,
+            "zero_demand_pct": 0.10,
+            "seasonal_amplitude": 0.55,
+            "n_rows": 100000.0,
+        }
+        with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
+            _, profile = resolve_cluster_params("strong_seasonal", stats, base)
+        assert profile == "seasonal_dominant"
+
+    def test_low_volume_volatile_requires_intermittency(self):
+        """low_volume_volatile requires zero_demand_pct >= 0.15.
+        A low-volume cluster with no zeros should not match low_volume_volatile.
+        With medium_volume_periodic profile, mean=10 (in 5-100) and zero_pct=0 (<0.30)
+        means it matches medium_volume_periodic instead."""
+        base = {"num_leaves": 63}
+        stats = {
+            "mean_demand": 10.0,
+            "cv_demand": 2.0,
+            "zero_demand_pct": 0.0,  # Fully continuous — no zeros at all
+            "seasonal_amplitude": 0.10,
+            "n_rows": 50000.0,
+        }
+        with patch("common.ml.backtest_framework.load_config", return_value=self._ENABLED_CONFIG):
+            _, profile = resolve_cluster_params("low_vol_continuous", stats, base)
+        assert profile != "low_volume_volatile"
+        # mean=10 in [5,100] and zero_pct=0 < 0.30 → matches medium_volume_periodic
+        assert profile == "medium_volume_periodic"
+
+    def test_cluster_name_match_takes_precedence(self):
+        """A profile with cluster_name match should take precedence over
+        demand-stats matching, even if stats would match a different profile."""
+        config = {
+            "enabled": True,
+            "cluster_profiles": {
+                "sparse_intermittent": {
+                    "description": "Sparse",
+                    "match_criteria": {"zero_demand_pct_min": 0.6, "mean_demand_max": 20},
+                    "overrides": {"num_leaves": 15, "min_child_samples": 50},
+                },
+                "tuned_L2_1": {
+                    "description": "Tuned profile for L2_1",
+                    "match_criteria": {"cluster_name": "L2_1"},
+                    "overrides": {"num_leaves": 200, "learning_rate": 0.005},
+                },
+                "default": {
+                    "description": "Default",
+                    "match_criteria": {},
+                    "overrides": {},
+                },
+            },
+        }
+        base = {"num_leaves": 63, "learning_rate": 0.02, "min_child_samples": 20}
+        # Stats that would match sparse_intermittent via demand-stats
+        stats = {"mean_demand": 5.0, "cv_demand": 1.5, "zero_demand_pct": 0.7, "seasonal_amplitude": 0.1}
+        with patch("common.ml.backtest_framework.load_config", return_value=config):
+            resolved, profile = resolve_cluster_params("L2_1", stats, base)
+        assert profile == "tuned_L2_1"
+        assert resolved["num_leaves"] == 200
+        assert resolved["learning_rate"] == 0.005
+        # base param preserved when not overridden
+        assert resolved["min_child_samples"] == 20
+
+    def test_cluster_name_no_match_falls_to_stats(self):
+        """When cluster_id does not match any cluster_name criteria,
+        fall through to demand-stats matching."""
+        config = {
+            "enabled": True,
+            "cluster_profiles": {
+                "tuned_L2_1": {
+                    "description": "Tuned for L2_1",
+                    "match_criteria": {"cluster_name": "L2_1"},
+                    "overrides": {"num_leaves": 200},
+                },
+                "sparse_intermittent": {
+                    "description": "Sparse",
+                    "match_criteria": {"zero_demand_pct_min": 0.6, "mean_demand_max": 20},
+                    "overrides": {"num_leaves": 15},
+                },
+                "default": {
+                    "description": "Default",
+                    "match_criteria": {},
+                    "overrides": {},
+                },
+            },
+        }
+        base = {"num_leaves": 63}
+        stats = {"mean_demand": 5.0, "cv_demand": 1.5, "zero_demand_pct": 0.7, "seasonal_amplitude": 0.1}
+        with patch("common.ml.backtest_framework.load_config", return_value=config):
+            resolved, profile = resolve_cluster_params("unknown_cluster", stats, base)
+        # Should fall through to sparse_intermittent via stats matching
+        assert profile == "sparse_intermittent"
+        assert resolved["num_leaves"] == 15
+
+    def test_no_match_at_all_uses_global(self):
+        """When no profile matches by name or stats, return base params."""
+        config = {
+            "enabled": True,
+            "cluster_profiles": {
+                "tuned_L2_1": {
+                    "description": "Tuned for L2_1",
+                    "match_criteria": {"cluster_name": "L2_1"},
+                    "overrides": {"num_leaves": 200},
+                },
+                "sparse_intermittent": {
+                    "description": "Sparse",
+                    "match_criteria": {"zero_demand_pct_min": 0.6, "mean_demand_max": 20},
+                    "overrides": {"num_leaves": 15},
+                },
+            },
+        }
+        base = {"num_leaves": 63, "learning_rate": 0.02}
+        # Stats that don't match sparse_intermittent (zero_pct too low)
+        stats = {"mean_demand": 150.0, "cv_demand": 0.6, "zero_demand_pct": 0.05, "seasonal_amplitude": 0.05}
+        with patch("common.ml.backtest_framework.load_config", return_value=config):
+            resolved, profile = resolve_cluster_params("some_cluster", stats, base)
+        assert profile == "none"
+        assert resolved is base

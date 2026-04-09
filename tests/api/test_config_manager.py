@@ -242,7 +242,7 @@ def test_all_fields_have_required_metadata():
             assert "label" in field, f"{name}.{path} missing label"
             assert "description" in field, f"{name}.{path} missing description"
             assert "type" in field, f"{name}.{path} missing type"
-            assert field["type"] in ("number", "integer", "text", "boolean", "select", "array", "object"), \
+            assert field["type"] in ("number", "integer", "text", "boolean", "select", "array", "object", "model_toggle"), \
                 f"{name}.{path} has invalid type {field['type']}"
 
 

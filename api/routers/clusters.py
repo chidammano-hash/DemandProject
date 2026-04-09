@@ -176,6 +176,22 @@ def dfu_seasonality_profiles():
 
 
 # ---------------------------------------------------------------------------
+# Core features list (single source: common.ml.clustering.training)
+# ---------------------------------------------------------------------------
+
+from common.ml.clustering.training import CORE_FEATURES  # noqa: E402
+
+
+@router.get("/clustering/core-features")
+def get_core_features():
+    """Return the canonical list of core clustering features."""
+    return JSONResponse(
+        content={"features": CORE_FEATURES},
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Clustering what-if scenarios (feature 29)
 # ---------------------------------------------------------------------------
 
@@ -238,54 +254,46 @@ class ClusteringScenarioRequest(BaseModel):
 
 @router.get("/clustering/defaults")
 def get_clustering_defaults():
-    """Return current default clustering parameters from config."""
-    import yaml
+    """Return current default clustering parameters from promoted experiment or hardcoded defaults."""
+    from api.core import get_conn
 
-    config_path = Path(__file__).resolve().parents[2] / "config" / "clustering_config.yaml"
-    if not config_path.exists():
-        return {
-            "feature_params": {"time_window_months": 24, "min_months_history": 1},
-            "model_params": {
-                "k_range": [3, 12], "min_cluster_size_pct": 2.0,
-                "use_pca": False, "pca_components": None,
-                "all_features": False,
-            },
-            "label_params": {
-                "volume_high": 0.75, "volume_low": 0.25,
-                "cv_steady": 0.3, "cv_volatile": 0.8,
-                "seasonality_threshold": 0.5, "zero_demand_threshold": 0.2,
-            },
-        }
-
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-
-    clustering = config.get("clustering", {})
-    labeling = clustering.get("labeling", {})
-    vol = labeling.get("volume_thresholds", {})
-    cv = labeling.get("cv_thresholds", {})
-
-    return {
+    _defaults = {
         "feature_params": {
-            "time_window_months": clustering.get("time_window_months", 24),
-            "min_months_history": clustering.get("min_months_history", 1),
+            "time_window_months": 36, "min_months_history": 12,
         },
         "model_params": {
-            "k_range": clustering.get("k_range", [3, 12]),
-            "min_cluster_size_pct": clustering.get("min_cluster_size_pct", 2.0),
-            "use_pca": clustering.get("use_pca", False),
-            "pca_components": clustering.get("pca_components", None),
-            "all_features": clustering.get("all_features", False),
+            "k_range": [9, 18], "min_cluster_size_pct": 2.0,
+            "use_pca": False, "pca_components": None, "all_features": False,
         },
         "label_params": {
-            "volume_high": vol.get("high", 0.75),
-            "volume_low": vol.get("low", 0.25),
-            "cv_steady": cv.get("steady", 0.3),
-            "cv_volatile": cv.get("volatile", 0.8),
-            "seasonality_threshold": labeling.get("seasonality_threshold", 0.5),
-            "zero_demand_threshold": labeling.get("zero_demand_threshold", 0.2),
+            "volume_high": 0.75, "volume_low": 0.25,
+            "cv_steady": 0.4, "cv_volatile": 0.8,
+            "seasonality_threshold": 0.3, "zero_demand_threshold": 0.15,
         },
     }
+
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT feature_params, model_params, label_params "
+                "FROM cluster_experiment "
+                "WHERE is_promoted = TRUE "
+                "ORDER BY promoted_at DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row:
+                fp = row[0] if isinstance(row[0], dict) else {}
+                mp = row[1] if isinstance(row[1], dict) else {}
+                lp = row[2] if isinstance(row[2], dict) else {}
+                return {
+                    "feature_params": {**_defaults["feature_params"], **fp},
+                    "model_params": {**_defaults["model_params"], **mp},
+                    "label_params": {**_defaults["label_params"], **lp},
+                }
+    except Exception:
+        logger.exception("Failed to fetch promoted experiment params for /clustering/defaults")
+
+    return _defaults
 
 
 @router.get("/clustering/scenario/estimate")

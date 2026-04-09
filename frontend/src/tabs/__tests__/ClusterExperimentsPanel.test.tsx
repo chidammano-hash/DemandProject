@@ -127,7 +127,7 @@ const mockComparison = {
 
 const mockTemplates = {
   templates: [
-    { id: "production_baseline", label: "Production Baseline", description: "Current config", source: "clustering_config" },
+    { id: "production_baseline", label: "Production Baseline", description: "Current config", source: "promoted_experiment" },
     { id: "high_k_granular", label: "High-K Granular", description: "K=12-25", model_params: { k_range: [12, 25], min_cluster_size_pct: 1.5 } },
     { id: "custom", label: "Custom", description: "Start from defaults" },
   ],

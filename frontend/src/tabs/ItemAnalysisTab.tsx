@@ -19,8 +19,8 @@ import {
   correctionKeys,
   fetchCorrectionsByItem,
 } from "@/api/queries";
-import { fetchProductionForecast } from "@/api/queries/production-forecast";
-import type { ProductionForecastPayload } from "@/api/queries/production-forecast";
+import { fetchProductionForecast, fetchStagingForecasts } from "@/api/queries/production-forecast";
+import type { ProductionForecastPayload, StagingForecastsPayload } from "@/api/queries/production-forecast";
 import type {
   SkuAnalysisKpis,
   SkuAnalysisPayload,
@@ -36,7 +36,7 @@ import { ModelKpiSection } from "./dfu-analysis/ModelKpiSection";
 import { SkuShapPanel } from "./dfu-analysis/DfuShapPanel";
 
 // Unified chart (demand + supply in one view)
-import { UnifiedChartPanel } from "./item-analysis/UnifiedChartPanel";
+import { UnifiedChartPanel, loadDefaultMeasures, buildInitialVisibleSeries } from "./item-analysis/UnifiedChartPanel";
 
 // ---------------------------------------------------------------------------
 // Panel toggle defaults
@@ -70,7 +70,7 @@ export function ItemAnalysisTab() {
   const [skuKpiMonths, setSkuKpiMonths] = useState(12);
   const [skuData, setSkuData] = useState<SkuAnalysisPayload | null>(null);
   const [skuVisibleSeries, setSkuVisibleSeries] = useState<Set<string>>(
-    new Set(["tothist_dmd", "sales_qty", "qty_shipped", "qty_ordered"]),
+    () => loadDefaultMeasures(),
   );
   const [skuTimeStart, setSkuTimeStart] = useState("");
   const [skuTimeEnd, setSkuTimeEnd] = useState("");
@@ -166,8 +166,7 @@ export function ItemAnalysisTab() {
         if (!cancelled) {
           setSkuData(payload);
           setSelectedModel(null);
-          const allKeys = new Set(["tothist_dmd", "sales_qty", "qty_shipped", "qty_ordered", "production_forecast", ...payload.models.map((m) => `forecast_${m}`)]);
-          setSkuVisibleSeries(allKeys);
+          setSkuVisibleSeries(buildInitialVisibleSeries(payload.models));
           const fcKeys = payload.models.map((m) => `forecast_${m}`);
           let smartStart = "";
           for (const pt of payload.series) { if (fcKeys.some((k) => k in pt)) { smartStart = String(pt.month); break; } }
@@ -189,6 +188,17 @@ export function ItemAnalysisTab() {
     fetchProductionForecast({ item_id: debouncedSkuItem.trim(), loc: debouncedSkuLocation.trim() })
       .then((payload) => { if (!cancelled) setProdForecastData(payload); })
       .catch(() => { if (!cancelled) setProdForecastData(null); });
+    return () => { cancelled = true; };
+  }, [debouncedSkuItem, debouncedSkuLocation]);
+
+  // Fetch staging forecasts (all algorithm lines, pre-promotion)
+  const [stagingForecastData, setStagingForecastData] = useState<StagingForecastsPayload | null>(null);
+  useEffect(() => {
+    if (!debouncedSkuItem.trim() || !debouncedSkuLocation.trim()) { setStagingForecastData(null); return; }
+    let cancelled = false;
+    fetchStagingForecasts({ item_id: debouncedSkuItem.trim(), loc: debouncedSkuLocation.trim() })
+      .then((payload) => { if (!cancelled) setStagingForecastData(payload); })
+      .catch(() => { if (!cancelled) setStagingForecastData(null); });
     return () => { cancelled = true; };
   }, [debouncedSkuItem, debouncedSkuLocation]);
 
@@ -256,21 +266,67 @@ export function ItemAnalysisTab() {
   }, [skuData, skuMonths, skuTimeStart, skuTimeEnd]);
 
   const mergedFilteredSeries = useMemo(() => {
-    if (!prodForecastData?.forecasts.length) return skuFilteredSeries as Record<string, unknown>[];
     const lastHistMonth = skuMonths[skuMonths.length - 1] ?? "";
-    const prodMap = new Map<string, number | null>(
-      prodForecastData.forecasts.map((pt) => [pt.forecast_month, pt.forecast_qty]),
-    );
-    const enhanced = skuFilteredSeries.map((pt) => {
+
+    // Start with the filtered demand series
+    let result = skuFilteredSeries as Record<string, unknown>[];
+
+    // Build production forecast month map
+    const prodMap = new Map<string, number | null>();
+    if (prodForecastData?.forecasts.length) {
+      for (const pt of prodForecastData.forecasts) {
+        prodMap.set(pt.forecast_month, pt.forecast_qty);
+      }
+    }
+
+    // Build staging forecast month maps: staging_{model_id} → month → qty
+    const stagingMaps = new Map<string, Map<string, number | null>>();
+    if (stagingForecastData?.models) {
+      for (const [modelId, points] of Object.entries(stagingForecastData.models)) {
+        const key = `staging_${modelId}`;
+        const monthMap = new Map<string, number | null>();
+        for (const pt of points) {
+          monthMap.set(pt.forecast_month, pt.forecast_qty);
+        }
+        stagingMaps.set(key, monthMap);
+      }
+    }
+
+    // Merge production + staging into existing chart points
+    result = result.map((pt) => {
       const m = String(pt.month);
-      return prodMap.has(m) ? { ...pt, production_forecast: prodMap.get(m) } : pt;
+      const extras: Record<string, unknown> = {};
+      if (prodMap.has(m)) extras.production_forecast = prodMap.get(m);
+      for (const [key, monthMap] of stagingMaps) {
+        if (monthMap.has(m)) extras[key] = monthMap.get(m);
+      }
+      return Object.keys(extras).length > 0 ? { ...pt, ...extras } : pt;
     });
-    const futurePts = prodForecastData.forecasts
-      .filter((pt) => pt.forecast_month > lastHistMonth)
-      .sort((a, b) => a.forecast_month.localeCompare(b.forecast_month))
-      .map((pt) => ({ month: pt.forecast_month, production_forecast: pt.forecast_qty }));
-    return [...enhanced, ...futurePts] as Record<string, unknown>[];
-  }, [skuFilteredSeries, skuMonths, prodForecastData]);
+
+    // Collect all future months from production + staging that are beyond the last historical month
+    const futureMonthSet = new Set<string>();
+    for (const month of prodMap.keys()) {
+      if (month > lastHistMonth) futureMonthSet.add(month);
+    }
+    for (const monthMap of stagingMaps.values()) {
+      for (const month of monthMap.keys()) {
+        if (month > lastHistMonth) futureMonthSet.add(month);
+      }
+    }
+
+    // Create future points with all available forecast values
+    const futureMonths = Array.from(futureMonthSet).sort();
+    const futurePts = futureMonths.map((month) => {
+      const pt: Record<string, unknown> = { month };
+      if (prodMap.has(month)) pt.production_forecast = prodMap.get(month);
+      for (const [key, monthMap] of stagingMaps) {
+        if (monthMap.has(month)) pt[key] = monthMap.get(month);
+      }
+      return pt;
+    });
+
+    return [...result, ...futurePts] as Record<string, unknown>[];
+  }, [skuFilteredSeries, skuMonths, prodForecastData, stagingForecastData]);
 
   // Available models for the SHAP dropdown
   const shapModelOptions = useMemo(() => {
@@ -444,6 +500,7 @@ export function ItemAnalysisTab() {
                     skuVisibleSeries={skuVisibleSeries}
                     setSkuVisibleSeries={setSkuVisibleSeries}
                     prodForecastData={prodForecastData}
+                    stagingForecastData={stagingForecastData}
                     selectedModel={selectedModel}
                     onModelSelect={setSelectedModel}
                     trendData={trendData}

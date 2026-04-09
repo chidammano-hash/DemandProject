@@ -9,7 +9,7 @@ import {
   PlayCircle,
   Brain, Monitor,
   CalendarDays,
-  Shield, BarChart3, MapPin,
+  Shield, BarChart3, MapPin, FlaskConical,
   Settings2,
   TerminalSquare,
   History,
@@ -50,6 +50,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "lgbmTuning",        label: "Model Tuning",  icon: Activity,        section: "demand" },
   { key: "customerAnalytics", label: "Customer Analytics", icon: MapPin,       section: "demand" },
   { key: "demandHistory",     label: "Demand History",     icon: History,      section: "demand" },
+  { key: "skuFeatures",       label: "SKU Features",       icon: FlaskConical, section: "demand" },
   // System — data tools
   { key: "explorer",     label: "Explorer",      icon: Database,     section: "system" },
   { key: "sqlRunner",    label: "SQL Runner",    icon: TerminalSquare, section: "system" },

@@ -7,7 +7,7 @@ from common.utils import load_config
 logger = logging.getLogger(__name__)
 
 # Feature engineering constants
-CAT_FEATURES = ["ml_cluster", "region", "brand", "abc_vol"]
+CAT_FEATURES = ["region", "brand", "abc_vol"]
 NUMERIC_SKU_FEATURES = ["execution_lag", "total_lt"]
 NUMERIC_ITEM_FEATURES = ["case_weight", "item_proof", "bpc"]
 
@@ -23,6 +23,7 @@ DERIVED_FEATURES = ["mom_growth", "demand_accel", "volatility_ratio",
 TS_PROFILE_FEATURES = [
     "cv_demand", "zero_demand_pct", "trend_slope_norm", "recency_ratio",
     "seasonal_amplitude", "adi", "mean_demand", "yoy_correlation",
+    "periodicity",
 ]
 
 # Fourier seasonal terms — sub-annual seasonality (quarterly, biannual patterns)
@@ -33,9 +34,10 @@ for _period in [12, 6, 4, 3]:
 # Croston decomposition features — intermittent demand signals
 CROSTON_FEATURES = ["croston_demand_size", "croston_demand_interval", "croston_probability"]
 
-# Cross-DFU cluster aggregate features — cluster-level demand signals
-CROSS_DFU_FEATURES = ["cluster_mean_lag1", "cluster_total_lag1",
-                      "cluster_demand_trend", "cluster_zero_pct"]
+# Cross-DFU cluster aggregate features — REMOVED (ml_cluster leaks future info
+# into backtesting; see docs/KNOWN_GAPS.md §1). Kept as empty list for backward
+# compat with code that iterates over it.
+CROSS_DFU_FEATURES: list[str] = []
 
 # External forecast signal features — optional enrichment
 EXTERNAL_FORECAST_FEATURES = ["ext_fcst_ratio", "ext_fcst_lag1_ratio"]
@@ -83,14 +85,36 @@ ENHANCED_FEATURES = FOURIER_FEATURES + CROSTON_FEATURES + CROSS_DFU_FEATURES + E
 # Features always kept by SHAP selection (never dropped regardless of SHAP rank).
 # These provide essential temporal/categorical context the model needs.
 # Fourier terms are calendar-derived (no leakage), so they are also protected.
+# NOTE: ml_cluster removed — causes leakage in backtesting (see docs/KNOWN_GAPS.md §1).
 PROTECTED_FEATURES = {
-    "month", "quarter", "ml_cluster",
+    "month", "quarter",
     *FOURIER_FEATURES,
     # Croston decomposition features handle intermittent demand correctly;
     # protect them so SHAP selection cannot strip them (causes bias on sparse SKUs).
     "croston_demand_size", "croston_probability",
     # Customer enrichment — core signals that should never be SHAP-pruned
     "true_demand_ratio", "n_active_cust", "hhi_demand",
+    # Core demand signals — highly correlated with each other but each captures
+    # a distinct aspect (level, recency, short/medium trend). The correlation
+    # filter was dropping these in favour of lower-variance proxies, destroying
+    # model accuracy (especially for low-volume clusters).
+    "mean_demand", "qty_lag_1", "rolling_mean_3m", "rolling_mean_6m",
+    # Lag features essential for recursive prediction — if SHAP drops these,
+    # the recursive chain (month N predictions become month N+1 lag inputs)
+    # loses signal and accuracy collapses. Protect the first 3 lags which
+    # carry the strongest recency signal.
+    "qty_lag_2", "qty_lag_3",
+    "rolling_mean_12m",
+}
+
+# Exact-duplicate feature pairs: alias → canonical name to keep.
+# The alias is dropped statically before any per-timeframe computation.
+DUPLICATE_FEATURE_ALIASES: dict[str, str] = {
+    "year_over_year_correlation": "yoy_correlation",
+    "sparsity_score": "zero_demand_pct",
+    "growth_rate": "cagr",
+    "recent_vs_historical": "recency_ratio",
+    "demand_stability": "cv_demand",
 }
 
 # Output column ordering for fact_external_forecast_monthly
@@ -108,7 +132,7 @@ ARCHIVE_COLS = [
 ]
 
 # Metadata columns excluded from feature set
-METADATA_COLS = {"sku_ck", "item_id", "customer_group", "loc", "startdate", "qty", "_k"}
+METADATA_COLS = {"sku_ck", "item_id", "customer_group", "loc", "startdate", "qty", "_k", "ml_cluster"}
 
 # Maximum archive lag (0-4)
 MAX_ARCHIVE_LAG = 4

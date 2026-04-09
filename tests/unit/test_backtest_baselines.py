@@ -7,6 +7,8 @@ import pytest
 from scripts.run_backtest import (
     MODEL_REGISTRY,
     _BASELINE_PREDICT_FNS,
+    _RollingMeanModel,
+    _SeasonalNaiveModel,
     _predict_rolling_mean,
     _predict_seasonal_naive,
 )
@@ -365,3 +367,145 @@ class TestBaselineRegistry:
         """All 5 model types should be registered."""
         expected = {"lgbm", "catboost", "xgboost", "seasonal_naive", "rolling_mean"}
         assert expected.issubset(set(MODEL_REGISTRY.keys()))
+
+
+# ---------------------------------------------------------------------------
+# _SeasonalNaiveModel tests (used for recursive intermittent prediction)
+# ---------------------------------------------------------------------------
+
+
+class TestSeasonalNaiveModel:
+    """Tests for _SeasonalNaiveModel predict behaviour."""
+
+    def test_predict_with_sku_ck_and_startdate_columns(self):
+        """When X has sku_ck and startdate, use seasonal map directly."""
+        seasonal_map = {("ck1", 1): 100.0, ("ck1", 6): 200.0}
+        fallback = {"ck1": 50.0}
+        model = _SeasonalNaiveModel(seasonal_map, fallback)
+
+        X = pd.DataFrame({
+            "sku_ck": ["ck1", "ck1"],
+            "startdate": ["2024-01-01", "2024-06-01"],
+            "feat1": [0.5, 0.3],
+        })
+        preds = model.predict(X)
+        np.testing.assert_array_equal(preds, [100.0, 200.0])
+
+    def test_predict_falls_back_to_rolling_mean_for_missing_month(self):
+        """When seasonal map lacks a month, fall back to rolling mean."""
+        seasonal_map = {("ck1", 1): 100.0}  # only January
+        fallback = {"ck1": 42.0}
+        model = _SeasonalNaiveModel(seasonal_map, fallback)
+
+        X = pd.DataFrame({
+            "sku_ck": ["ck1", "ck1"],
+            "startdate": ["2024-01-01", "2024-07-01"],  # July not in seasonal
+            "feat1": [0.5, 0.3],
+        })
+        preds = model.predict(X)
+        np.testing.assert_array_equal(preds, [100.0, 42.0])
+
+    def test_predict_falls_back_to_zero_for_unknown_sku(self):
+        """When both seasonal and fallback miss a SKU, predict 0."""
+        seasonal_map = {("ck1", 1): 100.0}
+        fallback = {"ck1": 50.0}
+        model = _SeasonalNaiveModel(seasonal_map, fallback)
+
+        X = pd.DataFrame({
+            "sku_ck": ["ck_unknown"],
+            "startdate": ["2024-01-01"],
+            "feat1": [0.5],
+        })
+        preds = model.predict(X)
+        np.testing.assert_array_equal(preds, [0.0])
+
+    def test_predict_with_sku_cks_and_months_attrs(self):
+        """In recursive mode, _sku_cks and _months are set externally."""
+        seasonal_map = {("ck1", 3): 300.0, ("ck2", 3): 150.0}
+        fallback = {"ck1": 10.0, "ck2": 20.0}
+        model = _SeasonalNaiveModel(seasonal_map, fallback)
+        model._sku_cks = ["ck1", "ck2"]
+        model._months = [3, 3]
+
+        # X has only feature columns (no sku_ck or startdate)
+        X = pd.DataFrame({"feat1": [0.5, 0.3], "feat2": [1.0, 2.0]})
+        preds = model.predict(X)
+        np.testing.assert_array_equal(preds, [300.0, 150.0])
+
+    def test_predict_with_sku_cks_and_months_mixed_fallback(self):
+        """Recursive mode: some months found in seasonal, some fall back."""
+        seasonal_map = {("ck1", 1): 100.0}
+        fallback = {"ck1": 25.0}
+        model = _SeasonalNaiveModel(seasonal_map, fallback)
+        model._sku_cks = ["ck1", "ck1"]
+        model._months = [1, 8]  # Jan in seasonal, Aug not
+
+        X = pd.DataFrame({"feat1": [0.5, 0.3]})
+        preds = model.predict(X)
+        np.testing.assert_array_equal(preds, [100.0, 25.0])
+
+    def test_predict_with_only_sku_cks_no_months(self):
+        """When _sku_cks is set but _months is not, fall back to rolling mean."""
+        seasonal_map = {("ck1", 1): 999.0}
+        fallback = {"ck1": 42.0}
+        model = _SeasonalNaiveModel(seasonal_map, fallback)
+        model._sku_cks = ["ck1"]
+        # _months not set
+
+        X = pd.DataFrame({"feat1": [0.5]})
+        preds = model.predict(X)
+        np.testing.assert_array_equal(preds, [42.0])
+
+    def test_predict_no_sku_cks_returns_zeros(self):
+        """When neither sku_ck column nor _sku_cks attr exists, return zeros."""
+        seasonal_map = {("ck1", 1): 100.0}
+        fallback = {"ck1": 50.0}
+        model = _SeasonalNaiveModel(seasonal_map, fallback)
+
+        X = pd.DataFrame({"feat1": [0.5, 0.3]})
+        preds = model.predict(X)
+        np.testing.assert_array_equal(preds, [0.0, 0.0])
+
+    def test_predictions_non_negative(self):
+        """Negative values in seasonal map are clipped to 0."""
+        seasonal_map = {("ck1", 1): -50.0}
+        fallback = {"ck1": -10.0}
+        model = _SeasonalNaiveModel(seasonal_map, fallback)
+
+        X = pd.DataFrame({
+            "sku_ck": ["ck1", "ck1"],
+            "startdate": ["2024-01-01", "2024-06-01"],  # June falls back
+            "feat1": [0.5, 0.3],
+        })
+        preds = model.predict(X)
+        assert (preds >= 0).all()
+
+    def test_different_months_get_different_predictions(self):
+        """Core value prop: different months produce different forecasts."""
+        seasonal_map = {
+            ("ck1", 1): 10.0,
+            ("ck1", 2): 0.0,
+            ("ck1", 3): 50.0,
+            ("ck1", 4): 0.0,
+            ("ck1", 5): 30.0,
+            ("ck1", 6): 0.0,
+        }
+        fallback = {"ck1": 15.0}
+        model = _SeasonalNaiveModel(seasonal_map, fallback)
+        model._sku_cks = ["ck1"] * 6
+        model._months = [1, 2, 3, 4, 5, 6]
+
+        X = pd.DataFrame({"feat1": [0.0] * 6})
+        preds = model.predict(X)
+        # Non-constant predictions (unlike _RollingMeanModel)
+        assert len(set(preds)) > 1, "Seasonal naive should produce varying predictions"
+        np.testing.assert_array_equal(preds, [10.0, 0.0, 50.0, 0.0, 30.0, 0.0])
+
+    def test_rolling_mean_model_gives_constant(self):
+        """Contrast: _RollingMeanModel gives the same value for every month."""
+        rm = _RollingMeanModel({"ck1": 15.0})
+        rm._sku_cks = ["ck1"] * 6
+
+        X = pd.DataFrame({"feat1": [0.0] * 6})
+        preds = rm.predict(X)
+        assert len(set(preds)) == 1, "Rolling mean should produce constant predictions"

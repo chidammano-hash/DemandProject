@@ -1,57 +1,68 @@
 # ETL Pipeline Configuration — Data loading and MV refresh
 # Used by scripts/etl/run_pipeline.py
 # Renamed from pipeline_config.yaml for clarity (distinct from forecast_pipeline_config.yaml)
+#
+# Consumed by: scripts/etl/run_pipeline.py (_cfg), Makefile (pipeline-full, pipeline-refresh)
+# Provides: domain load ordering, parallelization settings, MV refresh mapping
 
-# Domain processing order (dimensions first, then facts)
+# Domain processing order (dimensions first, then facts).
+# run_pipeline.py processes domains in this order. Dimensions (item, location,
+# customer, time, sku, sourcing) load in wave 1; facts load in wave 2 to
+# satisfy FK dependencies. New data sources MUST be added here.
 domain_order:
-  - item
-  - location
-  - customer
-  - time
-  - sku
-  - sales
-  - forecast
-  - inventory
-  - customer_demand
-  - sourcing
-  - purchase_order
+  - item                                # dim_item — product master data
+  - location                            # dim_location — warehouse/DC/store locations
+  - customer                            # dim_customer — customer master data
+  - time                                # dim_time — auto-generated 2020-2035 calendar dimension
+  - sku                                 # dim_sku — item+location composite (SKU-level attributes)
+  - sales                               # fact_sales_monthly — historical sales (TYPE=1 only)
+  - forecast                            # fact_external_forecast_monthly — external system forecasts
+  - inventory                           # fact_inventory_snapshot — monthly partitioned inventory snapshots
+  - customer_demand                     # fact_customer_demand_monthly — customer-level demand (monthly partitioned)
+  - sourcing                            # dim_sourcing — item-location sourcing assignments
+  - purchase_order                      # fact_purchase_orders — PO transactions
 
-# Source data directory (relative to project root)
+# Source data directory (relative to project root).
+# Contains raw CSV files to be normalized and loaded.
 source_data_dir: data/input
 
-# Parallel settings (used when --parallel flag is passed)
+# Parallel settings (used when --parallel flag is passed to run_pipeline.py).
+# Two-wave loading: dimensions load in parallel first, then facts load in parallel.
 parallel:
-  max_workers: 4           # legacy fallback
-  normalize_workers: 4     # concurrent normalize subprocesses
-  load_workers: 4          # concurrent loads (two-wave: dims then facts)
-  mv_refresh_workers: 3    # concurrent MV refreshes
+  max_workers: 4                        # Legacy fallback when specific worker counts are missing
+  normalize_workers: 4                  # Max concurrent normalize subprocesses (CSV cleaning)
+  load_workers: 4                       # Max concurrent DB loads per wave (dims then facts)
+  mv_refresh_workers: 3                 # Max concurrent MV refreshes (each uses its own DB connection)
 
-# Materialized views to refresh per domain
+# Materialized views to refresh after each domain is loaded.
+# run_pipeline.py collects MVs for all loaded domains, deduplicates,
+# and refreshes them (sequentially or in parallel).
 mv_refresh:
   sales:
-    - agg_sales_monthly
+    - agg_sales_monthly                 # Pre-aggregated monthly sales for KPI queries
   forecast:
-    - agg_forecast_monthly
-    - agg_accuracy_by_dim
-    - agg_accuracy_lag_archive
-    - agg_dfu_coverage
-    - agg_dfu_coverage_lag_archive
+    - agg_forecast_monthly              # Pre-aggregated monthly forecast for accuracy dashboard
+    - agg_accuracy_by_dim               # Accuracy broken down by item/location/customer dimensions
+    - agg_accuracy_lag_archive          # Accuracy metrics across execution lags 0-4
+    - agg_dfu_coverage                  # DFU forecast coverage (% of DFUs with forecast)
+    - agg_dfu_coverage_lag_archive      # DFU coverage across execution lags
   inventory:
-    - agg_inventory_monthly
-    - mv_inventory_forecast_monthly
-    - mv_inventory_health_score
-    - mv_supplier_performance
-    - mv_fill_rate_monthly
-    - mv_intramonth_stockout
-  item: []
-  location: []
-  customer: []
-  time: []
-  sku: []
-  sourcing: []
-  purchase_order: []
+    - agg_inventory_monthly             # EOM on-hand, sales, DOS, lead time aggregates
+    - mv_inventory_forecast_monthly     # Inventory-forecast bridge for root cause attribution
+    - mv_inventory_health_score         # Composite health score per SKU
+    - mv_supplier_performance           # Supplier on-time delivery and quality metrics
+    - mv_fill_rate_monthly              # Monthly fill rate by item+location
+    - mv_intramonth_stockout            # Intra-month stockout detection
+  item: []                              # No MVs depend solely on dim_item
+  location: []                          # No MVs depend solely on dim_location
+  customer: []                          # No MVs depend solely on dim_customer
+  time: []                              # No MVs depend solely on dim_time
+  sku: []                               # No MVs depend solely on dim_sku
+  sourcing: []                          # No MVs depend solely on dim_sourcing
+  purchase_order: []                    # No MVs depend solely on fact_purchase_orders
 
-# Always refresh after any pipeline run
+# Always refresh after any pipeline run, regardless of which domains changed.
+# These cross-domain MVs depend on multiple source tables.
 always_refresh:
-  - mv_dq_dashboard
-  - mv_control_tower_kpis
+  - mv_dq_dashboard                     # Data quality dashboard aggregate (all domains)
+  - mv_control_tower_kpis               # Cross-domain control tower KPIs

@@ -79,8 +79,9 @@ Predict future demand using ML models, then select the best forecast per item.
 | 20 | [Bolt Hierarchical](02-forecasting/20-bolt-hierarchical.md) | Customer-level bottom-up Chronos Bolt with top-down reconciliation — uses true demand from `fact_customer_demand_monthly` to correct stockout bias |
 | 21 | [Customer-Enriched Features](02-forecasting/21-customer-enriched-features.md) | 34 customer-derived features (concentration, churn, OOS, channel mix, customer attribute mix) for tree model enrichment |
 | 22 | [Expert Panel Flow](02-forecasting/22-expert-panel-flow.md) | Mermaid process flow diagram for the advanced expert panel algorithm selection pipeline |
+| 23 | [LGBM Accuracy Tuning](02-forecasting/23-lgbm-accuracy-tuning.md) | Systematic LGBM accuracy improvement (59% -> 68%): data fixes, per-cluster SHAP, MAE objective, tuning profiles, intermittent routing, per-cluster Bayesian tuning pipeline |
 
-**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 10b (LGBM tuning) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config) → 20-21 (customer-enriched) → 22 (expert panel flow)
+**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 10b (LGBM tuning) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config) → 20-21 (customer-enriched) → 22 (expert panel flow) → 23 (LGBM accuracy tuning)
 
 ---
 
@@ -90,10 +91,9 @@ Understand demand patterns — descriptive analytics that inform forecasting and
 
 | # | Spec | Summary |
 |---|------|---------|
-| 01 | [DFU Clustering](03-demand-intelligence/01-dfu-clustering.md) | Group items by demand behavior (14 features, KMeans, What-If) |
-| 02 | [Seasonality](03-demand-intelligence/02-seasonality.md) | Detect peak/trough months and seasonal strength per item |
+| 01 | [SKU Clustering & Experimentation Studio](03-demand-intelligence/01-sku-clustering.md) | Group SKUs by demand behavior (14 features, KMeans, What-If), experiment lifecycle (create, run, compare, promote), cluster-aware algorithm tuning |
+| 02 | [SKU Feature Engineering](01-foundation/02-sku-feature-engineering.md) | 34 time-series features (volume, trend, seasonality, periodicity, intermittency, lifecycle, statistical), derived classifications, `dim_sku` persistence, API + UI explorer |
 | 03 | [Blended Demand](03-demand-intelligence/03-blended-demand.md) | Alpha-weighted blend of statistical forecast + demand signals |
-| 04 | [Cluster Experimentation Studio](03-demand-intelligence/04-cluster-experimentation-studio.md) | Experiment lifecycle for testing segmentation configs (create, run, compare, promote) with cluster-aware algorithm tuning |
 | 05 | [Champion Experimentation Studio](03-demand-intelligence/05-champion-experimentation-studio.md) | Experiment lifecycle for 8 champion selection strategies (expanding, rolling, decay, ensemble, meta_learner, hybrid_warmup, adaptive_ensemble, ensemble_rolling) with 2-stage promotion |
 | 06 | [Demand History Workbench](03-demand-intelligence/06-demand-history-workbench.md) | 5-endpoint customer demand analysis API — reference panel, proportional decomposition, hierarchical drill-down, cross-reference matrix |
 | 07 | [Customer Analytics](03-demand-intelligence/07-customer-analytics.md) | Demand-aware customer map with volume, OOS hotspots, channel mix, and concentration analytics |
@@ -198,7 +198,7 @@ Specs for features that are designed but not yet fully implemented. Kept separat
 
 | Term | Definition |
 |------|-----------|
-| **DFU** | Demand Forecast Unit — an item + location combination (the atomic unit of planning) |
+| **SKU** | An item + location combination (the atomic unit of planning). Also referred to as DFU (Demand Forecast Unit) in legacy contexts. |
 | **WAPE** | Weighted Absolute Percentage Error — `SUM(\|F-A\|) / \|SUM(A)\|` |
 | **Bias** | `(SUM(Forecast) / SUM(Actual)) - 1` — positive means over-forecasting |
 | **DOS** | Days of Supply — how many days current inventory will last at current demand |
@@ -211,6 +211,6 @@ Specs for features that are designed but not yet fully implemented. Kept separat
 | **FVA** | Forecast Value Add — measures whether manual adjustments improve accuracy |
 | **SHAP** | SHapley Additive exPlanations — which features drove a model's prediction |
 | **CI** | Confidence Interval — range of likely forecast outcomes (e.g., 80% CI) |
-| **ml_cluster** | The cluster label assigned to a DFU by the KMeans pipeline |
+| **ml_cluster** | The cluster label assigned to an SKU by the KMeans pipeline |
 | **model_id** | Identifies the forecasting algorithm (e.g., `external`, `lgbm_cluster`, `champion`) |
 | **execution_lag** | Months between when a forecast is made and when it's evaluated |

@@ -7,6 +7,7 @@ Endpoints (F1.1):
     GET /forecast/production           — DFU-level forecast series
     GET /forecast/production/summary   — Portfolio-level aggregate
     GET /forecast/production/versions  — Available plan versions
+    GET /forecast/production/staging   — All staged forecasts for a DFU, grouped by model
 
 Endpoints (F2.2):
     GET /forecast/demand-plan          — Quantile forecast (P10/P50/P90) per DFU
@@ -16,7 +17,7 @@ Endpoints (F2.2):
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from api.core import get_conn
 from common.planning_date import get_planning_date
@@ -32,7 +33,7 @@ router = APIRouter(tags=["production-forecast"])
 async def get_production_forecast(
     item_id: str,
     loc: str,
-    horizon: int = 18,
+    horizon: int = 24,
     plan_version: str | None = None,
 ):
     """Return production forecast series for a specific DFU.
@@ -40,13 +41,13 @@ async def get_production_forecast(
     Args:
         item_id: Item number (exact match).
         loc: Location code (exact match).
-        horizon: Max months ahead to return (1–18).
+        horizon: Max months ahead to return (1–24).
         plan_version: Specific plan version (e.g. '2026-02'). Defaults to latest.
 
     Returns:
         Forecast rows with confidence intervals and lag source metadata.
     """
-    horizon = max(1, min(horizon, 18))
+    horizon = max(1, min(horizon, 24))
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -305,6 +306,60 @@ async def get_production_forecast_versions():
             }
             for r in rows
         ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /forecast/production/staging
+# ---------------------------------------------------------------------------
+
+@router.get("/forecast/production/staging")
+async def get_staging_forecasts(
+    item_id: str = Query(...),
+    loc: str = Query(...),
+):
+    """Return ALL staged forecasts for a DFU, grouped by model_id.
+
+    Returns forecasts from fact_production_forecast_staging for all models
+    that have generated forecasts for this item+loc combination.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("""
+                    SELECT model_id, forecast_month, forecast_qty,
+                           forecast_qty_lower, forecast_qty_upper,
+                           horizon_months, cluster_id, lag_source,
+                           generated_at
+                    FROM fact_production_forecast_staging
+                    WHERE item_id = %s AND loc = %s
+                    ORDER BY model_id, forecast_month
+                """, (item_id, loc))
+                rows = cur.fetchall()
+            except Exception:  # staging table may not exist yet
+                return {"item_id": item_id, "loc": loc, "models": {}}
+
+    # Group by model_id
+    models: dict[str, list] = {}
+    for r in rows:
+        mid = r[0]
+        if mid not in models:
+            models[mid] = []
+        models[mid].append({
+            "forecast_month": r[1].isoformat() if r[1] else None,
+            "forecast_qty": float(r[2]) if r[2] is not None else None,
+            "forecast_qty_lower": float(r[3]) if r[3] is not None else None,
+            "forecast_qty_upper": float(r[4]) if r[4] is not None else None,
+            "horizon_months": r[5],
+            "cluster_id": r[6],
+            "lag_source": r[7],
+            "generated_at": r[8].isoformat() if r[8] else None,
+        })
+
+    return {
+        "item_id": item_id,
+        "loc": loc,
+        "models": models,
     }
 
 

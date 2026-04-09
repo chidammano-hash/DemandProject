@@ -1,35 +1,45 @@
+# ═══ SUPPLY SCENARIO CONFIG ═══
+# Supply chain disruption scenario modeling (Spec F4.4 / 05-04)
+# Used by: scripts/run_supply_chain_scenario.py, api/routers/supply_scenarios.py
+# Output: fact_supply_scenario_results
+
 supply_scenario:
-  # Simulation horizon
-  simulation_horizon_weeks: 13
+  # ═══ SIMULATION SETTINGS ═══
+  # Simulation horizon — how far ahead disruption impacts are projected
+  simulation_horizon_weeks: 13           # Weeks to simulate (13 = ~1 quarter lookahead)
 
-  # Default service level target
-  service_level_target: 0.95
+  # Default service level target for scenario impact assessment
+  service_level_target: 0.95            # Target fill rate (0.0–1.0); scenarios report projected fill rate vs. this target
 
-  # Financial impact parameters
-  stockout_cost_per_unit: 10.0        # $ per unit of lost sales (margin proxy)
-  excess_holding_cost_pct: 0.25       # Annual holding cost fraction
+  # ═══ FINANCIAL IMPACT PARAMETERS ═══
+  # Used to compute dollar impact of simulated disruptions
+  stockout_cost_per_unit: 10.0           # $ per unit of lost sales (margin proxy); used for stockout financial impact
+  excess_holding_cost_pct: 0.25          # Annual holding cost as fraction of unit cost (0.25 = 25%); for excess inventory cost
 
-  # Disruption types and their default parameters
+  # ═══ DISRUPTION DEFAULTS ═══
+  # Default parameters for each disruption type; used when user does not specify custom values
   disruption_defaults:
-    supplier_delay:
-      typical_impact_pct: 50
-      typical_duration_weeks: 4
-    capacity_constraint:
-      typical_impact_pct: 30
-      typical_duration_weeks: 8
-    demand_shock:
-      typical_impact_pct: 40
-      typical_duration_weeks: 2
-    transport_disruption:
-      typical_impact_pct: 100
-      typical_duration_weeks: 2
-    quality_hold:
-      typical_impact_pct: 25
-      typical_duration_weeks: 3
+    supplier_delay:                      # Supplier lead time extended (e.g., port congestion, raw material shortage)
+      typical_impact_pct: 50             # % of normal supply capacity affected (0–100)
+      typical_duration_weeks: 4          # Typical disruption duration in weeks
+    capacity_constraint:                 # Supplier can only ship a fraction of ordered quantity
+      typical_impact_pct: 30             # % supply reduction (30 = supplier ships 70% of normal)
+      typical_duration_weeks: 8          # Tends to be longer-lasting (equipment, labor issues)
+    demand_shock:                        # Unexpected demand surge (competitor exit, viral trend)
+      typical_impact_pct: 40             # % demand increase above baseline
+      typical_duration_weeks: 2          # Usually short-lived spike
+    transport_disruption:                # Freight completely unavailable (strike, natural disaster)
+      typical_impact_pct: 100            # 100 = total transport stoppage
+      typical_duration_weeks: 2          # Full blockage is typically resolved quickly
+    quality_hold:                        # Incoming stock placed on quality hold (contamination, defect)
+      typical_impact_pct: 25             # % of incoming shipment quarantined
+      typical_duration_weeks: 3          # Time for inspection, rework, or disposal
 
-  # Alert threshold: scenarios with total financial impact above this are flagged
-  alert_threshold_usd: 100000.0
+  # ═══ ALERT THRESHOLD ═══
+  # Scenarios with total projected financial impact above this are flagged as critical
+  alert_threshold_usd: 100000.0          # USD; scenarios above this surface in control tower alerts
 
+# ═══ SCHEDULER ═══
 scheduler:
-  job_type: run_supply_chain_scenario
-  cron: null            # On-demand only (no scheduled runs)
+  job_type: run_supply_chain_scenario    # Job registry type for APScheduler integration
+  cron: null                             # null = on-demand only (no scheduled runs); set cron expression to enable

@@ -21,8 +21,16 @@ import {
 } from "@/api/queries/unified-model-tuning";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MODEL_LABELS } from "@/lib/model-labels";
+import { LoadingElement } from "@/components/LoadingElement";
+import { modelLabel, MODEL_TYPE_COLORS } from "@/lib/model-labels";
 import { cn } from "@/lib/utils";
+
+const TYPE_BADGE_COLORS: Record<string, string> = {
+  tree: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+  foundation: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+  statistical: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+  deep_learning: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
+};
 
 // ---------------------------------------------------------------------------
 // Strategy param defaults
@@ -77,8 +85,6 @@ const DEFAULT_MODELS = [
   "chronos", "chronos_bolt", "chronos2", "chronos2_enriched", "bolt_hierarchical",
   "mstl", "nbeats", "nhits", "seasonal_naive", "rolling_mean",
 ];
-
-/* MODEL_LABELS imported from @/lib/model-labels */
 
 const STRATEGY_LABELS: Record<string, string> = {
   // Core
@@ -144,6 +150,87 @@ const STRATEGY_DESCRIPTIONS: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Strategy tier button — extracted to reduce duplication in the 3 tiers
+// ---------------------------------------------------------------------------
+
+function StrategyButton({
+  strategyKey,
+  selected,
+  onSelect,
+  showDescription = false,
+}: {
+  strategyKey: string;
+  selected: boolean;
+  onSelect: (key: string) => void;
+  showDescription?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(strategyKey)}
+      className={cn(
+        "w-full rounded border px-3 py-2 text-left text-sm transition-colors",
+        selected
+          ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+          : "hover:bg-muted",
+      )}
+    >
+      <div className="font-medium">{STRATEGY_LABELS[strategyKey]}</div>
+      {showDescription && STRATEGY_DESCRIPTIONS[strategyKey] && (
+        <div className="text-[11px] text-muted-foreground mt-0.5">
+          {STRATEGY_DESCRIPTIONS[strategyKey]}
+        </div>
+      )}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Collapsible strategy tier — shared toggle + list pattern
+// ---------------------------------------------------------------------------
+
+function StrategyTier({
+  label,
+  strategies,
+  expanded,
+  onToggle,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  strategies: string[];
+  expanded: boolean;
+  onToggle: () => void;
+  selected: string;
+  onSelect: (key: string) => void;
+}) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors py-1"
+      >
+        {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        {label} ({strategies.length})
+      </button>
+      {expanded && (
+        <div className="space-y-1 mt-1">
+          {strategies.map((k) => (
+            <StrategyButton
+              key={k}
+              strategyKey={k}
+              selected={selected === k}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -163,13 +250,19 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
     staleTime: 60_000,
   });
 
-  // Derive competing models from pipeline config (those with compete: true)
+  // All algorithms from pipeline config (show all, pre-select competing ones)
   const ALL_MODELS = useMemo(() => {
     if (!pipelineConfig?.algorithms) return DEFAULT_MODELS;
-    const competing = Object.entries(pipelineConfig.algorithms)
+    const all = Object.keys(pipelineConfig.algorithms);
+    return all.length > 0 ? all : DEFAULT_MODELS;
+  }, [pipelineConfig]);
+
+  // Models that have compete: true (pre-selected by default)
+  const COMPETING_MODELS = useMemo(() => {
+    if (!pipelineConfig?.algorithms) return DEFAULT_MODELS;
+    return Object.entries(pipelineConfig.algorithms)
       .filter(([, algo]) => algo.enabled && algo.compete)
       .map(([id]) => id);
-    return competing.length > 0 ? competing : DEFAULT_MODELS;
   }, [pipelineConfig]);
 
   // Form state
@@ -193,15 +286,15 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
   // Model editing state — collapsed by default to show pipeline config summary
   const [modelsExpanded, setModelsExpanded] = useState(false);
 
-  // Sync model selection when dynamic model list loads
+  // Sync model selection when dynamic model list loads — pre-select competing models
   useEffect(() => {
-    if (ALL_MODELS !== DEFAULT_MODELS) {
-      setModels([...ALL_MODELS]);
+    if (COMPETING_MODELS !== DEFAULT_MODELS && COMPETING_MODELS.length > 0) {
+      setModels([...COMPETING_MODELS]);
     }
-  }, [ALL_MODELS]);
+  }, [COMPETING_MODELS]);
 
   // Templates query
-  const { data: templatesData } = useQuery({
+  const { data: templatesData, isLoading: templatesLoading } = useQuery({
     queryKey: championExperimentKeys.templates(),
     queryFn: fetchChampionTemplates,
     staleTime: CHAMPION_EXP_STALE.TEMPLATES,
@@ -379,6 +472,13 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
               </div>
             </CardHeader>
             <CardContent className="pb-3">
+              {templatesLoading ? (
+                <LoadingElement message="Loading templates..." />
+              ) : templates.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">
+                  No templates available. Use the Custom option below.
+                </p>
+              ) : null}
               <div className="grid grid-cols-2 gap-2">
                 {templates.map((t) => {
                   const perf = t.strategy ? strategyPerf.get(t.strategy) : undefined;
@@ -452,86 +552,35 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                 <div className="space-y-1">
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Recommended</span>
                   {RECOMMENDED_STRATEGIES.map((k) => (
-                    <button
+                    <StrategyButton
                       key={k}
-                      type="button"
-                      onClick={() => setStrategy(k)}
-                      className={cn(
-                        "w-full rounded border px-3 py-2 text-left text-sm transition-colors",
-                        strategy === k
-                          ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                          : "hover:bg-muted",
-                      )}
-                    >
-                      <div className="font-medium">{STRATEGY_LABELS[k]}</div>
-                      {STRATEGY_DESCRIPTIONS[k] && (
-                        <div className="text-[11px] text-muted-foreground mt-0.5">{STRATEGY_DESCRIPTIONS[k]}</div>
-                      )}
-                    </button>
+                      strategyKey={k}
+                      selected={strategy === k}
+                      onSelect={setStrategy}
+                      showDescription
+                    />
                   ))}
                 </div>
 
                 {/* Advanced tier — collapsed */}
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setShowAdvanced((p) => !p)}
-                    className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors py-1"
-                  >
-                    {showAdvanced ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                    Show more strategies ({ADVANCED_STRATEGIES.length})
-                  </button>
-                  {showAdvanced && (
-                    <div className="space-y-1 mt-1">
-                      {ADVANCED_STRATEGIES.map((k) => (
-                        <button
-                          key={k}
-                          type="button"
-                          onClick={() => setStrategy(k)}
-                          className={cn(
-                            "w-full rounded border px-3 py-1.5 text-left text-sm transition-colors",
-                            strategy === k
-                              ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                              : "hover:bg-muted",
-                          )}
-                        >
-                          {STRATEGY_LABELS[k]}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <StrategyTier
+                  label="Show more strategies"
+                  strategies={ADVANCED_STRATEGIES}
+                  expanded={showAdvanced}
+                  onToggle={() => setShowAdvanced((p) => !p)}
+                  selected={strategy}
+                  onSelect={setStrategy}
+                />
 
                 {/* Expert tier — collapsed */}
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setShowExpert((p) => !p)}
-                    className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors py-1"
-                  >
-                    {showExpert ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                    Show all strategies ({EXPERT_STRATEGIES.length})
-                  </button>
-                  {showExpert && (
-                    <div className="space-y-1 mt-1">
-                      {EXPERT_STRATEGIES.map((k) => (
-                        <button
-                          key={k}
-                          type="button"
-                          onClick={() => setStrategy(k)}
-                          className={cn(
-                            "w-full rounded border px-3 py-1.5 text-left text-sm transition-colors",
-                            strategy === k
-                              ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                              : "hover:bg-muted",
-                          )}
-                        >
-                          {STRATEGY_LABELS[k]}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <StrategyTier
+                  label="Show all strategies"
+                  strategies={EXPERT_STRATEGIES}
+                  expanded={showExpert}
+                  onToggle={() => setShowExpert((p) => !p)}
+                  selected={strategy}
+                  onSelect={setStrategy}
+                />
 
                 {/* Show current selection if it's in a collapsed tier */}
                 {!RECOMMENDED_STRATEGIES.includes(strategy) && (
@@ -697,17 +746,49 @@ export function ChampionExperimentBuilder({ open, onClose, onSubmitted }: Props)
                   </button>
                 </div>
                 {modelsExpanded && (
-                  <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-1">
-                    {ALL_MODELS.map((m) => (
-                      <label key={m} className="flex items-center gap-1.5 text-xs">
-                        <input
-                          type="checkbox"
-                          checked={models.includes(m)}
-                          onChange={() => toggleModel(m)}
-                        />
-                        {MODEL_LABELS[m] ?? m.replace("_cluster", "")}
-                      </label>
-                    ))}
+                  <div className="mt-2 space-y-2">
+                    <div className="flex gap-2 text-[10px]">
+                      <button type="button" onClick={() => setModels([...ALL_MODELS])} className="text-primary hover:underline">Select All</button>
+                      <button type="button" onClick={() => setModels([...COMPETING_MODELS])} className="text-primary hover:underline">Competing Only</button>
+                      <button type="button" onClick={() => setModels([])} className="text-muted-foreground hover:underline">Clear</button>
+                      <span className="ml-auto text-muted-foreground">{models.length}/{ALL_MODELS.length} selected</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                      {ALL_MODELS.map((m) => {
+                        const algo = pipelineConfig?.algorithms?.[m];
+                        const selected = models.includes(m);
+                        const isCompeting = algo?.enabled && algo?.compete;
+                        const algoType = algo?.type ?? "unknown";
+                        return (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => toggleModel(m)}
+                            className={cn(
+                              "rounded-lg border p-2.5 text-left transition-all",
+                              selected
+                                ? "border-primary bg-primary/5 ring-1 ring-primary"
+                                : "opacity-50 hover:opacity-80 hover:bg-muted/50",
+                            )}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-semibold truncate">{modelLabel(m)}</span>
+                              {isCompeting && (
+                                <span className="h-2 w-2 rounded-full bg-primary shrink-0" title="Competing" />
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${TYPE_BADGE_COLORS[algoType] ?? "bg-gray-100 text-gray-600"}`}>
+                                {algoType.replace("_", " ")}
+                              </span>
+                              {!algo?.enabled && (
+                                <span className="text-[9px] text-muted-foreground">disabled</span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>

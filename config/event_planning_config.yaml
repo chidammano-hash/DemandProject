@@ -1,32 +1,42 @@
+# ═══ EVENT PLANNING CONFIG ═══
+# Promotional and event calendar management (Spec F4.3 / 05-03)
+# Used by: scripts/apply_event_adjustments.py, api/routers/events.py
+# Output: fact_event_adjusted_forecast
+
 event_planning:
-  # Allowed event types
+  # ═══ EVENT TYPES ═══
+  # Allowed event type codes; new events must use one of these values
   event_types:
-    - PROMOTION
-    - HOLIDAY
-    - PRODUCT_LAUNCH
-    - PHASE_OUT
-    - DISRUPTION
-    - TRADE_SHOW
+    - PROMOTION                          # Promotional campaigns (discounts, BOGO, ads)
+    - HOLIDAY                            # Holiday-driven demand shifts (Christmas, Black Friday)
+    - PRODUCT_LAUNCH                     # New product introduction demand uplift
+    - PHASE_OUT                          # Product end-of-life demand reduction
+    - DISRUPTION                         # Supply or demand disruption (weather, strike)
+    - TRADE_SHOW                         # Trade show / exhibition demand spike
 
-  # Guard rails on uplift multiplier
-  max_uplift_multiplier: 5.0
-  min_uplift_multiplier: 0.0
+  # ═══ GUARD RAILS ═══
+  # Bounds on uplift multiplier to prevent data entry errors
+  max_uplift_multiplier: 5.0             # Maximum multiplier (5.0 = 5x baseline); enforced in apply_event_uplift()
+  min_uplift_multiplier: 0.0             # Minimum multiplier (0.0 = zero demand, e.g., phase-out)
 
-  # Events above this estimated impact value require manager approval
-  require_approval_above_impact_value: 5000.0
+  # ═══ APPROVAL THRESHOLDS ═══
+  # Events exceeding either threshold trigger mandatory manager approval
+  require_approval_above_impact_value: 5000.0   # USD; estimated financial impact above this requires approval
+  require_approval_above_uplift_pct: 20.0        # %; uplift percentage above this requires approval (regardless of $ value)
 
-  # Approval threshold by uplift % (override regardless of $ value)
-  require_approval_above_uplift_pct: 20.0
+  # ═══ POST-EVENT TRACKING ═══
+  # How many weeks after event_end_date to wait before comparing actuals vs. forecast
+  post_event_lag_weeks: 2                # Weeks; allows late-arriving sales data to settle before ROI calculation
 
-  # Post-event tracking: how many weeks after event_end_date to check actuals
-  post_event_lag_weeks: 2
+  # ═══ EVENT CREATION RULES ═══
+  # Minimum days advance notice required to create a new event
+  min_advance_days: 3                    # Days; events with start_date < today + 3 days are rejected
 
-  # Minimum days advance notice required to create an event
-  min_advance_days: 3
+  # ═══ CONFLICT DETECTION ═══
+  # Events within this many days of each other for the same DFU flag for manual review
+  conflict_window_days: 7                # Days; overlapping or near-overlapping events surface a warning
 
-  # Conflict detection: events within this many days of each other flag for review
-  conflict_window_days: 7
-
+# ═══ SCHEDULER ═══
 scheduler:
-  job_type: apply_event_adjustments
-  cron: "0 6 * * *"    # Daily at 6am (events can be added any day)
+  job_type: apply_event_adjustments      # Job registry type for APScheduler integration
+  cron: "0 6 * * *"                      # Cron expression: daily at 6:00 AM (events can be added any day)

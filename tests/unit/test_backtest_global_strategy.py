@@ -72,19 +72,20 @@ class TestGlobalValSplit:
         assert n_val >= 1
 
 
-class TestClusterAlwaysIncluded:
-    """ml_cluster is a hard feature — never stripped from feature_cols in any mode."""
+class TestClusterExcludedFromFeatures:
+    """ml_cluster is in METADATA_COLS — excluded from feature_cols, used for partitioning only."""
 
-    def test_ml_cluster_in_global_feature_cols(self):
-        feat_cols = ["qty_lag_1", "qty_rolling_3", "ml_cluster"]
-        # Global: ml_cluster included
-        assert "ml_cluster" in feat_cols
+    def test_ml_cluster_excluded_from_feature_cols(self):
+        from common.core.constants import METADATA_COLS
+        assert "ml_cluster" in METADATA_COLS
 
-    def test_ml_cluster_in_per_cluster_feature_cols(self):
-        feat_cols = ["qty_lag_1", "qty_rolling_3", "ml_cluster"]
-        # Per-cluster: ml_cluster is ALSO included (hard feature, not stripped)
-        assert "ml_cluster" in feat_cols
-        assert len(feat_cols) == 3
+    def test_ml_cluster_not_in_get_feature_columns(self):
+        """get_feature_columns() should exclude ml_cluster via METADATA_COLS."""
+        grid = _make_grid(10)
+        grid["ml_cluster"] = "A"
+        from common.ml.feature_engineering import get_feature_columns
+        feat_cols = get_feature_columns(grid)
+        assert "ml_cluster" not in feat_cols
 
 
 class TestGlobalModelsKey:
@@ -178,24 +179,17 @@ class TestClusterStrategyDispatch:
 class TestCatBoostGlobalCatIndices:
     """CatBoost global uses integer indices computed from feature_cols (not stripped)."""
 
-    def test_cat_indices_include_ml_cluster(self):
-        feature_cols = ["qty_lag_1", "qty_rolling_3", "ml_cluster"]
-        cat_cols = ["ml_cluster"]
-        # Global: compute indices against full feature_cols (ml_cluster not stripped)
+    def test_cat_indices_exclude_ml_cluster(self):
+        """ml_cluster is in METADATA_COLS, so it should not be in feature_cols or cat_cols."""
+        feature_cols = ["qty_lag_1", "qty_rolling_3", "region"]
+        cat_cols = ["region"]
         cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
         assert cat_indices == [2]
-
-    def test_cat_indices_per_cluster_includes_ml_cluster(self):
-        """Per-cluster also keeps ml_cluster as a hard feature."""
-        feature_cols = ["qty_lag_1", "qty_rolling_3", "ml_cluster"]
-        cat_cols = ["ml_cluster"]
-        # Per-cluster: ml_cluster is NOT stripped — same indices as global
-        cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
-        assert cat_indices == [2]
+        assert "ml_cluster" not in feature_cols
 
     def test_cat_indices_with_other_cat_cols(self):
-        feature_cols = ["customer_group", "qty_lag_1", "ml_cluster", "qty_rolling_3"]
-        cat_cols = ["customer_group", "ml_cluster"]
+        feature_cols = ["region", "qty_lag_1", "brand", "qty_rolling_3"]
+        cat_cols = ["region", "brand"]
         cat_indices = [feature_cols.index(c) for c in cat_cols if c in feature_cols]
         assert cat_indices == [0, 2]
 

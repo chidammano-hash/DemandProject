@@ -1,55 +1,155 @@
-# Production Forecast Generation
+# Production Forecast Pipeline
 
-> Turns backtest-trained models into real forward-looking forecasts that planners can use for purchasing decisions.
+> Trains ML models on full sales history up to the planning date, then generates forward-looking point and probabilistic forecasts for the next 24 months. This is the final step that turns backtest-validated algorithms into actionable demand plans.
 
 | | |
 |---|---|
 | **Status** | Implemented |
-| **UI Tab** | Inv. Planning (Demand Forecast panel) |
-| **Key Files** | `scripts/generate_production_forecasts.py`, `api/routers/production_forecast.py`, `config/forecast_pipeline_config.yaml` (production_forecast section), `sql/039_create_production_forecast.sql`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
+| **UI Tab** | Inv. Planning (Demand Forecast panel), Model Experimentation Studio |
+| **Key Files** | `scripts/ml/train_production_models.py`, `scripts/generate_production_forecasts.py`, `api/routers/production_forecast.py`, `config/production_forecast_config.yaml`, `sql/039_create_production_forecast.sql`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
 
 ---
 
 ## Problem
 
-Backtest models train on historical data, evaluate accuracy, and then discard the trained weights. The models can tell you they would have forecast 490 units for April -- but they never actually produce a forecast for a future month. Planners see either the ERP's flat forecast or nothing at all for upcoming months. The ML signal exists but is never materialized into an actionable prediction.
+Backtesting evaluates model accuracy on historical hold-out windows, but the trained weights cover only a partial history window (e.g., 24 of 36 available months). Using those partial-history weights for production inference wastes signal -- the model has never seen the most recent months of data. Furthermore, foundation and statistical models do not produce reusable weight artifacts at all during backtesting. Planners need a dedicated pipeline that (1) trains tree models on ALL available history up to the planning date, (2) generates recursive forward-looking predictions, and (3) attaches confidence interval bands derived from backtest residuals.
 
-## Solution
+## Production Forecast vs. Backtest
 
-The production forecast pipeline persists trained model weights during backtesting, loads the champion model for each DFU, and generates recursive forward-looking predictions for the next 24 months using 36 months of lookback history. DFUs with fewer than 12 months of history are routed to a cold-start model (rolling_mean), and DFUs with fewer than 3 months are skipped entirely. Predictions are written to a dedicated `fact_production_forecast` table with version management, confidence interval bands, and full traceability. A scheduled job runs monthly after sales data closes.
+| Aspect | Backtest | Production Forecast |
+|--------|----------|---------------------|
+| **Purpose** | Evaluate accuracy on known actuals | Generate actionable future predictions |
+| **Training window** | Expanding or sliding window, partial history | Full history up to planning date |
+| **Prediction target** | Historical months where actuals exist | T+1 through T+24 (future months) |
+| **Evaluation** | Compare predictions to actuals (WAPE, accuracy) | No evaluation possible -- predictions are the output |
+| **Artifacts** | Discarded after accuracy scoring | Persisted `.pkl` files for inference |
+| **Frequency** | On-demand or after data refresh | Monthly, on the 2nd after sales close |
 
-## How It Works
+## Pipeline Steps
 
-1. During backtest, model weights are saved as `.pkl` files to `data/models/<model_id>/cluster_<N>.pkl` and saved to `data/models/<model_id>/` directory
-2. The inference script loads the champion assignment for each DFU from the forecast table
-3. For each DFU, it loads the appropriate cluster model from the registry
-4. It builds a feature matrix for future months using the last known actuals
-5. Recursive inference predicts month by month: T+1 uses actual lags, T+2 uses T+1's prediction as `qty_lag_1`, and so on
-6. Confidence interval bands are computed from backtest residuals (see [Forecast CI Bands](./10-forecast-ci-bands.md))
-7. Results are written to `fact_production_forecast` with a versioned `plan_version` (e.g., `"2026-03"`)
-8. Old versions are purged (keep last 3 by default)
+The production forecast pipeline has two major phases: **Train** and **Generate**.
 
-## Data Model
+### Step 1: Train Production Models
 
-### `fact_production_forecast`
+Script: `scripts/ml/train_production_models.py`
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `plan_version` | VARCHAR(30) | Version label (e.g., "2026-03") |
-| `item_id` | VARCHAR(50) | Item identifier |
-| `loc` | VARCHAR(50) | Location code |
-| `forecast_month` | DATE | Future month being forecast |
-| `forecast_qty` | NUMERIC(12,2) | Point forecast |
-| `forecast_qty_lower` | NUMERIC(12,2) | Lower CI bound (P10) |
-| `forecast_qty_upper` | NUMERIC(12,2) | Upper CI bound (P90) |
-| `model_id` | VARCHAR(100) | Algorithm that produced this row |
-| `cluster_id` | INTEGER | ml_cluster used for inference |
-| `horizon_months` | SMALLINT | 1=T+1, 2=T+2, ... 12=T+12 |
-| `is_recursive` | BOOLEAN | Whether recursive inference was used |
-| `lag_source` | VARCHAR(20) | "actual" (T+1) or "predicted" (T+2+) |
-| `run_id` | UUID | Ties rows to a single inference run |
+For each tree model (LightGBM, CatBoost, XGBoost):
 
-**Grain:** `(plan_version, item_id, loc, forecast_month)`
+1. Load all sales history from `fact_sales_monthly` up to the planning date
+2. Build the full feature matrix using `build_feature_matrix()` -- identical features to backtest but with all available months
+3. Split into train/validation sets: the last `val_fraction` (20%) of months serve as early-stopping validation
+4. Train one model per cluster (`ml_cluster`), applying per-cluster tuning profiles from `config/cluster_tuning_profiles.yaml`
+5. Save model artifacts to `data/models/{model_id}/cluster_{N}.pkl`
+6. Save `training_metadata.json` alongside each artifact with feature columns, row counts, training timestamp, and hyperparameters
+7. Clusters with fewer than `min_cluster_rows` (50) rows are skipped -- their DFUs fall back to the global model or `cold_start_model_id`
+
+Usage:
+```bash
+# Train a single model
+make train-production MODEL=lgbm_cluster
+
+# Train all tree models
+make train-production-all
+```
+
+### Step 2: Generate Point Forecasts
+
+Script: `scripts/generate_production_forecasts.py`
+
+For each DFU:
+
+1. Look up the champion model assignment (from champion selection) or use `fallback_model_id`
+2. Apply cold-start routing: DFUs with < `min_history_months` (12) months of history are routed to `cold_start_model_id` (rolling_mean); DFUs with < `cold_start_min_months` (3) months are skipped entirely
+3. Load the trained `.pkl` artifact for the assigned model and cluster
+4. Build a feature vector for T+1 using the last known actuals as lag features
+5. Predict T+1 (point forecast)
+6. For T+2 through T+24, use recursive inference: the predicted value for month T becomes `qty_lag_1` for month T+1, and so on
+7. Write all predictions to `fact_production_forecast` with `plan_version`, `model_id`, `horizon_months`, `lag_source` ("actual" for T+1, "predicted" for T+2+), and `run_id`
+
+### Step 3: Generate Probabilistic Forecasts (Confidence Intervals)
+
+After point forecasts are written:
+
+1. Load backtest residuals from `backtest_lag_archive` for the champion model's algorithm
+2. Compute per-DFU RMSE (sigma) from forecast-minus-actual residuals
+3. Apply the three-level fallback hierarchy: DFU-level sigma (if >= 6 residual observations) > cluster-level sigma > global sigma
+4. Apply guard rails: `sigma_floor` (1.0 units minimum) and `sigma_cap_multiplier` (3x global median)
+5. Scale sigma by horizon using `horizon_scaling` mode (default `sqrt` -- uncertainty grows like a random walk)
+6. Compute bounds: `lower = max(0, forecast - z_lower * sigma * scale)`, `upper = forecast + z_upper * sigma * scale`
+7. Update `forecast_qty_lower` and `forecast_qty_upper` columns in `fact_production_forecast`
+
+See [Forecast CI Bands](./10-forecast-ci-bands.md) for full details on the residual-based CI methodology.
+
+### Step 4: Champion Routing
+
+When `model_selection.strategy` is `champion` (default):
+
+1. The meta-learner from [Champion Selection](./07-champion-selection.md) assigns each DFU a best model based on causal prior WAPE
+2. All participating models must be trained first (Step 1) before inference can run
+3. Each DFU loads the `.pkl` for its assigned champion model and cluster
+4. If no champion assignment exists, `fallback_model_id` (default `lgbm_cluster`) is used
+
+## Model Types
+
+### Tree Models (LightGBM, CatBoost, XGBoost)
+
+- **Require explicit training** on full history before inference
+- Produce reusable `.pkl` artifacts per cluster
+- Support per-cluster tuning profiles and early stopping
+- Use recursive inference for multi-step horizons (lag features from prior predictions)
+
+### Foundation Models (Chronos, Chronos Bolt, N-HiTS)
+
+- **No separate training step required** -- zero-shot or pre-trained
+- Consume raw sales history directly at inference time
+- Output predictions for all horizons in a single forward pass
+- No `.pkl` artifacts to manage
+
+### Statistical Models (rolling_mean, seasonal_naive)
+
+- **No training step required** -- computed directly from history
+- Simple transformations of historical data (moving average, same-month-last-year)
+- Used as cold-start fallbacks for DFUs with insufficient history
+- Also serve as baselines for intermittent-demand clusters (>70% zero rows)
+
+## Artifact Management
+
+### Directory Structure
+
+```
+data/models/
+├── lgbm_cluster/
+│   ├── cluster_0.pkl
+│   ├── cluster_0_training_metadata.json
+│   ├── cluster_1.pkl
+│   ├── cluster_1_training_metadata.json
+│   └── ...
+├── catboost_cluster/
+│   └── ...
+└── xgboost_cluster/
+    └── ...
+```
+
+### Training Metadata JSON
+
+Each `.pkl` file has a companion `_training_metadata.json`:
+
+```json
+{
+  "model_id": "lgbm_cluster",
+  "cluster_id": 3,
+  "trained_at": "2026-04-02T06:15:00Z",
+  "planning_date": "2026-04-01",
+  "n_rows": 12480,
+  "n_features": 47,
+  "feature_cols": ["qty_lag_1", "qty_lag_2", "..."],
+  "best_iteration": 312,
+  "val_rmse": 42.7,
+  "hyperparams": {"n_estimators": 500, "learning_rate": 0.05, "...": "..."}
+}
+```
+
+### `fact_model_registry`
 
 Tracks persisted model weights so the inference pipeline can reload them.
 
@@ -61,6 +161,40 @@ Tracks persisted model weights so the inference pipeline can reload them.
 | `feature_cols` | TEXT[] | Ordered feature column names |
 | `is_active` | BOOLEAN | TRUE = use for inference |
 
+## Data Model
+
+### `fact_production_forecast`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `plan_version` | VARCHAR(30) | Version label (e.g., "2026-04") |
+| `item_id` | VARCHAR(50) | Item identifier |
+| `loc` | VARCHAR(50) | Location code |
+| `forecast_month` | DATE | Future month being forecast |
+| `forecast_qty` | NUMERIC(12,2) | Point forecast |
+| `forecast_qty_lower` | NUMERIC(12,2) | Lower CI bound (P10) |
+| `forecast_qty_upper` | NUMERIC(12,2) | Upper CI bound (P90) |
+| `model_id` | VARCHAR(100) | Algorithm that produced this row |
+| `cluster_id` | INTEGER | ml_cluster used for inference |
+| `horizon_months` | SMALLINT | 1=T+1, 2=T+2, ... 24=T+24 |
+| `is_recursive` | BOOLEAN | Whether recursive inference was used |
+| `lag_source` | VARCHAR(20) | "actual" (T+1) or "predicted" (T+2+) |
+| `run_id` | UUID | Ties rows to a single inference run |
+
+**Grain:** `(plan_version, item_id, loc, forecast_month)`
+
+## Cold-Start Routing
+
+DFUs with insufficient sales history cannot be forecast by tree models. The pipeline applies tiered routing:
+
+| History Length | Routing | Rationale |
+|----------------|---------|-----------|
+| >= `min_history_months` (12) | Champion tree model | Enough data for ML features and lag computation |
+| >= `cold_start_min_months` (3) and < 12 | `cold_start_model_id` (rolling_mean) | Some signal exists, use simple extrapolation |
+| < `cold_start_min_months` (3) | Skipped entirely | Too little data for any meaningful forecast |
+
+Configured in `config/forecast_pipeline_config.yaml` under `production_forecast`.
+
 ## API
 
 | Method | Path | Description |
@@ -69,65 +203,80 @@ Tracks persisted model weights so the inference pipeline can reload them.
 | GET | `/forecast/production/summary` | Aggregate forecast by ABC class for a plan version |
 | GET | `/forecast/production/versions` | List available plan versions with metadata |
 
-## Pipeline
+## Pipeline Targets
 
 | Target | Description |
 |--------|-------------|
-| `make forecast-prod-schema` | Create tables (one-time) |
-| `make forecast-generate` | Run full inference for all DFUs |
-| `make forecast-generate-sku ITEM=100320 LOC=1401-BULK` | Single DFU inference |
+| `make train-production MODEL=<id>` | Train a single model on full history |
+| `make train-production-all` | Train all tree models on full history |
+| `make forecast-generate` | Generate forecasts for all DFUs (requires trained models) |
+| `make forecast-generate-dfu ITEM=X LOC=Y` | Single DFU inference |
 | `make forecast-generate-dry` | Preview without writing |
+| `make forecast-full` | Full pipeline: train all models + generate forecasts |
+| `make forecast-model MODEL=<id>` | Train + generate for a single model |
+| `make forecast-prod-schema` | Create tables (one-time) |
 | `make forecast-prod-all` | Schema + generate |
 
 **Scheduler:** Runs as `generate_production_forecast` job type on the 2nd of each month at 06:00 UTC (after sales close).
 
 ## Configuration
 
-### `config/forecast_pipeline_config.yaml` (production_forecast section)
+All production forecast settings live in `config/production_forecast_config.yaml`.
 
-> **Note:** Production forecast settings live in `config/forecast_pipeline_config.yaml` under the `production_forecast` section. The legacy `config/production_forecast_config.yaml` has been deleted.
+### Production Training
 
 ```yaml
-production_forecast:
-  horizon_months: 24               # Forecast T+1 through T+24 (was 12 in legacy config)
-  lookback_months: 36              # Months of sales history loaded (was 24)
-  min_history_months: 12           # Below this -> cold-start model routing
-  cold_start_model_id: rolling_mean  # Fallback for DFUs with 3-11 months history
-  cold_start_min_months: 3         # Absolute floor -- DFUs with < 3 months skipped
-  fallback_model_id: lgbm_cluster  # Default for mature DFUs without champion assignment
-  recursive: true
-  plan_version_format: "%Y-%m"
-  keep_last_n_versions: 3
-  confidence_interval:
-    enabled: true
-    source_model_ids: [lgbm_cluster, catboost_cluster, xgboost_cluster]
-    residual_lag: 0
-    min_residual_months: 6
-    z_lower: 1.282                 # P10
-    z_upper: 1.282                 # P90
-    horizon_scaling: sqrt
-    sigma_floor: 1.0
-    sigma_cap_multiplier: 3.0
-  model_registry:
-    base_path: "data/models"
-  scheduler:
-    job_type: generate_production_forecast
-    cron: "0 6 2 * *"
+production_training:
+  enabled: true                 # Master switch for production training step
+  output_dir: data/models       # Where trained model artifacts are saved
+  val_fraction: 0.20            # Last 20% of months used for early stopping validation
+  min_cluster_rows: 50          # Minimum rows per cluster to train (skip sparse clusters)
+  save_metadata: true           # Save training_metadata.json alongside model artifacts
 ```
 
-### Cold-Start Routing
+### Inference
 
-| History Length | Routing | Rationale |
-|---|---|---|
-| >= 12 months | Champion model (normal path) | Sufficient history for tree model features |
-| 3-11 months | `cold_start_model_id` (rolling_mean) | Too little for tree models, enough for simple average |
-| < 3 months | Skipped entirely | Not enough signal to produce meaningful forecast |
+```yaml
+inference:
+  horizon_months: 18            # Months ahead to forecast (T+1 through T+18)
+  recursive: true               # Use recursive inference for multi-step horizons
+```
+
+### Confidence Intervals
+
+```yaml
+confidence_interval:
+  enabled: true                 # Enable probabilistic forecasts (CI bands)
+  z_lower: 1.282                # Z-score for 10th percentile (P10)
+  z_upper: 1.282                # Z-score for 90th percentile (P90)
+  horizon_scaling: sqrt          # Scale sigma by sqrt(h) for longer horizons
+  sigma_floor: 1.0              # Minimum sigma in units
+  sigma_cap_multiplier: 3.0     # Cap sigma at 3x global median
+```
+
+### Model Selection
+
+```yaml
+model_selection:
+  strategy: champion            # 'champion' = use DFU's champion assignment
+  fallback_model_id: lgbm_cluster
+```
+
+## UI Integration
+
+The **Model Experimentation Studio** provides a Train then Generate workflow:
+
+1. Select models to train (or "all")
+2. Monitor training progress (cluster-by-cluster)
+3. Review training metadata (row counts, validation RMSE, feature counts)
+4. Trigger forecast generation
+5. View point forecasts with CI bands in the Demand Forecast panel
 
 ## Dependencies
 
-- [Backtest Framework](./03-backtest-framework.md) -- produces the trained models
+- [Backtest Framework](./03-backtest-framework.md) -- provides backtest residuals for CI computation
 - [Champion Selection](./07-champion-selection.md) -- determines which model to use per DFU
-- [Forecast CI Bands](./10-forecast-ci-bands.md) -- populates confidence interval columns
+- [Forecast CI Bands](./10-forecast-ci-bands.md) -- details the residual-based CI methodology
 - Clustering (in `03-demand-intelligence/`) -- routes DFUs to correct cluster model
 
 ## See Also

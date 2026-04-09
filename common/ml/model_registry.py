@@ -111,18 +111,30 @@ def get_best_iteration(model: Any, model_name: str) -> int | None:
 # Early stopping patience
 # ---------------------------------------------------------------------------
 
-EARLY_STOP_PCT = 0.03  # 3% of max iterations
+EARLY_STOP_PCT = 0.05  # 5% of max iterations
 EARLY_STOP_FLOOR = 10  # minimum patience rounds
+SPARSE_EARLY_STOP_PCT = 0.10  # 10% of max iterations for sparse/intermittent clusters
+SPARSE_EARLY_STOP_FLOOR = 50  # minimum patience for sparse clusters
 
 
 def compute_early_stop_patience(
     max_iterations: int,
     pct: float = EARLY_STOP_PCT,
+    *,
+    sparse: bool = False,
 ) -> int:
     """Compute standardized early stopping patience as a percentage of max iterations.
 
-    Returns max(floor, int(max_iterations * pct)) to ensure a minimum of 10 rounds.
+    Returns max(floor, int(max_iterations * pct)) to ensure a minimum of 10 rounds
+    (or 50 rounds for sparse clusters).
+
+    For sparse/intermittent clusters, WAPE is noisy due to small denominators in
+    the validation set, so we need more patience to avoid premature stopping.
+    When ``sparse=True``, uses 10% of max iterations with a floor of 50 rounds.
     """
+    if sparse:
+        effective_pct = max(pct, SPARSE_EARLY_STOP_PCT)
+        return max(SPARSE_EARLY_STOP_FLOOR, int(max_iterations * effective_pct))
     return max(EARLY_STOP_FLOOR, int(max_iterations * pct))
 
 
@@ -142,8 +154,17 @@ def _wape_lgbm(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[str, float, bool
 
     Signature follows the lightgbm **sklearn** custom-eval contract:
     ``(y_true, y_pred) -> (name, value, is_higher_better)``
+
+    The denominator uses a scaled floor: max(|sum(A)|, n_samples * 0.01) with a
+    hard minimum of 1.0.  For sparse validation sets where most actuals are zero,
+    the raw |sum(A)| can be very small, making WAPE extremely noisy and causing
+    premature early stopping.  The scaled floor stabilises the metric while
+    preserving correct behavior for normal-volume data.
     """
-    denom = max(abs(y_true.sum()), 1.0)
+    abs_sum = abs(y_true.sum())
+    # Scaled floor: at least 1% of sample count, never less than 1.0
+    floor = max(len(y_true) * 0.01, 1.0)
+    denom = max(abs_sum, floor)
     wape = float(np.sum(np.abs(y_pred - y_true)) / denom)
     return "wape", wape, False
 
@@ -165,7 +186,9 @@ class WapeMetric:
     ) -> tuple[float, float]:
         y_pred = np.asarray(approxes[0])
         y_true = np.asarray(target)
-        denom = max(abs(y_true.sum()), 1.0)
+        abs_sum = abs(y_true.sum())
+        floor = max(len(y_true) * 0.01, 1.0)
+        denom = max(abs_sum, floor)
         wape = float(np.sum(np.abs(y_pred - y_true)) / denom)
         return wape, 1.0
 
@@ -175,8 +198,13 @@ def _wape_xgb(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
     Signature follows the xgboost 3.x **sklearn** eval_metric contract:
     ``(y_true, y_pred) -> float``  (function ``__name__`` is used as metric name).
+
+    Uses the same scaled denominator floor as ``_wape_lgbm`` for stability
+    on sparse validation sets.
     """
-    denom = max(abs(y_true.sum()), 1.0)
+    abs_sum = abs(y_true.sum())
+    floor = max(len(y_true) * 0.01, 1.0)
+    denom = max(abs_sum, floor)
     return float(np.sum(np.abs(y_pred - y_true)) / denom)
 
 
@@ -196,6 +224,8 @@ def fit_model(
     lib_module: Any,
     max_iterations: int,
     early_stop_pct: float = EARLY_STOP_PCT,
+    *,
+    demand_pattern: str = "continuous",
 ) -> None:
     """Fit a tree model with early stopping — single source of truth for all models.
 
@@ -213,13 +243,17 @@ def fit_model(
         feature_cols: Full feature column list (for computing cat_indices).
         lib_module: The model's parent library module (lightgbm, catboost, xgboost).
         max_iterations: Max boosting iterations (for computing early stop patience).
+        demand_pattern: Cluster demand pattern ("continuous", "lumpy", or "intermittent").
+            Sparse patterns get increased early stopping patience to compensate for
+            noisy WAPE on validation sets with many zeros.
     """
-    patience = compute_early_stop_patience(max_iterations, pct=early_stop_pct)
+    is_sparse = demand_pattern in ("intermittent", "lumpy")
+    patience = compute_early_stop_patience(max_iterations, pct=early_stop_pct, sparse=is_sparse)
 
     if model_name == "lgbm":
         # Use WAPE (not MAE) so early stopping optimises the same metric we report.
-        # Training objective is RMSE/Tweedie; stopping on MAE misaligns the stop
-        # point — WAPE drives stopping toward the actual accuracy KPI.
+        # Training objective is MAE/Tweedie; stopping on WAPE drives stopping
+        # toward the actual accuracy KPI used in champion selection.
         model.fit(
             X_tr, y_tr,
             eval_set=[(X_val, y_val)],
@@ -246,7 +280,10 @@ def fit_model(
             verbose=False,
         )
     elif model_name == "xgboost":
-        model.set_params(eval_metric="mae", early_stopping_rounds=patience)
+        # Use WAPE (not MAE) so early stopping optimises the same metric we report,
+        # consistent with the LGBM branch above.
+        _wape_xgb.__name__ = "wape"  # XGBoost uses __name__ as metric label
+        model.set_params(eval_metric=_wape_xgb, early_stopping_rounds=patience)
         model.fit(
             X_tr, y_tr,
             eval_set=[(X_val, y_val)],

@@ -45,7 +45,7 @@ class TestGetScenarioResult:
         with open(scenario_dir / "scenario_result.json", "w") as f:
             json.dump(expected, f)
 
-        with patch("scripts.run_clustering_scenario.SCENARIO_BASE", tmp_path):
+        with patch("common.ml.clustering.scenario.SCENARIO_BASE", tmp_path):
             result = get_scenario_result(scenario_id)
             assert result is not None
             assert result["scenario_id"] == scenario_id
@@ -58,7 +58,7 @@ class TestRunScenarioErrorHandling:
         from scripts.run_clustering_scenario import run_scenario
 
         with patch("scripts.run_clustering_scenario._run_full_pipeline", side_effect=ValueError("test error")), \
-             patch("scripts.run_clustering_scenario.SCENARIO_BASE", Path(tempfile.mkdtemp())):
+             patch("common.ml.clustering.scenario.SCENARIO_BASE", Path(tempfile.mkdtemp())):
             result = run_scenario(
                 feature_params={"time_window_months": 24, "min_months_history": 1},
                 model_params={"k_range": [3, 5]},
@@ -72,14 +72,24 @@ class TestRunScenarioErrorHandling:
         from scripts.run_clustering_scenario import run_scenario
 
         with patch("scripts.run_clustering_scenario._run_full_pipeline", side_effect=ValueError("skip")), \
-             patch("scripts.run_clustering_scenario.SCENARIO_BASE", Path(tempfile.mkdtemp())):
+             patch("common.ml.clustering.scenario.SCENARIO_BASE", Path(tempfile.mkdtemp())), \
+             patch("scripts.run_clustering_scenario._load_config_defaults", return_value={
+                 "time_window_months": 36, "min_months_history": 12,
+                 "k_range": [9, 18], "min_cluster_size_pct": 2.0,
+                 "use_pca": False, "pca_components": None,
+                 "labeling": {
+                     "volume_thresholds": {"high": 0.75, "low": 0.25},
+                     "cv_thresholds": {"steady": 0.4, "volatile": 0.8},
+                     "seasonality_threshold": 0.3, "zero_demand_threshold": 0.15,
+                 },
+             }):
             result = run_scenario(
                 model_params={"k_range": [4, 8]},
             )
             params = result["params"]
             # User-specified k_range should be present
             assert params["model_params"]["k_range"] == [4, 8]
-            # Defaults from clustering_config.yaml (time_window_months: 36, min_months_history: 12)
+            # Defaults from promoted experiment or hardcoded fallbacks
             assert params["feature_params"]["time_window_months"] == 36
             # Label params filled from config
             assert "volume_high" in params["label_params"]

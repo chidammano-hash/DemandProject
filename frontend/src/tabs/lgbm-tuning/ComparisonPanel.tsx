@@ -25,7 +25,6 @@ import {
   type MonthComparison,
   type ParamDiff,
   type ParamCommon,
-  type FeatureDiffs,
   type ConfigDiff,
   type ConfigCommon,
 } from "@/api/queries";
@@ -40,6 +39,24 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { LoadingElement } from "@/components/LoadingElement";
+
+// ---------------------------------------------------------------------------
+// Shared delta color helper — used in ClusterDeltaTable and month tables
+// ---------------------------------------------------------------------------
+
+/** Return a Tailwind text color class for a numeric delta value. */
+function deltaColorClass(delta: number | null | undefined, threshold = 0.05): string {
+  if (delta == null) return "text-muted-foreground";
+  if (delta > threshold) return "text-emerald-600 dark:text-emerald-400";
+  if (delta < -threshold) return "text-red-600 dark:text-red-400";
+  return "text-muted-foreground";
+}
+
+/** Format a signed delta value with sign prefix. */
+function formatDelta(delta: number | null | undefined, decimals = 1): string {
+  if (delta == null) return "--";
+  return `${delta > 0 ? "+" : ""}${delta.toFixed(decimals)}`;
+}
 
 // ---------------------------------------------------------------------------
 // Props
@@ -264,35 +281,25 @@ function ClusterDeltaTable({ items, title }: {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((item) => {
-              const delta = item.delta_accuracy;
-              const deltaColor =
-                delta != null && delta > 0.05
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : delta != null && delta < -0.05
-                    ? "text-red-600 dark:text-red-400"
-                    : "text-muted-foreground";
-
-              return (
-                <tr key={item.cluster} className="border-t border-border/40 hover:bg-muted/30">
-                  <td className="px-2 py-1 truncate max-w-[120px]" title={item.cluster}>
-                    {item.cluster}
-                  </td>
-                  <td className="text-right px-2 py-1 tabular-nums">
-                    {item.baseline_accuracy != null ? formatFixed(item.baseline_accuracy, 1) : "--"}
-                  </td>
-                  <td className="text-right px-2 py-1 tabular-nums">
-                    {item.candidate_accuracy != null ? formatFixed(item.candidate_accuracy, 1) : "--"}
-                  </td>
-                  <td className={cn("text-right px-2 py-1 tabular-nums font-medium", deltaColor)}>
-                    {delta != null ? `${delta > 0 ? "+" : ""}${delta.toFixed(1)}` : "--"}
-                  </td>
-                  <td className="text-right px-2 py-1 tabular-nums text-muted-foreground">
-                    {item.baseline_n_dfus ?? "--"}
-                  </td>
-                </tr>
-              );
-            })}
+            {sorted.map((item) => (
+              <tr key={item.cluster} className="border-t border-border/40 hover:bg-muted/30">
+                <td className="px-2 py-1 truncate max-w-[120px]" title={item.cluster}>
+                  {item.cluster}
+                </td>
+                <td className="text-right px-2 py-1 tabular-nums">
+                  {item.baseline_accuracy != null ? formatFixed(item.baseline_accuracy, 1) : "--"}
+                </td>
+                <td className="text-right px-2 py-1 tabular-nums">
+                  {item.candidate_accuracy != null ? formatFixed(item.candidate_accuracy, 1) : "--"}
+                </td>
+                <td className={cn("text-right px-2 py-1 tabular-nums font-medium", deltaColorClass(item.delta_accuracy))}>
+                  {formatDelta(item.delta_accuracy)}
+                </td>
+                <td className="text-right px-2 py-1 tabular-nums text-muted-foreground">
+                  {item.baseline_n_dfus ?? "--"}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -673,39 +680,27 @@ export function ComparisonPanel({ baselineId, candidateId, modelType = "lgbm" }:
           </div>
         )}
 
-        {/* ML Cluster view */}
-        {view === "ml_cluster" && ml_clusters.length > 0 && (
-          <div className="space-y-3">
-            <ComparisonBarChart
-              data={ml_clusters}
-              xKey="cluster"
-              baselineLabel={baselineLabel}
-              candidateLabel={candidateLabel}
-              chartColors={chartColors}
-              trendColors={trendColors}
-              baselineRef={baseline.accuracy_pct}
-              height={Math.min(400, Math.max(250, ml_clusters.length * 28))}
-            />
-            <ClusterDeltaTable items={ml_clusters} title="ML Cluster Accuracy Delta" />
-          </div>
-        )}
-
-        {/* Business Cluster view */}
-        {view === "business_cluster" && biz_clusters.length > 0 && (
-          <div className="space-y-3">
-            <ComparisonBarChart
-              data={biz_clusters}
-              xKey="cluster"
-              baselineLabel={baselineLabel}
-              candidateLabel={candidateLabel}
-              chartColors={chartColors}
-              trendColors={trendColors}
-              baselineRef={baseline.accuracy_pct}
-              height={Math.min(400, Math.max(250, biz_clusters.length * 28))}
-            />
-            <ClusterDeltaTable items={biz_clusters} title="Business Cluster Accuracy Delta" />
-          </div>
-        )}
+        {/* ML Cluster / Business Cluster views — same layout, different data */}
+        {(view === "ml_cluster" || view === "business_cluster") && (() => {
+          const items = view === "ml_cluster" ? ml_clusters : biz_clusters;
+          const title = view === "ml_cluster" ? "ML Cluster Accuracy Delta" : "Business Cluster Accuracy Delta";
+          if (items.length === 0) return null;
+          return (
+            <div className="space-y-3">
+              <ComparisonBarChart
+                data={items}
+                xKey="cluster"
+                baselineLabel={baselineLabel}
+                candidateLabel={candidateLabel}
+                chartColors={chartColors}
+                trendColors={trendColors}
+                baselineRef={baseline.accuracy_pct}
+                height={Math.min(400, Math.max(250, items.length * 28))}
+              />
+              <ClusterDeltaTable items={items} title={title} />
+            </div>
+          );
+        })()}
 
         {/* Month view */}
         {view === "month" && per_month.length > 0 && (
@@ -740,35 +735,26 @@ export function ComparisonPanel({ baselineId, candidateId, modelType = "lgbm" }:
                   </tr>
                 </thead>
                 <tbody>
-                  {per_month.map((m: MonthComparison) => {
-                    const delta = m.delta_accuracy;
-                    const deltaColor =
-                      delta != null && delta > 0.05
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : delta != null && delta < -0.05
-                          ? "text-red-600 dark:text-red-400"
-                          : "text-muted-foreground";
-                    return (
-                      <tr key={m.month} className="border-t border-border/40 hover:bg-muted/30">
-                        <td className="px-2 py-1">{m.month.slice(0, 7)}</td>
-                        <td className="text-right px-2 py-1 tabular-nums">
-                          {m.baseline_accuracy != null ? formatFixed(m.baseline_accuracy, 1) : "--"}
-                        </td>
-                        <td className="text-right px-2 py-1 tabular-nums">
-                          {m.candidate_accuracy != null ? formatFixed(m.candidate_accuracy, 1) : "--"}
-                        </td>
-                        <td className={cn("text-right px-2 py-1 tabular-nums font-medium", deltaColor)}>
-                          {delta != null ? `${delta > 0 ? "+" : ""}${delta.toFixed(1)}` : "--"}
-                        </td>
-                        <td className="text-right px-2 py-1 tabular-nums text-muted-foreground">
-                          {m.baseline_wape != null ? formatFixed(m.baseline_wape, 1) : "--"}
-                        </td>
-                        <td className="text-right px-2 py-1 tabular-nums text-muted-foreground">
-                          {m.candidate_wape != null ? formatFixed(m.candidate_wape, 1) : "--"}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {per_month.map((m: MonthComparison) => (
+                    <tr key={m.month} className="border-t border-border/40 hover:bg-muted/30">
+                      <td className="px-2 py-1">{m.month.slice(0, 7)}</td>
+                      <td className="text-right px-2 py-1 tabular-nums">
+                        {m.baseline_accuracy != null ? formatFixed(m.baseline_accuracy, 1) : "--"}
+                      </td>
+                      <td className="text-right px-2 py-1 tabular-nums">
+                        {m.candidate_accuracy != null ? formatFixed(m.candidate_accuracy, 1) : "--"}
+                      </td>
+                      <td className={cn("text-right px-2 py-1 tabular-nums font-medium", deltaColorClass(m.delta_accuracy))}>
+                        {formatDelta(m.delta_accuracy)}
+                      </td>
+                      <td className="text-right px-2 py-1 tabular-nums text-muted-foreground">
+                        {m.baseline_wape != null ? formatFixed(m.baseline_wape, 1) : "--"}
+                      </td>
+                      <td className="text-right px-2 py-1 tabular-nums text-muted-foreground">
+                        {m.candidate_wape != null ? formatFixed(m.candidate_wape, 1) : "--"}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

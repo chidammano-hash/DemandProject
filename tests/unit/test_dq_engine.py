@@ -171,11 +171,11 @@ class TestCheckUniqueness:
 # ---------------------------------------------------------------------------
 
 class TestCheckFunctionsRegistry:
-    def test_all_ten_types_registered(self):
+    def test_all_check_types_registered(self):
         assert set(CHECK_FUNCTIONS.keys()) == {
-            "completeness", "row_count", "uniqueness",
+            "freshness", "completeness", "row_count", "uniqueness",
             "range", "volume_delta", "referential_integrity",
-            "distribution_drift", "temporal_gaps",
+            "statistical_outlier", "distribution_drift", "temporal_gaps",
             "cross_column", "cardinality_anomaly",
         }
 

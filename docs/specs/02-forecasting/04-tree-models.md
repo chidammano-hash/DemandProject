@@ -48,11 +48,11 @@ All features are strictly causal -- only data available before the target month 
 | Rolling std | `rolling_std_3m`, `rolling_std_6m`, `rolling_std_12m` (shifted by 1) | 3 |
 | Calendar | `month` (1-12), `quarter` (1-4), `is_quarter_end`, `is_year_end`, `days_in_month` | 5 |
 | Fourier | `fourier_sin_12/6/4/3`, `fourier_cos_12/6/4/3` (sub-annual seasonality) | 8 |
-| DFU attributes | `ml_cluster`, `execution_lag`, `total_lt`, `region`, `brand`, `abc_vol` | 6 |
+| DFU attributes | `execution_lag`, `total_lt`, `region`, `brand`, `abc_vol` | 5 |
 | Item attributes | `case_weight`, `item_proof`, `bpc` | 3 |
-| **Total** | | **~31** |
+| **Total** | | **~30** |
 
-**Key convention:** `ml_cluster` is always a hard feature -- it is never removed from the feature set in either per_cluster or global mode. In per_cluster mode it provides a constant identity signal; in global mode it provides inter-cluster discrimination.
+**Note:** `ml_cluster` was removed from the feature set to eliminate data leakage — cluster assignments are computed from full history and would leak future information into early backtest timeframes. `ml_cluster` is still used for per-cluster model *partitioning* (separate models per cluster). See spec 23 for the full feature selection pipeline.
 
 ### Categorical Feature Handling
 

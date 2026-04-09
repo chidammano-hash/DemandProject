@@ -93,26 +93,47 @@ def _apply_tweedie_objective(
     demand_pattern: str,
     tweedie_variance_power: float = 1.5,
 ) -> dict[str, object]:
-    """Return a copy of *params* with Tweedie objective injected for intermittent demand.
+    """Return a copy of *params* with objective adjusted for non-continuous demand.
 
-    For continuous/lumpy patterns the original params are returned unchanged.
+    For continuous patterns the original params are returned unchanged.
+    For intermittent patterns (>= intermittent_threshold zeros, typically 70%+),
+    Tweedie is NOT applied — MAE (regression_l1) is used instead.  Tweedie's log
+    link function produces reasonable predictions at iteration 0 for highly sparse
+    data, causing WAPE-based early stopping to fire at iter 1 before the model
+    learns any signal.  MAE is robust to zero-inflation and lets the model train
+    for many rounds, dramatically improving accuracy on sparse clusters.
+
+    For lumpy patterns (moderate intermittency, 30-70% zeros), the original
+    params are returned unchanged (uses default MAE/RMSE from config).
     """
-    if demand_pattern != "intermittent":
+    if demand_pattern == "continuous":
         return params
 
-    overrides = dict(_TWEEDIE_OBJECTIVE.get(model_name, {}))
-    if model_name == "lgbm":
-        overrides["tweedie_variance_power"] = tweedie_variance_power
-    elif model_name == "catboost":
-        overrides["loss_function"] = f"Tweedie:variance_power={tweedie_variance_power}"
-    elif model_name == "xgboost":
-        overrides["tweedie_variance_power"] = tweedie_variance_power
+    if demand_pattern == "lumpy":
+        # Lumpy demand (30-70% zeros): keep default objective (MAE/RMSE).
+        # Tweedie doesn't help here either — default loss works well enough.
+        return params
 
-    merged = {**params, **overrides}
-    # boost_from_average is only valid for RMSE/MAE/Quantile/etc. in CatBoost;
-    # remove it when switching to Tweedie to avoid _check_train_params error.
-    if model_name == "catboost":
+    # Intermittent demand (>70% zeros): force MAE objective.
+    # Tweedie is catastrophic for very sparse data (best_iter=1, negative accuracy).
+    # MAE (regression_l1) is robust for zero-inflated time series.
+    overrides: dict[str, object] = {}
+    if model_name == "lgbm":
+        overrides["objective"] = "regression_l1"
+        # Remove any residual Tweedie params
+        merged = {**params, **overrides}
+        merged.pop("tweedie_variance_power", None)
+    elif model_name == "catboost":
+        overrides["loss_function"] = "MAE"
+        merged = {**params, **overrides}
         merged.pop("boost_from_average", None)
+    elif model_name == "xgboost":
+        overrides["objective"] = "reg:absoluteerror"
+        merged = {**params, **overrides}
+        merged.pop("tweedie_variance_power", None)
+    else:
+        merged = {**params, **overrides}
+
     return merged
 
 
@@ -130,24 +151,28 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "fit_extras_per_cluster": lambda params, iter_param: {},
         "fit_extras_global": lambda params, iter_param: {},
         "default_params": lambda algo, seed=42: {
-            "n_estimators": algo.get("n_estimators", 300),
-            "learning_rate": algo.get("learning_rate", 0.08),
-            "num_leaves": algo.get("num_leaves", 31),
-            "min_child_samples": algo.get("min_child_samples", 20),
-            "max_depth": algo.get("max_depth", -1),
-            "min_gain_to_split": algo.get("min_gain_to_split", 0.01),
-            "subsample": algo.get("subsample", 0.80),
-            "bagging_freq": algo.get("bagging_freq", 1),
-            "colsample_bytree": algo.get("colsample_bytree", 0.80),
-            "feature_fraction_bynode": algo.get("feature_fraction_bynode", 0.7),
-            "reg_lambda": algo.get("reg_lambda", 1.0),
-            "reg_alpha": algo.get("reg_alpha", 0.1),
-            "path_smooth": algo.get("path_smooth", 2.0),
-            "max_bin": algo.get("max_bin", 127),  # halve histogram memory (default 255)
-            "feature_pre_filter": True,  # skip features not used in splits
-            "verbosity": -1,
-            "random_state": seed,
-            "n_jobs": -1,
+            k: v for k, v in {
+                "objective": algo.get("objective", "regression_l1"),
+                "alpha": algo.get("huber_delta", None),  # Huber delta (only used when objective=huber)
+                "n_estimators": algo.get("n_estimators", 1500),
+                "learning_rate": algo.get("learning_rate", 0.02),
+                "num_leaves": algo.get("num_leaves", 63),
+                "min_child_samples": algo.get("min_child_samples", 20),
+                "max_depth": algo.get("max_depth", 8),
+                "min_gain_to_split": algo.get("min_gain_to_split", 0.005),
+                "subsample": algo.get("subsample", 0.70),
+                "bagging_freq": algo.get("bagging_freq", 1),
+                "colsample_bytree": algo.get("colsample_bytree", 0.80),
+                "feature_fraction_bynode": algo.get("feature_fraction_bynode", 0.7),
+                "reg_lambda": algo.get("reg_lambda", 1.0),
+                "reg_alpha": algo.get("reg_alpha", 0.1),
+                "path_smooth": algo.get("path_smooth", 1.0),
+                "max_bin": algo.get("max_bin", 255),
+                "feature_pre_filter": True,
+                "verbosity": -1,
+                "random_state": seed,
+                "n_jobs": -1,
+            }.items() if v is not None
         },
         "cat_dtype": "category",
         "model_params_key": "lgbm_params",
@@ -398,6 +423,84 @@ _BASELINE_PREDICT_FNS: dict[str, Callable] = {
 }
 
 
+class _RollingMeanModel:
+    """Placeholder model for intermittent clusters routed to rolling-mean baseline.
+
+    Stores the rolling mean per DFU so ``predict()`` can be called like a tree
+    model.  SHAP extraction will fail on this (no tree structure), which is
+    fine — the existing exception handler in shap_selector keeps all features.
+
+    The ``_sku_cks`` attribute is set by the caller after groupby so that
+    ``predict()`` can map feature-only DataFrames back to DFU means.
+    """
+
+    def __init__(self, rolling_means: dict[str, float]):
+        self._means = rolling_means
+        self._sku_cks: list[str] | None = None
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        if "sku_ck" in X.columns:
+            return np.maximum(X["sku_ck"].map(self._means).fillna(0.0).values, 0.0)
+        # In recursive mode, X only has feature_cols (no sku_ck).
+        # Use the pre-set _sku_cks from the caller.
+        if self._sku_cks is not None and len(self._sku_cks) == len(X):
+            vals = [self._means.get(sk, 0.0) for sk in self._sku_cks]
+            return np.maximum(np.array(vals), 0.0)
+        return np.zeros(len(X))
+
+
+class _SeasonalNaiveModel:
+    """Seasonal naive model for intermittent clusters.
+
+    Stores per-DFU per-calendar-month predictions using the most recent
+    same-month value from history.  Falls back to a per-DFU rolling mean
+    when no seasonal data exists for a given (sku, month) combination.
+
+    Attributes:
+        _seasonal_map: ``{(sku_ck, month_number): prediction}`` lookup.
+        _fallback_means: ``{sku_ck: rolling_mean}`` for DFUs without
+            seasonal history for a given month.
+        _sku_cks: Set by ``_predict_single_month`` before each call —
+            maps rows back to DFU keys when ``sku_ck`` is not in columns.
+        _months: Set by ``_predict_single_month`` before each call —
+            calendar month numbers corresponding to each row.
+    """
+
+    def __init__(
+        self,
+        seasonal_map: dict[tuple[str, int], float],
+        fallback_means: dict[str, float],
+    ):
+        self._seasonal_map = seasonal_map
+        self._fallback_means = fallback_means
+        self._sku_cks: list[str] | None = None
+        self._months: list[int] | None = None
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        # Determine sku keys and month numbers for each row
+        if "sku_ck" in X.columns and "startdate" in X.columns:
+            skus = X["sku_ck"].tolist()
+            months = pd.to_datetime(X["startdate"]).dt.month.tolist()
+        elif self._sku_cks is not None and self._months is not None:
+            skus = self._sku_cks
+            months = self._months
+        elif self._sku_cks is not None:
+            # No month info — fall back to rolling mean for all rows
+            vals = [self._fallback_means.get(sk, 0.0) for sk in self._sku_cks]
+            return np.maximum(np.array(vals), 0.0)
+        else:
+            return np.zeros(len(X))
+
+        vals = []
+        for sku, mo in zip(skus, months):
+            key = (sku, mo)
+            if key in self._seasonal_map:
+                vals.append(self._seasonal_map[key])
+            else:
+                vals.append(self._fallback_means.get(sku, 0.0))
+        return np.maximum(np.array(vals), 0.0)
+
+
 def _import_model_class(dotted_path: str) -> type:
     """Dynamically import a model class from a dotted module.class path."""
     module_path, class_name = dotted_path.rsplit(".", 1)
@@ -530,6 +633,65 @@ def _train_single_cluster(
             fit_params.get("objective", fit_params.get("loss_function", "default")),
         )
 
+    # ── Route intermittent clusters to seasonal naive baseline ──────────
+    # Tree models consistently produce 0% accuracy on 80-98% zero-demand clusters.
+    # Seasonal naive captures monthly demand patterns (zero vs non-zero months)
+    # far better than a flat rolling mean which predicts the same constant
+    # value for every month, collapsing accuracy during recursive prediction.
+    baseline_intermittent = backtest_cfg.get("baseline_intermittent", True)
+    if baseline_intermittent and demand_pattern == "intermittent":
+        window = backtest_cfg.get("baseline_intermittent_window", 12)
+        # Use seasonal naive for the initial (non-recursive) prediction
+        result_df = _predict_seasonal_naive(train_c, pred_c)
+
+        # Build per-DFU per-calendar-month seasonal map for recursive steps
+        dfu_key = ["item_id", "customer_group", "loc"]
+        seasonal_map: dict[tuple[str, int], float] = {}
+        rm_by_sku: dict[str, float] = {}
+        if "sku_ck" in train_c.columns:
+            train_with_month = train_c.copy()
+            train_with_month["_month"] = pd.to_datetime(train_with_month["startdate"]).dt.month
+            train_with_month["_year"] = pd.to_datetime(train_with_month["startdate"]).dt.year
+            # For each DFU + calendar month, take the most recent year value
+            train_sorted_by_year = train_with_month.sort_values("_year", ascending=False)
+            for (sku_ck,), grp in train_sorted_by_year.groupby(["sku_ck"]):
+                for _, row in grp.iterrows():
+                    month_num = int(row["_month"])
+                    key = (sku_ck, month_num)
+                    if key not in seasonal_map:
+                        seasonal_map[key] = max(float(row["qty"]), 0.0)
+            # Per-DFU rolling mean as fallback for months without seasonal data
+            train_sorted = train_c.sort_values("startdate", ascending=False)
+            rm = (
+                train_sorted.groupby(dfu_key)
+                .apply(lambda g: g.head(window)["qty"].mean(), include_groups=False)
+                .reset_index()
+                .rename(columns={0: "_rm"})
+            )
+            sku_map = train_c.drop_duplicates(subset="sku_ck")[["sku_ck"] + dfu_key]
+            rm_merged = sku_map.merge(rm, on=dfu_key, how="left")
+            rm_by_sku = dict(zip(rm_merged["sku_ck"], rm_merged["_rm"].fillna(0.0)))
+        model = _SeasonalNaiveModel(seasonal_map, rm_by_sku)
+        val_wape = round(
+            float(100.0 * abs(result_df["basefcst_pref"].sum() - y_train.sum()) / max(abs(y_train.sum()), 1.0)),
+            2,
+        )
+        val_accuracy = round(100.0 - val_wape, 2)
+        logger.info(
+            "Cluster %d/%d '%s': routed to seasonal_naive baseline (zero_pct=%.2f), "
+            "val_accuracy=%.1f%%, %s predictions (%.1fs)",
+            ci, n_clusters, cluster_label, cluster_stats["zero_demand_pct"],
+            val_accuracy, f"{len(pred_c):,}", time.time() - t0,
+        )
+        meta = {
+            "val_wape": val_wape,
+            "train_rows": len(train_c),
+            "cluster_profile": "seasonal_naive_baseline",
+            "demand_pattern": demand_pattern,
+            "cluster_stats": cluster_stats,
+        }
+        return cluster_label, result_df, model, meta
+
     # In parallel mode, cap per-model thread count to avoid oversubscription.
     # With 8 workers each requesting all cores, thread contention degrades perf.
     thread_key = "thread_count" if "thread_count" in fit_params else "n_jobs"
@@ -541,18 +703,25 @@ def _train_single_cluster(
     model = model_class(**fit_params)
 
     # Unified fit call — all model-specific logic in model_registry.fit_model()
-    fit_model(model, model_name, X_tr, y_tr, X_val, y_val, cat_cols, feature_cols, lib_module, max_iters)
+    fit_model(
+        model, model_name, X_tr, y_tr, X_val, y_val,
+        cat_cols, feature_cols, lib_module, max_iters,
+        demand_pattern=demand_pattern,
+    )
 
     preds = model.predict(X_pred)
 
-    # Per-cluster validation WAPE
+    # Per-cluster validation WAPE — use scaled floor for sparse clusters to avoid
+    # division instability when val actuals sum near zero
     val_preds = model.predict(X_val)
-    val_denom = float(abs(y_val.sum()))
-    val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2) if val_denom > 0 else 0.0
+    val_abs_sum = float(abs(y_val.sum()))
+    val_floor = max(len(y_val) * 0.01, 1.0)
+    val_denom = max(val_abs_sum, val_floor)
+    val_wape = round(float((abs(val_preds - y_val.values)).sum() / val_denom * 100), 2)
 
     result = pred_c[["sku_ck", "item_id", "customer_group", "loc", "startdate"]].copy()
-    # Always clip predictions to non-negative (Tweedie can still produce negatives
-    # due to link-function approximations, and negative forecasts are nonsensical)
+    # Always clip predictions to non-negative (MAE/RMSE can produce negatives
+    # and negative forecasts are nonsensical)
     result["basefcst_pref"] = np.maximum(preds, 0)
     n_est_used = get_best_iteration(model, model_name)
     if n_est_used is None:
@@ -568,11 +737,12 @@ def _train_single_cluster(
         "demand_pattern": demand_pattern,
         "cluster_stats": cluster_stats,
     }
+    val_accuracy = round(100.0 - val_wape, 2)
     logger.info(
         "Cluster %d/%d '%s': train=%s, pred=%s, best_iter=%s, "
-        "val_wape=%.1f%%, profile=%s, pattern=%s (%.1fs)",
+        "val_accuracy=%.1f%%, val_wape=%.1f%%, profile=%s, pattern=%s (%.1fs)",
         ci, n_clusters, cluster_label, f"{len(train_c):,}", f"{len(pred_c):,}",
-        n_est_used, val_wape, profile_name, demand_pattern, time.time() - t0,
+        n_est_used, val_accuracy, val_wape, profile_name, demand_pattern, time.time() - t0,
     )
 
     return cluster_label, result, model, meta
@@ -634,15 +804,19 @@ def train_and_predict_per_cluster(
     lib_module: Any,
     parallel: bool = False,
     max_workers: int = 4,
+    per_cluster_feature_cols: dict[str, list[str]] | None = None,
 ) -> tuple[pd.DataFrame, dict, dict[str, dict]]:
     """Train separate tree models per ml_cluster.
 
-    ml_cluster is kept as a hard feature (constant within each cluster partition,
-    but required for consistent feature alignment with global models).
+    ml_cluster is a metadata column (in METADATA_COLS) — used to partition DFUs
+    into per-cluster models, but excluded from feature_cols (not a model feature).
 
     When ``parallel=True`` and there are >4 clusters, uses ProcessPoolExecutor
     to train clusters concurrently.  Each cluster's training is independent
     (no shared mutable state).
+
+    When ``per_cluster_feature_cols`` is provided, each cluster uses its own
+    SHAP-selected feature list instead of the shared ``feature_cols``.
 
     Returns (predictions, models, model_meta) where model_meta stores per-cluster
     training metadata (val_wape, train_rows).
@@ -697,11 +871,21 @@ def train_and_predict_per_cluster(
             for ci, cluster_label in enumerate(clusters, 1):
                 train_c = train_df[train_df["ml_cluster"] == cluster_label]
                 pred_c = predict_df[predict_df["ml_cluster"] == cluster_label]
+                cluster_feature_cols = (
+                    per_cluster_feature_cols.get(cluster_label, feature_cols)
+                    if per_cluster_feature_cols
+                    else feature_cols
+                )
+                cluster_cat_cols = (
+                    [c for c in cat_cols if c in cluster_feature_cols]
+                    if per_cluster_feature_cols
+                    else cat_cols
+                )
                 future = executor.submit(
                     _train_single_cluster,
                     cluster_label, ci, n_clusters,
                     train_c, pred_c,
-                    feature_cols, cat_cols, params,
+                    cluster_feature_cols, cluster_cat_cols, params,
                     **_worker_kwargs,
                 )
                 futures[future] = cluster_label
@@ -716,10 +900,20 @@ def train_and_predict_per_cluster(
         for ci, cluster_label in enumerate(clusters, 1):
             train_c = train_df[train_df["ml_cluster"] == cluster_label]
             pred_c = predict_df[predict_df["ml_cluster"] == cluster_label]
+            cluster_feature_cols = (
+                per_cluster_feature_cols.get(cluster_label, feature_cols)
+                if per_cluster_feature_cols
+                else feature_cols
+            )
+            cluster_cat_cols = (
+                [c for c in cat_cols if c in cluster_feature_cols]
+                if per_cluster_feature_cols
+                else cat_cols
+            )
             cl, result, model, meta = _train_single_cluster(
                 cluster_label, ci, n_clusters,
                 train_c, pred_c,
-                feature_cols, cat_cols, params,
+                cluster_feature_cols, cluster_cat_cols, params,
                 **_worker_kwargs,
             )
             _collect_result(cl, result, model, meta)
@@ -780,12 +974,13 @@ def train_and_predict_global(
     # Sort by startdate so last 15% = most recent months (not last DFUs alphabetically)
     sorted_idx = train_df["startdate"].argsort(kind="mergesort")
     train_sorted = train_df.iloc[sorted_idx]
-    X_train = train_sorted[feature_cols].copy() if needs_cat_dtype_cast else train_sorted[feature_cols]
+    X_train = train_sorted[feature_cols].copy()
     y_train = train_sorted["qty"]
-    X_pred = predict_df[feature_cols].copy() if needs_cat_dtype_cast else predict_df[feature_cols]
+    X_pred = predict_df[feature_cols].copy()
 
-    if needs_cat_dtype_cast:
-        for col in cat_cols_in_features:
+    # Ensure all categorical columns have category dtype (LGBM requires this)
+    for col in cat_cols:
+        if col in X_train.columns:
             X_train[col] = X_train[col].astype("category")
             X_pred[col] = X_pred[col].astype("category")
 
@@ -823,7 +1018,7 @@ def train_and_predict_global(
 
 def persist_cluster_models(
     models: dict,
-    feature_cols: list[str],
+    feature_cols: list[str] | dict[str, list[str]],
     model_id: str,
     timeframe_label: str,
     prod_config: dict | None = None,
@@ -841,6 +1036,8 @@ def persist_cluster_models(
     Args:
         models: {cluster_label: model} from train_and_predict_per_cluster.
         feature_cols: Ordered feature column names used during training.
+            Can be a flat list (shared across clusters) or a dict mapping
+            cluster labels to per-cluster feature lists (from per-cluster SHAP).
         model_id: e.g. 'lgbm_cluster'.
         timeframe_label: Backtest timeframe label (e.g. 'J' = most recent).
         prod_config: Loaded production_forecast section from forecast_pipeline_config.yaml (optional).
@@ -864,13 +1061,21 @@ def persist_cluster_models(
     _meta = model_meta or {}
     saved = 0
     for cluster_label, model in models.items():
+        # Resolve per-cluster feature list when feature_cols is a dict
+        if isinstance(feature_cols, dict):
+            cluster_features = feature_cols.get(
+                str(cluster_label), next(iter(feature_cols.values()))
+            )
+        else:
+            cluster_features = feature_cols
+
         n_est_used = get_best_iteration(model, model_name) or 0
         importance_raw = _get_importance(model)
-        importance_dict = dict(zip(feature_cols, [float(v) for v in importance_raw])) if len(importance_raw) == len(feature_cols) else {}
+        importance_dict = dict(zip(cluster_features, [float(v) for v in importance_raw])) if len(importance_raw) == len(cluster_features) else {}
         cluster_meta = _meta.get(cluster_label, {})
         artifact = {
             "model": model,
-            "feature_cols": feature_cols,
+            "feature_cols": cluster_features,
             "model_id": model_id,
             "cluster_label": str(cluster_label),
             "n_estimators_used": n_est_used,
@@ -889,9 +1094,16 @@ def persist_cluster_models(
     fi_dir = out_dir / "feature_importance"
     fi_dir.mkdir(parents=True, exist_ok=True)
     for cluster_label, model in models.items():
+        if isinstance(feature_cols, dict):
+            cluster_features = feature_cols.get(
+                str(cluster_label), next(iter(feature_cols.values()))
+            )
+        else:
+            cluster_features = feature_cols
+
         imp = _get_importance(model)
-        if len(imp) == len(feature_cols):
-            fi_dict = dict(zip(feature_cols, [float(v) for v in imp]))
+        if len(imp) == len(cluster_features):
+            fi_dict = dict(zip(cluster_features, [float(v) for v in imp]))
             fi_sorted = dict(sorted(fi_dict.items(), key=lambda x: x[1], reverse=True))
             with open(fi_dir / f"cluster_{cluster_label}.json", "w") as f:
                 json.dump(fi_sorted, f, indent=2)
@@ -1010,10 +1222,11 @@ def main() -> None:
         except FileNotFoundError:
             pass  # No pipeline config — run unconditionally
 
-        # Propagate backtest-level noise settings into algo dict so run_tree_backtest
+        # Propagate backtest-level noise/smoothing settings into algo dict so run_tree_backtest
         # can access them via algo_config (algo only holds the per-algorithm sub-dict).
         algo.setdefault("recursive_noise_enabled", backtest_cfg.get("recursive_noise_enabled", cfg.get("recursive_noise_enabled", False)))
         algo.setdefault("recursive_noise_pct", backtest_cfg.get("recursive_noise_pct", cfg.get("recursive_noise_pct", 0.05)))
+        algo.setdefault("recursive_lag_smooth", backtest_cfg.get("recursive_lag_smooth", cfg.get("recursive_lag_smooth", 0.0)))
 
     # Resolve cluster override: CLI flag takes priority, then algo_config key
     cluster_override = args.cluster_override or algo.get("cluster_override_path")
@@ -1124,6 +1337,11 @@ def main() -> None:
     shap_threshold = algo.get("shap_threshold", 0.95)
     shap_top_n = algo.get("shap_top_n", None)
     shap_sample_size = algo.get("shap_sample_size", 500)
+    _corr_filter = algo.get("correlation_filter", False)
+    _corr_threshold = algo.get("correlation_threshold", 0.95)
+    _var_filter = algo.get("variance_filter", False)
+    _var_threshold = algo.get("variance_threshold", 0.01)
+    _shap_min_features = backtest_cfg.get("shap_min_features", 20)
     tune_inline = algo.get("tune_inline", False)
     params_file = algo.get("params_file", None)
     iter_param = registry["iter_param"]
@@ -1212,6 +1430,7 @@ def main() -> None:
     # Build SHAP feature selector closure (Feature 42)
     feature_selector_fn = None
     if shap_select:
+        from common.ml.shap_selector import compute_timeframe_shap_per_cluster
         from common.shap_selector import compute_timeframe_shap
         shap_extractor_name = registry["shap_extractor"]
         shap_extractor_fn = getattr(
@@ -1220,6 +1439,20 @@ def main() -> None:
         )
 
         def feature_selector_fn(model_or_dict, train_data, feature_cols, cat_cols, tf_idx, cutoff):
+            if isinstance(model_or_dict, dict):
+                return compute_timeframe_shap_per_cluster(
+                    model_or_dict, train_data, feature_cols, cat_cols,
+                    tf_idx, cutoff,
+                    shap_extractor_fn=shap_extractor_fn,
+                    sample_size=shap_sample_size,
+                    cumulative_threshold=shap_threshold,
+                    top_n=shap_top_n,
+                    min_features=_shap_min_features,
+                    correlation_filter=_corr_filter,
+                    correlation_threshold=_corr_threshold,
+                    variance_filter=_var_filter,
+                    variance_threshold=_var_threshold,
+                )
             return compute_timeframe_shap(
                 model_or_dict, train_data, feature_cols, cat_cols,
                 tf_idx, cutoff,
@@ -1228,10 +1461,15 @@ def main() -> None:
                 sample_size=shap_sample_size,
                 cumulative_threshold=shap_threshold,
                 top_n=shap_top_n,
+                min_features=_shap_min_features,
+                correlation_filter=_corr_filter,
+                correlation_threshold=_corr_threshold,
+                variance_filter=_var_filter,
+                variance_threshold=_var_threshold,
             )
 
-        logger.info("SHAP feature selection enabled (threshold=%s, top_n=%s, sample=%s)",
-                    shap_threshold, shap_top_n, shap_sample_size)
+        logger.info("Feature selection enabled (shap=%.2f, corr_filter=%s/%.2f, var_filter=%s/%.3f)",
+                    shap_threshold, _corr_filter, _corr_threshold, _var_filter, _var_threshold)
 
     # Load production forecast config for model persistence (F1.1)
     pipeline_config_path = ROOT / "config" / "forecast_pipeline_config.yaml"
@@ -1243,7 +1481,7 @@ def main() -> None:
 
     _fi_fn = registry["feature_importance_fn"]
 
-    def _persistence_fn(models: dict, feature_cols: list[str], timeframe_label: str) -> None:
+    def _persistence_fn(models: dict, feature_cols: list[str] | dict[str, list[str]], timeframe_label: str) -> None:
         persist_cluster_models(
             models, feature_cols, model_id, timeframe_label, prod_config,
             _model_meta_registry,

@@ -749,6 +749,33 @@ def refresh_views(db_params: dict[str, Any]) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+def _load_cached_winners(
+    csv_path: Path,
+    competing_models: list[str],
+) -> tuple[pd.DataFrame, list[tuple], bool]:
+    """Load cached winners from a CSV file saved by a champion experiment.
+
+    *competing_models* is the list of model IDs from the config — used to
+    detect whether the cached winners are from an ensemble strategy (winner
+    model_ids not in the competing set means blended/synthetic forecasts).
+
+    Returns (winners_df, winners_tuples, is_ensemble).
+    """
+    print(f"Loading cached winners from {csv_path}...")
+    winners_df = pd.read_csv(csv_path, dtype={"item_id": str, "customer_group": str, "loc": str})
+    winners_df["startdate"] = pd.to_datetime(winners_df["startdate"])
+    for col in ["basefcst_pref", "tothist_dmd", "prior_wape"]:
+        if col in winners_df.columns:
+            winners_df[col] = pd.to_numeric(winners_df[col], errors="coerce")
+    winners = list(winners_df.itertuples(index=False, name=None))
+    # Detect ensemble: if winner model_ids contain values not in the
+    # competing model list, the strategy produced blended forecasts.
+    winner_model_ids = set(winners_df["model_id"].unique())
+    is_ensemble = not winner_model_ids.issubset(set(competing_models))
+    print(f"  {len(winners):,} cached DFU-month winners loaded")
+    return winners_df, winners, is_ensemble
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Champion model selection")
     parser.add_argument(
@@ -763,6 +790,12 @@ def main() -> None:
         default=None,
         help="Selection strategy (overrides config): "
              "expanding, rolling, decay, ensemble, meta_learner",
+    )
+    parser.add_argument(
+        "--load-winners-from",
+        type=str,
+        default=None,
+        help="Path to a cached winners CSV (skips computation, loads directly)",
     )
     args = parser.parse_args()
 
@@ -786,42 +819,65 @@ def main() -> None:
     print(f"  Champion model_id: '{champion_id}'")
     print()
 
-    # Step 1: Run strategy to compute champion winners
+    # Step 1: Load cached winners or run strategy to compute them
     t0 = time.time()
-    strategy_fn = STRATEGY_REGISTRY.get(strategy_name)
 
-    with profiled_section("compute_champion_winners"):
-        if strategy_fn:
-            # Use DataFrame-based strategy from registry
-            print(f"Loading monthly errors for strategy '{strategy_name}'...")
-            monthly_errors_df = load_monthly_errors_df(db, models, lag_mode)
-            print(f"  {len(monthly_errors_df):,} rows loaded")
+    if args.load_winners_from:
+        # Fast path: load pre-computed winners from experiment CSV
+        cached_path = Path(args.load_winners_from)
+        if not cached_path.is_absolute():
+            cached_path = ROOT / cached_path
+        if not cached_path.exists():
+            print(f"ERROR: Cached winners file not found: {cached_path}")
+            print("Falling back to full computation...")
+            args.load_winners_from = None  # fall through to computation below
 
-            # Build kwargs
-            strat_kwargs = {
-                "min_prior_months": min_rows,
-                **strategy_params,
-            }
-            if strategy_name == "meta_learner":
-                strat_kwargs["dfu_features"] = load_dfu_features(db)
-                strat_kwargs.setdefault(
-                    "meta_model_path",
-                    str(ROOT / "data" / "champion" / "meta_learner.joblib"),
-                )
+    if args.load_winners_from:
+        with profiled_section("load_cached_winners"):
+            cached_path = Path(args.load_winners_from)
+            if not cached_path.is_absolute():
+                cached_path = ROOT / cached_path
+            winners_df, winners, is_ensemble = _load_cached_winners(cached_path, models)
+    else:
+        strategy_fn = STRATEGY_REGISTRY.get(strategy_name)
 
-            print(f"Computing champion winners ({strategy_name}, prior months only)...")
-            winners_df = strategy_fn(monthly_errors_df, **strat_kwargs)
+        with profiled_section("compute_champion_winners"):
+            if strategy_fn:
+                # Use DataFrame-based strategy from registry
+                print(f"Loading monthly errors for strategy '{strategy_name}'...")
+                monthly_errors_df = load_monthly_errors_df(db, models, lag_mode)
+                print(f"  {len(monthly_errors_df):,} rows loaded")
 
-            # Convert to tuple list for existing insert/summary logic
-            winners = list(winners_df.itertuples(index=False, name=None))
-            is_ensemble = strategy_name == "ensemble"
-        else:
-            # Fallback to SQL-based expanding window
-            print("Computing per-DFU per-month champion (expanding window, prior months only)...")
-            with psycopg.connect(**db) as conn, conn.cursor() as cur:
-                winners = compute_champion_winners(cur, models, lag_mode, min_rows)
-            winners_df = pd.DataFrame()
-            is_ensemble = False
+                # Build kwargs
+                strat_kwargs = {
+                    "min_prior_months": min_rows,
+                    **strategy_params,
+                }
+                if strategy_name in ("meta_learner", "per_cluster"):
+                    strat_kwargs["dfu_features"] = load_dfu_features(db)
+                if strategy_name == "meta_learner":
+                    strat_kwargs.setdefault(
+                        "meta_model_path",
+                        str(ROOT / "data" / "champion" / "meta_learner.joblib"),
+                    )
+
+                print(f"Computing champion winners ({strategy_name}, prior months only)...")
+                winners_df = strategy_fn(monthly_errors_df, **strat_kwargs)
+
+                # Convert to tuple list for existing insert/summary logic
+                winners = list(winners_df.itertuples(index=False, name=None))
+                # Detect ensemble: if winner model_ids are synthetic (not in the
+                # competing model list), the strategy produced blended forecasts
+                # that need the ensemble insert path.
+                winner_model_ids = set(winners_df["model_id"].unique())
+                is_ensemble = not winner_model_ids.issubset(set(models))
+            else:
+                # Fallback to SQL-based expanding window
+                print("Computing per-DFU per-month champion (expanding window, prior months only)...")
+                with psycopg.connect(**db) as conn, conn.cursor() as cur:
+                    winners = compute_champion_winners(cur, models, lag_mode, min_rows)
+                winners_df = pd.DataFrame()
+                is_ensemble = False
 
     elapsed = time.time() - t0
     unique_dfus = len({(w[0], w[1], w[2]) for w in winners})

@@ -80,7 +80,8 @@ class TestConstants:
     def test_protected_features_includes_temporal(self):
         assert "month" in PROTECTED_FEATURES
         assert "quarter" in PROTECTED_FEATURES
-        assert "ml_cluster" in PROTECTED_FEATURES
+        # ml_cluster removed — causes leakage (see KNOWN_GAPS.md §1)
+        assert "ml_cluster" not in PROTECTED_FEATURES
         # fourier_sin_12/cos_12 replace legacy month_sin/cos
         assert "fourier_sin_12" in PROTECTED_FEATURES
         assert "fourier_cos_12" in PROTECTED_FEATURES
@@ -108,11 +109,8 @@ class TestConstants:
         assert "croston_probability" in CROSTON_FEATURES
 
     def test_cross_dfu_features(self):
-        assert len(CROSS_DFU_FEATURES) == 4
-        assert "cluster_mean_lag1" in CROSS_DFU_FEATURES
-        assert "cluster_total_lag1" in CROSS_DFU_FEATURES
-        assert "cluster_demand_trend" in CROSS_DFU_FEATURES
-        assert "cluster_zero_pct" in CROSS_DFU_FEATURES
+        # Cross-DFU features removed — ml_cluster leakage (see KNOWN_GAPS.md §1)
+        assert len(CROSS_DFU_FEATURES) == 0
 
     def test_external_forecast_features(self):
         assert len(EXTERNAL_FORECAST_FEATURES) == 2
@@ -122,7 +120,7 @@ class TestConstants:
     def test_enhanced_features_combines_all_groups(self):
         expected = FOURIER_FEATURES + CROSTON_FEATURES + CROSS_DFU_FEATURES + EXTERNAL_FORECAST_FEATURES
         assert ENHANCED_FEATURES == expected
-        assert len(ENHANCED_FEATURES) == 8 + 3 + 4 + 2  # 17 total
+        assert len(ENHANCED_FEATURES) == 8 + 3 + 0 + 2  # 13 total (cross-DFU removed)
 
     def test_protected_features_includes_fourier(self):
         for feat in FOURIER_FEATURES:

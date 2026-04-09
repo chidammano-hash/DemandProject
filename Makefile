@@ -6,7 +6,7 @@ POSTGRES_SERVICE := postgres
 PG_EXEC := $(DC) exec -T $(POSTGRES_SERVICE)
 PSQL := $(PG_EXEC) psql -U demand -d demand_mvp
 
-.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-features cluster-train cluster-label cluster-update cluster-all seasonality-schema seasonality-detect seasonality-update seasonality-all variability-schema variability-compute variability-all lt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-seasonal-naive backtest-rolling-mean backtest-mstl backtest-nhits backtest-nbeats backtest-baselines backtest-load backtest-load-all backtest-load-all-bulk backtest-load-bulk backtest-load-main-only backtest-load-archive-only backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini load-ext-lgbm load-ext-cat load-ext-xg load-ext-best load-ext-all db-analyze db-health db-drop-unused-indexes db-retention db-optimize db-maintain
+.PHONY: help init init-pip up down logs db-apply-sql db-apply-chat db-apply-inventory db-apply-inv-backtest generate-embeddings api ui-init ui ui-test normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-all load-item load-location load-customer load-time load-dfu load-sales load-forecast load-forecast-replace load-forecast-replace-no-archive load-inventory load-all refresh-agg-sales refresh-agg-forecast refresh-agg-inventory refresh-agg refresh-inv-backtest inventory-pipeline check-api check-db check-all ai-sync-check cluster-all features-computelt-profile-schema lt-profile-compute lt-profile-all eoq-schema eoq-compute eoq-all policy-schema policy-assign policy-all health-schema health-refresh health-all exceptions-schema exceptions-generate exceptions-generate-dry ss-schema ss-compute ss-compute-dry ss-all ai-insights-schema ai-insights-scan ai-insights-scan-dry ai-insights-dfu ai-insights-all storyboard-schema storyboard-generate storyboard-generate-dry storyboard-all forecast-prod-schema forecast-generate forecast-generate-dfu forecast-generate-dry forecast-prod-all train-production train-production-all forecast-full forecast-model replplan-schema replplan-compute replplan-compute-dry replplan-all backtest-lgbm backtest-catboost backtest-xgboost backtest-seasonal-naive backtest-rolling-mean backtest-mstl backtest-nhits backtest-nbeats backtest-baselines backtest-load backtest-load-all backtest-load-all-bulk backtest-load-bulk backtest-load-main-only backtest-load-archive-only backtest-all backtest-all-parallel backtest-clean backtest-list forecast-clean forecast-clean-list accuracy-slice-refresh accuracy-slice-check champion-select champion-simulate champion-train-meta champion-all tune-lgbm tune-catboost tune-xgboost tune-all tune-lgbm-clusters tune-catboost-clusters tune-xgboost-clusters tune-clusters db-apply-jobs commit test test-unit test-api test-cov test-all e2e-install e2e e2e-ui e2e-headed e2e-report quantile-schema quantile-train quantile-train-dfu quantile-dry quantile-all consensus-schema consensus-generate consensus-generate-dry consensus-all procurement-schema procurement-export procurement-send-erp procurement-all fva-schema sop-seed sop-all dq-schema dq-populate dq-run dq-all pipeline-full pipeline-refresh pipeline-inventory pipeline-inventory-refresh setup-data setup-features setup-backtest setup-inv-planning setup-demand-planning setup-ops setup-planning setup-all perf-report perf-script perf-api perf-pipeline lgbm-tuning-list lgbm-tuning-compare lgbm-tuning-backup lgbm-tuning-run lgbm-auto-tune lgbm-auto-tune-promote lgbm-auto-tune-dry-run lgbm-auto-tune-list seed-baselines seed-baselines-tuning seed-baselines-champion seed-baselines-clustering db-truncate-data clean-artifacts refresh-mvs-tiered refresh-accuracy-mvs fresh-load fresh-features fresh-backtest fresh-champion fresh-all dev fresh test-quick lint format type-check health audit-routers new-router expert-panel expert-panel-quick expert-panel-mini adv-expert-panel adv-expert-panel-quick adv-expert-panel-mini load-ext-lgbm load-ext-cat load-ext-xg load-ext-best load-ext-all db-analyze db-health db-drop-unused-indexes db-retention db-optimize db-maintain
 
 # ---------------------------------------------------------------------------
 # Convenience aliases
@@ -103,6 +103,10 @@ help:
 	@echo "  tune-catboost        - Bayesian hyperparameter tuning for CatBoost (50 trials)"
 	@echo "  tune-xgboost         - Bayesian hyperparameter tuning for XGBoost (50 trials)"
 	@echo "  tune-all             - Run all three tuning jobs sequentially"
+	@echo "  tune-lgbm-clusters   - Per-cluster Bayesian tuning for LGBM (30 trials)"
+	@echo "  tune-catboost-clusters - Per-cluster Bayesian tuning for CatBoost (30 trials)"
+	@echo "  tune-xgboost-clusters - Per-cluster Bayesian tuning for XGBoost (30 trials)"
+	@echo "  tune-clusters        - Run all three per-cluster tuning jobs sequentially"
 	@echo "  expert-panel         - Expert Panel algorithm selection test (5000 DFUs, 5 TFs, ~30 min)"
 	@echo "  expert-panel-quick   - Quick Expert Panel test (1000 DFUs, 3 TFs, ~8 min)"
 	@echo "  expert-panel-mini    - Minimal Expert Panel test (200 DFUs, 2 TFs, ~2 min)"
@@ -115,13 +119,7 @@ help:
 	@echo "  expsys-backtest-dry    - ExpSys accuracy only, no DB load (--skip-load)"
 	@echo "  expsys-backtest-replace - ExpSys: delete existing rows then reload"
 	@echo "  NOTE: recursive, SHAP, and tuning are configured via config/forecast_pipeline_config.yaml"
-	@echo "  seasonality-schema   - apply DDL for seasonality columns on dim_dfu (one-time)"
-	@echo "  seasonality-detect   - run seasonality detection pipeline (detect + profile)"
-	@echo "  seasonality-update   - write seasonality profiles to dim_dfu"
-	@echo "  seasonality-all      - seasonality-schema + detect + update (full pipeline)"
-	@echo "  variability-schema   - apply DDL for variability columns on dim_dfu (one-time)"
-	@echo "  variability-compute  - compute demand variability stats per DFU"
-	@echo "  variability-all      - variability-schema + variability-compute (full pipeline)"
+	@echo "  features-compute     - compute all SKU features (volume, trend, seasonality, variability, lifecycle)"
 	@echo "  lt-profile-schema    - create dim_item_lead_time_profile table (one-time)"
 	@echo "  lt-profile-compute   - compute LT variability profiles per item-location"
 	@echo "  lt-profile-all       - lt-profile-schema + lt-profile-compute (full pipeline)"
@@ -168,7 +166,7 @@ help:
 	@echo "  setup-all            - EVERYTHING: data + ML + planning + ops (~4-6 hours)"
 	@echo "  setup-data           - data only: normalize + load all 10 domains (~30 min)"
 	@echo "  setup-planning       - data + inventory planning, no ML (~1 hour)"
-	@echo "  setup-features       - data + clustering + seasonality + variability"
+	@echo "  setup-features       - data + clustering + SKU features"
 	@echo "  setup-backtest       - features + 3 backtests + champion selection"
 	@echo "  setup-inv-planning   - inventory planning (SS, EOQ, policies, exceptions)"
 	@echo "  setup-demand-planning - forecasts + projections + orders + replenishment"
@@ -178,7 +176,7 @@ help:
 	@echo "  fresh-all            - FULL RESET: truncate + clean + load + ML + champion + baseline planning"
 	@echo "  fresh-champion       - load + features + backtests + champion (no truncate)"
 	@echo "  fresh-backtest       - load + features + backtests (no champion)"
-	@echo "  fresh-features       - load + clustering + seasonality + variability + LT"
+	@echo "  fresh-features       - load + clustering + SKU features + LT"
 	@echo "  fresh-load           - normalize + load + refresh MVs only"
 	@echo "  db-truncate-data     - truncate non-config data/history while preserving configuration masters"
 	@echo "  clean-artifacts      - remove stale CSVs, backtest, tuning, clustering, champion files"
@@ -418,44 +416,14 @@ check-db:
 	@echo "── Model Coverage ──"
 	@$(PSQL) -c "SELECT model_id, count(*) AS rows FROM fact_external_forecast_monthly GROUP BY model_id ORDER BY count(*) DESC;" 2>/dev/null || echo "  (no backtest data loaded yet)"
 
-cluster-features:
-	$(UV) python scripts/generate_clustering_features.py
-
-cluster-train:
-	$(UV) python scripts/train_clustering_model.py
-
-cluster-label:
-	$(UV) python scripts/label_clusters.py
-
-cluster-update:
-	$(UV) python scripts/update_cluster_assignments.py
-
-cluster-all: cluster-features cluster-train cluster-label cluster-update
+cluster-all:                           ## Run clustering pipeline (creates experiment, auto-promotes)
+	$(UV) python scripts/ml/run_cluster_pipeline.py --label "make cluster-all"
 
 # ---------------------------------------------------------------------------
-# Seasonality pipeline (feature 30)
+# Unified SKU Features pipeline
 # ---------------------------------------------------------------------------
-seasonality-schema:
-	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/015_add_seasonality_columns.sql').read()); conn.close(); print('Seasonality DDL applied')"
-
-seasonality-detect:
-	$(UV) python scripts/detect_seasonality.py --config config/forecast_domain_config.yaml
-
-seasonality-update:
-	$(UV) python scripts/update_seasonality_profiles.py
-
-seasonality-all: seasonality-schema seasonality-detect seasonality-update
-
-# ---------------------------------------------------------------------------
-# Demand Variability pipeline (IPfeature1)
-# ---------------------------------------------------------------------------
-variability-schema:
-	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/022_add_demand_variability_columns.sql').read()); conn.close(); print('Variability DDL applied')"
-
-variability-compute:
-	$(UV) python scripts/compute_demand_variability.py
-
-variability-all: variability-schema variability-compute
+features-compute:                     ## Compute all SKU features (volume, trend, seasonality, variability, lifecycle)
+	$(UV) python scripts/ml/compute_sku_features.py
 
 # ---------------------------------------------------------------------------
 # Lead Time Variability pipeline (IPfeature2)
@@ -753,6 +721,17 @@ tune-xgboost:
 
 tune-all: tune-lgbm tune-catboost tune-xgboost
 
+tune-lgbm-clusters:
+	$(UV) python scripts/tune_cluster_hyperparams.py --model lgbm --trials 30
+
+tune-catboost-clusters:
+	$(UV) python scripts/tune_cluster_hyperparams.py --model catboost --trials 30
+
+tune-xgboost-clusters:
+	$(UV) python scripts/tune_cluster_hyperparams.py --model xgboost --trials 30
+
+tune-clusters: tune-lgbm-clusters tune-catboost-clusters tune-xgboost-clusters
+
 # ── Production Baseline Seeding ──────────────────────────────────────────────
 seed-baselines:          ## Seed production baselines into experiment tables
 	$(UV) python scripts/seed_production_baselines.py
@@ -972,6 +951,13 @@ storyboard-all: storyboard-schema storyboard-generate
 forecast-prod-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/039_create_production_forecast.sql').read()); conn.execute(open('sql/041_add_source_model_id.sql').read()); conn.close(); print('Production forecast DDL applied')"
 
+# ── Production Model Training ──────────────────────────────────────────────
+train-production: ## Train a single model on full history: make train-production MODEL=lgbm_cluster
+	$(UV) python scripts/ml/train_production_models.py --model $(MODEL)
+
+train-production-all: ## Train all forecastable tree models on full history
+	$(UV) python scripts/ml/train_production_models.py --all
+
 forecast-generate:
 	$(UV) python scripts/generate_production_forecasts.py
 
@@ -982,6 +968,12 @@ forecast-generate-dry:
 	$(UV) python scripts/generate_production_forecasts.py --dry-run
 
 forecast-prod-all: forecast-prod-schema forecast-generate
+
+forecast-full: train-production-all forecast-generate ## Full pipeline: train all models + generate forecasts
+
+forecast-model: ## Train + generate for one model: make forecast-model MODEL=lgbm_cluster
+	$(UV) python scripts/ml/train_production_models.py --model $(MODEL) && \
+	$(UV) python scripts/generate_production_forecasts.py --model-id $(MODEL)
 
 # ---------------------------------------------------------------------------
 # Forward-Looking Replenishment Plan (CI Bands + Repl. Plan)
@@ -1300,8 +1292,8 @@ setup-data:
 	$(UV) python scripts/etl/run_pipeline.py --mode full --parallel
 	@echo "✓ Phase 1 complete: all data loaded into Postgres (parallel pipeline)"
 
-setup-features: setup-data cluster-all seasonality-all variability-all lt-profile-all abc-xyz-all demand-signals-all
-	@echo "✓ Phase 2 complete: clustering, seasonality, variability, lead time, ABC-XYZ, demand signals"
+setup-features: setup-data features-compute cluster-all lt-profile-all abc-xyz-all demand-signals-all
+	@echo "✓ Phase 2 complete: clustering, SKU features, lead time, ABC-XYZ, demand signals"
 
 setup-backtest: setup-features backtest-all backtest-load-all accuracy-slice-refresh champion-all seed-baselines
 	@echo "✓ Phase 3 complete: backtests, champion selection"
@@ -1487,7 +1479,7 @@ refresh-accuracy-mvs:                  ## Refresh accuracy MVs (after backtest l
 fresh-load: normalize-all load-all refresh-mvs-tiered  ## Normalize + load + refresh MVs (from input CSVs)
 	@echo "✓ Fresh data load complete."
 
-fresh-features: fresh-load cluster-all seasonality-all variability-all lt-profile-all  ## Load + clustering + seasonality + variability + LT
+fresh-features: fresh-load features-compute cluster-all lt-profile-all  ## Load + clustering + SKU features + LT
 	@echo "✓ Fresh load + feature engineering complete."
 
 fresh-backtest: fresh-features backtest-all backtest-load-all refresh-accuracy-mvs  ## Load + features + backtests + accuracy refresh

@@ -25,7 +25,7 @@ import { SchedulesPanel } from "./jobs/SchedulesPanel";
 import { JobHistoryPanel } from "./jobs/JobHistoryPanel";
 import { PipelineBuilderPanel } from "./jobs/PipelineBuilderPanel";
 import { ChampionConfigPanel } from "./jobs/ChampionConfigPanel";
-import { ClusterScenarioConfigPanel } from "./jobs/ClusterScenarioConfigPanel";
+// ClusterScenarioConfigPanel removed — clustering managed via Cluster tab
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -194,8 +194,8 @@ export default function JobsTab({ onNavigateToScenario }: JobsTabProps) {
           submitting={submitMutation.isPending}
           customCards={{
             champion_select: <ChampionConfigPanel onJobSubmitted={invalidateAll} />,
-            cluster_scenario: <ClusterScenarioConfigPanel onJobSubmitted={invalidateAll} />,
           }}
+          hiddenGroups={["clustering", "features", "backtest", "champion", "forecast"]}
         />
       </section>
 

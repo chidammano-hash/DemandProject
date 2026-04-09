@@ -38,7 +38,7 @@ export interface ClusterPromoteModalProps {
 // ---------------------------------------------------------------------------
 
 const WARNINGS = [
-  "All DFU cluster assignments in dim_sku.ml_cluster will be overwritten",
+  "All SKU cluster assignments in dim_sku.ml_cluster will be overwritten",
   "Existing backtest results were trained on the old clusters",
   "Per-cluster forecast accuracy metrics may shift",
   "Inventory planning safety stock calculations use cluster segments",

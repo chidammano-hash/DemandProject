@@ -1,318 +1,501 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CHAMPION EXPERIMENT TEMPLATES
+# ═══════════════════════════════════════════════════════════════════════════════
+# Pre-defined champion selection strategy configurations for the Champion
+# Experimentation Studio. Each template defines a strategy with tuned params
+# that users can run as-is or clone and customize.
+#
+# Loaded by: api/routers/forecasting/champion_experiments.py (GET /champion-experiments/templates)
+# Consumed by: Champion Experimentation Studio UI tab
+#
+# Template fields:
+#   id:                  Unique identifier (used as template reference)
+#   label:               Human-readable display name in the UI
+#   description:         Brief explanation of when/why to use this strategy
+#   strategy:            Champion selection strategy name (must match common/ml/champion_strategies.py)
+#   strategy_params:     Strategy-specific parameters (see each strategy's docstring)
+#   source:              Special marker — "model_competition_config" or "pipeline_config" means
+#                        this template's params are loaded live from forecast_pipeline_config.yaml
+#                        champion section (so it always reflects current production settings)
+#   meta_learner_params: Only for meta_learner and hybrid_meta_router strategies
+#
+# Common strategy_params across most strategies:
+#   min_prior_months:    Minimum months of backtest history before a model can be evaluated
+# ═══════════════════════════════════════════════════════════════════════════════
 templates:
+
+  # ═══ PRODUCTION BASELINE ════════════════════════════════════════════════════
+  # Special template — reads live settings from forecast_pipeline_config.yaml
+  # champion section. Always reflects whatever is currently running in production.
   - id: production_baseline
     label: "Production Baseline"
     description: "Current production strategy from model_competition.yaml"
-    source: model_competition_config
+    source: model_competition_config    # Marker: enriched at load time with live pipeline config champion settings
 
+  # ═══ WINDOW-BASED STRATEGIES ════════════════════════════════════════════════
+  # These strategies select the best model based on accuracy over a defined
+  # evaluation window of backtest history.
+
+  # ─── Expanding Window ───────────────────────────────────────────────────────
+  # Uses cumulative WAPE from ALL available backtest months. Most stable
+  # strategy — not sensitive to recent regime changes. Good default choice.
   - id: expanding_conservative
     label: "Expanding Window (Conservative)"
     description: "Cumulative WAPE from all history, min 5 prior months"
-    strategy: expanding
+    strategy: expanding                 # Evaluates accuracy over all available history (expanding window)
     strategy_params:
-      min_prior_months: 5
+      min_prior_months: 5              # Requires 5+ months of backtest data before evaluating a model
 
+  # ─── Rolling 6-Month Window ────────────────────────────────────────────────
+  # Only considers the last 6 months of backtest accuracy. Adapts faster to
+  # demand pattern changes (e.g., new product ramp, trend shift).
   - id: rolling_6m
     label: "Rolling 6-Month Window"
     description: "Last 6 months WAPE — adapts faster to regime changes"
-    strategy: rolling
+    strategy: rolling                   # Evaluates accuracy over a sliding window
     strategy_params:
-      window_months: 6
-      min_prior_months: 3
+      window_months: 6                 # Window size: 6 months of most recent backtest accuracy
+      min_prior_months: 3              # Minimum months before evaluation starts
 
+  # ─── Rolling 3-Month Window (Aggressive) ───────────────────────────────────
+  # Very short evaluation window. Reacts quickly to demand shifts but has
+  # higher variance. Best for volatile or rapidly changing demand patterns.
   - id: rolling_3m
     label: "Rolling 3-Month (Aggressive Recency)"
     description: "Last 3 months — fast adaptation, higher variance"
-    strategy: rolling
+    strategy: rolling                   # Sliding window evaluation
     strategy_params:
-      window_months: 3
-      min_prior_months: 2
+      window_months: 3                 # Very short window: last 3 months only
+      min_prior_months: 2              # Lower barrier to entry (2 months)
 
+  # ═══ DECAY-WEIGHTED STRATEGIES ═════════════════════════════════════════════
+  # Weight recent months more heavily using exponential decay. Provides a
+  # middle ground between expanding (all history equal) and rolling (hard cutoff).
+
+  # ─── Moderate Decay (0.90) ─────────────────────────────────────────────────
+  # Each month d steps ago gets weight 0.90^d. Month -1 = 0.90, Month -2 = 0.81,
+  # Month -6 = 0.53. Half-life is ~6.6 months.
   - id: decay_090
     label: "Exponential Decay (0.90)"
     description: "Each prior month weighted 0.90^d — moderate recency bias"
-    strategy: decay
+    strategy: decay                     # Exponential decay weighting of backtest accuracy
     strategy_params:
-      decay_factor: 0.90
-      min_prior_months: 3
+      decay_factor: 0.90               # Decay rate per month (0.90 = moderate recency bias)
+      min_prior_months: 3              # Minimum months before evaluation
 
+  # ─── Gentle Decay (0.95) ───────────────────────────────────────────────────
+  # Very gentle decay — close to expanding strategy. Good when recent accuracy
+  # matters slightly more but you still want stability from full history.
   - id: decay_095
     label: "Exponential Decay (0.95)"
     description: "Gentle decay — close to expanding but with recency tilt"
-    strategy: decay
+    strategy: decay                     # Exponential decay weighting
     strategy_params:
-      decay_factor: 0.95
-      min_prior_months: 3
+      decay_factor: 0.95               # Gentle decay (half-life ~13.5 months)
+      min_prior_months: 3              # Minimum months before evaluation
 
+  # ═══ ENSEMBLE STRATEGIES ═══════════════════════════════════════════════════
+  # Instead of picking a single winner, blend predictions from multiple models.
+  # Produces synthetic forecasts that are often more robust than any single model.
+
+  # ─── Inverse-WAPE Top-3 Ensemble ──────────────────────────────────────────
+  # Blends top 3 models weighted by 1/WAPE (better models get higher weight).
+  # The resulting "champion" is a synthetic blended forecast, not a single model.
   - id: ensemble_top3_inverse
     label: "Ensemble Top-3 (Inverse WAPE)"
     description: "Blend top 3 models weighted by 1/WAPE — synthetic forecast"
-    strategy: ensemble
+    strategy: ensemble                  # Model blending strategy
     strategy_params:
-      top_k: 3
-      weight_method: inverse_wape
-      min_prior_months: 3
+      top_k: 3                         # Number of top models to blend
+      weight_method: inverse_wape      # Weighting method. Options: inverse_wape (1/WAPE), equal
+      min_prior_months: 3              # Minimum months for accuracy evaluation
 
+  # ─── Equal-Weight Top-2 Ensemble ───────────────────────────────────────────
+  # Simple average of 2 best models. Very robust — diversification reduces
+  # variance without adding complexity.
   - id: ensemble_top2_equal
     label: "Ensemble Top-2 (Equal Weight)"
     description: "Simple average of top 2 models — robust diversification"
-    strategy: ensemble
+    strategy: ensemble                  # Model blending strategy
     strategy_params:
-      top_k: 2
-      weight_method: equal
-      min_prior_months: 3
+      top_k: 2                         # Blend the top 2 models
+      weight_method: equal             # Equal weight (50/50 average)
+      min_prior_months: 3              # Minimum months for evaluation
 
+  # ═══ ML-BASED STRATEGIES ═══════════════════════════════════════════════════
+  # Use machine learning to predict which model will perform best for each DFU.
+
+  # ─── Meta-Learner (Random Forest) ─────────────────────────────────────────
+  # Trains a Random Forest classifier on DFU features (volume, trend, seasonality,
+  # etc.) and rolling performance metrics to predict which model will win.
+  # Falls back to expanding strategy if meta-learner model is unavailable.
   - id: meta_learner_rf
     label: "Meta-Learner (Random Forest)"
     description: "ML classifier predicts best model from DFU features + performance"
-    strategy: meta_learner
+    strategy: meta_learner              # ML-based model selection
     strategy_params:
-      min_prior_months: 3
-    meta_learner_params:
-      model_type: random_forest
-      n_estimators: 200
-      max_depth: 15
-      test_months: 3
-      performance_window: 6
+      min_prior_months: 3              # Minimum months before meta-learner can evaluate
+    meta_learner_params:                # Random Forest classifier hyperparameters
+      model_type: random_forest        # Classifier type. Options: random_forest, gradient_boosting
+      n_estimators: 200                # Number of trees in the forest
+      max_depth: 15                    # Maximum tree depth
+      test_months: 3                   # Hold-out months for meta-learner evaluation
+      performance_window: 6            # Rolling months for computing model performance features
 
+  # ═══ OPTIMIZED / AUTO-TUNING STRATEGIES ════════════════════════════════════
+
+  # ─── Walk-Forward Optimized Decay ──────────────────────────────────────────
+  # Tests multiple decay factors via walk-forward validation and picks the
+  # best one. Self-tuning alternative to fixed decay_090/decay_095.
   - id: optimized_decay
     label: "Walk-Forward Optimized Decay"
     description: "Auto-selects best decay factor via walk-forward validation"
-    strategy: optimized_decay
+    strategy: optimized_decay           # Auto-tuning decay strategy
     strategy_params:
-      decay_candidates: [0.75, 0.80, 0.85, 0.90, 0.95]
-      min_prior_months: 3
-      validation_months: 3
+      decay_candidates: [0.75, 0.80, 0.85, 0.90, 0.95]  # Candidate decay factors to evaluate
+      min_prior_months: 3              # Minimum months before evaluation
+      validation_months: 3             # Months used for walk-forward validation of each candidate
 
+  # ═══ SEASONAL & SEGMENT-AWARE STRATEGIES ═══════════════════════════════════
+
+  # ─── Seasonal Quarter-Based ────────────────────────────────────────────────
+  # Evaluates model accuracy using only same-quarter historical months.
+  # Best for strongly seasonal items where off-season accuracy is irrelevant.
   - id: seasonal_quarter
     label: "Seasonal (Same-Quarter WAPE)"
     description: "Selects champion using same-quarter historical accuracy"
-    strategy: seasonal
+    strategy: seasonal                  # Same-quarter accuracy evaluation
     strategy_params:
-      min_prior_months: 2
-      fallback_strategy: expanding
+      min_prior_months: 2              # Minimum months (need 2+ same-quarter observations)
+      fallback_strategy: expanding     # Fallback when insufficient same-quarter data
 
+  # ─── Syntetos-Boylan Demand Classification ─────────────────────────────────
+  # Classifies DFUs into smooth/erratic/intermittent/lumpy using SBA framework,
+  # then routes each segment to the best-suited strategy automatically.
   - id: per_segment_sba
     label: "Per-Segment (Syntetos-Boylan)"
     description: "Routes smooth/erratic/intermittent/lumpy to different strategies"
-    strategy: per_segment
+    strategy: per_segment               # Demand-pattern-based routing
     strategy_params:
-      min_prior_months: 3
-      adi_threshold: 1.32
-      cv2_threshold: 0.49
+      min_prior_months: 3              # Minimum months for classification
+      adi_threshold: 1.32              # Average Demand Interval threshold (SBA standard = 1.32)
+      cv2_threshold: 0.49              # Squared coefficient of variation threshold (SBA standard = 0.49)
 
+  # ═══ REGRESSION-BASED BLENDING ═════════════════════════════════════════════
+
+  # ─── Ridge Regression Blend ────────────────────────────────────────────────
+  # Learns optimal model blending weights via Ridge regression. Regularization
+  # prevents overfitting to training period accuracy.
   - id: learned_blend_ridge
     label: "Learned Blend (Ridge Regression)"
     description: "Ridge regression learns optimal model blending weights"
-    strategy: learned_blend
+    strategy: learned_blend             # Ridge regression blending
     strategy_params:
-      min_prior_months: 6
-      alpha: 100.0
+      min_prior_months: 6             # Needs more history for regression stability (6 months)
+      alpha: 100.0                     # Ridge regularization strength (higher = more shrinkage toward equal weights)
 
+  # ═══ RISK-ADJUSTED STRATEGIES ══════════════════════════════════════════════
+
+  # ─── Uncertainty-Aware Selection ───────────────────────────────────────────
+  # Penalizes models with erratic errors. Picks models that are both accurate
+  # AND consistent. Good for risk-averse supply chain planning.
   - id: uncertainty_aware_single
     label: "Uncertainty-Aware (Single Model)"
     description: "Risk-adjusted selection penalizing erratic model errors"
-    strategy: uncertainty_aware
+    strategy: uncertainty_aware         # Risk-adjusted model selection
     strategy_params:
-      min_prior_months: 3
-      uncertainty_weight: 0.3
+      min_prior_months: 3              # Minimum months for evaluation
+      uncertainty_weight: 0.3          # Weight on error variance (0.0 = pure accuracy, 1.0 = pure stability)
 
+  # ═══ DIVERSITY-PROMOTING ENSEMBLES ═════════════════════════════════════════
+
+  # ─── Diverse Ensemble ──────────────────────────────────────────────────────
+  # Blends models with a penalty for model family overlap. Prevents selecting
+  # 3 tree models — promotes mixing trees + foundation + statistical.
   - id: diverse_ensemble_top3
     label: "Diverse Ensemble (Top-3)"
     description: "Family-penalized ensemble for model diversity"
-    strategy: diverse_ensemble
+    strategy: diverse_ensemble          # Diversity-promoting ensemble
     strategy_params:
-      top_k: 3
-      min_prior_months: 3
-      correlation_penalty: 0.5
+      top_k: 3                         # Number of models to blend
+      min_prior_months: 3              # Minimum months for evaluation
+      correlation_penalty: 0.5         # Penalty for same-family models (0.0 = no penalty, 1.0 = full penalty)
 
+  # ═══ HYBRID / ROUTER STRATEGIES ════════════════════════════════════════════
+
+  # ─── Hybrid Meta-Router ────────────────────────────────────────────────────
+  # If meta-learner is confident (above threshold), use its single-model pick.
+  # Otherwise, fall back to inverse-WAPE blend of top-K models.
   - id: hybrid_meta_router_06
     label: "Hybrid Meta-Router (0.6 threshold)"
     description: "High-confidence meta prediction OR inverse-WAPE blend"
-    strategy: hybrid_meta_router
+    strategy: hybrid_meta_router        # Confidence-gated meta-learner with ensemble fallback
     strategy_params:
-      min_prior_months: 3
-      confidence_threshold: 0.6
-      blend_top_k: 3
-    meta_learner_params:
-      model_type: random_forest
-      n_estimators: 200
-      max_depth: 15
-      performance_window: 6
+      min_prior_months: 3              # Minimum months for evaluation
+      confidence_threshold: 0.6        # Meta-learner confidence threshold (above = use prediction, below = blend)
+      blend_top_k: 3                   # Number of models in fallback blend
+    meta_learner_params:                # Random Forest classifier settings (same as meta_learner_rf)
+      model_type: random_forest        # Classifier type
+      n_estimators: 200                # Number of trees
+      max_depth: 15                    # Max tree depth
+      performance_window: 6            # Rolling months for performance features
 
+  # ─── Per-Cluster Champion ──────────────────────────────────────────────────
+  # Selects the single best model per ML cluster and applies it to ALL DFUs
+  # in that cluster. Simpler than per-DFU selection, may reduce noise.
   - id: per_cluster_champion
     label: "Per-Cluster Champion"
     description: "Best model per ML cluster applied to all DFUs in that cluster"
-    strategy: per_cluster
+    strategy: per_cluster               # Cluster-level model selection (one model per cluster)
     strategy_params:
-      min_prior_months: 3
+      min_prior_months: 3              # Minimum months for evaluation
 
+  # ─── Ridge Blend (variant) ────────────────────────────────────────────────
+  # Ridge regression blend with explicit min training months requirement.
   - id: ridge_blend_alpha100
     label: "Ridge Blend (Alpha=100)"
     description: "Ridge regression blend with alpha=100, min 6 months training"
-    strategy: ridge_blend
+    strategy: ridge_blend               # Ridge regression model blending
     strategy_params:
-      min_prior_months: 3
-      ridge_alpha: 100.0
-      min_train_months: 6
+      min_prior_months: 3              # Minimum months before evaluation starts
+      ridge_alpha: 100.0               # Regularization strength (prevents overfitting to training accuracy)
+      min_train_months: 6              # Minimum months of training data for the Ridge regression
 
+  # ─── Hybrid Warmup ────────────────────────────────────────────────────────
+  # Two-phase strategy: rolling window for cold-start DFUs (insufficient history),
+  # adaptive ensemble for mature DFUs. Smooth transition as data accumulates.
   - id: hybrid_warmup_default
     label: "Hybrid Warmup"
     description: "Rolling warmup for cold-start DFUs, then adaptive ensemble for mature DFUs"
-    strategy: hybrid_warmup
+    strategy: hybrid_warmup             # Cold-start aware two-phase strategy
     strategy_params:
-      min_prior_months: 3
-      warmup_strategy: rolling
-      warmup_window: 2
-      warmup_min_prior: 1
-      primary_strategy: adaptive_ensemble
-      primary_top_k: 3
-      primary_weight_method: inverse_wape
+      min_prior_months: 3              # Minimum months overall
+      warmup_strategy: rolling         # Strategy used during warmup phase. Options: rolling, expanding
+      warmup_window: 2                 # Rolling window months during warmup phase
+      warmup_min_prior: 1              # Minimum prior months for warmup (very permissive)
+      primary_strategy: adaptive_ensemble  # Strategy after warmup phase completes
+      primary_top_k: 3                 # Number of models to blend in primary phase
+      primary_weight_method: inverse_wape  # Weighting for primary ensemble
 
+  # ─── Adaptive Ensemble ─────────────────────────────────────────────────────
+  # Auto-selects how many models to blend (2-5) based on accuracy spread.
+  # If one model dominates, blends fewer. If models are close, blends more.
   - id: adaptive_ensemble_default
     label: "Adaptive Ensemble"
     description: "Auto-selects top-K models based on spread — blends 2-5 models adaptively"
-    strategy: adaptive_ensemble
+    strategy: adaptive_ensemble         # Spread-adaptive ensemble sizing
     strategy_params:
-      min_k: 2
-      max_k: 5
-      spread_threshold: 0.15
-      min_prior_months: 3
-      weight_method: inverse_wape
+      min_k: 2                         # Minimum models to blend
+      max_k: 5                         # Maximum models to blend
+      spread_threshold: 0.15           # WAPE spread threshold — if spread > this, use fewer models (dominant winner exists)
+      min_prior_months: 3              # Minimum months for evaluation
+      weight_method: inverse_wape      # Weighting method for blending
 
+  # ─── Ensemble Rolling ──────────────────────────────────────────────────────
+  # Combines rolling window accuracy with ensemble blending. Weights are
+  # recomputed each month using only the trailing window.
   - id: ensemble_rolling_6m
     label: "Ensemble Rolling (6-Month)"
     description: "Blended top-3 models using rolling 6-month inverse-WAPE weights"
-    strategy: ensemble_rolling
+    strategy: ensemble_rolling          # Rolling-window ensemble
     strategy_params:
-      top_k: 3
-      window_months: 6
-      weight_method: inverse_wape
-      min_prior_months: 3
+      top_k: 3                         # Models to blend
+      window_months: 6                 # Rolling evaluation window
+      weight_method: inverse_wape      # Weighting method
+      min_prior_months: 3              # Minimum months
 
+  # ═══ TIERED / CASCADE STRATEGIES ═══════════════════════════════════════════
+
+  # ─── Cascade Ensemble ──────────────────────────────────────────────────────
+  # Three tiers: (1) if one model wins by > solo_threshold, use it alone;
+  # (2) if spread is moderate, blend top-2; (3) if models are tight, blend top-5.
   - id: cascade_ensemble_default
     label: "Cascade Ensemble"
     description: "Tiered selection — solo model if dominant, blend 2 if moderate, blend 5 if tight"
-    strategy: cascade_ensemble
+    strategy: cascade_ensemble          # Tiered ensemble sizing
     strategy_params:
-      min_prior_months: 3
-      solo_threshold: 0.10
-      mid_threshold: 0.25
-      mid_k: 2
-      wide_k: 5
+      min_prior_months: 3              # Minimum months for evaluation
+      solo_threshold: 0.10             # WAPE gap above which a single model is used alone (dominant winner)
+      mid_threshold: 0.25              # WAPE gap above which top-2 blend is used (moderate spread)
+      mid_k: 2                         # Models in mid-tier blend
+      wide_k: 5                        # Models in wide-tier blend (spread < solo_threshold)
 
+  # ═══ OUTLIER-ROBUST STRATEGIES ═════════════════════════════════════════════
+
+  # ─── Adversarial Filter ────────────────────────────────────────────────────
+  # Removes outlier model predictions (beyond Z-threshold from median) before
+  # blending. Prevents one bad model from contaminating the ensemble.
   - id: adversarial_filter_default
     label: "Adversarial Filter"
     description: "Removes outlier model predictions before blending top-3"
-    strategy: adversarial_filter
+    strategy: adversarial_filter        # Outlier-filtered ensemble
     strategy_params:
-      min_prior_months: 3
-      outlier_z_threshold: 1.5
-      top_k: 3
+      min_prior_months: 3              # Minimum months for evaluation
+      outlier_z_threshold: 1.5         # Z-score threshold for outlier detection (models beyond this are excluded)
+      top_k: 3                         # Models to blend after filtering
 
+  # ═══ AUTO-WINDOW STRATEGIES ════════════════════════════════════════════════
+
+  # ─── Dynamic Window ────────────────────────────────────────────────────────
+  # Tests multiple evaluation window sizes via cross-validation and picks the
+  # best one per DFU. Self-tuning alternative to fixed rolling windows.
   - id: dynamic_window_default
     label: "Dynamic Window"
     description: "Auto-selects optimal evaluation window via cross-validation"
-    strategy: dynamic_window
+    strategy: dynamic_window            # Cross-validated window selection
     strategy_params:
-      min_prior_months: 3
-      window_candidates: [2, 3, 4, 6, 9, 12]
-      cv_months: 3
+      min_prior_months: 3              # Minimum months for evaluation
+      window_candidates: [2, 3, 4, 6, 9, 12]  # Candidate window sizes (months) to evaluate
+      cv_months: 3                     # Cross-validation holdout months
 
+  # ═══ REGIME-AWARE STRATEGIES ═══════════════════════════════════════════════
+
+  # ─── Regime Adaptive ───────────────────────────────────────────────────────
+  # Detects demand regime shifts (via rolling variance ratio) and adapts model
+  # selection. During stable periods uses expanding; during shifts uses rolling.
   - id: regime_adaptive_default
     label: "Regime Adaptive"
     description: "Detects demand regime shifts and adapts model selection accordingly"
-    strategy: regime_adaptive
+    strategy: regime_adaptive           # Regime-shift-aware selection
     strategy_params:
-      min_prior_months: 3
-      variance_window: 4
-      variance_threshold: 2.0
+      min_prior_months: 3              # Minimum months for evaluation
+      variance_window: 4               # Rolling window months for variance computation
+      variance_threshold: 2.0          # Ratio threshold for regime shift detection (current_var / historical_var > 2.0 = shift)
 
+  # ═══ BAYESIAN STRATEGIES ═══════════════════════════════════════════════════
+
+  # ─── Bayesian Model Averaging ──────────────────────────────────────────────
+  # Computes posterior model probabilities based on observed accuracy and
+  # blends predictions weighted by posterior. Principled statistical approach.
   - id: bayesian_model_avg_default
     label: "Bayesian Model Average"
     description: "Bayesian posterior weighting of models based on observed accuracy"
-    strategy: bayesian_model_avg
+    strategy: bayesian_model_avg        # Bayesian model averaging
     strategy_params:
-      min_prior_months: 3
+      min_prior_months: 3              # Minimum months for posterior computation
 
+  # ═══ ERROR-CORRECTING STRATEGIES ═══════════════════════════════════════════
+
+  # ─── Error Correcting ──────────────────────────────────────────────────────
+  # Takes the champion model's forecast and applies a bias correction based on
+  # recent systematic errors. Reduces forecast bias without changing model.
   - id: error_correcting_default
     label: "Error Correcting"
     description: "Adjusts champion forecast by correcting systematic recent bias"
-    strategy: error_correcting
+    strategy: error_correcting          # Post-hoc bias correction
     strategy_params:
-      min_prior_months: 3
-      correction_window: 3
-      correction_strength: 0.5
+      min_prior_months: 3              # Minimum months for evaluation
+      correction_window: 3             # Recent months used to compute bias correction
+      correction_strength: 0.5         # How much correction to apply (0.0 = none, 1.0 = full correction)
 
+  # ═══ SHRINKAGE STRATEGIES ═════════════════════════════════════════════════
+
+  # ─── Shrinkage Blend (Strong) ──────────────────────────────────────────────
+  # Shrinks ensemble weights toward equal weighting (1/N). Balances accuracy
+  # optimization with robustness to estimation error.
   - id: shrinkage_blend_050
     label: "Shrinkage Blend (0.50)"
     description: "Shrinks model weights toward equal weighting — balances accuracy vs stability"
-    strategy: shrinkage_blend
+    strategy: shrinkage_blend           # Shrinkage toward equal weights
     strategy_params:
-      min_prior_months: 3
-      shrinkage_intensity: 0.5
+      min_prior_months: 3              # Minimum months for evaluation
+      shrinkage_intensity: 0.5         # 0.0 = pure accuracy-based weights, 1.0 = fully equal weights
 
+  # ─── Shrinkage Blend (Light) ───────────────────────────────────────────────
+  # Lighter shrinkage — preserves more accuracy-based differentiation.
   - id: shrinkage_blend_030
     label: "Shrinkage Blend (0.30)"
     description: "Lighter shrinkage — keeps more accuracy-based differentiation"
-    strategy: shrinkage_blend
+    strategy: shrinkage_blend           # Shrinkage toward equal weights
     strategy_params:
-      min_prior_months: 3
-      shrinkage_intensity: 0.3
+      min_prior_months: 3              # Minimum months for evaluation
+      shrinkage_intensity: 0.3         # 30% shrinkage (mostly accuracy-driven)
 
+  # ═══ META-ROUTING STRATEGIES ═══════════════════════════════════════════════
+
+  # ─── DFU Strategy Router ───────────────────────────────────────────────────
+  # Routes each DFU to whichever champion strategy performed best for that
+  # DFU in the recent evaluation window. Strategy-of-strategies.
   - id: dfu_strategy_router_default
     label: "DFU Strategy Router"
     description: "Routes each DFU to the best strategy based on recent performance"
-    strategy: dfu_strategy_router
+    strategy: dfu_strategy_router       # Per-DFU strategy selection
     strategy_params:
-      min_prior_months: 3
-      eval_months: 3
+      min_prior_months: 3              # Minimum months for evaluation
+      eval_months: 3                   # Recent months for evaluating which strategy works best per DFU
 
+  # ─── Stacked Strategies ────────────────────────────────────────────────────
+  # Meta-strategy that runs multiple selection strategies and stacks their
+  # outputs for the most robust routing. Higher compute cost.
   - id: stacked_strategies_default
     label: "Stacked Strategies"
     description: "Meta-strategy that stacks multiple selection strategies for robust routing"
-    strategy: stacked_strategies
+    strategy: stacked_strategies        # Stacked strategy ensemble
     strategy_params:
-      min_prior_months: 3
-      eval_months: 3
+      min_prior_months: 3              # Minimum months for evaluation
+      eval_months: 3                   # Recent months for strategy evaluation
 
+  # ─── Cluster-Regime Hybrid ─────────────────────────────────────────────────
+  # Combines per-cluster champion selection with regime-shift detection.
+  # Uses cluster-level champion during stable periods; switches to rolling
+  # during regime shifts.
   - id: cluster_regime_hybrid_default
     label: "Cluster-Regime Hybrid"
     description: "Per-cluster champion with regime-shift detection for adaptive switching"
-    strategy: cluster_regime_hybrid
+    strategy: cluster_regime_hybrid     # Cluster + regime-aware hybrid
     strategy_params:
-      min_prior_months: 3
-      variance_window: 4
-      variance_threshold: 2.0
+      min_prior_months: 3              # Minimum months for evaluation
+      variance_window: 4               # Rolling window for variance computation (regime detection)
+      variance_threshold: 2.0          # Variance ratio threshold for regime shift
 
+  # ═══ BANDIT STRATEGIES ═════════════════════════════════════════════════════
+  # Multi-armed bandit algorithms that balance exploration (trying uncertain
+  # models) with exploitation (using proven winners). Useful when model
+  # performance is non-stationary.
+
+  # ─── Thompson Sampling ─────────────────────────────────────────────────────
+  # Bayesian bandit: maintains a Beta distribution per model, samples from
+  # posteriors to decide which model to use. Natural exploration.
   - id: thompson_sampling_default
     label: "Thompson Sampling"
     description: "Bayesian bandit — explores uncertain models, exploits proven winners"
-    strategy: thompson_sampling
+    strategy: thompson_sampling         # Thompson sampling bandit
     strategy_params:
-      min_prior_months: 2
-      discount: 0.95
+      min_prior_months: 2              # Low barrier (bandit handles cold-start via exploration)
+      discount: 0.95                   # Temporal discount on past observations (0.95 = 5% forgetting per period)
 
+  # ─── Thompson Ensemble ─────────────────────────────────────────────────────
+  # Thompson sampling over top-K models, but blends them by posterior
+  # probability instead of picking a single winner.
   - id: thompson_ensemble_default
     label: "Thompson Ensemble"
     description: "Thompson sampling over top-K models blended by posterior probability"
-    strategy: thompson_ensemble
+    strategy: thompson_ensemble         # Thompson sampling + ensemble blending
     strategy_params:
-      min_prior_months: 2
-      discount: 0.95
-      top_k: 3
+      min_prior_months: 2              # Low barrier for bandit
+      discount: 0.95                   # Temporal discount
+      top_k: 3                         # Number of models to blend
 
+  # ─── LinUCB (Contextual Bandit) ────────────────────────────────────────────
+  # Linear Upper Confidence Bound: uses DFU features as context to select
+  # models. Adds UCB exploration bonus to encourage trying models with
+  # uncertain feature-performance relationships.
   - id: linucb_default
     label: "LinUCB"
     description: "Contextual bandit — selects models using DFU features with UCB exploration"
-    strategy: linucb
+    strategy: linucb                    # Contextual bandit with linear payoff model
     strategy_params:
-      min_prior_months: 3
-      alpha_ucb: 1.0
+      min_prior_months: 3              # Minimum months for feature computation
+      alpha_ucb: 1.0                   # Exploration coefficient (higher = more exploration, lower = more exploitation)
 
+  # ─── EXP3 (Adversarial Bandit) ─────────────────────────────────────────────
+  # Exponential-weight algorithm for Exploration and Exploitation.
+  # Designed for adversarial (worst-case) settings — hedges against any model
+  # performance distribution. Most robust bandit, but slower to converge.
   - id: exp3_default
     label: "EXP3"
     description: "Adversarial bandit — hedges against worst-case model performance"
-    strategy: exp3
+    strategy: exp3                      # Adversarial bandit
     strategy_params:
-      min_prior_months: 2
-      gamma: 0.10
+      min_prior_months: 2              # Low barrier for bandit
+      gamma: 0.10                      # Exploration rate (probability of uniform random selection vs. weighted)

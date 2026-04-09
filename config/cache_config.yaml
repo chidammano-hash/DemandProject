@@ -1,87 +1,93 @@
-# cache_config.yaml
+# ═══ CACHE CONFIG ═══
 # API response caching configuration (Spec 08-03)
+# Used by: common/services/cache.py (@cached decorator), api middleware
+# Backends: InMemoryBackend (default) or Redis (when REDIS_URL set)
 
-backend: memory                        # memory or redis
-redis_url: ${REDIS_URL:-redis://localhost:6379/0}
+backend: memory                          # Cache backend; options: 'memory' (in-process dict), 'redis' (requires Redis server)
+redis_url: ${REDIS_URL:-redis://localhost:6379/0}  # Redis connection URL (env var); only used when backend=redis
 
-default_ttl_seconds: 120               # 2 minutes
-max_memory_mb: 256                     # in-memory cache size cap
+default_ttl_seconds: 120                 # Default cache TTL in seconds (2 minutes); used when no group_ttl matches
+max_memory_mb: 256                       # Max memory for in-memory cache (MB); LRU eviction when exceeded
 
-# Per-group TTL overrides (seconds)
+# ═══ PER-GROUP TTL OVERRIDES ═══
+# Override TTL (seconds) by API path group; group derived from first path segment after /
+# Shorter TTLs for rapidly-changing data; longer for expensive computations
 group_ttls:
-  dashboard: 60
-  accuracy: 300
-  inv-planning: 120
-  control-tower: 60
-  domains: 180
-  inventory: 120
-  ai-planner: 180
-  storyboard: 120
-  fill-rate: 120
-  clustering: 300
-  forecast: 300
-  jobs: 30
+  dashboard: 60                          # Dashboard KPIs — refresh every 1 min (frequently viewed)
+  accuracy: 300                          # Forecast accuracy metrics — 5 min (expensive aggregation, slow-changing)
+  inv-planning: 120                      # Inventory planning endpoints — 2 min
+  control-tower: 60                      # Control tower KPIs — 1 min (real-time operational view)
+  domains: 180                           # Generic domain data (dim/fact tables) — 3 min
+  inventory: 120                         # Inventory snapshots — 2 min
+  ai-planner: 180                        # AI planner insights — 3 min (LLM calls are expensive)
+  storyboard: 120                        # Storyboard narratives — 2 min
+  fill-rate: 120                         # Fill rate metrics — 2 min
+  clustering: 300                        # Clustering results — 5 min (rarely changes outside experiments)
+  forecast: 300                          # Forecast data — 5 min (only changes on pipeline runs)
+  jobs: 30                               # Job status — 30 sec (needs near-real-time updates)
 
-# Invalidation rules: mutation endpoints → cache groups to clear
+# ═══ INVALIDATION RULES ═══
+# Maps mutation endpoints (POST/PUT/DELETE) to cache groups that must be cleared
+# Wildcard (*) matches any path segment; ensures stale data is evicted after writes
 invalidation_rules:
-  # Inventory planning mutations
-  "POST /inv-planning/exceptions/generate":
+  # --- Inventory planning mutations ---
+  "POST /inv-planning/exceptions/generate":       # Regenerating exceptions invalidates inv-planning + control-tower views
     - "inv-planning"
     - "control-tower"
-  "POST /inv-planning/exceptions/acknowledge":
+  "POST /inv-planning/exceptions/acknowledge":    # Acknowledging an exception updates inv-planning state
     - "inv-planning"
-  "PUT /inv-planning/policy/assign":
+  "PUT /inv-planning/policy/assign":              # Assigning policy to SKUs changes planning calculations
     - "inv-planning"
-  "POST /inv-planning/policy":
+  "POST /inv-planning/policy":                    # Creating a new policy
     - "inv-planning"
-  "PUT /inv-planning/policy/*":
+  "PUT /inv-planning/policy/*":                   # Updating an existing policy
     - "inv-planning"
 
-  # AI planner mutations
-  "POST /ai-planner/portfolio-scan":
+  # --- AI planner mutations ---
+  "POST /ai-planner/portfolio-scan":              # Running portfolio scan generates new insights
     - "ai-planner"
-  "PUT /ai-planner/insights/*/status":
+  "PUT /ai-planner/insights/*/status":            # Updating insight status (acknowledge, dismiss)
     - "ai-planner"
-  "POST /ai-planner/analyze":
+  "POST /ai-planner/analyze":                     # Running ad-hoc analysis
     - "ai-planner"
 
-  # Storyboard mutations
-  "POST /storyboard/generate":
+  # --- Storyboard mutations ---
+  "POST /storyboard/generate":                    # Generating storyboard narratives
     - "storyboard"
-    - "control-tower"
-  "PUT /storyboard/*/acknowledge":
+    - "control-tower"                              # Storyboard feeds control tower exception view
+  "PUT /storyboard/*/acknowledge":                # Acknowledging a storyboard exception
     - "storyboard"
 
-  # Clustering mutations
-  "POST /clustering/scenario":
+  # --- Clustering mutations ---
+  "POST /clustering/scenario":                    # Creating a new clustering scenario/experiment
     - "clustering"
-  "POST /clustering/scenario/*/promote":
+  "POST /clustering/scenario/*/promote":          # Promoting a scenario affects accuracy + dashboard views
     - "clustering"
     - "accuracy"
     - "dashboard"
 
-  # Competition / champion
-  "POST /competition/run":
+  # --- Competition / champion ---
+  "POST /competition/run":                        # Running model competition updates accuracy + forecast + dashboard
     - "accuracy"
     - "forecast"
     - "dashboard"
-  "PUT /competition/config":
+  "PUT /competition/config":                      # Updating competition config changes accuracy metrics
     - "accuracy"
 
-  # Job mutations
-  "POST /jobs/*":
+  # --- Job mutations ---
+  "POST /jobs/*":                                 # Creating/triggering a job
     - "jobs"
-  "DELETE /jobs/*":
+  "DELETE /jobs/*":                               # Deleting a job
     - "jobs"
 
-  # Domain data loads
-  "POST /domains/*/reload":
+  # --- Domain data loads ---
+  "POST /domains/*/reload":                       # Reloading domain data invalidates multiple downstream caches
     - "domains"
     - "dashboard"
     - "accuracy"
     - "inventory"
 
-  # Forecast production
-  "POST /forecast/production/generate":
+  # --- Forecast production ---
+  "POST /forecast/production/generate":           # Generating production forecast invalidates forecast + inv-planning
     - "forecast"
     - "inv-planning"

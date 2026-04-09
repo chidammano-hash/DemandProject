@@ -11,6 +11,13 @@ import { cn } from "@/lib/utils";
 // Types
 // ---------------------------------------------------------------------------
 
+// Core features used when all_features is off (matches train_clustering_model.py CORE_FEATURES)
+const CORE_FEATURES = [
+  "mean_demand", "cv_demand", "iqr_demand", "trend_slope_norm", "trend_r2",
+  "cagr", "seasonal_amplitude", "seasonal_r2", "yoy_correlation",
+  "periodicity_strength", "zero_demand_pct", "adi", "months_available", "recency_ratio",
+];
+
 export interface ClusterParamsFormProps {
   featureParams: FeatureParams;
   modelParams: ModelParams;
@@ -26,6 +33,8 @@ export interface ClusterParamsFormProps {
     labelParams?: LabelParams;
   };
   disabled?: boolean;
+  /** Optional feature list fetched from API; falls back to hardcoded CORE_FEATURES */
+  features?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +132,9 @@ export function ClusterParamsForm({
   onChange,
   defaults,
   disabled = false,
+  features,
 }: ClusterParamsFormProps) {
+  const resolvedFeatures = features ?? CORE_FEATURES;
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
       {/* Data Scope */}
@@ -186,6 +197,22 @@ export function ClusterParamsForm({
           max={20}
           disabled={disabled}
         />
+        <CheckboxInput
+          label="All Features"
+          checked={modelParams.all_features ?? false}
+          onChange={(v) => onChange("model", "all_features", v)}
+          disabled={disabled}
+        />
+        {!(modelParams.all_features ?? false) && (
+          <p className="text-[10px] text-muted-foreground -mt-1">
+            Core: volume, trend, seasonality, intermittency ({resolvedFeatures.length} features)
+          </p>
+        )}
+        {(modelParams.all_features ?? false) && (
+          <p className="text-[10px] text-muted-foreground -mt-1">
+            All numeric features from clustering feature set
+          </p>
+        )}
         <CheckboxInput
           label="Use PCA"
           checked={modelParams.use_pca}

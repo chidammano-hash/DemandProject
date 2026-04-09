@@ -1,112 +1,120 @@
-# notification_config.yaml
-# Notification channel and routing configuration (Spec 08-04)
+# ═══ NOTIFICATION CONFIG ═══
+# Multi-channel notification dispatch configuration (Spec 08-04)
+# Used by: common/services/notification_engine.py (dispatch), api/routers/notifications.py (CRUD)
+# Adapters: Slack (webhook), Teams (webhook), Email (SMTP), PagerDuty (Events API v2)
 
+# ═══ CHANNELS ═══
+# Each channel can be independently enabled/disabled; env vars resolved at runtime
 channels:
   slack:
-    enabled: true
-    webhook_url: ${SLACK_WEBHOOK_URL}
-    default_channel: "#demand-alerts"
-    username: "Supply Chain Command Center"
-    icon_emoji: ":bar_chart:"
+    enabled: true                        # Master switch for Slack notifications
+    webhook_url: ${SLACK_WEBHOOK_URL}    # Slack incoming webhook URL (env var; set in .env)
+    default_channel: "#demand-alerts"    # Default Slack channel for messages (override per routing rule)
+    username: "Supply Chain Command Center"  # Display name for the Slack bot
+    icon_emoji: ":bar_chart:"            # Slack emoji used as bot avatar
 
   teams:
-    enabled: false
-    webhook_url: ${TEAMS_WEBHOOK_URL}
+    enabled: false                       # Master switch for Microsoft Teams notifications
+    webhook_url: ${TEAMS_WEBHOOK_URL}    # Teams incoming webhook URL (env var; set in .env)
 
   email:
-    enabled: false
-    smtp_host: ${SMTP_HOST:-localhost}
-    smtp_port: ${SMTP_PORT:-587}
-    smtp_user: ${SMTP_USER}
-    smtp_password: ${SMTP_PASSWORD}
-    from_address: ${SMTP_FROM:-noreply@demandstudio.local}
-    use_tls: true
+    enabled: false                       # Master switch for email (SMTP) notifications
+    smtp_host: ${SMTP_HOST:-localhost}   # SMTP server hostname; default: localhost
+    smtp_port: ${SMTP_PORT:-587}         # SMTP server port; 587 = STARTTLS, 465 = SSL
+    smtp_user: ${SMTP_USER}              # SMTP authentication username (env var)
+    smtp_password: ${SMTP_PASSWORD}      # SMTP authentication password (env var; never commit plaintext)
+    from_address: ${SMTP_FROM:-noreply@demandstudio.local}  # Sender email address
+    use_tls: true                        # Enable TLS encryption for SMTP connection
 
   pagerduty:
-    enabled: false
-    routing_key: ${PAGERDUTY_ROUTING_KEY}
-    severity_map:
-      critical: critical
-      warning: warning
-      info: info
+    enabled: false                       # Master switch for PagerDuty incident creation
+    routing_key: ${PAGERDUTY_ROUTING_KEY}  # PagerDuty Events API v2 routing key (env var)
+    severity_map:                        # Maps internal severity levels to PagerDuty severity strings
+      critical: critical                 # Internal 'critical' -> PagerDuty 'critical'
+      warning: warning                   # Internal 'warning' -> PagerDuty 'warning'
+      info: info                         # Internal 'info' -> PagerDuty 'info'
 
-# Routing rules: which event types + severities go to which channels
+# ═══ ROUTING RULES ═══
+# Maps event_type + severity combinations to destination channels
+# Each rule: event_type (string), severity (list), channels (list of channel names)
+# Rules are evaluated in order; first matching rule per event wins
 routing_rules:
-  # AI planner insights
+  # --- AI planner insights ---
+  - event_type: ai_insight               # AI-generated portfolio insights (from ai_planner)
+    severity: [critical]                 # Critical insights (e.g., major demand shift detected)
+    channels: [slack, pagerduty]         # Page on-call + Slack alert
   - event_type: ai_insight
-    severity: [critical]
-    channels: [slack, pagerduty]
+    severity: [warning]                  # Warning-level insights
+    channels: [slack]                    # Slack only
   - event_type: ai_insight
-    severity: [warning]
-    channels: [slack]
-  - event_type: ai_insight
-    severity: [info]
-    channels: [email]
+    severity: [info]                     # Informational insights
+    channels: [email]                    # Email digest
 
-  # Storyboard exceptions
-  - event_type: storyboard_exception
+  # --- Storyboard exceptions ---
+  - event_type: storyboard_exception     # Exception narratives from storyboard engine
     severity: [critical]
     channels: [slack, pagerduty]
   - event_type: storyboard_exception
     severity: [warning, info]
     channels: [slack]
 
-  # Data quality failures
+  # --- Data quality failures ---
+  - event_type: dq_check_fail           # Data quality check failures (from dq_engine)
+    severity: [critical]                 # Critical = data integrity at risk
+    channels: [slack, pagerduty, email]  # All channels for critical DQ issues
   - event_type: dq_check_fail
-    severity: [critical]
-    channels: [slack, pagerduty, email]
-  - event_type: dq_check_fail
-    severity: [warning]
+    severity: [warning]                  # Warning = data anomaly detected
     channels: [slack]
 
-  # Job failures
-  - event_type: job_failed
+  # --- Job lifecycle ---
+  - event_type: job_failed               # Background job (backtest, ETL, etc.) failed
     severity: [critical, warning]
     channels: [slack]
-  - event_type: job_completed
+  - event_type: job_completed            # Background job completed successfully
     severity: [info]
-    channels: [email]
+    channels: [email]                    # Low-priority completion notifications via email
 
-  # Inventory alerts
-  - event_type: stockout_alert
+  # --- Inventory alerts ---
+  - event_type: stockout_alert           # Projected or actual stockout detected
     severity: [critical]
-    channels: [slack, pagerduty]
+    channels: [slack, pagerduty]         # Page on-call for critical stockouts
   - event_type: stockout_alert
     severity: [warning]
     channels: [slack]
-  - event_type: excess_inventory
+  - event_type: excess_inventory         # Excess inventory above threshold
     severity: [warning]
-    channels: [email]
+    channels: [email]                    # Lower urgency; email summary
 
-  # Forecast accuracy degradation
-  - event_type: accuracy_degradation
+  # --- Forecast accuracy ---
+  - event_type: accuracy_degradation     # Forecast accuracy dropped below threshold
     severity: [critical, warning]
     channels: [slack]
 
-  # Control tower alerts
-  - event_type: control_tower_alert
+  # --- Control tower ---
+  - event_type: control_tower_alert      # Control tower KPI breach (fill rate, DOS, etc.)
     severity: [critical]
     channels: [slack, pagerduty]
   - event_type: control_tower_alert
     severity: [warning]
     channels: [slack]
 
-  # S&OP cycle events
-  - event_type: sop_stage_change
+  # --- S&OP cycle ---
+  - event_type: sop_stage_change         # S&OP cycle phase transition (e.g., demand review -> supply review)
     severity: [info]
     channels: [email, slack]
-  - event_type: sop_approval_needed
+  - event_type: sop_approval_needed      # S&OP stage requires manager approval
     severity: [warning]
     channels: [slack, email]
 
-  # System events
-  - event_type: system_error
+  # --- System events ---
+  - event_type: system_error             # Unhandled system error or infrastructure failure
     severity: [critical]
-    channels: [pagerduty, slack]
+    channels: [pagerduty, slack]         # PagerDuty first for fastest response
 
-# Rate limiting
+# ═══ RATE LIMITS ═══
+# Prevents notification flooding during cascading failures or noisy pipelines
 rate_limits:
-  max_per_minute_per_channel: 10       # Max notifications per channel per minute
-  cooldown_seconds: 300                # 5 min dedup window for same event+severity+recipient
-  burst_limit: 5                       # Max burst before throttling kicks in
-  backoff_multiplier: 2.0              # Exponential backoff on repeated throttling
+  max_per_minute_per_channel: 10         # Max notifications dispatched per channel per minute
+  cooldown_seconds: 300                  # Dedup window (seconds); same event+severity+recipient suppressed within this window
+  burst_limit: 5                         # Max notifications in a burst before throttling activates
+  backoff_multiplier: 2.0                # Exponential backoff multiplier on repeated throttling (2.0 = double wait each time)

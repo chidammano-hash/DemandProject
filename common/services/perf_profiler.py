@@ -18,7 +18,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from common.core.sql_helpers import _elapsed
 from common.core.utils import load_config
 
 logger = logging.getLogger(__name__)
@@ -281,9 +280,6 @@ def wrap_connection(conn: Any, *, readonly: bool = True) -> Any:
         with conn.cursor() as cur:
             cur.execute("SET default_transaction_read_only = true")
         conn.autocommit = False
-
-    original_execute = conn.cursor().__class__.execute
-    original_executemany = conn.cursor().__class__.executemany
 
     class _ProfiledCursor:
         """Thin wrapper that logs query timings to the active collector."""

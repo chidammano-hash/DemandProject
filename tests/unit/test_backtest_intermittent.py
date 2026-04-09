@@ -119,33 +119,38 @@ class TestClassifyClusterDemand:
 # ---------------------------------------------------------------------------
 
 class TestApplyTweedieObjective:
-    """Test Tweedie objective injection for each model type."""
+    """Test objective routing for each model type and demand pattern.
 
-    def test_lgbm_intermittent_gets_tweedie(self) -> None:
+    Intermittent clusters (>70% zeros) use MAE (regression_l1) instead of Tweedie,
+    because Tweedie's log link function causes early stopping at iter 1 for very
+    sparse data, destroying accuracy.  Lumpy and continuous clusters keep defaults.
+    """
+
+    def test_lgbm_intermittent_gets_mae(self) -> None:
         from scripts.run_backtest import _apply_tweedie_objective
 
         params = {"n_estimators": 300, "learning_rate": 0.05, "verbosity": -1}
         result = _apply_tweedie_objective(params, "lgbm", "intermittent")
-        assert result["objective"] == "tweedie"
-        assert result["tweedie_variance_power"] == 1.5
+        assert result["objective"] == "regression_l1"
+        assert "tweedie_variance_power" not in result
         # Original params preserved
         assert result["n_estimators"] == 300
 
-    def test_catboost_intermittent_gets_tweedie(self) -> None:
+    def test_catboost_intermittent_gets_mae(self) -> None:
         from scripts.run_backtest import _apply_tweedie_objective
 
         params = {"iterations": 300, "loss_function": "RMSE", "verbose": 0}
         result = _apply_tweedie_objective(params, "catboost", "intermittent")
-        assert result["loss_function"] == "Tweedie:variance_power=1.5"
+        assert result["loss_function"] == "MAE"
         assert result["iterations"] == 300
 
-    def test_xgboost_intermittent_gets_tweedie(self) -> None:
+    def test_xgboost_intermittent_gets_absoluteerror(self) -> None:
         from scripts.run_backtest import _apply_tweedie_objective
 
         params = {"n_estimators": 500, "learning_rate": 0.05, "verbosity": 0}
         result = _apply_tweedie_objective(params, "xgboost", "intermittent")
-        assert result["objective"] == "reg:tweedie"
-        assert result["tweedie_variance_power"] == 1.5
+        assert result["objective"] == "reg:absoluteerror"
+        assert "tweedie_variance_power" not in result
 
     def test_continuous_keeps_default_objective(self) -> None:
         from scripts.run_backtest import _apply_tweedie_objective
@@ -164,23 +169,23 @@ class TestApplyTweedieObjective:
         assert "objective" not in result
         assert result == params
 
-    def test_custom_variance_power(self) -> None:
+    def test_lgbm_intermittent_strips_existing_tweedie_vp(self) -> None:
+        """If params already have tweedie_variance_power, it must be removed."""
         from scripts.run_backtest import _apply_tweedie_objective
 
-        params = {"n_estimators": 300}
-        result = _apply_tweedie_objective(
-            params, "lgbm", "intermittent", tweedie_variance_power=1.8,
-        )
-        assert result["tweedie_variance_power"] == 1.8
+        params = {"n_estimators": 300, "tweedie_variance_power": 1.8}
+        result = _apply_tweedie_objective(params, "lgbm", "intermittent")
+        assert result["objective"] == "regression_l1"
+        assert "tweedie_variance_power" not in result
 
-    def test_catboost_custom_variance_power(self) -> None:
+    def test_catboost_intermittent_strips_boost_from_average(self) -> None:
+        """CatBoost boost_from_average is removed when switching to MAE for intermittent."""
         from scripts.run_backtest import _apply_tweedie_objective
 
-        params = {"iterations": 300, "loss_function": "RMSE"}
-        result = _apply_tweedie_objective(
-            params, "catboost", "intermittent", tweedie_variance_power=1.2,
-        )
-        assert result["loss_function"] == "Tweedie:variance_power=1.2"
+        params = {"iterations": 300, "loss_function": "RMSE", "boost_from_average": True}
+        result = _apply_tweedie_objective(params, "catboost", "intermittent")
+        assert result["loss_function"] == "MAE"
+        assert "boost_from_average" not in result
 
     def test_original_params_not_mutated(self) -> None:
         from scripts.run_backtest import _apply_tweedie_objective

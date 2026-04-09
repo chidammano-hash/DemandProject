@@ -1,13 +1,16 @@
-"""Trim all input files to keep only rows for specified locations.
+"""Trim all input files to keep only rows for specified locations and sites.
 
 Filters CSV/TXT files in data/input/ to retain only rows matching
-target location values (default: 1401-BULK, 3201-COLU).
+target location values (default: 1401-BULK) and/or target site values
+(default: 1). Files with a location column are filtered by location;
+files with only a site column are filtered by site.
 Overwrites files in-place using atomic temp-file swap.
 
 Usage:
     python scripts/etl/trim_input_files.py
     python scripts/etl/trim_input_files.py --dry-run
-    python scripts/etl/trim_input_files.py --locations 1401-BULK 3201-COLU 5501-NASH
+    python scripts/etl/trim_input_files.py --locations 1401-BULK 3201-COLU
+    python scripts/etl/trim_input_files.py --sites 1 100
 """
 
 import argparse
@@ -27,6 +30,7 @@ logger = logging.getLogger(__name__)
 INPUT_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "input"
 
 DEFAULT_LOCATIONS = {"1401-BULK"}
+DEFAULT_SITES = {"1"}
 
 # Map of filename pattern -> (delimiter, location_column_name)
 # Column names are case-sensitive as they appear in headers.
@@ -40,31 +44,46 @@ FILE_CONFIG: dict[str, tuple[str, str]] = {
     "dfu_stat_fcst.txt": ("|", "loc"),
 }
 
+# Map of filename pattern -> (delimiter, site_column_name)
+# For files that have a site column instead of a location column.
+SITE_CONFIG: dict[str, tuple[str, str]] = {
+    "_customer_demand.csv": (",", "site"),
+    "customerdata.csv": (",", "site"),
+}
+
 # Files in samples/ subdirectory
 SAMPLE_CONFIG: dict[str, tuple[str, str]] = {
     "open_pos_sample.csv": (",", "loc"),
     "po_receipts_sample.csv": (",", "loc"),
 }
 
-# Files without a location column — left untouched
-SKIP_FILES = {"customerdata.csv", "itemdata.csv", "suppliers_sample.csv", "cleanup_input.py"}
+# Files without a location or site column — left untouched
+SKIP_FILES = {"itemdata.csv", "suppliers_sample.csv", "cleanup_input.py"}
 
 
-def _resolve_config(filename: str) -> tuple[str, str] | None:
-    """Return (delimiter, loc_column) for a given filename, or None to skip."""
+def _resolve_config(filename: str) -> tuple[str, str, str] | None:
+    """Return (delimiter, filter_column, filter_type) or None to skip.
+
+    filter_type is 'loc' for location-based or 'site' for site-based filtering.
+    """
     if filename in SKIP_FILES:
         return None
+    # Check location-based config first
     for pattern, cfg in FILE_CONFIG.items():
         if filename.startswith(pattern) or filename == pattern:
-            return cfg
+            return (cfg[0], cfg[1], "loc")
+    # Check site-based config
+    for pattern, cfg in SITE_CONFIG.items():
+        if filename.endswith(pattern) or filename == pattern:
+            return (cfg[0], cfg[1], "site")
     return None
 
 
 def _filter_file(
     filepath: Path,
     delimiter: str,
-    loc_column: str,
-    keep_locations: set[str],
+    filter_column: str,
+    keep_values: set[str],
     dry_run: bool,
 ) -> tuple[int, int]:
     """Filter a single file in-place. Returns (original_rows, kept_rows)."""
@@ -80,10 +99,10 @@ def _filter_file(
             os.fdopen(fd, "w", newline="", encoding="utf-8") as fout,
         ):
             reader = csv.DictReader(fin, delimiter=delimiter)
-            if loc_column not in (reader.fieldnames or []):
+            if filter_column not in (reader.fieldnames or []):
                 logger.warning(
                     "Column %r not found in %s (has: %s) — skipping",
-                    loc_column,
+                    filter_column,
                     filepath.name,
                     reader.fieldnames,
                 )
@@ -100,7 +119,7 @@ def _filter_file(
 
             for row in reader:
                 original_count += 1
-                if row.get(loc_column, "").strip() in keep_locations:
+                if row.get(filter_column, "").strip() in keep_values:
                     writer.writerow(row)
                     kept_count += 1
 
@@ -117,12 +136,20 @@ def _filter_file(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Trim input files to target locations")
+    parser = argparse.ArgumentParser(
+        description="Trim input files to target locations and sites",
+    )
     parser.add_argument(
         "--locations",
         nargs="+",
         default=sorted(DEFAULT_LOCATIONS),
-        help="Location codes to keep (default: 1401-BULK 3201-COLU)",
+        help="Location codes to keep (default: 1401-BULK)",
+    )
+    parser.add_argument(
+        "--sites",
+        nargs="+",
+        default=sorted(DEFAULT_SITES),
+        help="Site codes to keep (default: 1)",
     )
     parser.add_argument(
         "--dry-run",
@@ -131,8 +158,10 @@ def main() -> None:
     )
     args = parser.parse_args()
     keep_locations = set(args.locations)
+    keep_sites = set(args.sites)
 
     logger.info("Target locations: %s", sorted(keep_locations))
+    logger.info("Target sites: %s", sorted(keep_sites))
     logger.info("Input directory: %s", INPUT_DIR)
     if args.dry_run:
         logger.info("DRY RUN — no files will be modified")
@@ -147,12 +176,18 @@ def main() -> None:
             continue
         cfg = _resolve_config(entry.name)
         if cfg is None:
-            logger.info("SKIP  %s (no location column)", entry.name)
+            logger.info("SKIP  %s (no location/site column)", entry.name)
             continue
 
-        delimiter, loc_col = cfg
-        logger.info("FILTER %s (col=%s, delim=%r)", entry.name, loc_col, delimiter)
-        orig, kept = _filter_file(entry, delimiter, loc_col, keep_locations, args.dry_run)
+        delimiter, filter_col, filter_type = cfg
+        keep_values = keep_sites if filter_type == "site" else keep_locations
+        logger.info(
+            "FILTER %s (col=%s, type=%s, delim=%r)",
+            entry.name, filter_col, filter_type, delimiter,
+        )
+        orig, kept = _filter_file(
+            entry, delimiter, filter_col, keep_values, args.dry_run,
+        )
         logger.info(
             "       %s: %s → %s rows (%.1f%%)",
             entry.name,

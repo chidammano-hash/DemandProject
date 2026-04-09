@@ -412,7 +412,7 @@ def tune_for_timeframe(
             masked = mask_future_sales(full_grid, train_end_fold)
 
             train_data = masked[masked["startdate"].isin(set(train_months))].dropna(
-                subset=[f"qty_lag_{lag}" for lag in LAG_RANGE]
+                subset=["qty_lag_1"]
             )
             val_data = masked[masked["startdate"].isin(set(val_months))].copy()
             for col in feature_cols:

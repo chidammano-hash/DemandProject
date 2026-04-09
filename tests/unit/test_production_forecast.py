@@ -22,6 +22,7 @@ from scripts.generate_production_forecasts import (
     build_cat_encoders,
     generate_forecast_recursive,
     generate_forecasts_batch,
+    generate_forecasts_statistical,
 )
 from common.constants import LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES
 
@@ -567,3 +568,188 @@ def test_inference_grid_feature_parity_with_backtest():
     # All derived features from constants must be present
     for feat in DERIVED_FEATURES:
         assert feat in grid_cols, f"Missing derived feature: {feat}"
+
+
+# ---------------------------------------------------------------------------
+# Statistical / non-tree model inference
+# ---------------------------------------------------------------------------
+
+
+def _make_sales_index(item_id="ITEM001", loc="LOC1", n_months=24):
+    """Build a sales_index dict for generate_forecasts_statistical tests."""
+    dates = pd.date_range(start="2024-01-01", periods=n_months, freq="MS")
+    rng = np.random.default_rng(42)
+    qty = rng.uniform(80, 120, n_months)
+    return {(item_id, loc): (list(dates.values), list(qty))}
+
+
+def _make_champion_df(item_id="ITEM001", loc="LOC1", cluster_id=2):
+    """Build a minimal champion DataFrame for statistical tests."""
+    return pd.DataFrame([{
+        "item_id": item_id,
+        "loc": loc,
+        "cluster_id": cluster_id,
+        "source_model_id": "rolling_mean",
+    }])
+
+
+def test_statistical_rolling_mean_returns_rows():
+    """rolling_mean generates horizon rows per DFU."""
+    sales_idx = _make_sales_index(n_months=24)
+    champion_df = _make_champion_df()
+    rows = generate_forecasts_statistical(
+        model_id="rolling_mean",
+        sales_index=sales_idx,
+        attrs_index={},
+        champion_df=champion_df,
+        horizon=6,
+        forecast_month_generated="2026-03-01",
+        run_id="test-run-id",
+    )
+    assert len(rows) == 6
+    for row in rows:
+        assert row["model_id"] == "rolling_mean"
+        assert row["forecast_qty"] >= 0.0
+
+
+def test_statistical_seasonal_naive_returns_rows():
+    """seasonal_naive generates horizon rows per DFU."""
+    sales_idx = _make_sales_index(n_months=24)
+    champion_df = _make_champion_df()
+    rows = generate_forecasts_statistical(
+        model_id="seasonal_naive",
+        sales_index=sales_idx,
+        attrs_index={},
+        champion_df=champion_df,
+        horizon=3,
+        forecast_month_generated="2026-03-01",
+        run_id="test-run-id",
+    )
+    assert len(rows) == 3
+    for row in rows:
+        assert row["model_id"] == "seasonal_naive"
+        assert row["forecast_qty"] >= 0.0
+
+
+def test_statistical_mstl_returns_rows():
+    """mstl generates horizon rows with damped trend."""
+    sales_idx = _make_sales_index(n_months=24)
+    champion_df = _make_champion_df()
+    rows = generate_forecasts_statistical(
+        model_id="mstl",
+        sales_index=sales_idx,
+        attrs_index={},
+        champion_df=champion_df,
+        horizon=3,
+        forecast_month_generated="2026-03-01",
+        run_id="test-run-id",
+    )
+    assert len(rows) == 3
+    for row in rows:
+        assert row["model_id"] == "mstl"
+        assert row["forecast_qty"] >= 0.0
+
+
+def test_statistical_foundation_fallback():
+    """Foundation model (chronos etc.) uses rolling mean fallback."""
+    sales_idx = _make_sales_index(n_months=24)
+    champion_df = _make_champion_df()
+    rows = generate_forecasts_statistical(
+        model_id="chronos_bolt",
+        sales_index=sales_idx,
+        attrs_index={},
+        champion_df=champion_df,
+        horizon=3,
+        forecast_month_generated="2026-03-01",
+        run_id="test-run-id",
+    )
+    assert len(rows) == 3
+    for row in rows:
+        assert row["model_id"] == "chronos_bolt"
+        assert row["forecast_qty"] >= 0.0
+
+
+def test_statistical_skips_short_history():
+    """DFUs with fewer than 3 months of history are skipped."""
+    dates = pd.date_range(start="2024-01-01", periods=2, freq="MS")
+    sales_idx = {("ITEM001", "LOC1"): (list(dates.values), [100.0, 110.0])}
+    champion_df = _make_champion_df()
+    rows = generate_forecasts_statistical(
+        model_id="rolling_mean",
+        sales_index=sales_idx,
+        attrs_index={},
+        champion_df=champion_df,
+        horizon=3,
+        forecast_month_generated="2026-03-01",
+        run_id="test-run-id",
+    )
+    assert len(rows) == 0
+
+
+def test_statistical_skips_missing_dfu():
+    """DFUs not found in sales_index are skipped."""
+    sales_idx = {}  # empty — no sales data
+    champion_df = _make_champion_df()
+    rows = generate_forecasts_statistical(
+        model_id="rolling_mean",
+        sales_index=sales_idx,
+        attrs_index={},
+        champion_df=champion_df,
+        horizon=3,
+        forecast_month_generated="2026-03-01",
+        run_id="test-run-id",
+    )
+    assert len(rows) == 0
+
+
+def test_statistical_output_keys():
+    """Output rows have all expected keys for DB write."""
+    sales_idx = _make_sales_index(n_months=24)
+    champion_df = _make_champion_df()
+    rows = generate_forecasts_statistical(
+        model_id="rolling_mean",
+        sales_index=sales_idx,
+        attrs_index={},
+        champion_df=champion_df,
+        horizon=2,
+        forecast_month_generated="2026-03-01",
+        run_id="test-run-id",
+    )
+    expected_keys = {
+        "forecast_month_generated", "item_id", "loc", "forecast_month",
+        "forecast_qty", "forecast_qty_lower", "forecast_qty_upper",
+        "model_id", "cluster_id", "horizon_months", "is_recursive",
+        "lag_source", "run_id", "generated_at",
+    }
+    assert len(rows) == 2
+    assert set(rows[0].keys()) == expected_keys
+    # First horizon step: lag_source=actual, not recursive
+    assert rows[0]["lag_source"] == "actual"
+    assert rows[0]["is_recursive"] is False
+    # Second horizon step: lag_source=predicted, recursive
+    assert rows[1]["lag_source"] == "predicted"
+    assert rows[1]["is_recursive"] is True
+
+
+def test_statistical_multi_dfu():
+    """Statistical inference handles multiple DFUs correctly."""
+    dates = pd.date_range(start="2024-01-01", periods=24, freq="MS")
+    rng = np.random.default_rng(42)
+    sales_idx = {
+        ("ITEM001", "LOC1"): (list(dates.values), list(rng.uniform(80, 120, 24))),
+        ("ITEM002", "LOC2"): (list(dates.values), list(rng.uniform(50, 80, 24))),
+    }
+    champion_df = pd.DataFrame([
+        {"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 0, "source_model_id": "rolling_mean"},
+        {"item_id": "ITEM002", "loc": "LOC2", "cluster_id": 1, "source_model_id": "rolling_mean"},
+    ])
+    rows = generate_forecasts_statistical(
+        model_id="rolling_mean",
+        sales_index=sales_idx,
+        attrs_index={},
+        champion_df=champion_df,
+        horizon=3,
+        forecast_month_generated="2026-03-01",
+        run_id="test-run-id",
+    )
+    assert len(rows) == 6  # 2 DFUs x 3 months

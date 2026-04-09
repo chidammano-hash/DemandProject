@@ -395,7 +395,7 @@ make rebalancing-refresh       # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_netwo
 Run after Phase 2. These enrich `dim_sku` with segment labels used as ML features.
 
 ```bash
-# DFU clustering (groups DFUs by demand pattern)
+# SKU clustering (groups SKUs by demand pattern)
 make cluster-all             # features → train → label → update dim_sku
 
 # Seasonality profiles
@@ -405,10 +405,7 @@ make seasonality-all         # detect → update dim_sku
 **Clustering individual steps:**
 
 ```bash
-make cluster-features  # Extract 14 core features (volume, trend, seasonality, periodicity, intermittency, lifecycle) from 36-month sales history
-make cluster-train     # KMeans with combined Silhouette + Calinski-Harabasz scoring, 5% min cluster size, k_range [5,18] (logged to MLflow: dfu_clustering)
-make cluster-label     # Priority-ordered taxonomy labeling: Intermittency → Periodicity → Seasonality → Trend → Volatility → Volume (5 tiers)
-make cluster-update    # Write cluster_assignment to dim_sku in Postgres
+make cluster-all  # Unified pipeline: features → train → label → auto-promote (creates cluster_experiment row)
 ```
 
 Cluster assignments are filterable in the Data Explorer via the `cluster_assignment` column and viewable via `/domains/sku/clusters`.
@@ -428,7 +425,7 @@ Before running any backtest, edit the algorithm entry in `config/forecast_pipeli
 algorithms:
   lgbm_cluster:
     type: tree
-    cluster_strategy: per_cluster  # "per_cluster" or "global" — ml_cluster always a hard feature
+    cluster_strategy: per_cluster  # "per_cluster" or "global" — ml_cluster used for partitioning only, not a model feature
     recursive: false       # Set true for recursive multi-step inference (Feature 43)
     shap_select: false     # Set true for per-timeframe SHAP feature selection (Feature 42)
     shap_threshold: 0.95   # Cumulative SHAP importance threshold
@@ -444,7 +441,7 @@ algorithms:
 
 Same structure for `catboost_cluster:` and `xgboost_cluster:` entries.
 
-**Architecture (Feature 44):** Tree-based models (LGBM, CatBoost, XGBoost) share `common/backtest_framework.py` via `run_tree_backtest()`. Each script provides both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting based on the `cluster_strategy` config key (`per_cluster` or `global`). **`ml_cluster` is always a hard feature** — never stripped from feature_cols in either strategy. Algorithm options (cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparameters) are read from `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>`. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve hyperparameters. Shared modules: `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py`, `shap_selector.py`.
+**Architecture (Feature 44):** Tree-based models (LGBM, CatBoost, XGBoost) share `common/backtest_framework.py` via `run_tree_backtest()`. Each script provides both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting based on the `cluster_strategy` config key (`per_cluster` or `global`). **`ml_cluster` is excluded from model features** (listed in `METADATA_COLS`) — it is merged into the grid as a metadata column for per-cluster partitioning only, never passed to models as an input feature. Algorithm options (cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparameters) are read from `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>`. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve hyperparameters. Shared modules: `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py`, `shap_selector.py`.
 
 ### GPU Acceleration
 
@@ -475,12 +472,18 @@ CatBoost and XGBoost also auto-detect GPU at runtime (`task_type="GPU"` and `dev
 
 ### Optional: Hyperparameter Tuning (Before Backtests)
 
-Two modes — choose based on your goal:
+Three modes — choose based on your goal:
 
-| Mode | When to use | How to activate (Feature 44) |
-|---|---|---|
-| **Global** — tune once on full history, apply via `params_file` | Production scoring, fastest path | `make tune-lgbm` then set `params_file: data/tuning/best_params_lgbm.json` in `forecast_pipeline_config.yaml` under `algorithms.lgbm_cluster` |
-| **Inline** — per-timeframe causal tuning inside each backtest fold | Honest backtest evaluation, no future leakage (PL-002) | Set `tune_inline: true` in `forecast_pipeline_config.yaml` under `algorithms.lgbm_cluster`, then `make backtest-lgbm` |
+| Mode | When to use | How to activate | Output |
+|---|---|---|---|
+| **Global** — tune once on all data, one param set | Quick baseline tuning | `make tune-lgbm` | `data/tuning/best_params_lgbm.json` |
+| **Per-cluster** — tune independently per `ml_cluster` | Best accuracy (recommended) | `make tune-lgbm-clusters` | `config/cluster_tuning_profiles.yaml` |
+| **Inline** — per-timeframe tuning inside each backtest fold | Unbiased backtest evaluation | Set `tune_inline: true` in config, then `make backtest-lgbm` | Params applied per timeframe |
+
+**Recommended workflow:**
+1. `make tune-lgbm` → sets good global base params in `forecast_pipeline_config.yaml`
+2. `make tune-lgbm-clusters` → tunes per cluster, writes `cluster_tuning_profiles.yaml`
+3. `make backtest-lgbm` → uses base params + per-cluster overrides
 
 > **Warning:** Using a globally tuned `params_file` in backtests introduces temporal leakage — the tuner sees future timeframes. Use `tune_inline: true` for unbiased backtest accuracy.
 
@@ -494,7 +497,46 @@ make tune-all       # All three sequentially
 
 Each JSON file contains `best_params`, `best_n_estimators`, per-cluster WAPEs, and CV fold metrics. Apply in backtest by setting `params_file: data/tuning/best_params_<model>.json` in `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>` (Feature 44).
 
-**Inline per-timeframe tuning (Mode B, PL-002 fix):**
+**Per-cluster tuning (Mode B — recommended):**
+```bash
+make tune-lgbm-clusters      # ~45–60 min  → config/cluster_tuning_profiles.yaml
+make tune-catboost-clusters   # ~60–90 min
+make tune-xgboost-clusters    # ~45–60 min
+make tune-clusters            # All three sequentially
+```
+
+Tunes Optuna Bayesian optimization (30 trials) independently for each `ml_cluster` from `dim_sku`. Writes per-cluster params to `config/cluster_tuning_profiles.yaml` with `cluster_name`-based matching. During backtest, each cluster first checks for an exact name match in profiles; if found, those tuned overrides are applied on top of base params. If not found, base params are used and the log shows "using global params (no profile match)".
+
+Options: `--trials 30` (default), `--clusters L2_1 L2_3` (tune specific clusters), `--min-rows 500` (skip clusters with fewer rows).
+
+**Disabling per-cluster profiles (use global params only):**
+
+Set `enabled: false` in `config/cluster_tuning_profiles.yaml`. All clusters will use the base params from `forecast_pipeline_config.yaml`. The profiles are ignored but preserved — set back to `true` to re-enable.
+
+**End-to-end LGBM workflow after new clustering:**
+```bash
+# 1. Run clustering (updates dim_sku.ml_cluster with new labels)
+make cluster-all
+
+# 2. (Optional) Tune global base params
+make tune-lgbm                       # → forecast_pipeline_config.yaml
+
+# 3. (Optional) Tune per-cluster params — requires step 1 first
+make tune-lgbm-clusters              # → cluster_tuning_profiles.yaml
+
+# 4. Run backtest with tuned params
+make backtest-lgbm                   # Uses base + per-cluster overrides
+
+# 5. Load predictions into Postgres
+make backtest-load-bulk MODELS=lgbm_cluster
+
+# 6. Run champion selection
+make champion-all                    # Selects best model per DFU
+```
+
+Skip step 3 to use only global params. Skip steps 2-3 to use the existing params as-is.
+
+**Inline per-timeframe tuning (Mode C, PL-002 fix):**
 
 Set `tune_inline: true` in `config/forecast_pipeline_config.yaml` for the relevant algorithm entry, then run `make backtest-lgbm` (or catboost/xgboost). Each of the 10 timeframes (~20 trials x 3 folds, ~2-3x slower) tunes on only data available up to its training cutoff — no future leakage into backtest accuracy metrics.
 
@@ -2037,23 +2079,21 @@ docker compose exec -T postgres psql -U demand -d demand_mvp -c "
 ### Step 6: Clustering & Feature Engineering
 
 ```bash
-~/.local/bin/uv run python scripts/generate_clustering_features.py
-~/.local/bin/uv run python scripts/train_clustering_model.py
-~/.local/bin/uv run python scripts/label_clusters.py
-~/.local/bin/uv run python scripts/update_cluster_assignments.py
+~/.local/bin/uv run python scripts/ml/run_cluster_pipeline.py  # unified: features -> train -> label -> promote
 ```
 
-### Step 7: Seasonality Detection
+### Step 7: SKU Feature Engineering (Seasonality + Variability)
+
+The unified pipeline computes seasonality, variability, and lifecycle features in a single pass.
+The legacy scripts (`detect_seasonality.py`, `update_seasonality_profiles.py`, `compute_demand_variability.py`) are deprecated shims -- use `make features-compute` instead.
 
 ```bash
-~/.local/bin/uv run python scripts/detect_seasonality.py
-~/.local/bin/uv run python scripts/update_seasonality_profiles.py
+~/.local/bin/uv run python scripts/ml/compute_sku_features.py   # or: make features-compute
 ```
 
-### Step 8: Demand Variability & Lead Time Profiles
+### Step 8: Lead Time Profiles
 
 ```bash
-~/.local/bin/uv run python scripts/compute_demand_variability.py
 ~/.local/bin/uv run python scripts/compute_lead_time_variability.py
 ```
 

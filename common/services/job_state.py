@@ -32,17 +32,11 @@ logger = logging.getLogger(__name__)
 
 
 def _get_conn():
-    """Open a single psycopg connection using environment variables."""
+    """Open a single psycopg connection using get_db_params()."""
     import psycopg  # imported here to keep module-level imports APScheduler-free
+    from common.db import get_db_params
 
-    return psycopg.connect(
-        host=os.getenv("POSTGRES_HOST", "localhost"),
-        port=int(os.getenv("POSTGRES_PORT", "5440")),
-        dbname=os.getenv("POSTGRES_DB", "demand_mvp"),
-        user=os.getenv("POSTGRES_USER", "demand"),
-        password=os.getenv("POSTGRES_PASSWORD", "demand"),
-        autocommit=True,
-    )
+    return psycopg.connect(**get_db_params(), autocommit=True)
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +68,13 @@ _UV = "uv"
 _SUBPROCESS_TIMEOUT = 7200  # 2 hours — prevents hung jobs from blocking the executor thread
 _LOG_FLUSH_INTERVAL = 5  # seconds between DB log flushes
 _LOG_FLUSH_LINES = 20  # flush after this many buffered lines
+
+# Model name → backtest output directory mapping (shared across job callables)
+MODEL_OUTPUT_DIRS: dict[str, str] = {
+    "lgbm": "lgbm_cluster",
+    "catboost": "catboost_cluster",
+    "xgboost": "xgboost_cluster",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -308,29 +309,24 @@ def _run_cluster_pipeline(
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run the full clustering pipeline: features -> train -> label -> update."""
-    tw = params.get("time_window_months", 24)
-    k_range = params.get("k_range", [3, 12])
-    steps = [
-        (25, "Generating clustering features",
-         [_UV, "run", "python", "scripts/generate_clustering_features.py", "--time-window", str(tw)]),
-        (50, "Training clustering model",
-         [_UV, "run", "python", "scripts/train_clustering_model.py",
-          "--k-range", str(k_range[0]), str(k_range[1])]),
-        (75, "Labeling clusters",
-         [_UV, "run", "python", "scripts/label_clusters.py"]),
-        (95, "Updating DFU assignments",
-         [_UV, "run", "python", "scripts/update_cluster_assignments.py"]),
-    ]
-    outputs = []
-    for pct, msg, cmd in steps:
-        if cancel_event and cancel_event.is_set():
-            raise RuntimeError("Job cancelled by user")
-        if progress_cb:
-            progress_cb(pct=pct, msg=msg)
-        out = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
-        outputs.append(out)
-    return {"steps_completed": len(steps), "output_log": "Pipeline completed successfully"}
+    """Run the full clustering pipeline via the unified experiment system."""
+    from scripts.ml.run_cluster_pipeline import run_unified_pipeline
+
+    if progress_cb:
+        progress_cb(pct=10, msg="Starting unified clustering pipeline")
+
+    result = run_unified_pipeline(
+        feature_params=params.get("feature_params"),
+        model_params=params.get("model_params"),
+        label_params=params.get("label_params"),
+        label=params.get("label", "Job Pipeline Run"),
+        auto_promote=params.get("auto_promote", True),
+    )
+
+    if progress_cb:
+        progress_cb(pct=100, msg="Pipeline completed")
+
+    return result
 
 
 def _run_seasonality(
@@ -339,21 +335,53 @@ def _run_seasonality(
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run the seasonality detection + update pipeline."""
-    config = params.get("config", "config/forecast_domain_config.yaml")
-    steps = [
-        (40, "Detecting seasonality patterns",
-         [_UV, "run", "python", "scripts/detect_seasonality.py", "--config", config]),
-        (90, "Updating seasonality profiles",
-         [_UV, "run", "python", "scripts/update_seasonality_profiles.py", "--config", config]),
-    ]
-    for pct, msg, cmd in steps:
-        if cancel_event and cancel_event.is_set():
-            raise RuntimeError("Job cancelled by user")
-        if progress_cb:
-            progress_cb(pct=pct, msg=msg)
-        _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
-    return {"steps_completed": len(steps), "output_log": "Seasonality pipeline completed"}
+    """Legacy seasonality pipeline — delegates to unified SKU features."""
+    return _run_compute_sku_features(params, progress_cb, cancel_event, job_id)
+
+
+def _update_backtest_run_on_completion(run_id: int, model: str) -> None:
+    """Update a backtest_run row with results from the completed backtest metadata."""
+    import json
+    from pathlib import Path
+
+    # Model ID mapping (backtest key → output directory model_id)
+    _MODEL_TO_DIR = {
+        "lgbm": "lgbm_cluster", "catboost": "catboost_cluster", "xgboost": "xgboost_cluster",
+        "chronos": "chronos", "chronos_bolt": "chronos_bolt", "chronos2": "chronos2",
+        "chronos2_enriched": "chronos2_enriched", "bolt_hierarchical": "bolt_hierarchical",
+        "mstl": "mstl", "nbeats": "nbeats", "nhits": "nhits",
+        "seasonal_naive": "seasonal_naive", "rolling_mean": "rolling_mean",
+        "lgbm_cust_enriched": "lgbm_cust_enriched", "catboost_cust_enriched": "catboost_cust_enriched",
+        "xgboost_cust_enriched": "xgboost_cust_enriched",
+    }
+    model_dir = _MODEL_TO_DIR.get(model, model)
+    meta_path = Path("data/backtest") / model_dir / "backtest_metadata.json"
+
+    try:
+        with _get_conn() as conn:
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text())
+                acc = meta.get("accuracy_at_execution_lag", {})
+                conn.execute(
+                    """UPDATE backtest_run SET
+                        status = 'completed', completed_at = NOW(),
+                        accuracy_pct = %s, wape = %s, bias = %s,
+                        n_predictions = %s, n_dfus = %s,
+                        metadata = %s::jsonb
+                    WHERE id = %s""",
+                    (
+                        acc.get("accuracy_pct"), acc.get("wape"), acc.get("bias"),
+                        meta.get("n_predictions"), meta.get("n_dfus"),
+                        json.dumps(meta), run_id,
+                    ),
+                )
+            else:
+                conn.execute(
+                    "UPDATE backtest_run SET status = 'completed', completed_at = NOW() WHERE id = %s",
+                    (run_id,),
+                )
+    except Exception:
+        logger.warning("Failed to update backtest_run %d after completion", run_id)
 
 
 def _run_backtest(
@@ -363,53 +391,119 @@ def _run_backtest(
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run a backtest for a given model type."""
-    script_map = {
+    """Run a backtest for a given model type.
+
+    Supports tree models (direct script), foundation models (module invocation),
+    deep learning (--model flag), and statistical baselines.
+    """
+    # Tree models: direct script invocation
+    tree_scripts = {
         "lgbm": "scripts/run_backtest.py",
         "catboost": "scripts/run_backtest_catboost.py",
         "xgboost": "scripts/run_backtest_xgboost.py",
     }
-    script = script_map.get(model)
-    if not script:
-        raise ValueError(f"Unknown backtest model: {model}")
-    strategy = params.get("cluster_strategy", "global")
-    config_path = params.get("config")
+    # Foundation models: python -m invocation
+    foundation_modules = {
+        "chronos": "scripts.run_backtest_chronos",
+        "chronos_bolt": "scripts.run_backtest_chronos_bolt",
+        "chronos2": "scripts.run_backtest_chronos2",
+        "chronos2_enriched": "scripts.run_backtest_chronos2_enriched",
+    }
+    # Special scripts: direct file path
+    special_scripts = {
+        "bolt_hierarchical": "scripts/run_backtest_bolt_hierarchical.py",
+        "mstl": "scripts/run_backtest_mstl.py",
+        "seasonal_naive": ("scripts/run_backtest.py", ["--model", "seasonal_naive"]),
+        "rolling_mean": ("scripts/run_backtest.py", ["--model", "rolling_mean"]),
+        "nhits": ("scripts/run_backtest_dl.py", ["--model", "nhits"]),
+        "nbeats": ("scripts/run_backtest_dl.py", ["--model", "nbeats"]),
+    }
+
+    backtest_run_id = params.get("backtest_run_id")
     if progress_cb:
-        progress_cb(pct=0, msg=f"Running {model.upper()} backtest ({strategy})")
-    cmd = [_UV, "run", "python", script, "--cluster-strategy", strategy]
+        progress_cb(pct=0, msg=f"Running {model} backtest")
+
+    # Mark as running
+    if backtest_run_id:
+        try:
+            with _get_conn() as conn:
+                conn.execute(
+                    "UPDATE backtest_run SET status = 'running', started_at = NOW() WHERE id = %s",
+                    (backtest_run_id,),
+                )
+        except Exception:
+            logger.warning("Failed to mark backtest_run %d as running", backtest_run_id)
+
+    if model in tree_scripts:
+        cmd = [_UV, "run", "python", tree_scripts[model]]
+    elif model in foundation_modules:
+        cmd = [_UV, "run", "python", "-m", foundation_modules[model]]
+    elif model in special_scripts:
+        entry = special_scripts[model]
+        if isinstance(entry, tuple):
+            script, extra_args = entry
+            cmd = [_UV, "run", "python", script] + extra_args
+        else:
+            cmd = [_UV, "run", "python", entry]
+    else:
+        raise ValueError(f"Unknown backtest model: {model}")
+
+    config_path = params.get("config")
     if config_path:
         cmd.extend(["--config", config_path])
-    output = _run_subprocess(cmd, progress_cb, cancel_event=cancel_event, job_id=job_id)
+    if params.get("resume"):
+        cmd.append("--resume")
+
+    try:
+        output = _run_subprocess(cmd, progress_cb, cancel_event=cancel_event, job_id=job_id)
+    except Exception:
+        if backtest_run_id:
+            try:
+                with _get_conn() as conn:
+                    conn.execute(
+                        "UPDATE backtest_run SET status = 'failed', completed_at = NOW() WHERE id = %s",
+                        (backtest_run_id,),
+                    )
+            except Exception:
+                pass
+        raise
+
     if progress_cb:
-        progress_cb(pct=100, msg=f"{model.upper()} backtest completed")
-    return {"model": model, "strategy": strategy, "output_log": output if output else "Completed"}
+        progress_cb(pct=100, msg=f"{model} backtest completed")
+
+    # Update backtest_run tracking row with results
+    if backtest_run_id:
+        _update_backtest_run_on_completion(backtest_run_id, model)
+
+    return {"model": model, "output_log": output if output else "Completed"}
 
 
-def _run_backtest_lgbm(
-    params: dict[str, Any],
-    progress_cb: Callable | None = None,
-    cancel_event: Event | None = None,
-    job_id: str | None = None,
-) -> dict[str, Any]:
-    return _run_backtest("lgbm", params, progress_cb, cancel_event=cancel_event, job_id=job_id)
+def _make_backtest_runner(model: str):
+    """Factory to create a backtest runner for a specific model."""
+    def runner(
+        params: dict[str, Any],
+        progress_cb: Callable | None = None,
+        cancel_event: Event | None = None,
+        job_id: str | None = None,
+    ) -> dict[str, Any]:
+        return _run_backtest(model, params, progress_cb, cancel_event=cancel_event, job_id=job_id)
+    runner.__name__ = f"_run_backtest_{model}"
+    return runner
 
 
-def _run_backtest_catboost(
-    params: dict[str, Any],
-    progress_cb: Callable | None = None,
-    cancel_event: Event | None = None,
-    job_id: str | None = None,
-) -> dict[str, Any]:
-    return _run_backtest("catboost", params, progress_cb, cancel_event=cancel_event, job_id=job_id)
-
-
-def _run_backtest_xgboost(
-    params: dict[str, Any],
-    progress_cb: Callable | None = None,
-    cancel_event: Event | None = None,
-    job_id: str | None = None,
-) -> dict[str, Any]:
-    return _run_backtest("xgboost", params, progress_cb, cancel_event=cancel_event, job_id=job_id)
+_run_backtest_lgbm = _make_backtest_runner("lgbm")
+_run_backtest_catboost = _make_backtest_runner("catboost")
+_run_backtest_xgboost = _make_backtest_runner("xgboost")
+_run_backtest_chronos = _make_backtest_runner("chronos")
+_run_backtest_chronos_bolt = _make_backtest_runner("chronos_bolt")
+_run_backtest_chronos2 = _make_backtest_runner("chronos2")
+_run_backtest_chronos2_enriched = _make_backtest_runner("chronos2_enriched")
+_run_backtest_bolt_hierarchical = _make_backtest_runner("bolt_hierarchical")
+_run_backtest_mstl = _make_backtest_runner("mstl")
+_run_backtest_seasonal_naive = _make_backtest_runner("seasonal_naive")
+_run_backtest_rolling_mean = _make_backtest_runner("rolling_mean")
+_run_backtest_nhits = _make_backtest_runner("nhits")
+_run_backtest_nbeats = _make_backtest_runner("nbeats")
 
 
 def _run_champion_select(
@@ -462,18 +556,40 @@ def _run_champion_results_load(
     cancel_event: Event | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run champion selection with promoted config and load results into DB."""
+    """Load champion results into DB, using cached experiment winners when available.
+
+    If a cached winners CSV exists from the experiment run
+    (data/champion/experiment_{id}_winners.csv), the script loads those
+    pre-computed winners directly instead of recomputing from scratch.
+    Falls back to full computation if no cached file is found.
+    """
     experiment_id = params["experiment_id"]
     if progress_cb:
         progress_cb(pct=5, msg="Loading champion results into forecast tables")
 
+    # Check for cached winners CSV from experiment run
+    winners_csv = _SCRIPTS_DIR.parent / "data" / "champion" / f"experiment_{experiment_id}_winners.csv"
     cmd = [_UV, "run", "python", "scripts/run_champion_selection.py"]
+    if winners_csv.exists():
+        cmd.extend(["--load-winners-from", str(winners_csv)])
+        logger.info("Using cached winners from experiment %d: %s", experiment_id, winners_csv)
+        if progress_cb:
+            progress_cb(pct=10, msg="Found cached winners — loading directly (skipping recomputation)")
+    else:
+        logger.info("No cached winners for experiment %d, running full computation", experiment_id)
+
     output = _run_subprocess(cmd, progress_cb, "Loading champion results",
                              cancel_event=cancel_event, job_id=job_id)
 
-    # Mark results promoted on experiment
+    # Mark results promoted — clear flag on ALL other experiments first
+    # (only one experiment's results can be active in the forecast table at a time)
     try:
         with _get_conn() as conn:
+            conn.execute(
+                "UPDATE champion_experiment SET is_results_promoted = FALSE "
+                "WHERE experiment_id != %s AND is_results_promoted = TRUE",
+                (experiment_id,),
+            )
             conn.execute(
                 "UPDATE champion_experiment SET is_results_promoted = TRUE, "
                 "results_promoted_at = NOW(), results_promote_job_id = %s "
@@ -488,6 +604,52 @@ def _run_champion_results_load(
     return {"experiment_id": experiment_id, "output_log": output or "Champion results loaded"}
 
 
+def _run_train_production_model(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Train a production model on full history for forecasting.
+
+    Invokes ``scripts/ml/train_production_models.py`` as a subprocess.
+    Supports training a single model (--model) or all tree models (--all).
+    """
+    ROOT = Path(__file__).resolve().parents[2]
+
+    model_id = params.get("model_id", "")
+    all_models = params.get("all_models", False)
+
+    if progress_cb:
+        progress_cb(pct=0, msg=f"Starting production training: {model_id or 'all models'}")
+
+    cmd = [_UV, "run", "python", str(ROOT / "scripts" / "ml" / "train_production_models.py")]
+    if all_models:
+        cmd.append("--all")
+    elif model_id:
+        cmd.extend(["--model", model_id])
+
+    start = time.time()
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Training {'all models' if all_models else model_id}")
+
+    _run_subprocess(
+        cmd, progress_cb, f"Training production model: {model_id or 'all'}",
+        cancel_event=cancel_event, job_id=job_id,
+    )
+    duration = time.time() - start
+
+    if progress_cb:
+        progress_cb(pct=100, msg=f"Training completed in {duration:.0f}s")
+
+    return {
+        "model_id": model_id,
+        "all_models": all_models,
+        "duration_s": round(duration, 1),
+        "status": "trained",
+    }
+
+
 def _run_generate_production_forecast(
     params: dict[str, Any],
     progress_cb: Callable | None = None,
@@ -495,10 +657,13 @@ def _run_generate_production_forecast(
     job_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the production forecast generation pipeline (F1.1)."""
-    horizon = params.get("horizon", 12)
+    horizon = params.get("horizon", 24)
+    model_id = params.get("model_id")
     if progress_cb:
         progress_cb(pct=5, msg=f"Starting production forecast generation (horizon={horizon})")
     cmd = [_UV, "run", "python", "scripts/generate_production_forecasts.py", "--horizon", str(horizon)]
+    if model_id:
+        cmd.extend(["--model-id", str(model_id)])
     output = _run_subprocess(cmd, progress_cb, "Generating production forecasts",
                              cancel_event=cancel_event, job_id=job_id)
     if progress_cb:
@@ -638,6 +803,23 @@ def _run_compute_variability(
            "--config", "config/forecast_domain_config.yaml"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Demand variability computation completed"}
+
+
+def _run_compute_sku_features(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Compute all time-series features (volume, trend, seasonality, variability, lifecycle) for all SKUs."""
+    from scripts.ml.compute_sku_features import run_pipeline
+
+    if progress_cb:
+        progress_cb(pct=10, msg="Computing SKU features")
+    result = run_pipeline(time_window_months=params.get("time_window_months", 36))
+    if progress_cb:
+        progress_cb(pct=100, msg="Complete")
+    return result
 
 
 def _run_compute_demand_signals(
@@ -826,13 +1008,6 @@ def _run_model_tuning_experiment(
     """
     ROOT = Path(__file__).resolve().parents[2]
 
-    # Model → backtest output directory mapping
-    MODEL_OUTPUT_DIRS: dict[str, str] = {
-        "lgbm": "lgbm_cluster",
-        "catboost": "catboost_cluster",
-        "xgboost": "xgboost_cluster",
-    }
-
     run_id = params["run_id"]
     model = params["model"]
     config_path = params["config_path"]
@@ -994,12 +1169,6 @@ def _run_load_backtest_results(
     """
     ROOT = Path(__file__).resolve().parents[2]
 
-    MODEL_OUTPUT_DIRS: dict[str, str] = {
-        "lgbm": "lgbm_cluster",
-        "catboost": "catboost_cluster",
-        "xgboost": "xgboost_cluster",
-    }
-
     run_id = params["run_id"]
     model = params["model"]
     model_id = MODEL_OUTPUT_DIRS.get(model, params.get("model_id", ""))
@@ -1052,6 +1221,71 @@ def _run_load_backtest_results(
     return {
         "run_id": run_id,
         "model": model,
+        "duration_seconds": round(duration),
+        "status": "loaded",
+    }
+
+
+def _run_load_backtest_model(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Load backtest predictions for a specific model into Postgres.
+
+    Invokes ``scripts/load_backtest_forecasts.py --model <model_id> --replace``
+    as a subprocess.  If ``run_id`` is provided, marks the corresponding
+    ``backtest_run`` row as loaded on success.
+    """
+    ROOT = Path(__file__).resolve().parents[2]
+
+    model_id = params["model_id"]
+    run_id = params.get("run_id")
+
+    if progress_cb:
+        progress_cb(pct=0, msg=f"Starting results load for {model_id}")
+
+    pred_path = ROOT / "data" / "backtest" / model_id / "backtest_predictions.csv"
+    if not pred_path.exists():
+        raise RuntimeError(f"Prediction file not found: {pred_path}")
+
+    cmd = [
+        _UV, "run", "python",
+        str(ROOT / "scripts" / "load_backtest_forecasts.py"),
+        "--model", model_id, "--replace",
+    ]
+    start = time.time()
+    if progress_cb:
+        progress_cb(pct=5, msg=f"Loading {model_id} predictions into database")
+
+    _run_subprocess(
+        cmd, progress_cb, f"Loading {model_id} results",
+        cancel_event=cancel_event, job_id=job_id,
+    )
+    duration = time.time() - start
+
+    # Mark backtest_run as loaded if run_id provided
+    if run_id is not None:
+        if progress_cb:
+            progress_cb(pct=95, msg="Updating load status in backtest_run")
+        try:
+            with _get_conn() as conn:
+                conn.execute(
+                    "UPDATE backtest_run "
+                    "SET is_loaded_to_db = TRUE, loaded_at = NOW() "
+                    "WHERE id = %s",
+                    (run_id,),
+                )
+        except Exception:
+            logger.warning("Failed to update backtest_run %s as loaded", run_id)
+
+    if progress_cb:
+        progress_cb(pct=100, msg=f"Results loaded in {duration:.0f}s")
+
+    return {
+        "model_id": model_id,
+        "run_id": run_id,
         "duration_seconds": round(duration),
         "status": "loaded",
     }

@@ -28,6 +28,7 @@ import {
 } from "@/api/queries";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
+import { TableSkeleton } from "@/components/Skeleton";
 import { formatFixed, formatInt } from "@/lib/formatters";
 import { insightKeys, fetchProactiveRebalancing } from "@/api/queries/inv-planning-insights";
 
@@ -338,7 +339,7 @@ export function RebalancingPanel() {
               </thead>
               <tbody>
                 {transfersLoading ? (
-                  <tr><td colSpan={10} className="py-4 text-center text-muted-foreground">Loading...</td></tr>
+                  <tr><td colSpan={10} className="py-2"><TableSkeleton rows={5} cols={10} /></td></tr>
                 ) : (transfers?.rows ?? []).length === 0 ? (
                   <tr><td colSpan={10} className="py-4 text-center text-muted-foreground">No transfers in this plan.</td></tr>
                 ) : (

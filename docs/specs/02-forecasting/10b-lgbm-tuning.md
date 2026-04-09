@@ -875,7 +875,7 @@ Core time series and lag features used in all baseline experiments:
 
 | Feature | Category | Description |
 |---------|----------|-------------|
-| `ml_cluster` | Cluster | ML-derived cluster assignment (hard feature, never stripped) |
+| `ml_cluster` | Cluster | Used for per-cluster model partitioning only (removed as a model feature to prevent leakage) |
 | `fourier_sin_12/6/4/3`, `fourier_cos_12/6/4/3` | Fourier | Cyclical seasonal encoding (sub-annual harmonics) |
 | `lag_1` through `lag_12` | Lag | 1, 2, 3, 6, 12-month demand lags |
 | `rolling_mean_3`, `rolling_mean_6` | Rolling | 3/6-month rolling averages |

@@ -39,6 +39,7 @@ import {
 } from "@/api/queries";
 import { useChartColors } from "@/hooks/useChartColors";
 import { formatPct, formatFixed, formatInt } from "@/lib/formatters";
+import { modelLabel } from "@/lib/model-labels";
 import { cn } from "@/lib/utils";
 
 import {
@@ -233,8 +234,8 @@ function GapSection() {
     <div className="space-y-4">
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} />
+          <BarChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} />
             <XAxis
               dataKey="component"
               tick={{ fontSize: 10, fill: chartColors.axis }}
@@ -497,9 +498,10 @@ function ModelComparisonSection() {
   return (
     <div className="space-y-4">
       {oracleCeiling && (
-        <div className="text-sm text-muted-foreground">
-          Oracle ceiling: <span className="font-medium text-foreground">{formatPct(oracleCeiling.accuracy)}</span>
-          {" "}(WAPE {formatFixed(oracleCeiling.wape, 2)})
+        <div className="flex items-center gap-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+          <div className="text-xs text-muted-foreground">Oracle ceiling</div>
+          <div className="text-sm font-semibold tabular-nums">{formatPct(oracleCeiling.accuracy)}</div>
+          <div className="text-xs text-muted-foreground">WAPE {formatFixed(oracleCeiling.wape, 2)}</div>
         </div>
       )}
       <div className="overflow-x-auto">
@@ -519,8 +521,11 @@ function ModelComparisonSection() {
                 key={m.model_id}
                 className={cn(idx === 0 && "bg-emerald-50/50 dark:bg-emerald-950/20")}
               >
-                <TableCell className="font-mono text-xs font-medium">
-                  {m.model_id}
+                <TableCell className="text-sm font-medium">
+                  <span className="mr-1">{modelLabel(m.model_id)}</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    {m.model_id}
+                  </span>
                   {idx === 0 && (
                     <Badge className="ml-2 bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 text-[10px] px-2 py-0.5">
                       Best

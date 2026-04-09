@@ -231,7 +231,12 @@ def list_experiments(
 
 @router.get("/templates")
 def get_templates(response: FastAPIResponse):
-    """Load cluster experiment templates from config YAML."""
+    """Load cluster experiment templates from config YAML.
+
+    The ``production_baseline`` template is enriched with the currently
+    promoted experiment's actual parameters so the UI shows the real
+    production config instead of hardcoded defaults.
+    """
     set_cache(response, max_age=_TEMPLATE_CACHE_TTL)
 
     if not _TEMPLATES_PATH.exists():
@@ -245,7 +250,42 @@ def get_templates(response: FastAPIResponse):
         logger.exception("Failed to load cluster experiment templates")
         raise HTTPException(status_code=500, detail="Failed to load templates")
 
+    # Resolve production_baseline from currently promoted experiment
+    promoted_params = _get_promoted_params()
+    if promoted_params:
+        for tmpl in templates:
+            if tmpl.get("id") == "production_baseline":
+                tmpl["feature_params"] = promoted_params.get("feature_params")
+                tmpl["model_params"] = promoted_params.get("model_params")
+                tmpl["label_params"] = promoted_params.get("label_params")
+                break
+
     return {"templates": templates}
+
+
+def _get_promoted_params() -> dict | None:
+    """Fetch feature/model/label params from the currently promoted experiment."""
+    sql = """
+        SELECT feature_params, model_params, label_params
+        FROM cluster_experiment
+        WHERE is_promoted = TRUE
+        ORDER BY promoted_at DESC
+        LIMIT 1
+    """
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "feature_params": _parse_json(row[0]),
+                "model_params": _parse_json(row[1]),
+                "label_params": _parse_json(row[2]),
+            }
+    except Exception:
+        logger.exception("Failed to fetch promoted experiment params")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -656,7 +696,7 @@ def create_experiment(body: CreateExperimentBody):
 # 4. PATCH /cluster-experiments/{experiment_id} — Update label/notes
 # ---------------------------------------------------------------------------
 
-@router.patch("/{experiment_id}")
+@router.patch("/{experiment_id}", dependencies=[Depends(require_api_key)])
 def update_experiment(experiment_id: int, body: UpdateExperimentBody):
     """Update the label and/or notes of an existing cluster experiment."""
     updates: list[str] = []
@@ -699,11 +739,11 @@ def update_experiment(experiment_id: int, body: UpdateExperimentBody):
 # 5. DELETE /cluster-experiments/{experiment_id}
 # ---------------------------------------------------------------------------
 
-@router.delete("/{experiment_id}")
+@router.delete("/{experiment_id}", dependencies=[Depends(require_api_key)])
 def delete_experiment(experiment_id: int):
-    """Delete a cluster experiment. Returns 409 if running or queued."""
-    # Check current status
-    status_sql = "SELECT status FROM cluster_experiment WHERE experiment_id = %s"
+    """Delete a cluster experiment. Returns 409 if running, queued, or promoted."""
+    # Check current status and promotion flag
+    status_sql = "SELECT status, is_promoted FROM cluster_experiment WHERE experiment_id = %s"
 
     try:
         with get_conn() as conn, conn.cursor() as cur:
@@ -717,11 +757,36 @@ def delete_experiment(experiment_id: int):
         raise HTTPException(status_code=404, detail="Experiment not found")
 
     current_status = row[0]
+    is_promoted = bool(row[1])
+    if is_promoted:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete the promoted production cluster config.",
+        )
     if current_status in ("running", "queued"):
         raise HTTPException(
             status_code=409,
             detail=f"Cannot delete experiment with status '{current_status}'. Cancel it first.",
         )
+
+    # Check if any algorithm tuning runs reference this cluster experiment
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM lgbm_tuning_run WHERE cluster_experiment_id = %s",
+                [experiment_id],
+            )
+            ref_count = cur.fetchone()[0]
+            if ref_count > 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Cannot delete: {ref_count} algorithm tuning experiment(s) "
+                    f"reference this cluster. Remove those references first.",
+                )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to check tuning run references for experiment %d", experiment_id)
 
     # Delete — cascade removes comparison cache entries
     delete_sql = "DELETE FROM cluster_experiment WHERE experiment_id = %s"

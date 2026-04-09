@@ -196,33 +196,24 @@ describe("ClusterExperimentDetail", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows Promote button when not promoted", async () => {
-    const onPromote = vi.fn();
+  it("renders config summary with experiment parameters", async () => {
     const { ClusterExperimentDetail } = await import(
       "../clusters/ClusterExperimentDetail"
     );
     render(
       <TestQueryWrapper>
-        <ClusterExperimentDetail
-          experiment={completedExperiment}
-          onPromote={onPromote}
-        />
+        <ClusterExperimentDetail experiment={completedExperiment} />
       </TestQueryWrapper>,
     );
-    expect(screen.getByText("Promote")).toBeInTheDocument();
-  });
-
-  it("hides Promote button when already promoted", async () => {
-    const promoted = { ...completedExperiment, is_promoted: true };
-    const { ClusterExperimentDetail } = await import(
-      "../clusters/ClusterExperimentDetail"
-    );
-    render(
-      <TestQueryWrapper>
-        <ClusterExperimentDetail experiment={promoted} onPromote={() => {}} />
-      </TestQueryWrapper>,
-    );
-    expect(screen.queryByText("Promote")).not.toBeInTheDocument();
+    expect(screen.getByText("Configuration")).toBeInTheDocument();
+    expect(screen.getByText("K Range")).toBeInTheDocument();
+    expect(screen.getByText("3--12")).toBeInTheDocument();
+    expect(screen.getByText("Min Cluster %")).toBeInTheDocument();
+    expect(screen.getByText("Use PCA")).toBeInTheDocument();
+    expect(screen.getByText("Time Window")).toBeInTheDocument();
+    expect(screen.getByText("24mo")).toBeInTheDocument();
+    expect(screen.getByText("Vol High")).toBeInTheDocument();
+    expect(screen.getByText("0.75")).toBeInTheDocument();
   });
 
   it("displays experiment notes when present", async () => {

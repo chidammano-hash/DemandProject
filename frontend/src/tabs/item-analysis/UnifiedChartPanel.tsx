@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, useCallback } from "react";
+import { memo, useMemo, useState, useCallback, useRef, useEffect } from "react";
 import {
   CartesianGrid,
   Line,
@@ -18,7 +18,8 @@ import type {
   InventoryTrendPoint,
   InventoryTrendParams,
 } from "@/types";
-import type { ProductionForecastPayload } from "@/api/queries/production-forecast";
+import type { ProductionForecastPayload, StagingForecastsPayload } from "@/api/queries/production-forecast";
+import { modelLabel } from "@/lib/model-labels";
 import type { DQCorrection } from "@/api/queries/platform";
 
 // ---------------------------------------------------------------------------
@@ -27,6 +28,27 @@ import type { DQCorrection } from "@/api/queries/platform";
 const PROD_FORECAST_COLOR = "#7c3aed";
 const CHART_MARGIN = { top: 8, right: 40, left: 18, bottom: 8 };
 const DESELECT_OPACITY = 0.25;
+
+/** Per-model colors for staging forecast lines */
+const STAGING_COLORS: Record<string, string> = {
+  lgbm_cluster: "#2563eb",
+  catboost_cluster: "#dc2626",
+  xgboost_cluster: "#16a34a",
+  lgbm_cust_enriched: "#1d4ed8",
+  catboost_cust_enriched: "#b91c1c",
+  xgboost_cust_enriched: "#15803d",
+  nbeats: "#ea580c",
+  nhits: "#9333ea",
+  chronos_bolt: "#0891b2",
+  chronos: "#0e7490",
+  chronos2: "#155e75",
+  chronos2_enriched: "#164e63",
+  bolt_hierarchical: "#0d9488",
+  mstl: "#ca8a04",
+  seasonal_naive: "#64748b",
+  rolling_mean: "#78716c",
+};
+const STAGING_FALLBACK_COLOR = "#6b7280";
 
 const SUPPLY_COLORS: Record<string, string> = {
   total_on_hand: "#2563EB",
@@ -63,6 +85,58 @@ const SUPPLY_SERIES_DEFS: SupplySeriesDef[] = [
 const DEFAULT_HIDDEN_SUPPLY = new Set(
   SUPPLY_SERIES_DEFS.filter((s) => !s.defaultVisible).map((s) => s.key),
 );
+
+// ---------------------------------------------------------------------------
+// Persistent default-measure preferences (localStorage)
+// ---------------------------------------------------------------------------
+const LS_KEY_DEMAND = "ds:itemAnalysis:defaultMeasures";
+const LS_KEY_SUPPLY = "ds:itemAnalysis:defaultSupply";
+
+/** All static demand measure keys (sales-side). */
+const SALES_MEASURE_KEYS = ["tothist_dmd", "sales_qty", "qty_shipped", "qty_ordered"] as const;
+
+/** Load saved demand defaults from localStorage. */
+export function loadDefaultMeasures(): Set<string> {
+  try {
+    const raw = localStorage.getItem(LS_KEY_DEMAND);
+    if (raw) return new Set(JSON.parse(raw) as string[]);
+  } catch { /* ignore */ }
+  return new Set<string>(SALES_MEASURE_KEYS);
+}
+
+/** Load saved supply hidden-set from localStorage. */
+export function loadDefaultHiddenSupply(): Set<string> {
+  try {
+    const raw = localStorage.getItem(LS_KEY_SUPPLY);
+    if (raw) return new Set(JSON.parse(raw) as string[]);
+  } catch { /* ignore */ }
+  return new Set(DEFAULT_HIDDEN_SUPPLY);
+}
+
+function saveDemandDefaults(keys: Set<string>) {
+  localStorage.setItem(LS_KEY_DEMAND, JSON.stringify([...keys]));
+}
+
+function saveSupplyDefaults(hiddenKeys: Set<string>) {
+  localStorage.setItem(LS_KEY_SUPPLY, JSON.stringify([...hiddenKeys]));
+}
+
+/**
+ * Build the visible-series set for a new SKU load, using saved defaults.
+ * Forecast model keys are always included; sales measures follow user prefs.
+ */
+export function buildInitialVisibleSeries(
+  models: string[],
+): Set<string> {
+  const defaults = loadDefaultMeasures();
+  const keys = new Set<string>();
+  for (const k of SALES_MEASURE_KEYS) {
+    if (defaults.has(k)) keys.add(k);
+  }
+  for (const m of models) keys.add(`forecast_${m}`);
+  if (defaults.has("production_forecast")) keys.add("production_forecast");
+  return keys;
+}
 
 const DQ_ORIG_COLOR = "#DC2626"; // red for original (pre-DQ) values
 
@@ -108,6 +182,7 @@ export interface UnifiedChartPanelProps {
   skuVisibleSeries: Set<string>;
   setSkuVisibleSeries: (updater: (prev: Set<string>) => Set<string>) => void;
   prodForecastData?: ProductionForecastPayload | null;
+  stagingForecastData?: StagingForecastsPayload | null;
   selectedModel?: string | null;
   onModelSelect?: (model: string | null) => void;
   // Supply data (optional)
@@ -133,6 +208,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   skuVisibleSeries,
   setSkuVisibleSeries,
   prodForecastData,
+  stagingForecastData,
   selectedModel = null,
   onModelSelect,
   trendData = [],
@@ -141,13 +217,26 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
   showCorrections = false,
 }: UnifiedChartPanelProps) {
   const { chartColors } = useChartColors();
-  const [hiddenSupply, setHiddenSupply] = useState<Set<string>>(DEFAULT_HIDDEN_SUPPLY);
+  const [hiddenSupply, setHiddenSupply] = useState<Set<string>>(() => loadDefaultHiddenSupply());
+  // Tracks demand series whose pill is shown but chart line is hidden (dimmed pill)
+  const [hiddenDemand, setHiddenDemand] = useState<Set<string>>(new Set());
+
+  // Staging forecast model visibility (hidden set — hidden by default until toggled on)
+  const [hiddenStaging, setHiddenStaging] = useState<Set<string>>(new Set());
 
   const hasProdForecast = (prodForecastData?.forecasts.length ?? 0) > 0;
   const prodForecastLabel = hasProdForecast
     ? `Prod (${prodForecastData!.model_id})`
     : "Prod Forecast";
   const hasSupplyData = trendData.length > 0;
+
+  // Derive staging model IDs from the chart data (staging_* keys)
+  const stagingModelIds = useMemo(() => {
+    if (!stagingForecastData?.models) return [];
+    return Object.keys(stagingForecastData.models);
+  }, [stagingForecastData]);
+
+  const hasStagingModels = stagingModelIds.length > 0;
   const ss = trendParams?.safety_stock ?? null;
   const ropUnits = trendParams?.reorder_point_units ?? null;
   const hasSs = ss != null;
@@ -220,7 +309,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
     return data;
   }, [skuFilteredSeries, trendData, hasSupplyData, correctionOverlay]);
 
-  // Demand toggle helper
+  // Demand toggle helper — controls whether pill is shown (Defaults checkbox)
   function toggleDemandSeries(key: string, checked: boolean) {
     setSkuVisibleSeries((prev) => {
       const next = new Set(prev);
@@ -229,6 +318,37 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
       return next;
     });
   }
+
+  // Toggle chart line visibility — pill stays but dims (clicking pill)
+  function toggleDemandLineVisibility(key: string) {
+    setHiddenDemand((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  // Staging model toggle
+  const toggleStagingModel = useCallback((modelId: string) => {
+    setHiddenStaging((prev) => {
+      const next = new Set(prev);
+      if (next.has(modelId)) next.delete(modelId);
+      else next.add(modelId);
+      return next;
+    });
+  }, []);
+
+  // Toggle all staging models
+  const allStagingOn = hasStagingModels && stagingModelIds.every((m) => !hiddenStaging.has(m));
+  const toggleAllStaging = useCallback(() => {
+    setHiddenStaging((prev) => {
+      if (allStagingOn) {
+        return new Set(stagingModelIds);
+      }
+      return new Set();
+    });
+  }, [allStagingOn, stagingModelIds]);
 
   // Supply toggle
   const toggleSupply = useCallback((key: string) => {
@@ -271,19 +391,25 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
     return keys;
   }, [skuData.models, hasProdForecast]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const allDemandOn = allDemandKeys.every((k) => skuVisibleSeries.has(k));
+  // "All on" means all enabled pills have their lines visible (not hidden)
+  const enabledDemandKeys = allDemandKeys.filter((k) => skuVisibleSeries.has(k));
+  const allDemandOn = enabledDemandKeys.length > 0 && enabledDemandKeys.every((k) => !hiddenDemand.has(k));
 
   const toggleAllDemand = useCallback(() => {
-    setSkuVisibleSeries((prev) => {
-      const next = new Set(prev);
+    setHiddenDemand((prev) => {
       if (allDemandOn) {
-        for (const k of allDemandKeys) next.delete(k);
+        // Hide all lines (dim all pills)
+        const next = new Set(prev);
+        for (const k of enabledDemandKeys) next.add(k);
+        return next;
       } else {
-        for (const k of allDemandKeys) next.add(k);
+        // Show all lines (un-dim all pills)
+        const next = new Set(prev);
+        for (const k of enabledDemandKeys) next.delete(k);
+        return next;
       }
-      return next;
     });
-  }, [allDemandKeys, allDemandOn, setSkuVisibleSeries]);
+  }, [enabledDemandKeys, allDemandOn]);
 
   // Supply select/deselect all
   const allSupplyOn = availableSupply.every((s) => !hiddenSupply.has(s.key));
@@ -299,8 +425,9 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
 
   return (
     <div className="space-y-3">
-      {/* ---- Toggle pills ---- */}
-      <div className="space-y-1.5">
+      {/* ---- Toggle pills + defaults gear ---- */}
+      <div className="flex items-start gap-2">
+        <div className="flex-1 space-y-1.5">
         {/* Demand pills */}
         <div className="flex flex-wrap items-center gap-1.5">
           <button
@@ -310,31 +437,34 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
           >
             {allDemandOn ? "Demand \u2212" : "Demand +"}
           </button>
-          {salesMeasures.map(({ key, label, color }) => (
-            <TogglePill
-              key={key}
-              label={label}
-              color={color}
-              active={skuVisibleSeries.has(key)}
-              onClick={() => toggleDemandSeries(key, !skuVisibleSeries.has(key))}
-            />
-          ))}
+          {salesMeasures.map(({ key, label, color }) =>
+            skuVisibleSeries.has(key) ? (
+              <TogglePill
+                key={key}
+                label={label}
+                color={color}
+                active={!hiddenDemand.has(key)}
+                onClick={() => toggleDemandLineVisibility(key)}
+              />
+            ) : null,
+          )}
           {skuData.models.map((model, idx) => {
             const key = `forecast_${model}`;
             const color = skuModelColor(model, idx);
-            const isVisible = skuVisibleSeries.has(key);
+            const isEnabled = skuVisibleSeries.has(key);
+            if (!isEnabled) return null;
             const isShapSelected = selectedModel === model;
             return (
               <span key={key} className="inline-flex items-center gap-0.5">
                 <TogglePill
                   label={model}
                   color={color}
-                  active={isVisible}
-                  onClick={() => toggleDemandSeries(key, !isVisible)}
+                  active={!hiddenDemand.has(key)}
+                  onClick={() => toggleDemandLineVisibility(key)}
                   dashed={model !== "champion"}
                   ring={isShapSelected}
                 />
-                {isVisible && onModelSelect && (
+                {onModelSelect && (
                   <button
                     onClick={() => onModelSelect(isShapSelected ? null : model)}
                     className={`rounded px-1 py-0.5 text-[9px] font-semibold leading-none transition-colors ${
@@ -350,18 +480,42 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
               </span>
             );
           })}
-          {hasProdForecast && (
+          {hasProdForecast && skuVisibleSeries.has("production_forecast") && (
             <TogglePill
               label={prodForecastLabel}
               color={PROD_FORECAST_COLOR}
-              active={skuVisibleSeries.has("production_forecast")}
-              onClick={() =>
-                toggleDemandSeries("production_forecast", !skuVisibleSeries.has("production_forecast"))
-              }
+              active={!hiddenDemand.has("production_forecast")}
+              onClick={() => toggleDemandLineVisibility("production_forecast")}
               dashed
             />
           )}
         </div>
+
+        {/* Staging forecast model pills */}
+        {hasStagingModels && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={toggleAllStaging}
+              className="w-16 text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors text-left"
+              title={allStagingOn ? "Hide all staging models" : "Show all staging models"}
+            >
+              {allStagingOn ? "Staging \u2212" : "Staging +"}
+            </button>
+            {stagingModelIds.map((mid) => {
+              const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+              return (
+                <TogglePill
+                  key={`staging_${mid}`}
+                  label={modelLabel(mid)}
+                  color={color}
+                  active={!hiddenStaging.has(mid)}
+                  onClick={() => toggleStagingModel(mid)}
+                  dashed
+                />
+              );
+            })}
+          </div>
+        )}
 
         {/* DQ corrections indicator */}
         {showCorrections && activeCorrectionSeries.length > 0 && (
@@ -398,18 +552,32 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
             >
               {allSupplyOn ? "Supply \u2212" : "Supply +"}
             </button>
-            {availableSupply.map((s) => (
-              <TogglePill
-                key={s.key}
-                label={s.label}
-                color={s.color}
-                active={showSupply(s.key)}
-                onClick={() => toggleSupply(s.key)}
-                suffix={s.axis === "right" ? "d" : "u"}
-              />
-            ))}
+            {availableSupply.map((s) =>
+              showSupply(s.key) ? (
+                <TogglePill
+                  key={s.key}
+                  label={s.label}
+                  color={s.color}
+                  active
+                  onClick={() => toggleSupply(s.key)}
+                  suffix={s.axis === "right" ? "d" : "u"}
+                />
+              ) : null,
+            )}
           </div>
         )}
+        </div>
+
+        {/* Defaults gear — right side */}
+        <MeasureDefaultsMenu
+          models={skuData.models}
+          hasProdForecast={hasProdForecast}
+          prodForecastLabel={prodForecastLabel}
+          hasSupplyData={hasSupplyData}
+          availableSupply={availableSupply}
+          setSkuVisibleSeries={setSkuVisibleSeries}
+          setHiddenSupply={setHiddenSupply}
+        />
       </div>
 
       {/* ---- Time range ---- */}
@@ -478,7 +646,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
       <div className="h-[400px] overflow-x-auto overflow-y-hidden pb-2 [scrollbar-gutter:stable]">
         <div
           className="h-full"
-          style={{ minWidth: `${Math.max(1200, mergedData.length * 100)}px` }}
+          style={{ minWidth: `${Math.max(800, mergedData.length * 40)}px` }}
         >
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={mergedData} margin={CHART_MARGIN}>
@@ -506,7 +674,12 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
                   borderColor: chartColors.tooltip_border,
                 }}
                 formatter={(value: number, name: string) => {
-                  const label = TOOLTIP_LABELS[name] ?? name;
+                  let label = TOOLTIP_LABELS[name] ?? name;
+                  // Resolve staging model names to readable labels
+                  if (name.startsWith("staging_")) {
+                    const mid = name.slice("staging_".length);
+                    label = `${modelLabel(mid)} (staging)`;
+                  }
                   if (name === "dos" || name === "avg_lead_time")
                     return [`${Number(value).toFixed(1)} days`, label];
                   return [
@@ -517,7 +690,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
               />
 
               {/* ---- Demand lines ---- */}
-              {skuVisibleSeries.has("tothist_dmd") && (
+              {skuVisibleSeries.has("tothist_dmd") && !hiddenDemand.has("tothist_dmd") && (
                 <Line
                   type="monotone"
                   dataKey="tothist_dmd"
@@ -529,7 +702,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
                   activeDot={{ r: 4 }}
                 />
               )}
-              {skuVisibleSeries.has("sales_qty") && (
+              {skuVisibleSeries.has("sales_qty") && !hiddenDemand.has("sales_qty") && (
                 <Line
                   type="monotone"
                   dataKey="sales_qty"
@@ -541,7 +714,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
                   activeDot={{ r: 4 }}
                 />
               )}
-              {skuVisibleSeries.has("qty_shipped") && (
+              {skuVisibleSeries.has("qty_shipped") && !hiddenDemand.has("qty_shipped") && (
                 <Line
                   type="monotone"
                   dataKey="qty_shipped"
@@ -553,7 +726,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
                   activeDot={{ r: 4 }}
                 />
               )}
-              {skuVisibleSeries.has("qty_ordered") && (
+              {skuVisibleSeries.has("qty_ordered") && !hiddenDemand.has("qty_ordered") && (
                 <Line
                   type="monotone"
                   dataKey="qty_ordered"
@@ -566,7 +739,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
                 />
               )}
               {skuData.models
-                .filter((m) => skuVisibleSeries.has(`forecast_${m}`))
+                .filter((m) => skuVisibleSeries.has(`forecast_${m}`) && !hiddenDemand.has(`forecast_${m}`))
                 .map((model, idx) => {
                   const isSelected = selectedModel === model;
                   const isOtherSelected = selectedModel !== null && selectedModel !== model;
@@ -586,7 +759,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
                     />
                   );
                 })}
-              {hasProdForecast && skuVisibleSeries.has("production_forecast") && (
+              {hasProdForecast && skuVisibleSeries.has("production_forecast") && !hiddenDemand.has("production_forecast") && (
                 <Line
                   type="monotone"
                   dataKey="production_forecast"
@@ -599,6 +772,29 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
                   activeDot={{ r: 5 }}
                 />
               )}
+
+              {/* ---- Staging forecast lines ---- */}
+              {stagingModelIds
+                .filter((mid) => !hiddenStaging.has(mid))
+                .map((mid) => {
+                  const key = `staging_${mid}`;
+                  const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+                  return (
+                    <Line
+                      key={key}
+                      type="monotone"
+                      dataKey={key}
+                      yAxisId="left"
+                      name={key}
+                      stroke={color}
+                      strokeWidth={1.5}
+                      strokeDasharray="4 3"
+                      dot={false}
+                      connectNulls
+                      activeDot={{ r: 3 }}
+                    />
+                  );
+                })}
 
               {/* ---- Supply lines ---- */}
               {hasSupplyData &&
@@ -675,6 +871,168 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
       </div>
 
     </div>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// MeasureDefaultsMenu — gear icon dropdown to set default visible measures
+// ---------------------------------------------------------------------------
+const MeasureDefaultsMenu = memo(function MeasureDefaultsMenu({
+  models,
+  hasProdForecast,
+  prodForecastLabel,
+  hasSupplyData,
+  availableSupply,
+  setSkuVisibleSeries,
+  setHiddenSupply,
+}: {
+  models: string[];
+  hasProdForecast: boolean;
+  prodForecastLabel: string;
+  hasSupplyData: boolean;
+  availableSupply: SupplySeriesDef[];
+  setSkuVisibleSeries: (updater: (prev: Set<string>) => Set<string>) => void;
+  setHiddenSupply: React.Dispatch<React.SetStateAction<Set<string>>>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [demandDefaults, setDemandDefaults] = useState<Set<string>>(loadDefaultMeasures);
+  const [supplyHidden, setSupplyHidden] = useState<Set<string>>(loadDefaultHiddenSupply);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
+
+  // Compute fixed position from button rect when opening
+  useEffect(() => {
+    if (open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (
+        menuRef.current && !menuRef.current.contains(e.target as Node) &&
+        btnRef.current && !btnRef.current.contains(e.target as Node)
+      ) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  const toggleDemand = useCallback((key: string) => {
+    setDemandDefaults((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      saveDemandDefaults(next);
+      return next;
+    });
+    // Update live chart state immediately
+    setSkuVisibleSeries((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, [setSkuVisibleSeries]);
+
+  const toggleSupply = useCallback((key: string) => {
+    setSupplyHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      saveSupplyDefaults(next);
+      return next;
+    });
+    // Update live chart state immediately
+    setHiddenSupply((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, [setHiddenSupply]);
+
+  const demandItems: { key: string; label: string; color: string }[] = [
+    { key: "tothist_dmd", label: "Sale Qty (ext)", color: SKU_SALES_COLORS.tothist_dmd },
+    { key: "sales_qty", label: "Sale Qty", color: SKU_SALES_COLORS.sales_qty },
+    { key: "qty_shipped", label: "Shipped", color: SKU_SALES_COLORS.qty_shipped },
+    { key: "qty_ordered", label: "Ordered", color: SKU_SALES_COLORS.qty_ordered },
+    ...models.map((m, i) => ({ key: `forecast_${m}`, label: m, color: skuModelColor(m, i) })),
+    ...(hasProdForecast ? [{ key: "production_forecast", label: prodForecastLabel, color: PROD_FORECAST_COLOR }] : []),
+  ];
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={() => setOpen((v) => !v)}
+        className={`flex h-6 items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+          open
+            ? "border-primary text-primary"
+            : "border-input text-muted-foreground hover:text-foreground hover:border-foreground"
+        }`}
+        title="Configure which measures are visible by default when loading a new DFU"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+        Defaults
+      </button>
+      {open && (
+        <div
+          ref={menuRef}
+          className="fixed z-[9999] min-w-[200px] rounded-md border bg-white p-2.5 shadow-lg dark:bg-zinc-900"
+          style={{ top: pos.top, right: pos.right }}
+        >
+          {/* Demand section */}
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Demand
+          </p>
+          {demandItems.map(({ key, label, color }) => (
+            <label
+              key={key}
+              className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[11px] hover:bg-muted"
+            >
+              <input
+                type="checkbox"
+                checked={demandDefaults.has(key)}
+                onChange={() => toggleDemand(key)}
+                className="h-3 w-3 rounded border-muted-foreground accent-current"
+                style={{ accentColor: color }}
+              />
+              <span className="inline-block h-0.5 w-3 rounded-full" style={{ backgroundColor: color }} />
+              {label}
+            </label>
+          ))}
+
+          {/* Supply section */}
+          {hasSupplyData && availableSupply.length > 0 && (
+            <>
+              <div className="my-1.5 border-t border-border" />
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Supply
+              </p>
+              {availableSupply.map((s) => (
+                <label
+                  key={s.key}
+                  className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[11px] hover:bg-muted"
+                >
+                  <input
+                    type="checkbox"
+                    checked={!supplyHidden.has(s.key)}
+                    onChange={() => toggleSupply(s.key)}
+                    className="h-3 w-3 rounded border-muted-foreground accent-current"
+                    style={{ accentColor: s.color }}
+                  />
+                  <span className="inline-block h-0.5 w-3 rounded-full" style={{ backgroundColor: s.color }} />
+                  {s.label}
+                </label>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </>
   );
 });
 

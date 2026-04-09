@@ -1,0 +1,32 @@
+# Unified SKU Feature Computation Configuration
+# Single source of truth for all feature computation thresholds
+#
+# Referenced by the unified SKU feature computation pipeline.
+# Merges thresholds previously spread across:
+#   - config/forecast_domain_config.yaml (seasonality, variability sections)
+#   - scripts/compute_demand_variability.py (CV / intermittency classification)
+
+history:
+  time_window_months: 36          # months of sales history to use
+  min_months_history: 1           # minimum months for a SKU to be included (compute for all SKUs)
+
+seasonality:
+  amplitude_threshold: 0.3        # seasonal_amplitude > this -> seasonal
+  r2_threshold: 0.25              # seasonal_r2 > this -> confirmed seasonal
+  yoy_correlation_threshold: 0.3  # year-over-year correlation confirmation
+  peak_trough_min_ratio: 1.5      # peak/trough ratio for strong seasonality
+
+variability:
+  cv_thresholds:
+    smooth: 0.3                   # CV < this -> smooth
+    erratic: 0.8                  # CV > this -> erratic
+  intermittency_threshold: 0.15   # zero_demand_pct > this -> intermittent
+
+trend:
+  slope_threshold: 0.01           # |trend_slope_norm| > this -> trending
+  r2_threshold: 0.25              # trend_r2 > this -> meaningful trend
+  cagr_growing: 5.0               # CAGR > this -> growing
+  cagr_declining: -5.0            # CAGR < this -> declining
+
+parallelism:
+  max_workers: 8                  # multiprocessing pool size

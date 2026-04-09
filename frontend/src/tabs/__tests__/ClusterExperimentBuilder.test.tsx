@@ -8,7 +8,7 @@ import { TestQueryWrapper } from "./test-utils";
 
 const mockTemplates = {
   templates: [
-    { id: "production_baseline", label: "Production Baseline", description: "Current production config", source: "clustering_config" },
+    { id: "production_baseline", label: "Production Baseline", description: "Current production config", source: "promoted_experiment" },
     { id: "high_k_granular", label: "High-K Granular", description: "K=12-25, finer segments", model_params: { k_range: [12, 25], min_cluster_size_pct: 1.5 } },
     { id: "low_k_broad", label: "Low-K Broad", description: "K=3-8, robust clusters", model_params: { k_range: [3, 8], min_cluster_size_pct: 5.0 } },
     { id: "seasonal_focus", label: "Seasonal Focus", description: "48-month window, low threshold", feature_params: { time_window_months: 48 }, label_params: { seasonality_threshold: 0.2 } },

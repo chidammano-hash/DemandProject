@@ -900,7 +900,8 @@ If ANY assertion above fails, create a ticket in this format:
 
 ### 21.1 Run
 ```bash
-~/.local/bin/uv run python scripts/compute_demand_variability.py
+# Unified SKU feature pipeline (replaces legacy compute_demand_variability.py)
+~/.local/bin/uv run python scripts/ml/compute_sku_features.py   # or: make features-compute
 ```
 
 ### 21.2 Pick 5 SKUs across variability classes
@@ -1645,8 +1646,8 @@ LIMIT 3;
 
 ### 37.1 Run
 ```bash
-~/.local/bin/uv run python scripts/detect_seasonality.py
-~/.local/bin/uv run python scripts/update_seasonality_profiles.py
+# Unified SKU feature pipeline (replaces legacy detect_seasonality.py + update_seasonality_profiles.py)
+~/.local/bin/uv run python scripts/ml/compute_sku_features.py   # or: make features-compute
 ```
 
 ### 37.2 Pick 5 SKUs across seasonality profiles

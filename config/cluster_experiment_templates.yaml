@@ -1,53 +1,73 @@
 # Cluster Experiment Templates
-# Pre-configured clustering parameter sets for the Cluster Experimentation Studio
-# Production baseline loads live defaults from clustering_config.yaml
+# Pre-configured clustering parameter sets for the Cluster Experimentation Studio.
+# Production baseline loads live params from the promoted cluster experiment in DB.
+#
+# Consumed by: api/routers/forecasting/cluster_experiments.py (GET /cluster-experiments/templates)
+# The templates endpoint enriches 'production_baseline' with the currently promoted
+# experiment's actual params so the UI shows real production config.
+#
+# Parameter reference:
+#   feature_params: Controls time-series feature generation for clustering
+#     time_window_months: Months of sales history to use (int or 'all')
+#     min_months_history: Min months of history required to include a SKU
+#   model_params: Controls KMeans clustering algorithm
+#     k_range: [min_k, max_k] — range to search for optimal cluster count
+#     min_cluster_size_pct: Minimum cluster size as % of total SKUs (clusters below this are merged)
+#     use_pca: Apply PCA dimensionality reduction before clustering
+#     pca_components: Number of PCA components (only used if use_pca is true)
+#     all_features: Use all available features (not just CORE_FEATURES from training.py)
+#   label_params: Controls cluster labeling thresholds (labeling.py)
+#     seasonality_threshold: Amplitude above which a SKU is labeled as seasonal
+#     zero_demand_threshold: Fraction of zero-demand months to flag as intermittent
+#     cv_volatile: Coefficient of variation above which demand is labeled as volatile
+#     volume_high/volume_low: Quantile thresholds for high/low volume classification
 
 templates:
-  - id: production_baseline
+  - id: production_baseline             # Special template — params resolved from DB at runtime
     label: "Production Baseline"
-    description: "Current production parameters from clustering_config.yaml"
-    source: clustering_config
+    description: "Parameters from the currently promoted cluster experiment"
+    source: promoted_experiment         # Signals the API to fetch live params from cluster_experiment table
 
-  - id: high_k_granular
+  - id: high_k_granular                 # More clusters for finer demand segmentation
     label: "High-K Granular"
     description: "More clusters (12-25) for finer demand segmentation"
     model_params:
-      k_range: [12, 25]
-      min_cluster_size_pct: 1.5
+      k_range: [12, 25]                 # Search range: 12 to 25 clusters (higher granularity)
+      min_cluster_size_pct: 1.5         # Allow smaller clusters (1.5% of SKUs)
 
-  - id: low_k_broad
+  - id: low_k_broad                     # Fewer clusters for more robust per-cluster models
     label: "Low-K Broad"
     description: "Fewer clusters (3-8) for robust per-cluster model training"
     model_params:
-      k_range: [3, 8]
-      min_cluster_size_pct: 5.0
+      k_range: [3, 8]                   # Search range: 3 to 8 clusters (coarser segmentation)
+      min_cluster_size_pct: 5.0         # Require each cluster to have at least 5% of SKUs
 
-  - id: seasonal_focus
+  - id: seasonal_focus                  # Tuned to detect seasonal demand patterns
     label: "Seasonal Focus"
     description: "48-month window with lower seasonality threshold to capture seasonal clusters"
     feature_params:
-      time_window_months: 48
+      time_window_months: 48            # 4 years of history — captures multi-year seasonal cycles
     label_params:
-      seasonality_threshold: 0.2
+      seasonality_threshold: 0.2        # Lower threshold (vs default 0.3) — more SKUs labeled seasonal
 
-  - id: intermittent_specialist
+  - id: intermittent_specialist         # Tuned for intermittent/lumpy demand detection
     label: "Intermittent Specialist"
     description: "Tuned for intermittent demand detection with lower zero-demand threshold"
     label_params:
-      zero_demand_threshold: 0.1
-      cv_volatile: 0.6
+      zero_demand_threshold: 0.1        # Lower threshold (vs default 0.15) — catches more intermittent SKUs
+      cv_volatile: 0.6                  # Lower CV threshold (vs default 0.8) — more SKUs labeled volatile
 
-  - id: pca_compressed
+  - id: pca_compressed                  # Uses PCA to reduce feature dimensions before clustering
     label: "PCA Compressed"
     description: "All features with PCA dimensionality reduction to 10 components"
     model_params:
-      all_features: true
-      use_pca: true
-      pca_components: 10
+      all_features: true                # Use all features, not just CORE_FEATURES
+      use_pca: true                     # Apply PCA before KMeans
+      pca_components: 10                # Reduce to 10 principal components
 
-  - id: recent_data_focus
+  - id: recent_data_focus               # Short window to capture recent demand shifts
     label: "Recent Data Focus"
     description: "18-month window to capture recent demand pattern shifts"
     feature_params:
-      time_window_months: 18
-      min_months_history: 6
+      time_window_months: 18            # Only 18 months — recent patterns only, ignores old trends
+      min_months_history: 6             # Require at least 6 months of history (lower bar for newer SKUs)

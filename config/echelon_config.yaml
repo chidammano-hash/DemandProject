@@ -1,21 +1,27 @@
+# ═══ ECHELON CONFIG ═══
+# Multi-echelon inventory optimization for distribution networks (Spec F3.5 / 04-09)
+# Used by: scripts/compute_echelon_targets.py, api/routers/inventory/echelon_planning.py
+# Output: fact_echelon_ss_targets, fact_echelon_reorder_points
+
 echelon:
-  # Service level Z-score for echelon safety stock (1.645 = 95%)
-  z_score_default: 1.645
-  default_service_level: 0.95
+  # Service level Z-score for echelon safety stock (1.645 = 95%, 2.326 = 99%)
+  z_score_default: 1.645                 # Z-score used in SS = Z * sqrt(LT*sigma_d^2 + mu_d^2*sigma_LT^2)
+  default_service_level: 0.95            # Target fill rate for echelon nodes; used for display/reporting
 
-  # Minimum downstream nodes to apply echelon pooling
-  min_downstream_nodes: 2
+  # Minimum downstream nodes to apply echelon pooling (risk pooling benefit requires >= 2 nodes)
+  min_downstream_nodes: 2                # Nodes with fewer downstream children use single-echelon SS instead
 
-  # Cascade risk scoring weight multiplier
-  cascade_risk_multiplier: 1.0
+  # Cascade risk scoring weight multiplier (scales risk propagation from downstream to upstream)
+  cascade_risk_multiplier: 1.0           # 1.0 = full propagation; <1.0 = dampen; >1.0 = amplify
 
-  # Alert when DC coverage drops below this (days)
-  coverage_alert_threshold_days: 7
+  # Alert when DC coverage drops below this threshold (days of supply)
+  coverage_alert_threshold_days: 7       # Days; triggers control tower alert when DC on-hand / daily demand < threshold
 
-  # DC lead time fallback (days) when not in dim_echelon_network
-  default_lt_days: 10
-  default_lt_std_days: 2.0
+  # DC lead time fallback values when not available in dim_echelon_network
+  default_lt_days: 10                    # Mean lead time in days (DC-to-store default)
+  default_lt_std_days: 2.0               # Lead time standard deviation in days (for safety stock calc)
 
+# ═══ SCHEDULER ═══
 scheduler:
-  job_type: compute_echelon_targets
-  cron: "0 4 * * 1"      # Weekly, Monday at 4am
+  job_type: compute_echelon_targets      # Job registry type for APScheduler integration
+  cron: "0 4 * * 1"                      # Cron expression: weekly, Monday at 4:00 AM

@@ -18,6 +18,7 @@ import {
 } from "@/api/queries";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { EmptyState } from "@/components/EmptyState";
+import { TableSkeleton } from "@/components/Skeleton";
 import { Activity } from "lucide-react";
 
 const PAGE = 50;
@@ -372,7 +373,7 @@ export function PortfolioHealthPanel() {
           )}
         </div>
         {healthDetailLoading ? (
-          <div className="text-xs text-muted-foreground">Loading…</div>
+          <TableSkeleton rows={8} cols={8} />
         ) : (healthDetail?.rows ?? []).length === 0 ? (
           <EmptyState
             icon={Activity}

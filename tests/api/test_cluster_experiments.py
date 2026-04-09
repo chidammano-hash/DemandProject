@@ -285,7 +285,9 @@ async def test_update_experiment_no_fields():
 @pytest.mark.asyncio
 async def test_delete_experiment():
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = ("completed",)
+    # First call: status check returns (status, is_promoted)
+    # Second call: tuning run ref count returns (0,)
+    cursor.fetchone.side_effect = [("completed", False), (0,)]
 
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -302,7 +304,7 @@ async def test_delete_experiment():
 async def test_delete_experiment_running_blocked():
     """Delete should return 409 for running experiments."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = ("running",)
+    cursor.fetchone.return_value = ("running", False)
 
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -317,7 +319,7 @@ async def test_delete_experiment_running_blocked():
 async def test_delete_experiment_queued_blocked():
     """Delete should return 409 for queued experiments."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = ("queued",)
+    cursor.fetchone.return_value = ("queued", False)
 
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -346,7 +348,7 @@ async def test_delete_experiment_not_found():
 async def test_delete_experiment_failed_allowed():
     """Delete should succeed for failed experiments."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = ("failed",)
+    cursor.fetchone.side_effect = [("failed", False), (0,)]
 
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app

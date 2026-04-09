@@ -10,9 +10,11 @@ import {
   Legend,
   CartesianGrid,
 } from "recharts";
+import { GitCompare } from "lucide-react";
 import { useChartColors } from "@/hooks/useChartColors";
 import { useComparison } from "@/api/queries/demand-history";
 import { useDemandHistorySelection } from "../DemandHistoryTab";
+import { Skeleton } from "@/components/Skeleton";
 
 const SERIES_CONFIG = [
   { key: "actual_qty", label: "Actual", color: "#1e293b", dash: undefined },
@@ -80,12 +82,19 @@ export function ComparisonPanel() {
       </div>
 
       {!hasSelection && (
-        <div className="text-center text-gray-400 text-sm py-20">
-          Enter an Item ID and Location, or select from the Workbench panel
+        <div className="flex flex-col items-center py-16 text-gray-400">
+          <GitCompare className="h-12 w-12 mb-3 opacity-30" />
+          <p className="text-sm font-medium">No item selected</p>
+          <p className="text-xs mt-1">Enter an Item ID and Location, or select from the Workbench panel</p>
         </div>
       )}
 
-      {isLoading && <div className="text-center text-gray-500 text-sm py-10">Loading...</div>}
+      {isLoading && (
+        <div className="space-y-3">
+          <Skeleton className="h-6 w-64" />
+          <Skeleton className="h-[420px] rounded-lg" />
+        </div>
+      )}
       {isError && <div className="text-center text-red-500 text-sm py-10">Failed to load data</div>}
 
       {hasSelection && data && (

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -17,15 +18,14 @@ from pydantic import BaseModel
 
 from api.auth import require_api_key
 from api.core import get_conn
-from common.utils import load_forecast_pipeline_config, get_competing_model_ids, reset_config
+from common.ml.champion_strategies import STRATEGY_REGISTRY as _STRAT_REG
+from common.utils import get_competing_model_ids, load_forecast_pipeline_config, reset_config
 
 router = APIRouter(tags=["competition"])
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecast_pipeline_config.yaml"
 _CHAMPION_SUMMARY_PATH = _PROJECT_ROOT / "data" / "champion" / "champion_summary.json"
-
-from common.ml.champion_strategies import STRATEGY_REGISTRY as _STRAT_REG
 
 _VALID_STRATEGIES = set(_STRAT_REG.keys())
 
@@ -140,6 +140,143 @@ def update_competition_config(body: CompetitionConfigUpdate):
     return {"status": "ok", "config": champion}
 
 
+def _insert_pick_winners(
+    winners_df: pd.DataFrame, target_model_id: str, table_suffix: str = "winners",
+) -> int:
+    """Bulk-insert pick-one winner rows into fact_external_forecast_monthly.
+
+    Creates a temp table, COPYs winner mappings, then joins to copy full
+    forecast rows under *target_model_id*.  Returns the number of rows inserted.
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM fact_external_forecast_monthly WHERE model_id = %s",
+            (target_model_id,),
+        )
+        cur.execute(f"""
+            CREATE TEMP TABLE _{table_suffix} (
+                item_id TEXT NOT NULL,
+                customer_group TEXT NOT NULL,
+                loc TEXT NOT NULL,
+                startdate DATE NOT NULL,
+                winning_model_id TEXT NOT NULL
+            ) ON COMMIT DROP
+        """)
+
+        buf = io.StringIO()
+        for _, r in winners_df.iterrows():
+            buf.write(
+                f"{r['item_id']}\t{r['customer_group']}\t{r['loc']}\t"
+                f"{r['startdate'].date()}\t{r['model_id']}\n"
+            )
+        buf.seek(0)
+        with cur.copy(f"COPY _{table_suffix} FROM STDIN") as copy:
+            copy.write(buf.read())
+
+        cur.execute(
+            f"""
+            INSERT INTO fact_external_forecast_monthly
+                (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
+                 lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+            SELECT
+                f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate,
+                f.startdate, f.lag, f.execution_lag, f.basefcst_pref,
+                f.tothist_dmd, %s
+            FROM fact_external_forecast_monthly f
+            INNER JOIN _{table_suffix} w
+                ON f.item_id = w.item_id
+               AND f.customer_group = w.customer_group
+               AND f.loc = w.loc
+               AND f.startdate = w.startdate
+               AND f.model_id = w.winning_model_id
+            """,
+            (target_model_id,),
+        )
+        inserted = cur.rowcount
+        conn.commit()
+    return inserted
+
+
+def _insert_ensemble_winners(
+    winners_df: pd.DataFrame, target_model_id: str, models: list[str],
+) -> int:
+    """Bulk-insert ensemble (blended) winner rows into fact_external_forecast_monthly.
+
+    Copies blended basefcst_pref values while borrowing metadata from any
+    competing model's row for the same DFU-month.  Returns inserted count.
+    """
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM fact_external_forecast_monthly WHERE model_id = %s",
+            (target_model_id,),
+        )
+        cur.execute("""
+            CREATE TEMP TABLE _champion_ensemble (
+                item_id TEXT NOT NULL,
+                customer_group TEXT NOT NULL,
+                loc TEXT NOT NULL,
+                startdate DATE NOT NULL,
+                basefcst_pref DOUBLE PRECISION NOT NULL,
+                tothist_dmd DOUBLE PRECISION NOT NULL
+            ) ON COMMIT DROP
+        """)
+
+        buf = io.StringIO()
+        for _, r in winners_df.iterrows():
+            buf.write(
+                f"{r['item_id']}\t{r['customer_group']}\t{r['loc']}\t"
+                f"{r['startdate'].date()}\t{r['basefcst_pref']}\t"
+                f"{r['tothist_dmd']}\n"
+            )
+        buf.seek(0)
+        with cur.copy("COPY _champion_ensemble FROM STDIN") as copy:
+            copy.write(buf.read())
+
+        placeholders = ",".join(["%s"] * len(models))
+        cur.execute(
+            f"""
+            INSERT INTO fact_external_forecast_monthly
+                (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
+                 lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
+            SELECT DISTINCT ON (e.item_id, e.customer_group, e.loc, e.startdate)
+                f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate,
+                f.startdate, f.lag, f.execution_lag,
+                e.basefcst_pref, e.tothist_dmd,
+                %s
+            FROM _champion_ensemble e
+            INNER JOIN fact_external_forecast_monthly f
+                ON f.item_id = e.item_id
+               AND f.customer_group = e.customer_group
+               AND f.loc = e.loc
+               AND f.startdate = e.startdate
+               AND f.model_id IN ({placeholders})
+            ORDER BY e.item_id, e.customer_group, e.loc, e.startdate, f.model_id
+            """,
+            [target_model_id, *models],
+        )
+        inserted = cur.rowcount
+        conn.commit()
+    return inserted
+
+
+def _count_model_wins(df: pd.DataFrame) -> dict[str, int]:
+    """Count per-model wins from a winners DataFrame, sorted descending."""
+    wins: dict[str, int] = {}
+    for mid in df["model_id"]:
+        wins[mid] = wins.get(mid, 0) + 1
+    return dict(sorted(wins.items(), key=lambda x: -x[1]))
+
+
+def _refresh_forecast_views() -> None:
+    """Refresh materialized views that depend on forecast data."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SET maintenance_work_mem = '512MB'")
+        cur.execute("REFRESH MATERIALIZED VIEW agg_forecast_monthly")
+        cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
+        cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
+        conn.commit()
+
+
 @router.post("/competition/run", dependencies=[Depends(require_api_key)])
 def run_competition():
     """Execute champion model selection using configured strategy.
@@ -148,11 +285,9 @@ def run_competition():
     All strategies enforce strict causality: selection for month T uses only
     data from months < T.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    import yaml
-
-    from common.champion_strategies import (
+    from common.ml.champion_strategies import (
         STRATEGY_REGISTRY,
         compute_ceiling,
         compute_strategy_accuracy,
@@ -175,12 +310,10 @@ def run_competition():
     if strategy_fn is None:
         raise HTTPException(422, f"Unknown strategy: {strategy_name}")
 
-    # Load monthly errors as DataFrame
     monthly_errors = _load_monthly_errors(models, lag_mode)
     if monthly_errors.empty:
         raise HTTPException(404, "No forecast data found for configured models")
 
-    # Run strategy — all strategies enforce strict causality
     strat_kwargs: dict[str, Any] = {
         "min_prior_months": min_rows,
         **strategy_params,
@@ -190,174 +323,30 @@ def run_competition():
     if winners_df.empty:
         raise HTTPException(404, "No qualifying DFUs found with current config")
 
-    is_ensemble = strategy_name == "ensemble"
     champion_acc = compute_strategy_accuracy(winners_df)
 
-    # Bulk insert champion rows
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM fact_external_forecast_monthly WHERE model_id = %s",
-            (champion_id,),
-        )
+    # Insert champion rows (ensemble vs pick-one)
+    if strategy_name == "ensemble":
+        inserted = _insert_ensemble_winners(winners_df, champion_id, models)
+    else:
+        inserted = _insert_pick_winners(winners_df, champion_id, "champion_winners")
 
-        if is_ensemble:
-            # Ensemble: insert blended forecasts directly
-            cur.execute("""
-                CREATE TEMP TABLE _champion_ensemble (
-                    item_id TEXT NOT NULL,
-                    customer_group TEXT NOT NULL,
-                    loc TEXT NOT NULL,
-                    startdate DATE NOT NULL,
-                    basefcst_pref DOUBLE PRECISION NOT NULL,
-                    tothist_dmd DOUBLE PRECISION NOT NULL
-                ) ON COMMIT DROP
-            """)
-
-            buf = io.StringIO()
-            for _, r in winners_df.iterrows():
-                buf.write(
-                    f"{r['item_id']}\t{r['customer_group']}\t{r['loc']}\t"
-                    f"{r['startdate'].date()}\t{r['basefcst_pref']}\t"
-                    f"{r['tothist_dmd']}\n"
-                )
-            buf.seek(0)
-            with cur.copy("COPY _champion_ensemble FROM STDIN") as copy:
-                copy.write(buf.read())
-
-            # For ensemble: copy metadata (forecast_ck, lag, etc.) from any
-            # competing model's row for the same DFU-month, then override
-            # basefcst_pref with the blended value.
-            cur.execute(f"""
-                INSERT INTO fact_external_forecast_monthly
-                    (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
-                     lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
-                SELECT DISTINCT ON (e.item_id, e.customer_group, e.loc, e.startdate)
-                    f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate,
-                    f.startdate, f.lag, f.execution_lag,
-                    e.basefcst_pref, e.tothist_dmd,
-                    %s
-                FROM _champion_ensemble e
-                INNER JOIN fact_external_forecast_monthly f
-                    ON f.item_id = e.item_id
-                   AND f.customer_group = e.customer_group
-                   AND f.loc = e.loc
-                   AND f.startdate = e.startdate
-                   AND f.model_id IN ({",".join(["%s"] * len(models))})
-                ORDER BY e.item_id, e.customer_group, e.loc, e.startdate, f.model_id
-            """, [champion_id] + models)
-        else:
-            # Pick-one: copy winning model's rows per DFU per month
-            cur.execute("""
-                CREATE TEMP TABLE _champion_winners (
-                    item_id TEXT NOT NULL,
-                    customer_group TEXT NOT NULL,
-                    loc TEXT NOT NULL,
-                    startdate DATE NOT NULL,
-                    winning_model_id TEXT NOT NULL
-                ) ON COMMIT DROP
-            """)
-
-            buf = io.StringIO()
-            for _, r in winners_df.iterrows():
-                buf.write(
-                    f"{r['item_id']}\t{r['customer_group']}\t{r['loc']}\t"
-                    f"{r['startdate'].date()}\t{r['model_id']}\n"
-                )
-            buf.seek(0)
-            with cur.copy("COPY _champion_winners FROM STDIN") as copy:
-                copy.write(buf.read())
-
-            cur.execute(
-                """
-                INSERT INTO fact_external_forecast_monthly
-                    (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
-                     lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
-                SELECT
-                    f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate,
-                    f.startdate, f.lag, f.execution_lag, f.basefcst_pref,
-                    f.tothist_dmd, %s
-                FROM fact_external_forecast_monthly f
-                INNER JOIN _champion_winners w
-                    ON f.item_id = w.item_id
-                   AND f.customer_group = w.customer_group
-                   AND f.loc = w.loc
-                   AND f.startdate = w.startdate
-                   AND f.model_id = w.winning_model_id
-                """,
-                (champion_id,),
-            )
-        inserted = cur.rowcount
-        conn.commit()
-
-    # Compute ceiling (oracle)
+    # Compute and insert ceiling (oracle best-per-DFU-month)
     ceiling_id = cfg.get("ceiling_model_id", "ceiling")
     ceiling_df = compute_ceiling(monthly_errors)
     ceiling_acc = compute_strategy_accuracy(ceiling_df)
     ceiling_inserted = 0
-
     if not ceiling_df.empty:
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM fact_external_forecast_monthly WHERE model_id = %s",
-                (ceiling_id,),
-            )
-            cur.execute("""
-                CREATE TEMP TABLE _ceiling_winners (
-                    item_id TEXT NOT NULL,
-                    customer_group TEXT NOT NULL,
-                    loc TEXT NOT NULL,
-                    startdate DATE NOT NULL,
-                    winning_model_id TEXT NOT NULL
-                ) ON COMMIT DROP
-            """)
+        ceiling_inserted = _insert_pick_winners(ceiling_df, ceiling_id, "ceiling_winners")
 
-            buf2 = io.StringIO()
-            for _, r in ceiling_df.iterrows():
-                buf2.write(
-                    f"{r['item_id']}\t{r['customer_group']}\t{r['loc']}\t"
-                    f"{r['startdate'].date()}\t{r['model_id']}\n"
-                )
-            buf2.seek(0)
-            with cur.copy("COPY _ceiling_winners FROM STDIN") as copy:
-                copy.write(buf2.read())
-
-            cur.execute(
-                """
-                INSERT INTO fact_external_forecast_monthly
-                    (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
-                     lag, execution_lag, basefcst_pref, tothist_dmd, model_id)
-                SELECT
-                    f.forecast_ck, f.item_id, f.customer_group, f.loc, f.fcstdate,
-                    f.startdate, f.lag, f.execution_lag, f.basefcst_pref,
-                    f.tothist_dmd, %s
-                FROM fact_external_forecast_monthly f
-                INNER JOIN _ceiling_winners w
-                    ON f.item_id = w.item_id
-                   AND f.customer_group = w.customer_group
-                   AND f.loc = w.loc
-                   AND f.startdate = w.startdate
-                   AND f.model_id = w.winning_model_id
-                """,
-                (ceiling_id,),
-            )
-            ceiling_inserted = cur.rowcount
-            conn.commit()
-
-    # Refresh materialized views
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SET maintenance_work_mem = '512MB'")
-        cur.execute("REFRESH MATERIALIZED VIEW agg_forecast_monthly")
-        cur.execute("REFRESH MATERIALIZED VIEW agg_accuracy_by_dim")
-        cur.execute("REFRESH MATERIALIZED VIEW agg_dfu_coverage")
-        conn.commit()
+    _refresh_forecast_views()
 
     # Build summary
-    model_wins: dict[str, int] = {}
-    for mid in winners_df["model_id"]:
-        model_wins[mid] = model_wins.get(mid, 0) + 1
-
-    n_unique_dfus = winners_df[["item_id", "customer_group", "loc"]].drop_duplicates().shape[0]
-
+    n_unique_dfus = (
+        winners_df[["item_id", "customer_group", "loc"]]
+        .drop_duplicates()
+        .shape[0]
+    )
 
     summary: dict[str, Any] = {
         "config": {
@@ -371,24 +360,18 @@ def run_competition():
         "total_dfus": n_unique_dfus,
         "total_dfu_months": len(winners_df),
         "total_champion_rows": inserted,
-        "model_wins": dict(sorted(model_wins.items(), key=lambda x: -x[1])),
+        "model_wins": _count_model_wins(winners_df),
         "overall_champion_wape": champion_acc.get("wape"),
         "overall_champion_accuracy_pct": champion_acc.get("accuracy_pct"),
-        "run_ts": datetime.now(timezone.utc).isoformat(),
+        "run_ts": datetime.now(UTC).isoformat(),
     }
 
-    # Ceiling metrics
     if not ceiling_df.empty:
-        ceil_wins: dict[str, int] = {}
-        for mid in ceiling_df["model_id"]:
-            ceil_wins[mid] = ceil_wins.get(mid, 0) + 1
-
         summary["total_ceiling_rows"] = ceiling_inserted
-        summary["ceiling_model_wins"] = dict(sorted(ceil_wins.items(), key=lambda x: -x[1]))
+        summary["ceiling_model_wins"] = _count_model_wins(ceiling_df)
         summary["overall_ceiling_wape"] = ceiling_acc.get("wape")
         summary["overall_ceiling_accuracy_pct"] = ceiling_acc.get("accuracy_pct")
 
-    # Save summary to disk
     _CHAMPION_SUMMARY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _CHAMPION_SUMMARY_PATH.open("w") as f:
         json.dump(summary, f, indent=2, default=str)

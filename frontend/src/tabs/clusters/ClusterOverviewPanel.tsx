@@ -291,7 +291,7 @@ export default function ClusterOverviewPanel({ onDomainChange: _onDomainChange }
             </div>
 
             <p className="mt-3 text-xs text-muted-foreground">
-              Uses default parameters from <code className="text-[10px] bg-muted rounded px-0.5">clustering_config.yaml</code>.
+              Uses parameters from the promoted cluster experiment (or system defaults).
               Use What-If Scenarios below to experiment with custom parameters first.
             </p>
 

@@ -10,7 +10,7 @@
 
 ---
 
-**Depends on:** Spec 11 (Unified Model Tuning), Spec 12 (Dual Promotion), Spec 04-cluster-experimentation-studio, Spec 05-champion-experimentation-studio
+**Depends on:** Spec 11 (Unified Model Tuning), Spec 12 (Dual Promotion), Spec 01-sku-clustering (Experimentation Studio), Spec 05-champion-experimentation-studio
 
 ---
 
@@ -85,7 +85,7 @@ After any production pipeline run completes, the system **automatically register
 - `cluster_profiles.json` — cluster demand profiles
 - `cluster_assignments.csv` — the promoted label mapping
 
-**Source config** (`config/clustering_config.yaml`):
+**Source config** (`cluster_experiment` table (promoted row)):
 - `time_window_months`, `min_months_history`, `k_range`, `min_cluster_size_pct`, feature flags
 
 **Target tables:**
@@ -162,7 +162,7 @@ def seed_champion_baseline() -> None:
 def seed_clustering_baseline() -> None:
     meta = json.loads(Path("data/clustering/cluster_metadata.json").read_text())
     profiles = json.loads(Path("data/clustering/cluster_profiles.json").read_text())
-    config = load_config("clustering_config")
+    config = # params from promoted cluster_experiment row
 
     # 1. Upsert cluster_experiment row with is_promoted=TRUE
     # 2. Store feature_params, model_params, label_params from config
@@ -246,7 +246,7 @@ clustering:
   metadata_path: "data/clustering/cluster_metadata.json"
   profiles_path: "data/clustering/cluster_profiles.json"
   assignments_path: "data/clustering/cluster_assignments.csv"
-  config_source: "clustering_config"
+  config_source: "cluster_experiment"
 ```
 
 ---

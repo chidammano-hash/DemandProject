@@ -16,6 +16,7 @@ import { insightKeys, fetchRootCause } from "@/api/queries/inv-planning-insights
 
 import { formatFixed } from "@/lib/formatters";
 import { EmptyState } from "@/components/EmptyState";
+import { TableSkeleton } from "@/components/Skeleton";
 import { AlertTriangle } from "lucide-react";
 
 function AiTag() {

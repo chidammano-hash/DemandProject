@@ -231,7 +231,7 @@ The `clustering` section is the master switch for the clustering pipeline. When 
 ```yaml
 clustering:
   enabled: true
-  config_ref: clustering_config.yaml
+  config_ref: cluster_experiment table
   tuning_profiles_ref: cluster_tuning_profiles.yaml
   experiment_templates_ref: cluster_experiment_templates.yaml
   steps:
@@ -301,7 +301,7 @@ pipeline:
 | `stages` | Ordered list of main pipeline stages. Each stage depends on the previous one completing. |
 | `auxiliary` | Stages that run independently and feed into backtest feature engineering. |
 
-Execution flow: `clustering` -> `backtest` -> `load` -> `champion` -> `forecast`. The `seasonality` and `variability` auxiliary stages can run in parallel with clustering and are consumed during the backtest stage.
+Execution flow: `clustering` -> `backtest` -> `load` -> `champion` -> `forecast`. The `seasonality` and `variability` auxiliary stages (see [SKU Feature Engineering](../01-foundation/02-sku-feature-engineering.md)) can run in parallel with clustering and are consumed during the backtest stage.
 
 ---
 
@@ -392,7 +392,7 @@ All legacy config files have been deleted. The master `forecast_pipeline_config.
 - [Champion Selection](./07-champion-selection.md) -- champion strategy governed by `champion` section
 - [Production Forecast](./08-production-forecast.md) -- inference settings governed by `production_forecast` section
 - [LGBM Tuning](./10b-lgbm-tuning.md) -- tracking settings governed by `tracking` section
-- `config/clustering_config.yaml` -- detailed clustering hyperparameters, referenced by `clustering.config_ref`
+- `cluster_experiment` table (promoted row) -- detailed clustering hyperparameters, referenced by `clustering.config_ref`
 - `config/cluster_tuning_profiles.yaml` -- cluster tuning profiles, referenced by `clustering.tuning_profiles_ref`
 - `config/cluster_experiment_templates.yaml` -- experiment templates, referenced by `clustering.experiment_templates_ref`
 

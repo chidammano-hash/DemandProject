@@ -6,7 +6,11 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Settings2, Save, RotateCcw, Search, Info, ChevronRight, Check, AlertTriangle } from "lucide-react";
+import {
+  Settings2, Save, RotateCcw, Search, ChevronRight, Check, AlertTriangle,
+  BarChart3, Package, Truck, Database, CalendarClock, Server,
+  Layers, Sliders, ToggleRight, X,
+} from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,7 +29,7 @@ import {
 } from "@/api/queries/config";
 
 // ---------------------------------------------------------------------------
-// Category icon colors
+// Category icon colors + icons
 // ---------------------------------------------------------------------------
 const CATEGORY_COLORS: Record<string, string> = {
   forecasting: "text-blue-500",
@@ -34,6 +38,27 @@ const CATEGORY_COLORS: Record<string, string> = {
   pipeline: "text-purple-500",
   planning: "text-cyan-500",
   system: "text-rose-500",
+};
+
+const CATEGORY_ICONS: Record<string, React.FC<{ className?: string }>> = {
+  forecasting: BarChart3,
+  inventory: Package,
+  operations: Truck,
+  pipeline: Database,
+  planning: CalendarClock,
+  system: Server,
+};
+
+const GROUP_ICONS: Record<string, React.FC<{ className?: string }>> = {
+  _general: Sliders,
+  hyperparameters: Sliders,
+  models: ToggleRight,
+  active_models: ToggleRight,
+  algorithms: Layers,
+  thresholds: BarChart3,
+  scoring: BarChart3,
+  schedule: CalendarClock,
+  connection: Database,
 };
 
 // ---------------------------------------------------------------------------
@@ -193,7 +218,7 @@ function ModelToggleGrid({
   onChange: (path: string, value: unknown) => void;
 }) {
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
       {fields.map((f) => {
         const isOn = !!editValues[f.path];
         const modelType = (f as unknown as Record<string, unknown>).model_type as string | undefined;
@@ -203,27 +228,40 @@ function ModelToggleGrid({
             type="button"
             onClick={() => onChange(f.path, !isOn)}
             className={cn(
-              "flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-all",
+              "group relative flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-all duration-200",
               isOn
-                ? "border-primary/30 bg-primary/5 shadow-sm"
-                : "border-border/50 bg-muted/30 opacity-60",
+                ? "border-primary/40 bg-primary/5 shadow-sm ring-1 ring-primary/20"
+                : "border-border/50 bg-muted/20 opacity-60 hover:opacity-80 hover:bg-muted/40",
             )}
           >
+            {/* Toggle indicator */}
             <div className={cn(
-              "h-2.5 w-2.5 rounded-full shrink-0 transition-colors",
-              isOn ? "bg-primary" : "bg-muted-foreground/30",
-            )} />
+              "relative h-5 w-9 shrink-0 rounded-full transition-colors duration-200",
+              isOn ? "bg-primary" : "bg-muted-foreground/20",
+            )}>
+              <div className={cn(
+                "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200",
+                isOn ? "translate-x-4" : "translate-x-0.5",
+              )} />
+            </div>
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium truncate">{f.label}</div>
+              <div className={cn(
+                "text-sm font-medium truncate transition-colors",
+                isOn ? "text-foreground" : "text-muted-foreground",
+              )}>{f.label}</div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 {modelType && (
-                  <span className={cn("rounded px-1 py-px text-[9px] font-medium", MODEL_TYPE_BADGE[modelType] || "")}>
+                  <span className={cn("rounded px-1.5 py-px text-[9px] font-semibold", MODEL_TYPE_BADGE[modelType] || "")}>
                     {modelType === "deep_learning" ? "DL" : modelType}
                   </span>
                 )}
                 <span className="text-[10px] text-muted-foreground truncate">{f.description}</span>
               </div>
             </div>
+            {/* Active indicator dot */}
+            {isOn && (
+              <div className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
+            )}
           </button>
         );
       })}
@@ -250,6 +288,31 @@ function formatGroupLabel(key: string): string {
   return key
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function GroupIcon({ groupKey }: { groupKey: string }) {
+  const Icon = GROUP_ICONS[groupKey] ?? Sliders;
+  return <Icon className="h-3.5 w-3.5 text-muted-foreground" />;
+}
+
+// ---------------------------------------------------------------------------
+// Search highlight helper
+// ---------------------------------------------------------------------------
+function HighlightText({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
+  const parts = text.split(regex);
+  return (
+    <>
+      {parts.map((part, i) =>
+        regex.test(part) ? (
+          <mark key={i} className="bg-yellow-200 dark:bg-yellow-800/60 rounded px-0.5">{part}</mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -393,33 +456,44 @@ export function SettingsTab() {
             placeholder="Search configs..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-8 rounded-md border border-input bg-background pl-8 pr-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring w-56"
+            className="h-8 rounded-md border border-input bg-background pl-8 pr-8 text-sm focus:outline-none focus:ring-1 focus:ring-ring w-56"
           />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Clear search"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-[200px_240px_1fr] gap-4 min-h-[calc(100vh-12rem)]">
+      <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] lg:grid-cols-[200px_240px_1fr] gap-4 min-h-[calc(100vh-12rem)]">
         {/* Column 1: Categories */}
         <Card className="h-fit">
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Categories</CardTitle>
           </CardHeader>
-          <CardContent className="p-1">
+          <CardContent className="p-1.5">
             {categories.map((cat) => {
               const count = configs.filter((c) => c.category === cat.key).length;
+              const CatIcon = CATEGORY_ICONS[cat.key] ?? Settings2;
               return (
                 <button
                   key={cat.key}
                   onClick={() => { setSelectedCategory(cat.key); setSearchQuery(""); }}
                   className={cn(
-                    "flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors",
+                    "flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
                     selectedCategory === cat.key && !searchQuery
                       ? "bg-primary/10 font-medium text-primary"
                       : "text-foreground hover:bg-muted",
                   )}
                 >
-                  <span className={cn("truncate", CATEGORY_COLORS[cat.key])}>{cat.label}</span>
-                  <span className="text-[10px] text-muted-foreground">{count}</span>
+                  <CatIcon className={cn("h-4 w-4 shrink-0", CATEGORY_COLORS[cat.key])} />
+                  <span className="flex-1 truncate text-left">{cat.label}</span>
+                  <span className="text-[10px] text-muted-foreground tabular-nums">{count}</span>
                 </button>
               );
             })}
@@ -449,8 +523,12 @@ export function SettingsTab() {
                 )}
               >
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm truncate">{cfg.label}</div>
-                  <div className="text-[10px] text-muted-foreground truncate">{cfg.description.slice(0, 60)}...</div>
+                  <div className="text-sm truncate">
+                    <HighlightText text={cfg.label} query={searchQuery} />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground truncate">
+                    <HighlightText text={cfg.description.slice(0, 60) + "..."} query={searchQuery} />
+                  </div>
                 </div>
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               </button>
@@ -521,15 +599,18 @@ export function SettingsTab() {
                   return (
                     <div key={group} className="mb-5">
                       {fieldGroups.size > 1 && (
-                        <div className="sticky top-[76px] z-[5] bg-card px-3 py-2 border-b border-border/30">
-                          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            {formatGroupLabel(group)}
-                          </span>
-                          {isModelToggleGroup && (
-                            <span className="ml-2 text-[10px] text-muted-foreground/60">
-                              {fields.filter((f) => !!editValues[f.path]).length} of {fields.length} active
+                        <div className="sticky top-[76px] z-[5] bg-card px-3 py-2.5 border-b border-border/30">
+                          <div className="flex items-center gap-2">
+                            <GroupIcon groupKey={group} />
+                            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              {formatGroupLabel(group)}
                             </span>
-                          )}
+                            {isModelToggleGroup && (
+                              <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                                {fields.filter((f) => !!editValues[f.path]).length}/{fields.length} active
+                              </span>
+                            )}
+                          </div>
                         </div>
                       )}
                       {isModelToggleGroup ? (

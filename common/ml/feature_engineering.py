@@ -73,9 +73,7 @@ def _recompute_derived_features(df: pd.DataFrame) -> None:
     if "croston_demand_size" in df.columns:
         _compute_croston_features(df)
 
-    # Recompute cross-DFU cluster aggregates if they were previously computed
-    if "cluster_mean_lag1" in df.columns and "ml_cluster" in df.columns:
-        _compute_cross_dfu_features(df)
+    # Cross-DFU cluster aggregates removed (ml_cluster leakage — see KNOWN_GAPS.md)
 
 
 def _compute_rolling_numpy(qty_2d: np.ndarray, windows: list[int]) -> dict[str, np.ndarray]:
@@ -250,6 +248,29 @@ def _compute_ts_profile_features(
             profiles["yoy_correlation"].append(corr if np.isfinite(corr) else 0.0)
         else:
             profiles["yoy_correlation"].append(0.0)
+
+        # Periodicity: dominant cycle length via autocorrelation
+        # Finds the lag (2-12 months) with the highest autocorrelation,
+        # indicating the strongest repeating pattern. Value is the lag in
+        # months (e.g., 12 = annual, 6 = semi-annual, 3 = quarterly).
+        # Returns 0 if no significant periodicity or insufficient data.
+        if n >= 6:
+            centered = vals - mean_d
+            var = float(np.dot(centered, centered))
+            if var > 0:
+                max_corr = 0.0
+                best_lag = 0
+                for lag in range(2, min(13, n)):
+                    ac = float(np.dot(centered[:-lag], centered[lag:])) / var
+                    if ac > max_corr:
+                        max_corr = ac
+                        best_lag = lag
+                # Only report if autocorrelation is meaningful (> 0.2)
+                profiles["periodicity"].append(float(best_lag) if max_corr > 0.2 else 0.0)
+            else:
+                profiles["periodicity"].append(0.0)
+        else:
+            profiles["periodicity"].append(0.0)
 
     result = pd.DataFrame({"sku_ck": sku_cks, **profiles})
     return result
@@ -596,9 +617,9 @@ def build_feature_matrix(
             grid[col] = grid[col].fillna(0).astype(np.float32)
     logger.info("TS profile features done (%.1fs)", time.time() - t1)
 
-    # DFU attributes (must be merged BEFORE cross-DFU features which need ml_cluster)
+    # DFU attributes
     t1 = time.time()
-    dfu_feat_cols = ["sku_ck"] + CAT_FEATURES + NUMERIC_SKU_FEATURES
+    dfu_feat_cols = ["sku_ck", "ml_cluster"] + CAT_FEATURES + NUMERIC_SKU_FEATURES
     dfu_feat_cols = [c for c in dfu_feat_cols if c in dfu_attrs.columns]
     grid = grid.merge(dfu_attrs[dfu_feat_cols], on="sku_ck", how="left")
 
@@ -606,11 +627,6 @@ def build_feature_matrix(
     if len(item_attrs) > 0:
         grid = grid.merge(item_attrs, on="item_id", how="left")
     logger.info("Attributes joined (%.1fs)", time.time() - t1)
-
-    # Cross-DFU cluster aggregates (requires ml_cluster from DFU attrs)
-    t1 = time.time()
-    _compute_cross_dfu_features(grid)
-    logger.debug("Cross-DFU cluster features done (%.1fs)", time.time() - t1)
 
     # Customer-derived features (optional — enriched models only)
     if customer_features is not None and len(customer_features) > 0:
@@ -649,7 +665,7 @@ def get_feature_columns(grid: pd.DataFrame) -> list[str]:
 
 
 def mask_future_sales(grid: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame:
-    """Set future qty to 0 and recompute lag/rolling features for rows after cutoff.
+    """Set future qty to NaN and recompute lag/rolling features for rows after cutoff.
 
     Instead of rebuilding the whole grid, we mask the qty column and
     recompute only the affected features. This is much faster than
@@ -672,8 +688,11 @@ def mask_future_sales(grid: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame:
 
     df = grid.copy()
 
-    # Mask future sales with zero
-    df.loc[future_mask, "qty"] = 0
+    # Mask future sales with NaN — not zero — so that rolling statistics
+    # (which skip NaN via min_periods=1) are computed only from real history.
+    # Zero would make the model believe demand was 0 in future months,
+    # dragging down rolling means and corrupting Croston intermittency signals.
+    df.loc[future_mask, "qty"] = np.nan
 
     # Recompute lags, rolling, and derived features on the masked data
     _compute_lags_and_rolling(df)
@@ -736,6 +755,7 @@ def update_grid_incremental(
     month: pd.Timestamp,
     predictions: pd.DataFrame,
     sorted_months: list[pd.Timestamp],
+    smooth_factor: float = 0.0,
 ) -> None:
     """Write predictions for one month and incrementally update only affected features.
 
@@ -744,6 +764,17 @@ def update_grid_incremental(
     1. Writes predictions into the qty column at ``month``
     2. Updates lag columns only for the next 12 months (affected rows)
     3. Updates rolling stats only for the next max_window months
+
+    When ``smooth_factor`` > 0, the lag-1 value written for the next month is
+    blended between the raw prediction and the previous lag-1 value at the
+    predicted month.  This dampens recursive error propagation by anchoring
+    lag features partially to the prior value rather than trusting the raw
+    prediction entirely::
+
+        smoothed_lag1 = pred * (1 - smooth_factor) + old_lag1 * smooth_factor
+
+    A typical value of 0.15 means 85% prediction / 15% prior lag.  Set to 0
+    (default) to disable smoothing for full backward compatibility.
 
     Mutates ``grid`` in-place. Only valid when grid is a uniform cross-product
     sorted by (sku_ck, startdate).
@@ -783,8 +814,22 @@ def update_grid_incremental(
             break
         target_month = sorted_months[target_pos]
         target_mask = grid["startdate"] == target_month
-        # lag_n at target = qty at target - lag_n = qty at month_pos
-        grid.loc[target_mask, f"qty_lag_{lag_n}"] = qty_2d[:, month_pos].astype(np.float32)
+        new_lag = qty_2d[:, month_pos].astype(np.float32)
+
+        # Smooth lag-1 to reduce recursive error propagation.
+        # Blend the prediction-derived lag with the previous lag-1 value so
+        # that downstream recursive steps don't compound raw prediction errors.
+        if lag_n == 1 and smooth_factor > 0:
+            col = "qty_lag_1"
+            old_lag = grid.loc[target_mask, col].values
+            # Only smooth where the old lag is finite (non-NaN); fresh rows keep
+            # the raw prediction value.
+            finite_mask = np.isfinite(old_lag)
+            if finite_mask.any():
+                smoothed = new_lag * (1 - smooth_factor) + old_lag * smooth_factor
+                new_lag = np.where(finite_mask, smoothed, new_lag)
+
+        grid.loc[target_mask, f"qty_lag_{lag_n}"] = new_lag
 
     # Update rolling stats for affected months
     # After changing qty at month_pos, shifted[month_pos+1] changes.
@@ -839,9 +884,28 @@ def update_grid_incremental(
         grid.loc[affected_mask, "demand_accel"] = sub["rolling_mean_3m"] - sub["rolling_mean_6m"]
         grid.loc[affected_mask, "volatility_ratio"] = sub["rolling_std_3m"] / (sub["rolling_mean_3m"].abs() + 1.0)
 
+        # Lag ratio features — must be recomputed along with other derived features
+        # to avoid stale values during recursive inference.
+        grid.loc[affected_mask, "lag_ratio_yoy"] = (
+            sub["qty_lag_1"] / (sub["qty_lag_12"].abs() + 1.0)
+        ).clip(-10.0, 10.0) if "qty_lag_12" in grid.columns else 0.0
+        grid.loc[affected_mask, "lag_ratio_mom"] = (
+            sub["qty_lag_1"] / (sub["qty_lag_2"].abs() + 1.0)
+        ).clip(-10.0, 10.0)
+        grid.loc[affected_mask, "lag_ratio_3v12"] = (
+            sub["rolling_mean_3m"] / (sub["rolling_mean_12m"].abs() + 1.0)
+        ).clip(-10.0, 10.0)
+
+        # Zero-demand count in recent 6 months
+        lag_cols_6m = [f"qty_lag_{i}" for i in range(1, 7)]
+        existing_lag_cols = [c for c in lag_cols_6m if c in grid.columns]
+        if existing_lag_cols and "n_zero_last_6m" in grid.columns:
+            grid.loc[affected_mask, "n_zero_last_6m"] = (
+                (sub[existing_lag_cols] == 0).sum(axis=1).astype(np.float32)
+            )
+
     # Recompute Croston and cross-DFU cluster features (full grid, not incremental —
     # these depend on rolling windows across all DFUs so partial update is unsafe)
     if "croston_demand_size" in grid.columns:
         _compute_croston_features(grid)
-    if "cluster_mean_lag1" in grid.columns and "ml_cluster" in grid.columns:
-        _compute_cross_dfu_features(grid)
+    # Cross-DFU cluster aggregates removed (ml_cluster leakage — see KNOWN_GAPS.md)

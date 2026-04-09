@@ -34,6 +34,7 @@ import {
 import type { AiInsight, InsightStatus } from "@/types/ai-planner";
 import type { StoryboardException } from "@/types/storyboard";
 import { Skeleton } from "@/components/Skeleton";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/formatters";
 import { navigateToItem } from "@/lib/navigation";
@@ -49,6 +50,7 @@ import {
   ExternalLink,
   Loader2,
   CheckCircle2,
+  Activity,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -288,20 +290,38 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h2 className="text-xl font-semibold">Command Center</h2>
-        <p className="text-sm text-muted-foreground max-w-3xl">
-          Unified morning triage: portfolio health KPIs, AI-generated insights,
-          and rule-based exceptions in a single view. Prioritized by severity
-          and financial impact.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-primary" />
+            <h2 className="text-xl font-semibold">Command Center</h2>
+          </div>
+          <p className="text-sm text-muted-foreground max-w-3xl mt-1">
+            Unified morning triage: portfolio health KPIs, AI-generated insights,
+            and rule-based exceptions in a single view. Prioritized by severity
+            and financial impact.
+          </p>
+        </div>
+        {(aiQ.isFetching || sbQ.isFetching || kpisQ.isFetching) && (
+          <Badge variant="outline" className="gap-1.5 text-muted-foreground animate-pulse">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Syncing
+          </Badge>
+        )}
       </div>
 
       {/* Section 1: KPI Summary Bar */}
       {isLoading && !kpisQ.data ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="kpi-skeletons">
           {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-20 rounded-lg" />
+            <div key={i} className="rounded-lg border bg-card p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-4 w-4 rounded" />
+                <Skeleton className="h-3 w-20" />
+              </div>
+              <Skeleton className="h-8 w-24" />
+              <Skeleton className="h-2 w-16" />
+            </div>
           ))}
         </div>
       ) : (
@@ -323,6 +343,7 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
                     ? "amber"
                     : "red"
             }
+            progress={h?.avg_health_score != null ? h.avg_health_score / 100 : undefined}
           />
           <KpiSummaryCard
             icon={AlertTriangle}
@@ -352,6 +373,7 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
                     ? "amber"
                     : "red"
             }
+            progress={fr?.portfolio_fill_rate_3m ?? undefined}
           />
           <KpiSummaryCard
             icon={DollarSign}
@@ -429,7 +451,19 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
         {aiQ.isLoading && sbQ.isLoading ? (
           <div className="space-y-3" data-testid="feed-skeletons">
             {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-28 rounded-lg" />
+              <div key={i} className="rounded-lg border border-l-4 bg-card p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-2.5 w-2.5 rounded-full" />
+                  <Skeleton className="h-4 w-12 rounded-full" />
+                  <Skeleton className="h-3 w-24" />
+                </div>
+                <Skeleton className="h-3 w-40" />
+                <Skeleton className="h-4 w-full max-w-md" />
+                <div className="flex gap-3">
+                  <Skeleton className="h-3 w-16" />
+                  <Skeleton className="h-3 w-20" />
+                </div>
+              </div>
             ))}
           </div>
         ) : unified.length === 0 ? (
@@ -467,13 +501,16 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
       </div>
 
       {/* Section 3: Trend Chart (collapsible) */}
-      <div className="rounded-lg border bg-card">
+      <div className="rounded-lg border bg-card shadow-sm">
         <button
           onClick={() => setShowTrend((v) => !v)}
-          className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold hover:bg-muted/50 transition-colors"
+          className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold hover:bg-muted/50 transition-colors rounded-t-lg"
           data-testid="trend-toggle"
         >
-          <span>Portfolio Trend (6M)</span>
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            <span>Portfolio Trend (6M)</span>
+          </div>
           {showTrend ? (
             <ChevronUp className="h-4 w-4" />
           ) : (
@@ -481,8 +518,12 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
           )}
         </button>
         {showTrend && (
-          <div className="px-4 pb-4">
-            {trendQ.data?.trend && trendQ.data.trend.length > 0 ? (
+          <div className="px-4 pb-4 border-t">
+            {trendQ.isLoading ? (
+              <div className="space-y-3 pt-4" data-testid="trend-skeleton">
+                <Skeleton className="h-[200px] w-full rounded-md" />
+              </div>
+            ) : trendQ.data?.trend && trendQ.data.trend.length > 0 ? (
               <ResponsiveContainer width="100%" height={200}>
                 <LineChart data={trendQ.data.trend}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -522,7 +563,7 @@ export default function CommandCenterTab({ onNavigate }: CommandCenterTabProps) 
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              <p className="text-xs text-muted-foreground py-4">
+              <p className="text-xs text-muted-foreground py-6 text-center">
                 No trend data available.
               </p>
             )}
@@ -542,12 +583,14 @@ function KpiSummaryCard({
   value,
   badge,
   color,
+  progress,
 }: {
   icon: React.FC<{ className?: string }>;
   label: string;
   value: string;
   badge?: string;
   color?: "green" | "amber" | "red";
+  progress?: number;
 }) {
   const borderColor =
     color === "green"
@@ -560,27 +603,58 @@ function KpiSummaryCard({
 
   const textColor =
     color === "green"
-      ? "text-green-600"
+      ? "text-green-600 dark:text-green-400"
       : color === "amber"
-        ? "text-amber-600"
+        ? "text-amber-600 dark:text-amber-400"
         : color === "red"
-          ? "text-red-600"
+          ? "text-red-600 dark:text-red-400"
           : "";
+
+  const iconBg =
+    color === "green"
+      ? "bg-green-100 dark:bg-green-900/30"
+      : color === "amber"
+        ? "bg-amber-100 dark:bg-amber-900/30"
+        : color === "red"
+          ? "bg-red-100 dark:bg-red-900/30"
+          : "bg-muted";
+
+  const progressBg =
+    color === "green"
+      ? "bg-green-500"
+      : color === "amber"
+        ? "bg-amber-500"
+        : color === "red"
+          ? "bg-red-500"
+          : "bg-primary";
 
   return (
     <div
       className={cn(
-        "rounded-lg border border-l-4 bg-card p-3 shadow-sm",
+        "rounded-lg border border-l-4 bg-card p-4 shadow-sm transition-shadow hover:shadow-md",
         borderColor
       )}
     >
-      <div className="flex items-center gap-1.5">
-        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-        <p className="text-xs text-muted-foreground">{label}</p>
+      <div className="flex items-center gap-2 mb-2">
+        <div className={cn("rounded-md p-1.5", iconBg)}>
+          <Icon className={cn("h-3.5 w-3.5", textColor || "text-muted-foreground")} />
+        </div>
+        <p className="text-xs font-medium text-muted-foreground">{label}</p>
       </div>
-      <p className={cn("text-2xl font-bold", textColor)}>{value}</p>
+      <p className={cn("text-2xl font-bold tracking-tight", textColor)}>{value}</p>
       {badge && (
-        <span className="text-[10px] font-medium text-red-600">{badge}</span>
+        <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold text-red-600 dark:text-red-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+          {badge}
+        </span>
+      )}
+      {progress != null && (
+        <div className="mt-2 h-1.5 w-full rounded-full bg-muted overflow-hidden">
+          <div
+            className={cn("h-full rounded-full transition-all duration-500", progressBg)}
+            style={{ width: `${Math.min(progress * 100, 100)}%` }}
+          />
+        </div>
       )}
     </div>
   );
@@ -603,60 +677,76 @@ function ExceptionFeedCard({
   const sourceBadge = SOURCE_BADGE[item.source];
   const SourceIcon = item.source === "ai" ? Brain : BookOpen;
 
+  const severityBgColor: Record<string, string> = {
+    critical: "bg-red-50 dark:bg-red-950/20",
+    high: "bg-orange-50 dark:bg-orange-950/20",
+    medium: "bg-yellow-50/50 dark:bg-yellow-950/10",
+    low: "",
+  };
+
   return (
     <div
       className={cn(
-        "rounded-lg border border-l-4 bg-card p-3 shadow-sm transition-shadow hover:shadow-md",
-        SEVERITY_BORDER[item.severity] ?? "border-l-gray-400"
+        "rounded-lg border border-l-4 bg-card p-4 shadow-sm transition-all hover:shadow-md",
+        SEVERITY_BORDER[item.severity] ?? "border-l-gray-400",
+        severityBgColor[item.severity] ?? ""
       )}
       data-testid="exception-card"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0 space-y-1.5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0 space-y-2">
           {/* Top row: severity dot + source badge + type label */}
           <div className="flex items-center gap-2 flex-wrap">
             <span
               className={cn(
-                "h-2 w-2 rounded-full flex-shrink-0",
-                SEVERITY_DOT[item.severity]
+                "h-2.5 w-2.5 rounded-full flex-shrink-0 ring-2 ring-offset-1 ring-offset-card",
+                SEVERITY_DOT[item.severity],
+                item.severity === "critical" ? "ring-red-200 dark:ring-red-800" : "ring-transparent"
               )}
             />
             <span
               className={cn(
-                "text-[10px] font-semibold px-1.5 py-0.5 rounded-full",
+                "text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1",
                 sourceBadge.className
               )}
             >
-              <SourceIcon className="inline h-2.5 w-2.5 mr-0.5 -mt-px" />
+              <SourceIcon className="h-2.5 w-2.5" />
               {sourceBadge.label}
             </span>
-            <span className="text-xs text-muted-foreground font-medium">
+            <span className="text-xs font-medium text-foreground/70 bg-muted px-2 py-0.5 rounded">
               {item.typeLabel}
             </span>
-            <span className="text-xs text-muted-foreground capitalize">
+            <span className={cn(
+              "text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded",
+              item.severity === "critical" ? "text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-900/40" :
+              item.severity === "high" ? "text-orange-700 dark:text-orange-300 bg-orange-100 dark:bg-orange-900/40" :
+              item.severity === "medium" ? "text-yellow-700 dark:text-yellow-300 bg-yellow-100 dark:bg-yellow-900/40" :
+              "text-muted-foreground"
+            )}>
               {item.severity}
             </span>
           </div>
 
           {/* Item/Location identity */}
-          <p className="text-xs font-mono font-bold">
+          <p className="text-xs font-mono font-bold tracking-wide">
             {item.itemNo} @ {item.location}
           </p>
 
           {/* Summary */}
-          <p className="text-sm leading-snug">{item.summary}</p>
+          <p className="text-sm leading-relaxed">{item.summary}</p>
 
           {/* Recommendation */}
           {item.recommendation && (
-            <p className="text-xs text-muted-foreground italic leading-snug">
-              {item.recommendation}
-            </p>
+            <div className="flex items-start gap-1.5 text-xs text-muted-foreground bg-muted/50 rounded-md px-2.5 py-1.5">
+              <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0 text-primary/60" />
+              <span className="leading-snug">{item.recommendation}</span>
+            </div>
           )}
 
           {/* Financial impact + timestamp */}
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap pt-0.5">
             {item.financialImpact != null && item.financialImpact > 0 && (
-              <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded">
                 <DollarSign className="h-3 w-3" />
                 {formatCurrency(item.financialImpact)}
               </span>
@@ -668,23 +758,26 @@ function ExceptionFeedCard({
         </div>
 
         {/* Action buttons */}
-        <div className="flex flex-col gap-1.5 flex-shrink-0">
+        <div className="flex flex-col gap-2 flex-shrink-0 pt-0.5">
           {item.source === "ai" && item.status === "open" && (
             <button
               onClick={() => onAccept(item)}
               disabled={acceptPending}
-              className="inline-flex items-center gap-1 text-xs font-medium rounded-md border px-2.5 py-1 hover:bg-green-50 hover:border-green-300 hover:text-green-800 dark:hover:bg-green-900/30 dark:hover:border-green-700 dark:hover:text-green-300 transition-colors disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-1 text-xs font-medium rounded-md border px-3 py-1.5 bg-green-50 border-green-200 text-green-700 hover:bg-green-100 hover:border-green-300 dark:bg-green-900/20 dark:border-green-800 dark:text-green-300 dark:hover:bg-green-900/40 transition-colors disabled:opacity-50"
             >
               {acceptPending ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
-                "Accept"
+                <>
+                  <CheckCircle2 className="h-3 w-3" />
+                  Accept
+                </>
               )}
             </button>
           )}
           <button
             onClick={onViewItem}
-            className="inline-flex items-center gap-1 text-xs font-medium rounded-md border px-2.5 py-1 hover:bg-muted transition-colors"
+            className="inline-flex items-center justify-center gap-1 text-xs font-medium rounded-md border px-3 py-1.5 hover:bg-muted transition-colors"
           >
             View Item
             <ExternalLink className="h-3 w-3" />

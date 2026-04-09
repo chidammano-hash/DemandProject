@@ -137,16 +137,18 @@ export function PipelineBuilderPanel({ jobTypes, activeJobs, onSubmit, isSubmitt
   // O(1) lookup map for job types
   const jobTypeMap = useMemo(() => new Map(jobTypes.map((jt) => [jt.type_id, jt])), [jobTypes]);
 
-  // Group job types for <optgroup> rendering
+  // Group job types for <optgroup> rendering (hide groups managed in dedicated tabs)
+  const HIDDEN_GROUPS = new Set(["clustering", "features"]);
   const byGroup = useMemo(() => {
     const map: Record<string, JobType[]> = {};
     for (const jt of jobTypes) {
       const g = jt.group || "other";
+      if (HIDDEN_GROUPS.has(g)) continue;
       if (!map[g]) map[g] = [];
       map[g].push(jt);
     }
     return map;
-  }, [jobTypes]);
+  }, [jobTypes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function addStep() {
     if (!selectedType) return;

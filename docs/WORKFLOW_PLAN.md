@@ -315,7 +315,7 @@ make check-all      # DB + API health check
 
 ### STAGE 2: Seasonality & Variability Profiling
 
-**Purpose:** Compute per-DFU demand characteristics that inform clustering, model selection, and planning policies. Seasonality detection identifies yearly patterns (peak/trough months, strength). Variability profiling classifies each DFU as low/medium/high/lumpy based on CV and intermittency.
+**Purpose:** Compute per-SKU demand characteristics that inform clustering, model selection, and planning policies. Seasonality detection identifies yearly patterns (peak/trough months, strength). Variability profiling classifies each DFU as low/medium/high/lumpy based on CV and intermittency.
 
 **Prerequisites:** `fact_sales_monthly` and `dim_sku` populated (Stage 1 complete).
 
@@ -340,14 +340,13 @@ Variability columns written to `dim_sku`: `demand_mean`, `demand_std`, `demand_c
 
 **CLI commands:**
 ```bash
-# Seasonality
-make seasonality-all        # schema + detect + update (full pipeline)
-make seasonality-detect     # Just detection (writes CSV)
-make seasonality-update     # Just DB update (reads CSV)
+make features-compute       # Unified SKU feature pipeline (seasonality + variability + lifecycle)
 
-# Variability
-make variability-all        # schema + compute (full pipeline)
-make variability-compute    # Just compute + upsert
+# Legacy aliases (all delegate to features-compute)
+make seasonality-all        # alias → features-compute
+make seasonality-detect     # alias → features-compute
+make variability-all        # alias → features-compute
+make variability-compute    # alias → features-compute
 ```
 
 **UI actions:**
@@ -355,9 +354,10 @@ make variability-compute    # Just compute + upsert
 - Aggregate Analysis tab (`AggregateAnalysisTab.tsx`) has a `seasonality_profile` filter in the accuracy slice endpoint
 
 **Scripts:**
-- `scripts/detect_seasonality.py` -- computes CV of monthly means, YoY correlation, ACF lag-12, peak/trough analysis; uses numba JIT if available
-- `scripts/update_seasonality_profiles.py` -- batch upserts `data/seasonality_results.csv` into `dim_sku`
-- `scripts/compute_demand_variability.py` -- winsorizes outliers, computes CV/MAD/skewness/kurtosis, classifies into low/medium/high/lumpy
+- `scripts/ml/compute_sku_features.py` -- unified pipeline: computes volume, trend, seasonality (CV of monthly means, YoY correlation, ACF lag-12, peak/trough), variability (CV/MAD/skewness/kurtosis), intermittency, and lifecycle features in a single pass; writes all columns to `dim_sku`
+- `scripts/detect_seasonality.py` -- **deprecated shim** (kept for backward-compatible function exports consumed by tests); use `compute_sku_features.py` instead
+- `scripts/update_seasonality_profiles.py` -- **deprecated shim**; handled by `compute_sku_features.py`
+- `scripts/compute_demand_variability.py` -- **deprecated shim** (kept for backward-compatible function exports consumed by tests); use `compute_sku_features.py` instead
 
 **Error Recovery:**
 - If seasonality detection fails: check `min_months_history` threshold -- DFUs with insufficient history are skipped (not an error)
@@ -444,7 +444,7 @@ make customer-features-python   # Python-based alternative
 - `config/forecast_pipeline_config.yaml` -- `clustering` section:
   - `enabled`: true -- **Master switch.** When `false`, all backtests fall back to `global` strategy regardless of per-algorithm settings.
   - `steps`: generate_features, train_model, label_clusters, update_db
-- `config/clustering_config.yaml`:
+- Clustering params are stored in the `cluster_experiment` table (promoted row):
   - `k_range`: [9, 18] -- **When to change:** Increase max if you have >50K DFUs with diverse demand patterns; decrease if <5K DFUs
   - `min_cluster_size_pct`: 2.0 -- **Why:** Prevents tiny clusters that overfit
   - `min_months_history`: 12
@@ -462,9 +462,9 @@ make customer-features-python   # Python-based alternative
 ```bash
 make cluster-all       # Full pipeline: features -> train -> label -> update DB
 make cluster-features  # Step 1: generate_clustering_features.py
-make cluster-train     # Step 2: train_clustering_model.py
+make cluster-train     # Step 2: KMeans training (via run_cluster_pipeline.py)
 make cluster-label     # Step 3: label_clusters.py
-make cluster-update    # Step 4: update_cluster_assignments.py
+# (cluster-update absorbed into unified pipeline via promote_scenario)
 ```
 
 **UI actions (Cluster Experiments):**
@@ -487,9 +487,9 @@ API endpoints (prefix `/cluster-experiments`):
 
 **Scripts:**
 - `scripts/generate_clustering_features.py` -- 6 feature dimensions: volume, trend, seasonality, periodicity, intermittency, lifecycle
-- `scripts/train_clustering_model.py` -- KMeans with silhouette + Calinski-Harabasz combined scoring
+- `scripts/ml/run_cluster_pipeline.py` -- unified pipeline: features -> train -> label -> promote (KMeans with silhouette + Calinski-Harabasz combined scoring)
 - `scripts/label_clusters.py` -- hierarchical labeling taxonomy (e.g., `high_volume_seasonal_growing`)
-- `scripts/update_cluster_assignments.py` -- batch upserts into `dim_sku.ml_cluster`
+- Cluster assignment updates are handled by `promote_scenario()` in the unified pipeline
 
 **Output artifacts:**
 - `data/clustering_features.csv`, `data/clustering/kmeans_model.pkl`, `data/clustering/cluster_labels.csv`
@@ -726,6 +726,15 @@ API endpoints (prefix `/model-tuning/{model}`):
 **Scripts:**
 - `scripts/tune_hyperparams.py` -- Optuna Bayesian optimization with walk-forward CV
 - `scripts/ml/auto_tune.py` -- strategy-based grid search from `tune_strategies.yaml`
+- `scripts/tune_cluster_hyperparams.py` -- Per-cluster Bayesian tuning (runs Optuna independently per `ml_cluster`)
+
+**Per-cluster tuning CLI:**
+```bash
+make tune-lgbm-clusters       # Per-cluster LGBM tuning
+make tune-clusters            # Per-cluster tuning for all tree models
+```
+
+Per-cluster tuning writes cluster-specific overrides to `config/cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. During backtest, `resolve_cluster_params()` matches profiles: Phase 1 = exact `cluster_name` match, Phase 2 = statistical criteria fallback (mean_demand, cv_demand, zero_demand_pct, etc.).
 
 **Error Recovery:**
 - Optuna studies are resumable: `data/tuning/optuna_<model>.db` (SQLite). Re-running continues from where it stopped.
@@ -1123,7 +1132,7 @@ Located in the Model Tuning Tab. Provides a YAML config editor for:
 |---|---|---|---|
 | `forecast_pipeline_config.yaml` | Master pipeline config | 16 algorithms, backtest, tuning, champion, production_forecast, clustering, sampling, tracking | ALL stages |
 | `etl_config.yaml` | ETL pipeline config | Domain load order, MV refresh tiers, parallel workers | Stage 1 |
-| `clustering_config.yaml` | Clustering ML params | k_range, min_cluster_size_pct, labeling thresholds | Stage 5 |
+| `cluster_experiment` table | Clustering ML params | k_range, min_cluster_size_pct, labeling thresholds | Stage 5 |
 | `hyperparameter_tuning.yaml` | Optuna search spaces | n_trials, search_space per model, pruner settings | Stage 8 |
 | `tune_strategies.yaml` | Auto-tune strategy overrides | 13 LGBM + 15 CatBoost + 15 XGBoost named strategies | Stage 8 |
 | `tuning_templates.yaml` | UI experiment templates | Per-model: production_baseline + 4 expert templates | Stage 8 UI |
@@ -1146,7 +1155,7 @@ Located in the Model Tuning Tab. Provides a YAML config editor for:
 
 | Setting | Default | When to Change | Impact |
 |---|---|---|---|
-| `clustering.enabled` | true | Set false if DFUs are homogeneous or <1000 | All backtests use global strategy |
+| `clustering.enabled` | true | Set false if SKUs are homogeneous or <1000 | All backtests use global strategy |
 | `backtest.n_timeframes` | 10 | Reduce to 5 for experimentation speed | Less robust accuracy estimates |
 | `backtest_sampling.enabled` | true | Set false for production-quality evaluation | Full population backtest (slower) |
 | `backtest_sampling.default_target_n` | 5000 | Increase if you need broader DFU coverage | Longer backtest, better champion quality |

@@ -125,8 +125,8 @@ qty_lag_12      = sales 12 months ago
 rolling_3m_mean = avg of last 3 months
 rolling_6m_mean = avg of last 6 months
 month_of_year   = 12 (December)
-ml_cluster      = "seasonal_high_volume"   ← always kept, never stripped
-... ~62 features total
+region          = "WEST"                   ← categorical attribute
+... ~30 features total (reduced by multi-stage selection pipeline)
 ```
 
 ---
@@ -142,7 +142,7 @@ Cluster "high_volume_stable"   → tuned for smooth, predictable demand
 ...
 ```
 
-Small clusters (too few rows) fall back to **seasonal naive** (same month last year).
+Small clusters (too few rows) fall back to **seasonal naive** (same month last year). Intermittent clusters (>70% zero-demand rows) are routed to **rolling mean** baseline instead of tree models — tree models cannot meaningfully learn from data that is 87-98% zeros.
 
 ---
 
@@ -183,6 +183,38 @@ We support `execution_lag` values from 0 to 4, meaning some DFUs need their fore
 
 **2. Statistical robustness**
 A single train/test split gives a noisy accuracy estimate that reflects one slice of market conditions. 10 expanding windows produce predictions across many months — different seasons, demand shocks, and trend inflections — so the accuracy metric reflects genuine model skill rather than a lucky or unlucky split.
+
+---
+
+### Step 6: Per-Cluster SHAP Feature Selection
+
+When `shap_select: true`, SHAP runs independently per cluster via `compute_timeframe_shap_per_cluster()`:
+
+1. Pre-SHAP stages (0-2: duplicate removal, variance filter, correlation filter) are shared globally
+2. For each cluster, SHAP values are computed on that cluster's training data only
+3. Per-cluster cumulative selection picks features covering `shap_threshold` (default 0.90) of importance
+4. Sparse clusters (>50% zeros) use stratified 50/50 sampling; clusters with too few non-zero rows keep all features
+5. Returns `dict[str, list[str]]` — each cluster gets its own selected feature list
+6. Protected features (`PROTECTED_FEATURES` in `constants.py`) always survive selection
+
+### Step 7: Per-Cluster Tuning Profiles
+
+Each cluster can receive hyperparameter overrides from `config/cluster_tuning_profiles.yaml`:
+
+1. **Phase 1:** Exact match by `cluster_name` in `match_criteria` (e.g., `cluster_name: high_volume_periodic`)
+2. **Phase 2:** Statistical criteria fallback (mean_demand, cv_demand, zero_demand_pct, seasonal_amplitude, n_rows)
+3. First match wins per `_PROFILE_PRIORITY` order (sparse_intermittent first, default last)
+4. Profiles can override any LGBM parameter (num_leaves, learning_rate, n_estimators, etc.)
+
+### Step 8: Recursive Lag Smoothing
+
+When `recursive: true` and `recursive_lag_smooth > 0` (default 0.15), lag features are exponentially smoothed from step 3 onward:
+
+```
+lag_t = alpha * prediction + (1-alpha) * lag_{t-1}
+```
+
+This damps compounding oscillations in later recursive steps without losing the recency signal in steps 1-2.
 
 ---
 
@@ -284,8 +316,12 @@ All models use `compute_early_stop_patience(max_iterations, pct=0.03)`:
 Backtest behavior is controlled by `config/forecast_pipeline_config.yaml`. See [Algorithm Config](./06-algorithm-config.md) for details.
 
 Key backtest-level settings:
-- `early_stop_pct: 0.03` — early stopping patience as percentage of max iterations
-- `shap_retrain_threshold: 0.10` — retrain if >= 10% of features are dropped by SHAP
+- `early_stop_pct: 0.05` — early stopping patience as percentage of max iterations (10% for sparse clusters)
+- `shap_retrain_threshold: 0.50` — retrain safety check threshold (effectively disabled; original model consistently outperforms)
+- `recursive_noise_pct: 0.03` — Gaussian noise for recursive training (reduced from 0.08)
+- `recursive_lag_smooth: 0.15` — exponential smoothing for recursive lags from step 3+
+- `baseline_intermittent: true` — route intermittent clusters to rolling mean baseline
+- `intermittent_threshold: 0.7` — zero-demand percentage cutoff for intermittent routing
 
 ## Backtest Model Coverage
 

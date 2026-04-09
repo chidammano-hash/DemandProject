@@ -2,12 +2,13 @@
  * ModelTuningTab -- Model Experimentation Studio.
  *
  * Pipeline-aligned layout:
- *   Clustering → Backtest & Tune → Champion
+ *   Clustering -> Backtest -> Tune -> Champion -> Forecast
  *
- * The "Backtest & Tune" stage shows tunable models as clickable cards
- * and non-tunable models as a compact summary row.
+ * The "Backtest" stage shows ALL models with run/load actions.
+ * The "Tune" stage shows only tunable models with experiment UI.
+ * The "Forecast" stage triggers production forecast generation.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -22,6 +23,8 @@ import {
   Plus,
   FileText,
   Layers,
+  SlidersHorizontal,
+  TrendingUp,
 } from "lucide-react";
 
 import {
@@ -65,6 +68,12 @@ import {
 import {
   fetchPipelineConfig, pipelineConfigKeys, type PipelineAlgorithm,
 } from "@/api/queries/unified-model-tuning";
+import {
+  backtestMgmtKeys,
+  fetchBacktestSummary,
+  submitBacktestRun,
+  submitBacktestLoad,
+} from "@/api/queries/backtest-management";
 
 import { TuningChatPanel } from "./lgbm-tuning/TuningChatPanel";
 import { ClusterEDAPanel } from "./lgbm-tuning/ClusterEDAPanel";
@@ -76,6 +85,8 @@ import { EnhancedPromoteModal } from "./model-tuning/EnhancedPromoteModal";
 import { LogViewer } from "./model-tuning/LogViewer";
 import { ClusterExperimentsPanel } from "./clusters/ClusterExperimentsPanel";
 import { ChampionExperimentsPanel } from "./champion/ChampionExperimentsPanel";
+import { BacktestDetailPanel } from "./model-tuning/BacktestDetailPanel";
+import { ForecastPanel } from "./forecast/ForecastPanel";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -100,8 +111,6 @@ const DEFAULT_MODELS: { id: string; label: string; type: string; tunable: boolea
   { id: "seasonal_naive",       label: "Seasonal Naive",     type: "statistical",   tunable: false },
   { id: "rolling_mean",         label: "Rolling Mean",       type: "statistical",   tunable: false },
 ];
-
-/* MODEL_LABEL_FALLBACK imported from @/lib/model-labels */
 
 /** Map algorithm id to ModelType for tunable models (used for experiment API routing) */
 const ID_TO_MODEL_TYPE: Record<string, ModelType> = {
@@ -142,12 +151,14 @@ const MODEL_PREFIX: Record<ModelType, string> = {
 // ---------------------------------------------------------------------------
 // Pipeline stage tabs
 // ---------------------------------------------------------------------------
-type PipelineStage = "clustering" | "backtest" | "champion";
+type PipelineStage = "clustering" | "backtest" | "tune" | "champion" | "forecast";
 
 const STAGE_TABS: { key: PipelineStage; label: string; icon: typeof FlaskConical }[] = [
-  { key: "clustering", label: "Clustering",       icon: Target },
-  { key: "backtest",   label: "Backtest & Tune",  icon: FlaskConical },
-  { key: "champion",   label: "Champion",         icon: Crown },
+  { key: "clustering", label: "Clustering",  icon: Target },
+  { key: "backtest",   label: "Backtest",    icon: FlaskConical },
+  { key: "tune",       label: "Tune",        icon: SlidersHorizontal },
+  { key: "champion",   label: "Champion",    icon: Crown },
+  { key: "forecast",   label: "Forecast",    icon: TrendingUp },
 ];
 
 // Model detail sub-tabs (shown when a model is selected)
@@ -157,6 +168,97 @@ type ModelDetailTab = "experiments" | "feature-lab" | "cluster-eda";
 // Status filter options
 // ---------------------------------------------------------------------------
 type StatusFilter = "all" | "running" | "completed" | "failed";
+
+// ---------------------------------------------------------------------------
+// State reducer -- consolidates related state for model selection & comparison
+// ---------------------------------------------------------------------------
+interface TabState {
+  selectedModelId: string;
+  modelDetailTab: ModelDetailTab;
+  baselineId: number | null;
+  candidateId: number | null;
+  selectedRunForLogs: number | null;
+  selectedRunForPromote: TuningRun | null;
+  showBuilder: boolean;
+  statusFilter: StatusFilter;
+  page: number;
+  sortCol: string;
+  sortDir: "asc" | "desc";
+}
+
+type TabAction =
+  | { type: "SELECT_MODEL"; modelId: string }
+  | { type: "SET_DETAIL_TAB"; tab: ModelDetailTab }
+  | { type: "SELECT_ROW"; runId: number }
+  | { type: "CLEAR_SELECTION" }
+  | { type: "SET_LOGS"; runId: number | null }
+  | { type: "SET_PROMOTE"; run: TuningRun | null }
+  | { type: "SET_BUILDER"; open: boolean }
+  | { type: "SET_STATUS_FILTER"; filter: StatusFilter }
+  | { type: "SET_PAGE"; page: number }
+  | { type: "TOGGLE_SORT"; col: string };
+
+const INITIAL_STATE: TabState = {
+  selectedModelId: "lgbm_cluster",
+  modelDetailTab: "experiments",
+  baselineId: null,
+  candidateId: null,
+  selectedRunForLogs: null,
+  selectedRunForPromote: null,
+  showBuilder: false,
+  statusFilter: "all",
+  page: 0,
+  sortCol: "run_id",
+  sortDir: "desc",
+};
+
+function tabReducer(state: TabState, action: TabAction): TabState {
+  switch (action.type) {
+    case "SELECT_MODEL":
+      if (action.modelId === state.selectedModelId) return state;
+      return {
+        ...state,
+        selectedModelId: action.modelId,
+        modelDetailTab: "experiments",
+        baselineId: null,
+        candidateId: null,
+        selectedRunForPromote: null,
+        selectedRunForLogs: null,
+        page: 0,
+      };
+    case "SET_DETAIL_TAB":
+      return { ...state, modelDetailTab: action.tab };
+    case "SELECT_ROW": {
+      if (state.baselineId === null) {
+        return { ...state, baselineId: action.runId };
+      }
+      if (state.candidateId === null) {
+        if (action.runId === state.baselineId) return state;
+        return { ...state, candidateId: action.runId };
+      }
+      return { ...state, baselineId: action.runId, candidateId: null };
+    }
+    case "CLEAR_SELECTION":
+      return { ...state, baselineId: null, candidateId: null };
+    case "SET_LOGS":
+      return { ...state, selectedRunForLogs: action.runId };
+    case "SET_PROMOTE":
+      return { ...state, selectedRunForPromote: action.run };
+    case "SET_BUILDER":
+      return { ...state, showBuilder: action.open };
+    case "SET_STATUS_FILTER":
+      return { ...state, statusFilter: action.filter, page: 0 };
+    case "SET_PAGE":
+      return { ...state, page: action.page };
+    case "TOGGLE_SORT":
+      if (state.sortCol === action.col) {
+        return { ...state, sortDir: state.sortDir === "asc" ? "desc" : "asc" };
+      }
+      return { ...state, sortCol: action.col, sortDir: "desc" };
+    default:
+      return state;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Fetchers
@@ -193,32 +295,38 @@ async function fetchModelSummary(model: ModelType): Promise<{ best: number | nul
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
+const PAGE_SIZE = 25;
+
 export default function ModelTuningTab() {
   useChartColors(); // ensure theme context
   const queryClient = useQueryClient();
 
-  // ---- State ---------------------------------------------------------------
+  // ---- Consolidated state via reducer ------------------------------------
+  const [state, dispatch] = useReducer(tabReducer, INITIAL_STATE);
+  const {
+    selectedModelId,
+    modelDetailTab,
+    baselineId,
+    candidateId,
+    selectedRunForLogs,
+    selectedRunForPromote,
+    showBuilder,
+    statusFilter,
+    page,
+    sortCol,
+    sortDir,
+  } = state;
+
+  // Non-reducer state (independent concerns)
   const [stage, setStage] = useState<PipelineStage>("backtest");
-  const [selectedModelId, setSelectedModelId] = useState<string>("lgbm_cluster");
-  const [modelDetailTab, setModelDetailTab] = useState<ModelDetailTab>("experiments");
   const [execLag, setExecLag] = useState<number | undefined>(undefined);
-  const [baselineId, setBaselineId] = useState<number | null>(null);
-  const [candidateId, setCandidateId] = useState<number | null>(null);
-  const [showBuilder, setShowBuilder] = useState(false);
-  const [selectedRunForLogs, setSelectedRunForLogs] = useState<number | null>(null);
-  const [selectedRunForPromote, setSelectedRunForPromote] = useState<TuningRun | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [page, setPage] = useState(0);
-  const [sortCol, setSortCol] = useState<string>("run_id");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const pageSize = 25;
 
   // ---- Fetch pipeline config for dynamic model roster ----------------------
   const { data: pipelineConfig } = useQuery({
     queryKey: pipelineConfigKeys.config,
     queryFn: fetchPipelineConfig,
-    staleTime: 60_000, // 1 min — config rarely changes
+    staleTime: 60_000, // 1 min -- config rarely changes
   });
 
   // Derive model grid from pipeline config, falling back to hardcoded defaults
@@ -235,13 +343,13 @@ export default function ModelTuningTab() {
 
   // ---- Model grid summaries (for tunable models) ---------------------------
   const { data: lgbmSummary } = useQuery({
-    queryKey: ["model-summary", "lgbm"], queryFn: () => fetchModelSummary("lgbm"), staleTime: STALE.TWO_MIN, enabled: stage === "backtest",
+    queryKey: ["model-summary", "lgbm"], queryFn: () => fetchModelSummary("lgbm"), staleTime: STALE.TWO_MIN, enabled: stage === "tune",
   });
   const { data: catboostSummary } = useQuery({
-    queryKey: ["model-summary", "catboost"], queryFn: () => fetchModelSummary("catboost"), staleTime: STALE.TWO_MIN, enabled: stage === "backtest",
+    queryKey: ["model-summary", "catboost"], queryFn: () => fetchModelSummary("catboost"), staleTime: STALE.TWO_MIN, enabled: stage === "tune",
   });
   const { data: xgboostSummary } = useQuery({
-    queryKey: ["model-summary", "xgboost"], queryFn: () => fetchModelSummary("xgboost"), staleTime: STALE.TWO_MIN, enabled: stage === "backtest",
+    queryKey: ["model-summary", "xgboost"], queryFn: () => fetchModelSummary("xgboost"), staleTime: STALE.TWO_MIN, enabled: stage === "tune",
   });
   const modelSummaries: Record<string, { best: number | null; runs: number; active: number; promoted: number | null }> = {
     lgbm_cluster: lgbmSummary ?? { best: null, runs: 0, active: 0, promoted: null },
@@ -249,17 +357,73 @@ export default function ModelTuningTab() {
     xgboost_cluster: xgboostSummary ?? { best: null, runs: 0, active: 0, promoted: null },
   };
 
-  // ---- Reset on model change -----------------------------------------------
-  function handleModelSelect(modelId: string) {
-    if (modelId === selectedModelId) return;
-    setSelectedModelId(modelId);
-    setModelDetailTab("experiments");
-    setBaselineId(null);
-    setCandidateId(null);
-    setSelectedRunForPromote(null);
-    setSelectedRunForLogs(null);
-    setPage(0);
-  }
+  const [runningModels, setRunningModels] = useState<Set<string>>(new Set());
+  const [loadingModels, setLoadingModels] = useState<Set<string>>(new Set());
+
+  // ---- Backtest management summaries (for non-tunable model cards) ----------
+  const { data: backtestSummary } = useQuery({
+    queryKey: backtestMgmtKeys.summary,
+    queryFn: fetchBacktestSummary,
+    staleTime: 30_000,
+    enabled: stage === "backtest",
+    refetchInterval: loadingModels.size > 0 ? 5_000 : false,
+  });
+
+  const handleRunBacktest = async (modelId: string) => {
+    setRunningModels((prev) => new Set(prev).add(modelId));
+    try {
+      await submitBacktestRun(modelId);
+      queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.summary });
+    } catch (err) {
+      console.error("Failed to submit backtest:", err);
+    } finally {
+      // Keep the running indicator for a bit so the user sees feedback
+      setTimeout(() => {
+        setRunningModels((prev) => {
+          const next = new Set(prev);
+          next.delete(modelId);
+          return next;
+        });
+      }, 5_000);
+    }
+  };
+
+  const handleLoadBacktest = async (modelId: string) => {
+    setLoadingModels((prev) => new Set(prev).add(modelId));
+    // Pass the latest run ID so the backend can mark it as loaded
+    const runId = backtestSummary?.[modelId]?.latest_run?.id;
+    try {
+      await submitBacktestLoad(modelId, runId ?? undefined);
+      queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.summary });
+      // Keep loadingModels populated — cleared by polling effect below
+    } catch (err) {
+      console.error("Failed to load backtest:", err);
+      setLoadingModels((prev) => {
+        const next = new Set(prev);
+        next.delete(modelId);
+        return next;
+      });
+    }
+  };
+
+  // Clear loading state when polled summary shows the model is loaded
+  useEffect(() => {
+    if (loadingModels.size === 0 || !backtestSummary) return;
+    const done = new Set<string>();
+    for (const modelId of loadingModels) {
+      const summary = backtestSummary[modelId];
+      if (summary?.latest_run?.is_loaded_to_db) {
+        done.add(modelId);
+      }
+    }
+    if (done.size > 0) {
+      setLoadingModels((prev) => {
+        const next = new Set(prev);
+        for (const m of done) next.delete(m);
+        return next;
+      });
+    }
+  }, [backtestSummary, loadingModels]);
 
   // ---- Data fetching (for selected tunable model) --------------------------
   const {
@@ -275,7 +439,7 @@ export default function ModelTuningTab() {
         exec_lag: execLag,
       }),
     staleTime: STALE.TWO_MIN,
-    enabled: stage === "backtest" && isTunable,
+    enabled: stage === "tune" && isTunable,
   });
 
   const allRuns = runsPayload?.experiments ?? [];
@@ -298,8 +462,8 @@ export default function ModelTuningTab() {
     return runs;
   }, [allRuns, sortCol, sortDir]);
 
-  const pagedRuns = sortedRuns.slice(page * pageSize, (page + 1) * pageSize);
-  const totalPages = Math.ceil(sortedRuns.length / pageSize);
+  const pagedRuns = sortedRuns.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const totalPages = Math.ceil(sortedRuns.length / PAGE_SIZE);
 
   // ---- KPIs ----------------------------------------------------------------
   const kpis = useMemo(() => {
@@ -315,21 +479,7 @@ export default function ModelTuningTab() {
     };
   }, [allRuns]);
 
-  // ---- Row click handler ---------------------------------------------------
-  function handleRowClick(runId: number) {
-    if (baselineId === null) { setBaselineId(runId); }
-    else if (candidateId === null) { if (runId === baselineId) return; setCandidateId(runId); }
-    else { setBaselineId(runId); setCandidateId(null); }
-  }
-
-  function clearSelection() { setBaselineId(null); setCandidateId(null); }
-
-  // ---- Column sort handler -------------------------------------------------
-  function handleSort(col: string) {
-    if (sortCol === col) { setSortDir(d => d === "asc" ? "desc" : "asc"); }
-    else { setSortCol(col); setSortDir("desc"); }
-  }
-
+  // ---- Column sort indicator -----------------------------------------------
   function SortIndicator({ col }: { col: string }) {
     if (sortCol !== col) return null;
     return <span className="ml-0.5 text-[10px]">{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>;
@@ -369,24 +519,104 @@ export default function ModelTuningTab() {
         ))}
       </div>
 
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* CLUSTERING stage                                                    */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* Clustering stage */}
       {stage === "clustering" && <ClusterExperimentsPanel />}
 
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* CHAMPION stage                                                      */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* Champion stage */}
       {stage === "champion" && <ChampionExperimentsPanel />}
 
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* BACKTEST & TUNE stage — 12-model grid + selected model detail       */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* Forecast stage */}
+      {stage === "forecast" && <ForecastPanel />}
+
+      {/* Backtest stage -- ALL models with run/load actions */}
       {stage === "backtest" && (
         <>
-          {/* ---- Model Grid ---- */}
+          {/* ---- Model Grid (all models) ---- */}
           <div className="space-y-3">
-            {/* Tunable Models — clickable cards */}
+            <div>
+              <h3 className="text-sm font-medium text-muted-foreground mb-2">All Models</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                {ALL_MODELS.map((m) => {
+                  const btSummary = backtestSummary?.[m.id];
+                  const isSelected = selectedModelId === m.id;
+                  return (
+                    <div
+                      key={m.id}
+                      className={cn(
+                        "rounded-lg border p-3 text-left transition-all",
+                        isSelected
+                          ? "border-primary bg-primary/5 ring-1 ring-primary shadow-sm"
+                          : "hover:bg-muted/50",
+                      )}
+                    >
+                      <button
+                        onClick={() => dispatch({ type: "SELECT_MODEL", modelId: m.id })}
+                        className="w-full text-left"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-semibold truncate">{m.label}</span>
+                          {btSummary?.latest_run?.is_loaded_to_db && (
+                            <span className="h-2 w-2 rounded-full bg-green-500 shrink-0" title="Loaded to DB" />
+                          )}
+                        </div>
+                        <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${TYPE_COLORS[m.type] ?? ""}`}>
+                          {m.type.replace("_", " ")}
+                        </Badge>
+                        {btSummary?.current_accuracy != null ? (
+                          <div className="mt-2 text-xs tabular-nums">
+                            <span className="font-semibold">{btSummary.current_accuracy.toFixed(1)}%</span>
+                            <span className="text-muted-foreground ml-1 text-[10px]">accuracy</span>
+                          </div>
+                        ) : (
+                          <div className="mt-2 text-[10px] text-muted-foreground">No backtest yet</div>
+                        )}
+                      </button>
+                      {/* Action buttons */}
+                      <div className="flex gap-1 mt-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleRunBacktest(m.id); }}
+                          className="flex-1 rounded bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary hover:bg-primary/20 disabled:opacity-40"
+                          disabled={runningModels.has(m.id)}
+                        >
+                          {runningModels.has(m.id) ? "Running..." : "Run"}
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleLoadBacktest(m.id); }}
+                          className="flex-1 rounded bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-600 hover:bg-emerald-500/20 disabled:opacity-30"
+                          disabled={!btSummary?.has_predictions || loadingModels.has(m.id)}
+                        >
+                          {loadingModels.has(m.id) ? "Loading..." : "Load"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* ---- Selected Model Backtest Detail ---- */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-base">{selectedModelInfo.label}</CardTitle>
+                <Badge variant="outline" className={`text-[10px] ${TYPE_COLORS[selectedModelInfo.type] ?? ""}`}>
+                  {selectedModelInfo.type.replace("_", " ")}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <BacktestDetailPanel modelId={selectedModelId} />
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {/* Tune stage -- tunable models only with experiment UI */}
+      {stage === "tune" && (
+        <>
+          {/* ---- Tunable Model Grid ---- */}
+          <div className="space-y-3">
             <div>
               <h3 className="text-sm font-medium text-muted-foreground mb-2">Tunable Models</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
@@ -396,7 +626,7 @@ export default function ModelTuningTab() {
                   return (
                     <button
                       key={m.id}
-                      onClick={() => handleModelSelect(m.id)}
+                      onClick={() => dispatch({ type: "SELECT_MODEL", modelId: m.id })}
                       className={cn(
                         "rounded-lg border p-3 text-left transition-all",
                         isSelected
@@ -438,23 +668,9 @@ export default function ModelTuningTab() {
                 })}
               </div>
             </div>
-
-            {/* Other Models — compact summary row */}
-            {ALL_MODELS.some((m) => !m.tunable) && (
-              <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-2.5" data-testid="other-models-row">
-                <span className="text-xs font-medium text-muted-foreground">
-                  Other models (backtest only):{" "}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {ALL_MODELS.filter((m) => !m.tunable)
-                    .map((m) => m.label)
-                    .join(", ")}
-                </span>
-              </div>
-            )}
           </div>
 
-          {/* ---- Selected Model Detail ---- */}
+          {/* ---- Selected Tunable Model Detail ---- */}
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -473,7 +689,7 @@ export default function ModelTuningTab() {
                     ]).map(({ key, label, icon: Icon }) => (
                       <button
                         key={key}
-                        onClick={() => setModelDetailTab(key)}
+                        onClick={() => dispatch({ type: "SET_DETAIL_TAB", tab: key })}
                         className={cn(
                           "flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
                           modelDetailTab === key
@@ -494,18 +710,6 @@ export default function ModelTuningTab() {
               {isTunable && modelDetailTab === "feature-lab" && <FeatureLabPanel />}
               {isTunable && modelDetailTab === "cluster-eda" && <ClusterEDAPanel />}
 
-              {/* Non-tunable model info */}
-              {!isTunable && (
-                <div className="py-8 text-center text-sm text-muted-foreground">
-                  <p className="font-medium mb-1">{selectedModelInfo.label} is a {selectedModelInfo.type.replace("_", " ")} model</p>
-                  <p>
-                    {selectedModelInfo.type === "foundation"
-                      ? "Foundation models are zero-shot — no hyperparameters to tune. Backtest results are available in the Champion tab."
-                      : "Statistical models use fixed algorithms. Backtest results are available in the Champion tab."}
-                  </p>
-                </div>
-              )}
-
               {/* Experiments sub-tab (tunable models only) */}
               {isTunable && modelDetailTab === "experiments" && (
                 <>
@@ -515,7 +719,7 @@ export default function ModelTuningTab() {
                       <LagFilterBar value={execLag} onChange={setExecLag} />
                       <Select
                         value={statusFilter}
-                        onValueChange={(v) => { setStatusFilter(v as StatusFilter); setPage(0); }}
+                        onValueChange={(v) => dispatch({ type: "SET_STATUS_FILTER", filter: v as StatusFilter })}
                       >
                         <SelectTrigger className="h-8 text-xs w-[120px]">
                           <SelectValue placeholder="Status" />
@@ -531,9 +735,9 @@ export default function ModelTuningTab() {
                         {sortedRuns.length} run{sortedRuns.length !== 1 ? "s" : ""}
                       </span>
                     </div>
-                    <Button size="sm" className="gap-1.5" onClick={() => setShowBuilder(true)}>
+                    <Button size="sm" className="gap-1.5" onClick={() => dispatch({ type: "SET_BUILDER", open: true })} disabled={kpis.activeRuns > 0}>
                       <Plus className="h-3.5 w-3.5" />
-                      New Experiment
+                      {kpis.activeRuns > 0 ? "Training…" : "New Experiment"}
                     </Button>
                   </div>
 
@@ -564,7 +768,7 @@ export default function ModelTuningTab() {
                               <CardDescription className="text-xs">Click two rows to compare</CardDescription>
                             </div>
                             {(baselineId !== null || candidateId !== null) && (
-                              <Button variant="ghost" size="sm" onClick={clearSelection}>Clear</Button>
+                              <Button variant="ghost" size="sm" onClick={() => dispatch({ type: "CLEAR_SELECTION" })}>Clear</Button>
                             )}
                           </div>
                         </CardHeader>
@@ -574,8 +778,8 @@ export default function ModelTuningTab() {
                               <FlaskConical className="h-10 w-10 text-muted-foreground/30 mb-3" />
                               <p className="text-sm font-medium mb-1">No experiments yet for {selectedModelInfo.label}</p>
                               <p className="text-xs text-muted-foreground mb-4">Click "New Experiment" to launch your first tuning run.</p>
-                              <Button size="sm" className="gap-1.5" onClick={() => setShowBuilder(true)}>
-                                <Plus className="h-3.5 w-3.5" /> New Experiment
+                              <Button size="sm" className="gap-1.5" onClick={() => dispatch({ type: "SET_BUILDER", open: true })} disabled={kpis.activeRuns > 0}>
+                                <Plus className="h-3.5 w-3.5" /> {kpis.activeRuns > 0 ? "Training…" : "New Experiment"}
                               </Button>
                             </div>
                           ) : (
@@ -583,14 +787,14 @@ export default function ModelTuningTab() {
                               <Table>
                                 <TableHeader>
                                   <TableRow>
-                                    <TableHead className="w-14 cursor-pointer" onClick={() => handleSort("run_id")}>#<SortIndicator col="run_id" /></TableHead>
-                                    <TableHead className="cursor-pointer" onClick={() => handleSort("run_label")}>Label<SortIndicator col="run_label" /></TableHead>
-                                    <TableHead className="w-20 cursor-pointer" onClick={() => handleSort("status")}>Status<SortIndicator col="status" /></TableHead>
-                                    <TableHead className="text-right w-20 cursor-pointer" onClick={() => handleSort("accuracy_pct")}>Acc%<SortIndicator col="accuracy_pct" /></TableHead>
-                                    <TableHead className="text-right w-16 cursor-pointer" onClick={() => handleSort("wape")}>WAPE<SortIndicator col="wape" /></TableHead>
-                                    <TableHead className="text-right w-16 cursor-pointer" onClick={() => handleSort("bias")}>Bias<SortIndicator col="bias" /></TableHead>
+                                    <TableHead className="w-14 cursor-pointer" onClick={() => dispatch({ type: "TOGGLE_SORT", col: "run_id" })}>#<SortIndicator col="run_id" /></TableHead>
+                                    <TableHead className="cursor-pointer" onClick={() => dispatch({ type: "TOGGLE_SORT", col: "run_label" })}>Label<SortIndicator col="run_label" /></TableHead>
+                                    <TableHead className="w-20 cursor-pointer" onClick={() => dispatch({ type: "TOGGLE_SORT", col: "status" })}>Status<SortIndicator col="status" /></TableHead>
+                                    <TableHead className="text-right w-20 cursor-pointer" onClick={() => dispatch({ type: "TOGGLE_SORT", col: "accuracy_pct" })}>Acc%<SortIndicator col="accuracy_pct" /></TableHead>
+                                    <TableHead className="text-right w-16 cursor-pointer" onClick={() => dispatch({ type: "TOGGLE_SORT", col: "wape" })}>WAPE<SortIndicator col="wape" /></TableHead>
+                                    <TableHead className="text-right w-16 cursor-pointer" onClick={() => dispatch({ type: "TOGGLE_SORT", col: "bias" })}>Bias<SortIndicator col="bias" /></TableHead>
                                     <TableHead className="w-20">Duration</TableHead>
-                                    <TableHead className="w-24 cursor-pointer" onClick={() => handleSort("started_at")}>Started<SortIndicator col="started_at" /></TableHead>
+                                    <TableHead className="w-24 cursor-pointer" onClick={() => dispatch({ type: "TOGGLE_SORT", col: "started_at" })}>Started<SortIndicator col="started_at" /></TableHead>
                                     <TableHead className="w-20 text-center">Actions</TableHead>
                                   </TableRow>
                                 </TableHeader>
@@ -608,7 +812,7 @@ export default function ModelTuningTab() {
                                           isCandidate && "bg-emerald-50 dark:bg-emerald-950/30",
                                           !isSelected && "hover:bg-muted/50",
                                         )}
-                                        onClick={() => handleRowClick(run.run_id)}
+                                        onClick={() => dispatch({ type: "SELECT_ROW", runId: run.run_id })}
                                       >
                                         <TableCell className="font-mono text-xs">
                                           #{run.run_id}
@@ -635,11 +839,11 @@ export default function ModelTuningTab() {
                                         <TableCell className="text-xs text-muted-foreground" title={run.started_at ? new Date(run.started_at).toLocaleString() : ""}>{timeAgo(run.started_at)}</TableCell>
                                         <TableCell className="text-center">
                                           <div className="flex items-center justify-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-                                            <button title="View Logs" className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" onClick={() => setSelectedRunForLogs(run.run_id)}>
+                                            <button title="View Logs" className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" onClick={() => dispatch({ type: "SET_LOGS", runId: run.run_id })}>
                                               <FileText className="h-3.5 w-3.5" />
                                             </button>
                                             {run.status === "completed" && (
-                                              <button title="Promote" className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 transition-colors" onClick={() => setSelectedRunForPromote(run)}>
+                                              <button title="Promote" className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 transition-colors" onClick={() => dispatch({ type: "SET_PROMOTE", run })}>
                                                 <Crown className="h-3.5 w-3.5" />
                                               </button>
                                             )}
@@ -654,8 +858,8 @@ export default function ModelTuningTab() {
                                 <div className="flex items-center justify-between px-4 py-2 border-t border-border/40">
                                   <span className="text-xs text-muted-foreground">Page {page + 1} of {totalPages}</span>
                                   <div className="flex gap-1">
-                                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Prev</Button>
-                                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" disabled={page >= totalPages - 1} onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}>Next</Button>
+                                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" disabled={page === 0} onClick={() => dispatch({ type: "SET_PAGE", page: Math.max(0, page - 1) })}>Prev</Button>
+                                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" disabled={page >= totalPages - 1} onClick={() => dispatch({ type: "SET_PAGE", page: Math.min(totalPages - 1, page + 1) })}>Next</Button>
                                   </div>
                                 </div>
                               )}
@@ -672,7 +876,7 @@ export default function ModelTuningTab() {
                             baselineId={baselineId}
                             candidateId={candidateId}
                             execLag={execLag}
-                            onPromote={(run) => setSelectedRunForPromote(run)}
+                            onPromote={(run) => dispatch({ type: "SET_PROMOTE", run })}
                           />
                         ) : (
                           <Card className="h-full">
@@ -701,9 +905,9 @@ export default function ModelTuningTab() {
         <ExperimentBuilder
           model={selectedModel}
           open={showBuilder}
-          onClose={() => setShowBuilder(false)}
+          onClose={() => dispatch({ type: "SET_BUILDER", open: false })}
           onSubmitted={() => {
-            setShowBuilder(false);
+            dispatch({ type: "SET_BUILDER", open: false });
             queryClient.invalidateQueries({ queryKey: ["model-tuning-runs", selectedModel] });
             queryClient.invalidateQueries({ queryKey: ["model-summary", selectedModel] });
           }}
@@ -716,7 +920,7 @@ export default function ModelTuningTab() {
           model={selectedModel}
           runId={selectedRunForLogs ?? 0}
           open={selectedRunForLogs !== null}
-          onClose={() => setSelectedRunForLogs(null)}
+          onClose={() => dispatch({ type: "SET_LOGS", runId: null })}
         />
       )}
 
@@ -726,9 +930,9 @@ export default function ModelTuningTab() {
           model={selectedModel}
           run={selectedRunForPromote}
           open={true}
-          onClose={() => setSelectedRunForPromote(null)}
+          onClose={() => dispatch({ type: "SET_PROMOTE", run: null })}
           onPromoted={() => {
-            setSelectedRunForPromote(null);
+            dispatch({ type: "SET_PROMOTE", run: null });
             queryClient.invalidateQueries({ queryKey: ["model-tuning-runs", selectedModel] });
             queryClient.invalidateQueries({ queryKey: ["model-summary", selectedModel] });
           }}

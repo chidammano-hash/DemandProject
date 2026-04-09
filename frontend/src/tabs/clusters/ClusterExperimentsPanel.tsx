@@ -27,18 +27,13 @@ import {
   deleteClusterExperiment,
   type ClusterExperiment,
   type ClusterExperimentStatus,
-  type FeatureParams,
-  type ModelParams,
-  type LabelParams,
 } from "@/api/queries";
-import { STALE } from "@/api/queries";
 import { cn } from "@/lib/utils";
 import { formatFixed, formatClusterLabel } from "@/lib/formatters";
 
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -344,8 +339,14 @@ export function ClusterExperimentsPanel() {
 
   if (isError) {
     return (
-      <div className="p-6 text-center text-sm text-destructive">
-        Failed to load experiments: {(error as Error).message}
+      <div className="flex flex-col items-center justify-center py-16 text-center px-6">
+        <FlaskConical className="h-10 w-10 text-destructive/40 mb-3" />
+        <p className="text-sm font-medium text-destructive mb-1">
+          Failed to load experiments
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {(error as Error).message}
+        </p>
       </div>
     );
   }
@@ -432,9 +433,9 @@ export function ClusterExperimentsPanel() {
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="text-base">Experiments</CardTitle>
-                <CardDescription className="text-xs">
+                <p className="text-xs text-muted-foreground mt-0.5">
                   Click two rows to compare (baseline then candidate)
-                </CardDescription>
+                </p>
               </div>
               {(baselineId !== null || candidateId !== null) && (
                 <Button variant="ghost" size="sm" onClick={clearSelection}>
@@ -445,28 +446,49 @@ export function ClusterExperimentsPanel() {
           </CardHeader>
           <CardContent className="p-0">
             {allExperiments.length === 0 ? (
-              /* Empty state */
+              /* Empty state — contextual message based on active filter */
               <div className="flex flex-col items-center justify-center py-16 text-center px-6">
                 <FlaskConical className="h-10 w-10 text-muted-foreground/30 mb-3" />
-                <p className="text-sm font-medium text-foreground mb-1">
-                  No cluster experiments yet
-                </p>
-                <p className="text-xs text-muted-foreground mb-4 max-w-sm">
-                  Cluster experiments let you test different SKU segmentation
-                  configurations before committing to production. Each experiment
-                  runs the full clustering pipeline with your chosen parameters.
-                </p>
-                <Button
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => {
-                    setCloneSource(null);
-                    setShowBuilder(true);
-                  }}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Create First Experiment
-                </Button>
+                {statusFilter !== "all" ? (
+                  <>
+                    <p className="text-sm font-medium text-foreground mb-1">
+                      No {statusFilter} experiments
+                    </p>
+                    <p className="text-xs text-muted-foreground mb-4 max-w-sm">
+                      No experiments match the "{statusFilter}" filter.
+                      Clear the filter to see all experiments.
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setStatusFilter("all")}
+                    >
+                      Clear Filter
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium text-foreground mb-1">
+                      No cluster experiments yet
+                    </p>
+                    <p className="text-xs text-muted-foreground mb-4 max-w-sm">
+                      Cluster experiments let you test different SKU segmentation
+                      configurations before committing to production. Each experiment
+                      runs the full clustering pipeline with your chosen parameters.
+                    </p>
+                    <Button
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => {
+                        setCloneSource(null);
+                        setShowBuilder(true);
+                      }}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Create First Experiment
+                    </Button>
+                  </>
+                )}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -609,37 +631,42 @@ export function ClusterExperimentsPanel() {
                             {timeAgo(exp.created_at)}
                           </TableCell>
                           <TableCell className="text-center">
-                            <div
-                              className="flex items-center justify-center gap-0.5"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <button
-                                title="Clone"
-                                className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                                onClick={() => handleClone(exp)}
+                            {exp.is_promoted ? (
+                              <div
+                                className="flex flex-col items-start gap-0.5 text-[10px] text-muted-foreground"
+                                title={`K range: ${exp.model_params?.k_range?.join("–") ?? "?"}, PCA: ${exp.model_params?.use_pca ? "on" : "off"}, Window: ${exp.feature_params?.time_window_months ?? "?"}m`}
                               >
-                                <Copy className="h-3.5 w-3.5" />
-                              </button>
-                              {exp.status === "completed" && (
-                                <button
-                                  title="Promote"
-                                  className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
-                                  onClick={() => setPromoteTarget(exp)}
-                                >
-                                  <Crown className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                              {exp.status !== "running" &&
-                                exp.status !== "queued" && (
+                                <span className="inline-flex items-center gap-1 rounded bg-amber-50 dark:bg-amber-950/40 px-1.5 py-0.5 text-amber-700 dark:text-amber-400 font-medium">
+                                  <Crown className="h-2.5 w-2.5" />
+                                  Production
+                                </span>
+                              </div>
+                            ) : (
+                              <div
+                                className="flex items-center justify-center gap-0.5"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {exp.status === "completed" && (
                                   <button
-                                    title="Delete"
-                                    className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                                    onClick={() => handleDelete(exp)}
+                                    title="Promote"
+                                    className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                                    onClick={() => setPromoteTarget(exp)}
                                   >
-                                    <Trash2 className="h-3.5 w-3.5" />
+                                    <Crown className="h-3.5 w-3.5" />
                                   </button>
                                 )}
-                            </div>
+                                {exp.status !== "running" &&
+                                  exp.status !== "queued" && (
+                                    <button
+                                      title="Delete"
+                                      className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                                      onClick={() => handleDelete(exp)}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
+                              </div>
+                            )}
                           </TableCell>
                         </TableRow>
                       );
@@ -657,7 +684,6 @@ export function ClusterExperimentsPanel() {
             <ClusterComparisonPanel
               baselineId={baselineId}
               candidateId={candidateId}
-              onPromote={(exp) => setPromoteTarget(exp)}
             />
           ) : baselineId !== null ? (
             (() => {
@@ -669,11 +695,6 @@ export function ClusterExperimentsPanel() {
                 <div className="space-y-3">
                   <ClusterExperimentDetail
                     experiment={selected}
-                    onPromote={
-                      selected.status === "completed" && !selected.is_promoted
-                        ? () => setPromoteTarget(selected)
-                        : undefined
-                    }
                   />
                   <p className="text-xs text-muted-foreground text-center">
                     Click another row to compare two experiments side by side.

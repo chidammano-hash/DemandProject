@@ -1,32 +1,40 @@
-procurement:
-  po_number_format: "DS-{YEAR}-{MONTH:02d}-{SEQ:03d}"
-  default_currency: USD
-  default_unit_of_measure: EA
+# ═══ PROCUREMENT CONFIG ═══
+# Purchase order generation and ERP integration settings (Spec F2.4)
+# Used by: scripts/release_planned_orders.py, api/routers/config_manager.py
 
+procurement:
+  po_number_format: "DS-{YEAR}-{MONTH:02d}-{SEQ:03d}"  # PO number template; tokens: YEAR, MONTH, SEQ (auto-incremented per month via PG sequence)
+  default_currency: USD                  # ISO 4217 currency code for new POs
+  default_unit_of_measure: EA            # Default UOM when not specified; options: EA (each), CS (case), PL (pallet)
+
+  # ═══ APPROVAL THRESHOLDS ═══
   approval_thresholds:
     # POs > $1,000 total value require buyer release step before CSV/ERP send
-    requires_buyer_release_above_value: 1000
+    requires_buyer_release_above_value: 1000   # USD threshold; POs above this need buyer sign-off
     # Set > 0 to enable auto-release for small orders (skip buyer step)
-    auto_release_below_value: 0
+    auto_release_below_value: 0                # USD threshold; 0 = no auto-release (all POs need manual release)
 
+  # ═══ CSV EXPORT ═══
   csv_export:
-    output_dir: data/po_exports/
-    filename_format: "PO_export_{TIMESTAMP}.csv"
-    include_internal_ids: true
+    output_dir: data/po_exports/         # Directory for exported PO CSV files (relative to project root)
+    filename_format: "PO_export_{TIMESTAMP}.csv"  # Export filename template; TIMESTAMP = ISO datetime
+    include_internal_ids: true           # Include internal DB IDs (po_id, exception_id) in export; false = customer-facing only
 
+  # ═══ ERP INTEGRATION ═══
   erp_integration:
-    default_integration_id: 1
-    retry_on_failure: true
-    max_retries: 3
-    retry_delay_seconds: 30
-    timeout_seconds: 30
+    default_integration_id: 1            # FK to dim_erp_integration table; identifies target ERP system
+    retry_on_failure: true               # Retry failed ERP sends automatically
+    max_retries: 3                       # Maximum retry attempts before marking as failed
+    retry_delay_seconds: 30              # Delay between retry attempts (seconds)
+    timeout_seconds: 30                  # HTTP request timeout for ERP API calls (seconds)
 
+  # ═══ NOTIFICATIONS ═══
   notifications:
-    notify_buyer_on_planner_approval: true
-    notify_planner_on_buyer_release: true
-    notify_on_erp_failure: true
-    # 'email', 'slack', 'none'
-    notification_method: none
+    notify_buyer_on_planner_approval: true   # Send notification to buyer when planner approves a PO
+    notify_planner_on_buyer_release: true    # Send notification to planner when buyer releases a PO
+    notify_on_erp_failure: true              # Send notification on ERP integration failure
+    # Notification delivery method; options: 'email', 'slack', 'none'
+    notification_method: none                # Set to 'slack' or 'email' to enable; 'none' = disabled
 
   # Used when dim_supplier.default_lead_time_days is NULL
-  lead_time_fallback_days: 14
+  lead_time_fallback_days: 14            # Default lead time (days) for suppliers without configured lead times

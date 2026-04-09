@@ -1,79 +1,97 @@
+# Replenishment Policy Configuration
+# Consumed by: scripts/assign_replenishment_policies.py (upsert_policies, determine_policy_id)
+#              scripts/classify_abc_xyz.py (abc_xyz_policies for DOS targets + service levels)
+# Upserted to: dim_replenishment_policy table
+# Assignments stored in: fact_dfu_policy_assignment table
+
+# Policy definitions — each is upserted into dim_replenishment_policy.
+# Policies map to inventory segments (ABC class or variability class).
 policies:
-  - id: A_continuous_v1
-    name: "A-Class Continuous Review (ROP/EOQ)"
-    type: continuous_rop
-    segment: "A"
-    service_level: 0.98
-    use_eoq: true
-    use_safety_stock: true
+  - id: A_continuous_v1                 # Unique policy identifier (stored in DB as policy_id)
+    name: "A-Class Continuous Review (ROP/EOQ)"  # Human-readable policy name
+    type: continuous_rop                # Policy type: continuous reorder point — order when stock hits ROP
+    segment: "A"                        # ABC segment this policy applies to (A = high-volume SKUs)
+    service_level: 0.98                 # Target fill rate — 98% for A-class items
+    use_eoq: true                       # Use Economic Order Quantity for order sizing
+    use_safety_stock: true              # Include safety stock buffer in reorder point
 
   - id: B_periodic_v1
     name: "B-Class Periodic Review (4-week)"
-    type: periodic_review
-    segment: "B"
-    review_cycle_days: 28
-    service_level: 0.95
-    use_eoq: true
-    use_safety_stock: true
+    type: periodic_review               # Policy type: review stock at fixed intervals, order up to target
+    segment: "B"                        # ABC segment: B = medium-volume SKUs
+    review_cycle_days: 28               # Review period in days (28 = 4-week cycle)
+    service_level: 0.95                 # 95% fill rate for B-class
+    use_eoq: true                       # Use EOQ for order sizing
+    use_safety_stock: true              # Include safety stock
 
   - id: C_min_max_v1
     name: "C-Class Min-Max"
-    type: min_max
-    segment: "C"
-    service_level: 0.90
-    use_eoq: false
-    use_safety_stock: true
+    type: min_max                       # Policy type: order when stock drops below min, order up to max
+    segment: "C"                        # ABC segment: C = low-volume SKUs
+    service_level: 0.90                 # 90% fill rate — lower investment for C-class
+    use_eoq: false                      # No EOQ — use min/max bands instead
+    use_safety_stock: true              # Safety stock still applied for min level calculation
 
   - id: lumpy_manual_v1
     name: "Lumpy/Intermittent — Manual Review"
-    type: manual
-    segment: "lumpy"
-    service_level: 0.85
-    use_eoq: false
-    use_safety_stock: false
+    type: manual                        # Policy type: manual planner review (no automatic ordering)
+    segment: "lumpy"                    # Variability segment: lumpy/intermittent demand pattern
+    service_level: 0.85                 # Lower service target — lumpy demand hard to predict
+    use_eoq: false                      # EOQ not meaningful for intermittent demand
+    use_safety_stock: false             # Safety stock unreliable for lumpy patterns
 
+# Auto-assignment configuration — maps SKUs to policies based on dim_sku attributes.
+# Scripts/assign_replenishment_policies.py uses this to batch-assign DFUs.
 auto_assign:
-  enabled: true
+  enabled: true                         # Master switch — set false to skip auto-assignment
   # Priority: variability_class overrides abc_vol
-  # lumpy variability_class → lumpy_manual_v1 regardless of ABC class
-  # else: A → A_continuous_v1, B → B_periodic_v1, C → C_min_max_v1
-  variability_override:
-    lumpy: lumpy_manual_v1
+  # lumpy variability_class -> lumpy_manual_v1 regardless of ABC class
+  # else: A -> A_continuous_v1, B -> B_periodic_v1, C -> C_min_max_v1
+  variability_override:                 # Map variability_class values to policy IDs (overrides ABC)
+    lumpy: lumpy_manual_v1              # All lumpy SKUs -> manual review regardless of ABC class
 
+# ABC-XYZ Policy Matrix — 9-cell matrix combining ABC volume class and XYZ variability class.
+# Consumed by: scripts/classify_abc_xyz.py (writes dos targets + service levels to dim_sku)
+# Each cell defines inventory policy parameters:
+#   dos_min: minimum days of supply target (safety stock floor)
+#   dos_max: maximum days of supply target (overstock ceiling)
+#   service_level: target fill rate for this segment
+# Higher variability (X->Y->Z) increases DOS buffers and reduces service targets.
+# Lower volume class (A->B->C) also increases DOS buffers and reduces service targets.
 abc_xyz_policies:
-  AX:
-    dos_min: 14
-    dos_max: 21
-    service_level: 0.98
-  AY:
-    dos_min: 21
-    dos_max: 28
-    service_level: 0.97
-  AZ:
-    dos_min: 28
-    dos_max: 42
+  AX:                                   # A-volume + X-variability (high volume, low variability = most predictable)
+    dos_min: 14                         # Min 14 days of supply (2 weeks)
+    dos_max: 21                         # Max 21 days of supply (3 weeks)
+    service_level: 0.98                 # 98% fill rate — tight control, high service
+  AY:                                   # A-volume + Y-variability (high volume, moderate variability)
+    dos_min: 21                         # Min 3 weeks — extra buffer for moderate variability
+    dos_max: 28                         # Max 4 weeks
+    service_level: 0.97                 # 97% fill rate
+  AZ:                                   # A-volume + Z-variability (high volume, high variability)
+    dos_min: 28                         # Min 4 weeks — significant buffer for volatile demand
+    dos_max: 42                         # Max 6 weeks
+    service_level: 0.95                 # 95% fill rate — harder to achieve with volatile demand
+  BX:                                   # B-volume + X-variability
+    dos_min: 21                         # Min 3 weeks
+    dos_max: 28                         # Max 4 weeks
     service_level: 0.95
-  BX:
-    dos_min: 21
-    dos_max: 28
-    service_level: 0.95
-  BY:
-    dos_min: 28
-    dos_max: 35
+  BY:                                   # B-volume + Y-variability
+    dos_min: 28                         # Min 4 weeks
+    dos_max: 35                         # Max 5 weeks
     service_level: 0.93
-  BZ:
-    dos_min: 35
-    dos_max: 45
+  BZ:                                   # B-volume + Z-variability
+    dos_min: 35                         # Min 5 weeks
+    dos_max: 45                         # Max ~6.5 weeks
     service_level: 0.90
-  CX:
-    dos_min: 28
-    dos_max: 35
+  CX:                                   # C-volume + X-variability
+    dos_min: 28                         # Min 4 weeks
+    dos_max: 35                         # Max 5 weeks
     service_level: 0.92
-  CY:
-    dos_min: 35
-    dos_max: 42
+  CY:                                   # C-volume + Y-variability
+    dos_min: 35                         # Min 5 weeks
+    dos_max: 42                         # Max 6 weeks
     service_level: 0.90
-  CZ:
-    dos_min: 42
-    dos_max: 60
-    service_level: 0.85
+  CZ:                                   # C-volume + Z-variability (low volume, high variability = hardest to manage)
+    dos_min: 42                         # Min 6 weeks — large buffer for unpredictable, low-volume items
+    dos_max: 60                         # Max ~8.5 weeks
+    service_level: 0.85                 # 85% fill rate — lowest target in matrix

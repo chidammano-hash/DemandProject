@@ -8,10 +8,23 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
+import { ChevronRight, BarChart3, Search } from "lucide-react";
 import { useChartColors } from "@/hooks/useChartColors";
 import { useWorkbench } from "@/api/queries/demand-history";
 import type { WorkbenchGrain, WorkbenchSeries } from "@/api/queries/demand-history";
 import { useDemandHistorySelection } from "../DemandHistoryTab";
+import { Skeleton } from "@/components/Skeleton";
+import { formatInt } from "@/lib/formatters";
+
+// ---------------------------------------------------------------------------
+// Grain labels
+// ---------------------------------------------------------------------------
+
+const GRAIN_LABELS: Record<WorkbenchGrain, string> = {
+  item: "Item",
+  item_loc: "Item + Loc",
+  item_loc_customer: "Item + Loc + Cust",
+};
 
 // ---------------------------------------------------------------------------
 // Hierarchy tree node
@@ -21,24 +34,33 @@ function TreeNode({
   series,
   isSelected,
   onSelect,
+  canDrillDown,
 }: {
   series: WorkbenchSeries;
   isSelected: boolean;
   onSelect: (key: string) => void;
+  canDrillDown: boolean;
 }) {
   return (
     <button
       onClick={() => onSelect(series.key)}
-      className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
+      className={`group w-full text-left px-3 py-2 text-sm rounded-lg transition-all ${
         isSelected
-          ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-          : "hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300"
+          ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-800"
+          : "hover:bg-gray-50 dark:hover:bg-gray-800/60 text-gray-700 dark:text-gray-300"
       }`}
     >
-      <div className="flex items-center justify-between">
-        <span className="truncate font-medium">{series.label || series.key}</span>
-        <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
-          {series.total_demand.toLocaleString()}
+      <div className="flex items-center gap-2">
+        {canDrillDown && (
+          <ChevronRight className={`h-3.5 w-3.5 flex-shrink-0 transition-transform ${
+            isSelected ? "text-blue-500 rotate-90" : "text-gray-400 group-hover:text-gray-500"
+          }`} />
+        )}
+        <span className="truncate font-medium flex-1">{series.label || series.key}</span>
+        <span className={`text-xs tabular-nums flex-shrink-0 ${
+          isSelected ? "text-blue-500 font-medium" : "text-gray-400"
+        }`}>
+          {formatInt(series.total_demand)}
         </span>
       </div>
     </button>
@@ -103,6 +125,8 @@ export function DemandWorkbenchPanel() {
     setSelectedKey("");
   }
 
+  const canDrillDown = grain !== "item_loc_customer" && !!data?.hierarchy_children;
+
   return (
     <div className="flex gap-4 h-full min-h-[500px]">
       {/* Left: hierarchy tree */}
@@ -113,30 +137,44 @@ export function DemandWorkbenchPanel() {
             <button
               key={g}
               onClick={() => { setGrain(g); setSelectedKey(""); }}
-              className={`px-2 py-1 text-xs rounded ${
+              className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors ${
                 grain === g
                   ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
                   : "text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
               }`}
             >
-              {g.replace(/_/g, " + ")}
+              {GRAIN_LABELS[g]}
             </button>
           ))}
         </div>
 
         {/* Search */}
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search..."
-          className="mb-3 px-3 py-1.5 text-sm border dark:border-gray-700 rounded-md bg-white dark:bg-gray-900 w-full"
-        />
+        <div className="relative mb-3">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search items..."
+            className="w-full pl-8 pr-3 py-1.5 text-sm border dark:border-gray-700 rounded-md bg-white dark:bg-gray-900"
+          />
+        </div>
+
+        {/* Series count */}
+        {!isLoading && data?.series && (
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-2 px-1">
+            {filteredSeries.length} of {data.series.length} series
+          </p>
+        )}
 
         {/* Series list */}
         <div className="flex-1 overflow-y-auto space-y-0.5">
           {isLoading && (
-            <p className="text-sm text-gray-500 p-3">Loading...</p>
+            <div className="space-y-1.5 p-1">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Skeleton key={i} className="h-9 rounded-lg" />
+              ))}
+            </div>
           )}
           {filteredSeries.map((s) => (
             <TreeNode
@@ -144,21 +182,34 @@ export function DemandWorkbenchPanel() {
               series={s}
               isSelected={selectedKey === s.key}
               onSelect={handleNodeSelect}
+              canDrillDown={canDrillDown}
             />
           ))}
           {!isLoading && filteredSeries.length === 0 && (
-            <p className="text-sm text-gray-400 p-3">No series found</p>
+            <div className="flex flex-col items-center py-8 text-gray-400">
+              <Search className="h-8 w-8 mb-2 opacity-40" />
+              <p className="text-sm">No series found</p>
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="mt-1 text-xs text-blue-500 hover:underline"
+                >
+                  Clear search
+                </button>
+              )}
+            </div>
           )}
         </div>
 
         {/* Drill-down button */}
-        {data?.hierarchy_children && selectedKey && grain !== "item_loc_customer" && (
+        {canDrillDown && selectedKey && (
           <div className="mt-3 pt-3 border-t dark:border-gray-700">
             <button
               onClick={() => handleDrillDown(selectedKey)}
-              className="w-full text-left px-3 py-2 text-xs rounded bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-medium"
+              className="w-full flex items-center justify-between px-3 py-2.5 text-xs rounded-lg bg-gradient-to-r from-blue-50 to-blue-100/50 hover:from-blue-100 hover:to-blue-100 dark:from-blue-900/30 dark:to-blue-900/20 dark:hover:from-blue-900/50 dark:hover:to-blue-900/30 text-blue-700 dark:text-blue-300 font-medium transition-all"
             >
-              Drill down to {data.hierarchy_children.replace(/_/g, " + ")} →
+              <span>Drill down to {GRAIN_LABELS[grain === "item" ? "item_loc" : "item_loc_customer"]}</span>
+              <ChevronRight className="h-4 w-4" />
             </button>
           </div>
         )}
@@ -168,12 +219,14 @@ export function DemandWorkbenchPanel() {
       <div className="flex-1 flex flex-col">
         {selectedSeries ? (
           <>
-            <h3 className="text-sm font-semibold mb-1 text-gray-800 dark:text-gray-200">
-              {selectedSeries.label || selectedSeries.key}
-            </h3>
-            <p className="text-xs text-gray-500 mb-3">
-              Total: {selectedSeries.total_demand.toLocaleString()}
-            </p>
+            <div className="flex items-baseline gap-3 mb-3">
+              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                {selectedSeries.label || selectedSeries.key}
+              </h3>
+              <span className="text-xs text-gray-400 tabular-nums">
+                Total: {formatInt(selectedSeries.total_demand)}
+              </span>
+            </div>
             <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={selectedSeries.months}>
@@ -190,6 +243,7 @@ export function DemandWorkbenchPanel() {
                       border: `1px solid ${chartColors.tooltip_border}`,
                       fontSize: 12,
                     }}
+                    formatter={(v: number) => [formatInt(v), "Demand"]}
                   />
                   <defs>
                     <linearGradient id="wbGrad" x1="0" y1="0" x2="0" y2="1">
@@ -210,8 +264,10 @@ export function DemandWorkbenchPanel() {
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-            Select a series from the tree to view demand history
+          <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+            <BarChart3 className="h-12 w-12 mb-3 opacity-30" />
+            <p className="text-sm font-medium">No series selected</p>
+            <p className="text-xs mt-1">Select a series from the tree to view demand history</p>
           </div>
         )}
       </div>

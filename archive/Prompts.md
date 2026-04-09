@@ -87,3 +87,6 @@ oK. create a quick script that will do backtesting for the entire population not
 1,14,28789,116,202601,1.000,0.000
 1,14,28789,2161,202601,0.333,0.333
 1,14,28789,
+
+
+yes simplify and provide an idea. I would say create a fact_production_forecast_staging table that can store all the forecasts from all the algorithms. generate button will generate forecasts in to this table by deleing the previous forecast for that algorithm. Promote will promote the forecast as the production forecast and load that model forecast from fact_production_forecast_staging to fact_production_forecast. fact_production_forecast_staging wil store forecast for all the algorithms with a forecast month as current month. there could be one version for each algorithm for one forecast month in the fact_production_forecast_staging. fact_production_forecast can store only the promoted forecast.

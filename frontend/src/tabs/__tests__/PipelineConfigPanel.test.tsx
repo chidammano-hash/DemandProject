@@ -32,7 +32,7 @@ const mockPipelineConfig = {
   },
   clustering: {
     enabled: true,
-    config_ref: "clustering_config.yaml",
+    config_ref: null,
     tuning_profiles_ref: "cluster_tuning_profiles.yaml",
     steps: { generate_features: true, train_model: true, label_clusters: true, update_db: true },
   },

@@ -16,7 +16,7 @@ Default hyperparameters are rarely optimal. With ~40 engineered features, many a
 
 ## Solution
 
-Three composable capabilities address these gaps: (1) Bayesian hyperparameter tuning finds optimal model parameters, (2) SHAP-based feature selection removes noise features, and (3) recursive multi-step forecasting simulates real deployment conditions. All three are activated via config keys in `forecast_pipeline_config.yaml` -- no code changes required.
+Three composable capabilities address these gaps: (1) Bayesian hyperparameter tuning finds optimal model parameters, (2) multi-stage feature selection removes redundant and noise features, and (3) recursive multi-step forecasting simulates real deployment conditions. All three are activated via config keys in `forecast_pipeline_config.yaml` -- no code changes required.
 
 ---
 
@@ -52,24 +52,26 @@ Global tuning is faster (50 trials, ~20-40 min). Inline tuning is slower (~600 m
 
 ---
 
-## 2. SHAP Feature Selection
+## 2. Multi-Stage Feature Selection
 
 ### What It Does
 
-For each backtest timeframe, trains an initial model on all features, computes SHAP (SHapley Additive exPlanations -- measures each feature's contribution to predictions) values to rank features by importance, selects features covering 95% of cumulative SHAP mass, then retrains on the reduced set.
+For each backtest timeframe, runs a 4-stage pipeline to remove redundant, low-information, and noise features before retraining on the reduced set. All stages are per-timeframe (causal) — they only see training data up to the cutoff.
 
 ### Why Per-Timeframe
 
-Feature importance shifts over time. Seasonality features matter more in certain periods; lag features dominate in others. A single static feature list is suboptimal across 10 expanding timeframes.
+Feature importance and correlation structure shift over time. A single static feature list is suboptimal across 10 expanding timeframes.
 
 ### How It Works
 
-1. Train initial model on all ~31 features
-2. Compute SHAP values (sampled from training data for speed)
-3. Rank features by mean absolute SHAP value
-4. Keep features covering 95% of total SHAP mass (configurable)
+1. **Stage 0 — Duplicate removal**: Drop exact-duplicate aliases (e.g., `sparsity_score` → keep `zero_demand_pct`)
+2. **Stage 1 — Variance filter**: Drop features with near-zero relative variance (configurable threshold)
+3. **Stage 2 — Correlation filter**: For pairs with |r| > 0.95, drop the lower-variance member
+4. **Stage 3 — SHAP selection**: Compute SHAP values, keep features covering 95% of cumulative mass
 5. Retrain final model on selected features only
 6. Write per-timeframe and summary CSVs to `data/backtest/<model_id>/shap/`
+
+See [spec 23 — Feature Selection Pipeline](23-feature-selection-pipeline.md) for full details.
 
 ### SHAP API
 

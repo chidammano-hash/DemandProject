@@ -640,21 +640,23 @@ def seed_clustering_baseline(conn: psycopg.Connection) -> int | None:  # type: i
     if profiles_path.exists():
         profiles = json.loads(profiles_path.read_text())
 
-    cluster_config = load_config("clustering_config.yaml")
-
     # Build config sub-objects matching cluster_experiment schema
     feature_params = {
-        "time_window_months": cluster_config.get("time_window_months"),
-        "min_months_history": cluster_config.get("min_months_history"),
+        "time_window_months": meta.get("time_window_months", 36),
+        "min_months_history": meta.get("min_months_history", 12),
     }
     model_params = {
-        "k_range": meta.get("k_selection_results", {}).get("k_values", cluster_config.get("k_range")),
-        "min_cluster_size_pct": meta.get("min_cluster_size_pct", cluster_config.get("min_cluster_size_pct")),
-        "use_pca": cluster_config.get("use_pca", False),
-        "pca_components": cluster_config.get("pca_components"),
+        "k_range": meta.get("k_selection_results", {}).get("k_values", [9, 18]),
+        "min_cluster_size_pct": meta.get("min_cluster_size_pct", 2.0),
+        "use_pca": meta.get("use_pca", False),
+        "pca_components": meta.get("pca_components"),
         "all_features": meta.get("feature_names", []),
     }
-    label_params = cluster_config.get("labeling", {})
+    label_params = {
+        "volume_high": 0.75, "volume_low": 0.25,
+        "cv_steady": 0.4, "cv_volatile": 0.8,
+        "seasonality_threshold": 0.3, "zero_demand_threshold": 0.15,
+    }
 
     # Generate a unique scenario_id
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")

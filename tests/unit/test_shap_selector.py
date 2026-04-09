@@ -273,3 +273,421 @@ class TestWeightedPoolClusterShap:
         pooled, per_cluster = _weighted_pool_cluster_shap(models, train_data, ["f1", "f2"], [], bad_extractor, 10)
         np.testing.assert_allclose(pooled, [0.0, 0.0])
         assert len(per_cluster) == 0
+
+
+# ---------------------------------------------------------------------------
+# compute_timeframe_shap_per_cluster
+# ---------------------------------------------------------------------------
+
+
+from common.shap_selector import (
+    SPARSE_MIN_NONZERO_ROWS,
+    _stratified_sample_for_shap,
+    compute_timeframe_shap_per_cluster,
+)
+
+
+# ---------------------------------------------------------------------------
+# _stratified_sample_for_shap
+# ---------------------------------------------------------------------------
+
+
+class TestStratifiedSampleForShap:
+    """Tests for the sparse-cluster stratified SHAP sampling helper."""
+
+    def test_nonsparse_cluster_uses_random_sampling(self):
+        """Cluster with <50% zeros uses standard random sampling."""
+        rng = np.random.RandomState(42)
+        n = 200
+        # 30% zeros — below threshold
+        qty = np.where(rng.rand(n) < 0.3, 0.0, rng.rand(n) * 100 + 1)
+        df = pd.DataFrame({
+            "feat_a": rng.randn(n),
+            "feat_b": rng.randn(n),
+            "qty": qty,
+        })
+        result = _stratified_sample_for_shap(df, ["feat_a", "feat_b"], sample_size=50)
+        assert result is not None
+        assert len(result) == 50
+        assert list(result.columns) == ["feat_a", "feat_b"]
+
+    def test_sparse_cluster_uses_stratified_sampling(self):
+        """Cluster with >50% zeros gets 50/50 zero vs non-zero samples."""
+        rng = np.random.RandomState(42)
+        n = 500
+        # 80% zeros → sparse
+        qty = np.where(rng.rand(n) < 0.8, 0.0, rng.rand(n) * 100 + 1)
+        df = pd.DataFrame({
+            "feat_a": rng.randn(n),
+            "feat_b": rng.randn(n),
+            "qty": qty,
+        })
+        result = _stratified_sample_for_shap(df, ["feat_a", "feat_b"], sample_size=100)
+        assert result is not None
+        assert list(result.columns) == ["feat_a", "feat_b"]
+        # Should have ~50 rows from each stratum (50/50 split of sample_size=100)
+        assert len(result) <= 100
+
+    def test_sparse_cluster_balances_nonzero_rows(self):
+        """Verify that stratified sample actually contains non-zero rows."""
+        # 80% zeros, 20% non-zero — 1000 total → 800 zero, 200 nonzero
+        # 200 nonzero > SPARSE_MIN_NONZERO_ROWS (100), so SHAP proceeds
+        n = 1000
+        qty = np.zeros(n)
+        qty[:200] = np.arange(1, 201).astype(float)  # 200 nonzero
+        rng = np.random.RandomState(42)
+        df = pd.DataFrame({
+            "feat_a": rng.randn(n),
+            "qty": qty,
+        })
+        # Shuffle so the pattern isn't trivial
+        df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+
+        result = _stratified_sample_for_shap(df, ["feat_a"], sample_size=40)
+        assert result is not None
+        # sample_size=40 → half=20, so up to 20 nonzero + 20 zero
+        assert len(result) == 40
+
+    def test_too_few_nonzero_returns_none(self):
+        """Cluster with <SPARSE_MIN_NONZERO_ROWS non-zero rows returns None."""
+        n = 500
+        # Only 10 nonzero rows (well below 100 threshold)
+        qty = np.zeros(n)
+        qty[:10] = np.arange(1, 11).astype(float)
+        rng = np.random.RandomState(42)
+        df = pd.DataFrame({
+            "feat_a": rng.randn(n),
+            "qty": qty,
+        })
+        result = _stratified_sample_for_shap(df, ["feat_a"], sample_size=100)
+        assert result is None
+
+    def test_exactly_at_threshold_nonzero_returns_sample(self):
+        """Cluster with exactly SPARSE_MIN_NONZERO_ROWS non-zero rows gets sampled."""
+        n = 500
+        n_nonzero = SPARSE_MIN_NONZERO_ROWS  # exactly at threshold
+        qty = np.zeros(n)
+        qty[:n_nonzero] = np.arange(1, n_nonzero + 1).astype(float)
+        rng = np.random.RandomState(42)
+        df = pd.DataFrame({
+            "feat_a": rng.randn(n),
+            "qty": qty,
+        })
+        result = _stratified_sample_for_shap(df, ["feat_a"], sample_size=100)
+        assert result is not None
+
+    def test_no_qty_column_falls_back_to_random(self):
+        """When qty column is missing, standard random sampling is used."""
+        rng = np.random.RandomState(42)
+        df = pd.DataFrame({
+            "feat_a": rng.randn(200),
+            "feat_b": rng.randn(200),
+        })
+        result = _stratified_sample_for_shap(df, ["feat_a", "feat_b"], sample_size=50)
+        assert result is not None
+        assert len(result) == 50
+        assert list(result.columns) == ["feat_a", "feat_b"]
+
+    def test_all_zero_demand_returns_none(self):
+        """Cluster with 100% zeros and 0 non-zero rows returns None."""
+        n = 200
+        rng = np.random.RandomState(42)
+        df = pd.DataFrame({
+            "feat_a": rng.randn(n),
+            "qty": np.zeros(n),
+        })
+        result = _stratified_sample_for_shap(df, ["feat_a"], sample_size=50)
+        assert result is None  # 0 nonzero < SPARSE_MIN_NONZERO_ROWS
+
+    def test_sample_size_larger_than_data(self):
+        """When sample_size > cluster size, caps at available rows."""
+        rng = np.random.RandomState(42)
+        n = 200
+        df = pd.DataFrame({
+            "feat_a": rng.randn(n),
+            "qty": rng.rand(n) * 100 + 1,  # all nonzero (200 > threshold)
+        })
+        result = _stratified_sample_for_shap(df, ["feat_a"], sample_size=500)
+        assert result is not None
+        assert len(result) == 200  # capped at data size
+
+
+# ---------------------------------------------------------------------------
+# compute_timeframe_shap_per_cluster (sparse cluster integration tests)
+# ---------------------------------------------------------------------------
+
+
+class TestSparseClusterShapIntegration:
+    """Integration tests for SHAP handling of sparse/low-volume clusters."""
+
+    def test_sparse_cluster_keeps_all_features(self):
+        """A cluster with too few non-zero rows skips SHAP, keeps all features."""
+        rng = np.random.RandomState(42)
+        n_features = 10
+        feature_cols = [f"feat_{i}" for i in range(n_features)]
+
+        # "active" cluster: 200 rows, all nonzero demand
+        # "sparse" cluster: 200 rows, only 5 nonzero (< SPARSE_MIN_NONZERO_ROWS)
+        rows = []
+        for _ in range(200):
+            row = {f"feat_{i}": rng.randn() for i in range(n_features)}
+            row["ml_cluster"] = "active"
+            row["qty"] = rng.rand() * 100 + 1
+            rows.append(row)
+        for i in range(200):
+            row = {f"feat_{i}": rng.randn() for i in range(n_features)}
+            row["ml_cluster"] = "sparse"
+            row["qty"] = float(i + 1) if i < 5 else 0.0  # only 5 nonzero
+            rows.append(row)
+        df = pd.DataFrame(rows)
+        cat_cols: list[str] = []
+
+        model_dict = {"active": MagicMock(), "sparse": MagicMock()}
+
+        def extractor(model, X, feature_cols, cat_cols):
+            rng_ext = np.random.RandomState(0)
+            return rng_ext.rand(len(X), len(feature_cols))
+
+        result_features, shap_df = compute_timeframe_shap_per_cluster(
+            model_dict=model_dict,
+            train_data=df,
+            feature_cols=feature_cols,
+            cat_cols=cat_cols,
+            timeframe_idx=0,
+            cutoff_date=pd.Timestamp("2025-01-01"),
+            shap_extractor_fn=extractor,
+        )
+
+        # Sparse cluster should keep ALL features (SHAP skipped)
+        assert set(result_features["sparse"]) == set(feature_cols)
+
+        # Active cluster should have features selected via SHAP normally
+        assert "active" in result_features
+        assert len(result_features["active"]) > 0
+
+    def test_sparse_cluster_no_shap_df_row(self):
+        """Sparse cluster that skips SHAP should NOT appear in shap_df."""
+        rng = np.random.RandomState(42)
+        n_features = 5
+        feature_cols = [f"f{i}" for i in range(n_features)]
+
+        rows = []
+        # active cluster with enough data
+        for _ in range(200):
+            row = {f"f{i}": rng.randn() for i in range(n_features)}
+            row["ml_cluster"] = "active"
+            row["qty"] = rng.rand() * 100 + 1
+            rows.append(row)
+        # sparse cluster with too few nonzero
+        for i in range(200):
+            row = {f"f{i}": rng.randn() for i in range(n_features)}
+            row["ml_cluster"] = "sparse"
+            row["qty"] = 1.0 if i < 3 else 0.0
+            rows.append(row)
+        df = pd.DataFrame(rows)
+
+        model_dict = {"active": MagicMock(), "sparse": MagicMock()}
+
+        def extractor(model, X, feature_cols, cat_cols):
+            return np.random.RandomState(0).rand(len(X), len(feature_cols))
+
+        _, shap_df = compute_timeframe_shap_per_cluster(
+            model_dict=model_dict,
+            train_data=df,
+            feature_cols=feature_cols,
+            cat_cols=[],
+            timeframe_idx=0,
+            cutoff_date=pd.Timestamp("2025-01-01"),
+            shap_extractor_fn=extractor,
+        )
+
+        # The sparse cluster should NOT appear in shap_df (SHAP was skipped)
+        if not shap_df.empty:
+            cluster_values = set(shap_df["cluster"].unique())
+            assert "sparse" not in cluster_values
+            assert "active" in cluster_values
+
+
+def _make_cluster_data(n_features=10, n_per_cluster=50, clusters=("high", "low")):
+    """Helper to create test data for per-cluster SHAP tests."""
+    rng = np.random.RandomState(42)
+    rows = []
+    for cluster in clusters:
+        for _ in range(n_per_cluster):
+            row = {f"feat_{i}": rng.randn() for i in range(n_features)}
+            row["ml_cluster"] = cluster
+            row["target"] = rng.randn()
+            rows.append(row)
+    df = pd.DataFrame(rows)
+    feature_cols = [f"feat_{i}" for i in range(n_features)]
+    cat_cols: list[str] = []
+    return df, feature_cols, cat_cols
+
+
+def _make_per_cluster_shap_extractor(n_features):
+    """Mock SHAP extractor that returns random absolute values."""
+    def extractor(model, X, feature_cols, cat_cols):
+        rng = np.random.RandomState(0)
+        return rng.rand(len(X), len(feature_cols))
+    return extractor
+
+
+class TestComputeTimeframeShapPerCluster:
+    """Tests for the per-cluster independent SHAP feature selection."""
+
+    def test_compute_timeframe_shap_per_cluster_basic(self):
+        """Basic: 2 clusters, returns per-cluster feature lists and shap_df."""
+        df, feature_cols, cat_cols = _make_cluster_data(
+            n_features=10, n_per_cluster=50, clusters=("high", "low"),
+        )
+        model_dict = {"high": MagicMock(), "low": MagicMock()}
+        extractor = _make_per_cluster_shap_extractor(10)
+
+        result_features, shap_df = compute_timeframe_shap_per_cluster(
+            model_dict=model_dict,
+            train_data=df,
+            feature_cols=feature_cols,
+            cat_cols=cat_cols,
+            timeframe_idx=0,
+            cutoff_date=pd.Timestamp("2025-01-01"),
+            shap_extractor_fn=extractor,
+        )
+
+        # Return type checks
+        assert isinstance(result_features, dict)
+        assert isinstance(shap_df, pd.DataFrame)
+
+        # Both clusters present in result
+        assert "high" in result_features
+        assert "low" in result_features
+
+        # Each value is a list of feature name strings
+        for cluster_label, feats in result_features.items():
+            assert isinstance(feats, list)
+            assert len(feats) > 0
+            for f in feats:
+                assert isinstance(f, str)
+                assert f in feature_cols
+
+        # shap_df has the cluster column with correct values
+        assert "cluster" in shap_df.columns
+        cluster_values = set(shap_df["cluster"].unique())
+        assert "high" in cluster_values
+        assert "low" in cluster_values
+
+    def test_compute_timeframe_shap_per_cluster_skips_base(self):
+        """The __base__ key in model_dict is skipped (transfer-learning sentinel)."""
+        df, feature_cols, cat_cols = _make_cluster_data(
+            n_features=10, n_per_cluster=50, clusters=("high", "low"),
+        )
+        model_dict = {
+            "__base__": MagicMock(),
+            "high": MagicMock(),
+            "low": MagicMock(),
+        }
+        extractor = _make_per_cluster_shap_extractor(10)
+
+        result_features, shap_df = compute_timeframe_shap_per_cluster(
+            model_dict=model_dict,
+            train_data=df,
+            feature_cols=feature_cols,
+            cat_cols=cat_cols,
+            timeframe_idx=0,
+            cutoff_date=pd.Timestamp("2025-01-01"),
+            shap_extractor_fn=extractor,
+        )
+
+        # __base__ must not appear in the result
+        assert "__base__" not in result_features
+        # The two real clusters must be present
+        assert "high" in result_features
+        assert "low" in result_features
+
+    def test_compute_timeframe_shap_per_cluster_failed_cluster(self):
+        """When SHAP extraction fails for one cluster, it gets ALL features (fallback)."""
+        df, feature_cols, cat_cols = _make_cluster_data(
+            n_features=10, n_per_cluster=50, clusters=("good", "bad"),
+        )
+
+        model_good = MagicMock()
+        model_bad = MagicMock()
+        model_dict = {"good": model_good, "bad": model_bad}
+
+        call_count = {"n": 0}
+
+        def failing_extractor(model, X, feature_cols, cat_cols):
+            call_count["n"] += 1
+            if model is model_bad:
+                raise RuntimeError("Simulated SHAP failure")
+            rng = np.random.RandomState(0)
+            return rng.rand(len(X), len(feature_cols))
+
+        result_features, shap_df = compute_timeframe_shap_per_cluster(
+            model_dict=model_dict,
+            train_data=df,
+            feature_cols=feature_cols,
+            cat_cols=cat_cols,
+            timeframe_idx=0,
+            cutoff_date=pd.Timestamp("2025-01-01"),
+            shap_extractor_fn=failing_extractor,
+        )
+
+        # Both clusters should be present despite the failure
+        assert "good" in result_features
+        assert "bad" in result_features
+
+        # The failed cluster ("bad") gets ALL features as fallback
+        assert set(result_features["bad"]) == set(feature_cols)
+
+        # The successful cluster ("good") gets a (possibly smaller) subset
+        assert len(result_features["good"]) > 0
+        # All selected features are valid feature names
+        assert all(f in feature_cols for f in result_features["good"])
+
+    def test_compute_timeframe_shap_per_cluster_with_variance_filter(self):
+        """Variance filter excludes near-zero-variance features for all clusters."""
+        n_features = 10
+        clusters = ("high", "low")
+        n_per_cluster = 50
+
+        # Build data where feat_0 and feat_1 have near-zero variance (constant)
+        rng = np.random.RandomState(42)
+        rows = []
+        for cluster in clusters:
+            for _ in range(n_per_cluster):
+                row = {f"feat_{i}": rng.randn() for i in range(n_features)}
+                # Make feat_0 and feat_1 constant → zero variance
+                row["feat_0"] = 1.0
+                row["feat_1"] = 2.0
+                row["ml_cluster"] = cluster
+                row["target"] = rng.randn()
+                rows.append(row)
+        df = pd.DataFrame(rows)
+        feature_cols = [f"feat_{i}" for i in range(n_features)]
+        cat_cols: list[str] = []
+
+        model_dict = {"high": MagicMock(), "low": MagicMock()}
+
+        def extractor(model, X, feature_cols, cat_cols):
+            rng = np.random.RandomState(0)
+            return rng.rand(len(X), len(feature_cols))
+
+        result_features, shap_df = compute_timeframe_shap_per_cluster(
+            model_dict=model_dict,
+            train_data=df,
+            feature_cols=feature_cols,
+            cat_cols=cat_cols,
+            timeframe_idx=0,
+            cutoff_date=pd.Timestamp("2025-01-01"),
+            shap_extractor_fn=extractor,
+            variance_filter=True,
+            variance_threshold=0.01,
+        )
+
+        # Near-zero-variance features (feat_0, feat_1) should be excluded
+        # from the selected features of BOTH clusters
+        for cluster_label, feats in result_features.items():
+            assert "feat_0" not in feats, f"feat_0 should be excluded for {cluster_label}"
+            assert "feat_1" not in feats, f"feat_1 should be excluded for {cluster_label}"
+            # Other features should still be selectable
+            assert len(feats) > 0

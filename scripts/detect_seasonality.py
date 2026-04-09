@@ -1,6 +1,13 @@
 """
 Detect seasonality patterns in DFU monthly sales history.
 
+.. deprecated::
+    This script is deprecated.  Use ``scripts/ml/compute_sku_features.py``
+    (backed by ``common/ml/sku_features/``) for all new work.  The unified
+    module computes seasonality, variability, and lifecycle features in a
+    single pass.  This file is kept only for backward-compatible function
+    exports consumed by existing tests.
+
 Computes per-DFU seasonality metrics: strength (CV of monthly means),
 year-over-year correlation, autocorrelation at lag 12, peak/trough analysis,
 and classifies each DFU into a seasonality profile tier.
@@ -224,109 +231,45 @@ def _compute_seasonality_for_group(args: tuple) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Detect seasonality patterns in DFU sales")
-    parser.add_argument("--config", type=str, default="config/forecast_domain_config.yaml", help="Config file path")
-    parser.add_argument("--min-months", type=int, default=None, help="Override minimum months required")
+    """Entry point — delegates to the unified SKU features pipeline.
+
+    .. deprecated::
+        This script is deprecated.  Run ``scripts/ml/compute_sku_features.py``
+        directly for the unified pipeline.
+    """
+    import warnings
+
+    warnings.warn(
+        "scripts/detect_seasonality.py is deprecated. "
+        "Use scripts/ml/compute_sku_features.py (backed by common/ml/sku_features/) instead.",
+        DeprecationWarning,
+        stacklevel=1,
+    )
+    print(
+        "WARNING: scripts/detect_seasonality.py is deprecated.\n"
+        "  Delegating to the unified SKU features pipeline "
+        "(scripts/ml/compute_sku_features.py).\n"
+        "  Please update your workflow to call scripts/ml/compute_sku_features.py directly.\n"
+    )
+
+    # Re-use the unified pipeline's CLI so all flags are forwarded
+    from scripts.ml.compute_sku_features import run_pipeline
+
+    parser = argparse.ArgumentParser(
+        description="[DEPRECATED] Detect seasonality — delegates to unified SKU features pipeline",
+    )
+    parser.add_argument("--config", type=str, default=None, help="(ignored, kept for backward compat)")
+    parser.add_argument("--min-months", type=int, default=None, help="(ignored, kept for backward compat)")
     parser.add_argument("--output", type=str, default=None, help="Output CSV path")
-    parser.add_argument("--verbose", action="store_true", help="Print per-DFU diagnostics")
+    parser.add_argument("--verbose", action="store_true", help="(ignored, kept for backward compat)")
+    parser.add_argument("--dry-run", action="store_true", help="Compute but do not write to DB")
     args = parser.parse_args()
 
-    load_dotenv(ROOT / ".env")
-    config = load_config(args.config)
-
-    if args.min_months is not None:
-        config["min_months_history"] = args.min_months
-
-    output_path = ROOT / (args.output or config["output_path"])
-
-    print(f"Seasonality detection (min_months={config['min_months_history']})")
-    print(f"Thresholds: low={config['thresholds']['low']}, "
-          f"medium={config['thresholds']['medium']}, high={config['thresholds']['high']}")
-
-    db = get_db_params()
-
-    with profiled_section("load_sales_data"):
-        with psycopg.connect(**db) as conn:
-            print("Loading sales data...")
-            sales_df = pd.read_sql(
-                """
-                SELECT d.sku_ck, s.startdate, s.qty
-                FROM fact_sales_monthly s
-                INNER JOIN dim_sku d
-                    ON d.item_id = s.item_id
-                    AND d.customer_group = s.customer_group
-                    AND d.loc = s.loc
-                WHERE s.qty IS NOT NULL
-                ORDER BY d.sku_ck, s.startdate
-                """,
-                conn,
-            )
-
-        sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
-        print(f"Loaded {len(sales_df)} sales records for {sales_df['sku_ck'].nunique()} DFUs")
-
-    # Process each DFU
-    with profiled_section("compute_seasonality"):
-        grouped = sales_df.groupby("sku_ck", sort=False)
-        n_groups = grouped.ngroups
-
-        n_workers = min(multiprocessing.cpu_count(), 8)
-        if n_groups > 500 and n_workers > 1 and not args.verbose:
-            print(f"  Parallel mode: {n_workers} workers for {n_groups} DFUs")
-            work_items = [
-                (sku_ck, {"startdate": g["startdate"].values, "qty": g["qty"].values}, config)
-                for sku_ck, g in grouped
-            ]
-            with multiprocessing.Pool(n_workers) as pool:
-                results = pool.map(
-                    _compute_seasonality_for_group,
-                    work_items,
-                    chunksize=max(1, n_groups // (n_workers * 4)),
-                )
-        else:
-            # Serial fallback (small datasets or verbose mode)
-            results = []
-            for idx, (sku_ck, dfu_sales) in enumerate(grouped):
-                if (idx + 1) % 2000 == 0 or idx == 0:
-                    print(f"  Processing DFU {idx + 1}/{n_groups}...")
-
-                metrics = compute_seasonality_metrics(dfu_sales.sort_values("startdate"), config)
-                metrics["sku_ck"] = sku_ck
-                results.append(metrics)
-
-                if args.verbose and metrics["seasonality_profile"] in ("high", "medium"):
-                    print(f"    {sku_ck}: {metrics['seasonality_profile']} "
-                          f"(strength={metrics['seasonality_strength']}, "
-                          f"yoy={metrics['yoy_correlation']}, acf12={metrics['acf_lag12']})")
-
-        results_df = pd.DataFrame(results)
-
-    # Save results
-    with profiled_section("write_results"):
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        results_df.to_csv(output_path, index=False)
-        print(f"\nSaved {len(results_df)} DFU seasonality profiles to {output_path}")
-
-    # Print summary
-    print("\nProfile distribution:")
-    profile_counts = results_df["seasonality_profile"].value_counts()
-    for profile, count in profile_counts.items():
-        pct = count / len(results_df) * 100
-        print(f"  {profile}: {count} ({pct:.1f}%)")
-
-    seasonal_count = results_df["is_yearly_seasonal"].sum()
-    print(f"\nDFUs with yearly seasonal cycle: {seasonal_count} "
-          f"({seasonal_count / len(results_df) * 100:.1f}%)")
-
-    # Top seasonal DFUs
-    ranked = results_df.dropna(subset=["seasonality_strength"])
-    if len(ranked) > 0:
-        top10 = ranked.nlargest(10, "seasonality_strength")
-        print("\nTop 10 most seasonal DFUs:")
-        for _, row in top10.iterrows():
-            print(f"  {row['sku_ck']}: strength={row['seasonality_strength']}, "
-                  f"profile={row['seasonality_profile']}, "
-                  f"peak={row['peak_month']}, trough={row['trough_month']}")
+    summary = run_pipeline(
+        dry_run=args.dry_run,
+        output_csv=args.output,
+    )
+    logger.info("Unified pipeline summary: %s", summary)
 
 
 if __name__ == "__main__":

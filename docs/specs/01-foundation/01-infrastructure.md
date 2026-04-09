@@ -77,11 +77,11 @@ The central schema registry is `DomainSpec` in `common/domain_specs.py`, coverin
 | Algorithm Config (YAML-driven) | [../02-forecasting/07-algorithm-config.md](../02-forecasting/07-algorithm-config.md) | Forecasting |
 | Production Forecast Pipeline | [../02-forecasting/08-production-forecast.md](../02-forecasting/08-production-forecast.md) | Forecasting |
 | Bias Correction Engine | [../02-forecasting/09-bias-correction.md](../02-forecasting/09-bias-correction.md) | Forecasting |
-| DFU Clustering + What-If Scenarios | [../02-forecasting/10-clustering.md](../02-forecasting/10-clustering.md) | Forecasting |
-| Seasonality Detection | [../02-forecasting/11-seasonality.md](../02-forecasting/11-seasonality.md) | Forecasting |
+| SKU Clustering + What-If Scenarios | [../03-demand-intelligence/01-sku-clustering.md](../03-demand-intelligence/01-sku-clustering.md) | Demand Intelligence |
+| SKU Feature Engineering (Seasonality + Variability) | [../01-foundation/02-sku-feature-engineering.md](../01-foundation/02-sku-feature-engineering.md) | Demand Intelligence |
 | Blended Demand Forecast | [../02-forecasting/12-blended-demand.md](../02-forecasting/12-blended-demand.md) | Forecasting |
 | Inventory Snapshots + Backtest | [../03-inventory/01-inventory-snapshot.md](../03-inventory/01-inventory-snapshot.md) | Inventory |
-| Demand Variability + Lead Time | [../03-inventory/02-variability.md](../03-inventory/02-variability.md) | Inventory |
+| Lead Time Variability | [../04-inventory/02-demand-variability.md](../04-inventory/02-demand-variability.md) | Inventory |
 | Safety Stock Engine + Simulation | [../03-inventory/03-safety-stock.md](../03-inventory/03-safety-stock.md) | Inventory |
 | EOQ + Replenishment Policies + Health Score | [../03-inventory/04-replenishment.md](../03-inventory/04-replenishment.md) | Inventory |
 | Exception Queue | [../03-inventory/05-exceptions.md](../03-inventory/05-exceptions.md) | Inventory |

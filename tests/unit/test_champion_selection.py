@@ -1,11 +1,17 @@
-"""Tests for scripts/run_champion_selection.py — generate_summary logic."""
+"""Tests for scripts/run_champion_selection.py — generate_summary logic and cached winners."""
 
-import pytest
-import pandas as pd
 from datetime import date
 from pathlib import Path
-from unittest.mock import patch
-from scripts.run_champion_selection import generate_summary, _compute_segment_accuracy
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+import pytest
+
+from scripts.run_champion_selection import (
+    _compute_segment_accuracy,
+    _load_cached_winners,
+    generate_summary,
+)
 
 
 class TestGenerateSummaryChampion:
@@ -415,3 +421,137 @@ class TestGenerateSummaryPerSegment:
         )
         assert "per_cluster_analysis" not in summary
         assert "per_abc_analysis" not in summary
+
+
+class TestLoadCachedWinners:
+    """Tests for _load_cached_winners — loading pre-computed winners from CSV."""
+
+    def test_load_standard_winners(self, tmp_path):
+        """Standard winners CSV with non-ensemble model_ids."""
+        csv_path = tmp_path / "winners.csv"
+        df = pd.DataFrame({
+            "item_id": ["I1", "I2"],
+            "customer_group": ["G1", "G1"],
+            "loc": ["L1", "L1"],
+            "startdate": ["2024-03-01", "2024-04-01"],
+            "model_id": ["lgbm_cluster", "catboost_cluster"],
+            "prior_wape": [0.1, 0.2],
+            "basefcst_pref": [110.0, 90.0],
+            "tothist_dmd": [100.0, 100.0],
+        })
+        df.to_csv(csv_path, index=False)
+
+        models = ["lgbm_cluster", "catboost_cluster", "xgboost_cluster"]
+        winners_df, winners, is_ensemble = _load_cached_winners(csv_path, models)
+
+        assert len(winners_df) == 2
+        assert len(winners) == 2
+        assert is_ensemble is False
+        assert winners_df["startdate"].dtype == "datetime64[ns]"
+        assert winners_df["basefcst_pref"].dtype == float
+
+    def test_load_ensemble_winners(self, tmp_path):
+        """Ensemble winners with synthetic model_id should set is_ensemble=True."""
+        csv_path = tmp_path / "winners.csv"
+        df = pd.DataFrame({
+            "item_id": ["I1", "I2"],
+            "customer_group": ["G1", "G1"],
+            "loc": ["L1", "L1"],
+            "startdate": ["2024-03-01", "2024-04-01"],
+            "model_id": ["ensemble", "ensemble"],
+            "prior_wape": [0.1, 0.15],
+            "basefcst_pref": [105.0, 95.0],
+            "tothist_dmd": [100.0, 100.0],
+        })
+        df.to_csv(csv_path, index=False)
+
+        models = ["lgbm_cluster", "catboost_cluster"]
+        _winners_df, winners, is_ensemble = _load_cached_winners(csv_path, models)
+
+        assert len(winners) == 2
+        assert is_ensemble is True
+
+    def test_load_winners_tuple_structure(self, tmp_path):
+        """Winners tuples have correct 8-element structure."""
+        csv_path = tmp_path / "winners.csv"
+        df = pd.DataFrame({
+            "item_id": ["ITEM1"],
+            "customer_group": ["GRP1"],
+            "loc": ["LOC1"],
+            "startdate": ["2024-03-01"],
+            "model_id": ["lgbm_cluster"],
+            "prior_wape": [0.1],
+            "basefcst_pref": [110.0],
+            "tothist_dmd": [100.0],
+        })
+        df.to_csv(csv_path, index=False)
+
+        _, winners, _ = _load_cached_winners(csv_path, ["lgbm_cluster"])
+        assert len(winners) == 1
+        w = winners[0]
+        assert w[0] == "ITEM1"       # item_id
+        assert w[1] == "GRP1"        # customer_group
+        assert w[2] == "LOC1"        # loc
+        assert w[4] == "lgbm_cluster"  # model_id
+
+
+class TestRunChampionResultsLoadCaching:
+    """Tests for _run_champion_results_load cached winners path."""
+
+    def _make_mock_conn(self):
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        return mock_conn
+
+    def test_uses_cached_winners_when_csv_exists(self, tmp_path):
+        """When experiment winners CSV exists, --load-winners-from is passed."""
+        from common.services.job_state import _SCRIPTS_DIR, _run_champion_results_load
+
+        experiment_id = 42
+        # Create cached winners CSV in the expected location
+        winners_dir = _SCRIPTS_DIR.parent / "data" / "champion"
+        winners_dir.mkdir(parents=True, exist_ok=True)
+        winners_csv = winners_dir / f"experiment_{experiment_id}_winners.csv"
+        winners_csv.write_text("item_id,customer_group,loc,startdate,model_id,prior_wape,basefcst_pref,tothist_dmd\n")
+
+        mock_conn = self._make_mock_conn()
+
+        try:
+            with (
+                patch("common.services.job_state._run_subprocess", return_value="ok") as m_sub,
+                patch("common.services.job_state._get_conn", return_value=mock_conn),
+            ):
+                result = _run_champion_results_load(
+                    {"experiment_id": experiment_id},
+                    progress_cb=MagicMock(),
+                    job_id="job-test-1",
+                )
+
+            # Verify --load-winners-from was passed
+            cmd = m_sub.call_args[0][0]
+            assert "--load-winners-from" in cmd
+            assert str(winners_csv) in cmd
+            assert result["experiment_id"] == experiment_id
+        finally:
+            winners_csv.unlink(missing_ok=True)
+
+    def test_falls_back_when_no_csv(self):
+        """When no cached CSV exists, the script runs without --load-winners-from."""
+        from common.services.job_state import _run_champion_results_load
+
+        mock_conn = self._make_mock_conn()
+
+        with (
+            patch("common.services.job_state._run_subprocess", return_value="ok") as m_sub,
+            patch("common.services.job_state._get_conn", return_value=mock_conn),
+        ):
+            result = _run_champion_results_load(
+                {"experiment_id": 99999},
+                progress_cb=MagicMock(),
+                job_id="job-test-2",
+            )
+
+        cmd = m_sub.call_args[0][0]
+        assert "--load-winners-from" not in cmd
+        assert result["experiment_id"] == 99999

@@ -1,5 +1,12 @@
 """IPfeature1: Compute demand variability statistics per DFU.
 
+.. deprecated::
+    This script is deprecated.  Use ``scripts/ml/compute_sku_features.py``
+    (backed by ``common/ml/sku_features/``) for all new work.  The unified
+    module computes seasonality, variability, and lifecycle features in a
+    single pass.  This file is kept only for backward-compatible function
+    exports consumed by existing tests.
+
 Reads config/forecast_domain_config.yaml (variability section) for all thresholds.
 Queries fact_sales_monthly (type=1, 24-month rolling window).
 Winsorizes outliers, computes CV/MAD/skewness/kurtosis/intermittency.
@@ -294,18 +301,42 @@ def run(config: dict, dry_run: bool = False) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compute demand variability per DFU")
+    """Entry point — delegates to the unified SKU features pipeline.
+
+    .. deprecated::
+        This script is deprecated.  Run ``scripts/ml/compute_sku_features.py``
+        directly for the unified pipeline.
+    """
+    import warnings
+
+    warnings.warn(
+        "scripts/compute_demand_variability.py is deprecated. "
+        "Use scripts/ml/compute_sku_features.py (backed by common/ml/sku_features/) instead.",
+        DeprecationWarning,
+        stacklevel=1,
+    )
+    print(
+        "WARNING: scripts/compute_demand_variability.py is deprecated.\n"
+        "  Delegating to the unified SKU features pipeline "
+        "(scripts/ml/compute_sku_features.py).\n"
+        "  Please update your workflow to call scripts/ml/compute_sku_features.py directly.\n"
+    )
+
+    from scripts.ml.compute_sku_features import run_pipeline
+
+    parser = argparse.ArgumentParser(
+        description="[DEPRECATED] Compute demand variability — delegates to unified SKU features pipeline",
+    )
     parser.add_argument(
         "--config",
-        default="config/forecast_domain_config.yaml",
-        help="Path to forecast_domain_config.yaml",
+        default=None,
+        help="(ignored, kept for backward compat)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Compute but do not write to DB")
     args = parser.parse_args()
 
-    config = load_config(args.config)
-    summary = run(config, dry_run=args.dry_run)
-    log.info("Done: %s", summary)
+    summary = run_pipeline(dry_run=args.dry_run)
+    log.info("Unified pipeline summary: %s", summary)
 
 
 if __name__ == "__main__":

@@ -13,9 +13,11 @@ import {
   Line,
   ComposedChart,
 } from "recharts";
+import { PieChart } from "lucide-react";
 import { useChartColors } from "@/hooks/useChartColors";
 import { useDecomposition } from "@/api/queries/demand-history";
 import { useDemandHistorySelection } from "../DemandHistoryTab";
+import { Skeleton } from "@/components/Skeleton";
 
 type ViewMode = "absolute" | "percent";
 
@@ -97,12 +99,25 @@ export function DecompositionPanel() {
       </div>
 
       {!hasSelection && (
-        <div className="text-center text-gray-400 text-sm py-20">
-          Enter an Item ID and Location, or select from the Workbench panel
+        <div className="flex flex-col items-center py-16 text-gray-400">
+          <PieChart className="h-12 w-12 mb-3 opacity-30" />
+          <p className="text-sm font-medium">No item selected</p>
+          <p className="text-xs mt-1">Enter an Item ID and Location, or select from the Workbench panel</p>
         </div>
       )}
 
-      {isLoading && <div className="text-center text-gray-500 text-sm py-10">Loading...</div>}
+      {isLoading && (
+        <div className="flex gap-6">
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-4 w-48" />
+            <Skeleton className="h-[360px] rounded-lg" />
+          </div>
+          <div className="w-72 space-y-2">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-[360px] rounded-lg" />
+          </div>
+        </div>
+      )}
       {isError && <div className="text-center text-red-500 text-sm py-10">Failed to load data</div>}
 
       {hasSelection && data && (

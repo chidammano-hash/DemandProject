@@ -50,9 +50,10 @@ logger = logging.getLogger(__name__)
 # Profile priority order — first match wins
 _PROFILE_PRIORITY = [
     "sparse_intermittent",
+    "high_volume_stable",       # mean demand >= 50, low zeros — gets deeper trees
+    "medium_volume_periodic",   # mean demand 5–100, low zeros
     "low_volume_volatile",
     "volatile_large_cluster",   # large (>300k rows) + high CV + mostly continuous
-    "high_volume_stable",
     "seasonal_dominant",
     "default",
 ]
@@ -168,6 +169,22 @@ def resolve_cluster_params(
     if not profiles:
         return base_params, "none"
 
+    # Phase 1: Exact cluster-name match (from per-cluster tuning)
+    for profile_name, profile in profiles.items():
+        if profile_name == "default":
+            continue
+        criteria = profile.get("match_criteria", {})
+        if "cluster_name" in criteria and str(criteria["cluster_name"]) == str(cluster_id):
+            overrides = profile.get("overrides", {})
+            if not overrides:
+                return base_params, profile_name
+            resolved = {**base_params, **overrides}
+            logger.info(
+                "Cluster '%s': using tuned profile (cluster_name match)",
+                cluster_id,
+            )
+            return resolved, profile_name
+
     for profile_name in _PROFILE_PRIORITY:
         profile = profiles.get(profile_name)
         if profile is None:
@@ -192,6 +209,7 @@ def resolve_cluster_params(
             )
             return resolved, profile_name
 
+    logger.info("Cluster '%s': using global params (no profile match)", cluster_id)
     return base_params, "none"
 
 
@@ -952,6 +970,99 @@ def _compute_step_wape(
     return round(float(100.0 * abs_error / total_actual), 2)
 
 
+def _log_timeframe_accuracy(
+    preds: pd.DataFrame,
+    sales_df: pd.DataFrame,
+    predict_data: pd.DataFrame,
+    label: str,
+) -> None:
+    """Log overall and per-cluster accuracy for a completed timeframe."""
+    if preds.empty:
+        return
+
+    # Join predictions with actuals from sales_df
+    predict_months = preds["startdate"].unique()
+    actuals = (
+        sales_df[sales_df["startdate"].isin(predict_months)]
+        .drop_duplicates(subset=["sku_ck", "startdate"])[["sku_ck", "startdate", "qty"]]
+    )
+    merged = preds.merge(actuals, on=["sku_ck", "startdate"], how="inner")
+    if merged.empty:
+        logger.info("Timeframe %s accuracy: no actuals available", label)
+        return
+
+    # Overall timeframe accuracy
+    total_actual = float(np.abs(merged["qty"].sum()))
+    if total_actual > 0:
+        total_error = float(np.abs(merged["basefcst_pref"] - merged["qty"]).sum())
+        overall_wape = round(100.0 * total_error / total_actual, 2)
+        overall_acc = round(100.0 - overall_wape, 2)
+    else:
+        overall_wape, overall_acc = 0.0, 0.0
+
+    # Build sku_ck -> ml_cluster lookup from predict_data
+    cluster_map = predict_data.drop_duplicates(subset="sku_ck")[["sku_ck", "ml_cluster"]]
+    merged_c = merged.merge(cluster_map, on="sku_ck", how="left")
+
+    # Per-cluster accuracy
+    cluster_lines = []
+    for cluster_label, grp in sorted(merged_c.groupby("ml_cluster", observed=True)):
+        c_actual = float(np.abs(grp["qty"].sum()))
+        if c_actual > 0:
+            c_error = float(np.abs(grp["basefcst_pref"] - grp["qty"]).sum())
+            c_wape = round(100.0 * c_error / c_actual, 2)
+            c_acc = round(100.0 - c_wape, 2)
+        else:
+            c_wape, c_acc = 0.0, 0.0
+        cluster_lines.append(f"    {cluster_label}: accuracy={c_acc:.1f}% wape={c_wape:.1f}% ({len(grp):,} rows)")
+
+    logger.info(
+        "Timeframe %s accuracy: %.1f%% (wape=%.1f%%, %s matched rows)\n%s",
+        label, overall_acc, overall_wape, f"{len(merged):,}",
+        "\n".join(cluster_lines),
+    )
+
+
+def _compute_cluster_wape(
+    preds_df: pd.DataFrame,
+    sales_df: pd.DataFrame,
+    cluster_label: str,
+    predict_data: pd.DataFrame,
+) -> float | None:
+    """Compute WAPE for a single cluster's predictions against actuals.
+
+    Used as a safety check after SHAP retrain — if the retrained model is worse
+    than the original, we revert to the original model.
+
+    Returns WAPE as a percentage, or None if no matching actuals.
+    """
+    # Build cluster SKU set from predict_data
+    cluster_skus = set(
+        predict_data.loc[predict_data["ml_cluster"] == cluster_label, "sku_ck"]
+    )
+    cluster_preds = preds_df[preds_df["sku_ck"].isin(cluster_skus)]
+    if cluster_preds.empty:
+        return None
+
+    predict_months = cluster_preds["startdate"].unique()
+    actuals = (
+        sales_df[
+            (sales_df["startdate"].isin(predict_months))
+            & (sales_df["sku_ck"].isin(cluster_skus))
+        ]
+        .drop_duplicates(subset=["sku_ck", "startdate"])[["sku_ck", "startdate", "qty"]]
+    )
+    merged = cluster_preds.merge(actuals, on=["sku_ck", "startdate"], how="inner")
+    if merged.empty:
+        return None
+
+    total_actual = float(np.abs(merged["qty"].sum()))
+    if total_actual == 0:
+        return None
+    total_error = float(np.abs(merged["basefcst_pref"] - merged["qty"]).sum())
+    return round(float(100.0 * total_error / total_actual), 2)
+
+
 def _fill_predict_nans(
     predict_data: pd.DataFrame,
     feature_cols: list[str],
@@ -960,7 +1071,8 @@ def _fill_predict_nans(
     """Fill NaN values in numeric feature columns of predict_data with 0."""
     for col in feature_cols:
         if col in predict_data.columns and col not in cat_cols:
-            predict_data[col] = predict_data[col].fillna(0)
+            if pd.api.types.is_numeric_dtype(predict_data[col]):
+                predict_data[col] = predict_data[col].fillna(0)
     return predict_data
 
 
@@ -968,6 +1080,7 @@ def _predict_single_month(
     models: dict,
     predict_data: pd.DataFrame,
     feature_cols: list[str],
+    per_cluster_feature_cols: dict[str, list[str]] | None = None,
 ) -> pd.DataFrame:
     """Route a single-month batch through per-cluster models for recursive inference.
 
@@ -977,17 +1090,32 @@ def _predict_single_month(
     Args:
         models: ``{cluster_label: model}`` dict from ``train_and_predict_per_cluster``.
         predict_data: Feature matrix for one month, all DFUs (must have ``ml_cluster``).
-        feature_cols: Ordered list of feature columns passed to each model.
+        feature_cols: Ordered list of feature columns passed to each model (default/fallback).
+        per_cluster_feature_cols: Optional per-cluster feature column overrides from
+            per-cluster SHAP selection. When provided, each cluster uses its own
+            feature set; clusters not in the dict fall back to ``feature_cols``.
     """
     parts = []
+    global_model = models.get("global")
     for cluster, group in predict_data.groupby("ml_cluster", observed=True):
-        m = models.get(cluster)
+        m = models.get(cluster) or global_model
         if m is None:
             continue
-        # Models were trained with all feature_cols (including ml_cluster as a
-        # categorical feature constant within each cluster partition). Pass the
-        # same feature set to maintain feature alignment.
-        preds = np.maximum(m.predict(group[feature_cols]), 0)
+        # ml_cluster is in METADATA_COLS (not in feature_cols) — used for
+        # partitioning only, never passed to models as an input feature.
+        cluster_feats = (
+            per_cluster_feature_cols.get(str(cluster), feature_cols)
+            if per_cluster_feature_cols
+            else feature_cols
+        )
+        # For baseline models (e.g., _RollingMeanModel, _SeasonalNaiveModel)
+        # that need sku_ck mapping, set the DFU keys before calling predict
+        # on feature-only DataFrames.
+        if hasattr(m, "_sku_cks"):
+            m._sku_cks = group["sku_ck"].tolist()
+        if hasattr(m, "_months"):
+            m._months = pd.to_datetime(group["startdate"]).dt.month.tolist()
+        preds = np.maximum(m.predict(group[cluster_feats]), 0)
         r = group[_PREDICT_META_COLS].copy()
         r["basefcst_pref"] = preds
         parts.append(r)
@@ -1011,10 +1139,10 @@ def run_tree_backtest(
     inline_tuner_fn: Callable[[Any, list[str], list[str], Any], dict[str, Any]] | None = None,
     feature_selector_fn: Callable[
         [Any, pd.DataFrame, list[str], list[str], int, pd.Timestamp],
-        tuple[list[str], pd.DataFrame],
+        tuple[list[str] | dict[str, list[str]], pd.DataFrame],
     ] | None = None,
     recursive: bool = False,
-    model_persistence_fn: Callable[[Any, list[str], str], None] | None = None,
+    model_persistence_fn: Callable[[Any, list[str] | dict[str, list[str]], str], None] | None = None,
     algo_config: dict[str, Any] | None = None,
     embargo_months: int = 0,
     resume: bool = False,
@@ -1032,7 +1160,7 @@ def run_tree_backtest(
         update_grid_with_predictions,
     )
 
-    cluster_strategy = "per_cluster"
+    cluster_strategy = (algo_config or {}).get("cluster_strategy", "per_cluster")
     t_start = time.time()
     db = get_db_params()
 
@@ -1083,7 +1211,12 @@ def run_tree_backtest(
     logger.info("Step 3: Building feature matrix (one-time)...")
     full_grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, all_months, cat_dtype=cat_dtype)
     feature_cols = get_feature_columns(full_grid)
+    # Global strategy uses ml_cluster as a categorical feature instead of partitioning
+    if cluster_strategy == "global" and "ml_cluster" in full_grid.columns and "ml_cluster" not in feature_cols:
+        feature_cols = feature_cols + ["ml_cluster"]
     cat_cols = [c for c in CAT_FEATURES if c in feature_cols and c in full_grid.columns]
+    if cluster_strategy == "global" and "ml_cluster" not in cat_cols and "ml_cluster" in feature_cols:
+        cat_cols = cat_cols + ["ml_cluster"]
     logger.info("Features: %d columns, cat: %s", len(feature_cols), cat_cols)
 
     # ── Checkpoint manager for incremental saves ──────────────────────────────
@@ -1134,8 +1267,14 @@ def run_tree_backtest(
         train_mask = masked_grid["startdate"] <= train_end
         predict_mask = masked_grid["startdate"].isin(predict_months)
 
-        # Drop rows with NaN in lag features (first few months of each DFU)
-        train_data = masked_grid[train_mask].dropna(subset=[f"qty_lag_{lag}" for lag in LAG_RANGE])
+        # Drop only rows missing the most recent lag (qty_lag_1).
+        # LightGBM, CatBoost, and XGBoost handle NaN natively — they create
+        # a separate "missing" bin during histogram splits.  Requiring all 12
+        # lags to be non-NaN was overly aggressive: a DFU with 8 months of
+        # history would have NaN for lags 9-12 in ALL rows, losing the DFU
+        # entirely from training.  Now we only need the first month to be
+        # available, letting short-history DFUs contribute training data.
+        train_data = masked_grid[train_mask].dropna(subset=["qty_lag_1"])
         predict_data = masked_grid[predict_mask].copy()
 
         # Fill NaN lag features in predict data with 0 (skip categoricals)
@@ -1183,6 +1322,9 @@ def run_tree_backtest(
             algo_cfg_noise = algo_config or {}
             noise_enabled = algo_cfg_noise.get("recursive_noise_enabled", False)
             noise_pct = algo_cfg_noise.get("recursive_noise_pct", 0.05)
+            # Lag smoothing factor: blend prediction-derived lags with prior
+            # lag values to dampen recursive error compounding (0 = disabled).
+            lag_smooth = float(algo_cfg_noise.get("recursive_lag_smooth", 0.0))
             train_data_for_fit = train_data
             if noise_enabled and noise_pct > 0:
                 lag_cols = [c for c in feature_cols if c.startswith("qty_lag_")]
@@ -1196,6 +1338,11 @@ def run_tree_backtest(
                         "Recursive noise injection: %.1f%% on %d lag cols",
                         noise_pct * 100, len(lag_cols),
                     )
+            if lag_smooth > 0:
+                logger.info(
+                    "Recursive lag smoothing: factor=%.2f (applied from step 3+)",
+                    lag_smooth,
+                )
 
             preds_first, models = train_fn_per_cluster(
                 train_data_for_fit, first_predict, feature_cols, cat_cols, effective_params
@@ -1206,6 +1353,8 @@ def run_tree_backtest(
         # In recursive mode, updates models and preds_first (first month preds).
         effective_feature_cols = feature_cols
         effective_cat_cols = cat_cols
+        per_cluster_feature_cols: dict[str, list[str]] | None = None
+        per_cluster_cat_cols: dict[str, list[str]] | None = None
         if feature_selector_fn is not None:
             logger.info("SHAP feature selection (timeframe %s)...", label)
             t_shap = time.time()
@@ -1218,38 +1367,219 @@ def run_tree_backtest(
 
             # Retrain if SHAP dropped >= threshold of features (configurable via forecast_pipeline_config.yaml)
             retrain_threshold = algo_config.get("shap_retrain_threshold", 0.10) if algo_config else 0.10
-            features_dropped = len(feature_cols) - len(selected_features)
-            drop_pct = features_dropped / len(feature_cols) if feature_cols else 0
-            if drop_pct >= retrain_threshold and set(selected_features) != set(feature_cols):
-                logger.info(
-                    "Retraining with %d SHAP-selected features (was %d)...",
-                    len(selected_features), len(feature_cols),
-                )
-                selected_cat_cols = [c for c in cat_cols if c in selected_features]
-                effective_feature_cols = selected_features
-                effective_cat_cols = selected_cat_cols
 
-                # predict_data for SHAP retrain: first month only in recursive mode
-                shap_predict_data = (
-                    _fill_predict_nans(
-                        masked_grid[masked_grid["startdate"] == sorted_months[0]].copy(),
-                        selected_features, selected_cat_cols,
+            if isinstance(selected_features, dict):
+                # ── Per-cluster feature selection ──────────────────────────────
+                per_cluster_feature_cols = {}
+                per_cluster_cat_cols = {}
+                clusters_to_retrain: list[str] = []
+
+                for cluster_label, sel_feats in selected_features.items():
+                    features_dropped = len(feature_cols) - len(sel_feats)
+                    drop_pct = features_dropped / len(feature_cols) if feature_cols else 0
+                    if drop_pct >= retrain_threshold and set(sel_feats) != set(feature_cols):
+                        per_cluster_feature_cols[cluster_label] = sel_feats
+                        per_cluster_cat_cols[cluster_label] = [c for c in cat_cols if c in sel_feats]
+                        clusters_to_retrain.append(cluster_label)
+                    else:
+                        per_cluster_feature_cols[cluster_label] = feature_cols
+                        per_cluster_cat_cols[cluster_label] = cat_cols
+
+                if clusters_to_retrain:
+                    logger.info(
+                        "Retraining %d/%d clusters with per-cluster SHAP-selected features...",
+                        len(clusters_to_retrain), len(selected_features),
                     )
-                    if recursive
-                    else _fill_predict_nans(predict_data.copy(), selected_features, selected_cat_cols)
-                )
+                    t_retrain = time.time()
+                    reverted_clusters: list[str] = []
+                    for cluster_label in clusters_to_retrain:
+                        sel_feats = per_cluster_feature_cols[cluster_label]
+                        sel_cats = per_cluster_cat_cols[cluster_label]
+                        cluster_train = train_data[train_data["ml_cluster"] == cluster_label]
 
-                t_retrain = time.time()
-                preds_retrain, models = train_fn_per_cluster(
-                    train_data, shap_predict_data, selected_features, selected_cat_cols, effective_params
-                )
-                if recursive:
-                    preds_first = preds_retrain
+                        if recursive:
+                            cluster_predict = _fill_predict_nans(
+                                masked_grid[
+                                    (masked_grid["startdate"] == sorted_months[0])
+                                    & (masked_grid["ml_cluster"] == cluster_label)
+                                ].copy(),
+                                sel_feats, sel_cats,
+                            )
+                        else:
+                            cluster_predict = _fill_predict_nans(
+                                predict_data[predict_data["ml_cluster"] == cluster_label].copy(),
+                                sel_feats, sel_cats,
+                            )
+
+                        # Save original model for safety check
+                        original_model = models.get(cluster_label)
+
+                        retrain_preds, retrain_models = train_fn_per_cluster(
+                            cluster_train, cluster_predict, sel_feats, sel_cats, effective_params,
+                        )
+
+                        # ── Safety check: revert if retrained model is worse ──
+                        # Compare WAPE of retrained predictions vs original predictions.
+                        # If retrained is worse, keep original model and predictions.
+                        original_preds_source = preds_first if recursive else preds
+                        orig_wape = _compute_cluster_wape(
+                            original_preds_source, sales_df, cluster_label, predict_data,
+                        )
+                        retrain_wape = None
+                        if not retrain_preds.empty:
+                            retrain_wape = _compute_cluster_wape(
+                                retrain_preds, sales_df, cluster_label, predict_data,
+                            )
+
+                        if (
+                            orig_wape is not None
+                            and retrain_wape is not None
+                            and retrain_wape > orig_wape
+                        ):
+                            # Retrained model is WORSE — revert to original
+                            logger.warning(
+                                "SHAP retrain safety: cluster '%s' reverted "
+                                "(retrain_wape=%.1f%% > orig_wape=%.1f%%)",
+                                cluster_label, retrain_wape, orig_wape,
+                            )
+                            per_cluster_feature_cols[cluster_label] = feature_cols
+                            per_cluster_cat_cols[cluster_label] = cat_cols
+                            models[cluster_label] = original_model
+                            reverted_clusters.append(cluster_label)
+                            continue
+
+                        models[cluster_label] = retrain_models.get(cluster_label, models.get(cluster_label))
+
+                        # Merge retrained predictions
+                        if not retrain_preds.empty:
+                            if recursive:
+                                retrain_keys = set(retrain_preds["sku_ck"])
+                                preds_first = pd.concat([
+                                    preds_first[~preds_first["sku_ck"].isin(retrain_keys)],
+                                    retrain_preds,
+                                ], ignore_index=True)
+                            else:
+                                retrain_keys = set(
+                                    zip(retrain_preds["sku_ck"], retrain_preds["startdate"], strict=True)
+                                )
+                                keep_mask = pd.Series(
+                                    [k not in retrain_keys
+                                     for k in zip(preds["sku_ck"], preds["startdate"], strict=True)]
+                                ).values if len(preds) > 0 else []
+                                preds = pd.concat([
+                                    preds[keep_mask] if len(preds) > 0 else preds,
+                                    retrain_preds,
+                                ], ignore_index=True)
+
+                    if reverted_clusters:
+                        logger.info(
+                            "Per-cluster retrain done (%.1fs): %d retrained, %d reverted (%s)",
+                            time.time() - t_retrain,
+                            len(clusters_to_retrain) - len(reverted_clusters),
+                            len(reverted_clusters),
+                            ", ".join(reverted_clusters),
+                        )
+                    else:
+                        logger.info("Per-cluster retrain done (%.1fs)", time.time() - t_retrain)
                 else:
-                    preds = preds_retrain
-                logger.info("Retrain done (%.1fs)", time.time() - t_retrain)
+                    logger.info("SHAP per-cluster: all %d clusters retained all features", len(selected_features))
+
             else:
-                logger.info("SHAP: all %d features retained", len(feature_cols))
+                # ── Legacy single-selection path (global strategy) ─────────────
+                features_dropped = len(feature_cols) - len(selected_features)
+                drop_pct = features_dropped / len(feature_cols) if feature_cols else 0
+                if drop_pct >= retrain_threshold and set(selected_features) != set(feature_cols):
+                    logger.info(
+                        "Retraining with %d SHAP-selected features (was %d)...",
+                        len(selected_features), len(feature_cols),
+                    )
+                    selected_cat_cols = [c for c in cat_cols if c in selected_features]
+                    effective_feature_cols = selected_features
+                    effective_cat_cols = selected_cat_cols
+
+                    # predict_data for SHAP retrain: first month only in recursive mode
+                    shap_predict_data = (
+                        _fill_predict_nans(
+                            masked_grid[masked_grid["startdate"] == sorted_months[0]].copy(),
+                            selected_features, selected_cat_cols,
+                        )
+                        if recursive
+                        else _fill_predict_nans(predict_data.copy(), selected_features, selected_cat_cols)
+                    )
+
+                    # Save original state for safety check
+                    original_models = {k: v for k, v in models.items()}
+                    original_preds_first = preds_first.copy() if recursive else None
+                    original_preds = preds.copy() if not recursive and len(preds) > 0 else None
+
+                    t_retrain = time.time()
+                    preds_retrain, models_retrain = train_fn_per_cluster(
+                        train_data, shap_predict_data, selected_features, selected_cat_cols, effective_params
+                    )
+
+                    # ── Safety check: compare overall WAPE before/after retrain ──
+                    orig_source = preds_first if recursive else preds
+                    orig_overall_wape = _compute_cluster_wape(
+                        orig_source, sales_df, "__all__", predict_data,
+                    ) if not orig_source.empty else None
+                    retrain_overall_wape = _compute_cluster_wape(
+                        preds_retrain, sales_df, "__all__", predict_data,
+                    ) if not preds_retrain.empty else None
+
+                    # For __all__ cluster, _compute_cluster_wape won't find matches
+                    # since it filters by ml_cluster. Use direct WAPE comparison:
+                    if not preds_retrain.empty:
+                        _r_months = preds_retrain["startdate"].unique()
+                        _r_actuals = sales_df[sales_df["startdate"].isin(_r_months)].drop_duplicates(
+                            subset=["sku_ck", "startdate"]
+                        )[["sku_ck", "startdate", "qty"]]
+                        _r_merged = preds_retrain.merge(_r_actuals, on=["sku_ck", "startdate"], how="inner")
+                        if not _r_merged.empty:
+                            _r_total = float(np.abs(_r_merged["qty"].sum()))
+                            if _r_total > 0:
+                                retrain_overall_wape = round(
+                                    100.0 * float(np.abs(_r_merged["basefcst_pref"] - _r_merged["qty"]).sum()) / _r_total, 2
+                                )
+
+                    if not orig_source.empty:
+                        _o_months = orig_source["startdate"].unique()
+                        _o_actuals = sales_df[sales_df["startdate"].isin(_o_months)].drop_duplicates(
+                            subset=["sku_ck", "startdate"]
+                        )[["sku_ck", "startdate", "qty"]]
+                        _o_merged = orig_source.merge(_o_actuals, on=["sku_ck", "startdate"], how="inner")
+                        if not _o_merged.empty:
+                            _o_total = float(np.abs(_o_merged["qty"].sum()))
+                            if _o_total > 0:
+                                orig_overall_wape = round(
+                                    100.0 * float(np.abs(_o_merged["basefcst_pref"] - _o_merged["qty"]).sum()) / _o_total, 2
+                                )
+
+                    if (
+                        orig_overall_wape is not None
+                        and retrain_overall_wape is not None
+                        and retrain_overall_wape > orig_overall_wape
+                    ):
+                        logger.warning(
+                            "SHAP retrain safety: global retrain reverted "
+                            "(retrain_wape=%.1f%% > orig_wape=%.1f%%)",
+                            retrain_overall_wape, orig_overall_wape,
+                        )
+                        effective_feature_cols = feature_cols
+                        effective_cat_cols = cat_cols
+                        models = original_models
+                        if recursive and original_preds_first is not None:
+                            preds_first = original_preds_first
+                        elif original_preds is not None:
+                            preds = original_preds
+                    else:
+                        models = models_retrain
+                        if recursive:
+                            preds_first = preds_retrain
+                        else:
+                            preds = preds_retrain
+                    logger.info("Retrain done (%.1fs)", time.time() - t_retrain)
+                else:
+                    logger.info("SHAP: all %d features retained", len(feature_cols))
 
         # ── Complete recursive loop for months 2+ ─────────────────────────────
         if recursive:
@@ -1287,13 +1617,32 @@ def run_tree_backtest(
                 })
 
             for step_idx, month in enumerate(sorted_months[1:], start=2):
-                month_data = _fill_predict_nans(
-                    current_grid[current_grid["startdate"] == month].copy(),
-                    effective_feature_cols, effective_cat_cols,
+                # When per-cluster SHAP is active, fill NaNs using the union of
+                # all per-cluster feature sets so every cluster's columns are present.
+                if per_cluster_feature_cols:
+                    all_feats_union = sorted(set().union(*per_cluster_feature_cols.values()))
+                    all_cats_union = [c for c in cat_cols if c in all_feats_union]
+                    month_data = _fill_predict_nans(
+                        current_grid[current_grid["startdate"] == month].copy(),
+                        all_feats_union, all_cats_union,
+                    )
+                else:
+                    month_data = _fill_predict_nans(
+                        current_grid[current_grid["startdate"] == month].copy(),
+                        effective_feature_cols, effective_cat_cols,
+                    )
+                preds_month = _predict_single_month(
+                    models, month_data, effective_feature_cols, per_cluster_feature_cols,
                 )
-                preds_month = _predict_single_month(models, month_data, effective_feature_cols)
                 all_month_preds.append(preds_month)
-                update_grid_incremental(current_grid, month, preds_month, all_months)
+                # Apply lag smoothing for step 3+. Step 2 uses raw prediction
+                # (lag-1 for step 2 came from step 1 prediction, not from prior
+                # lag history, so smoothing with a masked zero would be harmful).
+                step_smooth = lag_smooth if step_idx > 2 else 0.0
+                update_grid_incremental(
+                    current_grid, month, preds_month, all_months,
+                    smooth_factor=step_smooth,
+                )
 
                 # Compute per-step accuracy if actuals available
                 if month in actuals_by_month:
@@ -1325,13 +1674,21 @@ def run_tree_backtest(
         preds["model_id"] = model_id
         preds["timeframe"] = label
         preds["timeframe_idx"] = tf["index"]
+
+        # ── Per-timeframe accuracy summary ───────────────────────────────────
+        _log_timeframe_accuracy(preds, sales_df, predict_data, label)
+
         ckpt.save(preds, tf["index"])
         all_predictions.append(preds)
 
         # Persist the most recent timeframe's models for production inference (F1.1)
         if model_persistence_fn is not None and ti == len(timeframes) - 1:
             try:
-                model_persistence_fn(models, effective_feature_cols, label)
+                model_persistence_fn(
+                    models,
+                    per_cluster_feature_cols if per_cluster_feature_cols else effective_feature_cols,
+                    label,
+                )
             except Exception as exc:
                 logger.warning("Model persistence failed: %s", exc)
 
@@ -1353,6 +1710,9 @@ def run_tree_backtest(
     _extra_meta = dict(extra_metadata or {})
     if recursive:
         _extra_meta["recursive"] = True
+        _cfg = algo_config or {}
+        _extra_meta["recursive_noise_pct"] = _cfg.get("recursive_noise_pct", 0.05)
+        _extra_meta["recursive_lag_smooth"] = _cfg.get("recursive_lag_smooth", 0.0)
         # Attach per-step accuracy metrics collected across all timeframes
         if recursive_step_metrics:
             _extra_meta["recursive_step_metrics"] = recursive_step_metrics

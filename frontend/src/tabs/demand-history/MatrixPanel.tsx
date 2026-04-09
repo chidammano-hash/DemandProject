@@ -1,17 +1,28 @@
 import { useState, useMemo, useCallback } from "react";
+import { Grid3x3 } from "lucide-react";
 import { useMatrix } from "@/api/queries/demand-history";
 import { DemandReferencePanel } from "@/components/DemandReferencePanel";
+import { TableSkeleton } from "@/components/Skeleton";
+import { formatInt } from "@/lib/formatters";
 import type { MatrixDim, MatrixMetric } from "@/api/queries/demand-history";
 
-function cellColor(value: number, max: number): string {
-  if (max === 0) return "bg-gray-50 dark:bg-gray-800";
-  const intensity = Math.min(value / max, 1);
-  if (intensity > 0.75) return "bg-blue-600 text-white";
-  if (intensity > 0.5) return "bg-blue-400 text-white";
-  if (intensity > 0.25) return "bg-blue-200 dark:bg-blue-800 text-gray-900 dark:text-gray-100";
-  if (intensity > 0) return "bg-blue-50 dark:bg-blue-900/30";
-  return "bg-gray-50 dark:bg-gray-800 text-gray-400";
+/** 6-stop heatmap from gray (zero) through cool blue to deep indigo. */
+function cellStyle(value: number, max: number): { bg: string; text: string } {
+  if (max === 0 || value === 0) return { bg: "", text: "text-gray-300 dark:text-gray-600" };
+  const pct = Math.min(value / max, 1);
+  if (pct > 0.85) return { bg: "bg-indigo-700", text: "text-white font-semibold" };
+  if (pct > 0.65) return { bg: "bg-blue-600", text: "text-white" };
+  if (pct > 0.45) return { bg: "bg-blue-400", text: "text-white" };
+  if (pct > 0.25) return { bg: "bg-blue-200 dark:bg-blue-800", text: "text-gray-900 dark:text-gray-100" };
+  if (pct > 0.1)  return { bg: "bg-blue-100 dark:bg-blue-900/40", text: "text-gray-700 dark:text-gray-300" };
+  return { bg: "bg-blue-50 dark:bg-blue-950/30", text: "text-gray-500 dark:text-gray-400" };
 }
+
+const METRIC_LABELS: Record<MatrixMetric, string> = {
+  demand_qty: "Demand Qty",
+  sales_qty: "Sales Qty",
+  fill_rate: "Fill Rate",
+};
 
 export function MatrixPanel() {
   const [rowDim, setRowDim] = useState<MatrixDim>("item");
@@ -115,15 +126,32 @@ export function MatrixPanel() {
         </label>
       </div>
 
-      {isLoading && <div className="text-center text-gray-500 text-sm py-10">Loading...</div>}
+      {isLoading && <TableSkeleton rows={10} cols={8} />}
       {isError && <div className="text-center text-red-500 text-sm py-10">Failed to load data</div>}
+
+      {!isLoading && !isError && !data && (
+        <div className="flex flex-col items-center py-16 text-gray-400">
+          <Grid3x3 className="h-12 w-12 mb-3 opacity-30" />
+          <p className="text-sm font-medium">No matrix data</p>
+          <p className="text-xs mt-1">Adjust dimensions or time range to load the pivot grid</p>
+        </div>
+      )}
 
       {data && (
         <div className="overflow-auto max-h-[600px] border dark:border-gray-700 rounded-lg">
+          {/* Legend */}
+          <div className="sticky top-0 z-20 bg-white dark:bg-gray-900 border-b dark:border-gray-700 px-3 py-1.5 flex items-center gap-3 text-[10px] text-gray-500">
+            <span className="font-medium">{METRIC_LABELS[metric]}:</span>
+            <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-blue-50 dark:bg-blue-950/30 border" /> Low</span>
+            <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-blue-200" /> Medium</span>
+            <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-blue-600" /> High</span>
+            <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-indigo-700" /> Max</span>
+            <span className="ml-auto text-gray-400">{data.rows.length} rows x {data.cols.length} cols</span>
+          </div>
           <table className="text-xs w-full">
-            <thead className="sticky top-0 bg-white dark:bg-gray-900 z-10">
+            <thead className="sticky top-8 bg-white dark:bg-gray-900 z-10">
               <tr>
-                <th className="px-2 py-2 text-left font-medium text-gray-500 border-b dark:border-gray-700 min-w-[100px]">
+                <th className="px-3 py-2 text-left font-medium text-gray-500 border-b dark:border-gray-700 min-w-[120px]">
                   {rowDim} / {colDim}
                 </th>
                 {data.cols.map((col) => (
@@ -140,26 +168,32 @@ export function MatrixPanel() {
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((row, ri) => (
-                <tr key={row} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                  <td
-                    className="px-2 py-1.5 font-medium text-gray-700 dark:text-gray-300 border-b dark:border-gray-700/50 truncate max-w-[120px]"
-                    title={data.row_labels[row] || row}
-                  >
-                    {data.row_labels[row] || row}
-                  </td>
-                  {data.cells[ri]?.map((val, ci) => (
+              {data.rows.map((row, ri) => {
+                const rowTotal = data.cells[ri]?.reduce((a, b) => a + b, 0) ?? 0;
+                return (
+                  <tr key={row} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30">
                     <td
-                      key={ci}
-                      className={`px-2 py-1.5 text-center border-b dark:border-gray-700/50 cursor-pointer ${cellColor(val, maxVal)}`}
-                      onClick={() => handleCellClick(ri, ci)}
-                      title={`${val.toLocaleString()}`}
+                      className="px-3 py-1.5 font-medium text-gray-700 dark:text-gray-300 border-b dark:border-gray-700/50 truncate max-w-[140px]"
+                      title={`${data.row_labels[row] || row} — Total: ${formatInt(rowTotal)}`}
                     >
-                      {val > 0 ? val.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—"}
+                      {data.row_labels[row] || row}
                     </td>
-                  ))}
-                </tr>
-              ))}
+                    {data.cells[ri]?.map((val, ci) => {
+                      const style = cellStyle(val, maxVal);
+                      return (
+                        <td
+                          key={ci}
+                          className={`px-2 py-1.5 text-center border-b dark:border-gray-700/50 cursor-pointer tabular-nums transition-colors ${style.bg} ${style.text}`}
+                          onClick={() => handleCellClick(ri, ci)}
+                          title={`${data.row_labels[row] || row} x ${data.col_labels[data.cols[ci]] || data.cols[ci]}: ${formatInt(val)}`}
+                        >
+                          {val > 0 ? formatInt(val) : "—"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

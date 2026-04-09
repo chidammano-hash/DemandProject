@@ -1,370 +1,395 @@
 # data_quality_config.yaml
 # Data quality check definitions by domain (Spec 08-01)
+#
+# Consumed by: common/engines/dq_engine.py (DQEngine._flatten_checks -> _run_single)
+# Also used by: scripts/populate_dq_checks.py, scripts/fix_dq_issues.py
+# Results stored in: fact_dq_check_results table
+# Dashboard MV: mv_dq_dashboard (always refreshed after pipeline runs)
 
 schedule:
-  cron: "0 */4 * * *"          # Run every 4 hours
-  on_load: true                 # Also run after each data load
+  cron: "0 */4 * * *"                  # Cron expression — run DQ checks every 4 hours
+  on_load: true                         # Also trigger DQ checks after each data load completes
 
 global_defaults:
-  severity: warning
-  enabled: true
+  severity: warning                     # Default severity for checks that don't specify one (critical|warning|info)
+  enabled: true                         # Default enabled state — set false to disable all checks globally
 
 checks:
   # ── Completeness checks (null % on critical columns) ──────────
+  # Checks what percentage of rows have NULL values in critical columns.
+  # null_pct_threshold: max allowed null percentage (0.0 = no nulls allowed).
+  # severity: critical = blocks pipeline, warning = alert, info = log only.
   completeness:
     item:
-      table: dim_item
+      table: dim_item                   # Target table to check
       columns:
-        - column: item_id
-          null_pct_threshold: 0.0
-          severity: critical
-        - column: item_desc
-          null_pct_threshold: 5.0
+        - column: item_id              # Primary key — must never be null
+          null_pct_threshold: 0.0       # 0% nulls allowed (zero tolerance)
+          severity: critical            # Critical — blocks pipeline if violated
+        - column: item_desc            # Item description — some nulls acceptable
+          null_pct_threshold: 5.0       # Up to 5% nulls allowed
           severity: warning
-        - column: brand_name
-          null_pct_threshold: 10.0
+        - column: brand_name           # Brand — informational, tolerant threshold
+          null_pct_threshold: 10.0      # Up to 10% nulls allowed
           severity: warning
-        - column: category
-          null_pct_threshold: 10.0
+        - column: category             # Product category — informational
+          null_pct_threshold: 10.0      # Up to 10% nulls allowed
           severity: warning
     location:
       table: dim_location
       columns:
-        - column: location_id
+        - column: location_id          # Primary key — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: state_id
+        - column: state_id             # State/province — some nulls acceptable
           null_pct_threshold: 5.0
           severity: warning
     customer:
       table: dim_customer
       columns:
-        - column: customer_no
+        - column: customer_no          # Primary key — must never be null
           null_pct_threshold: 0.0
           severity: critical
     sku:
-      table: dim_sku
+      table: dim_sku                    # SKU dimension (item+location grain)
       columns:
-        - column: item_id
+        - column: item_id              # Part of composite key — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: loc
+        - column: loc                  # Part of composite key — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: cluster_assignment
-          null_pct_threshold: 20.0
+        - column: cluster_assignment   # ML cluster label — may be null before clustering runs
+          null_pct_threshold: 20.0      # Up to 20% nulls expected (new SKUs without cluster)
           severity: warning
     sales:
       table: fact_sales_monthly
       columns:
-        - column: item_id
+        - column: item_id              # FK to dim_item — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: qty
+        - column: qty                  # Sales quantity — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: startdate
+        - column: startdate            # Month start date — must never be null
           null_pct_threshold: 0.0
           severity: critical
     forecast:
       table: fact_external_forecast_monthly
       columns:
-        - column: item_id
+        - column: item_id              # FK to dim_item — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: loc
+        - column: loc                  # FK to dim_location — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: basefcst_pref
+        - column: basefcst_pref        # Forecast quantity column — must never be null
           null_pct_threshold: 0.0
           severity: critical
     inventory:
-      table: fact_inventory_snapshot
+      table: fact_inventory_snapshot    # Monthly range-partitioned by snapshot_date
       columns:
-        - column: item_id
+        - column: item_id              # FK to dim_item — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: loc
+        - column: loc                  # FK to dim_location — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: qty_on_hand
+        - column: qty_on_hand          # On-hand inventory — small null % tolerated (missing snapshots)
           null_pct_threshold: 1.0
           severity: warning
-        - column: snapshot_date
+        - column: snapshot_date        # Partition key — must never be null
           null_pct_threshold: 0.0
           severity: critical
     sourcing:
-      table: dim_sourcing
+      table: dim_sourcing              # Item-location sourcing assignments
       columns:
-        - column: item_id
+        - column: item_id              # Part of composite key
           null_pct_threshold: 0.0
           severity: critical
-        - column: loc
+        - column: loc                  # Part of composite key
           null_pct_threshold: 0.0
           severity: critical
-        - column: source_cd
+        - column: source_cd            # Source code (part of composite key)
           null_pct_threshold: 0.0
           severity: critical
-        - column: supplier_id
+        - column: supplier_id          # Supplier FK — some nulls tolerated for internal sourcing
           null_pct_threshold: 1.0
           severity: warning
     purchase_order:
       table: fact_purchase_orders
       columns:
-        - column: po_number
+        - column: po_number            # PO identifier — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: item_id
+        - column: item_id              # FK to dim_item — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: loc
+        - column: loc                  # FK to dim_location — must never be null
           null_pct_threshold: 0.0
           severity: critical
-        - column: ordered_qty
+        - column: ordered_qty          # Ordered quantity — some nulls tolerated for draft POs
           null_pct_threshold: 1.0
           severity: warning
-        - column: delivery_date
+        - column: delivery_date        # Expected delivery — some nulls tolerated for new POs
           null_pct_threshold: 5.0
           severity: warning
 
   # ── Uniqueness checks (duplicate detection on key columns) ────
+  # Verifies no duplicate rows exist for the given composite key.
+  # Uses GROUP BY ... HAVING count(*) > 1 to detect duplicate groups.
   uniqueness:
     item:
       table: dim_item
-      key_columns: ["item_id"]
+      key_columns: ["item_id"]          # Natural key — must be unique
       severity: critical
     location:
       table: dim_location
-      key_columns: ["location_id"]
+      key_columns: ["location_id"]      # Natural key — must be unique
       severity: critical
     customer:
       table: dim_customer
-      key_columns: ["site", "customer_no"]
+      key_columns: ["site", "customer_no"]  # Composite key: site + customer number
       severity: critical
     sku:
       table: dim_sku
-      key_columns: ["item_id", "loc"]
+      key_columns: ["item_id", "loc"]   # Composite key: item + location
       severity: critical
     sales:
       table: fact_sales_monthly
-      key_columns: ["item_id", "customer_group", "loc", "startdate", "type"]
-      severity: warning
+      key_columns: ["item_id", "customer_group", "loc", "startdate", "type"]  # Full grain key
+      severity: warning                 # Warning only — duplicates may occur during incremental loads
     forecast:
       table: fact_external_forecast_monthly
-      key_columns: ["forecast_ck", "model_id"]
+      key_columns: ["forecast_ck", "model_id"]  # Composite key enforced by UNIQUE constraint
       severity: critical
     inventory:
       table: fact_inventory_snapshot
-      key_columns: ["item_id", "loc", "snapshot_date"]
+      key_columns: ["item_id", "loc", "snapshot_date"]  # Partition-aware composite key
       severity: warning
     sourcing:
       table: dim_sourcing
-      key_columns: ["item_id", "loc", "source_cd"]
+      key_columns: ["item_id", "loc", "source_cd"]  # Composite sourcing key
       severity: critical
     purchase_order:
       table: fact_purchase_orders
-      key_columns: ["po_number", "item_id", "loc"]
+      key_columns: ["po_number", "item_id", "loc"]  # PO grain
       severity: critical
 
   # ── Range checks (min/max bounds for qty fields) ──────────────
+  # Detects values outside expected business ranges (likely data errors).
+  # Counts rows where column < min OR column > max.
   range:
     sales:
       table: fact_sales_monthly
       columns:
-        - column: qty
-          min: 0
-          max: 10000000
+        - column: qty                   # Sales quantity
+          min: 0                        # No negative sales
+          max: 10000000                 # Upper guard rail — flags extreme outliers
           severity: warning
-        - column: qty_shipped
-          min: 0
-          max: 10000000
+        - column: qty_shipped           # Shipped quantity
+          min: 0                        # No negative shipments
+          max: 10000000                 # Upper guard rail
           severity: warning
     forecast:
       table: fact_external_forecast_monthly
       columns:
-        - column: basefcst_pref
-          min: -1000000
-          max: 100000000
+        - column: basefcst_pref         # Forecast quantity — can be slightly negative (adjustments)
+          min: -1000000                 # Negative allowed for forecast adjustments
+          max: 100000000                # Upper guard rail
           severity: warning
     inventory:
       table: fact_inventory_snapshot
       columns:
-        - column: qty_on_hand
-          min: -100000
-          max: 100000000
+        - column: qty_on_hand           # On-hand quantity — can be negative (backorders)
+          min: -100000                  # Allow negative for backorder situations
+          max: 100000000                # Upper guard rail
           severity: warning
-        - column: qty_on_order
-          min: 0
-          max: 100000000
+        - column: qty_on_order          # On-order quantity
+          min: 0                        # Should not be negative
+          max: 100000000                # Upper guard rail
           severity: warning
-        - column: lead_time_days
-          min: 0
-          max: 730
+        - column: lead_time_days        # Supplier lead time in days
+          min: 0                        # Non-negative
+          max: 730                      # Max 2 years lead time
           severity: warning
     purchase_order:
       table: fact_purchase_orders
       columns:
-        - column: ordered_qty
-          min: 0
-          max: 100000000
+        - column: ordered_qty           # PO ordered quantity
+          min: 0                        # Non-negative
+          max: 100000000                # Upper guard rail
           severity: warning
-        - column: net_price
-          min: 0
-          max: 1000000
+        - column: net_price             # Unit price
+          min: 0                        # Non-negative
+          max: 1000000                  # Upper guard rail for single unit price
           severity: warning
-        - column: gross_value
-          min: 0
-          max: 100000000
+        - column: gross_value           # Total line value
+          min: 0                        # Non-negative
+          max: 100000000                # Upper guard rail
           severity: warning
 
   # ── Volume delta checks (max % change between loads) ──────────
+  # Compares row count between the two most recent load batches (by load_ts::date).
+  # Flags when row count changes more than max_pct_change between loads.
   volume_delta:
     sales:
       table: fact_sales_monthly
-      max_pct_change: 50.0
+      max_pct_change: 50.0              # Flag if row count changes >50% between loads
       severity: warning
     forecast:
       table: fact_external_forecast_monthly
-      max_pct_change: 50.0
+      max_pct_change: 50.0              # Flag if row count changes >50%
       severity: warning
     inventory:
       table: fact_inventory_snapshot
-      max_pct_change: 30.0
+      max_pct_change: 30.0              # Tighter threshold — inventory snapshots should be stable
       severity: warning
     item:
       table: dim_item
-      max_pct_change: 20.0
-      severity: info
+      max_pct_change: 20.0              # Dimension tables rarely change much
+      severity: info                    # Info only — new products may cause spikes
     location:
       table: dim_location
-      max_pct_change: 20.0
+      max_pct_change: 20.0              # Dimension tables rarely change much
       severity: info
     sku:
       table: dim_sku
-      max_pct_change: 25.0
+      max_pct_change: 25.0              # SKU count can grow with new item+location combos
       severity: warning
     sourcing:
       table: dim_sourcing
-      max_pct_change: 20.0
+      max_pct_change: 20.0              # Sourcing assignments rarely change dramatically
       severity: warning
     purchase_order:
       table: fact_purchase_orders
-      max_pct_change: 30.0
+      max_pct_change: 30.0              # PO volume can fluctuate moderately
       severity: warning
 
   # ── Referential integrity checks (FK relationships) ───────────
+  # Detects orphan rows in source_table whose key values don't exist in target_table.
+  # Uses LEFT JOIN ... WHERE target IS NULL or EXCEPT for multi-column keys.
   referential_integrity:
     sales_to_sku:
       source_table: fact_sales_monthly
-      source_columns: ["item_id", "loc"]
+      source_columns: ["item_id", "loc"]        # Sales FK columns
       target_table: dim_sku
-      target_columns: ["item_id", "loc"]
+      target_columns: ["item_id", "loc"]        # Must exist in dim_sku
       severity: warning
     forecast_to_sku:
       source_table: fact_external_forecast_monthly
-      source_columns: ["item_id", "loc"]
+      source_columns: ["item_id", "loc"]        # Forecast FK columns
       target_table: dim_sku
-      target_columns: ["item_id", "loc"]
+      target_columns: ["item_id", "loc"]        # Must exist in dim_sku
       severity: warning
     inventory_to_item:
       source_table: fact_inventory_snapshot
-      source_columns: ["item_id"]
+      source_columns: ["item_id"]               # Inventory item FK
       target_table: dim_item
-      target_columns: ["item_id"]
+      target_columns: ["item_id"]               # Must exist in dim_item
       severity: warning
     inventory_to_location:
       source_table: fact_inventory_snapshot
-      source_columns: ["loc"]
+      source_columns: ["loc"]                   # Inventory location FK
       target_table: dim_location
-      target_columns: ["location_id"]
+      target_columns: ["location_id"]           # Must exist in dim_location
       severity: warning
     sku_to_item:
       source_table: dim_sku
-      source_columns: ["item_id"]
+      source_columns: ["item_id"]               # SKU item FK
       target_table: dim_item
-      target_columns: ["item_id"]
-      severity: info
+      target_columns: ["item_id"]               # Must exist in dim_item
+      severity: info                            # Info — SKUs may reference items loaded separately
     sku_to_location:
       source_table: dim_sku
-      source_columns: ["loc"]
+      source_columns: ["loc"]                   # SKU location FK
       target_table: dim_location
-      target_columns: ["location_id"]
+      target_columns: ["location_id"]           # Must exist in dim_location
       severity: info
     sales_to_time:
       source_table: fact_sales_monthly
-      source_columns: ["startdate"]
+      source_columns: ["startdate"]             # Sales date FK
       target_table: dim_time
-      target_columns: ["date_key"]
+      target_columns: ["date_key"]              # Must exist in dim_time (auto-generated 2020-2035)
       severity: info
     sourcing_to_item:
       source_table: dim_sourcing
-      source_columns: ["item_id"]
+      source_columns: ["item_id"]               # Sourcing item FK
       target_table: dim_item
       target_columns: ["item_id"]
       severity: warning
     sourcing_to_location:
       source_table: dim_sourcing
-      source_columns: ["loc"]
+      source_columns: ["loc"]                   # Sourcing location FK
       target_table: dim_location
       target_columns: ["location_id"]
       severity: warning
     po_to_item:
       source_table: fact_purchase_orders
-      source_columns: ["item_id"]
+      source_columns: ["item_id"]               # PO item FK
       target_table: dim_item
       target_columns: ["item_id"]
       severity: warning
     po_to_location:
       source_table: fact_purchase_orders
-      source_columns: ["loc"]
+      source_columns: ["loc"]                   # PO location FK
       target_table: dim_location
       target_columns: ["location_id"]
       severity: warning
 
   # ── Distribution drift between load batches ──────────────────
+  # Compares statistical distribution (mean, stddev, median) between the two
+  # most recent load batches. Drift score = max normalized shift across stats.
+  # Status: pass if drift <= max_drift, warn if <= 2x, fail otherwise.
   distribution_drift:
     sales:
       table: fact_sales_monthly
       columns:
-        - column: qty
-          max_drift: 0.15
+        - column: qty                   # Sales quantity distribution
+          max_drift: 0.15               # Max normalized shift (15%) before flagging
           severity: warning
     forecast:
       table: fact_external_forecast_monthly
       columns:
-        - column: basefcst_pref
-          max_drift: 0.20
+        - column: basefcst_pref         # Forecast quantity distribution
+          max_drift: 0.20               # 20% threshold — forecasts naturally shift more
           severity: warning
     inventory:
       table: fact_inventory_snapshot
       columns:
-        - column: qty_on_hand
-          max_drift: 0.15
+        - column: qty_on_hand           # On-hand inventory distribution
+          max_drift: 0.15               # 15% threshold
           severity: warning
-        - column: lead_time_days
-          max_drift: 0.20
+        - column: lead_time_days        # Lead time distribution
+          max_drift: 0.20               # 20% threshold — lead times can shift with supply chain changes
           severity: warning
 
   # ── Temporal gap detection (missing months) ──────────────────
+  # Detects gaps (missing periods) in time-series tables.
+  # Scans all distinct periods and flags missing ones.
+  # Status: pass if 0 gaps, warn if <= 3, fail if > 3.
   temporal_gaps:
     sales:
       table: fact_sales_monthly
-      date_column: startdate
-      grain: month
+      date_column: startdate            # Date column to check for continuity
+      grain: month                      # Expected periodicity (month or day)
       severity: warning
     forecast:
       table: fact_external_forecast_monthly
-      date_column: startdate
-      grain: month
+      date_column: startdate            # Date column to check
+      grain: month                      # Monthly grain expected
       severity: warning
 
   # ── Cross-column logical consistency ─────────────────────────
+  # Validates business logic rules across columns within each row.
+  # expression: SQL boolean evaluated per row; violations are counted.
+  # Status: pass if 0 violations, warn if <1%, fail if >=1%.
   cross_column:
     sales:
       table: fact_sales_monthly
       rules:
-        - name: qty_non_negative
-          expression: "qty >= 0"
+        - name: qty_non_negative        # Rule identifier for reporting
+          expression: "qty >= 0"        # SQL boolean expression evaluated per row
           description: "Sales quantity must be non-negative"
           severity: warning
         - name: shipped_lte_ordered
@@ -381,7 +406,7 @@ checks:
         - name: lead_time_positive
           expression: "lead_time_days >= 0 OR lead_time_days IS NULL"
           description: "Lead time must be non-negative"
-          severity: critical
+          severity: critical             # Critical — negative lead times break safety stock calculations
         - name: snapshot_date_not_future
           expression: "snapshot_date <= '2026-02-24'"
           description: "Snapshot date should not be after planning date"
@@ -399,26 +424,29 @@ checks:
           severity: warning
 
   # ── Cardinality anomaly (unexpected distinct value changes) ──
+  # Detects when the count of distinct values in a column changes abnormally
+  # between load batches. Tracks new values appearing and old values disappearing.
+  # change_pct = 100 * (new + dropped) / previous_distinct_count.
+  # Status: pass if <= max_change_pct, warn if <= 2x, fail otherwise.
   cardinality_anomaly:
     item:
       table: dim_item
       columns:
-        - column: category
-          max_change_pct: 15.0
+        - column: category              # Product categories should be relatively stable
+          max_change_pct: 15.0          # Flag if >15% of categories appear/disappear
           severity: warning
-        - column: brand_name
-          max_change_pct: 10.0
+        - column: brand_name            # Brands should be stable
+          max_change_pct: 10.0          # Flag if >10% of brands change
           severity: warning
     sku:
       table: dim_sku
       columns:
-        - column: cluster_assignment
-          max_change_pct: 20.0
-          severity: info
+        - column: cluster_assignment    # Cluster labels change when clustering is re-run
+          max_change_pct: 20.0          # 20% tolerance — clustering reassignment expected
+          severity: info                # Info only — cluster labels naturally change
     inventory:
       table: fact_inventory_snapshot
       columns:
-        - column: loc
-          max_change_pct: 10.0
+        - column: loc                   # Location set should be stable across snapshots
+          max_change_pct: 10.0          # Flag if >10% of locations appear/disappear
           severity: warning
-

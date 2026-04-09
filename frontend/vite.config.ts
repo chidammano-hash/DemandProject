@@ -204,6 +204,14 @@ export default defineConfig({
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
+      "/sku-features": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/backtest-management": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
     },
   },
   build: {

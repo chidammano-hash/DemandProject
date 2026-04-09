@@ -50,6 +50,8 @@ api/                         # FastAPI backend
 common/                      # Shared Python modules (backward-compat shims at root)
 ├── core/                    # db, utils, planning_date, constants, sql_helpers, domain_specs
 ├── ml/                      # backtest_framework, model_registry, champion_strategies, tuning, shap, features
+│   ├── clustering/          # features.py, training.py, labeling.py, scenario.py
+│   └── sku_features/        # compute.py, classifiers.py — unified SKU feature computation
 ├── engines/                 # dq_engine, exception_engine
 ├── services/                # job_registry, job_scheduler, notifications, webhooks, cache
 ├── ai/                      # ai_planner
@@ -70,13 +72,13 @@ frontend/                    # React + Vite + TypeScript
 ├── Dockerfile               # Nginx multi-stage build
 └── nginx.conf               # SPA fallback + API reverse proxy
 
-config/                      # ~45 YAML config files organized by concern:
+config/                      # ~37 YAML config files organized by concern:
 │   ├── etl_config.yaml                # ETL pipeline: domain load order, MV refresh, parallel workers
 │   ├── forecast_pipeline_config.yaml  # ML pipeline: algorithm roster + params, backtest, tuning, champion, forecast
 │   ├── shared_constants.yaml          # Shared constants (service levels, z-table, financial defaults, guard rails)
 │   ├── inventory_planning_config.yaml # Merged inventory planning (lead time, simulation, projection)
 │   ├── tune_strategies.yaml           # Merged tune strategies (LGBM, CatBoost, XGBoost)
-│   └── ...                            # ~40 more configs (clustering, inventory, ops, etc.)
+│   └── ...                            # ~30 more configs (inventory, ops, etc.)
 sql/                         # 87 DDL migration files
 tests/                       # 2762+ backend tests (api/ + unit/)
 docs/                        # ARCHITECTURE, PLATFORM_GUIDE, RUNBOOK, specs/
@@ -118,7 +120,7 @@ make ui-init           # Install npm deps
 make ui                # React dev server on :5173
 
 # ML Pipelines
-make cluster-all       # Full clustering pipeline
+make cluster-all       # Unified clustering pipeline (creates experiment, runs features + training + labeling, auto-promotes)
 make backtest-all      # All backtests (tree + foundation models)
 make backtest-load-all # Load all backtest predictions into Postgres
 make backtest-load-all-bulk # Load all with single index cycle (~4x faster)
@@ -135,9 +137,13 @@ make backtest-bolt-hier # Chronos Bolt hierarchical (customer bottom-up + reconc
 make champion-all      # Meta-learner + simulate + champion select
 make tune-all          # Bayesian hyperparameter tuning (all models)
 make tune-cust-enriched-all # Bayesian tuning for customer-enriched tree models
+make tune-lgbm-clusters # Per-cluster Bayesian tuning for LGBM (tunes each ml_cluster independently)
+make tune-clusters     # Per-cluster tuning for all tree models
 make expert-panel      # Expert Panel algorithm selection test (5000 DFUs, ~30 min)
 make expert-panel-quick # Quick Expert Panel test (1000 DFUs, ~8 min)
-make seasonality-all   # Detect + write seasonality profiles
+make features-compute  # Compute all SKU features (volume, trend, seasonality, variability, lifecycle)
+make seasonality-all   # Alias for features-compute (legacy compatibility)
+make variability-all   # Alias for features-compute (legacy compatibility)
 make forecast-generate # Production forecast inference
 
 # Testing
@@ -161,7 +167,7 @@ make perf-pipeline         # ETL pipeline performance analysis
 make setup-all            # Everything: data + ML + planning + ops (~4-6 hours)
 make setup-data           # Data only: normalize + load all 11 domains (~30 min)
 make setup-planning       # Data + inventory planning, no ML (~1 hour)
-make setup-features       # Data + clustering + seasonality + variability
+make setup-features       # Data + features-compute + cluster-all (SKU features then clustering)
 make setup-backtest       # Features + 3 backtests + champion selection
 make setup-inv-planning   # Inventory planning (SS, EOQ, policies, exceptions)
 make setup-demand-planning # Forecasts + projections + orders + replenishment
@@ -260,6 +266,8 @@ These are hard constraints that cause bugs or test failures if violated.
 - **All config in YAML**: Every module externalizes params into `config/<name>.yaml`. No magic numbers in scripts. Load via `load_config(name)` from `common/utils.py`.
 - **Forecast pipeline master config**: `config/forecast_pipeline_config.yaml` is the single source of truth for the ML forecast pipeline. It contains the algorithm roster with inline hyperparameters (under `algorithms.<model_id>.params`), backtest settings, tuning settings, champion selection, production forecast config, and run tracking. Use `load_forecast_pipeline_config()` from `common/utils.py` to load it. Use `get_algorithm_roster(stage=...)` to get algorithms filtered by lifecycle stage (tune/backtest/compete/forecast/expert). Use `get_competing_model_ids()` and `get_forecastable_model_ids()` for common queries. Use `get_algorithm_params(model_id)` to retrieve hyperparameters for a specific algorithm. The old separate configs (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`, `backtest_sampling_config.yaml`, `algorithm_config.yaml`) have been deleted -- all settings now live in the master config.
 - **Cold-start DFU routing**: DFUs with < `min_history_months` (12) months of sales history are routed to `cold_start_model_id` (rolling_mean) instead of the champion tree model. DFUs with < `cold_start_min_months` (3) months are skipped entirely. Configured in `config/forecast_pipeline_config.yaml` under `production_forecast`.
+- **Clustering library in `common/ml/clustering/`**: All clustering library code lives in `common/ml/clustering/` — `features.py` (feature engineering), `training.py` (CORE_FEATURES, find_optimal_k, train_kmeans), `labeling.py` (assign_cluster_labels), `scenario.py` (promote_scenario, generate_scenario_id). Scripts in `scripts/` are thin shims that re-export from this package. `config/clustering_config.yaml` has been deleted — clustering params are stored in the `cluster_experiment` table (promoted row). `make cluster-all` goes through the unified experiment system (creates DB experiment, runs, auto-promotes). **Terminology**: Clustering operates on SKUs (item+location pairs), not DFUs. Use "SKU" when referring to the entities being clustered.
+- **Unified SKU feature computation**: All time-series features (volume, trend, seasonality, periodicity, intermittency, lifecycle) are computed once by `common/ml/sku_features/` and stored in `dim_sku`. Config: `config/sku_features_config.yaml`. Clustering reads pre-computed features from `dim_sku` instead of computing from raw sales.
 - **Clustering master switch**: `clustering.enabled` in `config/forecast_pipeline_config.yaml` is the master switch for the clustering pipeline. When `false`, all backtest scripts auto-fall back to `global` strategy regardless of per-algorithm `cluster_strategy` settings. Check via `is_clustering_enabled()` from `common/utils.py`.
 - **Config `_includes` directive**: `load_config(name)` supports an `_includes` key at the top of any YAML file. Listed files are loaded first and merged as defaults, allowing shared constants (e.g., `shared_constants.yaml`) to be inherited without duplication.
 - **`cluster_strategy` resolution order**: `forecast_pipeline_config.yaml` algorithm entry (`algorithms.<name>.cluster_strategy`) > default `"per_cluster"`. Only tree/statistical models use this field; foundation/DL models always run globally.
@@ -267,7 +275,10 @@ These are hard constraints that cause bugs or test failures if violated.
 - **DB params**: All scripts use `from common.db import get_db_params` — no inline connection helpers.
 - **Planning date**: All date-sensitive code uses `get_planning_date()` from `common/planning_date.py`, not `date.today()`. Config: `config/planning_config.yaml`. Env overrides: `PLANNING_DATE` or `USE_SYSTEM_DATE`.
 - **Timestamp helper**: Import `from common.utils import _ts` — no per-file `_ts()` definitions.
-- **`ml_cluster` is always a hard feature** — never stripped from `feature_cols` in per_cluster or global backtest mode. This includes SHAP computation — `shap_selector.py` must NOT strip `ml_cluster` from features (causes dimension mismatch with trained models).
+- **`ml_cluster` is a metadata column, not a model feature** — Listed in `METADATA_COLS` (excluded from `feature_cols` by `get_feature_columns()`). Removed from `CAT_FEATURES` and `CROSS_DFU_FEATURES` to prevent data leakage (cluster assignments use full history). It is still merged into the feature grid via `build_feature_matrix()` for per-cluster model partitioning (one model per cluster), clustering UI, and inventory planning. See `docs/KNOWN_GAPS.md` §1.
+- **Multi-stage feature selection**: `shap_selector.py` runs 4 stages per timeframe: (0) duplicate alias removal, (1) near-zero variance filter, (2) correlation pre-filter, (3) SHAP cumulative selection. Configured via `correlation_filter`, `variance_filter` params in `forecast_pipeline_config.yaml`. **Per-cluster SHAP**: `compute_timeframe_shap_per_cluster()` runs SHAP independently per cluster, returning `dict[str, list[str]]` (cluster -> selected features). Sparse clusters with too few non-zero rows skip SHAP and keep all features. Stratified sampling (50/50 zero/non-zero) used for clusters with >50% zeros.
+- **Per-cluster tuning profiles**: `config/cluster_tuning_profiles.yaml` defines per-cluster hyperparameter overrides. Profiles are matched in two phases: Phase 1 matches by `cluster_name` (exact match against `ml_cluster` label via `match_criteria.cluster_name`); Phase 2 falls back to statistical criteria (mean_demand, cv_demand, zero_demand_pct, etc.). First match wins per `_PROFILE_PRIORITY` order. Resolved via `resolve_cluster_params()` in `backtest_framework.py`.
+- **Intermittent cluster routing**: Clusters with >70% zero-demand rows (`intermittent_threshold`) are routed to rolling mean baseline instead of tree models during backtest. Configured via `backtest.baseline_intermittent` and `backtest.intermittent_threshold` in `forecast_pipeline_config.yaml`.
 - **Model registry for tree backtests**: Use `common/ml/model_registry.py` for all model-specific logic — `fit_model()`, `get_best_iteration()`, `to_native_params()`. Do NOT add new if/elif/else fit blocks in backtest scripts. Early stopping uses standardized 3% patience via `compute_early_stop_patience()`.
 - **Stub table pattern**: When a materialized view depends on a future feature's table, create it with `CREATE TABLE IF NOT EXISTS` and minimum columns. LEFT JOIN produces NULL → neutral scores until real data flows.
 - **Backward-compatible imports**: `common/` root has shim modules that re-export from subpackages (e.g., `from common.db import get_db_params` works via shim → `common/core/db.py`). New code may use either path; existing imports remain valid.
@@ -280,6 +291,14 @@ These are hard constraints that cause bugs or test failures if violated.
 - **Use `profiled_section()` for major stages**: New scripts should wrap major computation stages with `profiled_section()` from `common/services/perf_profiler.py` instead of raw `time.time()`.
 - **DB profiling is read-only**: `wrap_connection()` sets `default_transaction_read_only = true` and always rolls back. Safe for production.
 - **Config in YAML**: All perf thresholds in `config/perf_config.yaml`. No hardcoded timing thresholds.
+
+### Config Documentation Rules
+
+- **All config YAML files MUST have inline comments** for every key explaining what it does, valid options, and defaults.
+- When adding a new key to any config file, add an inline comment on the same line or the line above.
+- When modifying a config value, update the comment if the explanation changes.
+- Use section headers (`# ═══ SECTION ═══`) for major groups in large config files.
+- Config files in `config/` are the source of truth — document them inline, not in separate docs.
 
 ### File Placement Rules
 
@@ -296,11 +315,13 @@ These are hard constraints that cause bugs or test failures if violated.
 | Generic domain endpoint | `api/routers/domains.py` | Add to existing catch-all |
 | DB/config/date utility | `common/core/` | `new_helper.py` |
 | ML algorithm/backtest | `common/ml/` | `ensemble_strategy.py` |
+| Clustering library code | `common/ml/clustering/` | `features.py`, `training.py` |
+| SKU feature computation | `common/ml/sku_features/` | `compute.py`, `classifiers.py` |
 | DQ/exception engine | `common/engines/` | `alert_engine.py` |
 | Scheduler/cache/webhook | `common/services/` | `event_bus.py` |
 | AI/LLM utility | `common/ai/` | `prompt_builder.py` |
 | ETL/data loading script | `scripts/etl/` | `load_new_source.py` |
-| ML training/tuning script | `scripts/ml/` | `train_new_model.py` |
+| ML training/tuning script | `scripts/ml/` | `train_new_model.py`, `tune_cluster_hyperparams.py` |
 | Forecast generation script | `scripts/forecasting/` | `run_ensemble.py` |
 | Inventory planning script | `scripts/inventory/` | `calculate_new_metric.py` |
 | Operations/SOP script | `scripts/ops/` | `generate_report.py` |
@@ -351,7 +372,7 @@ When adding a new feature end-to-end, follow these steps in order:
 - [ ] Use `%s` placeholders in all SQL
 - [ ] Add `app.include_router()` in `api/main.py` — **before** `domains.py`
 - [ ] Add auth guard (`dependencies=[Depends(require_api_key)]`) on write endpoints
-- [ ] Externalize config to `config/<name>.yaml`
+- [ ] Externalize config to `config/<name>.yaml` (exception: clustering params live in `cluster_experiment` table, not YAML)
 
 ### 3. Frontend
 - [ ] Add query module in `frontend/src/api/queries/`
@@ -388,8 +409,8 @@ When adding a new feature end-to-end, follow these steps in order:
 **Fix**: Add the prefix to `frontend/vite.config.ts` proxy config. Run `make audit-routers` to check.
 
 ### Dimension Mismatch in SHAP
-**Cause**: `ml_cluster` was stripped from `feature_cols` during SHAP computation.
-**Fix**: Never strip `ml_cluster` — it is a hard feature that must always be present.
+**Cause**: A feature was stripped from `feature_cols` but the model was trained with it.
+**Fix**: Pre-SHAP stages (duplicate/variance/correlation) exclude features from the *selection pool* but SHAP extraction still uses the full feature set matching the trained model. Never strip features from the SHAP input that differ from the training set.
 
 ### Import Errors After Restructure
 **Cause**: Missing backward-compat shim in `common/` root.

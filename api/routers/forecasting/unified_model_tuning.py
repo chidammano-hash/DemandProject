@@ -14,11 +14,18 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from api.auth import require_api_key
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel, Field
 
 from api.core import get_conn, set_cache
+from common.utils import (
+    get_algorithm_params,
+    get_pipeline_config_path,
+    load_forecast_pipeline_config,
+    reset_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +42,6 @@ MODEL_ID_MAP: dict[str, str] = {
     "catboost": "catboost_cluster",
     "xgboost": "xgboost_cluster",
 }
-
-_PIPELINE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "forecast_pipeline_config.yaml"
 
 # CatBoost synonym pairs — only one of each pair can be set at a time.
 # When both appear, keep the first (CatBoost-native) name and drop the alias.
@@ -76,26 +81,12 @@ _MODEL_PARAM_KEYS: dict[str, set[str]] = {
     },
 }
 
-# forecast_pipeline_config.yaml model_id per model short name
-_ALGO_SECTION: dict[str, str] = {
-    "lgbm": "lgbm_cluster",
-    "catboost": "catboost_cluster",
-    "xgboost": "xgboost_cluster",
-}
-
 # Config keys for comparison (non-hyperparameter settings from metadata)
 _CONFIG_KEYS = [
     "cluster_strategy", "recursive", "shap_select", "shap_threshold",
     "shap_top_n", "shap_sample_size", "tune_inline", "params_source",
     "cluster_source", "cluster_experiment_id",
 ]
-
-# Script path per model for backtest launch
-_BACKTEST_SCRIPT: dict[str, str] = {
-    "lgbm": "scripts/run_backtest.py",
-    "catboost": "scripts/run_backtest.py",
-    "xgboost": "scripts/run_backtest.py",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -158,8 +149,66 @@ def _parse_json(val: Any) -> Any:
     return json.loads(val)
 
 
-def _run_row_to_dict(r: tuple) -> dict[str, Any]:
-    """Convert a run row tuple (16 columns) to a response dict."""
+def _list_row_to_dict(r: tuple) -> dict[str, Any]:
+    """Convert a list-query row tuple (22 columns) to a response dict."""
+    return {
+        "run_id": r[0],
+        "run_label": r[1],
+        "model_id": r[2],
+        "started_at": str(r[3]) if r[3] else None,
+        "completed_at": str(r[4]) if r[4] else None,
+        "status": r[5],
+        "accuracy_pct": float(r[6]) if r[6] is not None else None,
+        "wape": float(r[7]) if r[7] is not None else None,
+        "bias": float(r[8]) if r[8] is not None else None,
+        "n_predictions": int(r[9]) if r[9] is not None else None,
+        "n_dfus": int(r[10]) if r[10] is not None else None,
+        "notes": r[11],
+        "is_promoted": bool(r[12]),
+        "promoted_at": str(r[13]) if r[13] else None,
+        "job_id": r[14],
+        "template_id": r[15],
+        "is_results_promoted": bool(r[16]),
+        "results_promoted_at": str(r[17]) if r[17] else None,
+        "results_promote_job_id": r[18],
+        "cluster_source": r[19] or "production",
+        "cluster_experiment_id": int(r[20]) if r[20] is not None else None,
+        "cluster_experiment_label": r[21],
+    }
+
+
+def _detail_row_to_dict(r: tuple) -> dict[str, Any]:
+    """Convert a detail-query row tuple (24 columns) to a response dict."""
+    return {
+        "run_id": r[0],
+        "run_label": r[1],
+        "model_id": r[2],
+        "started_at": str(r[3]) if r[3] else None,
+        "completed_at": str(r[4]) if r[4] else None,
+        "status": r[5],
+        "params": _parse_json(r[6]),
+        "feature_count": r[7],
+        "features": _parse_json(r[8]),
+        "accuracy_pct": float(r[9]) if r[9] is not None else None,
+        "wape": float(r[10]) if r[10] is not None else None,
+        "bias": float(r[11]) if r[11] is not None else None,
+        "n_predictions": int(r[12]) if r[12] is not None else None,
+        "n_dfus": int(r[13]) if r[13] is not None else None,
+        "metadata": _parse_json(r[14]),
+        "notes": r[15],
+        "backup_path": r[16],
+        "job_id": r[17],
+        "template_id": r[18],
+        "is_promoted": bool(r[19]),
+        "promoted_at": str(r[20]) if r[20] else None,
+        "is_results_promoted": bool(r[21]),
+        "results_promoted_at": str(r[22]) if r[22] else None,
+        "results_promote_job_id": r[23],
+    }
+
+
+def _compare_row_to_dict(r: tuple) -> dict[str, Any]:
+    """Convert a compare-query row tuple (16 columns) to a response dict."""
     d: dict[str, Any] = {
         "run_id": r[0],
         "run_label": r[1],
@@ -401,7 +450,7 @@ def get_experiment(model: str, run_id: int, response: FastAPIResponse):
 # 3. POST /{model}/experiments — Create + launch experiment
 # ---------------------------------------------------------------------------
 
-@router.post("/{model}/experiments", status_code=201)
+@router.post("/{model}/experiments", status_code=201, dependencies=[Depends(require_api_key)])
 def create_experiment(model: str, body: CreateExperimentBody):
     """Create a new tuning experiment and launch it as a background job."""
     _validate_model(model)
@@ -555,13 +604,13 @@ def _build_temp_config(
     Returns the path to the temp config file.
     """
     try:
-        with open(_PIPELINE_CONFIG_PATH) as f:
+        with open(get_pipeline_config_path()) as f:
             cfg = yaml.safe_load(f)
     except (OSError, yaml.YAMLError) as exc:
         logger.exception("Failed to read forecast_pipeline_config.yaml for temp config")
         raise HTTPException(status_code=500, detail=f"Failed to read config: {exc}")
 
-    pipeline_key = _ALGO_SECTION[model]
+    pipeline_key = MODEL_ID_MAP[model]
     entry = cfg.get("algorithms", {}).get(pipeline_key, {})
     params_section = entry.setdefault("params", {})
 
@@ -877,28 +926,24 @@ def compare_experiments(
         logger.exception("Failed to compare runs %d vs %d", baseline_id, candidate_id)
         raise HTTPException(status_code=500, detail="Failed to compare experiments")
 
-    b = _run_row_to_dict(baseline)
-    c = _run_row_to_dict(candidate)
+    b = _compare_row_to_dict(baseline)
+    c = _compare_row_to_dict(candidate)
 
     # If exec_lag specified, override portfolio metrics with lag-specific metrics
     if exec_lag is not None:
         _apply_lag_metrics(b, baseline_id, exec_lag)
         _apply_lag_metrics(c, candidate_id, exec_lag)
 
-    delta_acc = None
-    delta_wape = None
-    delta_bias = None
+    delta_acc = _safe_delta(b["accuracy_pct"], c["accuracy_pct"])
+    delta_wape = _safe_delta(b["wape"], c["wape"])
+    delta_bias = _safe_delta(b["bias"], c["bias"], precision=4)
+
     verdict = "neutral"
-    if b["accuracy_pct"] is not None and c["accuracy_pct"] is not None:
-        delta_acc = round(c["accuracy_pct"] - b["accuracy_pct"], 2)
+    if delta_acc is not None:
         if delta_acc >= 0.05:
             verdict = "improved"
         elif delta_acc <= -0.05:
             verdict = "degraded"
-    if b["wape"] is not None and c["wape"] is not None:
-        delta_wape = round(c["wape"] - b["wape"], 2)
-    if b["bias"] is not None and c["bias"] is not None:
-        delta_bias = round(c["bias"] - b["bias"], 4)
 
     # Fetch per-lag comparison (always, regardless of exec_lag filter)
     per_lag = _build_per_lag_comparison(baseline_id, candidate_id)
@@ -933,89 +978,11 @@ def compare_experiments(
         logger.exception("Failed to fetch breakdowns for comparison")
         raise HTTPException(status_code=500, detail="Failed to fetch comparison breakdowns")
 
-    # Build per-cluster comparison
-    per_cluster: dict[str, list[dict[str, Any]]] = {}
-    for ct in ("ml_cluster", "business_cluster"):
-        b_map = {r["cluster_value"]: r for r in base_clusters if r["cluster_type"] == ct}
-        c_map = {r["cluster_value"]: r for r in cand_clusters if r["cluster_type"] == ct}
-        all_vals = sorted(set(b_map.keys()) | set(c_map.keys()))
-        items = []
-        for val in all_vals:
-            br = b_map.get(val, {})
-            cr = c_map.get(val, {})
-            b_a = br.get("accuracy_pct")
-            c_a = cr.get("accuracy_pct")
-            items.append({
-                "cluster": val,
-                "baseline_accuracy": b_a,
-                "candidate_accuracy": c_a,
-                "delta_accuracy": round(c_a - b_a, 2) if b_a is not None and c_a is not None else None,
-                "baseline_wape": br.get("wape"),
-                "candidate_wape": cr.get("wape"),
-                "baseline_n_dfus": br.get("n_dfus"),
-                "candidate_n_dfus": cr.get("n_dfus"),
-            })
-        per_cluster[ct] = items
-
-    # Build per-month comparison
-    b_month_map = {r["month_start"]: r for r in base_months}
-    c_month_map = {r["month_start"]: r for r in cand_months}
-    all_months = sorted(set(b_month_map.keys()) | set(c_month_map.keys()))
-    per_month = []
-    for m in all_months:
-        br = b_month_map.get(m, {})
-        cr = c_month_map.get(m, {})
-        b_a = br.get("accuracy_pct")
-        c_a = cr.get("accuracy_pct")
-        per_month.append({
-            "month": m,
-            "baseline_accuracy": b_a,
-            "candidate_accuracy": c_a,
-            "delta_accuracy": round(c_a - b_a, 2) if b_a is not None and c_a is not None else None,
-            "baseline_wape": br.get("wape"),
-            "candidate_wape": cr.get("wape"),
-        })
-
-    # Parameter comparison
-    param_diffs: list[dict[str, Any]] = []
-    param_common: list[dict[str, Any]] = []
-    b_params = b.get("params") or {}
-    c_params = c.get("params") or {}
-    all_keys = sorted(set(b_params.keys()) | set(c_params.keys()))
-    for key in all_keys:
-        bv = b_params.get(key)
-        cv = c_params.get(key)
-        if bv != cv:
-            param_diffs.append({"param": key, "baseline": bv, "candidate": cv})
-        else:
-            param_common.append({"param": key, "value": bv})
-
-    # Feature diff
-    b_features = set(b.get("features") or [])
-    c_features = set(c.get("features") or [])
-    feature_diffs = {
-        "baseline_count": b.get("feature_count") or len(b_features),
-        "candidate_count": c.get("feature_count") or len(c_features),
-        "added": sorted(c_features - b_features),
-        "removed": sorted(b_features - c_features),
-        "common_count": len(b_features & c_features),
-    }
-
-    # Config diff — check metadata dict first, then fall back to top-level keys
-    # (cluster_source / cluster_experiment_id are stored as direct columns)
-    config_diffs: list[dict[str, Any]] = []
-    config_common: list[dict[str, Any]] = []
-    b_meta = b.get("metadata") or {}
-    c_meta = c.get("metadata") or {}
-    for key in _CONFIG_KEYS:
-        bv = b_meta.get(key) if b_meta.get(key) is not None else b.get(key)
-        cv = c_meta.get(key) if c_meta.get(key) is not None else c.get(key)
-        if bv is None and cv is None:
-            continue
-        if bv != cv:
-            config_diffs.append({"setting": key, "baseline": bv, "candidate": cv})
-        else:
-            config_common.append({"setting": key, "value": bv})
+    per_cluster = _build_per_cluster_comparison(base_clusters, cand_clusters)
+    per_month = _build_per_month_comparison(base_months, cand_months)
+    param_diffs, param_common = _build_param_diff(b, c)
+    feature_diffs = _build_feature_diff(b, c)
+    config_diffs, config_common = _build_config_diff(b, c)
 
     result: dict[str, Any] = {
         "model": model,
@@ -1102,13 +1069,13 @@ def _build_per_lag_comparison(baseline_id: int, candidate_id: int) -> list[dict[
             "exec_lag": lag,
             "baseline_acc": b_acc,
             "candidate_acc": c_acc,
-            "delta_acc": round(c_acc - b_acc, 2) if b_acc is not None and c_acc is not None else None,
+            "delta_acc": _safe_delta(b_acc, c_acc),
             "baseline_wape": b_wape,
             "candidate_wape": c_wape,
-            "delta_wape": round(c_wape - b_wape, 2) if b_wape is not None and c_wape is not None else None,
+            "delta_wape": _safe_delta(b_wape, c_wape),
             "baseline_bias": b_bias,
             "candidate_bias": c_bias,
-            "delta_bias": round(c_bias - b_bias, 4) if b_bias is not None and c_bias is not None else None,
+            "delta_bias": _safe_delta(b_bias, c_bias, precision=4),
         })
 
     return per_lag
@@ -1145,16 +1112,127 @@ def _parse_month_rows(rows: list[tuple]) -> list[dict[str, Any]]:
     ]
 
 
+def _safe_delta(a: float | None, b: float | None, precision: int = 2) -> float | None:
+    """Return ``round(b - a, precision)`` if both values are non-None, else None."""
+    if a is not None and b is not None:
+        return round(b - a, precision)
+    return None
+
+
+def _build_per_cluster_comparison(
+    base_clusters: list[dict[str, Any]],
+    cand_clusters: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Build per-cluster accuracy comparison between baseline and candidate."""
+    per_cluster: dict[str, list[dict[str, Any]]] = {}
+    for ct in ("ml_cluster", "business_cluster"):
+        b_map = {r["cluster_value"]: r for r in base_clusters if r["cluster_type"] == ct}
+        c_map = {r["cluster_value"]: r for r in cand_clusters if r["cluster_type"] == ct}
+        items = []
+        for val in sorted(set(b_map.keys()) | set(c_map.keys())):
+            br = b_map.get(val, {})
+            cr = c_map.get(val, {})
+            items.append({
+                "cluster": val,
+                "baseline_accuracy": br.get("accuracy_pct"),
+                "candidate_accuracy": cr.get("accuracy_pct"),
+                "delta_accuracy": _safe_delta(br.get("accuracy_pct"), cr.get("accuracy_pct")),
+                "baseline_wape": br.get("wape"),
+                "candidate_wape": cr.get("wape"),
+                "baseline_n_dfus": br.get("n_dfus"),
+                "candidate_n_dfus": cr.get("n_dfus"),
+            })
+        per_cluster[ct] = items
+    return per_cluster
+
+
+def _build_per_month_comparison(
+    base_months: list[dict[str, Any]],
+    cand_months: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build per-month accuracy comparison between baseline and candidate."""
+    b_map = {r["month_start"]: r for r in base_months}
+    c_map = {r["month_start"]: r for r in cand_months}
+    per_month = []
+    for m in sorted(set(b_map.keys()) | set(c_map.keys())):
+        br = b_map.get(m, {})
+        cr = c_map.get(m, {})
+        per_month.append({
+            "month": m,
+            "baseline_accuracy": br.get("accuracy_pct"),
+            "candidate_accuracy": cr.get("accuracy_pct"),
+            "delta_accuracy": _safe_delta(br.get("accuracy_pct"), cr.get("accuracy_pct")),
+            "baseline_wape": br.get("wape"),
+            "candidate_wape": cr.get("wape"),
+        })
+    return per_month
+
+
+def _build_param_diff(
+    b: dict[str, Any], c: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Compare hyperparameters between two run dicts. Returns (diffs, common)."""
+    diffs: list[dict[str, Any]] = []
+    common: list[dict[str, Any]] = []
+    b_params = b.get("params") or {}
+    c_params = c.get("params") or {}
+    for key in sorted(set(b_params.keys()) | set(c_params.keys())):
+        bv = b_params.get(key)
+        cv = c_params.get(key)
+        if bv != cv:
+            diffs.append({"param": key, "baseline": bv, "candidate": cv})
+        else:
+            common.append({"param": key, "value": bv})
+    return diffs, common
+
+
+def _build_feature_diff(b: dict[str, Any], c: dict[str, Any]) -> dict[str, Any]:
+    """Compare feature sets between two run dicts."""
+    b_features = set(b.get("features") or [])
+    c_features = set(c.get("features") or [])
+    return {
+        "baseline_count": b.get("feature_count") or len(b_features),
+        "candidate_count": c.get("feature_count") or len(c_features),
+        "added": sorted(c_features - b_features),
+        "removed": sorted(b_features - c_features),
+        "common_count": len(b_features & c_features),
+    }
+
+
+def _build_config_diff(
+    b: dict[str, Any], c: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Compare config settings between two run dicts. Returns (diffs, common).
+
+    Checks the ``metadata`` dict first, then falls back to top-level keys
+    (e.g. ``cluster_source`` / ``cluster_experiment_id`` stored as direct columns).
+    """
+    diffs: list[dict[str, Any]] = []
+    common: list[dict[str, Any]] = []
+    b_meta = b.get("metadata") or {}
+    c_meta = c.get("metadata") or {}
+    for key in _CONFIG_KEYS:
+        bv = b_meta.get(key) if b_meta.get(key) is not None else b.get(key)
+        cv = c_meta.get(key) if c_meta.get(key) is not None else c.get(key)
+        if bv is None and cv is None:
+            continue
+        if bv != cv:
+            diffs.append({"setting": key, "baseline": bv, "candidate": cv})
+        else:
+            common.append({"setting": key, "value": bv})
+    return diffs, common
+
+
 # ---------------------------------------------------------------------------
 # 9. POST /{model}/experiments/{run_id}/promote — Promote
 # ---------------------------------------------------------------------------
 
-@router.post("/{model}/experiments/{run_id}/promote")
+@router.post("/{model}/experiments/{run_id}/promote", dependencies=[Depends(require_api_key)])
 def promote_experiment(model: str, run_id: int):
     """Promote a completed experiment to production — writes params to forecast_pipeline_config.yaml."""
     _validate_model(model)
     mid = _model_id(model)
-    algo_section = _ALGO_SECTION[model]
+    algo_section = MODEL_ID_MAP[model]
     param_keys = _MODEL_PARAM_KEYS[model]
 
     # 1. Fetch run
@@ -1197,12 +1275,12 @@ def promote_experiment(model: str, run_id: int):
 
     # 3. Backup and write to forecast_pipeline_config.yaml (algorithms.<model_id>.params)
     try:
-        with open(_PIPELINE_CONFIG_PATH) as f:
+        with open(get_pipeline_config_path()) as f:
             cfg = yaml.safe_load(f)
 
         # Create backup
-        backup_path = _PIPELINE_CONFIG_PATH.with_suffix(f".yaml.bak.{run_id}")
-        shutil.copy2(_PIPELINE_CONFIG_PATH, backup_path)
+        backup_path = get_pipeline_config_path().with_suffix(f".yaml.bak.{run_id}")
+        shutil.copy2(get_pipeline_config_path(), backup_path)
 
         entry = cfg["algorithms"][algo_section]
         params_section = entry.setdefault("params", {})
@@ -1210,10 +1288,9 @@ def promote_experiment(model: str, run_id: int):
         for key, value in overrides.items():
             params_section[key] = value
 
-        with open(_PIPELINE_CONFIG_PATH, "w") as f:
+        with open(get_pipeline_config_path(), "w") as f:
             yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
-        from common.utils import reset_config
         reset_config("forecast_pipeline_config.yaml")
     except (OSError, KeyError, yaml.YAMLError) as exc:
         logger.exception("Failed to write forecast_pipeline_config.yaml during %s promote", model)
@@ -1333,7 +1410,7 @@ def get_promoted(model: str, response: FastAPIResponse):
 # 11. POST /{model}/experiments/{run_id}/promote-results — Load predictions into DB
 # ---------------------------------------------------------------------------
 
-@router.post("/{model}/experiments/{run_id}/promote-results")
+@router.post("/{model}/experiments/{run_id}/promote-results", dependencies=[Depends(require_api_key)])
 def promote_results(model: str, run_id: int):
     """Load backtest predictions into fact_external_forecast_monthly + backtest_lag_archive.
 
@@ -1370,7 +1447,7 @@ def promote_results(model: str, run_id: int):
 
     # Check prediction files exist
     output_dir = MODEL_ID_MAP[model]
-    pred_path = _PIPELINE_CONFIG_PATH.parent.parent / "data" / "backtest" / output_dir / "backtest_predictions.csv"
+    pred_path = get_pipeline_config_path().parent.parent / "data" / "backtest" / output_dir / "backtest_predictions.csv"
     if not pred_path.exists():
         raise HTTPException(
             status_code=400,
@@ -1474,7 +1551,7 @@ def promote_results_status(model: str, run_id: int):
 # 12. POST /{model}/experiments/{run_id}/cancel — Cancel
 # ---------------------------------------------------------------------------
 
-@router.post("/{model}/experiments/{run_id}/cancel")
+@router.post("/{model}/experiments/{run_id}/cancel", dependencies=[Depends(require_api_key)])
 def cancel_experiment(model: str, run_id: int):
     """Cancel a running or queued experiment."""
     _validate_model(model)
@@ -1541,7 +1618,7 @@ def cancel_experiment(model: str, run_id: int):
 # 12. DELETE /{model}/experiments/{run_id} — Delete
 # ---------------------------------------------------------------------------
 
-@router.delete("/{model}/experiments/{run_id}")
+@router.delete("/{model}/experiments/{run_id}", dependencies=[Depends(require_api_key)])
 def delete_experiment(model: str, run_id: int):
     """Delete a completed, failed, or cancelled experiment."""
     _validate_model(model)
@@ -1628,19 +1705,18 @@ def get_templates(model: str, response: FastAPIResponse):
 
 
 def _load_live_params(model: str) -> dict[str, Any]:
-    """Load the current production params from forecast_pipeline_config.yaml for a model."""
+    """Load the current production params from forecast_pipeline_config.yaml for a model.
+
+    Uses ``get_algorithm_params()`` from ``common.utils`` and filters to
+    the known hyperparameter keys for the given model.
+    """
     try:
-        with open(_PIPELINE_CONFIG_PATH) as f:
-            cfg = yaml.safe_load(f)
-        pipeline_key = _ALGO_SECTION[model]
-        entry = cfg.get("algorithms", {}).get(pipeline_key, {})
-        # Support pipeline config format (params sub-dict) or flat format
-        section = entry.get("params", entry)
-        # Filter to known param keys
+        pipeline_key = MODEL_ID_MAP[model]
+        all_params = get_algorithm_params(pipeline_key)
         param_keys = _MODEL_PARAM_KEYS[model]
-        return {k: v for k, v in section.items() if k in param_keys}
-    except (OSError, yaml.YAMLError):
-        logger.warning("Failed to load live params from forecast_pipeline_config.yaml for %s", model)
+        return {k: v for k, v in all_params.items() if k in param_keys}
+    except (OSError, KeyError):
+        logger.warning("Failed to load live params for %s", model)
         return {}
 
 

@@ -53,7 +53,8 @@ export interface ProductionForecastSummaryPayload {
 
 export interface ProductionForecastVersion {
   plan_version: string;
-  sku_count: number;
+  sku_count?: number;
+  dfu_count?: number;
   total_rows: number;
   generated_at: string | null;
 }
@@ -94,6 +95,38 @@ export async function fetchProductionForecastSummary(params: {
 
 export async function fetchProductionForecastVersions(): Promise<ProductionForecastVersionsPayload> {
   return fetchJson("/forecast/production/versions");
+}
+
+// ---------------------------------------------------------------------------
+// F1.1b — Staging Forecasts (all algorithm lines, pre-promotion)
+// ---------------------------------------------------------------------------
+
+export interface StagingForecastPoint {
+  forecast_month: string;
+  forecast_qty: number | null;
+  forecast_qty_lower: number | null;
+  forecast_qty_upper: number | null;
+  horizon_months: number;
+  cluster_id: string | null;
+  lag_source: string | null;
+  generated_at: string | null;
+}
+
+export interface StagingForecastsPayload {
+  item_id: string;
+  loc: string;
+  models: Record<string, StagingForecastPoint[]>;
+}
+
+export async function fetchStagingForecasts(params: {
+  item_id: string;
+  loc: string;
+}): Promise<StagingForecastsPayload> {
+  const qs = new URLSearchParams({
+    item_id: params.item_id,
+    loc: params.loc,
+  });
+  return fetchJson(`/forecast/production/staging?${qs}`);
 }
 
 // ---------------------------------------------------------------------------

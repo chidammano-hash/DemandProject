@@ -7,10 +7,9 @@ What-If Scenarios UI.
 """
 
 import json
-import re
+import logging
 import sys
 import time
-import uuid
 import warnings
 from pathlib import Path
 from typing import Any
@@ -26,59 +25,31 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import yaml
-
 from common.db import get_db_params
 from common.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
-from scripts.generate_clustering_features import compute_time_series_features
-from scripts.train_clustering_model import (
+from common.ml.clustering.features import compute_time_series_features
+from common.ml.clustering.training import (
     CORE_FEATURES,
     LOG_TRANSFORM_FEATURES,
     find_optimal_k,
     merge_small_clusters,
 )
-from scripts.label_clusters import assign_cluster_labels
+from common.ml.clustering.labeling import assign_cluster_labels
 
-# Directory to store scenario temp data
-SCENARIO_BASE = Path("/tmp/clustering_scenarios")
-
-# Scenario IDs must match this pattern (same regex as enforced in clusters.py router)
-_SCENARIO_ID_RE = re.compile(r"^sc_\d{8}_\d{6}_[0-9a-f]{4}$")
-
-
-def _safe_scenario_dir(scenario_id: str) -> Path:
-    """Return the scenario directory path after validating scenario_id.
-
-    Raises ValueError if the ID format is invalid or if the resolved path
-    would escape SCENARIO_BASE (path traversal guard).
-    """
-    if not _SCENARIO_ID_RE.match(scenario_id):
-        raise ValueError(
-            f"Invalid scenario_id '{scenario_id}'. "
-            "Expected format: sc_YYYYMMDD_HHMMSS_<4hex>"
-        )
-    resolved = (SCENARIO_BASE / scenario_id).resolve()
-    base_resolved = SCENARIO_BASE.resolve()
-    if not str(resolved).startswith(str(base_resolved) + "/"):
-        raise ValueError(f"scenario_id '{scenario_id}' resolves outside SCENARIO_BASE")
-    return resolved
-
-
-def _load_config_defaults() -> dict[str, Any]:
-    """Load default parameters from clustering_config.yaml."""
-    config_path = ROOT / "config" / "clustering_config.yaml"
-    if not config_path.exists():
-        return {}
-    with open(config_path) as f:
-        return yaml.safe_load(f).get("clustering", {})
-
-
-def generate_scenario_id() -> str:
-    """Generate a unique scenario ID."""
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    short_uuid = uuid.uuid4().hex[:4]
-    return f"sc_{ts}_{short_uuid}"
+# Import reusable infrastructure from common.ml.clustering.scenario
+# and re-export at module level for backward compatibility — other modules
+# (job_state, clusters router, cluster_experiments router, run_cluster_pipeline)
+# import these names from scripts.run_clustering_scenario.
+from common.ml.clustering.scenario import (  # noqa: F401
+    SCENARIO_BASE,
+    _SCENARIO_ID_RE,
+    _safe_scenario_dir,
+    generate_scenario_id,
+    _load_config_defaults,
+    get_scenario_result,
+    promote_scenario,
+)
 
 
 def _update_experiment_completed(
@@ -184,7 +155,7 @@ def run_scenario(
     if scenario_id is None:
         scenario_id = generate_scenario_id()
 
-    # Load defaults from clustering_config.yaml
+    # Load defaults from promoted experiment or hardcoded fallbacks
     cfg = _load_config_defaults()
     labeling_cfg = cfg.get("labeling", {})
     vol_cfg = labeling_cfg.get("volume_thresholds", {})
@@ -290,6 +261,56 @@ def run_scenario(
 
 MAX_DFUS_FOR_TRAINING = 20_000  # Sample if DFU count exceeds this
 
+# Default time window used by the unified SKU features pipeline.  When the
+# scenario's ``time_window_months`` matches this value we can safely reuse
+# pre-computed features stored in ``dim_sku``.
+_DEFAULT_FEATURE_TIME_WINDOW = 36
+
+# Column mapping: dim_sku column name → feature name produced by
+# ``compute_time_series_features()``.  Columns whose dim_sku name matches
+# the feature name exactly are *not* listed here.
+_DIM_SKU_COL_TO_FEATURE: dict[str, str] = {
+    "demand_mean": "mean_demand",
+    "demand_std": "std_demand",
+    "demand_cv": "cv_demand",
+    "demand_mad": "demand_mad",
+    "demand_p50": "median_demand",
+    "demand_p90": "demand_p90",
+    "demand_skewness": "demand_skewness",
+    "demand_kurtosis": "demand_kurtosis",
+    "intermittency_ratio": "zero_demand_pct",
+    "total_demand_months": "months_available",
+}
+
+# dim_sku columns that already use the exact same name as the feature.
+# These come from sql/015 (seasonality) and sql/120 (unified features).
+_DIM_SKU_SAME_NAME_COLS: list[str] = [
+    "seasonality_strength",
+    "peak_month",
+    "trough_month",
+    "peak_trough_ratio",
+    "iqr_demand",
+    "min_demand",
+    "max_demand",
+    "total_demand",
+    "trend_slope",
+    "trend_slope_norm",
+    "trend_r2",
+    "trend_pct_change",
+    "trend_direction",
+    "seasonal_amplitude",
+    "seasonal_r2",
+    "yoy_correlation",
+    "seasonal_index_std",
+    "periodicity_strength",
+    "adi",
+    "cagr",
+    "recency_ratio",
+    "acceleration",
+    "outlier_count",
+    "acf_lag12",
+]
+
 
 def _build_thresholds(
     lp: dict, mean_demands: np.ndarray
@@ -341,6 +362,108 @@ def _build_thresholds(
     return volume_thresholds, cv_thresholds, labeling_config
 
 
+def _try_load_precomputed_features(
+    db: dict,
+    fp: dict,
+    scenario_dir: Path,
+) -> pd.DataFrame | None:
+    """Attempt to load pre-computed features from ``dim_sku``.
+
+    Returns a DataFrame identical in shape to what ``compute_time_series_features``
+    would produce (with ``sku_ck`` column), or ``None`` if the fast path cannot
+    be used.
+
+    The fast path is skipped when:
+    - ``features_computed_ts`` is NULL for every SKU (pipeline hasn't run yet)
+    - The user passed a custom ``time_window_months`` that differs from the
+      default used by the unified SKU features pipeline (what-if experiments)
+    - The user passed a custom ``min_months_history`` that differs from the
+      default (12), since the stored features may include SKUs we should skip
+    """
+    import psycopg
+
+    _log = logging.getLogger(__name__)
+
+    # Guard: if the user customized feature_params, fall back to raw computation
+    time_window = fp.get("time_window_months", _DEFAULT_FEATURE_TIME_WINDOW)
+    if isinstance(time_window, str) and time_window.lower() == "all":
+        _log.info("Custom time_window_months='all' — skipping pre-computed feature fast path")
+        return None
+    if int(time_window) != _DEFAULT_FEATURE_TIME_WINDOW:
+        _log.info(
+            "Custom time_window_months=%s (default=%s) — skipping pre-computed feature fast path",
+            time_window,
+            _DEFAULT_FEATURE_TIME_WINDOW,
+        )
+        return None
+
+    min_months = fp.get("min_months_history", 1)
+    if int(min_months) != 1:
+        _log.info(
+            "Custom min_months_history=%s (default=1) — skipping pre-computed feature fast path",
+            min_months,
+        )
+        return None
+
+    # Build the SELECT: aliased columns that need renaming + same-name columns
+    alias_parts = [f"{col} AS {feat}" for col, feat in _DIM_SKU_COL_TO_FEATURE.items()]
+    same_parts = list(_DIM_SKU_SAME_NAME_COLS)
+    select_cols = ", ".join(["sku_ck", *alias_parts, *same_parts])
+
+    query = (
+        f"SELECT {select_cols} "
+        "FROM dim_sku "
+        "WHERE features_computed_ts IS NOT NULL"
+    )
+
+    try:
+        with psycopg.connect(**db) as conn:
+            df = pd.read_sql(query, conn)
+    except psycopg.Error:
+        _log.warning("Failed to query dim_sku for pre-computed features — falling back", exc_info=True)
+        return None
+
+    if df.empty:
+        _log.info("No SKUs with features_computed_ts set — falling back to raw computation")
+        return None
+
+    # Filter by min_months_history (months_available comes from total_demand_months)
+    if "months_available" in df.columns:
+        before = len(df)
+        df = df[df["months_available"] >= int(min_months)].reset_index(drop=True)
+        skipped = before - len(df)
+        if skipped > 0:
+            _log.info("Filtered out %d SKUs with < %s months history", skipped, min_months)
+
+    if df.empty:
+        _log.info("All pre-computed SKUs filtered out by min_months_history — falling back")
+        return None
+
+    # Add derived features that compute_time_series_features produces but
+    # dim_sku does not store (backward-compat aliases and derived columns)
+    if "zero_demand_pct" in df.columns:
+        df["sparsity_score"] = df["zero_demand_pct"]
+    if "cv_demand" in df.columns:
+        df["demand_stability"] = 1.0 / (1.0 + df["cv_demand"])
+    if "cagr" in df.columns:
+        df["growth_rate"] = df["cagr"]
+    if "recency_ratio" in df.columns:
+        df["recent_vs_historical"] = df["recency_ratio"]
+    if "yoy_correlation" in df.columns:
+        df["year_over_year_correlation"] = df["yoy_correlation"]
+
+    # Fill NaN with 0 (matches the fillna(0) in the slow path's feature prep)
+    numeric_cols = df.select_dtypes(include=["number"]).columns
+    df[numeric_cols] = df[numeric_cols].fillna(0)
+
+    _log.info("Reading pre-computed features from dim_sku (%d SKUs)", len(df))
+
+    # Persist the CSV artifact so downstream relabel-only scenarios work
+    df.to_csv(scenario_dir / "clustering_features.csv", index=False)
+
+    return df
+
+
 def _run_full_pipeline(
     fp: dict, mp: dict, lp: dict, scenario_dir: Path
 ) -> dict[str, Any]:
@@ -353,51 +476,62 @@ def _run_full_pipeline(
 
     db = get_db_params()
 
-    # Step 1: Load sales data
-    with profiled_section("load_sales_data"):
-        time_window = fp["time_window_months"]
-        if isinstance(time_window, str) and time_window.lower() == "all":
-            cutoff_date = None
-        else:
-            cutoff_date = get_planning_date() - timedelta(days=int(time_window) * 30)
+    # ── Fast path: try pre-computed features from dim_sku ────────────────────
+    feature_df = _try_load_precomputed_features(db, fp, scenario_dir)
 
-        with psycopg.connect(**db) as conn:
-            sales_query = """
-                SELECT d.sku_ck, s.startdate, s.qty
-                FROM fact_sales_monthly s
-                INNER JOIN dim_sku d
-                    ON d.item_id = s.item_id AND d.customer_group = s.customer_group AND d.loc = s.loc
-                WHERE s.qty IS NOT NULL
-            """
-            params: dict[str, object] = {}
-            if cutoff_date:
-                sales_query += " AND s.startdate >= %(cutoff)s"
-                params["cutoff"] = cutoff_date
-            # Cap at planning date — exclude any data beyond current planning horizon
-            planning_upper = get_planning_date().replace(day=1)
-            sales_query += " AND s.startdate <= %(planning_upper)s"
-            params["planning_upper"] = planning_upper
-            sales_query += " ORDER BY d.sku_ck, s.startdate"
+    if feature_df is not None:
+        # Fast path succeeded — skip Steps 1 & 2
+        pass
+    else:
+        # ── Slow path: compute features from raw fact_sales_monthly ──────────
+        # Step 1: Load sales data
+        with profiled_section("load_sales_data"):
+            time_window = fp["time_window_months"]
+            if isinstance(time_window, str) and time_window.lower() == "all":
+                cutoff_date = None
+            else:
+                cutoff_date = get_planning_date() - timedelta(days=int(time_window) * 30)
 
-            sales_df = pd.read_sql(sales_query, conn, params=params if params else None)
-        sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
+            with psycopg.connect(**db) as conn:
+                sales_query = """
+                    SELECT d.sku_ck, s.startdate, s.qty
+                    FROM fact_sales_monthly s
+                    INNER JOIN dim_sku d
+                        ON d.item_id = s.item_id AND d.customer_group = s.customer_group AND d.loc = s.loc
+                    WHERE s.qty IS NOT NULL
+                """
+                params: dict[str, object] = {}
+                if cutoff_date:
+                    sales_query += " AND s.startdate >= %(cutoff)s"
+                    params["cutoff"] = cutoff_date
+                # Cap at planning date — exclude any data beyond current planning horizon
+                planning_upper = get_planning_date().replace(day=1)
+                sales_query += " AND s.startdate <= %(planning_upper)s"
+                params["planning_upper"] = planning_upper
+                sales_query += " ORDER BY d.sku_ck, s.startdate"
 
-    # Step 2: Compute time series features
-    with profiled_section("compute_ts_features"):
-        grouped = sales_df.groupby("sku_ck", sort=False)
-        ts_features_list = []
-        for sku_ck, dfu_sales in grouped:
-            if len(dfu_sales) < fp["min_months_history"]:
-                continue
-            ts = compute_time_series_features(dfu_sales)
-            ts["sku_ck"] = sku_ck
-            ts_features_list.append(ts)
+                sales_df = pd.read_sql(sales_query, conn, params=params if params else None)
+            sales_df["startdate"] = pd.to_datetime(sales_df["startdate"])
 
-        if not ts_features_list:
-            raise ValueError("No DFUs met minimum history requirement")
+        # Step 2: Compute time series features
+        with profiled_section("compute_ts_features"):
+            logging.getLogger(__name__).info(
+                "Computing features from raw sales (fallback)"
+            )
+            grouped = sales_df.groupby("sku_ck", sort=False)
+            ts_features_list = []
+            for sku_ck, dfu_sales in grouped:
+                if len(dfu_sales) < fp["min_months_history"]:
+                    continue
+                ts = compute_time_series_features(dfu_sales)
+                ts["sku_ck"] = sku_ck
+                ts_features_list.append(ts)
 
-        feature_df = pd.DataFrame(ts_features_list)
-        feature_df.to_csv(scenario_dir / "clustering_features.csv", index=False)
+            if not ts_features_list:
+                raise ValueError("No DFUs met minimum history requirement")
+
+            feature_df = pd.DataFrame(ts_features_list)
+            feature_df.to_csv(scenario_dir / "clustering_features.csv", index=False)
 
     # Step 3: Prepare features for clustering
     with profiled_section("prepare_features"):
@@ -757,6 +891,23 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
                 """)
                 updated_count = cur.rowcount
                 conn.commit()
+
+                # Refresh accuracy MVs so Accuracy Comparison reflects new clusters
+                _log = logging.getLogger(__name__)
+                _log.info("Refreshing accuracy materialized views after cluster promotion ...")
+                for mv in (
+                    "agg_accuracy_by_dim",
+                    "agg_accuracy_lag_archive",
+                    "agg_dfu_coverage",
+                    "agg_dfu_coverage_lag_archive",
+                ):
+                    try:
+                        cur.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}")
+                    except Exception:
+                        cur.execute("ROLLBACK")
+                        cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
+                conn.commit()
+                _log.info("Accuracy MVs refreshed.")
 
     # Build distribution
     distribution = {}

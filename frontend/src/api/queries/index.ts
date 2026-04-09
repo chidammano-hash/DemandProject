@@ -31,3 +31,5 @@ export * from "./cluster-experiments";
 export * from "./champion-experiments";
 export * from "./expsys";
 export * from "./customer-analytics";
+export * from "./sku-features";
+export * from "./backtest-management";

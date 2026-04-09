@@ -43,7 +43,7 @@ The only change is a wider feature matrix. This means:
 
 - Same `fit_model()` from `model_registry.py` — no code changes
 - Same per-cluster training strategy
-- Same SHAP selection (auto-drops low-value customer features)
+- Same multi-stage feature selection (auto-drops redundant/low-value features; see [spec 23](23-feature-selection-pipeline.md))
 - Same champion selector picks the winner per DFU
 - Zero regression risk — enriched models just join the competition pool
 

@@ -101,7 +101,7 @@ describe("JobsTab", () => {
     });
   });
 
-  it("shows job group headers", async () => {
+  it("hides managed pipeline groups from job scheduler", async () => {
     render(
       <TestQueryWrapper>
         <JobNotificationProvider>
@@ -110,8 +110,10 @@ describe("JobsTab", () => {
       </TestQueryWrapper>,
     );
     await waitFor(() => {
-      expect(screen.getByText("Clustering")).toBeDefined();
-      expect(screen.getByText("Backtesting")).toBeDefined();
+      // clustering, backtest, champion, features, and forecast groups
+      // are hidden from Jobs tab -- managed via Model Tuning tab
+      expect(screen.queryByText("Clustering")).toBeNull();
+      expect(screen.queryByText("Backtesting")).toBeNull();
     });
   });
 

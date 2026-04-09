@@ -16,10 +16,13 @@ Usage (from scripts):
 from __future__ import annotations
 
 import json
+import logging
 import math
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +130,6 @@ def detect_stockout_risk(
     cfg = config.get("thresholds", {}).get("stockout_risk", {})
     dos_threshold = float(cfg.get("dos_threshold", 14))
     critical_dos = float(cfg.get("critical_dos_threshold", 7))
-    _ = float(cfg.get("min_daily_sales", 1.0))  # reserved for future threshold use
 
     if dos >= dos_threshold and not is_below_ss:
         return None

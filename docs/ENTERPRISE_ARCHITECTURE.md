@@ -222,7 +222,7 @@ Supply Chain Command Center
 │       └── 31-expert panel testing 30+ statistical algorithms (croston, tsb, theta, ETS, ARIMA)
 │
 ├── L1: DEMAND INTELLIGENCE
-│   ├── L2: DFU Clustering
+│   ├── L2: SKU Clustering
 │   │   └── KMeans with 14 features, Silhouette + Calinski-Harabasz scoring, What-If scenarios
 │   ├── L2: Seasonality Detection
 │   │   └── Peak/trough identification per item, profile labeling
@@ -328,7 +328,7 @@ Supply Chain Command Center
 |---|---|---|
 | Market Signal | External CSV drops from ERP | `data/input/*.csv` |
 | Data Ingestion | Normalize + Load pipeline | `scripts/etl/normalize_dataset_csv.py`, `scripts/etl/load_dataset_postgres.py` |
-| Demand Sensing | Variability analysis + demand signals | `scripts/inventory/compute_demand_variability.py`, `scripts/inventory/compute_demand_signals.py` |
+| Demand Sensing | Variability analysis + demand signals | `scripts/ml/compute_sku_features.py` (unified SKU features), `scripts/inventory/compute_demand_signals.py` |
 | Forecast Generation | 3 tree-model backtests | `scripts/run_backtest.py`, `common/ml/backtest_framework.py` |
 | Champion Selection | Meta-learner + simulate + select | `scripts/ml/run_champion_selection.py`, `common/ml/champion_strategies.py` |
 | Exception Detection | 6 exception types with severity | `scripts/inventory/generate_replenishment_exceptions.py`, `common/engines/exception_engine.py` |
@@ -1177,8 +1177,8 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  │   Lag 1-12, rolling 3/6/12, MoM growth, volatility     │     │
 │  │   Fourier (sin/cos 12,6,4,3), Croston decomposition    │     │
 │  │   Calendar (month, quarter, is_quarter_end)             │     │
-│  │   DFU attributes (execution_lag, total_lt, ml_cluster)  │     │
-│  │   Cross-DFU cluster aggregates                          │     │
+│  │   DFU attributes (execution_lag, total_lt)               │     │
+│  │   ml_cluster (metadata — partitioning only, not a feat) │     │
 │  │   External forecast signals                              │     │
 │  └─────────────────────────────────────────────────────────┘     │
 │                         │                                         │
@@ -1219,7 +1219,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  ┌─────────────────────────────────────────────────────────┐     │
 │  │ Experiment Tracking & Tuning                             │     │
 │  │                                                          │     │
-│  │ MLflow: dfu_clustering, demand_backtest experiments      │     │
+│  │ MLflow: sku_clustering, demand_backtest experiments      │     │
 │  │ Optuna: Bayesian hyperparameter optimization            │     │
 │  │ Cluster-adaptive profiles (config/cluster_tuning_       │     │
 │  │   profiles.yaml)                                        │     │
@@ -1718,7 +1718,7 @@ Code Change → Ruff Lint (auto) → Anti-Pattern Check (auto) → Unit Tests (a
 | **FVA** | Forecast Value Add -- measures incremental accuracy across the planning ladder (`naive seasonal -> external -> champion`, later AI/planner adjustments) |
 | **SHAP** | SHapley Additive exPlanations -- ML feature attribution method |
 | **CI** | Confidence Interval -- P10/P90 bands on production forecast |
-| **ml_cluster** | KMeans cluster assignment per DFU (hard feature, never dropped) |
+| **ml_cluster** | KMeans cluster assignment per SKU — used for per-cluster model partitioning only, excluded from model features (`METADATA_COLS`) to prevent data leakage |
 | **model_id** | Identifies which model produced a forecast (e.g., `lgbm_cluster`, `external`, `champion`) |
 | **execution_lag** | Months between forecast issuance and evaluation -- controls what data was available at forecast time |
 | **ADM** | Architecture Development Method (TOGAF framework for EA development) |

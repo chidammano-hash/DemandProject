@@ -1,53 +1,63 @@
-# 08-02: Authentication & RBAC configuration
+# ═══ AUTH CONFIG ═══
+# Authentication & RBAC configuration (Spec 08-02)
+# Used by: common/auth.py (JWT + password), common/services/rate_limiter.py (governance)
 
+# ═══ JWT SETTINGS ═══
 jwt:
-  algorithm: HS256
-  access_token_expire_minutes: 30
-  refresh_token_expire_days: 7
+  algorithm: HS256                       # JWT signing algorithm; options: HS256, HS384, HS512
+  access_token_expire_minutes: 30        # Access token TTL in minutes; short-lived for security
+  refresh_token_expire_days: 7           # Refresh token TTL in days; used for silent token rotation
 
+# ═══ PASSWORD POLICY ═══
 password_policy:
-  min_length: 8
+  min_length: 8                          # Minimum password length enforced during registration
 
+# ═══ ROLE PERMISSIONS ═══
 # Role hierarchy: admin > manager > planner > viewer
 # Each role inherits permissions of all lower roles
+# Maps role name to list of allowed HTTP methods + ADMIN privilege
 role_permissions:
-  viewer:
+  viewer:                                # Read-only access to all dashboards and reports
     - "GET"
-  planner:
-    - "GET"
-    - "POST"
-    - "PUT"
-  manager:
+  planner:                               # Can submit overrides, create forecasts, update records
     - "GET"
     - "POST"
     - "PUT"
-    - "DELETE"
-  admin:
+  manager:                               # Can approve overrides, delete records, manage team
     - "GET"
     - "POST"
     - "PUT"
     - "DELETE"
-    - "ADMIN"
+  admin:                                 # Full access including user management and system config
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "ADMIN"                            # Special privilege for user CRUD and config changes
 
+# ═══ ROLE HIERARCHY LEVELS ═══
 # Role hierarchy level (higher number = more privileges)
+# Used by require_role() dependency to enforce minimum role level
 role_level:
-  viewer: 1
-  planner: 2
-  manager: 3
-  admin: 4
+  viewer: 1                              # Level 1 — lowest privilege
+  planner: 2                             # Level 2 — can create/edit
+  manager: 3                             # Level 3 — can approve/delete
+  admin: 4                               # Level 4 — full system access
 
-# API Governance (merged from api_governance_config.yaml — Spec 08-09)
+# ═══ API GOVERNANCE ═══
+# Merged from api_governance_config.yaml (Spec 08-09)
+# Used by: common/services/rate_limiter.py (sliding window rate limiter)
 governance:
-  rate_limit_tiers:
+  rate_limit_tiers:                      # Per-tier request quotas; tier assigned per API consumer
     free:
-      requests_per_minute: 60
+      requests_per_minute: 60            # Free tier — 1 req/sec average
     standard:
-      requests_per_minute: 300
+      requests_per_minute: 300           # Standard tier — 5 req/sec average
     premium:
-      requests_per_minute: 1000
+      requests_per_minute: 1000          # Premium tier — ~17 req/sec average
   deprecation:
-    sunset_header: true
+    sunset_header: true                  # Include Sunset HTTP header on deprecated endpoints
   versioning:
-    current_version: v1
-    supported_versions:
+    current_version: v1                  # Active API version prefix (e.g., /v1/...)
+    supported_versions:                  # List of still-supported API versions
       - v1

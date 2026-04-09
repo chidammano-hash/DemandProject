@@ -70,7 +70,8 @@ ON mv_sensing_overrides_active (item_id, loc);
 -- ==========================================================================
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_agg_accuracy_dim
 ON agg_accuracy_by_dim (model_id, lag, month_start, cluster_assignment, ml_cluster,
-                        supplier_desc, abc_vol, region, brand_desc, seasonality_profile);
+                        supplier_desc, abc_vol, region, brand_desc, dfu_execution_lag,
+                        seasonality_profile);
 
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_agg_accuracy_lag_archive
 ON agg_accuracy_lag_archive (model_id, lag, timeframe, month_start, cluster_assignment,

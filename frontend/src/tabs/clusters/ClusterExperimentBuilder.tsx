@@ -8,7 +8,7 @@
  * 4. Estimate bar (runtime + DFU count from /clustering/scenario/estimate)
  * 5. Cancel + Launch footer
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, Loader2, FlaskConical, AlertTriangle, Clock, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -118,6 +118,22 @@ export function ClusterExperimentBuilder({
   });
 
   const templates: ClusterExperimentTemplate[] = templatesData?.templates ?? [];
+
+  // ---- Fetch core features (fallback handled in ClusterParamsForm) -----------
+  const { data: coreFeaturesData } = useQuery<{ features: string[] }>({
+    queryKey: ["clustering", "core-features"],
+    queryFn: async () => {
+      const res = await fetch("/clustering/core-features");
+      if (!res.ok) throw new Error("Failed to fetch core features");
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000, // 5 min — rarely changes
+    enabled: open,
+  });
+  const coreFeatures = useMemo(
+    () => coreFeaturesData?.features,
+    [coreFeaturesData],
+  );
 
   // ---- Fetch estimate -------------------------------------------------------
   const { data: estimate } = useQuery({
@@ -319,6 +335,7 @@ export function ClusterExperimentBuilder({
                   modelParams: DEFAULT_MODEL_PARAMS,
                   labelParams: DEFAULT_LABEL_PARAMS,
                 }}
+                features={coreFeatures}
               />
             </div>
           </div>

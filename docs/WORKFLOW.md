@@ -33,7 +33,7 @@ make health            # DB row counts + API health check
 
 **Purpose:** Segment items into demand-pattern clusters (high-volume steady, intermittent, seasonal, etc.) so tree models can train per-cluster for better accuracy.
 
-**Config:** Settings → Forecasting → Forecast Pipeline → "DFU Clustering" toggle
+**Config:** Settings → Forecasting → Forecast Pipeline → "SKU Clustering" toggle
 
 **Run:**
 ```bash
@@ -110,6 +110,10 @@ make tune-lgbm         # ~1-2 hours (50 Optuna trials, 5-fold CV)
 make tune-catboost     # ~1-2 hours
 make tune-xgboost     # ~1-2 hours
 make tune-all          # All three sequentially
+
+# Per-cluster tuning (runs Optuna independently per ml_cluster)
+make tune-lgbm-clusters   # Per-cluster LGBM tuning
+make tune-clusters        # Per-cluster tuning for all tree models
 ```
 
 **What it does:**
@@ -117,6 +121,8 @@ make tune-all          # All three sequentially
 2. Each trial trains on 5 walk-forward CV folds
 3. Optuna learns which parameter regions minimize WAPE
 4. Best parameters saved to `data/tuning/best_params_<model>.json`
+
+**Per-cluster tuning** (`make tune-lgbm-clusters`) runs Optuna independently per `ml_cluster`, writing cluster-specific overrides to `config/cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. During backtest, profiles are matched by Phase 1 (exact cluster_name) then Phase 2 (statistical criteria fallback).
 
 **After tuning, promote and re-backtest:**
 ```bash
@@ -269,7 +275,7 @@ All pipeline configuration is in **Settings → Forecasting → Forecast Pipelin
 | Model Selection Strategy | Expanding | How champion is chosen |
 | Evaluation Metric | Accuracy % | WAPE or accuracy_pct |
 | Default Model | Seasonal Naive | Fallback when no champion |
-| DFU Clustering | ON/OFF | Segment items by demand pattern |
+| SKU Clustering | ON/OFF | Segment items by demand pattern |
 | Backtest Windows | 10 | Number of expanding evaluation windows |
 | Backtest Horizon | 6 months | Months predicted per window |
 | Fast Sampling | ON/OFF | Sample subset for quick iteration |

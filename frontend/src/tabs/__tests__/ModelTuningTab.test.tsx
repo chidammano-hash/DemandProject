@@ -147,6 +147,11 @@ vi.mock("../model-tuning/LogViewer", () => ({
   LogViewer: ({ open }: { open: boolean }) =>
     open ? <div>LogViewer</div> : null,
 }));
+vi.mock("../model-tuning/BacktestDetailPanel", () => ({
+  BacktestDetailPanel: ({ modelId }: { modelId: string }) => (
+    <div data-testid="backtest-detail-panel">BacktestDetailPanel: {modelId}</div>
+  ),
+}));
 vi.mock("../clusters/ClusterExperimentsPanel", () => ({
   ClusterExperimentsPanel: () => <div data-testid="cluster-experiments-panel">ClusterExperimentsPanel</div>,
 }));
@@ -170,20 +175,19 @@ describe("ModelTuningTab", () => {
       expect(screen.getByText("Model Experimentation Studio")).toBeInTheDocument();
     });
     expect(screen.getByText("Clustering")).toBeInTheDocument();
-    expect(screen.getByText("Backtest & Tune")).toBeInTheDocument();
+    expect(screen.getByText("Backtest")).toBeInTheDocument();
+    expect(screen.getByText("Tune")).toBeInTheDocument();
     expect(screen.getByText("Champion")).toBeInTheDocument();
   });
 
-  it("renders tunable model cards and other models summary", async () => {
+  it("renders all model cards on backtest stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
     await waitFor(() => {
-      // Tunable models appear as clickable cards
+      // All models appear as cards on the backtest stage
       expect(screen.getAllByText("LightGBM").length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText("CatBoost").length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText("XGBoost").length).toBeGreaterThanOrEqual(1);
-      // Non-tunable models appear in the compact summary row
-      expect(screen.getByTestId("other-models-row")).toBeInTheDocument();
       expect(screen.getByText(/Chronos T5/)).toBeInTheDocument();
       expect(screen.getByText(/Chronos Bolt/)).toBeInTheDocument();
       expect(screen.getByText(/MSTL/)).toBeInTheDocument();
@@ -214,9 +218,14 @@ describe("ModelTuningTab", () => {
     });
   });
 
-  it("selects model from grid and shows experiments", async () => {
+  it("selects model from grid and shows experiments on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    await waitFor(() => {
+      expect(screen.getByText("Tune")).toBeInTheDocument();
+    });
+    // Switch to Tune stage first
+    fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText("CatBoost")).toBeInTheDocument();
     });
@@ -229,9 +238,10 @@ describe("ModelTuningTab", () => {
     });
   });
 
-  it("renders KPI summary cards", async () => {
+  it("renders KPI summary cards on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText("Best Accuracy")).toBeInTheDocument();
       expect(screen.getByText("Production Accuracy")).toBeInTheDocument();
@@ -240,9 +250,10 @@ describe("ModelTuningTab", () => {
     });
   });
 
-  it("renders run history table", async () => {
+  it("renders run history table on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText("Run History")).toBeInTheDocument();
       expect(screen.getByText("Label")).toBeInTheDocument();
@@ -253,9 +264,10 @@ describe("ModelTuningTab", () => {
     });
   });
 
-  it("selects baseline on first row click", async () => {
+  it("selects baseline on first row click in tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText("production_baseline")).toBeInTheDocument();
     });
@@ -265,9 +277,10 @@ describe("ModelTuningTab", () => {
     });
   });
 
-  it("selects candidate on second row click", async () => {
+  it("selects candidate on second row click in tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText("production_baseline")).toBeInTheDocument();
     });
@@ -294,47 +307,40 @@ describe("ModelTuningTab", () => {
     });
   });
 
-  it("shows status badges for runs", async () => {
+  it("shows status badges for runs on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getAllByText("completed").length).toBeGreaterThanOrEqual(1);
       expect(screen.getByText("running")).toBeInTheDocument();
     });
   });
 
-  it("shows promoted run label in table", async () => {
+  it("shows promoted run label in table on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       // The promoted run label should be visible in the run history table
       expect(screen.getByText("production_baseline")).toBeInTheDocument();
     });
   });
 
-  it("shows empty state for zero runs", async () => {
+  it("shows empty state for zero runs on tune stage", async () => {
     mockFetchWith([], 0);
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText(/No experiments yet/i)).toBeInTheDocument();
     });
   });
 
-  it("shows non-tunable models in compact summary row", async () => {
+  it("shows model detail sub-tabs for tunable models on tune stage", async () => {
     const ModelTuningTab = (await import("../ModelTuningTab")).default;
     render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
-    await waitFor(() => {
-      const otherRow = screen.getByTestId("other-models-row");
-      expect(otherRow).toBeInTheDocument();
-      expect(otherRow.textContent).toContain("Chronos 2");
-      expect(otherRow.textContent).toContain("backtest only");
-    });
-  });
-
-  it("shows model detail sub-tabs for tunable models", async () => {
-    const ModelTuningTab = (await import("../ModelTuningTab")).default;
-    render(<TestQueryWrapper><ModelTuningTab /></TestQueryWrapper>);
+    fireEvent.click(screen.getByText("Tune"));
     await waitFor(() => {
       expect(screen.getByText("Experiments")).toBeInTheDocument();
       expect(screen.getByText("Feature Lab")).toBeInTheDocument();

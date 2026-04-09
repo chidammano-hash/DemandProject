@@ -1,21 +1,25 @@
+# Purchase Order Integration Configuration
+# Consumed by: scripts/load_open_pos.py (load_config -> validate_po_row, glob patterns)
+# Provides: CSV file patterns, validation rules, and scheduling for PO data loading
+
 ingest:
-  strategy: csv_export              # 'csv_export' | 'erp_api' (future)
+  strategy: csv_export                  # Data ingestion method: 'csv_export' (current) | 'erp_api' (future ERP integration)
   csv:
-    po_file_pattern: "data/input/open_pos_*.csv"
-    receipt_file_pattern: "data/input/po_receipts_*.csv"
-    supplier_file_pattern: "data/input/suppliers_*.csv"
-    archive_after_load: false
-    archive_dir: "data/input/archive/"
+    po_file_pattern: "data/input/open_pos_*.csv"        # Glob pattern for open purchase order CSV files
+    receipt_file_pattern: "data/input/po_receipts_*.csv" # Glob pattern for goods receipt CSV files
+    supplier_file_pattern: "data/input/suppliers_*.csv"  # Glob pattern for supplier master data CSV files
+    archive_after_load: false           # Whether to move CSV files to archive_dir after successful load
+    archive_dir: "data/input/archive/"  # Directory for archived CSV files (used only if archive_after_load is true)
 
 validation:
-  reject_pos_past_due_days: 180     # ignore POs > 180 days past due (likely data error)
-  require_confirmed_delivery_date: false
-  max_open_qty_ratio: 10.0
+  reject_pos_past_due_days: 180         # Reject POs with delivery date > N days past planning date (likely stale data errors)
+  require_confirmed_delivery_date: false # If true, reject PO lines without a confirmed delivery date
+  max_open_qty_ratio: 10.0              # Max ratio of open qty to ordered qty — flags suspicious data (future use)
 
 data_quality:
-  past_due_threshold_days: 7
-  delivery_date_tolerance_days: 2
+  past_due_threshold_days: 7            # POs past due by > N days flagged in DQ reports (informational)
+  delivery_date_tolerance_days: 2       # Tolerance window (days) for delivery date variance checks
 
 scheduler:
-  job_type: load_open_pos
-  cron: "0 */4 * * *"
+  job_type: load_open_pos               # Job type identifier registered with JobManager for scheduled runs
+  cron: "0 */4 * * *"                  # Cron schedule — run every 4 hours (matches DQ check schedule)

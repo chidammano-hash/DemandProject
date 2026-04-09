@@ -1,0 +1,660 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# FORECAST PIPELINE MASTER CONFIG
+# ═══════════════════════════════════════════════════════════════════════════════
+# Single source of truth for the entire ML forecast pipeline. Consumed by:
+#   - scripts/run_backtest.py (backtest execution)
+#   - scripts/run_champion_selection.py (champion model selection)
+#   - scripts/generate_production_forecasts.py (production inference)
+#   - scripts/tune_hyperparams.py (Bayesian tuning)
+#   - common/ml/backtest_framework.py (core backtest loop)
+#   - common/ml/backtest_sampler.py (stratified sampling)
+#   - common/core/utils.py (utility loaders: load_forecast_pipeline_config,
+#     get_algorithm_roster, get_algorithm_params, get_competing_model_ids, etc.)
+#
+# Load with: load_forecast_pipeline_config() from common/utils.py
+# Query algorithms with: get_algorithm_roster(stage=...) to filter by lifecycle stage
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══ ALGORITHMS ═══════════════════════════════════════════════════════════════
+# Each entry defines a model available in the pipeline. Lifecycle stage flags
+# (tune/backtest/compete/forecast/expert) control which pipeline steps include
+# the model. get_algorithm_roster(stage="backtest") returns only models with
+# backtest=true, etc.
+#
+# Common fields for all algorithms:
+#   type:             Model family. Options: tree, foundation, statistical, deep_learning
+#   enabled:          Master switch — false disables the model in ALL pipeline stages
+#   tune:             Include in Bayesian hyperparameter tuning (make tune-all)
+#   backtest:         Include in expanding-window backtests (make backtest-all)
+#   compete:          Include in champion model competition (make champion-all)
+#   forecast:         Include in production forecast generation (make forecast-generate)
+#   expert:           Include in the expert panel algorithm selection test
+#   cluster_strategy: How to partition data. Options: per_cluster (one model per ML cluster),
+#                     global (single model for all data). Foundation/DL models always run globally.
+#                     Resolution: algorithm entry > default "per_cluster"
+#   output_dir:       Directory for backtest prediction CSVs (relative to project root)
+# ═══════════════════════════════════════════════════════════════════════════════
+algorithms:
+  # ─── LightGBM (per-cluster) ─────────────────────────────────────────────────
+  # Primary tree model. Trains one LightGBM model per ML cluster.
+  lgbm_cluster:
+    type: tree                          # Model family: tree-based gradient boosting
+    enabled: true                       # Active in all enabled pipeline stages
+    tune: true                          # Included in Bayesian hyperparameter tuning
+    backtest: true                      # Included in expanding-window backtests
+    compete: true                       # Included in champion model competition
+    forecast: true                      # Included in production forecast generation
+    expert: false                       # Excluded from expert panel tests
+    cluster_strategy: per_cluster       # Train one model per ML cluster
+    output_dir: data/backtest/lgbm_cluster  # Backtest output directory
+    params:
+      # ── Backtest behavior flags ──
+      recursive: true                   # Use recursive multi-step forecasting (predict h=1, feed back as lag, repeat)
+      shap_select: true                 # Enable SHAP-based feature selection before training
+      shap_threshold: 0.9              # Cumulative SHAP importance threshold (keep features summing to this %)
+      shap_top_n: null                  # Hard cap on number of features to keep (null = use threshold only)
+      shap_sample_size: 500             # Number of rows sampled for SHAP value computation
+      correlation_filter: false         # Enable Stage 2 correlation pre-filter (removes highly correlated features before SHAP)
+      correlation_threshold: 0.98       # Pearson correlation threshold — feature pairs above this are deduplicated
+      variance_filter: false            # Enable Stage 1 near-zero variance filter (removes near-constant features)
+      variance_threshold: 0.01          # Relative variance threshold — features with variance below this are dropped
+      tune_inline: false                # If true, run per-timeframe Bayesian tuning during backtest (slower but adaptive)
+      params_file: null                 # Path to a tuning output JSON with optimized params (overrides defaults below)
+      # ── LightGBM hyperparameters ──
+      objective: regression_l1          # Loss function. Options: regression_l1 (MAE), regression (MSE), tweedie, etc.
+      n_estimators: 2000                # Maximum number of boosting rounds (early stopping may halt sooner)
+      learning_rate: 0.015              # Step size shrinkage per round — lower = more rounds needed but better generalization
+      num_leaves: 63                    # Max leaves per tree — controls model complexity (LightGBM leaf-wise growth)
+      min_child_samples: 20             # Minimum samples in a leaf — prevents overfitting on sparse data
+      max_depth: 8                      # Maximum tree depth — -1 for unlimited
+      min_gain_to_split: 0.01           # Minimum loss reduction to make a split — regularization
+      subsample: 0.75                   # Fraction of rows sampled per tree (row-level bagging)
+      bagging_freq: 1                   # Perform bagging every N iterations (1 = every iteration)
+      colsample_bytree: 0.8             # Fraction of features sampled per tree
+      feature_fraction_bynode: 0.8      # Fraction of features sampled per split node
+      reg_lambda: 0.8                   # L2 regularization on leaf weights
+      reg_alpha: 0.1                    # L1 regularization on leaf weights
+      path_smooth: 0.5                  # Smoothing applied to leaf output values — reduces overfitting
+      max_bin: 255                      # Max histogram bins for feature discretization — higher = finer splits
+  # ─── CatBoost (per-cluster) ──────────────────────────────────────────────────
+  # Alternative tree model with native categorical feature handling.
+  catboost_cluster:
+    type: tree                          # Model family: tree-based gradient boosting
+    enabled: false                      # Disabled — enable to include in pipeline stages
+    tune: true                          # Included in Bayesian hyperparameter tuning when enabled
+    backtest: true                      # Included in expanding-window backtests when enabled
+    compete: true                       # Included in champion model competition when enabled
+    forecast: true                      # Included in production forecast generation when enabled
+    expert: false                       # Excluded from expert panel tests
+    cluster_strategy: per_cluster       # Train one model per ML cluster
+    output_dir: data/backtest/catboost_cluster  # Backtest output directory
+    params:
+      # ── Backtest behavior flags (same semantics as lgbm_cluster) ──
+      recursive: true                   # Recursive multi-step forecasting
+      shap_select: true                 # SHAP-based feature selection
+      shap_threshold: 0.95             # Cumulative SHAP importance threshold
+      shap_top_n: null                  # Hard cap on features (null = threshold only)
+      shap_sample_size: 500             # Rows sampled for SHAP computation
+      correlation_filter: true          # Pre-SHAP correlation filter enabled
+      correlation_threshold: 0.95       # Correlation threshold for deduplication
+      variance_filter: true             # Pre-SHAP variance filter enabled
+      variance_threshold: 0.01          # Near-zero variance threshold
+      tune_inline: false                # No per-timeframe inline tuning
+      params_file: null                 # No external tuning params file
+      # ── CatBoost hyperparameters ──
+      iterations: 800                   # Maximum boosting iterations (CatBoost equivalent of n_estimators)
+      learning_rate: 0.03               # Step size shrinkage per iteration
+      depth: 7                          # Maximum tree depth
+      l2_leaf_reg: 7.5                  # L2 regularization coefficient on leaf values
+      subsample: 0.85                   # Fraction of rows sampled per tree
+      grow_policy: Lossguide            # Tree growth policy. Options: SymmetricTree, Depthwise, Lossguide
+      border_count: 32                  # Number of histogram bins for numeric features (higher = finer splits)
+      random_strength: 0.4              # Random noise added to feature split scoring — prevents overfitting
+      min_data_in_leaf: 28              # Minimum samples in a leaf node
+      colsample_bylevel: 0.85           # Fraction of features sampled per tree level
+      bagging_temperature: 0.4          # Controls intensity of Bayesian bootstrap (higher = more randomness)
+      max_leaves: 80                    # Maximum leaf count per tree (used with Lossguide/Depthwise)
+      bootstrap_type: MVS               # Bootstrap method. Options: MVS (minimum variance sampling), Bayesian, Ordered, Bernoulli
+      model_size_reg: 0.1               # Regularization for model size — penalizes large models
+      score_function: L2                # Split scoring function. Options: L2, Cosine, NewtonL2, NewtonCosine
+      boost_from_average: true          # Initialize predictions with dataset mean — faster convergence
+      leaf_estimation_method: Newton    # Leaf value calculation. Options: Newton, Gradient, Exact
+      leaf_estimation_iterations: 1     # Gradient steps per leaf value update
+      max_ctr_complexity: 1             # Max combinations of categorical features for CTR (counter) encoding
+  # ─── XGBoost (per-cluster) ───────────────────────────────────────────────────
+  # Alternative tree model with strong regularization support.
+  xgboost_cluster:
+    type: tree                          # Model family: tree-based gradient boosting
+    enabled: false                      # Disabled — enable to include in pipeline stages
+    tune: true                          # Included in Bayesian hyperparameter tuning when enabled
+    backtest: true                      # Included in expanding-window backtests when enabled
+    compete: true                       # Included in champion model competition when enabled
+    forecast: true                      # Included in production forecast generation when enabled
+    expert: false                       # Excluded from expert panel tests
+    cluster_strategy: per_cluster       # Train one model per ML cluster
+    output_dir: data/backtest/xgboost_cluster  # Backtest output directory
+    params:
+      # ── Backtest behavior flags (same semantics as lgbm_cluster) ──
+      recursive: true                   # Recursive multi-step forecasting
+      shap_select: true                 # SHAP-based feature selection
+      shap_threshold: 0.95             # Cumulative SHAP importance threshold
+      shap_top_n: null                  # Hard cap on features (null = threshold only)
+      shap_sample_size: 500             # Rows sampled for SHAP computation
+      correlation_filter: true          # Pre-SHAP correlation filter enabled
+      correlation_threshold: 0.95       # Correlation threshold for deduplication
+      variance_filter: true             # Pre-SHAP variance filter enabled
+      variance_threshold: 0.01          # Near-zero variance threshold
+      tune_inline: false                # No per-timeframe inline tuning
+      params_file: null                 # No external tuning params file
+      # ── XGBoost hyperparameters ──
+      n_estimators: 2000                # Maximum boosting rounds (early stopping may halt sooner)
+      learning_rate: 0.02               # Step size shrinkage per round
+      max_depth: 7                      # Maximum tree depth
+      min_child_weight: 15              # Minimum sum of instance weight in a child — prevents overfitting on sparse data
+      subsample: 0.8                    # Fraction of rows sampled per tree
+      colsample_bytree: 0.8             # Fraction of features sampled per tree
+      grow_policy: lossguide            # Tree growth policy. Options: depthwise, lossguide (leaf-wise, more like LightGBM)
+      max_leaves: 255                   # Max leaves per tree (used with lossguide)
+      max_bin: 256                      # Max histogram bins for feature discretization
+      reg_lambda: 5.0                   # L2 regularization on leaf weights
+      reg_alpha: 0.5                    # L1 regularization on leaf weights
+      gamma: 0.1                        # Minimum loss reduction required to make a further split
+      colsample_bylevel: 0.8            # Fraction of features sampled per tree level
+      booster: gbtree                   # Booster type. Options: gbtree (tree), dart (tree + dropout), gblinear (linear)
+  # ─── LightGBM Customer-Enriched ──────────────────────────────────────────────
+  # LightGBM variant that includes 34 pre-computed customer-derived features
+  # from fact_customer_demand_monthly (generated by make customer-features).
+  lgbm_cust_enriched:
+    type: tree                          # Model family: tree-based gradient boosting
+    enabled: false                      # Disabled — enable to include in pipeline stages
+    tune: true                          # Included in Bayesian hyperparameter tuning when enabled
+    backtest: true                      # Included in expanding-window backtests when enabled
+    compete: true                       # Included in champion model competition when enabled
+    forecast: true                      # Included in production forecast generation when enabled
+    expert: false                       # Excluded from expert panel tests
+    cluster_strategy: per_cluster       # Train one model per ML cluster
+    output_dir: data/backtest/lgbm_cust_enriched  # Backtest output directory
+    params:
+      # ── Backtest behavior flags ──
+      recursive: true                   # Recursive multi-step forecasting
+      shap_select: true                 # SHAP-based feature selection
+      shap_threshold: 0.95             # Cumulative SHAP importance threshold
+      shap_sample_size: 500             # Rows sampled for SHAP computation
+      correlation_filter: true          # Pre-SHAP correlation filter enabled
+      correlation_threshold: 0.95       # Correlation threshold for deduplication
+      variance_filter: true             # Pre-SHAP variance filter enabled
+      variance_threshold: 0.01          # Near-zero variance threshold
+      customer_features: true           # Include 34 customer-derived features (requires make customer-features first)
+      # ── LightGBM hyperparameters (tuned for customer-enriched feature set) ──
+      objective: regression_l1          # Loss function: MAE
+      n_estimators: 1500                # Max boosting rounds
+      learning_rate: 0.02               # Step size shrinkage
+      num_leaves: 63                    # Max leaves per tree
+      min_child_samples: 20             # Min samples per leaf
+      max_depth: 8                      # Max tree depth
+      min_gain_to_split: 0.005          # Min loss reduction for split (lower than base to capture customer signals)
+      subsample: 0.7                    # Row sampling fraction (lower to reduce overfitting with more features)
+      bagging_freq: 1                   # Bagging every iteration
+      colsample_bytree: 0.75            # Feature sampling per tree
+      feature_fraction_bynode: 0.6      # Feature sampling per node (lower = more regularization with richer features)
+      reg_lambda: 1.5                   # L2 regularization (higher than base for additional features)
+      reg_alpha: 0.15                   # L1 regularization
+      path_smooth: 1.0                  # Leaf value smoothing (higher than base for stability)
+      max_bin: 255                      # Max histogram bins
+  # ─── CatBoost Customer-Enriched ─────────────────────────────────────────────
+  # CatBoost variant with customer-derived features.
+  catboost_cust_enriched:
+    type: tree                          # Model family: tree-based gradient boosting
+    enabled: false                      # Disabled — enable to include in pipeline stages
+    tune: true                          # Included in Bayesian hyperparameter tuning when enabled
+    backtest: true                      # Included in expanding-window backtests when enabled
+    compete: true                       # Included in champion model competition when enabled
+    forecast: true                      # Included in production forecast generation when enabled
+    expert: false                       # Excluded from expert panel tests
+    cluster_strategy: per_cluster       # Train one model per ML cluster
+    output_dir: data/backtest/catboost_cust_enriched  # Backtest output directory
+    params:
+      # ── Backtest behavior flags ──
+      recursive: true                   # Recursive multi-step forecasting
+      shap_select: true                 # SHAP-based feature selection
+      shap_threshold: 0.95             # Cumulative SHAP importance threshold
+      shap_sample_size: 500             # Rows sampled for SHAP computation
+      correlation_filter: true          # Pre-SHAP correlation filter enabled
+      correlation_threshold: 0.95       # Correlation threshold for deduplication
+      variance_filter: true             # Pre-SHAP variance filter enabled
+      variance_threshold: 0.01          # Near-zero variance threshold
+      customer_features: true           # Include 34 customer-derived features
+      # ── CatBoost hyperparameters (tuned for customer-enriched feature set) ──
+      iterations: 800                   # Maximum boosting iterations
+      learning_rate: 0.03               # Step size shrinkage
+      depth: 7                          # Maximum tree depth
+      l2_leaf_reg: 9.0                  # L2 regularization (higher than base for additional features)
+      subsample: 0.85                   # Row sampling fraction
+      grow_policy: Lossguide            # Tree growth policy
+      border_count: 32                  # Histogram bins for numeric features
+      random_strength: 0.4              # Random noise for split scoring
+      min_data_in_leaf: 28              # Minimum samples per leaf
+      colsample_bylevel: 0.8            # Feature sampling per level
+      bagging_temperature: 0.4          # Bayesian bootstrap intensity
+      max_leaves: 80                    # Max leaves per tree
+      bootstrap_type: MVS               # Minimum variance sampling
+      model_size_reg: 0.1               # Model size regularization
+      score_function: L2                # Split scoring function
+      boost_from_average: true          # Initialize with dataset mean
+  # ─── XGBoost Customer-Enriched ──────────────────────────────────────────────
+  # XGBoost variant with customer-derived features.
+  xgboost_cust_enriched:
+    type: tree                          # Model family: tree-based gradient boosting
+    enabled: false                      # Disabled — enable to include in pipeline stages
+    tune: true                          # Included in Bayesian hyperparameter tuning when enabled
+    backtest: true                      # Included in expanding-window backtests when enabled
+    compete: true                       # Included in champion model competition when enabled
+    forecast: true                      # Included in production forecast generation when enabled
+    expert: false                       # Excluded from expert panel tests
+    cluster_strategy: per_cluster       # Train one model per ML cluster
+    output_dir: data/backtest/xgboost_cust_enriched  # Backtest output directory
+    params:
+      # ── Backtest behavior flags ──
+      recursive: true                   # Recursive multi-step forecasting
+      shap_select: true                 # SHAP-based feature selection
+      shap_threshold: 0.95             # Cumulative SHAP importance threshold
+      shap_sample_size: 500             # Rows sampled for SHAP computation
+      correlation_filter: true          # Pre-SHAP correlation filter enabled
+      correlation_threshold: 0.95       # Correlation threshold for deduplication
+      variance_filter: true             # Pre-SHAP variance filter enabled
+      variance_threshold: 0.01          # Near-zero variance threshold
+      customer_features: true           # Include 34 customer-derived features
+      # ── XGBoost hyperparameters (tuned for customer-enriched feature set) ──
+      n_estimators: 2000                # Max boosting rounds
+      learning_rate: 0.02               # Step size shrinkage
+      max_depth: 7                      # Max tree depth
+      min_child_weight: 15              # Min sum of instance weight in a child
+      subsample: 0.8                    # Row sampling fraction
+      colsample_bytree: 0.75            # Feature sampling per tree (lower = more regularization)
+      grow_policy: lossguide            # Leaf-wise tree growth
+      max_leaves: 255                   # Max leaves per tree
+      max_bin: 256                      # Max histogram bins
+      reg_lambda: 6.0                   # L2 regularization (higher than base for additional features)
+      reg_alpha: 0.6                    # L1 regularization (higher than base)
+      gamma: 0.1                        # Min loss reduction for splits
+      colsample_bylevel: 0.75           # Feature sampling per level
+      booster: gbtree                   # Booster type: standard gradient-boosted trees
+  # ─── Chronos T5 (Foundation Model) ───────────────────────────────────────────
+  # Amazon Chronos T5 zero-shot time-series foundation model (46M params).
+  # Runs ~2.5 hours for full backtest. No training — uses pre-trained weights.
+  chronos:
+    type: foundation                    # Model family: pre-trained foundation model
+    enabled: false                      # Disabled — slow, used for research/comparison
+    tune: false                         # Foundation models are not tunable
+    backtest: true                      # Included in backtests when enabled
+    compete: false                      # Excluded from champion competition
+    forecast: false                     # Not used for production forecasts
+    expert: true                        # Included in expert panel tests
+    output_dir: data/backtest/chronos   # Backtest output directory
+    params:
+      model_size: small                 # Chronos model variant. Options: tiny, mini, small, base, large
+      device: auto                      # Compute device. Options: auto (GPU if available), cpu, cuda, mps
+      batch_size: 1024                  # Number of time series processed in parallel per batch
+      num_samples: 20                   # Number of probabilistic forecast samples drawn for point estimate
+      prediction_length: 6              # Forecast horizon in months (6 = 6 months ahead)
+      num_workers: 1                    # Data loader worker threads for parallel processing
+  # ─── Chronos Bolt (Foundation Model) ─────────────────────────────────────────
+  # Amazon Chronos Bolt — faster, more efficient variant (205M params).
+  # Runs ~12 minutes for full backtest. Best speed/accuracy trade-off.
+  chronos_bolt:
+    type: foundation                    # Model family: pre-trained foundation model
+    enabled: true                       # Active — fast enough for regular pipeline use
+    tune: false                         # Foundation models are not tunable
+    backtest: true                      # Included in backtests
+    compete: true                       # Included in champion competition
+    forecast: false                     # Not used for direct production forecasts (tree models preferred)
+    expert: false                       # Excluded from expert panel tests
+    output_dir: data/backtest/chronos_bolt  # Backtest output directory
+    params:
+      model_size: base                  # Bolt model variant. Options: tiny, mini, small, base
+      device: auto                      # Compute device. Options: auto, cpu, cuda, mps
+      batch_size: 512                   # Batch size (smaller than Chronos due to larger model)
+      num_samples: 12                   # Probabilistic samples for point estimate
+      prediction_length: 6              # Forecast horizon in months
+      num_workers: 1                    # Data loader worker threads
+  # ─── Chronos 2 (Foundation Model) ────────────────────────────────────────────
+  # Amazon Chronos 2 zero-shot (821M params). Highest accuracy foundation model.
+  # Runs ~5.5 hours for full backtest. Use for accuracy comparison, not production.
+  chronos2:
+    type: foundation                    # Model family: pre-trained foundation model
+    enabled: false                      # Disabled — slow, used for research
+    tune: false                         # Foundation models are not tunable
+    backtest: true                      # Included in backtests when enabled
+    compete: true                       # Included in champion competition when enabled
+    forecast: false                     # Not used for production forecasts
+    expert: false                       # Excluded from expert panel tests
+    output_dir: data/backtest/chronos2  # Backtest output directory
+    params:
+      device: auto                      # Compute device. Options: auto, cpu, cuda, mps
+      batch_size: 2048                  # Batch size (large — model is efficient at inference)
+      prediction_length: 6              # Forecast horizon in months
+      num_workers: 1                    # Data loader worker threads
+  # ─── Chronos 2 Enriched (Foundation Model) ───────────────────────────────────
+  # Chronos 2 with 31 exogenous covariates. Runs ~6 hours for full backtest.
+  # Covariates include lag features, calendar, promotions, etc.
+  chronos2_enriched:
+    type: foundation                    # Model family: pre-trained foundation model
+    enabled: true                       # Active — provides diversity in model competition
+    tune: false                         # Foundation models are not tunable
+    backtest: true                      # Included in backtests
+    compete: true                       # Included in champion competition
+    forecast: false                     # Not used for direct production forecasts
+    expert: false                       # Excluded from expert panel tests
+    output_dir: data/backtest/chronos2_enriched  # Backtest output directory
+    params:
+      device: auto                      # Compute device. Options: auto, cpu, cuda, mps
+      batch_size: 1024                  # Batch size (smaller due to covariate overhead)
+      prediction_length: 6              # Forecast horizon in months
+      num_workers: 1                    # Data loader worker threads
+  # ─── Bolt Hierarchical (Foundation Model) ────────────────────────────────────
+  # Chronos Bolt with hierarchical reconciliation: forecasts at customer level
+  # (bottom-up) and item-location level (top-down), then reconciles via
+  # weighted average or MinT shrinkage.
+  bolt_hierarchical:
+    type: foundation                    # Model family: pre-trained foundation model
+    enabled: false                      # Disabled — enable for hierarchical forecasting
+    tune: false                         # Foundation models are not tunable
+    backtest: true                      # Included in backtests when enabled
+    compete: true                       # Included in champion competition when enabled
+    forecast: true                      # Can be used for production forecasts
+    expert: false                       # Excluded from expert panel tests
+    output_dir: data/backtest/bolt_hierarchical  # Backtest output directory
+    notes: Customer-level bottom-up Bolt + top-down reconciliation using true demand
+    params:
+      model_size: base                  # Bolt model variant. Options: tiny, mini, small, base
+      device: auto                      # Compute device. Options: auto, cpu, cuda, mps
+      batch_size: 2048                  # Batch size for Bolt inference
+      prediction_length: 6              # Forecast horizon in months
+      n_timeframes: 10                  # Number of backtest evaluation windows (overrides backtest.n_timeframes)
+      bu_chunk_size: 200000             # Customer-level series processed per chunk (memory management)
+      min_nonzero_months: 6             # Min months with non-zero demand to include a customer series
+      min_history_months: 6             # Min months of history required for a customer series
+      max_customers_per_item_loc: 100   # Cap on customers per item x location pair (excess aggregated)
+      reconciliation_method: weighted_average  # How to combine BU + TD. Options: weighted_average, mint_shrink
+      bu_weight: 0.6                    # Default bottom-up weight (0.6 BU + 0.4 TD). Overridden by adaptive per-SKU weights
+  # ─── MSTL (Statistical Model) ────────────────────────────────────────────────
+  # Multiple Seasonal-Trend decomposition using LOESS. Classical statistical
+  # approach — no training required. Fast and interpretable baseline.
+  mstl:
+    type: statistical                   # Model family: classical statistical method
+    enabled: true                       # Active
+    tune: false                         # Statistical models are not tunable via Bayesian search
+    backtest: true                      # Included in backtests
+    compete: true                       # Included in champion competition
+    forecast: false                     # Not used for production forecasts
+    expert: true                        # Included in expert panel tests
+    output_dir: data/backtest/mstl      # Backtest output directory
+    params:
+      season_length: 12                 # Seasonal period in months (12 = annual seasonality)
+      min_history: 25                   # Minimum months of history required to run MSTL (needs 2+ full cycles)
+  # ─── N-BEATS (Deep Learning Model) ───────────────────────────────────────────
+  # Neural Basis Expansion Analysis for interpretable Time Series forecasting.
+  # Pure deep learning model — no feature engineering needed.
+  nbeats:
+    type: deep_learning                 # Model family: neural network
+    enabled: true                       # Active
+    tune: false                         # DL models not yet in Bayesian tuning pipeline
+    backtest: true                      # Included in backtests
+    compete: true                       # Included in champion competition
+    forecast: false                     # Not used for production forecasts
+    expert: true                        # Included in expert panel tests
+    output_dir: data/backtest/nbeats    # Backtest output directory
+    params:
+      h: 6                              # Forecast horizon in months
+      input_size: 24                    # Lookback window in months (model sees 24 months of history)
+      max_steps: 500                    # Maximum training epochs/steps
+      batch_size: 32                    # Training batch size
+      learning_rate: 0.001              # Optimizer learning rate
+      scaler_type: standard             # Input normalization. Options: standard, robust, minmax, identity
+      early_stop_patience_steps: -1     # Epochs without improvement before stopping (-1 = disabled)
+  # ─── N-HiTS (Deep Learning Model) ────────────────────────────────────────────
+  # Neural Hierarchical Interpolation for Time Series. Improved N-BEATS
+  # variant with multi-rate signal sampling for better long-horizon accuracy.
+  nhits:
+    type: deep_learning                 # Model family: neural network
+    enabled: true                       # Active
+    tune: false                         # DL models not yet in Bayesian tuning pipeline
+    backtest: true                      # Included in backtests
+    compete: true                       # Included in champion competition
+    forecast: false                     # Not used for production forecasts
+    expert: false                       # Excluded from expert panel tests
+    output_dir: data/backtest/nhits     # Backtest output directory
+    params:
+      h: 6                              # Forecast horizon in months
+      input_size: 24                    # Lookback window in months
+      max_steps: 500                    # Maximum training steps
+      batch_size: 32                    # Training batch size
+      learning_rate: 0.001              # Optimizer learning rate
+      scaler_type: standard             # Input normalization. Options: standard, robust, minmax, identity
+      early_stop_patience_steps: -1     # Epochs without improvement before stopping (-1 = disabled)
+  # ─── Seasonal Naive (Statistical Baseline) ───────────────────────────────────
+  # Repeats the value from 12 months ago. Simplest seasonality-aware baseline.
+  # Used as the default fallback_model_id in champion selection.
+  seasonal_naive:
+    type: statistical                   # Model family: classical statistical method
+    enabled: true                       # Active — serves as baseline for model comparison
+    tune: false                         # No tunable hyperparameters
+    backtest: true                      # Included in backtests
+    compete: true                       # Included in champion competition
+    forecast: false                     # Not used for production forecasts directly
+    expert: false                       # Excluded from expert panel tests
+    cluster_strategy: per_cluster       # Can be evaluated per-cluster for comparison
+    output_dir: data/backtest/seasonal_naive  # Backtest output directory
+    params: {}                          # No hyperparameters — repeats same-month-last-year value
+  # ─── Rolling Mean (Statistical Baseline) ─────────────────────────────────────
+  # Simple rolling average over a configurable window. Used as the
+  # cold_start_model_id for DFUs with < min_history_months of sales history.
+  rolling_mean:
+    type: statistical                   # Model family: classical statistical method
+    enabled: false                      # Disabled for regular pipeline — used only as cold-start fallback
+    tune: false                         # No tunable hyperparameters
+    backtest: true                      # Included in backtests when enabled
+    compete: true                       # Included in champion competition when enabled
+    forecast: false                     # Not used for production forecasts directly (invoked via cold_start_model_id)
+    expert: true                        # Included in expert panel tests
+    cluster_strategy: per_cluster       # Can be evaluated per-cluster
+    output_dir: data/backtest/rolling_mean  # Backtest output directory
+    params:
+      window: 6                         # Rolling window size in months (averages last 6 months of sales)
+# ═══ BACKTEST ═════════════════════════════════════════════════════════════════
+# Settings for expanding-window backtests. Each backtest evaluates models across
+# n_timeframes historical windows, producing predictions at multiple lags (0-4).
+# Consumed by: scripts/run_backtest.py, common/ml/backtest_framework.py
+# ═════════════════════════════════════════════════════════════════════════════
+backtest:
+  n_timeframes: 10                      # Number of expanding evaluation windows to test (more = more robust but slower)
+  embargo_months: 0                     # Gap months between training cutoff and first forecast month (prevents leakage)
+  forecast_horizon: 6                   # How many months ahead each window predicts
+  early_stop_pct: 0.05                  # Early stopping patience as % of n_estimators (5% of 2000 = 100 rounds). Used by compute_early_stop_patience()
+  shap_retrain_threshold: 0.5           # Max fraction of features that can change between timeframes before triggering model retrain (0.5 = 50%)
+  shap_min_features: 20                 # Minimum features to retain after SHAP selection (floor)
+  n_seeds: 1                            # Number of random seeds for multi-seed variance estimation (1 = single run, >1 = compute mean/std across seeds)
+  tweedie_variance_power: 1.5           # Variance power for Tweedie loss on intermittent demand (1.0=Poisson, 2.0=Gamma, 1.5=compound Poisson-Gamma)
+  intermittent_threshold: 0.7           # Zero-demand fraction above which a cluster uses Tweedie loss (>= 70% zeros = intermittent)
+  lumpy_threshold: 0.3                  # Zero-demand fraction above which (but below intermittent_threshold) the cluster is classified as lumpy
+  output_dir: data/backtest             # Base directory for all backtest output CSVs
+  recursive_noise_enabled: true         # Add Gaussian noise to recursive lag predictions to reduce error accumulation
+  recursive_noise_pct: 0.05             # Noise magnitude as % of lag value (5% = +/- 5% random jitter on predicted lags)
+  recursive_lag_smooth: 0.15            # Exponential smoothing factor applied to recursive lag predictions (0.0 = no smoothing, 1.0 = full smoothing)
+# ═══ TUNING ═══════════════════════════════════════════════════════════════════
+# Bayesian hyperparameter tuning via Optuna. Uses time-series cross-validation
+# with gap between train/val to prevent lag-feature leakage.
+# Consumed by: scripts/tune_hyperparams.py, scripts/tune_cluster_hyperparams.py,
+#              common/ml/tuning.py
+# ═════════════════════════════════════════════════════════════════════════════
+tuning:
+  n_trials: 50                          # Number of Optuna trials (hyperparameter combinations to evaluate). More = better results but slower
+  n_splits: 5                           # Number of time-series cross-validation folds
+  gap_months: 2                         # Gap months between training end and validation start (prevents lag-feature leakage)
+  val_months_per_fold: 3                # Number of months in each validation window
+  min_train_months: 13                  # Minimum months of training data required for the first fold (folds with less are skipped)
+  early_stopping_rounds: 50             # Stop training if validation metric does not improve for this many rounds
+  n_estimators_max: 2000                # Hard upper limit on tree count during tuning
+  n_estimators_buffer: 1.1              # Multiply best iteration count by this buffer (1.1 = 10% extra) for production n_estimators
+  random_seed: 42                       # Random seed for reproducibility across tuning runs
+  output_dir: data/tuning               # Directory for tuning output (best params JSON, trial history)
+  search_space_ref: hyperparameter_tuning.yaml  # Reference to YAML defining Optuna search space bounds per model
+# ═══ CHAMPION ═════════════════════════════════════════════════════════════════
+# Champion model selection — picks the best-performing model per DFU based on
+# backtest results. Supports multiple strategies (expanding, rolling, decay,
+# ensemble, meta_learner, per_cluster, etc.)
+# Consumed by: scripts/run_champion_selection.py, api/routers/competition.py,
+#              api/routers/forecasting/champion_experiments.py,
+#              common/ml/champion_strategies.py
+# ═════════════════════════════════════════════════════════════════════════════
+champion:
+  strategy: expanding                   # Champion selection strategy. Options: expanding, rolling, decay, ensemble,
+                                        #   meta_learner, per_cluster, optimized_decay, seasonal, per_segment,
+                                        #   learned_blend, uncertainty_aware, diverse_ensemble, hybrid_meta_router,
+                                        #   ridge_blend, adaptive_ensemble, cascade_ensemble, bayesian_model_avg,
+                                        #   thompson_sampling, linucb, exp3, etc. See champion_experiment_templates.yaml
+  strategy_params:
+    min_prior_months: 5                 # Minimum months of backtest history required before a model can be evaluated
+  fallback_model_id: seasonal_naive     # Model used when no champion can be determined (insufficient data or all models fail)
+  metric: accuracy_pct                  # Accuracy metric for model comparison. Options: accuracy_pct, wape, bias
+  lag: execution                        # Which backtest lag to use for evaluation. Options: execution (execution-lag only), 0, 1, 2, 3, 4, all
+  min_sku_rows: 3                       # Minimum backtest rows per SKU to include in champion evaluation
+  min_dfu_rows: 3                       # Minimum backtest rows per DFU to include in champion evaluation (alias for min_sku_rows)
+  champion_model_id: champion           # Virtual model_id written to fact_production_forecast for the winning model's predictions
+  meta_learner:                         # Config for meta_learner strategy (ML classifier that predicts best model per DFU)
+    model_type: random_forest           # Classifier type. Options: random_forest, gradient_boosting
+    n_estimators: 200                   # Number of trees in the meta-learner random forest
+    max_depth: 15                       # Maximum tree depth for meta-learner
+    test_months: 3                      # Hold-out months for meta-learner evaluation
+    performance_window: 6               # Rolling window (months) for computing model performance features fed to the meta-learner
+  models:                               # List of model_ids to compete. Must match algorithm keys above and have backtest results loaded
+  - lgbm_cluster                        # Primary tree model
+  - nbeats                              # Deep learning model for diversity
+# ═══ PRODUCTION FORECAST ══════════════════════════════════════════════════════
+# Settings for generating production forecasts using champion models.
+# Consumed by: scripts/generate_production_forecasts.py
+# ═════════════════════════════════════════════════════════════════════════════
+production_forecast:
+  horizon_months: 24                    # How many months ahead to forecast (24 = 2-year forward projection)
+  lookback_months: 36                   # Months of historical sales data to load for model input features
+  min_history_months: 12                # DFUs with fewer months are routed to cold_start_model_id instead of champion
+  cold_start_model_id: rolling_mean     # Model used for DFUs with < min_history_months but >= cold_start_min_months of history
+  cold_start_min_months: 3              # Absolute floor — DFUs with fewer months than this are skipped entirely (no forecast)
+  fallback_model_id: lgbm_cluster       # Default model when champion assignment is missing for a DFU
+  recursive: true                       # Use recursive multi-step forecasting (predict h=1, feed back, repeat)
+  plan_version_format: '%Y-%m'          # strftime format for plan version label (e.g., "2026-04")
+  keep_last_n_versions: 3               # Number of historical plan versions to retain (older versions are purged)
+  confidence_interval:                  # Prediction interval (PI) configuration around point forecasts
+    enabled: true                       # Generate upper/lower confidence bounds
+    source_model_ids:                   # Models whose backtest residuals are used to compute sigma (prediction error)
+    - lgbm_cluster                      # Primary tree model residuals
+    - catboost_cluster                  # Alternative tree model residuals (if available)
+    - xgboost_cluster                   # Alternative tree model residuals (if available)
+    residual_lag: 0                     # Which backtest lag's residuals to use (0 = most recent predictions)
+    min_residual_months: 6              # Min months of residual data per DFU; fewer → fall back to cluster-level sigma
+    z_lower: 1.282                      # Z-score for lower bound (1.282 = 90th percentile, one-sided)
+    z_upper: 1.282                      # Z-score for upper bound (1.282 = 90th percentile, one-sided)
+    horizon_scaling: sqrt               # How sigma scales with horizon. Options: sqrt (sigma * sqrt(h)), linear (sigma * h), none
+    sigma_floor: 1.0                    # Minimum sigma value (prevents zero-width intervals for very accurate DFUs)
+    sigma_cap_multiplier: 3.0           # Cap sigma at this multiple of global median sigma (prevents extreme intervals)
+  model_registry:                       # Where trained model artifacts are stored for production inference
+    base_path: data/models              # Base directory for serialized model files (relative to project root)
+  scheduler:                            # APScheduler cron job for automated monthly forecast generation
+    job_type: generate_production_forecast  # Job type identifier in the job registry
+    cron: 0 6 2 * *                     # Cron expression: run at 06:00 on the 2nd of every month
+# ═══ TRACKING ═════════════════════════════════════════════════════════════════
+# Run tracking and comparison for backtest/tuning experiments.
+# Consumed by: common/ml/tuning_tracker.py, scripts/ml/compare_backtest_runs.py
+# ═════════════════════════════════════════════════════════════════════════════
+tracking:
+  backup_dir: data/backtest/tuning_archive  # Directory for archived backtest run snapshots
+  auto_register: true                   # Automatically register new backtest runs in the tracking DB
+  auto_compare_to_latest: true          # Automatically compare new runs against the most recent archived run
+  improvement_threshold_bps: 5          # Minimum improvement in basis points (0.05%) to flag as noteworthy
+  verdicts:                             # Thresholds for classifying run-to-run accuracy changes
+    improved_min_delta_accuracy: 0.05   # Accuracy delta above this (in pct points) is classified as "improved"
+    degraded_max_delta_accuracy: -0.05  # Accuracy delta below this is classified as "degraded" (between = "neutral")
+  max_archive_runs: 50                  # Maximum archived runs to retain (oldest are pruned when exceeded)
+# ═══ CLUSTERING ═══════════════════════════════════════════════════════════════
+# Master switch and config for SKU demand-pattern clustering. When enabled,
+# tree models train one model per cluster. When disabled, all backtests fall
+# back to "global" strategy regardless of per-algorithm cluster_strategy.
+# Consumed by: common/core/utils.py (is_clustering_enabled()), scripts/run_backtest.py,
+#              common/core/constants.py (compute_min_cluster_rows)
+# Clustering params are stored in the cluster_experiment table (promoted row),
+# NOT in this YAML. This section only controls pipeline behavior.
+# ═════════════════════════════════════════════════════════════════════════════
+clustering:
+  enabled: true                         # Master switch — false forces all models to global strategy
+  cluster_sizing:                       # Controls minimum cluster size calculation (compute_min_cluster_rows)
+    samples_per_feature: 1              # Ratio of samples-per-feature used to compute min cluster rows (lower = smaller clusters OK)
+  config_ref: null                      # Legacy reference to clustering_config.yaml (deleted — params now in cluster_experiment table)
+  tuning_profiles_ref: cluster_tuning_profiles.yaml  # Reference to cluster-specific tuning profile YAML
+  experiment_templates_ref: cluster_experiment_templates.yaml  # Reference to cluster experiment template YAML
+  steps:                                # Which clustering pipeline steps to execute in make cluster-all
+    generate_features: true             # Step 1: Compute SKU features from dim_sku (volume, trend, seasonality, etc.)
+    train_model: true                   # Step 2: Find optimal K and train KMeans model
+    label_clusters: true                # Step 3: Assign human-readable labels to cluster centroids
+    update_db: true                     # Step 4: Write cluster assignments to dim_sku.ml_cluster
+  artifacts:                            # File paths for clustering outputs
+    features_csv: data/clustering_features.csv  # CSV of computed clustering features per SKU
+    output_dir: data/clustering         # Directory for model artifacts (scaler, KMeans pickle, etc.)
+  db_target:                            # Where cluster assignments are stored in the database
+    table: dim_sku                      # Target table for cluster assignments
+    column: ml_cluster                  # Column name for cluster label (metadata column, NOT a model feature)
+# ═══ BACKTEST SAMPLING ════════════════════════════════════════════════════════
+# Stratified sampling for fast-iteration backtests. Instead of backtesting all
+# DFUs, sample a representative subset stratified by ML cluster.
+# Consumed by: common/ml/backtest_sampler.py, api/routers/forecasting/sampled_backtest.py
+# ═════════════════════════════════════════════════════════════════════════════
+backtest_sampling:
+  enabled: true                         # Enable sampling mode for quick iteration backtests
+  default_target_n: 5000                # Default number of DFUs to sample when no override is provided
+  default_method: proportional          # Allocation method. Options: proportional (by cluster size), equal (same per cluster), variability (by demand variability)
+  min_per_cluster: 10                   # Minimum DFUs sampled per cluster (floor to ensure representation)
+  max_target_n: 20000                   # Hard upper limit on sample size (safety cap)
+  seed: 42                              # Random seed for reproducible sampling
+  representativeness_threshold: 0.05    # Max allowed KL divergence between sample and population cluster distributions
+# ═══ PIPELINE ═════════════════════════════════════════════════════════════════
+# Declarative pipeline DAG defining execution order and dependencies.
+# Used for documentation and orchestration tooling. Each stage maps to a
+# Makefile target. Run the full pipeline with: make setup-backtest
+# ═════════════════════════════════════════════════════════════════════════════
+pipeline:
+  stages:                               # Ordered list of pipeline stages (executed in dependency order)
+  - name: clustering                    # Stage 1: Cluster SKUs by demand pattern
+    description: Segment DFUs into demand-pattern clusters
+    makefile_target: cluster-all        # make cluster-all (unified clustering pipeline)
+    depends_on: []                      # No dependencies — first stage
+    enabled_by: clustering.enabled      # Only runs if clustering.enabled is true
+  - name: backtest                      # Stage 2: Run expanding-window backtests
+    description: Expanding-window backtest for all enabled algorithms
+    makefile_target: backtest-all       # make backtest-all (runs all enabled model backtests)
+    depends_on:                         # Requires clustering to complete first
+    - clustering
+    enabled_by: always                  # Always runs (uses global strategy if clustering disabled)
+  - name: load                          # Stage 3: Load backtest results into database
+    description: Load backtest predictions into Postgres
+    makefile_target: backtest-load-all-bulk  # make backtest-load-all-bulk (bulk insert with single index cycle)
+    depends_on:                         # Requires backtest CSVs to exist
+    - backtest
+    enabled_by: always                  # Always runs
+  - name: champion                      # Stage 4: Select best model per DFU
+    description: Select best model per DFU from backtest results
+    makefile_target: champion-all       # make champion-all (meta-learner + simulate + champion select)
+    depends_on:                         # Requires backtest predictions loaded in DB
+    - load
+    enabled_by: always                  # Always runs
+  - name: forecast                      # Stage 5: Generate production forecasts
+    description: Generate production forecasts using champion models
+    makefile_target: forecast-generate  # make forecast-generate (production inference)
+    depends_on:                         # Requires champion assignments
+    - champion
+    enabled_by: always                  # Always runs
+  auxiliary:                            # Optional stages not in the main pipeline DAG
+  - name: seasonality                   # Compute per-DFU seasonality profiles
+    description: Detect per-DFU seasonality profiles
+    makefile_target: seasonality-all    # make seasonality-all (alias for features-compute)
+  - name: variability                   # Compute per-DFU demand variability classification
+    description: Compute per-DFU demand variability class
+    makefile_target: variability-all    # make variability-all (alias for features-compute)

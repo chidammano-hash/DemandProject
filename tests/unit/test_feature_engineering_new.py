@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from common.constants import CROSS_DFU_FEATURES
 from common.feature_engineering import build_feature_matrix
 
 
@@ -260,7 +261,7 @@ class TestFeatureCountIncrease:
 # Tests for compute_time_series_features in generate_clustering_features.py
 # ─────────────────────────────────────────────────────────────────────────────
 
-from scripts.generate_clustering_features import compute_time_series_features  # noqa: E402
+from common.ml.clustering.features import compute_time_series_features  # noqa: E402
 
 
 def make_sales_df(demand_values: list, start: str = "2022-01-01") -> pd.DataFrame:
@@ -693,12 +694,14 @@ class TestCrossDfuFeatures:
         for feat in CROSS_DFU_FEATURES:
             assert grid[feat].dtype == np.float32, f"{feat} not float32"
 
+    @pytest.mark.skipif(
+        not CROSS_DFU_FEATURES,
+        reason="CROSS_DFU_FEATURES removed (ml_cluster leakage fix)",
+    )
     def test_cluster_mean_lag1_consistent(self):
         """cluster_mean_lag1 should be the mean of qty_lag_1 within each cluster-month."""
         grid = _build_grid()
-        # Use observed=True to skip categories with no data
         for (cluster, month), group in grid.groupby(["ml_cluster", "startdate"], observed=True):
-            # pandas .mean() skips NaN, matching the agg behavior
             expected_mean = group["qty_lag_1"].mean()
             if pd.isna(expected_mean):
                 expected_mean = 0.0
@@ -707,11 +710,14 @@ class TestCrossDfuFeatures:
                 f"cluster_mean_lag1 mismatch for cluster={cluster}, month={month}"
             )
 
+    @pytest.mark.skipif(
+        not CROSS_DFU_FEATURES,
+        reason="CROSS_DFU_FEATURES removed (ml_cluster leakage fix)",
+    )
     def test_cluster_total_lag1_consistent(self):
         """cluster_total_lag1 should be the sum of qty_lag_1 within each cluster-month."""
         grid = _build_grid()
         for (cluster, month), group in grid.groupby(["ml_cluster", "startdate"], observed=True):
-            # pandas .sum() skips NaN, matching the agg behavior
             expected_sum = group["qty_lag_1"].sum()
             if pd.isna(expected_sum):
                 expected_sum = 0.0
@@ -720,12 +726,20 @@ class TestCrossDfuFeatures:
                 f"cluster_total_lag1 mismatch for cluster={cluster}, month={month}"
             )
 
+    @pytest.mark.skipif(
+        not CROSS_DFU_FEATURES,
+        reason="CROSS_DFU_FEATURES removed (ml_cluster leakage fix)",
+    )
     def test_cluster_zero_pct_bounded(self):
         """cluster_zero_pct should be in [0, 1]."""
         grid = _build_grid()
         assert (grid["cluster_zero_pct"] >= 0).all()
         assert (grid["cluster_zero_pct"] <= 1.0 + 1e-6).all()
 
+    @pytest.mark.skipif(
+        not CROSS_DFU_FEATURES,
+        reason="CROSS_DFU_FEATURES removed (ml_cluster leakage fix)",
+    )
     def test_cluster_demand_trend_clipped(self):
         grid = _build_grid()
         assert grid["cluster_demand_trend"].max() <= 10.0

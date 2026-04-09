@@ -406,20 +406,7 @@ CONFIG_REGISTRY: dict[str, dict[str, Any]] = {
             "global_defaults.enabled": {"label": "DQ Checks Enabled", "description": "Master switch to enable/disable all data quality checks.", "type": "boolean"},
         },
     },
-    "clustering_config": {
-        "label": "Demand Clustering",
-        "category": "pipeline",
-        "description": "K-means clustering configuration for demand pattern segmentation.",
-        "fields": {
-            "clustering.min_months_history": {"label": "Min History", "description": "Minimum months of sales history for a DFU to be included in clustering.", "type": "integer", "min": 3, "max": 24, "unit": "months"},
-            "clustering.time_window_months": {"label": "Time Window", "description": "Recent months of data used to compute clustering features.", "type": "integer", "min": 6, "max": 60, "unit": "months"},
-            "clustering.k_range": {"label": "K Range", "description": "Range of cluster counts to evaluate [min, max].", "type": "array"},
-            "clustering.min_cluster_size_pct": {"label": "Min Cluster Size %", "description": "Minimum cluster size as percentage of total DFUs.", "type": "number", "min": 0.5, "max": 10.0, "step": 0.5, "unit": "%"},
-            "clustering.labeling.volume_thresholds.high": {"label": "Volume High Threshold", "description": "Normalized volume above this is labeled 'High Volume'.", "type": "number", "min": 0.0, "max": 1.0, "step": 0.05},
-            "clustering.labeling.cv_thresholds.volatile": {"label": "CV Volatile Threshold", "description": "CV above this is labeled 'Volatile' in cluster descriptions.", "type": "number", "min": 0.0, "max": 2.0, "step": 0.1},
-            "clustering.labeling.seasonality_threshold": {"label": "Seasonality Threshold", "description": "Seasonal strength above this is labeled 'Seasonal'.", "type": "number", "min": 0.0, "max": 1.0, "step": 0.05},
-        },
-    },
+    # clustering_config removed — params now managed via Cluster Experimentation Studio UI
     "exception_config": {
         "label": "Exception Detection",
         "category": "pipeline",

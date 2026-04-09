@@ -5,8 +5,12 @@ Runs configurable SQL-based data quality checks and produces domain health score
 from __future__ import annotations
 
 import json
+import logging
+
 from common.db import get_db_params
 from common.utils import load_config, reset_config
+
+logger = logging.getLogger(__name__)
 
 _CONFIG_NAME = "data_quality_config.yaml"
 
@@ -386,16 +390,95 @@ def _check_cardinality_anomaly(
     }
 
 
+def _check_freshness(conn, table_name: str, max_hours: float = 48) -> dict:
+    """Check that the most recent load_ts is within max_hours of now."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f"SELECT MAX(load_ts) FROM {table_name} WHERE load_ts IS NOT NULL"
+        )
+        row = cur.fetchone()
+    if row is None or row[0] is None:
+        return {"status": "warn", "metric_value": None, "details": {"message": "No load_ts found"}}
+    from datetime import datetime, timezone
+    last_load = row[0]
+    if last_load.tzinfo is None:
+        last_load = last_load.replace(tzinfo=timezone.utc)
+    hours_since = (datetime.now(timezone.utc) - last_load).total_seconds() / 3600
+    status = "pass" if hours_since <= max_hours else "fail"
+    return {
+        "status": status,
+        "metric_value": round(hours_since, 2),
+        "details": {"hours_since_load": round(hours_since, 2), "max_hours": max_hours, "last_load": str(last_load)},
+    }
+
+
+def _check_statistical_outlier(
+    conn, table_name: str, column: str,
+    method: str = "iqr", threshold: float = 1.5,
+    group_by: str | None = None,
+) -> dict:
+    """Detect statistical outliers using IQR or Z-score method.
+
+    Returns the count and percentage of outlier rows.
+    """
+    if method == "zscore":
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT count(*) AS total, "
+                f"count(*) FILTER (WHERE ABS(({column} - avg_val) / NULLIF(std_val, 0)) > {threshold}) AS outliers "
+                f"FROM {table_name}, "
+                f"(SELECT AVG({column}) AS avg_val, STDDEV_POP({column}) AS std_val FROM {table_name} WHERE {column} IS NOT NULL) s "
+                f"WHERE {column} IS NOT NULL"
+            )
+            row = cur.fetchone()
+    else:
+        # IQR method
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT "
+                f"  percentile_cont(0.25) WITHIN GROUP (ORDER BY {column}) AS q1, "
+                f"  percentile_cont(0.75) WITHIN GROUP (ORDER BY {column}) AS q3 "
+                f"FROM {table_name} WHERE {column} IS NOT NULL"
+            )
+            q_row = cur.fetchone()
+            if q_row is None or q_row[0] is None:
+                return {"status": "warn", "metric_value": 0, "details": {"message": "No non-null rows"}}
+            q1, q3 = float(q_row[0]), float(q_row[1])
+            iqr = q3 - q1
+            lower = q1 - threshold * iqr
+            upper = q3 + threshold * iqr
+            cur.execute(
+                f"SELECT count(*) AS total, "
+                f"count(*) FILTER (WHERE {column} < %s OR {column} > %s) AS outliers "
+                f"FROM {table_name} WHERE {column} IS NOT NULL",
+                (lower, upper),
+            )
+            row = cur.fetchone()
+
+    total, outliers = row[0], row[1]
+    if total == 0:
+        return {"status": "warn", "metric_value": 0, "details": {"message": "No non-null rows"}}
+    outlier_pct = round(100.0 * outliers / total, 4)
+    status = "pass" if outlier_pct <= 1.0 else ("warn" if outlier_pct <= 5.0 else "fail")
+    return {
+        "status": status,
+        "metric_value": outliers,
+        "details": {"total": total, "outliers": outliers, "outlier_pct": outlier_pct, "method": method, "threshold": threshold},
+    }
+
+
 # ---------------------------------------------------------------------------
 # DQEngine class
 # ---------------------------------------------------------------------------
 CHECK_FUNCTIONS = {
+    "freshness": _check_freshness,
     "completeness": _check_completeness,
     "row_count": _check_row_count,
     "uniqueness": _check_uniqueness,
     "range": _check_range,
     "volume_delta": _check_volume_delta,
     "referential_integrity": _check_referential_integrity,
+    "statistical_outlier": _check_statistical_outlier,
     "distribution_drift": _check_distribution_drift,
     "temporal_gaps": _check_temporal_gaps,
     "cross_column": _check_cross_column,
@@ -731,7 +814,7 @@ class DQEngine:
                     ),
                 )
         except Exception:
-            pass  # Best-effort recording
+            logger.warning("Failed to record DQ check result: %s", result.get("check_name", "unknown"))
 
     def get_domain_score(self, domain: str) -> dict:
         """Get health score for a domain (weighted pass rate)."""

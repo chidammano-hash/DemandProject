@@ -32,14 +32,25 @@ from typing import Any
 # Sub-module imports
 # ---------------------------------------------------------------------------
 from common.job_state import (
+    MODEL_OUTPUT_DIRS,
     JobTypeDef,
     _get_conn,
     _row_to_dict,
     get_job_log,
     get_job_pid,
     _run_assign_policies,
+    _run_backtest_bolt_hierarchical,
     _run_backtest_catboost,
+    _run_backtest_chronos,
+    _run_backtest_chronos2,
+    _run_backtest_chronos2_enriched,
+    _run_backtest_chronos_bolt,
     _run_backtest_lgbm,
+    _run_backtest_mstl,
+    _run_backtest_nbeats,
+    _run_backtest_nhits,
+    _run_backtest_rolling_mean,
+    _run_backtest_seasonal_naive,
     _run_backtest_xgboost,
     _run_champion_experiment,
     _run_champion_results_load,
@@ -52,12 +63,15 @@ from common.job_state import (
     _run_compute_investment,
     _run_compute_replenishment_plan,
     _run_compute_safety_stock,
+    _run_compute_sku_features,
     _run_compute_variability,
     _run_data_quality,
     _run_generate_ai_insights,
     _run_generate_exceptions,
     _run_generate_production_forecast,
+    _run_train_production_model,
     _run_generate_storyboard,
+    _run_load_backtest_model,
     _run_load_backtest_results,
     _run_model_tuning_experiment,
     _run_refresh_health_scores,
@@ -94,42 +108,134 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
     "cluster_pipeline": JobTypeDef(
         type_id="cluster_pipeline",
         label="Full Clustering Pipeline",
-        description="Generate features, train model, label clusters, update DFU table",
+        description="Generate features, train model, label clusters, update SKU table",
         group="clustering",
         callable=_run_cluster_pipeline,
         params_schema={"time_window_months": 24, "k_range": [3, 12]},
     ),
+    "compute_sku_features": JobTypeDef(
+        type_id="compute_sku_features",
+        label="Compute SKU Features",
+        description="Compute all time-series features (volume, trend, seasonality, variability, lifecycle) for all SKUs",
+        group="features",
+        callable=_run_compute_sku_features,
+        params_schema={"time_window_months": 36},
+    ),
     "seasonality_pipeline": JobTypeDef(
         type_id="seasonality_pipeline",
         label="Seasonality Detection",
-        description="Detect seasonality patterns and update DFU profiles",
-        group="seasonality",
+        description="Detect seasonality patterns and update SKU profiles (delegates to compute_sku_features)",
+        group="features",
         callable=_run_seasonality,
-        params_schema={"config": "config/forecast_domain_config.yaml"},
+        params_schema={"time_window_months": 36},
     ),
+    # -- Tree models --
     "backtest_lgbm": JobTypeDef(
         type_id="backtest_lgbm",
-        label="LGBM Backtest",
-        description="Run LightGBM backtest with expanding window timeframes",
+        label="LightGBM Backtest",
+        description="Run LightGBM gradient boosting backtest",
         group="backtest",
         callable=_run_backtest_lgbm,
-        params_schema={"cluster_strategy": "global"},
+        params_schema={},
     ),
     "backtest_catboost": JobTypeDef(
         type_id="backtest_catboost",
         label="CatBoost Backtest",
-        description="Run CatBoost backtest with expanding window timeframes",
+        description="Run CatBoost gradient boosting backtest",
         group="backtest",
         callable=_run_backtest_catboost,
-        params_schema={"cluster_strategy": "global"},
+        params_schema={},
     ),
     "backtest_xgboost": JobTypeDef(
         type_id="backtest_xgboost",
         label="XGBoost Backtest",
-        description="Run XGBoost backtest with expanding window timeframes",
+        description="Run XGBoost gradient boosting backtest",
         group="backtest",
         callable=_run_backtest_xgboost,
-        params_schema={"cluster_strategy": "global"},
+        params_schema={},
+    ),
+    # -- Foundation models --
+    "backtest_chronos": JobTypeDef(
+        type_id="backtest_chronos",
+        label="Chronos T5 Backtest",
+        description="Run Chronos T5 foundation model backtest (zero-shot, ~2.5h)",
+        group="backtest",
+        callable=_run_backtest_chronos,
+        params_schema={},
+    ),
+    "backtest_chronos_bolt": JobTypeDef(
+        type_id="backtest_chronos_bolt",
+        label="Chronos Bolt Backtest",
+        description="Run Chronos Bolt foundation model backtest (~12 min)",
+        group="backtest",
+        callable=_run_backtest_chronos_bolt,
+        params_schema={},
+    ),
+    "backtest_chronos2": JobTypeDef(
+        type_id="backtest_chronos2",
+        label="Chronos 2 Backtest",
+        description="Run Chronos 2 foundation model backtest (zero-shot, ~5.5h)",
+        group="backtest",
+        callable=_run_backtest_chronos2,
+        params_schema={},
+    ),
+    "backtest_chronos2_enriched": JobTypeDef(
+        type_id="backtest_chronos2_enriched",
+        label="Chronos 2 Enriched Backtest",
+        description="Run Chronos 2 with 31 covariates backtest (~6h)",
+        group="backtest",
+        callable=_run_backtest_chronos2_enriched,
+        params_schema={},
+    ),
+    "backtest_bolt_hierarchical": JobTypeDef(
+        type_id="backtest_bolt_hierarchical",
+        label="Bolt Hierarchical Backtest",
+        description="Run Chronos Bolt hierarchical (customer bottom-up + reconciliation)",
+        group="backtest",
+        callable=_run_backtest_bolt_hierarchical,
+        params_schema={},
+    ),
+    # -- Statistical baselines --
+    "backtest_seasonal_naive": JobTypeDef(
+        type_id="backtest_seasonal_naive",
+        label="Seasonal Naive Backtest",
+        description="Run Seasonal Naive statistical baseline backtest (~5 min)",
+        group="backtest",
+        callable=_run_backtest_seasonal_naive,
+        params_schema={},
+    ),
+    "backtest_rolling_mean": JobTypeDef(
+        type_id="backtest_rolling_mean",
+        label="Rolling Mean Backtest",
+        description="Run Rolling Mean statistical baseline backtest (~5 min)",
+        group="backtest",
+        callable=_run_backtest_rolling_mean,
+        params_schema={},
+    ),
+    "backtest_mstl": JobTypeDef(
+        type_id="backtest_mstl",
+        label="MSTL Backtest",
+        description="Run MSTL decomposition backtest (~15 min)",
+        group="backtest",
+        callable=_run_backtest_mstl,
+        params_schema={},
+    ),
+    # -- Deep learning --
+    "backtest_nhits": JobTypeDef(
+        type_id="backtest_nhits",
+        label="N-HiTS Backtest",
+        description="Run N-HiTS deep learning backtest (~1h)",
+        group="backtest",
+        callable=_run_backtest_nhits,
+        params_schema={},
+    ),
+    "backtest_nbeats": JobTypeDef(
+        type_id="backtest_nbeats",
+        label="N-BEATS Backtest",
+        description="Run N-BEATS deep learning backtest (~1h)",
+        group="backtest",
+        callable=_run_backtest_nbeats,
+        params_schema={},
     ),
     "champion_select": JobTypeDef(
         type_id="champion_select",
@@ -163,13 +269,21 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         callable=_run_generate_ai_insights,
         params_schema={},
     ),
+    "train_production_model": JobTypeDef(
+        type_id="train_production_model",
+        label="Train Production Model",
+        description="Train model on full history for production forecasting",
+        group="forecast",
+        callable=_run_train_production_model,
+        params_schema={"model_id": "", "all_models": False},
+    ),
     "generate_production_forecast": JobTypeDef(
         type_id="generate_production_forecast",
         label="Production Forecast",
         description="Generate future-period production forecasts using champion ML models",
         group="forecast",
         callable=_run_generate_production_forecast,
-        params_schema={"horizon": 12},
+        params_schema={"horizon": 12, "model_id": None},
     ),
     "compute_replenishment_plan": JobTypeDef(
         type_id="compute_replenishment_plan",
@@ -232,8 +346,8 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
     "compute_variability": JobTypeDef(
         type_id="compute_variability",
         label="Demand Variability",
-        description="Compute demand CV, MAD, and volatility profiles per DFU",
-        group="inventory",
+        description="Compute demand CV, MAD, and volatility profiles per DFU (delegates to compute_sku_features)",
+        group="features",
         callable=_run_compute_variability,
         params_schema={},
     ),
@@ -306,6 +420,14 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="tuning",  # overridden to tuning_{model} at submit time
         callable=_run_load_backtest_results,
         params_schema={"run_id": 0, "model": ""},
+    ),
+    "backtest_load_model": JobTypeDef(
+        type_id="backtest_load_model",
+        label="Load Backtest Results",
+        description="Load backtest predictions into DB for a specific model",
+        group="backtest_load",
+        callable=_run_load_backtest_model,
+        params_schema={"model_id": "", "run_id": None},
     ),
     # ── Platform (platform group) ─────────────────────────────────────────────
     "data_quality": JobTypeDef(
@@ -591,15 +713,10 @@ class JobManager:
     def start_job_in_background(self, job_id: str) -> None:
         """Start executing a previously submitted job.
 
-        Backward-compatible method for code that calls submit_job() then
-        start_job_in_background() separately (e.g. clusters router).
-        With APScheduler, submit_job() already dispatches execution, so
-        this is a no-op if the job is already scheduled.
+        Backward-compatible no-op: submit_job() already dispatches via APScheduler.
+        Retained for callers that call submit_job() then start_job_in_background().
         """
         self._ensure_init()
-        # APScheduler already scheduled the job in submit_job()
-        # This method exists for backward compatibility
-        pass
 
     def schedule_recurring(
         self,
@@ -1006,14 +1123,12 @@ class JobManager:
             return
         params = job.get("params") or {}
         if isinstance(params, str):
-            import json as _json
-            params = _json.loads(params)
+            params = json.loads(params)
         run_id = params.get("run_id")
         model = params.get("model")
         if not run_id or not model:
             return
 
-        MODEL_OUTPUT_DIRS = {"lgbm": "lgbm_cluster", "catboost": "catboost_cluster", "xgboost": "xgboost_cluster"}
         output_dir = MODEL_OUTPUT_DIRS.get(model)
         if not output_dir:
             return

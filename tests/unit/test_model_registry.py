@@ -7,6 +7,8 @@ import pytest
 
 from common.ml.model_registry import (
     CANONICAL_TO_NATIVE,
+    SPARSE_EARLY_STOP_FLOOR,
+    SPARSE_EARLY_STOP_PCT,
     WapeMetric,
     _wape_lgbm,
     _wape_xgb,
@@ -120,14 +122,14 @@ class TestGetBestIteration:
 
 
 class TestComputeEarlyStopPatience:
-    def test_3pct_of_1500(self):
-        assert compute_early_stop_patience(1500) == 45
+    def test_5pct_of_1500(self):
+        assert compute_early_stop_patience(1500) == 75
 
-    def test_3pct_of_3000(self):
-        assert compute_early_stop_patience(3000) == 90
+    def test_5pct_of_3000(self):
+        assert compute_early_stop_patience(3000) == 150
 
-    def test_3pct_of_500(self):
-        assert compute_early_stop_patience(500) == 15
+    def test_5pct_of_500(self):
+        assert compute_early_stop_patience(500) == 25
 
     def test_floor_of_10(self):
         """For small iteration counts, patience should not go below 10."""
@@ -136,6 +138,30 @@ class TestComputeEarlyStopPatience:
 
     def test_custom_pct(self):
         assert compute_early_stop_patience(1000, pct=0.05) == 50
+
+    def test_sparse_uses_higher_pct(self):
+        """Sparse clusters use 10% patience instead of 5%."""
+        assert compute_early_stop_patience(1500, sparse=True) == 150  # 10% of 1500
+
+    def test_sparse_floor_of_50(self):
+        """Sparse clusters have a minimum patience of 50 rounds."""
+        assert compute_early_stop_patience(100, sparse=True) == SPARSE_EARLY_STOP_FLOOR
+        assert compute_early_stop_patience(200, sparse=True) == SPARSE_EARLY_STOP_FLOOR
+
+    def test_sparse_with_custom_pct_uses_max(self):
+        """When custom pct is higher than SPARSE_EARLY_STOP_PCT, custom wins."""
+        # 15% of 1000 = 150, which is > 10% of 1000 = 100
+        assert compute_early_stop_patience(1000, pct=0.15, sparse=True) == 150
+
+    def test_sparse_pct_overrides_low_custom(self):
+        """When custom pct is lower than SPARSE_EARLY_STOP_PCT, sparse pct wins."""
+        # sparse=True forces max(0.03, 0.10) = 0.10; 10% of 1000 = 100
+        assert compute_early_stop_patience(1000, pct=0.03, sparse=True) == 100
+
+    def test_non_sparse_ignores_sparse_settings(self):
+        """Non-sparse mode always uses the standard 5% default."""
+        assert compute_early_stop_patience(1500) == 75
+        assert compute_early_stop_patience(1500, sparse=False) == 75
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +213,7 @@ class TestFitModel:
                       MagicMock(), [], [], MagicMock(), 100)
 
     def test_standardized_patience_lgbm(self):
-        """LGBM early stopping should use 3% patience."""
+        """LGBM early stopping should use 5% patience."""
         model = MagicMock()
         lib_module = MagicMock()
         lib_module.early_stopping.return_value = "es"
@@ -196,10 +222,10 @@ class TestFitModel:
         fit_model(model, "lgbm", MagicMock(), MagicMock(), MagicMock(), MagicMock(),
                   [], ["f1"], lib_module, 1500)
 
-        lib_module.early_stopping.assert_called_once_with(stopping_rounds=45, verbose=False)
+        lib_module.early_stopping.assert_called_once_with(stopping_rounds=75, verbose=False)
 
     def test_standardized_patience_catboost(self):
-        """CatBoost early stopping should use 3% patience."""
+        """CatBoost early stopping should use 5% patience."""
         model = MagicMock()
         lib_module = MagicMock()
 
@@ -207,7 +233,7 @@ class TestFitModel:
                   [], ["f1"], lib_module, 3000)
 
         call_kwargs = model.fit.call_args.kwargs
-        assert call_kwargs["early_stopping_rounds"] == 90
+        assert call_kwargs["early_stopping_rounds"] == 150
 
     def test_xgboost_receives_early_stopping_rounds(self):
         """XGBoost fit must receive early_stopping_rounds parameter."""
@@ -232,7 +258,7 @@ class TestFitModel:
         expected_patience = compute_early_stop_patience(max_iter)
         sp_kwargs = model.set_params.call_args.kwargs
         assert sp_kwargs["early_stopping_rounds"] == expected_patience
-        assert sp_kwargs["early_stopping_rounds"] == 15
+        assert sp_kwargs["early_stopping_rounds"] == 25
 
     def test_all_models_receive_early_stopping(self):
         """All three models (LGBM, CatBoost, XGBoost) must receive early stopping config."""
@@ -275,12 +301,18 @@ class TestFitModel:
         sp_kwargs = model.set_params.call_args.kwargs
         assert sp_kwargs["early_stopping_rounds"] == 10
 
-    def test_compute_early_stop_patience_500_3pct(self):
-        """compute_early_stop_patience(500, 0.03) must return 15."""
+    def test_compute_early_stop_patience_500_explicit_3pct(self):
+        """compute_early_stop_patience(500, 0.03) must return 15 when explicit pct=0.03."""
         assert compute_early_stop_patience(500, 0.03) == 15
 
-    def test_lgbm_passes_mae_eval_metric(self):
-        """LGBM fit must receive eval_metric='mae'."""
+    def test_compute_early_stop_patience_500_default_5pct(self):
+        """compute_early_stop_patience(500) with default 5% must return 25."""
+        assert compute_early_stop_patience(500) == 25
+
+    def test_lgbm_passes_wape_eval_metric(self):
+        """LGBM fit must receive custom WAPE eval_metric function."""
+        from common.ml.model_registry import _wape_lgbm
+
         model = MagicMock()
         lib_module = MagicMock()
         lib_module.early_stopping.return_value = "es"
@@ -290,7 +322,7 @@ class TestFitModel:
                   [], ["f1"], lib_module, 1500)
 
         call_kwargs = model.fit.call_args.kwargs
-        assert call_kwargs["eval_metric"] == "mae"
+        assert call_kwargs["eval_metric"] is _wape_lgbm
 
     def test_catboost_does_not_override_eval_metric(self):
         """CatBoost must NOT pass eval_metric or custom_metric in fit() kwargs."""
@@ -304,8 +336,10 @@ class TestFitModel:
         assert "custom_metric" not in fit_kwargs
         assert "eval_metric" not in fit_kwargs
 
-    def test_xgboost_passes_mae_eval_metric(self):
-        """XGBoost eval_metric set via set_params as 'mae'."""
+    def test_xgboost_passes_wape_eval_metric(self):
+        """XGBoost eval_metric set via set_params as custom WAPE function."""
+        from common.ml.model_registry import _wape_xgb
+
         model = MagicMock()
         lib_module = MagicMock()
 
@@ -314,7 +348,7 @@ class TestFitModel:
 
         model.set_params.assert_called_once()
         sp_kwargs = model.set_params.call_args.kwargs
-        assert sp_kwargs["eval_metric"] == "mae"
+        assert sp_kwargs["eval_metric"] is _wape_xgb
         # custom_metric must NOT be in fit() kwargs
         assert "custom_metric" not in model.fit.call_args.kwargs
 

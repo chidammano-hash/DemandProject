@@ -11,17 +11,17 @@ import copy
 import json
 import logging
 import shutil
-import time
 from pathlib import Path
 from typing import Any
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query
-from api.auth import require_api_key
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel, Field
 
+from api.auth import require_api_key
 from api.core import get_conn, set_cache
+from common.ml.champion_strategies import STRATEGY_REGISTRY as _STRAT_REG
 from common.utils import reset_config
 
 logger = logging.getLogger(__name__)
@@ -35,8 +35,6 @@ router = APIRouter(prefix="/champion-experiments", tags=["champion-experiments"]
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _TEMPLATES_PATH = _PROJECT_ROOT / "config" / "champion_experiment_templates.yaml"
 _PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecast_pipeline_config.yaml"
-
-from common.ml.champion_strategies import STRATEGY_REGISTRY as _STRAT_REG
 
 _VALID_STRATEGIES = set(_STRAT_REG.keys())
 _VALID_METRICS = {"accuracy_pct", "wape"}
@@ -110,6 +108,19 @@ _SELECT_COLS = """
     champion_accuracy, ceiling_accuracy, gap_bps, n_champions, n_dfu_months, model_distribution,
     is_promoted, promoted_at, is_results_promoted, results_promoted_at, results_promote_job_id
 """
+
+
+def _apply_lag_override(target: dict[str, Any], lag_row: tuple) -> None:
+    """Override portfolio-level KPIs on *target* dict with lag-specific values.
+
+    *lag_row* columns: (champion_accuracy, ceiling_accuracy, gap_bps,
+    n_dfu_months, model_distribution).
+    """
+    target["champion_accuracy"] = float(lag_row[0]) if lag_row[0] is not None else None
+    target["ceiling_accuracy"] = float(lag_row[1]) if lag_row[1] is not None else None
+    target["gap_bps"] = float(lag_row[2]) if lag_row[2] is not None else None
+    target["n_dfu_months"] = int(lag_row[3]) if lag_row[3] is not None else None
+    target["model_distribution"] = _parse_json(lag_row[4])
 
 
 def _experiment_row_to_dict(row: tuple) -> dict[str, Any]:
@@ -197,7 +208,7 @@ def list_experiments(
             if exec_lag is not None and experiments:
                 exp_ids = [e["experiment_id"] for e in experiments]
                 cur.execute(
-                    f"""
+                    """
                     SELECT experiment_id, champion_accuracy, ceiling_accuracy,
                            gap_bps, n_dfu_months, model_distribution
                     FROM champion_experiment_lag
@@ -205,26 +216,20 @@ def list_experiments(
                     """,
                     (exp_ids, exec_lag),
                 )
-                lag_map: dict[int, dict[str, Any]] = {}
+                lag_map: dict[int, tuple] = {}
                 for r in cur.fetchall():
-                    lag_map[r[0]] = {
-                        "champion_accuracy": float(r[1]) if r[1] is not None else None,
-                        "ceiling_accuracy": float(r[2]) if r[2] is not None else None,
-                        "gap_bps": float(r[3]) if r[3] is not None else None,
-                        "n_dfu_months": int(r[4]) if r[4] is not None else None,
-                        "model_distribution": _parse_json(r[5]),
-                    }
+                    lag_map[r[0]] = r[1:]  # skip experiment_id
                 for exp in experiments:
-                    lag_data = lag_map.get(exp["experiment_id"])
-                    if lag_data:
-                        exp.update(lag_data)
+                    lag_row = lag_map.get(exp["experiment_id"])
+                    if lag_row:
+                        _apply_lag_override(exp, lag_row)
                     exp["exec_lag_filter"] = exec_lag
 
     except HTTPException:
         raise
     except Exception:
         logger.exception("Failed to list champion experiments")
-        raise HTTPException(status_code=500, detail="Failed to list champion experiments")
+        raise HTTPException(status_code=500, detail="Failed to list champion experiments") from None
 
     return {
         "experiments": experiments,
@@ -252,13 +257,13 @@ def get_templates(response: FastAPIResponse):
         logger.info("Champion experiment templates file not found")
     except (yaml.YAMLError, OSError):
         logger.exception("Failed to load champion experiment templates")
-        raise HTTPException(status_code=500, detail="Failed to load templates")
+        raise HTTPException(status_code=500, detail="Failed to load templates") from None
 
     # For production_baseline: merge in live config from pipeline config champion section
     for tmpl in templates:
         if tmpl.get("source") in ("model_competition_config", "pipeline_config"):
             try:
-                from common.utils import load_forecast_pipeline_config, get_competing_model_ids
+                from common.utils import get_competing_model_ids, load_forecast_pipeline_config
 
                 pipeline_cfg = load_forecast_pipeline_config()
                 champ = pipeline_cfg.get("champion", {})
@@ -299,7 +304,7 @@ def get_promoted(response: FastAPIResponse):
             row = cur.fetchone()
     except Exception:
         logger.exception("Failed to fetch promoted champion experiment")
-        raise HTTPException(status_code=500, detail="Failed to fetch promoted experiment")
+        raise HTTPException(status_code=500, detail="Failed to fetch promoted experiment") from None
 
     return {"promoted": _experiment_row_to_dict(row) if row else None}
 
@@ -331,7 +336,7 @@ def list_promotions(
             rows = cur.fetchall()
     except Exception:
         logger.exception("Failed to fetch promotion log")
-        raise HTTPException(status_code=500, detail="Failed to fetch promotions")
+        raise HTTPException(status_code=500, detail="Failed to fetch promotions") from None
 
     promotions = []
     for r in rows:
@@ -430,11 +435,7 @@ def compare_experiments(
                 )
                 for r in cur.fetchall():
                     target = exp_a if r[0] == a_id else exp_b
-                    target["champion_accuracy"] = float(r[1]) if r[1] is not None else None
-                    target["ceiling_accuracy"] = float(r[2]) if r[2] is not None else None
-                    target["gap_bps"] = float(r[3]) if r[3] is not None else None
-                    target["n_dfu_months"] = int(r[4]) if r[4] is not None else None
-                    target["model_distribution"] = _parse_json(r[5])
+                    _apply_lag_override(target, r[1:])
 
             # Overall comparison
             overall = _compute_overall_comparison(exp_a, exp_b)
@@ -524,7 +525,7 @@ def compare_experiments(
         raise
     except Exception:
         logger.exception("Failed to compare champion experiments %d vs %d", a_id, b_id)
-        raise HTTPException(status_code=500, detail="Failed to compare experiments")
+        raise HTTPException(status_code=500, detail="Failed to compare experiments") from None
 
     result = {
         "experiment_a_id": a_id,
@@ -584,18 +585,14 @@ def get_experiment(
                 )
                 lag_row = cur.fetchone()
                 if lag_row:
-                    result["champion_accuracy"] = float(lag_row[0]) if lag_row[0] is not None else None
-                    result["ceiling_accuracy"] = float(lag_row[1]) if lag_row[1] is not None else None
-                    result["gap_bps"] = float(lag_row[2]) if lag_row[2] is not None else None
-                    result["n_dfu_months"] = int(lag_row[3]) if lag_row[3] is not None else None
-                    result["model_distribution"] = _parse_json(lag_row[4])
+                    _apply_lag_override(result, lag_row)
                 result["exec_lag_filter"] = exec_lag
 
     except HTTPException:
         raise
     except Exception:
         logger.exception("Failed to fetch champion experiment %d", experiment_id)
-        raise HTTPException(status_code=500, detail="Failed to fetch experiment")
+        raise HTTPException(status_code=500, detail="Failed to fetch experiment") from None
 
     return result
 
@@ -637,7 +634,7 @@ def get_experiment_lags(
         raise
     except Exception:
         logger.exception("Failed to fetch lags for experiment %d", experiment_id)
-        raise HTTPException(status_code=500, detail="Failed to fetch experiment lags")
+        raise HTTPException(status_code=500, detail="Failed to fetch experiment lags") from None
 
     return {
         "experiment_id": experiment_id,
@@ -681,7 +678,7 @@ def get_experiment_months(
         raise
     except Exception:
         logger.exception("Failed to fetch months for experiment %d", experiment_id)
-        raise HTTPException(status_code=500, detail="Failed to fetch experiment months")
+        raise HTTPException(status_code=500, detail="Failed to fetch experiment months") from None
 
     return {
         "experiment_id": experiment_id,
@@ -729,7 +726,7 @@ def get_experiment_logs(
         raise
     except Exception:
         logger.exception("Failed to fetch logs for experiment %d", experiment_id)
-        raise HTTPException(status_code=500, detail="Failed to fetch logs")
+        raise HTTPException(status_code=500, detail="Failed to fetch logs") from None
 
     return {
         "experiment_id": experiment_id,
@@ -815,7 +812,7 @@ def create_experiment(body: CreateChampionExperimentBody):
         raise
     except Exception:
         logger.exception("Failed to create champion experiment")
-        raise HTTPException(status_code=500, detail="Failed to create experiment")
+        raise HTTPException(status_code=500, detail="Failed to create experiment") from None
 
     return {
         "experiment_id": experiment_id,
@@ -922,7 +919,7 @@ def promote_experiment(experiment_id: int):
         raise
     except Exception:
         logger.exception("Failed to promote champion experiment %d", experiment_id)
-        raise HTTPException(status_code=500, detail="Failed to promote experiment")
+        raise HTTPException(status_code=500, detail="Failed to promote experiment") from None
 
     return {
         "promoted": True,
@@ -991,7 +988,7 @@ def promote_results(experiment_id: int):
         raise
     except Exception:
         logger.exception("Failed to submit results load for experiment %d", experiment_id)
-        raise HTTPException(status_code=500, detail="Failed to submit results load")
+        raise HTTPException(status_code=500, detail="Failed to submit results load") from None
 
     return {
         "job_id": job_id,
@@ -1125,11 +1122,20 @@ def delete_experiment(experiment_id: int):
                     detail=f"Cannot delete experiment with status '{status}' (cancel first)",
                 )
             if is_promoted:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Cannot delete a promoted experiment",
+                # Clean up champion/ceiling rows from forecast table
+                cur.execute(
+                    "DELETE FROM fact_external_forecast_monthly WHERE model_id IN ('champion', 'ceiling')"
+                )
+                logger.info(
+                    "Deleted champion/ceiling forecast rows for promoted experiment %d",
+                    experiment_id,
                 )
 
+            # Clean up referencing tables before deleting experiment
+            cur.execute(
+                "DELETE FROM champion_promotion_log WHERE experiment_id = %s",
+                (experiment_id,),
+            )
             # CASCADE deletes lag, month, comparison rows
             cur.execute(
                 "DELETE FROM champion_experiment WHERE experiment_id = %s",

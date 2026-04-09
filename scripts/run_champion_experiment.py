@@ -275,6 +275,13 @@ def run_experiment(experiment_id: int) -> None:
         winners_df = strategy_fn(monthly_errors_df, **strat_kwargs)
         logger.info("  %d DFU-month winners", len(winners_df))
 
+        # 4b. Cache winners CSV for fast results loading (Stage 2)
+        winners_dir = ROOT / "data" / "champion"
+        winners_dir.mkdir(parents=True, exist_ok=True)
+        winners_path = winners_dir / f"experiment_{experiment_id}_winners.csv"
+        winners_df.to_csv(winners_path, index=False)
+        logger.info("  Cached winners to %s", winners_path)
+
         # 5. Compute overall champion accuracy
         champ_stats = compute_strategy_accuracy(winners_df)
         champion_accuracy = champ_stats["accuracy_pct"]

@@ -1,11 +1,11 @@
 /**
  * ClusterComparisonPanel -- Comparison panel when two cluster experiments
  * are selected. Shows quality metrics, cluster profile comparison,
- * DFU migration summary, and promote button.
+ * DFU migration summary, and config differences.
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUp, ArrowDown, Minus, Crown } from "lucide-react";
+import { ArrowUp, ArrowDown, Minus } from "lucide-react";
 import {
   clusterExperimentKeys,
   CLUSTER_EXP_STALE,
@@ -26,7 +26,6 @@ import {
 import { cn } from "@/lib/utils";
 import { formatClusterLabel } from "@/lib/formatters";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -43,7 +42,6 @@ import type { PCAScatterData } from "@/api/queries";
 export interface ClusterComparisonPanelProps {
   baselineId: number;
   candidateId: number;
-  onPromote: (experiment: ClusterExperiment) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,13 +187,110 @@ function VerdictBadge({ verdict }: { verdict: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Config diff helper
+// ---------------------------------------------------------------------------
+
+function ConfigDiffSection({
+  experimentA,
+  experimentB,
+}: {
+  experimentA: ClusterExperiment;
+  experimentB: ClusterExperiment;
+}) {
+  const diffs: { label: string; valueA: string; valueB: string }[] = [];
+
+  const fp = experimentA.feature_params;
+  const fpB = experimentB.feature_params;
+  const mp = experimentA.model_params;
+  const mpB = experimentB.model_params;
+  const lp = experimentA.label_params;
+  const lpB = experimentB.label_params;
+
+  // Model params
+  const kA = mp?.k_range ? `${mp.k_range[0]}--${mp.k_range[1]}` : "--";
+  const kB = mpB?.k_range ? `${mpB.k_range[0]}--${mpB.k_range[1]}` : "--";
+  if (kA !== kB) diffs.push({ label: "K Range", valueA: kA, valueB: kB });
+
+  const minClA = mp?.min_cluster_size_pct != null ? `${mp.min_cluster_size_pct}%` : "--";
+  const minClB = mpB?.min_cluster_size_pct != null ? `${mpB.min_cluster_size_pct}%` : "--";
+  if (minClA !== minClB) diffs.push({ label: "Min Cluster %", valueA: minClA, valueB: minClB });
+
+  const pcaA = mp?.use_pca ? "Yes" : "No";
+  const pcaB = mpB?.use_pca ? "Yes" : "No";
+  if (pcaA !== pcaB) diffs.push({ label: "Use PCA", valueA: pcaA, valueB: pcaB });
+
+  const pcaCompA = mp?.pca_components != null ? String(mp.pca_components) : "--";
+  const pcaCompB = mpB?.pca_components != null ? String(mpB.pca_components) : "--";
+  if (pcaCompA !== pcaCompB) diffs.push({ label: "PCA Components", valueA: pcaCompA, valueB: pcaCompB });
+
+  const allFeatA = mp?.all_features != null ? (mp.all_features ? "Yes" : "No") : "--";
+  const allFeatB = mpB?.all_features != null ? (mpB.all_features ? "Yes" : "No") : "--";
+  if (allFeatA !== allFeatB) diffs.push({ label: "All Features", valueA: allFeatA, valueB: allFeatB });
+
+  // Feature params
+  const twA = fp?.time_window_months != null ? `${fp.time_window_months}mo` : "--";
+  const twB = fpB?.time_window_months != null ? `${fpB.time_window_months}mo` : "--";
+  if (twA !== twB) diffs.push({ label: "Time Window", valueA: twA, valueB: twB });
+
+  const mhA = fp?.min_months_history != null ? `${fp.min_months_history}mo` : "--";
+  const mhB = fpB?.min_months_history != null ? `${fpB.min_months_history}mo` : "--";
+  if (mhA !== mhB) diffs.push({ label: "Min History", valueA: mhA, valueB: mhB });
+
+  // Label params
+  const labelChecks: { label: string; keyA: number | undefined; keyB: number | undefined }[] = [
+    { label: "Vol High", keyA: lp?.volume_high, keyB: lpB?.volume_high },
+    { label: "Vol Low", keyA: lp?.volume_low, keyB: lpB?.volume_low },
+    { label: "CV Steady", keyA: lp?.cv_steady, keyB: lpB?.cv_steady },
+    { label: "CV Volatile", keyA: lp?.cv_volatile, keyB: lpB?.cv_volatile },
+    { label: "Seasonality", keyA: lp?.seasonality_threshold, keyB: lpB?.seasonality_threshold },
+    { label: "Zero Demand", keyA: lp?.zero_demand_threshold, keyB: lpB?.zero_demand_threshold },
+  ];
+  for (const { label, keyA, keyB } of labelChecks) {
+    const a = keyA != null ? String(keyA) : "--";
+    const b = keyB != null ? String(keyB) : "--";
+    if (a !== b) diffs.push({ label, valueA: a, valueB: b });
+  }
+
+  if (diffs.length === 0) return null;
+
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-foreground">Config Differences</p>
+      <div className="rounded-md border border-border/60 bg-muted/20 overflow-hidden">
+        <table className="w-full text-xs">
+          <thead className="bg-muted/50">
+            <tr>
+              <th className="text-left px-2 py-1 font-medium text-[10px] text-muted-foreground">Param</th>
+              <th className="text-center px-2 py-1 font-medium text-[10px] text-muted-foreground">Baseline</th>
+              <th className="text-center px-2 py-1 font-medium text-[10px] text-muted-foreground">Candidate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {diffs.map((d) => (
+              <tr key={d.label} className="border-t border-border/40">
+                <td className="px-2 py-1 text-muted-foreground">{d.label}</td>
+                <td className="px-2 py-1 text-center tabular-nums font-medium bg-blue-50/50 dark:bg-blue-950/20">
+                  {d.valueA}
+                </td>
+                <td className="px-2 py-1 text-center tabular-nums font-medium bg-emerald-50/50 dark:bg-emerald-950/20">
+                  {d.valueB}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export function ClusterComparisonPanel({
   baselineId,
   candidateId,
-  onPromote,
 }: ClusterComparisonPanelProps) {
   const [showMigrationTable, setShowMigrationTable] = useState(false);
 
@@ -297,6 +392,9 @@ export function ClusterComparisonPanel({
             />
           </div>
         </div>
+
+        {/* 1b. Config Differences */}
+        <ConfigDiffSection experimentA={experiment_a} experimentB={experiment_b} />
 
         {/* 2. Cluster Profile Comparison */}
         {(profile_comparison.common_clusters.length > 0 ||
@@ -496,18 +594,6 @@ export function ClusterComparisonPanel({
           );
         })()}
 
-        {/* Promote button */}
-        <div className="flex justify-end gap-2 pt-2 border-t border-border/40">
-          <Button
-            size="sm"
-            className="text-xs gap-1 bg-amber-600 hover:bg-amber-700 text-white"
-            onClick={() => onPromote(experiment_b)}
-            disabled={experiment_b.status !== "completed"}
-          >
-            <Crown className="h-3 w-3" />
-            Promote Candidate
-          </Button>
-        </div>
       </CardContent>
     </Card>
   );

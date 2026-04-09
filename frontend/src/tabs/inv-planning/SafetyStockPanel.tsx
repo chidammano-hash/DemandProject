@@ -9,7 +9,8 @@ import {
 } from "@/api/queries";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
-import { formatFixed, formatPct } from "@/lib/formatters";
+import { TableSkeleton } from "@/components/Skeleton";
+import { formatFixed, formatPct, formatInt } from "@/lib/formatters";
 import { ArchiveX, Shield } from "lucide-react";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { insightKeys, fetchSsCostBenefit } from "@/api/queries/inv-planning-insights";
@@ -130,28 +131,28 @@ export function SafetyStockPanel() {
         <div className="border rounded-lg p-4 bg-card space-y-3">
           <h4 className="text-xs font-semibold text-foreground">Cost-Benefit Analysis</h4>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="border rounded p-2">
-              <p className="text-[10px] text-muted-foreground">Monthly Holding Cost</p>
-              <p className="text-sm font-bold text-foreground">
-                ${(cbData.holding_cost_monthly ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            <div className="border rounded-lg p-2.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Monthly Holding Cost</p>
+              <p className="text-sm font-bold tabular-nums text-foreground">
+                ${formatInt(cbData.holding_cost_monthly ?? 0)}
               </p>
             </div>
-            <div className="border rounded p-2">
-              <p className="text-[10px] text-muted-foreground">Monthly Stockout Risk</p>
-              <p className="text-sm font-bold text-red-600">
-                ${(cbData.stockout_risk_monthly ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            <div className="border rounded-lg p-2.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Monthly Stockout Risk</p>
+              <p className="text-sm font-bold tabular-nums text-red-600">
+                ${formatInt(cbData.stockout_risk_monthly ?? 0)}
               </p>
             </div>
-            <div className="border rounded p-2">
-              <p className="text-[10px] text-muted-foreground">Over-Stocked Items</p>
-              <p className="text-sm font-bold text-amber-600">
-                {(cbData.over_stocked_count ?? 0).toLocaleString()}
+            <div className="border rounded-lg p-2.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Over-Stocked Items</p>
+              <p className="text-sm font-bold tabular-nums text-amber-600">
+                {formatInt(cbData.over_stocked_count ?? 0)}
               </p>
             </div>
-            <div className="border rounded p-2">
-              <p className="text-[10px] text-muted-foreground">Under-Stocked Items</p>
-              <p className="text-sm font-bold text-red-600">
-                {(cbData.under_stocked_count ?? 0).toLocaleString()}
+            <div className="border rounded-lg p-2.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Under-Stocked Items</p>
+              <p className="text-sm font-bold tabular-nums text-red-600">
+                {formatInt(cbData.under_stocked_count ?? 0)}
               </p>
             </div>
           </div>
@@ -235,7 +236,7 @@ export function SafetyStockPanel() {
       </div>
 
       {detailLoading ? (
-        <p className="text-xs text-muted-foreground">Loading...</p>
+        <TableSkeleton rows={8} cols={10} />
       ) : (detail?.rows ?? []).length === 0 ? (
         <EmptyState
           icon={ArchiveX}

@@ -282,37 +282,39 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
 7. Multi-model forecasting:
    - `model_id` column on forecast fact table
    - Per-model analytics and model selector in UI
-8. DFU clustering:
+8. SKU clustering:
+   - Clustering library: `common/ml/clustering/` package (features.py, training.py, labeling.py, scenario.py)
    - Feature engineering: 14 core features across 6 dimensions (volume, trend, seasonality, periodicity, intermittency, lifecycle) from 36-month sales history
    - New features: FFT periodicity strength, OLS seasonal R-squared, Croston ADI, scale-invariant trend slope, IQR, CAGR, recency ratio, YoY correlation
    - KMeans clustering with combined Silhouette + Calinski-Harabasz scoring (0.5*sil + 0.5*CH); gap statistic removed
    - Hard 5% minimum cluster size constraint; k_range [5, 18]; post-hoc merge of small clusters
    - Priority-ordered taxonomy labeling: Intermittency -> Periodicity -> Seasonality -> Trend -> Volatility -> Volume (5 tiers)
    - Compound labels: `high_volume_seasonal_growing`, `low_volume_intermittent`, `very_high_volume_growing`, etc.
-   - MLflow experiment tracking (`dfu_clustering`)
+   - MLflow experiment tracking (`sku_clustering`)
    - Cluster assignments stored in `dim_sku.cluster_assignment`
    - Master switch: `clustering.enabled` in `config/forecast_pipeline_config.yaml` controls whether the clustering pipeline runs; when `false`, all backtest scripts auto-fall back to `global` strategy
-   - Pipeline config references: `clustering_config.yaml`, `cluster_tuning_profiles.yaml`, `cluster_experiment_templates.yaml`
+   - Pipeline config references: `cluster_tuning_profiles.yaml`, `cluster_experiment_templates.yaml`
 9. LGBM backtesting (Feature 44):
    - Expanding window backtest (10 timeframes A-J) with LightGBM regressors
    - Configurable `cluster_strategy`: `per_cluster` (default, one model per ml_cluster) or `global` (one model on all data)
    - `cluster_strategy` resolution: `forecast_pipeline_config.yaml` algorithm entry > default `per_cluster`; auto-falls back to `global` when `clustering.enabled` is `false`
-   - `ml_cluster` is always a hard feature — never stripped from feature_cols in either strategy
+   - `ml_cluster` is a metadata/partitioning column (in `METADATA_COLS`) — used to split DFUs into per-cluster models, but excluded from `feature_cols` to prevent data leakage
    - Algorithm options controlled by `config/forecast_pipeline_config.yaml` (cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparameters under `algorithms.<model_id>.params`)
    - Causal feature engineering: lag 1-12, rolling stats, calendar, DFU/item attributes
    - Execution-lag predictions loaded into `fact_external_forecast_monthly` via COPY + upsert
    - All-lag (0-4) predictions archived in `backtest_lag_archive` for accuracy at any horizon
    - MLflow experiment tracking (`demand_backtest`)
+   - **Accuracy tuning (59% -> 68%):** Data fixes (NaN masking, relaxed dropna, derived feature recompute), per-cluster SHAP feature selection, MAE objective, per-cluster tuning profiles with cluster_name matching, intermittent cluster routing to rolling mean baseline, recursive lag smoothing. See `docs/specs/02-forecasting/23-lgbm-accuracy-tuning.md`.
 10. CatBoost backtesting (Feature 44):
    - Same expanding window framework as LGBM (10 timeframes A-J) with CatBoost regressors
-   - Configurable `cluster_strategy`: `per_cluster` (default) or `global`; ml_cluster always a hard feature
+   - Configurable `cluster_strategy`: `per_cluster` (default) or `global`; `ml_cluster` used for partitioning only, not as a model feature
    - Algorithm options controlled by `config/forecast_pipeline_config.yaml` (`algorithms.catboost_cluster`)
    - Native categorical feature handling via ordered target encoding (no one-hot needed)
    - GPU support via `task_type="GPU"`; auto-detected at runtime
    - MLflow experiment tracking (`demand_backtest`)
 11. XGBoost backtesting (Feature 44):
    - Same expanding window framework as LGBM (10 timeframes A-J) with XGBoost regressors
-   - Configurable `cluster_strategy`: `per_cluster` (default) or `global`; ml_cluster always a hard feature
+   - Configurable `cluster_strategy`: `per_cluster` (default) or `global`; `ml_cluster` used for partitioning only, not as a model feature
    - Algorithm options controlled by `config/forecast_pipeline_config.yaml` (`algorithms.xgboost_cluster`)
    - Native categorical support via `enable_categorical=True` with `tree_method="hist"`
    - GPU support via `device="cuda"`; auto-detected at runtime
@@ -761,8 +763,8 @@ flowchart TD
     end
 
     subgraph P4["Phase 4: ML Features"]
-        CL["cluster-all<br/>features → train → label → update<br/>→ dim_sku.ml_cluster"]
-        SEAS["seasonality-all<br/>detect → update<br/>→ dim_sku.seasonality_*"]
+        FEAT["features-compute<br/>compute_sku_features.py<br/>→ dim_sku (all feature cols)"]
+        CL["cluster-all<br/>train → label → update<br/>→ dim_sku.ml_cluster"]
     end
 
     subgraph P5["Phase 5: Backtesting"]
@@ -801,7 +803,8 @@ flowchart TD
     SS & EOQ & POL & FILL --> CT
 
     %% ML pipeline
-    LOAD --> CL & SEAS
+    LOAD --> FEAT
+    FEAT --> CL
     CL --> TUNE
     TUNE -.->|params_file| BT_L & BT_C & BT_X
     CL --> BT_L & BT_C & BT_X
@@ -823,9 +826,10 @@ flowchart TD
 | Pipeline | Scripts (in order) | Reads | Writes | Config |
 |----------|--------------------|-------|--------|--------|
 | **Customer Demand** | `normalize_customer_demand_csv.py` → `load_customer_demand_postgres.py` | `{YYYY}_customer_demand.csv`, `dim_location` | `fact_customer_demand_monthly` | — (flags: `--replace`, `--month YYYY-MM`) |
-| **Clustering** | `generate_clustering_features.py` → `train_clustering_model.py` → `label_clusters.py` → `update_cluster_assignments.py` | `dim_sku`, `dim_item`, `fact_sales_monthly` | `dim_sku.ml_cluster`, `data/clustering/` | `forecast_pipeline_config.yaml` (`clustering` section; refs `clustering_config.yaml`) |
-| **Seasonality** | `detect_seasonality.py` → `update_seasonality_profiles.py` | `fact_sales_monthly`, `dim_sku` | `dim_sku.seasonality_*` (6 cols) | `seasonality_config.yaml` |
-| **Variability** | `compute_demand_variability.py` | `fact_sales_monthly` | `dim_sku.cv_demand` + variability cols | `variability_config.yaml` |
+| **SKU Features** | `compute_sku_features.py` | `fact_sales_monthly`, `dim_sku` | `dim_sku` (all feature columns: volume, trend, seasonality, variability, lifecycle + derived classifications) | `sku_features_config.yaml` |
+| **Clustering** | `run_cluster_pipeline.py` (unified: train → label → promote) | `dim_sku` (pre-computed features), `dim_item` | `dim_sku.ml_cluster`, `data/clustering/` | `forecast_pipeline_config.yaml` (`clustering` section) |
+| **Seasonality** | Alias for `features-compute` — now computed by `compute_sku_features.py` | `fact_sales_monthly`, `dim_sku` | `dim_sku.seasonality_*` (6 cols) | `sku_features_config.yaml` |
+| **Variability** | Alias for `features-compute` — now computed by `compute_sku_features.py` | `fact_sales_monthly` | `dim_sku.cv_demand` + variability cols | `sku_features_config.yaml` |
 | **Lead Time** | `compute_lead_time_variability.py` | `fact_inventory_snapshot` | lead time profile table | `inventory_planning_config.yaml` (lead_time section) |
 | **Safety Stock** | `compute_safety_stock.py` | `dim_sku` (variability), LT profile | `fact_safety_stock_targets` | `safety_stock_config.yaml` |
 | **EOQ** | `compute_eoq.py` | `agg_inventory_monthly`, `dim_sku` | `fact_eoq_targets` | `eoq_config.yaml` |
@@ -917,15 +921,17 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 
 | Module | Purpose |
 |--------|---------|
+| `common/ml/clustering/` | Clustering library package: `features.py` (`compute_time_series_features`), `training.py` (`CORE_FEATURES`, `LOG_TRANSFORM_FEATURES`, `find_optimal_k`, `merge_small_clusters`), `labeling.py` (`assign_cluster_labels`), `scenario.py` (`generate_scenario_id`, `promote_scenario`, `get_scenario_result`) |
+| `common/ml/sku_features/` | Unified SKU feature computation package: `compute.py` (`load_sales_from_db`, `compute_all_sku_features`), `classifiers.py` (`classify_seasonality_profile`, `classify_variability_class`), `persistence.py` (`write_features_to_dim_sku` — bulk COPY via staging table). Orchestrates time-series feature extraction and derived classifications (seasonality profile, variability class) then writes all feature columns to `dim_sku` in a single pass. |
 | `common/backtest_framework.py` | `run_tree_backtest()` orchestrator, timeframe generation, data loading, execution-lag assignment, all-lag expansion, post-processing, model-scoped output saving (`data/backtest/<model_id>/`), feature importance; `_fill_predict_nans()`, `_predict_single_month()`, `recursive` param for recursive multi-step inference (Feature 43); configurable `shap_retrain_threshold` from `forecast_pipeline_config.yaml` |
-| `common/model_registry.py` | Centralized model abstraction layer: `CANONICAL_TO_NATIVE` / `NATIVE_TO_CANONICAL` parameter name mapping (lgbm/catboost/xgboost), `to_native_params()` / `from_native_params()` for canonical ↔ native translation, `fit_model()` unified fit function replacing duplicate if/elif/else blocks, `get_best_iteration()` abstracting attribute differences (`best_iteration_` vs `best_iteration`), `compute_early_stop_patience()` for standardized 3% patience across all models |
+| `common/model_registry.py` | Centralized model abstraction layer: `CANONICAL_TO_NATIVE` / `NATIVE_TO_CANONICAL` parameter name mapping (lgbm/catboost/xgboost), `to_native_params()` / `from_native_params()` for canonical ↔ native translation, `fit_model()` unified fit function (accepts `demand_pattern` for sparse-aware early stopping), `get_best_iteration()` abstracting attribute differences (`best_iteration_` vs `best_iteration`), `compute_early_stop_patience()` with 5% patience (10% for sparse clusters), custom WAPE eval callbacks (`_wape_lgbm`, `WapeMetric`, `_wape_xgb`) with scaled denominator floor |
 | `common/feature_engineering.py` | `build_feature_matrix()`, `get_feature_columns()`, `mask_future_sales()` with `cat_dtype` parameter for framework-specific categorical handling; `update_grid_with_predictions()` for recursive multi-step lag write-back (Feature 43) |
 | `common/metrics.py` | `compute_accuracy_metrics()`: WAPE, bias, accuracy % |
 | `common/mlflow_utils.py` | `log_backtest_run()`: generic MLflow experiment logging |
 | `common/db.py` | `get_db_params()`: shared DB connection parameters |
 | `common/constants.py` | `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output column ordering, thresholds |
 | `common/tuning.py` | Shared tuning utilities: `generate_cv_month_splits`, `compute_wape_stabilised`, `suggest_params`, `save_best_params`, `load_best_params`, `best_rounds_to_n_estimators`, `tune_for_timeframe()` (per-timeframe causal tuning, PL-002), `TRAIN_FOLD_FNS` registry (`train_lgbm_fold`, `train_catboost_fold`, `train_xgboost_fold`) (Feature 41) |
-| `common/shap_selector.py` | SHAP-based feature selection: `compute_shap_global` (LGBM/XGBoost via `shap.TreeExplainer`), `compute_shap_catboost` (native ShapValues), `compute_timeframe_shap` (cluster-pooled or global), `build_shap_summary`, `save_shap_outputs` (Feature 42) |
+| `common/shap_selector.py` | SHAP-based feature selection: `compute_shap_global` (LGBM/XGBoost via `shap.TreeExplainer`), `compute_shap_catboost` (native ShapValues), `compute_timeframe_shap` (cluster-pooled or global), `compute_timeframe_shap_per_cluster` (independent per-cluster SHAP returning `dict[str, list[str]]`), `_stratified_sample_for_shap` (50/50 zero/non-zero sampling for sparse clusters), `build_shap_summary`, `save_shap_outputs` (Feature 42) |
 | `common/job_state.py` | In-memory job state: `_active_jobs`, `_pending_queues`, `_cancel_flags`, state lock, status constants; extracted from `job_registry.py` for separation of concerns |
 | `common/job_scheduler.py` | APScheduler wrapper: `make_scheduler()`, `make_trigger()` utilities; extracted from `job_registry.py` to isolate APScheduler-specific initialization and trigger creation |
 | `common/auth.py` | JWT authentication: `create_access_token()`, `create_refresh_token()`, `verify_token()`, `hash_password()`, `verify_password()`, `get_current_user()` FastAPI dependency, role-based `require_role(role)` dependency factory (08-02) |
@@ -941,38 +947,41 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 | `common/sql_helpers.py` | Shared SQL utilities for load scripts: `qident()`, `typed_expr()`, `business_key_expr()`, `_elapsed()`, `NULL_SQL`, `MV_REFRESH_ARCHIVE`, constants (`IQR_OUTLIER_MULTIPLIER`, `LEAD_TIME_MAX_DAYS`, `LEAD_TIME_DEFAULT_DAYS`, `HASH_CHUNK_SIZE`, `EXTERNAL_MODEL_ID`, percentile constants) |
 | `common/query_tracker.py` | API query tracking + usage metrics for governance and observability |
 
-Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting which to pass to `run_tree_backtest()` based on the `cluster_strategy` key in `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>` (`per_cluster` or `global`). **`ml_cluster` is always a hard feature** — it is never stripped from `feature_cols` in either strategy. In `per_cluster` mode it provides a constant identity signal within each partition; in `global` mode it provides inter-cluster discrimination across the full dataset. Algorithm behavior (cluster_strategy, recursive, SHAP selection, inline tuning, params file, hyperparameters) is read from `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>`, not from CLI flags. `run_tree_backtest()` accepts optional `feature_selector_fn` callable (Feature 42): when provided, each timeframe computes SHAP after the initial model train and retrains on the selected feature subset before generating predictions. `run_tree_backtest()` also accepts `recursive: bool = False` (Feature 43): when `True`, each predict month is scored one at a time using `_predict_single_month(models, predict_data, feature_cols)`, and predictions are written back into the feature grid via `update_grid_with_predictions()` so that `qty_lag_1` for month T+1 reflects the model's own prediction for month T rather than zero.
+Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting which to pass to `run_tree_backtest()` based on the `cluster_strategy` key in `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>` (`per_cluster` or `global`). **`ml_cluster` is excluded from model features** (listed in `METADATA_COLS` in `constants.py`) to prevent data leakage from full-history cluster assignments. It is merged into the feature grid as a metadata column so that `per_cluster` mode can partition DFUs into separate models per cluster, but models never see it as an input feature. Algorithm behavior (cluster_strategy, recursive, SHAP selection, inline tuning, params file, hyperparameters) is read from `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>`, not from CLI flags. `run_tree_backtest()` accepts optional `feature_selector_fn` callable (Feature 42): when provided, each timeframe computes SHAP after the initial model train and retrains on the selected feature subset before generating predictions. Per-cluster SHAP (`compute_timeframe_shap_per_cluster`) returns `dict[str, list[str]]` — the backtest framework handles per-cluster retrain and per-cluster prediction with independent feature sets. `run_tree_backtest()` also accepts `recursive: bool = False` (Feature 43): when `True`, each predict month is scored one at a time using `_predict_single_month(models, predict_data, feature_cols)`, and predictions are written back into the feature grid via `update_grid_with_predictions()` so that `qty_lag_1` for month T+1 reflects the model's own prediction for month T rather than zero. Recursive lag smoothing (`recursive_lag_smooth: 0.15`) damps compounding errors from step 3 onward. Intermittent clusters (>70% zeros) are automatically routed to rolling mean baseline instead of tree models. Per-cluster tuning profiles (`cluster_tuning_profiles.yaml`) are resolved via `resolve_cluster_params()` with Phase 1 `cluster_name` exact match before Phase 2 statistical criteria fallback.
 
 ---
 
 ## 18. ML Pipeline Components
 
-1. **Feature Engineering** (`generate_clustering_features.py`):
-   - Extracts 14 core features across 6 dimensions (volume, trend, seasonality, periodicity, intermittency, lifecycle) from `fact_sales_monthly` (36-month window, min 12 months)
+1. **SKU Feature Computation** (`common/ml/sku_features/` via `compute_all_sku_features()`, `classify_seasonality_profile()`, `classify_variability_class()`, `write_features_to_dim_sku()`):
+   - Unified pipeline: `scripts/ml/compute_sku_features.py` orchestrates feature extraction, classification, and persistence in a single pass
+   - Extracts 14 core features across 6 dimensions (volume, trend, seasonality, periodicity, intermittency, lifecycle) from `fact_sales_monthly` (36-month window, min 12 months) using `common.ml.clustering.features._compute_features_for_group`
    - New features: FFT periodicity strength, OLS seasonal R-squared, Croston ADI, scale-invariant trend slope (`slope * n / mean`), IQR, CAGR, recency ratio, YoY correlation
-   - Joins with `dim_sku` and `dim_item` for attribute features
-   - Outputs feature matrix CSV for clustering
-2. **Clustering Model** (`train_clustering_model.py`):
+   - Derives seasonality profile (`none`/`low`/`moderate`/`strong`) and variability class from computed features via `classifiers.py`
+   - Writes all feature columns + classifications to `dim_sku` in bulk via COPY staging table (`persistence.py`)
+   - Config: `config/sku_features_config.yaml` (thresholds, workers, time window); `make seasonality-all` and `make variability-compute` are now aliases for `make features-compute`
+2. **Clustering Model** (`common/ml/clustering/training.py` via `find_optimal_k()`, `merge_small_clusters()`):
+   - Reads pre-computed features from `dim_sku` (written by SKU Features step above) instead of computing them inline
    - Log-transforms skewed volume features (`mean_demand`, `iqr_demand`, `adi`, etc.) via `log1p` before StandardScaler
-   - Uses only 14 CORE_FEATURES for clustering (not all computed features)
+   - Uses only 14 `CORE_FEATURES` for clustering (not all computed features)
    - KMeans with combined Silhouette + Calinski-Harabasz scoring (`0.5 * sil_norm + 0.5 * CH_norm`); gap statistic removed
    - Hard 5% minimum cluster size constraint during K selection; k_range [5, 18]
    - Post-hoc `merge_small_clusters()` merges any cluster below threshold into nearest large neighbor
    - Optional PCA dimensionality reduction (disabled by default)
    - Generates cluster assignments and centroids
    - Logs to MLflow with parameters, metrics, and visualization artifacts
-3. **Cluster Labeling** (`label_clusters.py`):
+3. **Cluster Labeling** (`common/ml/clustering/labeling.py` via `assign_cluster_labels()`):
    - Priority-ordered taxonomy: Intermittency -> Periodicity -> Seasonality -> Trend -> Volatility -> Volume
    - Volume tiers: 5 levels (very_high/high/medium/low/very_low based on percentile thresholds)
    - Compound labels: `high_volume_seasonal_growing`, `low_volume_intermittent`, `medium_volume_periodic`, etc.
    - Two-pass disambiguation: base labels first, then secondary features resolve duplicates
-4. **Assignment Update** (`update_cluster_assignments.py`):
+4. **Assignment Update** (`common/ml/clustering/scenario.py` via `promote_scenario()`):
    - Updates `dim_sku.cluster_assignment` column in PostgreSQL
    - Validates updates and reports cluster distribution
 5. **LGBM Backtest** (`run_backtest.py` → `common/backtest_framework.py` — Feature 44):
    - Uses shared `run_tree_backtest()` orchestrator from `common/backtest_framework.py`
    - Script implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`; selects based on `cluster_strategy` config key
-   - `ml_cluster` is always a hard feature (never stripped from feature_cols)
+   - `ml_cluster` is a metadata column (in `METADATA_COLS`) — used for per-cluster partitioning, excluded from `feature_cols`
    - Algorithm options read from `config/forecast_pipeline_config.yaml` (`algorithms.lgbm_cluster`: cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparams under `.params`)
    - Shared feature engineering from `common/feature_engineering.py`: lag 1-12, rolling mean/std 3/6/12m, calendar, DFU/item attributes
    - Default model IDs: `lgbm_cluster` (per_cluster) or `lgbm_global` (global)
@@ -980,18 +989,18 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Deduplication across timeframes (latest timeframe wins)
    - MLflow logging via `common/mlflow_utils.py` to `demand_backtest` experiment
    - All 3 models use unified `fit_model()` from `common/model_registry.py` — no duplicate fit blocks
-   - Early stopping: standardized 3% patience via `compute_early_stop_patience()` across all models
+   - Early stopping: standardized 5% patience (10% for sparse clusters) via `compute_early_stop_patience()` with custom WAPE eval callbacks
    - Best iteration: abstracted via `get_best_iteration()` (handles `best_iteration_` vs `best_iteration` attribute differences)
 6. **CatBoost Backtest** (`run_backtest_catboost.py` → `common/backtest_framework.py` — Feature 44):
    - Uses shared `run_tree_backtest()` orchestrator with `cat_dtype="str"` for CatBoost's index-based categoricals
    - Script implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`
-   - `ml_cluster` always a hard feature; `cluster_strategy` config key selects mode
+   - `ml_cluster` used for partitioning only (in `METADATA_COLS`), not a model feature; `cluster_strategy` config key selects mode
    - Algorithm options read from `config/forecast_pipeline_config.yaml` (`algorithms.catboost_cluster`)
    - Default model IDs: `catboost_cluster` (per_cluster) or `catboost_global` (global)
 7. **XGBoost Backtest** (`run_backtest_xgboost.py` → `common/backtest_framework.py` — Feature 44):
    - Uses shared `run_tree_backtest()` orchestrator with `cat_dtype="category"` for XGBoost's native categoricals
    - Script implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`
-   - `ml_cluster` always a hard feature; `cluster_strategy` config key selects mode
+   - `ml_cluster` used for partitioning only (in `METADATA_COLS`), not a model feature; `cluster_strategy` config key selects mode
    - Algorithm options read from `config/forecast_pipeline_config.yaml` (`algorithms.xgboost_cluster`)
    - Default model IDs: `xgboost_cluster` (per_cluster) or `xgboost_global` (global)
 8. **Chronos T5 Backtest** (`run_backtest_chronos.py` → `foundation_models.py`):
@@ -1076,6 +1085,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Config-driven via `config/forecast_pipeline_config.yaml` (`champion` section); also callable via API
    - Meta-learner (`scripts/train_meta_learner.py`): RandomForest/XGBoost classifier trained on ceiling labels with temporal split
    - Simulation (`scripts/simulate_champion_strategies.py`): runs all 16 strategy variants (including ensemble_top5_inv, ensemble_roll6_inv, ensemble_roll9_inv, adaptive_ensemble, hybrid_warmup, hybrid_warmup_adapt), compares accuracy vs ceiling
+   - **Fixes:** Decimal -> float cast for DB values, `is_ensemble` detection checks synthetic model_id (not in competing list), per-cluster strategy loads `dfu_features`, cached winners CSV (`experiment_{id}_winners.csv`) for fast UI load, `item_id` read as str dtype, promoted experiment deletion cleans up forecast rows + promotion_log FK
 17. **Hyperparameter Tuning** (`scripts/tune_hyperparams.py` + `common/tuning.py`):
    - Bayesian optimisation via Optuna (TPESampler + MedianPruner) for LGBM, CatBoost, XGBoost
    - Walk-forward expanding CV with causal masking (`mask_future_sales()` inside each fold)
@@ -1085,6 +1095,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Output: `data/tuning/best_params_<model>.json` consumed via `params_file` key in `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>` (Feature 44)
    - MLflow experiment: `hyperparameter_tuning`
    - **Per-timeframe causal inline tuning (PL-002):** `tune_for_timeframe()` in `common/tuning.py` filters the feature matrix to `months <= cutoff_date` before running a lightweight Optuna study (20 trials, 3 folds) — eliminates future leakage into backtest accuracy metrics. Enabled via `tune_inline: true` in algorithm entry of `config/forecast_pipeline_config.yaml`. `TRAIN_FOLD_FNS` registry (`train_lgbm_fold`, `train_catboost_fold`, `train_xgboost_fold`) shared between global tuning and inline tuner. `run_tree_backtest()` accepts optional `inline_tuner_fn` callable — each timeframe gets its own causally-valid params.
+   - **Per-cluster Bayesian tuning:** `scripts/tune_cluster_hyperparams.py` runs Optuna independently per `ml_cluster`, producing cluster-specific hyperparameter overrides written to `config/cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. During backtest, `resolve_cluster_params()` matches by Phase 1 `cluster_name` exact match, then Phase 2 statistical criteria fallback. CLI: `make tune-lgbm-clusters`, `make tune-clusters`.
    - **Two modes:** Production (`params_file` in algorithm config — global tune once, apply everywhere) vs. Honest backtesting (`tune_inline: true` in algorithm config — 600 fits vs 250, no future leakage)
 18. **SHAP Feature Selection** (`common/shap_selector.py` — Feature 42):
    - Per-timeframe SHAP computation integrated into `run_tree_backtest()` via `feature_selector_fn` hook
@@ -1395,7 +1406,7 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | `tabs/JobsTab.tsx` (202L) | `tabs/jobs/` | KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel, jobsShared.ts |
 | `tabs/ClustersTab.tsx` (224L) | `tabs/clusters/` | ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel |
 | `tabs/InvPlanningTab.tsx` | `tabs/inv-planning/` | Two-column layout: fixed 220px grouped sidebar navigation (7 groups with colored dividers, icons, and labels — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) + scrollable main content area with per-panel header bar (title + description). 27 panels: ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, RebalancingPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel, ReplenishmentPlanPanel, DemandForecastPanel, BlendedDemandPanel, EchelonPanel, FinancialPlanPanel, EventCalendarPanel, ScenarioPlanningPanel, and Supply group panels |
-| `tabs/ModelTuningTab.tsx` | `tabs/model-tuning/` + `tabs/clusters/` + `tabs/champion/` | 5 sub-tabs: Experiments (ExperimentBuilder, EnhancedComparisonPanel), Cluster Experiments (ClusterExperimentBuilder, ClusterComparisonPanel, ClusterParamsForm, ClusterPromoteModal), Champion (ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal), Cluster EDA, Feature Lab |
+| `tabs/ModelTuningTab.tsx` | `tabs/model-tuning/` + `tabs/clusters/` + `tabs/champion/` + `tabs/forecast/` | 6 sub-tabs: Experiments (ExperimentBuilder, EnhancedComparisonPanel), Cluster Experiments (ClusterExperimentBuilder, ClusterComparisonPanel, ClusterParamsForm, ClusterPromoteModal), Champion (ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal), Forecast (ForecastPanel — algorithm picker, horizon config, generate job, version history), Cluster EDA, Feature Lab |
 
 ### API Query Sub-modules
 
@@ -1439,7 +1450,6 @@ All config files live in `config/`. Every compute script externalizes parameters
 | Config File | Used By | Key Parameters |
 |-------------|---------|---------------|
 | `forecast_pipeline_config.yaml` | All backtest/champion/forecast scripts | Algorithm roster + params, backtest, tuning, champion, production forecast settings |
-| `clustering_config.yaml` | Clustering pipeline | `k_range`, `min_cluster_size_pct`, `time_window_months` |
 | `shared_constants.yaml` | Inherited via `_includes` | Service levels, z-table, financial defaults, safety stock guard rails |
 | `hyperparameter_tuning.yaml` | Optuna tuning | Search spaces (8 LGBM, 5 CatBoost, 8 XGBoost params) |
 | `safety_stock_config.yaml` | Safety stock compute | Service levels by ABC class, Z-table |
@@ -1448,8 +1458,8 @@ All config files live in `config/`. Every compute script externalizes parameters
 | `rebalancing_config.yaml` | Rebalancing | `solver` (greedy/LP), thresholds, costs |
 | `exception_config.yaml` | Exceptions + storyboard | 6 exception types, severity thresholds |
 | `inventory_planning_config.yaml` | Lead time, simulation, projection | Merged from lead_time, simulation, projection configs |
-| `seasonality_config.yaml` | Seasonality detection | CV thresholds, profile labels |
-| `variability_config.yaml` | Demand variability | CV thresholds, `history_months` |
+| `seasonality_config.yaml` | SKU feature engineering (seasonality) | CV thresholds, profile labels. See [SKU Feature Engineering spec](specs/01-foundation/02-sku-feature-engineering.md) |
+| `variability_config.yaml` | SKU feature engineering (variability) | CV thresholds, `history_months`. See [SKU Feature Engineering spec](specs/01-foundation/02-sku-feature-engineering.md) |
 | `tune_strategies.yaml` | Auto-tune pipeline | Merged LGBM/CatBoost/XGBoost tune strategies |
 | `ai_planner_config.yaml` | AI agent | `model`, DOS/WAPE/bias thresholds |
 | `planning_config.yaml` | Planning date | `planning_date`, `use_system_date` |
@@ -1466,7 +1476,7 @@ All config files live in `config/`. Every compute script externalizes parameters
 |-----------|----------|-----------|
 | `data/` | Clean CSVs from normalization | `normalize_*.py` |
 | `data/backtest/<model_id>/` | Backtest predictions + SHAP CSVs | `run_backtest*.py` |
-| `data/clustering/` | Feature matrices, KMeans model, labels | `generate_clustering_features.py`, `train_clustering_model.py` |
+| `data/clustering/` | Feature matrices, KMeans model, labels | `run_cluster_pipeline.py` via `common/ml/clustering/` |
 | `data/tuning/` | `best_params_<model>.json` | `tune_hyperparams.py` |
 | `data/models/<model_id>/` | Persisted `.pkl` model artifacts | Backtest scripts (via `model_persistence_fn`) |
 | `data/input/` | Raw source CSVs/TXTs (read-only) | External system export |
@@ -1525,7 +1535,7 @@ make setup-planning          # Data + inventory planning, no ML (~1 hour)
 make setup-all               # EVERYTHING: data + ML + planning + ops (~4-6 hours)
 
 # --- Phase 3: Inventory Planning Computations --------------------------------
-make variability-compute     # Demand variability -> dim_sku
+make variability-compute     # Alias → features-compute (SKU features -> dim_sku)
 make lt-profile-compute      # Lead time variability
 make ss-compute              # Safety stock (needs variability + LT)
 make eoq-compute             # EOQ cycle stock
@@ -1543,8 +1553,9 @@ make rebalancing-compute     # Rebalancing plan (needs SS)
 make control-tower-refresh   # Control tower KPIs (needs all above)
 
 # --- Phase 4: ML Features ----------------------------------------------------
-make cluster-all             # features -> train -> label -> update dim_sku
-make seasonality-all         # detect -> update dim_sku
+make features-compute        # SKU features (volume, trend, seasonality, variability, lifecycle) -> dim_sku
+make cluster-all             # train -> label -> update dim_sku (reads pre-computed features from dim_sku)
+# Aliases: seasonality-all, variability-compute -> features-compute
 
 # --- Phase 5: Backtesting ----------------------------------------------------
 make tune-all                # (optional) Hyperparameter tuning

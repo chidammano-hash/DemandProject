@@ -24,6 +24,8 @@ import {
   submitSbDecision,
 } from "@/api/queries";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
+import { Skeleton } from "@/components/Skeleton";
+import { cn } from "@/lib/utils";
 
 import { ExceptionCard } from "./storyboard/ExceptionCard";
 import { SbKpiCard } from "./storyboard/SbKpiCard";
@@ -181,14 +183,18 @@ export default function StoryboardTab() {
         </p>
       </div>
 
-      {summaryLoading && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-          Loading exception data...
-        </div>
-      )}
-
       {/* ZONE 1: Summary KPI Strip */}
+      {summaryLoading ? (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="summary-kpi-skeletons">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="rounded-lg border bg-card p-3.5 space-y-2">
+              <Skeleton className="h-2.5 w-20" />
+              <Skeleton className="h-6 w-14" />
+              <Skeleton className="h-2 w-24" />
+            </div>
+          ))}
+        </div>
+      ) : (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="summary-kpis">
         <SbKpiCard
           label="Open Exceptions"
@@ -227,6 +233,7 @@ export default function StoryboardTab() {
           }
         />
       </div>
+      )}
 
       {/* ZONE 2 + ZONE 3: Split layout */}
       <div className="flex flex-col lg:flex-row gap-4 min-h-0">
@@ -318,15 +325,29 @@ export default function StoryboardTab() {
             {/* Exception list */}
             <div className="flex-1 overflow-y-auto max-h-[520px]">
               {listLoading && (
-                <div className="flex items-center gap-2 justify-center py-8 text-xs text-muted-foreground">
-                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                  Loading...
+                <div className="divide-y" data-testid="exception-list-skeletons">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="px-4 py-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Skeleton className="h-2 w-2 rounded-full" />
+                        <Skeleton className="h-4 w-16 rounded" />
+                        <Skeleton className="ml-auto h-3 w-12" />
+                      </div>
+                      <Skeleton className="h-3 w-32" />
+                      <Skeleton className="h-3 w-full max-w-[200px]" />
+                    </div>
+                  ))}
                 </div>
               )}
               {!listLoading && listData?.rows && listData.rows.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-3">
+                    <svg className="h-5 w-5 text-muted-foreground/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
                   <p className="text-sm font-medium">No exceptions found</p>
-                  <p className="text-xs mt-1">Try adjusting your filters or changing the status tab.</p>
+                  <p className="text-xs mt-1 text-center max-w-[200px]">Try adjusting your filters or changing the status tab.</p>
                 </div>
               )}
               <div className="divide-y">
@@ -377,9 +398,24 @@ export default function StoryboardTab() {
           {selectedExceptionId && (
             <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
               {detailLoading && (
-                <div className="flex items-center gap-2 justify-center py-12 text-xs text-muted-foreground">
-                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                  Loading exception details...
+                <div className="p-4 space-y-4" data-testid="detail-skeleton">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-5 w-20 rounded-full" />
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                    </div>
+                    <Skeleton className="h-5 w-40" />
+                    <Skeleton className="h-4 w-full max-w-sm" />
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="text-center space-y-1.5">
+                        <Skeleton className="h-2 w-16 mx-auto" />
+                        <Skeleton className="h-5 w-12 mx-auto" />
+                      </div>
+                    ))}
+                  </div>
+                  <Skeleton className="h-20 w-full" />
                 </div>
               )}
 
@@ -424,16 +460,22 @@ export default function StoryboardTab() {
                         )}
                       </div>
                       {/* Severity badge */}
-                      <div className="flex flex-col items-center gap-1 ml-4">
-                        <div className={`text-2xl font-bold ${severityColorClass(detailData.exception.severity)}`}>
+                      <div className={cn(
+                        "flex flex-col items-center gap-1 ml-4 px-3 py-2 rounded-lg",
+                        detailData.exception.severity >= 0.75 ? "bg-red-50 dark:bg-red-950/30" :
+                        detailData.exception.severity >= 0.5 ? "bg-orange-50 dark:bg-orange-950/30" :
+                        detailData.exception.severity >= 0.25 ? "bg-yellow-50 dark:bg-yellow-950/30" :
+                        "bg-green-50 dark:bg-green-950/30"
+                      )}>
+                        <div className={`text-2xl font-bold tabular-nums ${severityColorClass(detailData.exception.severity)}`}>
                           {Math.round(detailData.exception.severity * 100)}
                         </div>
                         <span className={`text-[10px] font-semibold uppercase tracking-wider ${severityColorClass(detailData.exception.severity)}`}>
                           {severityLabel(detailData.exception.severity)}
                         </span>
-                        <div className="w-12 h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div className="w-14 h-1.5 rounded-full bg-muted overflow-hidden">
                           <div
-                            className={`h-full rounded-full ${severityBg(detailData.exception.severity)}`}
+                            className={`h-full rounded-full transition-all duration-300 ${severityBg(detailData.exception.severity)}`}
                             style={{ width: `${detailData.exception.severity * 100}%` }}
                           />
                         </div>
@@ -531,28 +573,49 @@ export default function StoryboardTab() {
                   )}
 
                   {/* Action Panel */}
-                  <div className="px-4 py-4 bg-muted/30 space-y-4">
+                  <div className="px-4 py-4 bg-muted/30 border-t space-y-4">
                     <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Take Action
                     </p>
 
                     <div className="flex flex-wrap gap-2">
                       <button
-                        className="inline-flex items-center gap-1.5 text-xs font-medium rounded-md border px-3 py-1.5 hover:bg-yellow-50 hover:border-yellow-300 hover:text-yellow-800 dark:hover:bg-yellow-900/30 dark:hover:border-yellow-700 dark:hover:text-yellow-300 transition-colors disabled:opacity-50"
+                        className={cn(
+                          "inline-flex items-center gap-1.5 text-xs font-medium rounded-md border px-3 py-1.5 transition-colors disabled:opacity-50",
+                          detailData.exception.status === "investigating"
+                            ? "bg-yellow-100 border-yellow-300 text-yellow-800 dark:bg-yellow-900/40 dark:border-yellow-700 dark:text-yellow-300"
+                            : "hover:bg-yellow-50 hover:border-yellow-300 hover:text-yellow-800 dark:hover:bg-yellow-900/30 dark:hover:border-yellow-700 dark:hover:text-yellow-300"
+                        )}
                         disabled={statusMutation.isPending || detailData.exception.status === "investigating"}
                         onClick={() => statusMutation.mutate({ id: selectedExceptionId, status: "investigating" })}
                       >
-                        Start Investigation
+                        {detailData.exception.status === "investigating" && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-yellow-500" />
+                        )}
+                        {statusMutation.isPending ? "Updating..." : "Start Investigation"}
                       </button>
                       <button
-                        className="inline-flex items-center gap-1.5 text-xs font-medium rounded-md border px-3 py-1.5 hover:bg-green-50 hover:border-green-300 hover:text-green-800 dark:hover:bg-green-900/30 dark:hover:border-green-700 dark:hover:text-green-300 transition-colors disabled:opacity-50"
+                        className={cn(
+                          "inline-flex items-center gap-1.5 text-xs font-medium rounded-md border px-3 py-1.5 transition-colors disabled:opacity-50",
+                          detailData.exception.status === "resolved"
+                            ? "bg-green-100 border-green-300 text-green-800 dark:bg-green-900/40 dark:border-green-700 dark:text-green-300"
+                            : "hover:bg-green-50 hover:border-green-300 hover:text-green-800 dark:hover:bg-green-900/30 dark:hover:border-green-700 dark:hover:text-green-300"
+                        )}
                         disabled={statusMutation.isPending || detailData.exception.status === "resolved"}
                         onClick={() => statusMutation.mutate({ id: selectedExceptionId, status: "resolved" })}
                       >
+                        {detailData.exception.status === "resolved" && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                        )}
                         Mark Resolved
                       </button>
                       <button
-                        className="inline-flex items-center gap-1.5 text-xs font-medium rounded-md border px-3 py-1.5 hover:bg-muted transition-colors disabled:opacity-50"
+                        className={cn(
+                          "inline-flex items-center gap-1.5 text-xs font-medium rounded-md border px-3 py-1.5 transition-colors disabled:opacity-50",
+                          detailData.exception.status === "dismissed"
+                            ? "bg-gray-200 border-gray-300 text-gray-700 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
+                            : "hover:bg-muted"
+                        )}
                         disabled={statusMutation.isPending || detailData.exception.status === "dismissed"}
                         onClick={() => statusMutation.mutate({ id: selectedExceptionId, status: "dismissed" })}
                       >

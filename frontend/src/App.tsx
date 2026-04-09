@@ -55,6 +55,7 @@ const SqlRunnerTab = lazy(() => import("./tabs/SqlRunnerTab").then((m) => ({ def
 const SettingsTab = lazy(() => import("./tabs/SettingsTab"));
 const ModelTuningTab = lazy(() => import("./tabs/ModelTuningTab"));
 const DemandHistoryTab = lazy(() => import("./tabs/DemandHistoryTab"));
+const SkuFeaturesTab = lazy(() => import("./tabs/SkuFeaturesTab"));
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -298,6 +299,11 @@ export default function App() {
                 {activeTab === "demandHistory" && (
                   <TabPanel tabKey="demandHistory" resetKeys={[activeTab]}>
                     <DemandHistoryTab />
+                  </TabPanel>
+                )}
+                {activeTab === "skuFeatures" && (
+                  <TabPanel tabKey="skuFeatures" resetKeys={[activeTab]}>
+                    <SkuFeaturesTab />
                   </TabPanel>
                 )}
               </div>

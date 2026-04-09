@@ -10,8 +10,11 @@ import {
   Bar,
   Cell,
 } from "recharts";
+import { X } from "lucide-react";
 import { useChartColors } from "@/hooks/useChartColors";
 import { useReference } from "@/api/queries/demand-history";
+import { Skeleton } from "@/components/Skeleton";
+import { formatInt, formatPct, formatFixed } from "@/lib/formatters";
 
 interface Props {
   itemId: string;
@@ -20,9 +23,14 @@ interface Props {
   onClose: () => void;
 }
 
-function formatNum(n: number | null | undefined): string {
-  if (n == null) return "—";
-  return n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+const kpiFmt = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 1,
+  notation: "compact",
+});
+
+function formatKpi(n: number | null | undefined): string {
+  if (n == null) return "--";
+  return kpiFmt.format(n);
 }
 
 export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
@@ -58,25 +66,33 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
       >
         {/* Header */}
         <div className="sticky top-0 bg-white dark:bg-gray-900 border-b dark:border-gray-700 px-4 py-3 flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold text-sm">
+          <div className="min-w-0 flex-1">
+            <h3 className="font-semibold text-sm truncate">
               {data?.item_description ?? itemId}
             </h3>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-500 truncate">
               {data?.location_name ?? loc}
             </p>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg"
+            className="flex-shrink-0 ml-2 p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-800 transition-colors"
             aria-label="Close panel"
           >
-            &times;
+            <X className="h-4 w-4" />
           </button>
         </div>
 
         {isLoading && (
-          <div className="p-6 text-center text-sm text-gray-500">Loading...</div>
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-16 rounded-lg" />
+              ))}
+            </div>
+            <Skeleton className="h-[120px] rounded-lg" />
+            <Skeleton className="h-[100px] rounded-lg" />
+          </div>
         )}
         {isError && (
           <div className="p-6 text-center text-sm text-red-500">Failed to load data</div>
@@ -88,20 +104,20 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
             <div className="grid grid-cols-2 gap-3">
               <KpiCard
                 label="MoM Trend"
-                value={`${data.trend_mom_pct >= 0 ? "+" : ""}${data.trend_mom_pct.toFixed(1)}%`}
+                value={`${data.trend_mom_pct >= 0 ? "+" : ""}${formatFixed(data.trend_mom_pct)}%`}
                 color={data.trend_mom_pct >= 0 ? "text-green-600" : "text-red-600"}
               />
               <KpiCard
                 label="Accuracy"
-                value={data.forecast_accuracy != null ? `${data.forecast_accuracy.toFixed(1)}%` : "—"}
+                value={data.forecast_accuracy != null ? formatPct(data.forecast_accuracy) : "--"}
               />
               <KpiCard
                 label="Inventory"
-                value={formatNum(data.current_inventory)}
+                value={formatKpi(data.current_inventory)}
               />
               <KpiCard
                 label="Lead Time"
-                value={data.avg_lead_time != null ? `${data.avg_lead_time.toFixed(0)}d` : "—"}
+                value={data.avg_lead_time != null ? `${formatFixed(data.avg_lead_time, 0)}d` : "--"}
               />
             </div>
 
@@ -165,7 +181,7 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
                       fontSize: 11,
                     }}
                     formatter={(v: number) =>
-                      [`${v.toLocaleString()}`, "Demand"]
+                      [formatInt(v), "Demand"]
                     }
                   />
                   <Bar dataKey="demand_qty" radius={[0, 4, 4, 0]}>
@@ -192,9 +208,9 @@ export function DemandReferencePanel({ itemId, loc, open, onClose }: Props) {
 
 function KpiCard({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div className="rounded-lg bg-gray-50 dark:bg-gray-800 px-3 py-2">
-      <p className="text-[10px] text-gray-500 uppercase tracking-wide">{label}</p>
-      <p className={`text-lg font-semibold ${color ?? "text-gray-900 dark:text-gray-100"}`}>
+    <div className="rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 px-3 py-2.5">
+      <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">{label}</p>
+      <p className={`text-lg font-bold tabular-nums ${color ?? "text-gray-900 dark:text-gray-100"}`}>
         {value}
       </p>
     </div>

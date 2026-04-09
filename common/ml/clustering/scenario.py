@@ -1,0 +1,245 @@
+"""Reusable clustering scenario infrastructure.
+
+Contains the functions that are imported by routers, job_state, and pipeline
+scripts for scenario ID generation, promotion, result retrieval, and config
+defaults.  Orchestration (``run_scenario``, ``_run_full_pipeline``) stays in
+``scripts/run_clustering_scenario.py``.
+"""
+
+import json
+import logging
+import re
+import shutil
+import time
+import uuid
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from common.db import get_db_params
+from common.services.perf_profiler import profiled_section
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Root of the project — two levels up from common/ml/clustering/
+ROOT = Path(__file__).resolve().parents[3]
+
+# Directory to store scenario temp data
+SCENARIO_BASE = Path("/tmp/clustering_scenarios")
+
+# Scenario IDs must match this pattern (same regex as enforced in clusters.py router)
+_SCENARIO_ID_RE = re.compile(r"^sc_\d{8}_\d{6}_[0-9a-f]{4}$")
+
+# Hardcoded fallback defaults used when no promoted experiment is found in the DB.
+_FALLBACK_DEFAULTS: dict[str, Any] = {
+    "time_window_months": 36,
+    "min_months_history": 12,
+    "k_range": [9, 18],
+    "min_cluster_size_pct": 2.0,
+    "use_pca": False,
+    "pca_components": None,
+    "labeling": {
+        "volume_thresholds": {"very_high": 0.90, "high": 0.75, "low": 0.25, "very_low": 0.10},
+        "cv_thresholds": {"steady": 0.4, "volatile": 0.8},
+        "seasonality_threshold": 0.3,
+        "zero_demand_threshold": 0.15,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _safe_scenario_dir(scenario_id: str) -> Path:
+    """Return the scenario directory path after validating scenario_id.
+
+    Raises ValueError if the ID format is invalid or if the resolved path
+    would escape SCENARIO_BASE (path traversal guard).
+    """
+    if not _SCENARIO_ID_RE.match(scenario_id):
+        raise ValueError(
+            f"Invalid scenario_id '{scenario_id}'. "
+            "Expected format: sc_YYYYMMDD_HHMMSS_<4hex>"
+        )
+    resolved = (SCENARIO_BASE / scenario_id).resolve()
+    base_resolved = SCENARIO_BASE.resolve()
+    if not resolved.is_relative_to(base_resolved):
+        raise ValueError(f"scenario_id '{scenario_id}' resolves outside SCENARIO_BASE")
+    return resolved
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def generate_scenario_id() -> str:
+    """Generate a unique scenario ID."""
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    short_uuid = uuid.uuid4().hex[:4]
+    return f"sc_{ts}_{short_uuid}"
+
+
+def _load_config_defaults() -> dict[str, Any]:
+    """Load defaults from promoted experiment in DB, falling back to hardcoded defaults."""
+    try:
+        import psycopg
+
+        db = get_db_params()
+        with psycopg.connect(**db) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT feature_params, model_params, label_params "
+                "FROM cluster_experiment "
+                "WHERE is_promoted = TRUE "
+                "ORDER BY promoted_at DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row:
+                fp = row[0] if isinstance(row[0], dict) else (json.loads(row[0]) if row[0] else {})
+                mp = row[1] if isinstance(row[1], dict) else (json.loads(row[1]) if row[1] else {})
+                lp = row[2] if isinstance(row[2], dict) else (json.loads(row[2]) if row[2] else {})
+                return {
+                    "time_window_months": fp.get("time_window_months", 36),
+                    "min_months_history": fp.get("min_months_history", 12),
+                    "k_range": mp.get("k_range", [9, 18]),
+                    "min_cluster_size_pct": mp.get("min_cluster_size_pct", 2.0),
+                    "use_pca": mp.get("use_pca", False),
+                    "pca_components": mp.get("pca_components"),
+                    "labeling": {
+                        "volume_thresholds": {
+                            "high": lp.get("volume_high", 0.75),
+                            "low": lp.get("volume_low", 0.25),
+                        },
+                        "cv_thresholds": {
+                            "steady": lp.get("cv_steady", 0.4),
+                            "volatile": lp.get("cv_volatile", 0.8),
+                        },
+                        "seasonality_threshold": lp.get("seasonality_threshold", 0.3),
+                        "zero_demand_threshold": lp.get("zero_demand_threshold", 0.15),
+                    },
+                }
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Could not load config defaults from DB — using hardcoded defaults",
+            exc_info=True,
+        )
+    return {**_FALLBACK_DEFAULTS, "labeling": {**_FALLBACK_DEFAULTS["labeling"]}}
+
+
+def get_scenario_result(scenario_id: str) -> dict[str, Any] | None:
+    """Retrieve a previously run scenario result."""
+    try:
+        scenario_dir = _safe_scenario_dir(scenario_id)
+    except ValueError:
+        return None
+    result_path = scenario_dir / "scenario_result.json"
+    if not result_path.exists():
+        return None
+    with open(result_path) as f:
+        return json.load(f)
+
+
+def promote_scenario(scenario_id: str) -> dict[str, Any]:
+    """Promote a scenario to production by updating dim_sku.ml_cluster.
+
+    After updating the SKU dimension table, this also refreshes accuracy
+    materialized views so that Accuracy Comparison reflects the new clusters.
+    """
+    import psycopg
+
+    scenario_dir = _safe_scenario_dir(scenario_id)
+    labels_path = scenario_dir / "cluster_labels.csv"
+
+    if not labels_path.exists():
+        raise FileNotFoundError(f"Scenario labels not found: {labels_path}")
+
+    # Copy labels to production location
+    with profiled_section("copy_artifacts_to_production"):
+        prod_dir = ROOT / "data" / "clustering"
+        prod_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(labels_path, prod_dir / "cluster_labels.csv")
+
+        # Also copy centroids and profiles
+        for fname in ["cluster_centroids.csv", "scenario_result.json"]:
+            src = scenario_dir / fname
+            if src.exists():
+                shutil.copy2(src, prod_dir / fname)
+
+        # Update cluster_metadata.json so the overview panel shows correct metrics
+        result_path = scenario_dir / "scenario_result.json"
+        if result_path.exists():
+            with open(result_path) as f:
+                scenario_data = json.load(f)
+            scenario_result = scenario_data.get("result", {})
+            metadata = {
+                "optimal_k": scenario_result.get("optimal_k"),
+                "silhouette_score": scenario_result.get("silhouette_score"),
+                "inertia": scenario_result.get("inertia"),
+                "total_dfus": scenario_result.get("total_dfus"),
+                "k_selection_results": scenario_result.get("k_selection_results"),
+            }
+            with open(prod_dir / "cluster_metadata.json", "w") as f:
+                json.dump(metadata, f, indent=2)
+
+    # Update database
+    with profiled_section("update_database"):
+        df = pd.read_csv(labels_path)
+        db = get_db_params()
+
+        with psycopg.connect(**db) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TEMP TABLE _cluster_updates (
+                        sku_ck TEXT PRIMARY KEY,
+                        cluster_label TEXT NOT NULL
+                    ) ON COMMIT DROP
+                """)
+
+                valid = df.dropna(subset=["cluster_label"])
+                with cur.copy("COPY _cluster_updates (sku_ck, cluster_label) FROM STDIN") as copy:
+                    for _, r in valid.iterrows():
+                        copy.write_row((str(r["sku_ck"]), str(r["cluster_label"])))
+
+                cur.execute("""
+                    UPDATE dim_sku d
+                    SET ml_cluster = u.cluster_label,
+                        modified_ts = NOW()
+                    FROM _cluster_updates u
+                    WHERE d.sku_ck = u.sku_ck
+                """)
+                updated_count = cur.rowcount
+                conn.commit()
+
+                # Refresh accuracy MVs so Accuracy Comparison reflects new clusters
+                logger.info("Refreshing accuracy materialized views after cluster promotion ...")
+                for mv in (
+                    "agg_accuracy_by_dim",
+                    "agg_accuracy_lag_archive",
+                    "agg_dfu_coverage",
+                    "agg_dfu_coverage_lag_archive",
+                ):
+                    try:
+                        cur.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}")
+                    except psycopg.Error:
+                        conn.rollback()
+                        cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
+                conn.commit()
+                logger.info("Accuracy MVs refreshed.")
+
+    # Build distribution
+    distribution: dict[str, int] = {}
+    if "cluster_label" in df.columns:
+        for label, count in df["cluster_label"].value_counts().items():
+            distribution[str(label)] = int(count)
+
+    return {
+        "status": "promoted",
+        "scenario_id": scenario_id,
+        "dfus_updated": updated_count,
+        "cluster_distribution": distribution,
+    }

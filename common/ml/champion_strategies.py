@@ -72,6 +72,81 @@ def _get_exec_lag(group: pd.DataFrame) -> int:
     return 0
 
 
+def _compute_blend_weights(
+    prior_wape: pd.Series,
+    weight_method: str = "inverse_wape",
+) -> pd.Series:
+    """Compute blending weights from prior WAPE values.
+
+    Returns a Series of weights summing to 1.0, indexed like ``prior_wape``.
+
+    weight_method:
+        'inverse_wape': weights proportional to 1/WAPE (better models get more weight)
+        'equal': uniform weights
+    """
+    n = len(prior_wape)
+    if n == 0:
+        return pd.Series(dtype=float)
+    if weight_method == "inverse_wape":
+        inv = 1.0 / prior_wape.clip(lower=1e-6)
+        return inv / inv.sum()
+    return pd.Series([1.0 / n] * n, index=prior_wape.index)
+
+
+def _blend_forecasts(
+    top: pd.DataFrame,
+    weights: pd.Series,
+) -> tuple[float, float, float]:
+    """Compute blended forecast, actual, and weighted average WAPE from top models.
+
+    Returns (blended_fcst, actual, avg_wape).
+    """
+    blended_fcst = float((top["basefcst_pref"].astype(float) * weights).sum())
+    actual = float(top["tothist_dmd"].iloc[0])
+    avg_wape = float((top["prior_wape"] * weights).sum())
+    return blended_fcst, actual, avg_wape
+
+
+def _resolve_fallback_rows(
+    fallback_rows: list[pd.DataFrame],
+    results: list[dict[str, Any]],
+    min_prior_months: int = 1,
+) -> None:
+    """Apply expanding fallback for DFU-months not covered by primary results.
+
+    Deduplicates ``fallback_rows``, ensures ``abs_err`` is present, removes
+    DFU-months already in ``results``, and appends fallback winners to
+    ``results`` in-place.
+
+    Shared by ``learned_blend`` and ``ridge_blend`` strategies.
+    """
+    if not fallback_rows:
+        return
+
+    fallback_df = pd.concat(fallback_rows, ignore_index=True)
+    fallback_df = fallback_df.drop_duplicates(
+        subset=_DFU_MONTH_COLS + ["model_id"],
+    )
+    if "abs_err" not in fallback_df.columns:
+        fallback_df["abs_err"] = (
+            fallback_df["basefcst_pref"] - fallback_df["tothist_dmd"]
+        ).abs()
+    if results:
+        covered = {
+            (r["item_id"], r["customer_group"], r["loc"], r["startdate"])
+            for r in results
+        }
+        fallback_df = fallback_df[
+            ~fallback_df[_DFU_MONTH_COLS].apply(tuple, axis=1).isin(covered)
+        ]
+    if not fallback_df.empty:
+        fallback_winners = strategy_expanding(
+            fallback_df, min_prior_months=min_prior_months,
+        )
+        if not fallback_winners.empty:
+            results.extend(fallback_winners.to_dict("records"))
+
+
 def compute_strategy_accuracy(winners_df: pd.DataFrame) -> dict[str, Any]:
     """Compute overall WAPE and accuracy from a winners DataFrame.
 
@@ -80,8 +155,8 @@ def compute_strategy_accuracy(winners_df: pd.DataFrame) -> dict[str, Any]:
     if len(winners_df) == 0:
         return {"wape": None, "accuracy_pct": None, "n_dfu_months": 0}
 
-    abs_err = (winners_df["basefcst_pref"] - winners_df["tothist_dmd"]).abs().sum()
-    total_actual = winners_df["tothist_dmd"].sum()
+    abs_err = float((winners_df["basefcst_pref"] - winners_df["tothist_dmd"]).abs().sum())
+    total_actual = float(winners_df["tothist_dmd"].sum())
 
     if abs(total_actual) == 0:
         return {"wape": None, "accuracy_pct": None, "n_dfu_months": len(winners_df)}
@@ -342,17 +417,8 @@ def strategy_ensemble(
         if len(top) == 0:
             continue
 
-        if weight_method == "inverse_wape":
-            inv_wapes = 1.0 / top["prior_wape"].clip(lower=1e-6)
-            weights = inv_wapes / inv_wapes.sum()
-        else:  # equal
-            weights = pd.Series(
-                [1.0 / len(top)] * len(top), index=top.index,
-            )
-
-        blended_fcst = (top["basefcst_pref"].astype(float) * weights).sum()
-        actual = float(top["tothist_dmd"].iloc[0])
-        avg_wape = float((top["prior_wape"] * weights).sum())
+        weights = _compute_blend_weights(top["prior_wape"], weight_method)
+        blended_fcst, actual, avg_wape = _blend_forecasts(top, weights)
 
         results.append({
             "item_id": item_id,
@@ -398,7 +464,7 @@ def strategy_meta_learner(
         import joblib
         meta = joblib.load(meta_model_path)
     except (FileNotFoundError, Exception):
-        print("  Meta-learner model not found, falling back to expanding strategy")
+        _logger.warning("Meta-learner model not found, falling back to expanding strategy")
         return strategy_expanding(df, min_prior_months=min_prior_months)
 
     model_obj = meta["model"]
@@ -698,20 +764,14 @@ def strategy_adaptive_ensemble(
         k = max_k if spread > spread_threshold else min_k
         top = sorted_models.head(k)
 
-        if weight_method == "inverse_wape":
-            inv_wapes = 1.0 / top["prior_wape"].clip(lower=1e-6)
-            weights = inv_wapes / inv_wapes.sum()
-        else:
-            weights = pd.Series([1.0 / len(top)] * len(top), index=top.index)
+        weights = _compute_blend_weights(top["prior_wape"], weight_method)
 
         for model_id_w, w in zip(top["model_id"], weights):
             weight_sums[model_id_w] = weight_sums.get(model_id_w, 0.0) + float(w)
         weight_count += 1
         k_distribution[k] = k_distribution.get(k, 0) + 1
 
-        blended_fcst = (top["basefcst_pref"].astype(float) * weights).sum()
-        actual = float(top["tothist_dmd"].iloc[0])
-        avg_wape = float((top["prior_wape"] * weights).sum())
+        blended_fcst, actual, avg_wape = _blend_forecasts(top, weights)
 
         results.append({
             "item_id": item_id,
@@ -862,32 +922,7 @@ def strategy_learned_blend(
             })
 
     # ── Fallback: expanding strategy for DFUs with insufficient history ──
-    if fallback_rows:
-        fallback_df = pd.concat(fallback_rows, ignore_index=True)
-        # Deduplicate — same DFU-month may have been collected multiple times
-        fallback_df = fallback_df.drop_duplicates(
-            subset=_DFU_MONTH_COLS + ["model_id"],
-        )
-        # Recompute abs_err if not present
-        if "abs_err" not in fallback_df.columns:
-            fallback_df["abs_err"] = (
-                fallback_df["basefcst_pref"] - fallback_df["tothist_dmd"]
-            ).abs()
-        # Remove months already covered by learned_blend
-        if results:
-            covered = {
-                (r["item_id"], r["customer_group"], r["loc"], r["startdate"])
-                for r in results
-            }
-            fallback_df = fallback_df[
-                ~fallback_df[_DFU_MONTH_COLS].apply(tuple, axis=1).isin(covered)
-            ]
-        if not fallback_df.empty:
-            fallback_winners = strategy_expanding(
-                fallback_df, min_prior_months=1,
-            )
-            if not fallback_winners.empty:
-                results.extend(fallback_winners.to_dict("records"))
+    _resolve_fallback_rows(fallback_rows, results, min_prior_months=1)
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -1032,15 +1067,8 @@ def strategy_ensemble_rolling(
         if len(top) == 0:
             continue
 
-        if weight_method == "inverse_wape":
-            inv_wapes = 1.0 / top["prior_wape"].clip(lower=1e-6)
-            weights = inv_wapes / inv_wapes.sum()
-        else:
-            weights = pd.Series([1.0 / len(top)] * len(top), index=top.index)
-
-        blended_fcst = (top["basefcst_pref"].astype(float) * weights).sum()
-        actual = float(top["tothist_dmd"].iloc[0])
-        avg_wape = float((top["prior_wape"] * weights).sum())
+        weights = _compute_blend_weights(top["prior_wape"], weight_method)
+        blended_fcst, actual, avg_wape = _blend_forecasts(top, weights)
 
         results.append({
             "item_id": item_id,
@@ -1647,32 +1675,7 @@ def strategy_ridge_blend(
             })
 
     # ── Fallback: expanding strategy for DFU-months with insufficient data ──
-    if fallback_rows:
-        fallback_df = pd.concat(fallback_rows, ignore_index=True)
-        # Deduplicate — same DFU-month may have been collected multiple times
-        fallback_df = fallback_df.drop_duplicates(
-            subset=_DFU_MONTH_COLS + ["model_id"],
-        )
-        # Ensure abs_err is present for the expanding strategy
-        if "abs_err" not in fallback_df.columns:
-            fallback_df["abs_err"] = (
-                fallback_df["basefcst_pref"] - fallback_df["tothist_dmd"]
-            ).abs()
-        # Remove months already covered by ridge_blend
-        if results:
-            covered = {
-                (r["item_id"], r["customer_group"], r["loc"], r["startdate"])
-                for r in results
-            }
-            fallback_df = fallback_df[
-                ~fallback_df[_DFU_MONTH_COLS].apply(tuple, axis=1).isin(covered)
-            ]
-        if not fallback_df.empty:
-            fallback_winners = strategy_expanding(
-                fallback_df, min_prior_months=min_prior_months,
-            )
-            if not fallback_winners.empty:
-                results.extend(fallback_winners.to_dict("records"))
+    _resolve_fallback_rows(fallback_rows, results, min_prior_months=min_prior_months)
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -1732,7 +1735,7 @@ def strategy_hybrid_meta_router(
         import joblib
         meta = joblib.load(meta_model_path)
     except (FileNotFoundError, Exception):
-        print("  Hybrid meta-router model not found, falling back to expanding strategy")
+        _logger.warning("Hybrid meta-router model not found, falling back to expanding strategy")
         return strategy_expanding(df, min_prior_months=min_prior_months)
 
     model_obj = meta["model"]
@@ -1814,12 +1817,8 @@ def strategy_hybrid_meta_router(
             if len(top) == 0:
                 continue
 
-            inv_wapes = 1.0 / top["prior_wape"].clip(lower=1e-6)
-            weights = inv_wapes / inv_wapes.sum()
-
-            blended_fcst = (top["basefcst_pref"].astype(float) * weights).sum()
-            actual = float(top["tothist_dmd"].iloc[0])
-            avg_wape = float((top["prior_wape"] * weights).sum())
+            weights = _compute_blend_weights(top["prior_wape"])
+            blended_fcst, actual, avg_wape = _blend_forecasts(top, weights)
 
             blend_results.append({
                 "item_id": item_id,
@@ -1937,12 +1936,8 @@ def strategy_diverse_ensemble(
         top = candidates.loc[selected_indices]
 
         # Blend with original (unpenalised) inverse-WAPE weights
-        inv_wapes = 1.0 / top["prior_wape"].clip(lower=1e-6)
-        weights = inv_wapes / inv_wapes.sum()
-
-        blended_fcst = (top["basefcst_pref"].astype(float) * weights).sum()
-        actual = float(top["tothist_dmd"].iloc[0])
-        avg_wape = float((top["prior_wape"] * weights).sum())
+        weights = _compute_blend_weights(top["prior_wape"])
+        blended_fcst, actual, avg_wape = _blend_forecasts(top, weights)
 
         results.append({
             "item_id": item_id,
@@ -2177,13 +2172,8 @@ def strategy_cascade_ensemble(
                 "tothist_dmd": r["tothist_dmd"],
             })
         else:
-            if weight_method == "inverse_wape":
-                inv_w = 1.0 / top["prior_wape"].clip(lower=1e-6)
-                weights = inv_w / inv_w.sum()
-            else:
-                weights = pd.Series([1.0 / len(top)] * len(top), index=top.index)
-            blended = (top["basefcst_pref"].astype(float) * weights).sum()
-            actual = float(top["tothist_dmd"].iloc[0])
+            weights = _compute_blend_weights(top["prior_wape"], weight_method)
+            blended, actual, _ = _blend_forecasts(top, weights)
             results.append({
                 "item_id": item_id, "customer_group": customer_group,
                 "loc": loc, "startdate": startdate,
@@ -2272,14 +2262,8 @@ def strategy_adversarial_filter(
                 "tothist_dmd": r["tothist_dmd"],
             })
         else:
-            if weight_method == "inverse_wape":
-                inv_w = 1.0 / top["prior_wape"].clip(lower=1e-6)
-                weights = inv_w / inv_w.sum()
-            else:
-                weights = pd.Series([1.0 / len(top)] * len(top), index=top.index)
-            blended = (top["basefcst_pref"].astype(float) * weights).sum()
-            actual = float(top["tothist_dmd"].iloc[0])
-            avg_wape = float((top["prior_wape"] * weights).sum())
+            weights = _compute_blend_weights(top["prior_wape"], weight_method)
+            blended, actual, avg_wape = _blend_forecasts(top, weights)
             results.append({
                 "item_id": item_id, "customer_group": customer_group,
                 "loc": loc, "startdate": startdate,
@@ -3068,6 +3052,30 @@ def strategy_cluster_regime_hybrid(
 # ===========================================================================
 
 
+def _update_thompson_posteriors(
+    alphas: dict[str, float],
+    betas: dict[str, float],
+    models: list[str],
+    oracle_best: str,
+    discount: float,
+) -> None:
+    """Discount all posteriors and reward the oracle-best model.
+
+    Shared by ``thompson_sampling`` and ``thompson_ensemble``. Mutates
+    ``alphas`` and ``betas`` in-place.
+    """
+    for m in models:
+        alphas[m] *= discount
+        betas[m] *= discount
+        alphas[m] = max(alphas[m], 0.1)
+        betas[m] = max(betas[m], 0.1)
+    for m in models:
+        if m == oracle_best:
+            alphas[m] += 1.0
+        else:
+            betas[m] += 1.0
+
+
 # ---------------------------------------------------------------------------
 # Strategy: thompson_sampling
 # ---------------------------------------------------------------------------
@@ -3172,19 +3180,9 @@ def strategy_thompson_sampling(
                 if not update_rows.empty:
                     errors = update_rows.set_index("model_id")["abs_err"]
                     if len(errors) > 0:
-                        oracle_best = errors.idxmin()
-
-                        for m in models:
-                            alphas[m] *= discount
-                            betas[m] *= discount
-                            alphas[m] = max(alphas[m], 0.1)
-                            betas[m] = max(betas[m], 0.1)
-
-                        for m in models:
-                            if m == oracle_best:
-                                alphas[m] += 1.0
-                            else:
-                                betas[m] += 1.0
+                        _update_thompson_posteriors(
+                            alphas, betas, models, errors.idxmin(), discount,
+                        )
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)
@@ -3523,17 +3521,9 @@ def strategy_thompson_ensemble(
                 if not update_rows.empty:
                     errors = update_rows.set_index("model_id")["abs_err"]
                     if len(errors) > 0:
-                        oracle_best = errors.idxmin()
-                        for m in models:
-                            alphas[m] *= discount
-                            betas[m] *= discount
-                            alphas[m] = max(alphas[m], 0.1)
-                            betas[m] = max(betas[m], 0.1)
-                        for m in models:
-                            if m == oracle_best:
-                                alphas[m] += 1.0
-                            else:
-                                betas[m] += 1.0
+                        _update_thompson_posteriors(
+                            alphas, betas, models, errors.idxmin(), discount,
+                        )
 
     if not results:
         return pd.DataFrame(columns=_OUTPUT_COLS)

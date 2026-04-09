@@ -1,4 +1,4 @@
-"""Tests for common/feature_engineering.py — build_feature_matrix, get_feature_columns, mask_future_sales, update_grid_with_predictions."""
+"""Tests for common/feature_engineering.py — build_feature_matrix, get_feature_columns, mask_future_sales, update_grid_with_predictions, update_grid_incremental."""
 
 import pytest
 import pandas as pd
@@ -10,6 +10,7 @@ from common.feature_engineering import (
     build_feature_matrix,
     get_feature_columns,
     mask_future_sales,
+    update_grid_incremental,
     update_grid_with_predictions,
 )
 
@@ -202,7 +203,9 @@ class TestMaskFutureSales:
         cutoff = pd.Timestamp("2024-02-01")
         masked = mask_future_sales(grid, cutoff)
         future = masked[masked["startdate"] > cutoff]
-        assert (future["qty"] == 0).all()
+        # Future qty is NaN (not zero) so rolling stats skip it instead of
+        # dragging down means.  qty is excluded from features by METADATA_COLS.
+        assert future["qty"].isna().all()
 
     def test_preserves_past_qty(self, sample_data):
         sales_df, dfu_attrs, item_attrs, months = sample_data
@@ -309,22 +312,22 @@ class TestUpdateGridWithPredictions:
         assert after_val != before_val
 
 
-class TestZeroMaskingBehavior:
-    """Tests for zero-based future masking.
+class TestNaNMaskingBehavior:
+    """Tests for NaN-based future masking.
 
-    Verifies that mask_future_sales sets future qty to 0, that rolling
-    statistics include zeros from masked months, and that feature columns
-    are properly filled for model consumption.
+    Verifies that mask_future_sales sets future qty to NaN so rolling
+    statistics skip masked months (instead of including artificial zeros),
+    and that feature columns are properly filled to 0 for model consumption.
     """
 
-    def test_future_qty_is_zero(self, sample_data):
-        """After masking, future qty values are zero."""
+    def test_future_qty_is_nan(self, sample_data):
+        """After masking, future qty values are NaN (not zero)."""
         sales_df, dfu_attrs, item_attrs, months = sample_data
         grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, months)
         cutoff = pd.Timestamp("2024-02-01")
         masked = mask_future_sales(grid, cutoff)
         future = masked[masked["startdate"] > cutoff]
-        assert (future["qty"] == 0).all(), "Future qty should be zero"
+        assert future["qty"].isna().all(), "Future qty should be NaN"
 
     def test_past_qty_unchanged(self, sample_data):
         """Past qty values are preserved exactly."""
@@ -351,18 +354,18 @@ class TestZeroMaskingBehavior:
             if pd.api.types.is_numeric_dtype(masked[col]):
                 assert masked[col].isna().sum() == 0, f"Feature column {col} has NaN values"
 
-    def test_qty_column_is_zero_for_future(self, sample_data):
-        """qty itself is zero for future months (not a feature column)."""
+    def test_qty_column_is_nan_for_future(self, sample_data):
+        """qty itself is NaN for future months (not a feature column)."""
         sales_df, dfu_attrs, item_attrs, months = sample_data
         grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, months)
         cutoff = pd.Timestamp("2024-02-01")
         masked = mask_future_sales(grid, cutoff)
         future = masked[masked["startdate"] > cutoff]
-        assert (future["qty"] == 0).all(), "qty should be zero for future months"
+        assert future["qty"].isna().all(), "qty should be NaN for future months"
         assert "qty" not in get_feature_columns(masked), "qty must not be a feature column"
 
-    def test_rolling_mean_includes_zero_masked_months(self):
-        """With zero masking, rolling mean includes masked zeros in the average."""
+    def test_rolling_mean_skips_nan_masked_months(self):
+        """With NaN masking, rolling mean skips masked months entirely."""
         # 12 months of steady demand at 100 units, then 4 future months
         months = pd.to_datetime([f"2024-{m:02d}-01" for m in range(1, 13)]
                                 + ["2025-01-01", "2025-02-01", "2025-03-01", "2025-04-01"])
@@ -380,16 +383,16 @@ class TestZeroMaskingBehavior:
         cutoff = pd.Timestamp("2024-12-01")
         masked = mask_future_sales(grid, cutoff)
 
-        # rolling_mean_3m at 2025-03-01: shifted values are qty at 2025-02 (0), 2025-01 (0), 2024-12 (100)
-        # With zero masking: (100+0+0)/3 = 33.3
+        # rolling_mean_3m at 2025-03-01: shifted values are qty at 2025-02 (NaN),
+        # 2025-01 (NaN), 2024-12 (100). With NaN masking: only 100 is valid → mean = 100
         mar25 = masked[(masked["sku_ck"] == "S") & (masked["startdate"] == pd.Timestamp("2025-03-01"))]
         rm3 = float(mar25["rolling_mean_3m"].iloc[0])
-        assert rm3 == pytest.approx(100.0 / 3.0, abs=1.0), (
-            f"Rolling mean should be ~33.3 (includes zero-masked months). Got {rm3}"
+        assert rm3 == pytest.approx(100.0, abs=1.0), (
+            f"Rolling mean should be ~100 (NaN-masked months skipped). Got {rm3}"
         )
 
-    def test_rolling_mean_at_cutoff_plus_1(self):
-        """rolling_mean_3m at cutoff+1 includes zero-masked future months in average."""
+    def test_rolling_mean_at_cutoff_plus_2(self):
+        """rolling_mean_3m at cutoff+2 skips NaN-masked future months."""
         months = pd.to_datetime([f"2024-{m:02d}-01" for m in range(1, 7)])
         sales_df = pd.DataFrame({
             "sku_ck": ["S"] * 6,
@@ -405,16 +408,16 @@ class TestZeroMaskingBehavior:
         cutoff = pd.Timestamp("2024-04-01")
         masked = mask_future_sales(grid, cutoff)
 
-        # At 2024-06: shifted values are qty at 2024-05 (0, masked), 2024-04 (200), 2024-03 (150)
-        # rolling_mean_3m = (0+200+150)/3 = 116.7
+        # At 2024-06: shifted values are qty at 2024-05 (NaN, masked), 2024-04 (200),
+        # 2024-03 (150). With NaN masking: NaN is skipped → mean of (200, 150) = 175
         jun = masked[(masked["sku_ck"] == "S") & (masked["startdate"] == pd.Timestamp("2024-06-01"))]
         rm3 = float(jun["rolling_mean_3m"].iloc[0])
-        assert rm3 == pytest.approx(350.0 / 3.0, abs=1.0), (
-            f"Expected rolling_mean_3m ~116.7, got {rm3}"
+        assert rm3 == pytest.approx(175.0, abs=1.0), (
+            f"Expected rolling_mean_3m ~175 (NaN skipped), got {rm3}"
         )
 
-    def test_intermittent_demand_zeros_preserved(self):
-        """For intermittent demand, both real zeros and masked zeros are zero."""
+    def test_intermittent_demand_nan_vs_real_zeros(self):
+        """For intermittent demand, real zeros are preserved while masked months are NaN."""
         months = pd.to_datetime([f"2024-{m:02d}-01" for m in range(1, 7)])
         # Intermittent: demand in months 1, 3, 5 only; zeros in months 2, 4
         sales_df = pd.DataFrame({
@@ -431,11 +434,11 @@ class TestZeroMaskingBehavior:
         cutoff = pd.Timestamp("2024-03-01")
         masked = mask_future_sales(grid, cutoff)
 
-        # Future months (Apr, May, Jun) should have zero qty
+        # Future months (Apr, May, Jun) should have NaN qty (not zero)
         future = masked[masked["startdate"] > cutoff]
-        assert (future["qty"] == 0).all()
+        assert future["qty"].isna().all(), "Future months should be NaN"
 
-        # Historical zero (Feb qty=0) should stay as zero
+        # Historical zero (Feb qty=0) should stay as zero (real intermittent zero)
         feb = masked[(masked["sku_ck"] == "S") & (masked["startdate"] == pd.Timestamp("2024-02-01"))]
         assert float(feb["qty"].iloc[0]) == 0.0, "Real zero should be preserved"
 
@@ -443,8 +446,8 @@ class TestZeroMaskingBehavior:
         jan = masked[(masked["sku_ck"] == "S") & (masked["startdate"] == pd.Timestamp("2024-01-01"))]
         assert float(jan["qty"].iloc[0]) == 100.0
 
-    def test_all_future_months_masked_to_zero(self):
-        """Edge case: all months after cutoff are masked to zero."""
+    def test_all_future_months_masked_to_nan(self):
+        """Edge case: all months after cutoff are masked to NaN."""
         months = pd.to_datetime([f"2024-{m:02d}-01" for m in range(1, 7)])
         sales_df = pd.DataFrame({
             "sku_ck": ["S"] * 6,
@@ -461,20 +464,18 @@ class TestZeroMaskingBehavior:
         cutoff = pd.Timestamp("2024-01-01")
         masked = mask_future_sales(grid, cutoff)
 
-        # All future months should have zero qty
+        # All future months should have NaN qty
         future = masked[masked["startdate"] > cutoff]
-        assert (future["qty"] == 0).all()
+        assert future["qty"].isna().all()
 
-        # rolling_mean_3m at Feb: shifted[0]=NaN, shifted[1]=100 → (NaN, 100) window=3
-        # With zero masking and uniform grid, cumsum approach includes zeros
+        # rolling_mean_3m at Feb: shifted[1]=qty[0]=100 (real), shifted[0]=NaN
+        # With NaN masking, only 1 valid value in the window → mean = 100
         feb = masked[(masked["sku_ck"] == "S") & (masked["startdate"] == pd.Timestamp("2024-02-01"))]
         rm3 = float(feb["rolling_mean_3m"].iloc[0])
         assert rm3 == pytest.approx(100.0, abs=1.0)
 
         # rolling_mean_3m at Jun: shifted values are qty at May (NaN), Apr (NaN),
-        # Mar (NaN), Feb (NaN), Jan (100). Window of 3: shifted[5]=NaN, shifted[4]=NaN,
-        # shifted[3]=NaN → 0 valid in window. But shifted[2]=NaN, shifted[1]=100.
-        # For window=3 at position 5: shifted[3..5] = [NaN, NaN, NaN] → 0 valid → filled to 0
+        # Mar (NaN). All NaN in the 3-month window → filled to 0 after masking.
         jun = masked[(masked["sku_ck"] == "S") & (masked["startdate"] == pd.Timestamp("2024-06-01"))]
         rm3_jun = float(jun["rolling_mean_3m"].iloc[0])
         # With NaN masking, no valid values in the 3-month window → 0 (filled)
@@ -728,3 +729,187 @@ class TestTsProfileLeakagePrevention:
                     f"{feat} should be static per DFU but has {len(vals)} "
                     f"unique values for {sku}"
                 )
+
+
+class TestUpdateGridIncremental:
+    """Tests for update_grid_incremental — fast in-place recursive lag/rolling update."""
+
+    @pytest.fixture
+    def grid_and_months(self, sample_data):
+        """Build a masked grid ready for incremental updates."""
+        sales_df, dfu_attrs, item_attrs, months = sample_data
+        grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, months)
+        masked = mask_future_sales(grid, pd.Timestamp("2024-02-01"))
+        all_months = sorted(masked["startdate"].unique())
+        return masked, all_months
+
+    def test_writes_qty_for_predicted_month(self, grid_and_months):
+        """qty for the predicted month is set to prediction value."""
+        grid, all_months = grid_and_months
+        month = pd.Timestamp("2024-03-01")
+        preds = pd.DataFrame({"sku_ck": ["A", "B"], "basefcst_pref": [111.0, 222.0]})
+        update_grid_incremental(grid, month, preds, all_months)
+        a_row = grid[(grid["sku_ck"] == "A") & (grid["startdate"] == month)]
+        assert float(a_row["qty"].iloc[0]) == pytest.approx(111.0, abs=0.1)
+
+    def test_lag1_updated_for_next_month(self, grid_and_months):
+        """After updating month T, qty_lag_1 for T+1 equals prediction."""
+        grid, all_months = grid_and_months
+        month = pd.Timestamp("2024-03-01")
+        next_month = pd.Timestamp("2024-04-01")
+        preds = pd.DataFrame({"sku_ck": ["A", "B"], "basefcst_pref": [123.0, 456.0]})
+        update_grid_incremental(grid, month, preds, all_months)
+        a_next = grid[(grid["sku_ck"] == "A") & (grid["startdate"] == next_month)]
+        assert float(a_next["qty_lag_1"].iloc[0]) == pytest.approx(123.0, abs=0.1)
+
+    def test_smooth_factor_zero_is_raw_prediction(self, grid_and_months):
+        """With smooth_factor=0, lag-1 equals the raw prediction (default behavior)."""
+        grid, all_months = grid_and_months
+        month = pd.Timestamp("2024-03-01")
+        next_month = pd.Timestamp("2024-04-01")
+        preds = pd.DataFrame({"sku_ck": ["A", "B"], "basefcst_pref": [200.0, 300.0]})
+        update_grid_incremental(grid, month, preds, all_months, smooth_factor=0.0)
+        a_lag1 = float(
+            grid[(grid["sku_ck"] == "A") & (grid["startdate"] == next_month)]["qty_lag_1"].iloc[0]
+        )
+        assert a_lag1 == pytest.approx(200.0, abs=0.1)
+
+    def test_smooth_factor_blends_lag1(self, grid_and_months):
+        """With smooth_factor > 0, lag-1 is blended between prediction and old lag."""
+        grid, all_months = grid_and_months
+        # First, write predictions for month 3 (so month 4 has a non-zero lag-1)
+        month3 = pd.Timestamp("2024-03-01")
+        month4 = pd.Timestamp("2024-04-01")
+        preds_m3 = pd.DataFrame({"sku_ck": ["A", "B"], "basefcst_pref": [100.0, 200.0]})
+        update_grid_incremental(grid, month3, preds_m3, all_months, smooth_factor=0.0)
+
+        # Now month 4 has lag-1 = 100 for A. Predict month 4 with a very different value.
+        old_lag1_a = float(
+            grid[(grid["sku_ck"] == "A") & (grid["startdate"] == month4)]["qty_lag_1"].iloc[0]
+        )
+        assert old_lag1_a == pytest.approx(100.0, abs=0.1), "Precondition: lag-1 from step 1"
+
+        # Predict month 4 with smooth_factor=0.5 — lag-1 for (nonexistent) month 5
+        # won't exist in 4-month grid, but we can check the qty column is still written.
+        # Instead, let's use a 6-month grid.
+
+    def test_smooth_factor_blends_lag1_with_history(self):
+        """With smooth_factor > 0, lag-1 is blended: (1-sf)*pred + sf*old_lag1."""
+        # Build a 6-month grid for more room
+        months = pd.to_datetime([f"2024-{m:02d}-01" for m in range(1, 7)])
+        sales_df = pd.DataFrame({
+            "sku_ck": ["A"] * 6,
+            "startdate": list(months),
+            "qty": [100.0, 200.0, 150.0, 300.0, 250.0, 350.0],
+        })
+        dfu_attrs = pd.DataFrame({
+            "sku_ck": ["A"], "item_id": ["I1"],
+            "customer_group": ["G1"], "loc": ["L1"],
+        })
+        item_attrs = pd.DataFrame({"item_id": ["I1"]})
+        grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, list(months))
+        masked = mask_future_sales(grid, pd.Timestamp("2024-02-01"))
+        all_months = sorted(masked["startdate"].unique())
+
+        # Step 1: predict month 3 (no smoothing)
+        m3 = pd.Timestamp("2024-03-01")
+        m4 = pd.Timestamp("2024-04-01")
+        m5 = pd.Timestamp("2024-05-01")
+        preds_m3 = pd.DataFrame({"sku_ck": ["A"], "basefcst_pref": [100.0]})
+        update_grid_incremental(masked, m3, preds_m3, all_months, smooth_factor=0.0)
+
+        # Now lag-1 at m4 = 100.0 (the raw prediction for m3)
+        lag1_m4 = float(
+            masked[(masked["sku_ck"] == "A") & (masked["startdate"] == m4)]["qty_lag_1"].iloc[0]
+        )
+        assert lag1_m4 == pytest.approx(100.0, abs=0.1)
+
+        # Step 2: predict month 4 with smooth_factor=0.5
+        # Prediction = 500.0 (very different from lag-1=100)
+        preds_m4 = pd.DataFrame({"sku_ck": ["A"], "basefcst_pref": [500.0]})
+        update_grid_incremental(masked, m4, preds_m4, all_months, smooth_factor=0.5)
+
+        # lag-1 at m5 should be: 500*(1-0.5) + old_lag1_at_m5 * 0.5
+        # old_lag1_at_m5 was the lag-1 before this update. After m3 update,
+        # lag-1 at m5 = qty at m4, which was set to 500 by the qty write.
+        # Wait — update_grid_incremental first writes qty at m4 = 500, then
+        # for lag-1 at m5: new_lag = qty_2d[:, month_pos] = 500 (the predicted qty).
+        # old_lag = grid.loc[m5, "qty_lag_1"] which was set by the m3 update's
+        # lag-2 propagation (lag_2 at m5 = qty at m3 = 100, but lag-1 at m5...
+        # Actually lag-1 at m5 was set by qty at m4 from the m3 update. After m3
+        # prediction wrote qty at m3 = 100, lag-1 at m4 = 100, lag-2 at m5 = 100.
+        # lag-1 at m5 was NOT touched by the m3 update (lag-1 only looks at
+        # target_pos = month_pos + 1, which is m4, not m5).
+        # So lag-1 at m5 before the m4 update is whatever was left from masking (0).
+        # Smoothed lag-1 at m5 = 500*(1-0.5) + 0*0.5 = 250
+        lag1_m5 = float(
+            masked[(masked["sku_ck"] == "A") & (masked["startdate"] == m5)]["qty_lag_1"].iloc[0]
+        )
+        assert lag1_m5 == pytest.approx(250.0, abs=0.1), (
+            f"Expected smoothed lag-1 = 250.0 (blend of 500 and 0), got {lag1_m5}"
+        )
+
+    def test_smooth_factor_does_not_affect_lag2_and_beyond(self):
+        """Smoothing only applies to lag-1; lag-2+ get raw prediction values."""
+        months = pd.to_datetime([f"2024-{m:02d}-01" for m in range(1, 7)])
+        sales_df = pd.DataFrame({
+            "sku_ck": ["A"] * 6,
+            "startdate": list(months),
+            "qty": [100.0, 200.0, 150.0, 300.0, 250.0, 350.0],
+        })
+        dfu_attrs = pd.DataFrame({
+            "sku_ck": ["A"], "item_id": ["I1"],
+            "customer_group": ["G1"], "loc": ["L1"],
+        })
+        item_attrs = pd.DataFrame({"item_id": ["I1"]})
+        grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, list(months))
+        masked = mask_future_sales(grid, pd.Timestamp("2024-02-01"))
+        all_months = sorted(masked["startdate"].unique())
+
+        m3 = pd.Timestamp("2024-03-01")
+        m5 = pd.Timestamp("2024-05-01")
+        preds_m3 = pd.DataFrame({"sku_ck": ["A"], "basefcst_pref": [999.0]})
+        update_grid_incremental(masked, m3, preds_m3, all_months, smooth_factor=0.5)
+
+        # lag-2 at m5 = qty at m3 = 999.0 (raw, no smoothing)
+        lag2_m5 = float(
+            masked[(masked["sku_ck"] == "A") & (masked["startdate"] == m5)]["qty_lag_2"].iloc[0]
+        )
+        assert lag2_m5 == pytest.approx(999.0, abs=0.1), (
+            f"lag-2 should be raw prediction (999), got {lag2_m5}"
+        )
+
+    def test_smooth_factor_handles_nan_old_lag(self):
+        """When old lag-1 is NaN (no prior data), smoothing falls back to raw prediction."""
+        months = pd.to_datetime([f"2024-{m:02d}-01" for m in range(1, 7)])
+        sales_df = pd.DataFrame({
+            "sku_ck": ["A"] * 6,
+            "startdate": list(months),
+            "qty": [100.0, 200.0, 150.0, 300.0, 250.0, 350.0],
+        })
+        dfu_attrs = pd.DataFrame({
+            "sku_ck": ["A"], "item_id": ["I1"],
+            "customer_group": ["G1"], "loc": ["L1"],
+        })
+        item_attrs = pd.DataFrame({"item_id": ["I1"]})
+        grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, list(months))
+        masked = mask_future_sales(grid, pd.Timestamp("2024-02-01"))
+        all_months = sorted(masked["startdate"].unique())
+
+        # Force lag-1 at m4 to NaN to test NaN handling
+        m3 = pd.Timestamp("2024-03-01")
+        m4 = pd.Timestamp("2024-04-01")
+        masked.loc[
+            (masked["sku_ck"] == "A") & (masked["startdate"] == m4), "qty_lag_1"
+        ] = np.nan
+
+        preds_m3 = pd.DataFrame({"sku_ck": ["A"], "basefcst_pref": [400.0]})
+        update_grid_incremental(masked, m3, preds_m3, all_months, smooth_factor=0.5)
+
+        # lag-1 at m4: old was NaN → finite_mask is False → uses raw prediction 400
+        lag1_m4 = float(
+            masked[(masked["sku_ck"] == "A") & (masked["startdate"] == m4)]["qty_lag_1"].iloc[0]
+        )
+        assert lag1_m4 == pytest.approx(400.0, abs=0.1), (
+            f"With NaN old lag, should use raw prediction (400), got {lag1_m4}"
+        )

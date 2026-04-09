@@ -1,161 +1,252 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# TUNING EXPERIMENT TEMPLATES
+# ═══════════════════════════════════════════════════════════════════════════════
+# Pre-defined hyperparameter configurations for the Unified Model Tuning UI.
+# Each template provides a starting point for a tuning experiment — users can
+# run as-is or customize individual params.
+#
+# Loaded by: api/routers/forecasting/unified_model_tuning.py
+#            (GET /model-tuning/{model}/templates)
+#
+# Template fields:
+#   id:          Unique identifier within the model family
+#   label:       Human-readable display name in the UI
+#   description: When/why to use this template
+#   source:      "algorithm_config" or "pipeline_config" means params are loaded
+#                live from forecast_pipeline_config.yaml (always reflects production)
+#   params:      Hyperparameter overrides (only params that differ from production
+#                defaults — unspecified params inherit from the algorithm's config)
+#
+# Organization: templates are grouped by model family (lgbm, catboost, xgboost).
+# Each family has a production_baseline (live) plus expert-curated presets.
+# ═══════════════════════════════════════════════════════════════════════════════
 templates:
+  # ═══ LIGHTGBM TEMPLATES ════════════════════════════════════════════════════
   lgbm:
+    # ─── Production Baseline (Live) ──────────────────────────────────────────
+    # Reads current production parameters from forecast_pipeline_config.yaml
+    # algorithms.lgbm_cluster.params. Always up-to-date with what is running.
     - id: production_baseline
       label: "Current Production Settings"
       description: "The parameters currently running in production"
-      source: algorithm_config  # read live from algorithm_config.yaml
+      source: algorithm_config          # Special marker: params loaded live from pipeline config
+
+    # ─── Conservative (Stable Demand) ────────────────────────────────────────
+    # Strong regularization for stable, low-variability items. Deeper trees
+    # with aggressive smoothing prevent overfitting on predictable patterns.
+    # Use when: Items have consistent demand with minimal promotions/events.
     - id: expert_aggressive_depth
       label: "Conservative (Stable Demand)"
       description: "Best for stable, low-variability items with strong regularization"
       params:
-        max_depth: 10
-        num_leaves: 63
-        reg_lambda: 3.5
-        reg_alpha: 0.5
-        path_smooth: 8.0
-        min_child_samples: 60
+        max_depth: 10                   # Deeper trees OK with strong regularization
+        num_leaves: 63                  # Moderate leaf count
+        reg_lambda: 3.5                 # Heavy L2 regularization (vs. 0.8 production)
+        reg_alpha: 0.5                  # Moderate L1 regularization
+        path_smooth: 8.0               # Strong leaf smoothing (vs. 0.5 production)
+        min_child_samples: 60          # Large leaf minimum (vs. 20 production) — prevents small-sample splits
+
+    # ─── High Precision (Long Training) ──────────────────────────────────────
+    # Very slow learning rate with many trees. Trades training time for
+    # maximum accuracy by making tiny incremental improvements per round.
+    # Use when: Accuracy is critical and training time budget is generous.
     - id: expert_ultra_slow_lr
       label: "High Precision (Long Training)"
       description: "Maximizes accuracy with extended training for subtle patterns"
       params:
-        learning_rate: 0.008
-        n_estimators: 3000
-        subsample: 0.85
-        colsample_bytree: 0.85
+        learning_rate: 0.008            # Half the production rate — needs more rounds
+        n_estimators: 3000              # 50% more trees to compensate for lower LR
+        subsample: 0.85                 # Higher row sampling for stability
+        colsample_bytree: 0.85          # Higher feature sampling
+
+    # ─── Intermittent Demand ─────────────────────────────────────────────────
+    # Optimized for sparse demand (many zero-sales months). Heavy regularization
+    # and large leaf minimums prevent the model from memorizing sparse patterns.
+    # Use when: Items have >30% zero-demand months (lumpy/intermittent).
     - id: expert_sparse_demand
       label: "Intermittent Demand"
       description: "Optimized for sparse or intermittent demand patterns"
       params:
-        feature_fraction_bynode: 0.9
-        colsample_bytree: 0.9
-        min_child_samples: 100
-        min_gain_to_split: 0.05
-        reg_alpha: 1.0
-        path_smooth: 12.0
+        feature_fraction_bynode: 0.9    # High feature availability per node (sparse data needs more signal)
+        colsample_bytree: 0.9           # High feature availability per tree
+        min_child_samples: 100          # Very large leaf minimum (vs. 20 production) — crucial for sparse data
+        min_gain_to_split: 0.05         # Higher split threshold (vs. 0.01 production) — fewer but more meaningful splits
+        reg_alpha: 1.0                  # Strong L1 regularization for feature sparsity
+        path_smooth: 12.0              # Very strong smoothing (vs. 0.5 production)
+
+    # ─── Balanced (Best All-Around) ──────────────────────────────────────────
+    # Combines top findings from prior tuning experiments into a well-rounded
+    # configuration. Good starting point when you have no specific demand insight.
+    # Use when: Mixed demand patterns across the portfolio.
     - id: expert_balanced_champion
       label: "Balanced (Best All-Around)"
       description: "Well-rounded settings combining top findings from prior experiments"
       params:
-        learning_rate: 0.015
-        n_estimators: 2000
-        max_depth: 12
-        num_leaves: 95
-        reg_lambda: 2.5
-        reg_alpha: 0.3
-        feature_fraction_bynode: 0.8
-        path_smooth: 6.0
-        min_child_samples: 50
+        learning_rate: 0.015            # Same as production
+        n_estimators: 2000              # Same as production
+        max_depth: 12                   # Deeper than production (8) — more capacity
+        num_leaves: 95                  # More leaves than production (63) — finer splits
+        reg_lambda: 2.5                 # Moderate L2 (between conservative and production)
+        reg_alpha: 0.3                  # Moderate L1
+        feature_fraction_bynode: 0.8    # Same as production
+        path_smooth: 6.0               # Strong smoothing (between production and conservative)
+        min_child_samples: 50          # Moderate leaf minimum
 
+  # ═══ CATBOOST TEMPLATES ════════════════════════════════════════════════════
   catboost:
+    # ─── Production Baseline (Live) ──────────────────────────────────────────
     - id: production_baseline
       label: "Current Production Settings"
-      source: algorithm_config
+      source: algorithm_config          # Loaded live from pipeline config
+
+    # ─── Temporal Optimized ──────────────────────────────────────────────────
+    # Uses SymmetricTree growth and Ordered bootstrap, which are specifically
+    # designed for time-series data where observation order matters.
+    # Use when: Strong seasonal patterns, data has temporal dependencies.
     - id: expert_ordered_symmetric
       label: "Temporal Optimized"
       description: "Best for time-series data with strong seasonal patterns"
       params:
-        grow_policy: SymmetricTree
-        depth: 8
-        bootstrap_type: Ordered
-        iterations: 4000
-        learning_rate: 0.006
-        random_strength: 1.0
+        grow_policy: SymmetricTree      # Balanced trees (vs. Lossguide production) — better for ordered data
+        depth: 8                        # One deeper than production (7)
+        bootstrap_type: Ordered         # Ordered bootstrap preserves time ordering (vs. MVS production)
+        iterations: 4000                # 5x production (800) — slow LR needs more iterations
+        learning_rate: 0.006            # Very slow LR (vs. 0.03 production)
+        random_strength: 1.0            # Higher random noise for split scoring — more exploration
+
+    # ─── Fine-Grained Splits ────────────────────────────────────────────────
+    # Higher border_count gives finer-grained numeric feature splits.
+    # Good when demand signals have subtle thresholds (e.g., price sensitivity).
+    # Use when: Need higher resolution splits for nuanced feature relationships.
     - id: expert_high_border
       label: "Fine-Grained Splits"
       description: "Higher resolution splits for nuanced demand signals"
       params:
-        border_count: 128
-        l2_leaf_reg: 3.0
-        min_data_in_leaf: 40
-        bagging_temperature: 0.6
-        model_size_reg: 0.02
+        border_count: 128               # 4x production (32) — much finer histogram bins
+        l2_leaf_reg: 3.0                # Lower regularization (vs. 7.5 production) — more capacity
+        min_data_in_leaf: 40            # Larger minimum leaf (vs. 28 production) — prevents noise-fitting
+        bagging_temperature: 0.6        # Slightly higher randomness (vs. 0.4 production)
+        model_size_reg: 0.02            # Lower model size penalty (vs. 0.1 production) — allows larger model
+
+    # ─── Noise-Resistant (Langevin Diffusion) ────────────────────────────────
+    # Uses CatBoost's Langevin boosting with diffusion noise. Adds controlled
+    # stochasticity to gradient computation, improving robustness to noisy data.
+    # Use when: Demand data is noisy, has measurement errors, or many outliers.
     - id: expert_langevin
       label: "Noise-Resistant (Exploratory)"
       description: "Uses diffusion noise to handle noisy demand data"
       params:
-        langevin: true
-        diffusion_temperature: 10000
-        learning_rate: 0.005
-        iterations: 5000
-        l2_leaf_reg: 5.0
-        bootstrap_type: Bayesian
-        bagging_temperature: 1.0
+        langevin: true                  # Enable Langevin boosting (stochastic gradient descent with noise)
+        diffusion_temperature: 10000    # Noise temperature (higher = more noise in gradients)
+        learning_rate: 0.005            # Very slow LR (noise requires smaller steps)
+        iterations: 5000                # Many iterations to compensate for noise
+        l2_leaf_reg: 5.0                # Moderate regularization
+        bootstrap_type: Bayesian        # Bayesian bootstrap pairs well with Langevin
+        bagging_temperature: 1.0        # Full Bayesian bootstrap intensity
+
+    # ─── Ensemble Complement ─────────────────────────────────────────────────
+    # Designed to produce forecasts that complement (not duplicate) other models
+    # in a blended ensemble. Deeper trees with more iterations for distinct patterns.
+    # Use when: Running alongside LGBM/XGBoost in ensemble champion strategies.
     - id: expert_ensemble_optimized
       label: "Ensemble Complement"
       description: "Designed to work alongside other models in blended forecasts"
       params:
-        iterations: 3500
-        learning_rate: 0.01
-        depth: 12
-        l2_leaf_reg: 4.0
-        max_leaves: 191
-        subsample: 0.9
-        colsample_bylevel: 0.9
-        reg_lambda: 2.0
-        model_size_reg: 0.04
+        iterations: 3500                # High iteration count for thorough learning
+        learning_rate: 0.01             # Moderate LR
+        depth: 12                       # Very deep trees (vs. 7 production) — captures different patterns than LGBM
+        l2_leaf_reg: 4.0                # Moderate regularization
+        max_leaves: 191                 # Many leaves (vs. 80 production)
+        subsample: 0.9                  # High row sampling
+        colsample_bylevel: 0.9          # High feature sampling per level
+        reg_lambda: 2.0                 # L2 regularization
+        model_size_reg: 0.04            # Light model size penalty
 
+  # ═══ XGBOOST TEMPLATES ═════════════════════════════════════════════════════
   xgboost:
+    # ─── Production Baseline (Live) ──────────────────────────────────────────
     - id: production_baseline
       label: "Current Production Settings"
-      source: algorithm_config
+      source: algorithm_config          # Loaded live from pipeline config
+
+    # ─── Conservative (Heavy Guardrails) ─────────────────────────────────────
+    # Maximum regularization for the most stable, predictable forecasts.
+    # Sacrifices some accuracy for consistency and robustness.
+    # Use when: Supply chain needs predictable, low-variance forecasts.
     - id: expert_lossguide_heavy_reg
       label: "Conservative (Heavy Guardrails)"
       description: "Strong regularization for stable, predictable forecasts"
       params:
-        grow_policy: lossguide
-        max_leaves: 127
-        max_depth: 10
-        n_estimators: 2000
-        learning_rate: 0.015
-        reg_lambda: 5.0
-        reg_alpha: 0.5
-        gamma: 0.2
-        min_child_weight: 15
-        max_bin: 256
-        colsample_bylevel: 0.8
+        grow_policy: lossguide          # Leaf-wise growth (same as production)
+        max_leaves: 127                 # Fewer leaves than production (255) — simpler trees
+        max_depth: 10                   # Deeper than production (7) but compensated by fewer leaves
+        n_estimators: 2000              # Same as production
+        learning_rate: 0.015            # Slightly slower than production (0.02)
+        reg_lambda: 5.0                 # Same heavy L2 as production
+        reg_alpha: 0.5                  # Same L1 as production
+        gamma: 0.2                      # Higher split threshold (vs. 0.1 production)
+        min_child_weight: 15            # Same as production
+        max_bin: 256                    # Same as production
+        colsample_bylevel: 0.8          # Same as production
+
+    # ─── Balanced Diversity (DART) ───────────────────────────────────────────
+    # Uses DART (Dropouts meet Multiple Additive Regression Trees) booster
+    # which drops random trees during training. Produces more diverse trees
+    # and better generalization at the cost of slower training.
+    # Use when: Overfitting is a concern; want robust generalization.
     - id: expert_dart
       label: "Balanced Diversity"
       description: "Uses tree dropout for robust, well-generalized forecasts"
       params:
-        booster: dart
-        rate_drop: 0.08
-        skip_drop: 0.5
-        n_estimators: 2500
-        learning_rate: 0.012
-        max_depth: 8
-        subsample: 0.85
-        colsample_bytree: 0.85
-        reg_lambda: 3.0
+        booster: dart                   # DART booster with tree dropout (vs. gbtree production)
+        rate_drop: 0.08                 # Probability of dropping a tree during training (8%)
+        skip_drop: 0.5                  # Probability of skipping dropout in a round (50%)
+        n_estimators: 2500              # More trees (some are dropped, so need more)
+        learning_rate: 0.012            # Slower LR (DART benefits from smaller steps)
+        max_depth: 8                    # Slightly deeper than production
+        subsample: 0.85                 # Higher sampling
+        colsample_bytree: 0.85          # Higher feature sampling
+        reg_lambda: 3.0                 # Lower L2 than production (5.0) — DART provides implicit regularization
+
+    # ─── High Precision (Long Training) ──────────────────────────────────────
+    # Very slow learning rate with many trees. Extended training captures
+    # subtle patterns that faster configurations miss.
+    # Use when: Accuracy is paramount and GPU/time budget allows.
     - id: expert_ultra_high_trees
       label: "High Precision (Long Training)"
       description: "Extended training to capture fine-grained demand patterns"
       params:
-        n_estimators: 3000
-        learning_rate: 0.008
-        max_depth: 10
-        max_leaves: 95
-        grow_policy: lossguide
-        max_bin: 256
-        subsample: 0.82
-        colsample_bylevel: 0.85
-        reg_lambda: 4.0
-        gamma: 0.15
+        n_estimators: 3000              # 50% more trees than production
+        learning_rate: 0.008            # 2.5x slower than production
+        max_depth: 10                   # Deeper trees
+        max_leaves: 95                  # Fewer leaves (vs. 255 production) — deeper but narrower
+        grow_policy: lossguide          # Leaf-wise growth
+        max_bin: 256                    # Same as production
+        subsample: 0.82                 # Slightly higher than production (0.8)
+        colsample_bylevel: 0.85         # Higher feature sampling per level
+        reg_lambda: 4.0                 # Slightly lower L2 (vs. 5.0 production)
+        gamma: 0.15                     # Moderate split threshold
+
+    # ─── Balanced (Best All-Around) ──────────────────────────────────────────
+    # Combines DART booster with carefully tuned regularization. Best findings
+    # from prior experiments merged into one configuration.
+    # Use when: Mixed demand patterns, want a strong general-purpose candidate.
     - id: expert_champion_blend
       label: "Balanced (Best All-Around)"
       description: "Top findings combined for a well-rounded candidate"
       params:
-        booster: dart
-        rate_drop: 0.05
-        skip_drop: 0.6
-        n_estimators: 2800
-        learning_rate: 0.01
-        grow_policy: lossguide
-        max_leaves: 127
-        max_depth: 10
-        max_bin: 256
-        min_child_weight: 12
-        subsample: 0.85
-        colsample_bylevel: 0.85
-        reg_lambda: 5.0
-        reg_alpha: 0.3
-        gamma: 0.12
+        booster: dart                   # DART for implicit regularization via dropout
+        rate_drop: 0.05                 # Light dropout (5%)
+        skip_drop: 0.6                  # 60% chance of skipping dropout per round
+        n_estimators: 2800              # 40% more trees (compensates for dropout + slow LR)
+        learning_rate: 0.01             # Half production rate
+        grow_policy: lossguide          # Leaf-wise growth
+        max_leaves: 127                 # Fewer leaves than production (255)
+        max_depth: 10                   # Deeper than production (7)
+        max_bin: 256                    # Same as production
+        min_child_weight: 12            # Slightly lower than production (15) — more splits allowed
+        subsample: 0.85                 # Higher sampling
+        colsample_bylevel: 0.85         # Higher feature sampling
+        reg_lambda: 5.0                 # Same heavy L2 as production
+        reg_alpha: 0.3                  # Lower L1 (vs. 0.5 production)
+        gamma: 0.12                     # Moderate split threshold

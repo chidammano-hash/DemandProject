@@ -148,13 +148,13 @@ flowchart TD
 
 | Stage | What happens | File |
 |---|---|---|
-| Offline (prior) | k-means clustering of DFU demand patterns | `scripts/ml/run_clustering.py` |
+| Offline (prior) | k-means clustering of SKU demand patterns | `scripts/ml/run_cluster_pipeline.py` |
 | DB write | Cluster labels stored in `dim_sku.ml_cluster` | `sql/` DDL |
 | Runtime load | `load_golden_set_data()` queries `dim_sku` → `dfu_attrs["ml_cluster"]` | `algorithm_testing/golden_set.py:168` |
 | Feature matrix | `build_feature_matrix()` merges `dfu_attrs` incl. `ml_cluster` into grid | `common/ml/feature_engineering.py` |
 | Tree model use | One model trained per `ml_cluster` value, predictions concatenated | `algorithm_testing/tree_models.py:179` |
 
-`ml_cluster` is a **hard feature** — it is never stripped from `feature_cols` in either backtest or SHAP computation (stripping it causes dimension mismatch with trained models).
+`ml_cluster` is used for **per-cluster model partitioning** only — it is no longer included as a model feature (removed to prevent leakage from full-history cluster assignments). See [spec 23](23-feature-selection-pipeline.md) and `docs/KNOWN_GAPS.md` §1.
 
 ## Algorithm Count Summary
 

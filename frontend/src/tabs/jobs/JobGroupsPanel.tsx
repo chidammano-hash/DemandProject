@@ -20,24 +20,28 @@ export interface JobGroupsPanelProps {
   submitting: boolean;
   /** Render a custom inline panel for a specific job type (replaces the default Run button row) */
   customCards?: Record<string, React.ReactNode>;
+  /** Hide entire job groups by name (e.g., ["clustering"] — managed in dedicated tab) */
+  hiddenGroups?: string[];
 }
 
 // ---------------------------------------------------------------------------
 // JobGroupsPanel
 // ---------------------------------------------------------------------------
-export function JobGroupsPanel({ jobTypes, onSubmit, onSchedule, submitting, customCards }: JobGroupsPanelProps) {
+export function JobGroupsPanel({ jobTypes, onSubmit, onSchedule, submitting, customCards, hiddenGroups }: JobGroupsPanelProps) {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+
+  const hiddenSet = useMemo(() => new Set(hiddenGroups ?? []), [hiddenGroups]);
 
   const groups = useMemo(() => {
     const seen = new Set<string>();
     return jobTypes.reduce<string[]>((acc, t) => {
-      if (!seen.has(t.group)) {
+      if (!seen.has(t.group) && !hiddenSet.has(t.group)) {
         seen.add(t.group);
         acc.push(t.group);
       }
       return acc;
     }, []);
-  }, [jobTypes]);
+  }, [jobTypes, hiddenSet]);
 
   const toggleGroup = (group: string) => {
     setExpandedGroups((prev) => {

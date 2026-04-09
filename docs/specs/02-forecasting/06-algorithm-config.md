@@ -73,12 +73,16 @@ xgboost:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `cluster_strategy` | string | `"per_cluster"` | `"per_cluster"` trains one model per ml_cluster; `"global"` trains one model on all data. `ml_cluster` is always a hard feature in both modes. |
+| `cluster_strategy` | string | `"per_cluster"` | `"per_cluster"` trains one model per `ml_cluster` partition; `"global"` trains one model on all data. `ml_cluster` is used for partitioning only, not as a model feature (removed to prevent leakage). |
 | `recursive` | bool | false | Enable recursive multi-step inference. Each predict month is scored individually; model's prediction for month T becomes `qty_lag_1` for month T+1. |
-| `shap_select` | bool | false | Enable SHAP-based per-timeframe feature selection. Trains initial model, computes SHAP, selects features, retrains. |
-| `shap_threshold` | float | 0.95 | Cumulative importance threshold. Ignored if `shap_top_n` is set. |
+| `shap_select` | bool | false | Enable multi-stage per-timeframe feature selection (see [spec 23](23-feature-selection-pipeline.md)). |
+| `shap_threshold` | float | 0.95 | SHAP cumulative importance threshold (Stage 3). Ignored if `shap_top_n` is set. |
 | `shap_top_n` | int/null | null | Select exactly this many top features. Overrides `shap_threshold`. |
 | `shap_sample_size` | int | 500 | Rows sampled for SHAP computation per timeframe. |
+| `correlation_filter` | bool | true | Enable correlation pre-filter (Stage 2). Drops lower-variance member of pairs > threshold. |
+| `correlation_threshold` | float | 0.95 | Absolute Pearson correlation threshold for Stage 2. |
+| `variance_filter` | bool | true | Enable near-zero variance filter (Stage 1). |
+| `variance_threshold` | float | 0.01 | Relative variance threshold for Stage 1 (fraction of range squared). |
 | `tune_inline` | bool | false | Per-timeframe causal Optuna tuning. Mutually exclusive with `params_file`. |
 | `params_file` | string/null | null | Path to pre-tuned params JSON from `make tune-*`. Mutually exclusive with `tune_inline`. |
 | Algorithm-specific | varies | see above | Default hyperparameters used when `params_file` is null and `tune_inline` is false. |

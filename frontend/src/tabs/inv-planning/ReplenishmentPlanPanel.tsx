@@ -15,6 +15,7 @@ import {
 import { RefreshCw } from "lucide-react";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
+import { TableSkeleton } from "@/components/Skeleton";
 import { useChartColors } from "@/hooks/useChartColors";
 import { formatNumber, formatCompactNumber } from "@/lib/formatters";
 import {
@@ -257,7 +258,7 @@ export function ReplenishmentPlanPanel() {
         </h3>
 
         {detailQ.isLoading ? (
-          <p className="text-xs text-muted-foreground">Loading…</p>
+          <TableSkeleton rows={8} cols={10} />
         ) : (detail?.rows ?? []).length === 0 ? (
           <EmptyState
             icon={RefreshCw}

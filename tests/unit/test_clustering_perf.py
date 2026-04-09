@@ -110,10 +110,8 @@ class TestComputeFeaturesForGroup:
 
     def test_result_matches_direct_call(self):
         """Parallel wrapper should produce same output as direct call."""
-        from scripts.generate_clustering_features import (
-            _compute_features_for_group,
-            compute_time_series_features,
-        )
+        from scripts.generate_clustering_features import _compute_features_for_group
+        from common.ml.clustering.features import compute_time_series_features
 
         dates = pd.date_range("2023-01-01", periods=36, freq="MS")
         qty = np.random.RandomState(99).randint(10, 1000, size=36).astype(float)
@@ -240,7 +238,7 @@ class TestFindOptimalKParallel:
         return np.vstack([c1, c2, c3])
 
     def test_serial_returns_valid_result(self):
-        from scripts.train_clustering_model import find_optimal_k
+        from common.ml.clustering.training import find_optimal_k
 
         X = self._make_data()
         result = find_optimal_k(X, k_range=(2, 5), min_cluster_size_pct=5.0, n_workers=1)
@@ -253,7 +251,7 @@ class TestFindOptimalKParallel:
         assert len(result["feasible_mask"]) == 4
 
     def test_parallel_returns_valid_result(self):
-        from scripts.train_clustering_model import find_optimal_k
+        from common.ml.clustering.training import find_optimal_k
 
         X = self._make_data()
         result = find_optimal_k(X, k_range=(2, 5), min_cluster_size_pct=5.0, n_workers=2)
@@ -263,7 +261,7 @@ class TestFindOptimalKParallel:
 
     def test_serial_and_parallel_agree_on_optimal_k(self):
         """Serial and parallel should find the same optimal K (deterministic seeds)."""
-        from scripts.train_clustering_model import find_optimal_k
+        from common.ml.clustering.training import find_optimal_k
 
         X = self._make_data()
         serial = find_optimal_k(X, k_range=(2, 5), min_cluster_size_pct=5.0, n_workers=1)
@@ -271,7 +269,7 @@ class TestFindOptimalKParallel:
         assert serial["optimal_k"] == parallel["optimal_k"]
 
     def test_all_infeasible_falls_back_to_silhouette(self):
-        from scripts.train_clustering_model import find_optimal_k
+        from common.ml.clustering.training import find_optimal_k
 
         np.random.seed(42)
         X = np.random.randn(20, 3)  # Very small dataset
