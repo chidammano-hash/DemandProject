@@ -145,6 +145,8 @@ from api.routers.forecasting import expsys_accuracy  # noqa: E402  # ExpSys back
 from api.routers.forecasting import sku_features     # noqa: E402  # SKU feature explorer
 from api.routers import customer_analytics  # noqa: E402  # Customer Analytics
 from api.routers.inventory import demand_history  # noqa: E402  # Demand History Workbench
+from api.routers.inventory import inv_planning_algorithm_comparison  # noqa: E402  # Algorithm Inventory Comparison
+from api.routers.inventory import integrated_targets  # noqa: E402  # Integrated Planning Targets (SS+EOQ+ROP)
 from api.routers import domains    # noqa: E402
 
 # Specific-path routers first
@@ -224,6 +226,8 @@ app.include_router(expsys_accuracy.router)
 app.include_router(sku_features.router)
 app.include_router(customer_analytics.router)
 app.include_router(demand_history.router)
+app.include_router(inv_planning_algorithm_comparison.router)
+app.include_router(integrated_targets.router)
 
 # domains.py has catch-all /domains/{domain}/* — mount last
 app.include_router(domains.router)

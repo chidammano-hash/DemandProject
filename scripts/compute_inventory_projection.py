@@ -90,45 +90,73 @@ def get_daily_demand_rates(
     horizon_days: int,
     conn,
     config: dict | None = None,
+    forecast_source: str = "production",
+    staging_model_id: str | None = None,
 ) -> tuple[dict[date, float], str]:
     """
     Pull demand rates for projection, in priority order:
       1. fact_production_forecast (F1.1 forward forecast, latest plan_version)
+         — OR fact_production_forecast_staging when forecast_source="staging"
       2. fact_external_forecast_monthly model_id='champion' lag=0 (most recent months)
       3. Fallback: N-month average of actual sales from fact_sales_monthly
+
+    When forecast_source="staging", priority 1 queries the staging table filtered
+    by staging_model_id. Priorities 2 and 3 remain as fallback.
 
     Returns ({date: daily_qty}, source_label, plan_version).
     """
     fallback_months = (config or {}).get("projection", {}).get("fallback_history_months", 3)
 
-    # --- Priority 1: production forecast (F1.1 pipeline) ---
-    sql_prod = """
-        SELECT forecast_month, forecast_qty, plan_version
-        FROM fact_production_forecast
-        WHERE item_id = %s AND loc = %s
-          AND plan_version = (
-              SELECT plan_version FROM fact_production_forecast
-              WHERE item_id = %s AND loc = %s
-              ORDER BY generated_at DESC LIMIT 1
-          )
-        ORDER BY forecast_month
-    """
-    with conn.cursor() as cur:
-        cur.execute(sql_prod, (item_id, loc, item_id, loc))
-        prod_rows = cur.fetchall()
+    # --- Priority 1: production or staging forecast ---
+    if forecast_source == "staging" and staging_model_id:
+        sql_prod = """
+            SELECT forecast_month, forecast_qty
+            FROM fact_production_forecast_staging
+            WHERE item_id = %s AND loc = %s AND model_id = %s
+            ORDER BY forecast_month
+        """
+        with conn.cursor() as cur:
+            cur.execute(sql_prod, (item_id, loc, staging_model_id))
+            prod_rows = cur.fetchall()
 
-    if prod_rows:
-        source = "production_forecast"
-        plan_version = prod_rows[0][2]
-        monthly = {r[0]: float(r[1] or 0) for r in prod_rows}
-        # Disaggregate monthly to daily
-        daily: dict[date, float] = {}
-        for i in range(horizon_days):
-            d = start_date + timedelta(days=i)
-            month_start = d.replace(day=1)
-            days_in_month = calendar.monthrange(d.year, d.month)[1]
-            daily[d] = monthly.get(month_start, 0.0) / days_in_month
-        return daily, source, plan_version
+        if prod_rows:
+            source = f"staging:{staging_model_id}"
+            plan_version = None
+            monthly = {r[0]: float(r[1] or 0) for r in prod_rows}
+            daily: dict[date, float] = {}
+            for i in range(horizon_days):
+                d = start_date + timedelta(days=i)
+                month_start = d.replace(day=1)
+                days_in_month = calendar.monthrange(d.year, d.month)[1]
+                daily[d] = monthly.get(month_start, 0.0) / days_in_month
+            return daily, source, plan_version
+    else:
+        sql_prod = """
+            SELECT forecast_month, forecast_qty, plan_version
+            FROM fact_production_forecast
+            WHERE item_id = %s AND loc = %s
+              AND plan_version = (
+                  SELECT plan_version FROM fact_production_forecast
+                  WHERE item_id = %s AND loc = %s
+                  ORDER BY generated_at DESC LIMIT 1
+              )
+            ORDER BY forecast_month
+        """
+        with conn.cursor() as cur:
+            cur.execute(sql_prod, (item_id, loc, item_id, loc))
+            prod_rows = cur.fetchall()
+
+        if prod_rows:
+            source = "production_forecast"
+            plan_version = prod_rows[0][2]
+            monthly = {r[0]: float(r[1] or 0) for r in prod_rows}
+            daily: dict[date, float] = {}
+            for i in range(horizon_days):
+                d = start_date + timedelta(days=i)
+                month_start = d.replace(day=1)
+                days_in_month = calendar.monthrange(d.year, d.month)[1]
+                daily[d] = monthly.get(month_start, 0.0) / days_in_month
+            return daily, source, plan_version
 
     # --- Priority 2: champion model forecasts (most recent lag=0 months) ---
     sql_champion = """
@@ -559,6 +587,8 @@ def compute_dfu_projection(
     config: dict,
     conn,
     dry_run: bool = False,
+    forecast_source: str = "production",
+    staging_model_id: str | None = None,
 ) -> tuple[int, str]:
     """Compute and write projection for a single DFU. Returns (rows_written, run_id)."""
     start_date = get_planning_date()
@@ -570,7 +600,8 @@ def compute_dfu_projection(
     safety_stock = get_safety_stock(item_id, loc, conn)
 
     daily_demand, source, plan_version = get_daily_demand_rates(
-        item_id, loc, start_date, horizon_days, conn, config=config
+        item_id, loc, start_date, horizon_days, conn, config=config,
+        forecast_source=forecast_source, staging_model_id=staging_model_id,
     )
     po_receipts = get_open_po_receipts(item_id, loc, start_date, horizon_days, conn)
 
@@ -620,7 +651,17 @@ def main():
     parser.add_argument("--horizon", type=int, default=None, help="Days to project (default: from config)")
     parser.add_argument("--dfu", nargs=2, metavar=("ITEM", "LOC"), help="Single DFU to project")
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing")
+    parser.add_argument("--forecast-source", choices=["production", "staging"],
+                        default="production", help="Forecast source table")
+    parser.add_argument("--model-id", default=None,
+                        help="When --forecast-source=staging, which model_id to use")
     args = parser.parse_args()
+
+    if args.forecast_source == "staging" and not args.model_id:
+        parser.error("--model-id is required when --forecast-source=staging")
+
+    if args.horizon is not None and args.horizon <= 0:
+        parser.error("--horizon must be positive")
 
     with profiled_section("load_config"):
         config = load_config()
@@ -637,7 +678,9 @@ def main():
             for item_id, loc in dfus:
                 try:
                     written, run_id = compute_dfu_projection(
-                        item_id, loc, horizon_days, config, conn, dry_run=dry_run
+                        item_id, loc, horizon_days, config, conn, dry_run=dry_run,
+                        forecast_source=args.forecast_source,
+                        staging_model_id=args.model_id,
                     )
                     total_rows += written
                 except psycopg.Error as e:
@@ -669,6 +712,8 @@ def main():
             excess_months = config["thresholds"]["excess_coverage_months"]
             all_projection_rows: list[dict] = []
             total_rows = 0
+            projected_count = 0
+            skipped_count = 0
 
             with profiled_section("run_projections"):
                 for item_id, loc in dfus:
@@ -706,8 +751,12 @@ def main():
                                 loc=loc,
                             )
                             all_projection_rows.extend(rows)
+                        projected_count += 1
                     except psycopg.Error as e:
+                        skipped_count += 1
                         log.warning("%s/%s failed: %s", item_id, loc, e)
+
+            log.info("Projected %d DFUs, skipped %d (no inventory/forecast data or DB error)", projected_count, skipped_count)
 
             with profiled_section("bulk_insert"):
                 total_rows = write_all_projection_rows(all_projection_rows, dry_run, conn)

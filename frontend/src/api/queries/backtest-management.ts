@@ -152,16 +152,14 @@ async function fetchOrThrow<T>(url: string, init?: RequestInit): Promise<T> {
 
 /** Fetch summary for all models (latest run, accuracy, loaded status). */
 export async function fetchBacktestSummary(): Promise<BacktestSummary> {
-  return fetchOrThrow("/backtest-management/summary", { cache: "no-cache" });
+  return fetchOrThrow("/backtest-management/summary");
 }
 
 /** Fetch run history for a specific model. */
 export async function fetchBacktestRuns(
   modelId: string,
 ): Promise<BacktestRun[]> {
-  return fetchOrThrow(`/backtest-management/${modelId}/runs`, {
-    cache: "no-cache",
-  });
+  return fetchOrThrow(`/backtest-management/${modelId}/runs`);
 }
 
 /** Fetch current metadata from disk for a model. */
@@ -173,14 +171,12 @@ export async function fetchBacktestCurrent(
 
 /** Fetch training status for all forecastable models. */
 export async function fetchTrainingStatus(): Promise<TrainingStatusMap> {
-  return fetchOrThrow("/backtest-management/training-status", {
-    cache: "no-cache",
-  });
+  return fetchOrThrow("/backtest-management/training-status");
 }
 
 /** Fetch staging forecast summary per model. */
 export async function fetchStagingSummary(): Promise<StagingSummaryMap> {
-  return fetchOrThrow("/backtest-management/staging-summary", { cache: "no-cache" });
+  return fetchOrThrow("/backtest-management/staging-summary");
 }
 
 // ---------------------------------------------------------------------------
@@ -236,12 +232,12 @@ export async function submitGenerateForecast(
 
 /** Fetch current promotion status (which model is in production). */
 export async function fetchPromotionStatus(): Promise<{ promoted: PromotionStatus | null }> {
-  return fetchOrThrow("/backtest-management/promotion-status", { cache: "no-cache" });
+  return fetchOrThrow("/backtest-management/promotion-status");
 }
 
 /** Fetch candidate forecast summary per model. */
 export async function fetchCandidateSummary(): Promise<CandidateSummaryMap> {
-  return fetchOrThrow("/backtest-management/candidate-summary", { cache: "no-cache" });
+  return fetchOrThrow("/backtest-management/candidate-summary");
 }
 
 /** Promote a model (or 'champion') to production. Copies candidates → fact_production_forecast. */

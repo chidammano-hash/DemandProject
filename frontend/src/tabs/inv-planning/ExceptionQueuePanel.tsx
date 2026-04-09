@@ -17,7 +17,10 @@ import { insightKeys, fetchRootCause } from "@/api/queries/inv-planning-insights
 import { formatFixed } from "@/lib/formatters";
 import { EmptyState } from "@/components/EmptyState";
 import { TableSkeleton } from "@/components/Skeleton";
-import { AlertTriangle } from "lucide-react";
+import { KpiCard } from "@/components/KpiCard";
+import { AlertTriangle, HelpCircle, ChevronDown, ChevronRight } from "lucide-react";
+import { DataFreshnessBanner } from "@/components/DataFreshnessBanner";
+import { RecommendedActionCard } from "@/components/RecommendedActionCard";
 
 function AiTag() {
   return <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-[#0D9488]/10 text-[#0D9488]">AI</span>;
@@ -44,25 +47,157 @@ const SEVERITY_ROW_BG: Record<string, string> = {
 };
 
 const EXC_TYPE_LABELS: Record<string, string> = {
-  below_rop:          "Below ROP",
-  below_rop_critical: "Below ROP (Critical)",
-  below_ss:           "Below SS",
-  stockout:           "Stockout",
-  excess:             "Excess",
-  zero_velocity:      "Zero Velocity",
+  below_rop:          "Needs Reorder",
+  below_rop_critical: "Urgent Reorder",
+  below_ss:           "Below Safety Buffer",
+  stockout:           "Out of Stock",
+  excess:             "Overstocked",
+  zero_velocity:      "No Movement",
 };
 
 const EXC_TYPE_DESCRIPTIONS: Record<string, string> = {
-  reorder_point: "Reorder Point — on-hand fell below ROP; order needed",
-  below_ss: "Below Safety Stock — stock below minimum buffer target",
-  excess: "Excess Inventory — stock exceeds target; review for disposal",
-  zero_velocity: "Zero Velocity — no sales in 90+ days; review for obsolescence",
-  lead_time_risk: "Lead Time Risk — supplier LT variability threatens service level",
-  forecast_miss: "Forecast Miss — actual demand significantly exceeded forecast",
+  below_rop: "Needs Reorder -- inventory dropped below the reorder trigger; place an order now",
+  below_rop_critical: "Urgent Reorder -- inventory critically low; immediate order required to avoid stockout",
+  reorder_point: "Needs Reorder -- inventory dropped below the reorder trigger; place an order now",
+  below_ss: "Below Safety Buffer -- stock is below the minimum buffer; risk of running out before next delivery",
+  stockout: "Out of Stock -- no inventory available to fulfill orders",
+  excess: "Overstocked -- more inventory than needed; review for markdown or reallocation",
+  zero_velocity: "No Movement -- no sales in 90+ days; review for obsolescence or clearance",
+  lead_time_risk: "Delivery Risk -- unreliable supplier delivery times threaten ability to fulfill orders",
+  forecast_miss: "Demand Spike -- actual demand significantly exceeded forecast; review safety buffer",
 };
 
 const EXC_TYPES = ["below_rop", "below_ss", "stockout", "excess", "zero_velocity"];
 const EXC_SEVERITIES = ["critical", "high", "medium", "low"];
+
+function getRootCauseExplanation(exc: ExceptionRow): string {
+  const onHand = exc.current_qty_on_hand ?? 0;
+  const ss = exc.ss_combined ?? 0;
+  switch (exc.exception_type) {
+    case "below_ss":
+      return `Current stock (${onHand.toLocaleString()}) is below safety buffer (${ss.toLocaleString()}). Risk of stockout before next delivery arrives.`;
+    case "stockout":
+      return "Item is completely out of stock. Immediate reorder needed to restore service levels.";
+    case "excess":
+      return `Inventory exceeds safety buffer by ${(onHand - ss).toLocaleString()} units. Consider reducing next order or transferring to another location.`;
+    case "below_rop":
+      return `Stock has dropped below the reorder point (${(exc.reorder_point ?? 0).toLocaleString()}). A replenishment order should be placed now.`;
+    case "below_rop_critical":
+      return `Stock is critically low relative to the reorder point. Expedited order required to avoid imminent stockout.`;
+    case "zero_velocity":
+      return "No sales recorded in 90+ days. Review for obsolescence, clearance, or reallocation.";
+    default:
+      return exc.exception_type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+}
+
+function ExceptionDetailCard({
+  exception,
+  rootCauseData,
+  rootCauseLoading,
+}: {
+  exception: ExceptionRow;
+  rootCauseData: { causes: { factor: string; contribution_pct: number; description: string }[] } | undefined;
+  rootCauseLoading: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      {/* Main 3-column grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Column 1: Item details */}
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Item Details</p>
+          <p className="text-sm font-medium">{exception.item_id} @ {exception.loc}</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+            <span className="text-muted-foreground">On Hand</span>
+            <span className="font-medium">{exception.current_qty_on_hand != null ? exception.current_qty_on_hand.toLocaleString() : "--"}</span>
+            <span className="text-muted-foreground">Safety Stock</span>
+            <span className="font-medium">{exception.ss_combined != null ? exception.ss_combined.toLocaleString() : "--"}</span>
+            <span className="text-muted-foreground">Reorder Point</span>
+            <span className="font-medium">{exception.reorder_point != null ? exception.reorder_point.toLocaleString() : "--"}</span>
+            <span className="text-muted-foreground">Days of Supply</span>
+            <span className="font-medium">{exception.current_dos != null ? formatFixed(exception.current_dos, 1) + "d" : "--"}</span>
+            <span className="text-muted-foreground">Daily Demand</span>
+            <span className="font-medium">{exception.daily_demand_rate != null ? formatFixed(exception.daily_demand_rate, 1) + "/day" : "--"}</span>
+            <span className="text-muted-foreground">Unit Cost</span>
+            <span className="font-medium">{exception.unit_cost != null ? "$" + formatFixed(exception.unit_cost, 2) : "--"}</span>
+          </div>
+        </div>
+
+        {/* Column 2: Root cause */}
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Root Cause</p>
+          <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${SEVERITY_BADGE[exception.severity] ?? ""}`}>
+            {EXC_TYPE_LABELS[exception.exception_type] ?? exception.exception_type.replace(/_/g, " ")}
+          </span>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {getRootCauseExplanation(exception)}
+          </p>
+          {/* Financial impact */}
+          {exception.financial_impact_total != null && exception.financial_impact_total > 0 && (
+            <div className="mt-2 rounded border border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-900/10 px-2 py-1.5">
+              <p className="text-xs font-semibold text-red-600 dark:text-red-400">
+                ${exception.financial_impact_total.toLocaleString(undefined, { maximumFractionDigits: 0 })} total at risk
+              </p>
+              <div className="flex gap-3 mt-1 text-[10px] text-muted-foreground">
+                {exception.loss_of_sales_7d != null && exception.loss_of_sales_7d > 0 && (
+                  <span>${formatFixed(exception.loss_of_sales_7d, 0)} lost sales (7d)</span>
+                )}
+                {exception.monthly_holding_cost != null && exception.monthly_holding_cost > 0 && (
+                  <span>${formatFixed(exception.monthly_holding_cost, 0)}/mo holding</span>
+                )}
+              </div>
+            </div>
+          )}
+          {/* AI root cause analysis */}
+          {rootCauseLoading && (
+            <p className="text-[10px] text-muted-foreground mt-1">Analyzing root causes...</p>
+          )}
+          {rootCauseData?.causes?.length ? (
+            <div className="mt-2 space-y-1">
+              <p className="text-[10px] font-medium text-muted-foreground">AI Root Cause Factors:</p>
+              {rootCauseData.causes.slice(0, 3).map((cause) => (
+                <div key={cause.factor} className="flex items-center gap-2 text-[10px]">
+                  <span className={`px-1 py-0.5 rounded font-medium ${
+                    cause.contribution_pct >= 50 ? "bg-red-100 text-red-700" :
+                    cause.contribution_pct >= 25 ? "bg-amber-100 text-amber-700" :
+                    "bg-blue-100 text-blue-700"
+                  }`}>{cause.contribution_pct.toFixed(0)}%</span>
+                  <span className="text-muted-foreground">{cause.factor}: {cause.description}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Column 3: Quick actions */}
+        <div className="space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Quick Actions</p>
+          {exception.recommended_order_qty != null && exception.recommended_order_qty > 0 && (
+            <div className="text-xs text-muted-foreground mb-2 p-2 rounded bg-background border">
+              Recommended: <span className="font-medium text-foreground">{exception.recommended_order_qty.toLocaleString()} units</span>
+              {exception.estimated_order_value != null && exception.estimated_order_value > 0 && (
+                <span> (${formatFixed(exception.estimated_order_value, 0)})</span>
+              )}
+              {exception.recommended_order_by && (
+                <span className="block mt-0.5">Order by: <span className="font-medium text-foreground">{exception.recommended_order_by}</span></span>
+              )}
+            </div>
+          )}
+          <button className="w-full px-3 py-1.5 text-xs font-medium rounded border border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors">
+            Create Replenishment Order
+          </button>
+          <button className="w-full px-3 py-1.5 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-900/20 transition-colors">
+            View Inventory Projection
+          </button>
+          <button className="w-full px-3 py-1.5 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-900/20 transition-colors">
+            Review Safety Stock
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function ExceptionQueuePanel() {
   const queryClient = useQueryClient();
@@ -159,6 +294,12 @@ export function ExceptionQueuePanel() {
 
   return (
     <div>
+      <DataFreshnessBanner
+        lastRefreshed={excSummary?.last_generated_at}
+        source="Exception Queue"
+        staleSec={43200}
+      />
+
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-base font-semibold">Exception Queue</h3>
         <div className="flex items-center gap-2">
@@ -176,46 +317,106 @@ export function ExceptionQueuePanel() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        {[
-          {
-            label: "Total Open",
-            value: excSummary?.open_count ?? 0,
-            color: (excSummary?.open_count ?? 0) > 50 ? "text-red-600" : (excSummary?.open_count ?? 0) > 10 ? "text-amber-600" : "text-foreground",
-          },
-          {
-            label: "Critical",
-            value: excSummary?.by_severity.critical ?? 0,
-            color: (excSummary?.by_severity.critical ?? 0) > 0 ? "text-red-600" : "text-foreground",
-          },
-          {
-            label: "High",
-            value: excSummary?.by_severity.high ?? 0,
-            color: "text-amber-600",
-          },
-          {
-            label: "Rec. Order Value",
-            value: `$${formatFixed(excSummary?.total_recommended_order_value ?? 0, 0)}`,
-            color: "text-blue-600",
-            isStr: true,
-          },
-        ].map(({ label, value, color, isStr }) => (
-          <div key={label} className="border rounded-lg p-3 bg-card">
-            <p className="text-xs text-muted-foreground">{label}</p>
-            <p className={`text-2xl font-bold mt-1 ${color}`}>
-              {isStr ? value : (value as number).toLocaleString()}
-            </p>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        <KpiCard
+          label="Open Issues"
+          sublabel="Exceptions needing attention"
+          value={excSummary ? (excSummary.open_count).toLocaleString() : "..."}
+          colorClass={(excSummary?.open_count ?? 0) > 50 ? "text-red-600" : (excSummary?.open_count ?? 0) > 10 ? "text-amber-600" : undefined}
+          size="lg"
+          tooltip={{
+            title: "Total exceptions requiring planner attention",
+            description: "Aim to keep below 50.",
+          }}
+          trend={excSummary ? (() => {
+            const count = excSummary.open_count;
+            // >50 = high volume (up-bad); <10 = well-managed (down-good); otherwise flat
+            if (count > 50) return { delta: count, direction: "up" as const, unit: " open", period: "threshold" };
+            if (count <= 10) return { delta: count, direction: "down" as const, unit: " open", period: "threshold" };
+            return { delta: count, direction: "flat" as const, unit: " open", period: "threshold" };
+          })() : undefined}
+        />
+        <KpiCard
+          label="Urgent"
+          sublabel="Act within 24 hours"
+          value={excSummary ? (excSummary.by_severity.critical).toLocaleString() : "..."}
+          colorClass={(excSummary?.by_severity.critical ?? 0) > 0 ? "text-red-600" : undefined}
+          size="lg"
+          tooltip={{
+            title: "Critical severity exceptions",
+            description: "Act within 24 hours to prevent stockouts or excess cost.",
+          }}
+          trend={excSummary ? (() => {
+            const crit = excSummary.by_severity.critical;
+            // Any critical = bad trend (up); zero = good (down)
+            if (crit > 5) return { delta: crit, direction: "up" as const, unit: " critical", period: "threshold" };
+            if (crit > 0) return { delta: crit, direction: "flat" as const, unit: " critical", period: "threshold" };
+            return { delta: 0, direction: "down" as const, unit: " critical", period: "threshold" };
+          })() : undefined}
+        />
+        <KpiCard
+          label="High Priority"
+          sublabel="Review this week"
+          value={excSummary ? (excSummary.by_severity.high).toLocaleString() : "..."}
+          colorClass="text-amber-600"
+          size="lg"
+          tooltip={{
+            title: "High severity exceptions",
+            description: "Review within the week to avoid escalation to urgent status.",
+          }}
+          trend={excSummary ? (() => {
+            const high = excSummary.by_severity.high;
+            if (high > 10) return { delta: high, direction: "up" as const, unit: " high", period: "threshold" };
+            if (high === 0) return { delta: 0, direction: "down" as const, unit: " high", period: "threshold" };
+            return { delta: high, direction: "flat" as const, unit: " high", period: "threshold" };
+          })() : undefined}
+        />
+        <KpiCard
+          label="Financial Impact"
+          sublabel="Total quantified impact"
+          value={excSummary ? `$${formatFixed(excSummary.total_financial_impact ?? 0, 0)}` : "..."}
+          colorClass="text-red-600"
+          size="lg"
+          tooltip={{
+            title: "Estimated dollar impact",
+            description: "Estimated dollar impact if these exceptions are not resolved.",
+          }}
+          trend={excSummary?.total_financial_impact != null && excSummary.total_financial_impact > 0 ? {
+            delta: excSummary.total_financial_impact > 10000 ? +(excSummary.total_financial_impact / 1000).toFixed(0) : +excSummary.total_financial_impact.toFixed(0),
+            direction: "up" as const,
+            unit: excSummary.total_financial_impact > 10000 ? "k$ at risk" : "$ at risk",
+            period: "current",
+          } : undefined}
+        />
+        <KpiCard
+          label="Value at Risk"
+          sublabel="Recommended order value"
+          value={excSummary ? `$${formatFixed(excSummary.total_recommended_order_value ?? 0, 0)}` : "..."}
+          colorClass="text-blue-600"
+          size="lg"
+          tooltip={{
+            title: "Total recommended order value",
+            description: "Total recommended order value to resolve open exceptions.",
+          }}
+        />
       </div>
+
+      {/* Recommended actions based on current data */}
+      {(excSummary?.by_severity.critical ?? 0) > 5 && (
+        <RecommendedActionCard
+          severity="critical"
+          title={`${excSummary!.by_severity.critical} urgent exceptions need action within 24 hours`}
+          action="Resolve critical exceptions to prevent stockouts — approve pending orders"
+        />
+      )}
 
       {/* Severity legend */}
       <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border mb-4">
-        <span className="font-medium text-foreground">Severity: </span>
-        <span className="text-red-600 font-medium">● Critical</span> — immediate action required ·
-        <span className="text-orange-500 font-medium ml-2">● High</span> — review within 24h ·
-        <span className="text-amber-500 font-medium ml-2">● Medium</span> — review this week ·
-        <span className="text-blue-500 font-medium ml-2">● Low</span> — informational
+        <span className="font-medium text-foreground">Urgency: </span>
+        <span className="text-red-600 font-medium">● URGENT</span> — act within 24 hours ·
+        <span className="text-orange-500 font-medium ml-2">● HIGH</span> — review this week ·
+        <span className="text-amber-500 font-medium ml-2">● MEDIUM</span> — monitor closely ·
+        <span className="text-blue-500 font-medium ml-2">● LOW</span> — informational only
       </div>
 
       {/* Filter bar */}
@@ -303,7 +504,7 @@ export function ExceptionQueuePanel() {
         <table className="w-full text-xs">
           <thead className="bg-muted/50">
             <tr>
-              {["Severity", "Item", "Loc", "Type", "Qty on Hand", "SS Target", "Rec. Order Qty", "Order By", "Status", "Actions"].map((h) => (
+              {["", "Urgency", "Item", "Loc", "Issue", "On Hand", "Safety Buffer", "Rec. Order Qty", "Order By", "Status", "Actions"].map((h) => (
                 <th key={h} className="px-2 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -317,10 +518,23 @@ export function ExceptionQueuePanel() {
                   } ${selectedExc === row.exception_id ? "ring-1 ring-inset ring-primary/30" : ""}`}
                   onClick={() => setSelectedExc(selectedExc === row.exception_id ? null : row.exception_id)}
                 >
+                  <td className="px-2 py-1.5 w-6">
+                    {selectedExc === row.exception_id ? (
+                      <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                    )}
+                  </td>
                   <td className="px-2 py-1.5">
-                    <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${SEVERITY_BADGE[row.severity] ?? ""}`}>
-                      {row.severity}
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-xs font-medium ${SEVERITY_BADGE[row.severity] ?? ""}`}
+                      title={`Severity score: ${row.severity}`}
+                    >
+                      {row.severity === "critical" ? "URGENT" : row.severity === "high" ? "HIGH" : row.severity === "medium" ? "MEDIUM" : "LOW"}
                     </span>
+                    <p className="text-[9px] text-muted-foreground mt-0.5 leading-tight">
+                      {row.severity === "critical" ? "Act within 24h" : row.severity === "high" ? "Review this week" : row.severity === "medium" ? "Monitor" : "Informational"}
+                    </p>
                   </td>
                   <td className="px-2 py-1.5 font-mono">{row.item_id}</td>
                   <td className="px-2 py-1.5 font-mono">{row.loc}</td>
@@ -335,8 +549,22 @@ export function ExceptionQueuePanel() {
                           <AiTag />
                         </>
                       )}
-                      {row.exception_type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                      {EXC_TYPE_LABELS[row.exception_type] ?? row.exception_type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                     </span>
+                    {/* Financial impact line — stockout/below_ss/below_rop: lost sales; excess: holding cost */}
+                    {["stockout", "below_ss", "below_rop"].includes(row.exception_type) && row.loss_of_sales_7d != null && row.loss_of_sales_7d > 0 ? (
+                      <p className="text-[10px] text-red-600 font-medium mt-0.5">
+                        ${formatFixed(row.loss_of_sales_7d, 0)} at risk (7-day)
+                      </p>
+                    ) : row.exception_type === "excess" && row.monthly_holding_cost != null && row.monthly_holding_cost > 0 ? (
+                      <p className="text-[10px] text-amber-600 font-medium mt-0.5">
+                        ${formatFixed(row.monthly_holding_cost, 0)}/mo holding cost
+                      </p>
+                    ) : row.estimated_order_value != null && row.estimated_order_value > 0 ? (
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Est. ${formatFixed(row.estimated_order_value, 0)} order value
+                      </p>
+                    ) : null}
                   </td>
                   <td className="px-2 py-1.5 text-right">{formatFixed(row.current_qty_on_hand)}</td>
                   <td className="px-2 py-1.5 text-right">{formatFixed(row.ss_combined)}</td>
@@ -382,37 +610,15 @@ export function ExceptionQueuePanel() {
                     )}
                   </td>
                 </tr>
-                {/* Root Cause expandable section */}
+                {/* Inline drill-down expansion */}
                 {selectedExc === row.exception_id && (
-                  <tr className="border-t bg-muted/20">
-                    <td colSpan={10} className="px-4 py-3">
-                      <p className="text-xs font-semibold mb-2">Root Cause Analysis</p>
-                      {rootCauseLoading ? (
-                        <p className="text-xs text-muted-foreground">Analyzing root causes...</p>
-                      ) : rootCauseData?.causes?.length ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                          {rootCauseData.causes.map((cause) => (
-                            <div
-                              key={cause.factor}
-                              className="border rounded p-2 bg-background"
-                            >
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-xs font-medium">{cause.factor}</span>
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                                  cause.contribution_pct >= 50 ? "bg-red-100 text-red-700" :
-                                  cause.contribution_pct >= 25 ? "bg-amber-100 text-amber-700" :
-                                  "bg-blue-100 text-blue-700"
-                                }`}>
-                                  {cause.contribution_pct.toFixed(0)}%
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-muted-foreground">{cause.description}</p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">No root cause data available for this item-location.</p>
-                      )}
+                  <tr className="border-t">
+                    <td colSpan={11} className="bg-muted/30 px-4 py-4">
+                      <ExceptionDetailCard
+                        exception={row}
+                        rootCauseData={rootCauseData}
+                        rootCauseLoading={rootCauseLoading}
+                      />
                     </td>
                   </tr>
                 )}

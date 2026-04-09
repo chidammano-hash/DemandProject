@@ -12,6 +12,7 @@ export interface ReplenishmentSummary {
   avg_ss: number | null;
   avg_eoq: number | null;
   avg_ss_delta_pct: number | null;
+  computed_at?: string | null;
   by_policy_type: ReplenishmentPolicyBreakdown[];
 }
 

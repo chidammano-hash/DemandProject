@@ -32,10 +32,12 @@ vi.mock("@/api/queries/evolution", () => ({
 vi.mock("@/api/queries/inv-planning-insights", () => ({
   insightKeys: {
     actionFeed: () => ["inv-planning", "action-feed"],
+    dailyBriefing: () => ["inv-planning", "daily-briefing"],
     rootCause: (item: string, loc: string) => ["inv-planning", "root-cause", item, loc],
     segmentDashboard: (segment: string) => ["inv-planning", "segment-dashboard", segment],
     ssCostBenefit: (params: Record<string, unknown>) => ["inv-planning", "ss-cost-benefit", params],
     serviceLevelWaterfall: () => ["inv-planning", "service-level-waterfall"],
+    serviceLevelBridge: () => ["inv-planning", "service-level-bridge"],
     networkHeatmap: () => ["inv-planning", "network-heatmap"],
     planningScorecard: () => ["inv-planning", "planning-scorecard"],
     cashFlow: () => ["inv-planning", "cash-flow-timeline"],
@@ -44,10 +46,12 @@ vi.mock("@/api/queries/inv-planning-insights", () => ({
   },
   STALE_INSIGHTS: { ONE_MIN: 60000, FIVE_MIN: 300000 },
   fetchActionFeed: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+  fetchDailyBriefing: vi.fn().mockResolvedValue({ date: "2026-04-08", urgent: { label: "Act within 24 hours", items: [] }, this_week: { label: "Review this week", items: [] }, portfolio: { label: "Portfolio Health", items: [] }, actions: { label: "Top 3 Recommended Actions", items: [] }, stats: { total_skus: 0, below_ss_count: 0, excess_count: 0, total_excess_value: 0, total_stockout_risk_value: 0, avg_health_score: null } }),
   fetchRootCause: vi.fn().mockResolvedValue({ causes: [] }),
   fetchSegmentDashboard: vi.fn().mockResolvedValue({ segment: "AX", sku_count: 0, kpis: {}, exceptions: [], policy_distribution: {} }),
   fetchSsCostBenefit: vi.fn().mockResolvedValue({ items: [], total: 0, summary: { total_holding_cost: 0, total_stockout_risk: 0, over_stocked_count: 0, under_stocked_count: 0 } }),
   fetchServiceLevelWaterfall: vi.fn().mockResolvedValue({ steps: [], achieved_csl: 0 }),
+  fetchServiceLevelBridge: vi.fn().mockResolvedValue({ target: null, actual: null, steps: [], by_class: [], month: null }),
   fetchNetworkHeatmap: vi.fn().mockResolvedValue({ locations: [], categories: [], cells: [] }),
   fetchPlanningScorecard: vi.fn().mockResolvedValue({ metrics: [] }),
   fetchCashFlowTimeline: vi.fn().mockResolvedValue({ months: [] }),
@@ -482,10 +486,12 @@ vi.mock("@/api/queries", () => ({
   // Expert Panel Insights
   insightKeys: {
     actionFeed: () => ["inv-planning", "action-feed"],
+    dailyBriefing: () => ["inv-planning", "daily-briefing"],
     rootCause: (item: string, loc: string) => ["inv-planning", "root-cause", item, loc],
     segmentDashboard: (segment: string) => ["inv-planning", "segment-dashboard", segment],
     ssCostBenefit: (params: Record<string, unknown>) => ["inv-planning", "ss-cost-benefit", params],
     serviceLevelWaterfall: () => ["inv-planning", "service-level-waterfall"],
+    serviceLevelBridge: () => ["inv-planning", "service-level-bridge"],
     networkHeatmap: () => ["inv-planning", "network-heatmap"],
     planningScorecard: () => ["inv-planning", "planning-scorecard"],
     cashFlow: () => ["inv-planning", "cash-flow-timeline"],
@@ -494,10 +500,12 @@ vi.mock("@/api/queries", () => ({
   },
   STALE_INSIGHTS: { ONE_MIN: 60000, FIVE_MIN: 300000 },
   fetchActionFeed: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+  fetchDailyBriefing: vi.fn().mockResolvedValue({ date: "2026-04-08", urgent: { label: "Act within 24 hours", items: [] }, this_week: { label: "Review this week", items: [] }, portfolio: { label: "Portfolio Health", items: [] }, actions: { label: "Top 3 Recommended Actions", items: [] }, stats: { total_skus: 0, below_ss_count: 0, excess_count: 0, total_excess_value: 0, total_stockout_risk_value: 0, avg_health_score: null } }),
   fetchRootCause: vi.fn().mockResolvedValue({ causes: [] }),
   fetchSegmentDashboard: vi.fn().mockResolvedValue({ segment: "AX", sku_count: 0, kpis: {}, exceptions: [], policy_distribution: {} }),
   fetchSsCostBenefit: vi.fn().mockResolvedValue({ items: [], total: 0, summary: { total_holding_cost: 0, total_stockout_risk: 0, over_stocked_count: 0, under_stocked_count: 0 } }),
   fetchServiceLevelWaterfall: vi.fn().mockResolvedValue({ steps: [], achieved_csl: 0 }),
+  fetchServiceLevelBridge: vi.fn().mockResolvedValue({ target: null, actual: null, steps: [], by_class: [], month: null }),
   fetchNetworkHeatmap: vi.fn().mockResolvedValue({ locations: [], categories: [], cells: [] }),
   fetchPlanningScorecard: vi.fn().mockResolvedValue({ metrics: [] }),
   fetchCashFlowTimeline: vi.fn().mockResolvedValue({ months: [] }),
@@ -560,8 +568,12 @@ function makeFilterContext(): GlobalFilterContextValue {
   };
 }
 
-/** Navigate to a panel by clicking the group pill then the sub-tab. */
+/** Navigate to a panel by clicking the group pill then the sub-tab.
+ *  Switches to "All Panels" view first so all groups are visible
+ *  (default view is "Daily Essentials" which shows only 6 panels). */
 function navigateTo(groupShortLabel: string, tabLabel: string) {
+  // Switch to All Panels view to expose all group pills
+  fireEvent.click(screen.getByRole("button", { name: /All Panels/i }));
   fireEvent.click(screen.getByRole("tab", { name: groupShortLabel }));
   fireEvent.click(screen.getByRole("tab", { name: tabLabel }));
 }
@@ -754,12 +766,13 @@ describe("InvPlanningTab", () => {
     );
     navigateTo("Daily Ops", "Health");
     await waitFor(() => {
-      expect(screen.getByText("Healthy")).toBeDefined();
-      expect(screen.getByText("Monitor")).toBeDefined();
-      expect(screen.getByText("At Risk")).toBeDefined();
-      // "Critical" appears in health cards and exception severity pills — use getAllByText
-      const criticalEls = screen.getAllByText("Critical");
-      expect(criticalEls.length).toBeGreaterThan(0);
+      // Health tier labels may appear in KPI cards AND detail table rows — use getAllByText
+      expect(screen.getAllByText("Healthy").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Monitor").length).toBeGreaterThan(0);
+      // "At Risk" also appears in TodaysPlanBanner priority badge
+      expect(screen.getAllByText("At Risk").length).toBeGreaterThan(0);
+      // "Critical" appears in health cards and exception severity pills
+      expect(screen.getAllByText("Critical").length).toBeGreaterThan(0);
     });
   });
 
@@ -817,7 +830,7 @@ describe("InvPlanningTab", () => {
     );
     navigateTo("Daily Ops", "Health");
     await waitFor(() => {
-      expect(screen.getByText(/Score Components/i)).toBeDefined();
+      expect(screen.getByText(/Risk Factor Breakdown/i)).toBeDefined();
     });
   });
 
@@ -845,10 +858,10 @@ describe("InvPlanningTab", () => {
     );
     navigateTo("Daily Ops", "Exceptions");
     await waitFor(() => {
-      expect(screen.getByText("Total Open")).toBeDefined();
-      // "Critical" appears in multiple places — use getAllByText
-      const criticalEls = screen.getAllByText("Critical");
-      expect(criticalEls.length).toBeGreaterThan(0);
+      expect(screen.getByText("Open Issues")).toBeDefined();
+      // "Urgent" appears as KPI label; "Critical" still in severity filter pills
+      const urgentEls = screen.getAllByText("Urgent");
+      expect(urgentEls.length).toBeGreaterThan(0);
     });
   });
 
@@ -862,8 +875,8 @@ describe("InvPlanningTab", () => {
     );
     navigateTo("Daily Ops", "Exceptions");
     await waitFor(() => {
-      // exception_type label should appear
-      const els = screen.getAllByText(/below_rop|Below ROP/i);
+      // exception_type label should appear (now business-friendly)
+      const els = screen.getAllByText(/Needs Reorder|Urgent Reorder|below_rop/i);
       expect(els.length).toBeGreaterThan(0);
     });
   });
@@ -966,7 +979,7 @@ describe("InvPlanningTab", () => {
     });
   });
 
-  it("renders Production Demand Forecast section header", async () => {
+  it("renders Demand Intelligence section header", async () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
@@ -974,13 +987,14 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    navigateTo("Planning", "Demand Forecast");
+    navigateTo("Planning", "Demand Intelligence");
     await waitFor(() => {
-      expect(screen.getByText("Production Demand Forecast")).toBeDefined();
+      // Multiple elements contain "Demand Intelligence" (tab label, breadcrumb, panel title)
+      expect(screen.getAllByText("Demand Intelligence").length).toBeGreaterThan(0);
     });
   });
 
-  it("renders demand forecast KPI cards from mocked data", async () => {
+  it("renders demand intelligence sub-tabs", async () => {
     render(
       <TestQueryWrapper>
         <GlobalFilterProvider value={makeFilterContext()}>
@@ -988,10 +1002,11 @@ describe("InvPlanningTab", () => {
         </GlobalFilterProvider>
       </TestQueryWrapper>
     );
-    navigateTo("Planning", "Demand Forecast");
+    navigateTo("Planning", "Demand Intelligence");
     await waitFor(() => {
-      expect(screen.getByText("Forecast Version")).toBeDefined();
-      expect(screen.getByText("SKU-Locations Planned")).toBeDefined();
+      expect(screen.getByText("Production Forecast")).toBeDefined();
+      expect(screen.getByText("Demand Plan")).toBeDefined();
+      expect(screen.getByText("Blended Demand")).toBeDefined();
     });
   });
 

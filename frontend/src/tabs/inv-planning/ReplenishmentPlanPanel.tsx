@@ -13,6 +13,8 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { RefreshCw } from "lucide-react";
+import { DataFreshnessBanner } from "@/components/DataFreshnessBanner";
+import { RecommendedActionCard } from "@/components/RecommendedActionCard";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
 import { TableSkeleton } from "@/components/Skeleton";
@@ -107,9 +109,15 @@ export function ReplenishmentPlanPanel() {
 
   return (
     <div className="space-y-4">
+      <DataFreshnessBanner
+        lastRefreshed={summary?.computed_at}
+        source="Replenishment Plan"
+        staleSec={86400}
+      />
+
       {/* Info banner */}
       <div className="text-xs text-muted-foreground bg-muted/20 border rounded px-3 py-2 mb-3">
-        Forward replenishment plan: Safety stock, EOQ, and reorder point targets for the current plan version. <strong className="text-foreground">Below SS = YES</strong> means on-hand is below the safety stock floor — prioritize ordering.
+        Replenishment plan: Safety buffer, optimal order size, and reorder trigger targets for the current plan version. <strong className="text-foreground">At Risk = YES</strong> means current inventory is below the safety buffer — prioritize ordering.
       </div>
 
       {/* Filter controls */}
@@ -179,17 +187,25 @@ export function ReplenishmentPlanPanel() {
         />
         <KpiCard
           className={PANEL_KPI}
-          label="Avg Forward SS"
+          label="Avg Safety Buffer"
           value={summaryQ.isLoading ? "..." : formatNumber(summary?.avg_ss)}
+          tooltip={{
+            title: "Average units held as safety stock per item",
+            description: "Higher means more protection but more capital tied up.",
+          }}
         />
         <KpiCard
           className={PANEL_KPI}
-          label="Avg EOQ"
+          label="Optimal Order Size"
           value={summaryQ.isLoading ? "..." : formatNumber(summary?.avg_eoq)}
+          tooltip={{
+            title: "Economic order quantity balancing ordering cost vs holding cost",
+            description: "The order size that minimizes total inventory management cost.",
+          }}
         />
         <KpiCard
           className={PANEL_KPI}
-          label="Below SS"
+          label="At Stockout Risk"
           value={
             summaryQ.isLoading
               ? "..."
@@ -200,14 +216,27 @@ export function ReplenishmentPlanPanel() {
           colorClass={
             (summary?.below_ss_count ?? 0) > 0 ? "text-red-600" : undefined
           }
+          tooltip={{
+            title: "Items where current inventory is below the recommended safety buffer",
+            description: "These items may run out before the next delivery arrives.",
+          }}
         />
       </div>
+
+      {/* Recommended actions based on current data */}
+      {(summary?.below_ss_count ?? 0) > 0 && (
+        <RecommendedActionCard
+          severity="high"
+          title={`${summary!.below_ss_count} items at stockout risk in the forward plan`}
+          action="Review the replenishment plan and approve suggested order quantities"
+        />
+      )}
 
       {/* Comparison chart: Forecast SS vs Historical SS by ABC */}
       {(comparison?.by_abc?.length ?? 0) > 0 && comparison && (
         <div className="rounded-lg border bg-card p-4">
           <h3 className="mb-3 text-sm font-semibold text-foreground">
-            SS Comparison: Forecast vs Historical by ABC Class
+            Safety Buffer: Forecast-Based vs Historical by ABC Class
           </h3>
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
@@ -237,12 +266,12 @@ export function ReplenishmentPlanPanel() {
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <Bar
                   dataKey="avg_forecast_ss"
-                  name="Forecast SS"
+                  name="Forecast Buffer"
                   fill="#7c3aed"
                 />
                 <Bar
                   dataKey="avg_historical_ss"
-                  name="Historical SS"
+                  name="Historical Buffer"
                   fill="#94a3b8"
                 />
               </BarChart>
@@ -281,12 +310,12 @@ export function ReplenishmentPlanPanel() {
                     <th className="pb-2 pr-3">ABC</th>
                     <th className="pb-2 pr-3" title="Inventory review and ordering strategy for this item-location">Policy</th>
                     <th className="pb-2 pr-3 text-right">Fcst Qty</th>
-                    <th className="pb-2 pr-3 text-right" title="Safety Stock: combined forward (simulation-based) safety stock target in units">SS (Fwd)</th>
-                    <th className="pb-2 pr-3 text-right">SS (Hist)</th>
-                    <th className="pb-2 pr-3 text-right">Δ SS</th>
-                    <th className="pb-2 pr-3 text-right" title="Economic Order Quantity: cost-optimal order size balancing ordering vs holding costs">EOQ</th>
-                    <th className="pb-2 pr-3 text-right" title="Reorder Point: order when on-hand reaches this level (SS + demand during lead time)">ROP</th>
-                    <th className="pb-2 text-right" title="YES = current inventory is below the safety stock target — action needed">Below SS</th>
+                    <th className="pb-2 pr-3 text-right" title="Safety Buffer: units reserved to prevent stockouts (simulation-based)">Safety Buffer</th>
+                    <th className="pb-2 pr-3 text-right" title="Historical buffer based on past demand variability">Hist. Buffer</th>
+                    <th className="pb-2 pr-3 text-right" title="Buffer change vs last period — positive means increased buffer">Buffer Change</th>
+                    <th className="pb-2 pr-3 text-right" title="Optimal Order Size: the cost-optimal quantity to order each time">Order Size</th>
+                    <th className="pb-2 pr-3 text-right" title="Reorder Trigger: place an order when stock drops to this level">Reorder Trigger</th>
+                    <th className="pb-2 text-right" title="YES = current inventory is below the safety buffer — action needed">At Risk</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -439,7 +468,7 @@ export function ReplenishmentPlanPanel() {
                   <Line
                     type="monotone"
                     dataKey="ss_combined"
-                    name="SS (Forward)"
+                    name="Safety Buffer (Forward)"
                     stroke="#7c3aed"
                     strokeWidth={2}
                     strokeDasharray="5 3"
@@ -448,7 +477,7 @@ export function ReplenishmentPlanPanel() {
                   <Line
                     type="monotone"
                     dataKey="historical_ss"
-                    name="SS (Historical)"
+                    name="Safety Buffer (Historical)"
                     stroke="#94a3b8"
                     strokeWidth={1.5}
                     strokeDasharray="3 2"
@@ -457,7 +486,7 @@ export function ReplenishmentPlanPanel() {
                   <Line
                     type="monotone"
                     dataKey="reorder_point"
-                    name="ROP"
+                    name="Reorder Trigger"
                     stroke="#f97316"
                     strokeWidth={1.5}
                     dot={false}

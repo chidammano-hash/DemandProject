@@ -18,47 +18,55 @@ import {
 } from "@/api/queries";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { EmptyState } from "@/components/EmptyState";
+import { RecommendedActionCard } from "@/components/RecommendedActionCard";
 import { TableSkeleton } from "@/components/Skeleton";
-import { Activity } from "lucide-react";
+import { Activity, HelpCircle } from "lucide-react";
 
 const PAGE = 50;
 
-const SCORE_COMPONENTS: Record<string, { label: string; max: number; description: string }> = {
+const SCORE_COMPONENTS: Record<string, { label: string; businessLabel: string; max: number; description: string }> = {
   ss_coverage: {
     label: "SS Coverage",
+    businessLabel: "Buffer Adequacy",
     max: 25,
-    description: "Safety stock coverage ratio: how much on-hand inventory covers the safety stock target. Score 25 = ≥1.5× target.",
+    description: "How well on-hand inventory covers the safety buffer target. 25/25 = fully covered with margin.",
   },
   dos_adequacy: {
     label: "DOS Adequacy",
+    businessLabel: "Supply Coverage",
     max: 25,
-    description: "Days of Supply adequacy: current inventory covers the policy target number of days. Score 25 = ≥ target DOS.",
+    description: "How many days your current inventory can sustain demand. 25/25 = meets or exceeds target days.",
   },
   fill_rate: {
     label: "Fill Rate",
+    businessLabel: "Order Fill Rate",
     max: 25,
-    description: "Historical fill rate vs service level target. Score 25 = ≥ target service level (e.g. 98%).",
+    description: "Percentage of customer orders fulfilled completely on time. 25/25 = meets service level target.",
   },
   policy_compliance: {
     label: "Policy Compliance",
+    businessLabel: "Policy Compliance",
     max: 25,
-    description: "Percentage of SKUs following their assigned replenishment policy. Score 25 = ≥95% compliant.",
+    description: "Percentage of items following their assigned ordering policy. 25/25 = 95%+ compliant.",
   },
   // aliases used by the existing component_avgs keys
   dos_target: {
     label: "DOS Target",
+    businessLabel: "Supply Coverage",
     max: 25,
-    description: "Days of Supply adequacy: current inventory covers the policy target number of days. Score 25 = ≥ target DOS.",
+    description: "How many days your current inventory can sustain demand. 25/25 = meets or exceeds target days.",
   },
   stockout_risk: {
     label: "Stockout Risk",
+    businessLabel: "Stockout Protection",
     max: 25,
-    description: "Inverse stockout risk score: lower stockout probability yields a higher score. Score 25 = near-zero stockout risk.",
+    description: "How well-protected you are against running out of stock. 25/25 = near-zero stockout risk.",
   },
   forecast_accuracy: {
     label: "Forecast Accuracy",
+    businessLabel: "Forecast Fit",
     max: 25,
-    description: "Forecast accuracy relative to target WAPE. Score 25 = WAPE ≤ threshold (e.g. ≤ 15%).",
+    description: "How closely demand forecasts match actual sales. 25/25 = forecast error within acceptable range.",
   },
 };
 
@@ -136,7 +144,7 @@ export function PortfolioHealthPanel() {
 
   return (
     <div>
-      <h3 className="text-base font-semibold text-foreground mb-3">Portfolio Health Score</h3>
+      <h3 className="text-base font-semibold text-foreground mb-3">Portfolio Risk Overview</h3>
 
       {/* Health KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -176,6 +184,15 @@ export function PortfolioHealthPanel() {
           );
         })}
       </div>
+
+      {/* Recommended actions based on current data */}
+      {!healthSummaryLoading && healthSummary?.avg_health_score != null && healthSummary.avg_health_score < 60 && (
+        <RecommendedActionCard
+          severity="critical"
+          title={`Portfolio health is ${Math.round(healthSummary.avg_health_score)}/100 — below acceptable threshold`}
+          action="Focus on improving buffer adequacy and reducing stockout events"
+        />
+      )}
 
       {/* Health donut + component scores */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -218,8 +235,25 @@ export function PortfolioHealthPanel() {
                     <span className="text-muted-foreground ml-auto pl-4">{d.value.toLocaleString()}</span>
                   </div>
                 ))}
-                <div className="mt-1 pt-1 border-t text-muted-foreground">
-                  Avg score: <span className="font-semibold text-foreground">{healthSummary?.avg_health_score?.toFixed(1) ?? "—"}</span>
+                <div className="mt-1 pt-1 border-t text-muted-foreground flex items-center gap-1 flex-wrap">
+                  <span className="flex items-center gap-1">
+                    Portfolio Risk
+                    <span title="Overall inventory health across all items. Based on buffer adequacy, supply coverage, stockout protection, and forecast fit." className="cursor-help">
+                      <HelpCircle className="h-3 w-3 text-muted-foreground/60" strokeWidth={1.5} />
+                    </span>
+                    :
+                  </span>{" "}
+                  {(() => {
+                    const score = healthSummary?.avg_health_score;
+                    if (score == null) return <span className="font-semibold text-foreground">—</span>;
+                    const riskLevel = score >= 80 ? "Low" : score >= 60 ? "Medium" : score >= 40 ? "High" : "Critical";
+                    const riskColor = score >= 80 ? "bg-green-100 text-green-800" : score >= 60 ? "bg-blue-100 text-blue-800" : score >= 40 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800";
+                    return (
+                      <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${riskColor}`} title={`Health score: ${score.toFixed(1)}/100`}>
+                        {riskLevel}
+                      </span>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
@@ -230,27 +264,27 @@ export function PortfolioHealthPanel() {
 
         <div className="rounded-lg border bg-card p-4">
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-            Score Components (avg pts / 25)
+            Risk Factor Breakdown
           </h4>
           {healthSummaryLoading ? (
             <div className="text-xs text-muted-foreground">Loading…</div>
           ) : healthSummary?.component_avgs ? (
             <>
               <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border mb-3">
-                <span className="font-medium text-foreground">Health Score Components (each /25): </span>
-                <span className="text-green-600">● 20–25 Excellent</span> ·{" "}
-                <span className="text-blue-600 ml-1">● 15–19 Good</span> ·{" "}
-                <span className="text-amber-600 ml-1">● 10–14 Needs Attention</span> ·{" "}
-                <span className="text-red-600 ml-1">● 0–9 Critical</span>
-                <span className="ml-2 text-muted-foreground">Total score = sum of all 4 components (max 100)</span>
+                <span className="font-medium text-foreground">How healthy is each area? </span>
+                <span className="text-green-600">● Excellent</span> ·{" "}
+                <span className="text-blue-600 ml-1">● Good</span> ·{" "}
+                <span className="text-amber-600 ml-1">● Needs Attention</span> ·{" "}
+                <span className="text-red-600 ml-1">● Critical</span>
+                <span className="ml-2 text-muted-foreground">(4 areas, each scored out of 25)</span>
               </div>
               <div className="flex flex-col gap-2">
                 {(
                   [
-                    ["ss_coverage",      "SS Coverage",       healthSummary.component_avgs.ss_coverage],
-                    ["dos_target",       "DOS Target",        healthSummary.component_avgs.dos_target],
-                    ["stockout_risk",    "Stockout Risk",     healthSummary.component_avgs.stockout_risk],
-                    ["forecast_accuracy","Forecast Accuracy", healthSummary.component_avgs.forecast_accuracy],
+                    ["ss_coverage",      "Buffer Adequacy",       healthSummary.component_avgs.ss_coverage],
+                    ["dos_target",       "Supply Coverage",        healthSummary.component_avgs.dos_target],
+                    ["stockout_risk",    "Stockout Protection",     healthSummary.component_avgs.stockout_risk],
+                    ["forecast_accuracy","Forecast Fit", healthSummary.component_avgs.forecast_accuracy],
                   ] as [string, string, number | null][]
                 ).map(([key, label, val]) => {
                   const pct = val != null ? Math.min(100, (val / 25) * 100) : 0;
@@ -287,14 +321,14 @@ export function PortfolioHealthPanel() {
       {(healthHeatmap?.cells?.length ?? 0) > 0 && healthHeatmap && (
         <div className="rounded-lg border bg-card p-4 mb-4">
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-            Avg Health Score by ABC Class x Variability
+            Risk by ABC Class x Demand Variability
           </h4>
           <div className="text-xs text-muted-foreground p-2 rounded bg-muted/30 border mb-3">
-            <span className="font-medium text-foreground">Health Tiers (total score /100): </span>
-            <span className="text-green-700">● 80–100 Healthy</span> ·{" "}
-            <span className="text-blue-700 ml-1">● 60–79 Monitor</span> ·{" "}
-            <span className="text-amber-700 ml-1">● 40–59 At Risk</span> ·{" "}
-            <span className="text-red-700 ml-1">● 0–39 Critical</span>
+            <span className="font-medium text-foreground">Risk Levels: </span>
+            <span className="text-green-700">● Low Risk (80-100)</span> ·{" "}
+            <span className="text-blue-700 ml-1">● Medium Risk (60-79)</span> ·{" "}
+            <span className="text-amber-700 ml-1">● High Risk (40-59)</span> ·{" "}
+            <span className="text-red-700 ml-1">● Critical (0-39)</span>
           </div>
           <div className="overflow-x-auto">
             <table className="text-xs w-full">
@@ -392,12 +426,12 @@ export function PortfolioHealthPanel() {
                   <tr className="border-b text-muted-foreground">
                     <th className="text-left py-1 pr-3">Item</th>
                     <th className="text-left py-1 pr-3">Location</th>
-                    <th className="text-center py-1 pr-3">Score</th>
-                    <th className="text-center py-1 pr-3">Tier</th>
-                    <th className="text-right py-1 pr-3">SS Cov</th>
-                    <th className="text-right py-1 pr-3">DOS Tgt</th>
-                    <th className="text-right py-1 pr-3">Stockout</th>
-                    <th className="text-right py-1">Fcst Acc</th>
+                    <th className="text-center py-1 pr-3" title="Overall health score out of 100">Score</th>
+                    <th className="text-center py-1 pr-3">Risk Level</th>
+                    <th className="text-right py-1 pr-3" title="Buffer Adequacy: how well safety stock covers the target">Buffer</th>
+                    <th className="text-right py-1 pr-3" title="Supply Coverage: days of inventory on hand vs target">Supply</th>
+                    <th className="text-right py-1 pr-3" title="Stockout Protection: risk of running out of stock">Stockout</th>
+                    <th className="text-right py-1" title="Forecast Fit: how closely forecasts match actual demand">Forecast</th>
                   </tr>
                 </thead>
                 <tbody>

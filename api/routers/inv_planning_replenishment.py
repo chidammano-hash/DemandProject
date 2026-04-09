@@ -57,6 +57,7 @@ def get_replenishment_summary(
                     "avg_ss": None,
                     "avg_eoq": None,
                     "avg_ss_delta_pct": None,
+                    "computed_at": None,
                     "by_policy_type": [],
                 }
 
@@ -82,7 +83,8 @@ def get_replenishment_summary(
                     COUNT(DISTINCT (item_id, loc)) FILTER (WHERE is_below_ss = TRUE)  AS below_ss_count,
                     AVG(ss_combined)                                                   AS avg_ss,
                     AVG(effective_eoq)                                                 AS avg_eoq,
-                    AVG(ss_delta_pct)                                                  AS avg_ss_delta_pct
+                    AVG(ss_delta_pct)                                                  AS avg_ss_delta_pct,
+                    MAX(computed_at)                                                    AS last_computed_at
                 FROM fact_replenishment_plan
                 {summary_where_sql}
             """
@@ -111,11 +113,15 @@ def get_replenishment_summary(
             #               3: avg_eoq, 4: total_order_qty
 
     if not summary_row:
-        summary_row = (0, 0, None, None, None)
+        summary_row = (0, 0, None, None, None, None)
 
     total_dfus = int(summary_row[0] or 0)
     below_ss_count = int(summary_row[1] or 0)
     below_ss_pct = round(below_ss_count / total_dfus * 100, 2) if total_dfus else 0.0
+
+    # row[5] = last_computed_at (TIMESTAMPTZ or None)
+    last_ct = summary_row[5]
+    computed_at = last_ct.isoformat() if hasattr(last_ct, "isoformat") else (str(last_ct) if last_ct else None)
 
     by_policy_type = [
         {
@@ -136,6 +142,7 @@ def get_replenishment_summary(
         "avg_ss":           _f(summary_row[2]),
         "avg_eoq":          _f(summary_row[3]),
         "avg_ss_delta_pct": _f(summary_row[4]),
+        "computed_at":      computed_at,
         "by_policy_type":   by_policy_type,
     }
 

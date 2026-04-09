@@ -39,6 +39,13 @@ export interface ExceptionRow {
   status: string;
   acknowledged_by: string | null;
   notes: string | null;
+  unit_cost: number | null;
+  unit_margin: number | null;
+  daily_demand_rate: number | null;
+  loss_of_sales_7d: number | null;
+  loss_of_sales_30d: number | null;
+  monthly_holding_cost: number | null;
+  financial_impact_total: number | null;
 }
 
 export interface ExceptionListPayload {
@@ -54,6 +61,10 @@ export interface ExceptionSummaryPayload {
   by_severity: { critical: number; high: number; medium: number; low: number };
   total_recommended_order_value: number;
   oldest_open_days: number;
+  total_financial_impact: number;
+  total_loss_of_sales_7d: number;
+  total_monthly_holding_cost: number;
+  last_generated_at?: string | null;
 }
 
 export interface ExceptionGeneratePayload {

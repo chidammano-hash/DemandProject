@@ -58,12 +58,12 @@ describe("ExceptionQueuePanel", () => {
       </TestQueryWrapper>,
     );
     await waitFor(() => {
-      expect(screen.getByText("Total Open")).toBeInTheDocument();
+      expect(screen.getByText("Open Issues")).toBeInTheDocument();
     });
-    // "Critical" and "High" appear as both KPI labels and severity filter pills
-    expect(screen.getAllByText("Critical").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("High").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Rec. Order Value")).toBeInTheDocument();
+    // "Urgent" appears as KPI label; severity filter pills still show "Critical" and "High"
+    expect(screen.getAllByText("Urgent").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("High Priority")).toBeInTheDocument();
+    expect(screen.getByText("Value at Risk")).toBeInTheDocument();
   });
 
   it("renders exception table rows", async () => {
@@ -73,7 +73,7 @@ describe("ExceptionQueuePanel", () => {
       </TestQueryWrapper>,
     );
     expect(await screen.findByText("100320")).toBeInTheDocument();
-    expect(await screen.findByText("critical")).toBeInTheDocument();
+    expect(await screen.findByText("URGENT")).toBeInTheDocument();
   });
 
   it("renders Generate Exceptions button", async () => {

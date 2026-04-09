@@ -38,10 +38,26 @@ export interface FillRateDetailRow {
   region: string | null;
 }
 
+export interface GapDecompositionItem {
+  cause: string;
+  impact_pct: number;
+  sku_count: number;
+  shortage_qty: number;
+}
+
+export interface FillRateGapAnalysisPayload {
+  target_fill_rate: number;
+  actual_fill_rate: number | null;
+  gap_pct: number | null;
+  decomposition: GapDecompositionItem[];
+  month: string | null;
+}
+
 export const fillRateKeys = {
-  summary: (f?: Record<string, unknown>) => ["fill-rate-summary", f ?? {}] as const,
-  trend:   (f?: Record<string, unknown>) => ["fill-rate-trend", f ?? {}] as const,
-  detail:  (f?: Record<string, unknown>) => ["fill-rate-detail", f ?? {}] as const,
+  summary:     (f?: Record<string, unknown>) => ["fill-rate-summary", f ?? {}] as const,
+  trend:       (f?: Record<string, unknown>) => ["fill-rate-trend", f ?? {}] as const,
+  detail:      (f?: Record<string, unknown>) => ["fill-rate-detail", f ?? {}] as const,
+  gapAnalysis: (f?: Record<string, unknown>) => ["fill-rate-gap-analysis", f ?? {}] as const,
 };
 
 export async function fetchFillRateSummary(
@@ -60,4 +76,14 @@ export async function fetchFillRateDetail(
   params: Record<string, unknown> = {},
 ): Promise<{ total: number; rows: FillRateDetailRow[] }> {
   return fetchJson(`/fill-rate/detail${buildQuerySuffix(params as Record<string, string>)}`);
+}
+
+export async function fetchFillRateGapAnalysis(
+  params?: { month?: string; abc_vol?: string },
+): Promise<FillRateGapAnalysisPayload> {
+  const qs = new URLSearchParams();
+  if (params?.month) qs.set("month", params.month);
+  if (params?.abc_vol) qs.set("abc_vol", params.abc_vol);
+  const suffix = qs.toString();
+  return fetchJson(`/fill-rate/gap-analysis${suffix ? `?${suffix}` : ""}`);
 }

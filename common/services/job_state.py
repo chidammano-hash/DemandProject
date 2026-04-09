@@ -719,6 +719,47 @@ def _run_generate_storyboard(
     return {"output_log": output if output else "Storyboard exceptions generated"}
 
 
+def _run_inventory_backtest(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run inventory backtest simulation."""
+    cmd = [_UV, "run", "python", "scripts/run_inventory_backtest.py"]
+    if params.get("models"):
+        cmd.extend(["--models", params["models"]])
+    if params.get("months"):
+        cmd.extend(["--months", str(params["months"])])
+    output = _run_subprocess(
+        cmd, progress_cb, "Inventory backtest",
+        cancel_event=cancel_event, job_id=job_id,
+    )
+    return {"output_log": output or "Inventory backtest completed"}
+
+
+def _run_inventory_planning_pipeline(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run the end-to-end inventory planning pipeline."""
+    steps = params.get("steps")
+    cmd = [_UV, "run", "python", "scripts/run_inventory_planning_pipeline.py"]
+    if steps:
+        cmd.extend(["--steps", steps])
+    if progress_cb:
+        progress_cb(pct=0, msg="Starting inventory planning pipeline")
+    output = _run_subprocess(
+        cmd, progress_cb, "Inventory planning pipeline",
+        cancel_event=cancel_event, job_id=job_id,
+    )
+    if progress_cb:
+        progress_cb(pct=100, msg="Inventory planning pipeline complete")
+    return {"output_log": output or "Pipeline completed"}
+
+
 def _run_compute_safety_stock(
     params: dict[str, Any],
     progress_cb: Callable | None = None,
@@ -729,6 +770,10 @@ def _run_compute_safety_stock(
     if progress_cb:
         progress_cb(pct=10, msg="Computing safety stock targets")
     cmd = [_UV, "run", "python", "scripts/compute_safety_stock.py", "--config", "config/safety_stock_config.yaml"]
+    if params.get("forecast_source"):
+        cmd.extend(["--forecast-source", params["forecast_source"]])
+    if params.get("model_id"):
+        cmd.extend(["--model-id", params["model_id"]])
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Safety stock computation completed"}
 
@@ -745,6 +790,23 @@ def _run_compute_eoq(
     cmd = [_UV, "run", "python", "scripts/compute_eoq.py", "--config", "config/eoq_config.yaml"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "EOQ computation completed"}
+
+
+def _run_compare_inventory_algorithms(
+    params: dict[str, Any],
+    progress_cb: Callable | None = None,
+    cancel_event: Event | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Compare SS/EOQ/ROP across forecast algorithms."""
+    if progress_cb:
+        progress_cb(pct=10, msg="Comparing inventory algorithms")
+    cmd = [_UV, "run", "python", "scripts/compare_inventory_algorithms.py"]
+    models = params.get("models")
+    if models:
+        cmd.extend(["--models", models])
+    output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
+    return {"output_log": output or "Algorithm comparison completed"}
 
 
 def _run_assign_policies(

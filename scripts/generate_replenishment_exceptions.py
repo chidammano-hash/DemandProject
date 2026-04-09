@@ -33,6 +33,12 @@ from common.services.perf_profiler import profiled_section
 # Exception detection helpers (pure functions — also used by unit tests)
 # ---------------------------------------------------------------------------
 
+_DEFAULT_UNIT_COST = 10.0        # fallback when no cost data available (USD)
+_MARGIN_RATE = 0.30              # assumed gross margin (30%) when no margin data
+_ANNUAL_HOLDING_RATE = 0.25      # annual inventory carrying cost rate (25%)
+_DAYS_PER_MONTH = 30.44          # average days per month
+
+
 def detect_exception_type(
     current_qty: float,
     ss_combined: float | None,
@@ -69,6 +75,65 @@ def detect_exception_type(
         return "zero_velocity", "low"
 
     return None, None
+
+
+def compute_financial_impact(
+    exception_type: str,
+    current_qty: float,
+    ss_combined: float | None,
+    unit_cost: float | None,
+    demand_mean_monthly: float | None,
+    current_dos: float | None,
+    lead_time_mean_days: float | None,
+) -> dict:
+    """Compute financial impact metrics for an exception.
+
+    Returns dict with keys: unit_cost, unit_margin, daily_demand_rate,
+    loss_of_sales_7d, loss_of_sales_30d, monthly_holding_cost, financial_impact_total.
+    """
+    cost = unit_cost if unit_cost and unit_cost > 0 else _DEFAULT_UNIT_COST
+    margin = cost * _MARGIN_RATE
+    monthly_demand = demand_mean_monthly if demand_mean_monthly and demand_mean_monthly > 0 else 0.0
+    daily_demand = monthly_demand / _DAYS_PER_MONTH
+
+    loss_7d = 0.0
+    loss_30d = 0.0
+    monthly_holding = 0.0
+    impact_total = 0.0
+
+    if exception_type in ("stockout", "below_ss", "below_rop"):
+        # Days at risk: how many days before lead time replenishment arrives
+        lt = lead_time_mean_days or 0.0
+        dos = current_dos if current_dos is not None else 0.0
+        if lt > 0:
+            # Known lead time: risk = lead time minus current days of supply
+            days_at_risk = max(0.0, lt - dos)
+        elif dos <= 0 and daily_demand > 0:
+            # No lead time data but already stocked out: assume 7-day risk window
+            days_at_risk = 7.0
+        else:
+            days_at_risk = 0.0
+        loss_7d = round(daily_demand * margin * min(7.0, days_at_risk), 2)
+        loss_30d = round(daily_demand * margin * min(30.0, days_at_risk), 2)
+        impact_total = loss_7d
+
+    elif exception_type == "excess":
+        ss = ss_combined or 0.0
+        excess_qty = max(0.0, current_qty - ss * 2.0)  # qty above 2x safety stock
+        monthly_holding = round(excess_qty * cost * _ANNUAL_HOLDING_RATE / 12.0, 2)
+        impact_total = monthly_holding
+
+    # zero_velocity: no direct financial impact computed (impact_total stays 0)
+
+    return {
+        "unit_cost": round(cost, 2),
+        "unit_margin": round(margin, 2),
+        "daily_demand_rate": round(daily_demand, 4),
+        "loss_of_sales_7d": loss_7d,
+        "loss_of_sales_30d": loss_30d,
+        "monthly_holding_cost": monthly_holding,
+        "financial_impact_total": impact_total,
+    }
 
 
 def compute_recommendation(
@@ -198,6 +263,40 @@ def run(dry_run: bool = False) -> dict:
                 }
 
             # ----------------------------------------------------------------
+            # 2b. Unit cost lookup from fact_eoq_targets (batch load once)
+            # ----------------------------------------------------------------
+            with profiled_section("fetch_unit_costs"):
+                try:
+                    cur.execute("""
+                        SELECT item_id, loc, unit_cost
+                        FROM fact_eoq_targets
+                        WHERE unit_cost IS NOT NULL AND unit_cost > 0
+                    """)
+                    cost_rows = cur.fetchall()
+                except Exception:
+                    conn.rollback()
+                    cost_rows = []
+
+            cost_map: dict[tuple, float] = {}
+            for r in cost_rows:
+                cost_map[(r[0], r[1])] = float(r[2])
+
+            # Merge cost data into ss_map for items that have it
+            for key, cost in cost_map.items():
+                if key in ss_map:
+                    ss_map[key]["unit_cost"] = cost
+                else:
+                    # Create a minimal entry so cost is available even without SS targets
+                    ss_map[key] = {
+                        "ss_combined": None,
+                        "reorder_point": None,
+                        "effective_eoq": None,
+                        "target_dos_max": None,
+                        "unit_cost": cost,
+                        "demand_mean_monthly": None,
+                    }
+
+            # ----------------------------------------------------------------
             # 3. Policy assignments (review_cycle_days from IPfeature5)
             # ----------------------------------------------------------------
             with profiled_section("fetch_policy_assignments"):
@@ -300,6 +399,17 @@ def run(dry_run: bool = False) -> dict:
 
                 est_value = round(rec_qty * (unit_cost or 0.0), 2)
 
+                # Financial impact computation
+                fin = compute_financial_impact(
+                    exception_type=exc_type,
+                    current_qty=current_qty,
+                    ss_combined=ss_combined,
+                    unit_cost=unit_cost,
+                    demand_mean_monthly=demand_mean_monthly,
+                    current_dos=current_dos,
+                    lead_time_mean_days=lead_time,
+                )
+
                 to_insert.append({
                     "item_id": item_id,
                     "loc": loc,
@@ -316,6 +426,13 @@ def run(dry_run: bool = False) -> dict:
                     "estimated_order_value": est_value,
                     "policy_id": policy_id,
                     "lead_time_mean_days": lead_time,
+                    "unit_cost": fin["unit_cost"],
+                    "unit_margin": fin["unit_margin"],
+                    "daily_demand_rate": fin["daily_demand_rate"],
+                    "loss_of_sales_7d": fin["loss_of_sales_7d"],
+                    "loss_of_sales_30d": fin["loss_of_sales_30d"],
+                    "monthly_holding_cost": fin["monthly_holding_cost"],
+                    "financial_impact_total": fin["financial_impact_total"],
                 })
                 counts_by_type[exc_type] += 1
 
@@ -330,12 +447,18 @@ def run(dry_run: bool = False) -> dict:
                             item_id, loc, exception_date, exception_type, severity,
                             current_qty_on_hand, current_dos, ss_combined, reorder_point,
                             recommended_order_qty, recommended_order_by, expected_receipt_date,
-                            estimated_order_value, policy_id, lead_time_mean_days
+                            estimated_order_value, policy_id, lead_time_mean_days,
+                            unit_cost, unit_margin, daily_demand_rate,
+                            loss_of_sales_7d, loss_of_sales_30d,
+                            monthly_holding_cost, financial_impact_total
                         ) VALUES (
                             %(item_id)s, %(loc)s, %(exception_date)s, %(exception_type)s, %(severity)s,
                             %(current_qty_on_hand)s, %(current_dos)s, %(ss_combined)s, %(reorder_point)s,
                             %(recommended_order_qty)s, %(recommended_order_by)s, %(expected_receipt_date)s,
-                            %(estimated_order_value)s, %(policy_id)s, %(lead_time_mean_days)s
+                            %(estimated_order_value)s, %(policy_id)s, %(lead_time_mean_days)s,
+                            %(unit_cost)s, %(unit_margin)s, %(daily_demand_rate)s,
+                            %(loss_of_sales_7d)s, %(loss_of_sales_30d)s,
+                            %(monthly_holding_cost)s, %(financial_impact_total)s
                         )
                         ON CONFLICT DO NOTHING
                     """, to_insert)

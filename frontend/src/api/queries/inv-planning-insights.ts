@@ -10,6 +10,7 @@ export const STALE_INSIGHTS = { ONE_MIN: 60_000, FIVE_MIN: 300_000 } as const;
 // ---------------------------------------------------------------------------
 export const insightKeys = {
   actionFeed: () => ["inv-planning", "action-feed"] as const,
+  dailyBriefing: () => ["inv-planning", "daily-briefing"] as const,
   rootCause: (item: string, loc: string) =>
     ["inv-planning", "root-cause", item, loc] as const,
   segmentDashboard: (segment: string) =>
@@ -18,6 +19,8 @@ export const insightKeys = {
     ["inv-planning", "ss-cost-benefit", params] as const,
   serviceLevelWaterfall: () =>
     ["inv-planning", "service-level-waterfall"] as const,
+  serviceLevelBridge: () =>
+    ["inv-planning", "service-level-bridge"] as const,
   networkHeatmap: () => ["inv-planning", "network-heatmap"] as const,
   planningScorecard: () => ["inv-planning", "planning-scorecard"] as const,
   cashFlow: () => ["inv-planning", "cash-flow-timeline"] as const,
@@ -83,18 +86,49 @@ export interface SegmentDashboardPayload {
   recommended_actions: string[];
 }
 
+export interface ServiceLevelWaterfallSegment {
+  lever?: string;
+  label?: string;
+  contribution?: number;
+  contribution_pct?: number;
+  cumulative?: number;
+  cumulative_pct?: number;
+  color?: string;
+}
+
 export interface ServiceLevelWaterfallPayload {
-  base_forecast_csl: number;
-  ss_buffer_contribution: number;
-  lt_buffer_contribution: number;
-  sensing_contribution: number;
-  achieved_csl: number;
-  segments: {
-    lever: string;
-    contribution: number;
-    cumulative: number;
-    color: string;
-  }[];
+  base_forecast_csl?: number;
+  ss_buffer_contribution?: number;
+  lt_buffer_contribution?: number;
+  sensing_contribution?: number;
+  achieved_csl?: number;
+  /** Backend may return segments (old shape) or steps (current shape) */
+  segments?: ServiceLevelWaterfallSegment[];
+  steps?: ServiceLevelWaterfallSegment[];
+}
+
+export interface WaterfallBridgeStep {
+  label: string;
+  value: number;
+  type: "total" | "positive" | "negative";
+}
+
+export interface WaterfallBridgeClassData {
+  abc_class: string;
+  sku_count: number;
+  avg_fill_rate: number;
+  target_sl: number;
+  gap: number;
+  weight: number;
+  weighted_gap: number;
+}
+
+export interface WaterfallBridgePayload {
+  target: number | null;
+  actual: number | null;
+  steps: WaterfallBridgeStep[];
+  by_class: WaterfallBridgeClassData[];
+  month: string | null;
 }
 
 export interface NetworkHeatmapCell {
@@ -225,4 +259,62 @@ export async function fetchConstrainedOpt(
 
 export async function fetchProactiveRebalancing(): Promise<unknown> {
   return fetchJson("/inv-planning/proactive-rebalancing");
+}
+
+export async function fetchServiceLevelBridge(
+  month?: string,
+): Promise<WaterfallBridgePayload> {
+  const qs = month ? `?month=${encodeURIComponent(month)}` : "";
+  return fetchJson(`/inv-planning/service-level/waterfall${qs}`);
+}
+
+// ---------------------------------------------------------------------------
+// Daily Briefing (Issue #23)
+// ---------------------------------------------------------------------------
+
+export interface DailyBriefingUrgentItem {
+  text: string;
+  value: string;
+  severity: "critical" | "high";
+}
+
+export interface DailyBriefingWeekItem {
+  text: string;
+  value: string;
+}
+
+export interface DailyBriefingPortfolioItem {
+  text: string;
+  trend?: "up" | "down" | "flat";
+  delta?: string;
+  status?: "good" | "attention" | "critical";
+}
+
+export interface DailyBriefingActionItem {
+  priority: number;
+  text: string;
+  impact: string;
+  deadline: string;
+}
+
+export interface DailyBriefingStats {
+  total_skus: number;
+  below_ss_count: number;
+  excess_count: number;
+  total_excess_value: number;
+  total_stockout_risk_value: number;
+  avg_health_score: number | null;
+}
+
+export interface DailyBriefingPayload {
+  date: string;
+  urgent: { label: string; items: DailyBriefingUrgentItem[] };
+  this_week: { label: string; items: DailyBriefingWeekItem[] };
+  portfolio: { label: string; items: DailyBriefingPortfolioItem[] };
+  actions: { label: string; items: DailyBriefingActionItem[] };
+  stats: DailyBriefingStats;
+}
+
+export async function fetchDailyBriefing(): Promise<DailyBriefingPayload> {
+  return fetchJson("/inv-planning/daily-briefing");
 }

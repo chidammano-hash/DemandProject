@@ -13,8 +13,10 @@ import {
   fillRateKeys,
   fetchFillRateSummary,
   fetchFillRateTrend,
+  fetchFillRateGapAnalysis,
   STALE,
 } from "@/api/queries";
+import type { GapDecompositionItem } from "@/api/queries";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 import { KpiCard } from "@/components/KpiCard";
 import { EmptyState } from "@/components/EmptyState";
@@ -41,6 +43,11 @@ export function FillRatePanel() {
   const { data: trendData } = useQuery({
     queryKey: fillRateKeys.trend(gf),
     queryFn: () => fetchFillRateTrend(gf),
+    staleTime: STALE.FIVE_MIN,
+  });
+  const { data: gapData } = useQuery({
+    queryKey: fillRateKeys.gapAnalysis(gf),
+    queryFn: () => fetchFillRateGapAnalysis(gf as { month?: string; abc_vol?: string }),
     staleTime: STALE.FIVE_MIN,
   });
 
@@ -91,6 +98,76 @@ export function FillRatePanel() {
           </ResponsiveContainer>
         </div>
       )}
+      {gapData && gapData.decomposition.length > 0 && (
+        <GapWaterfall
+          targetFillRate={gapData.target_fill_rate}
+          actualFillRate={gapData.actual_fill_rate}
+          gapPct={gapData.gap_pct}
+          decomposition={gapData.decomposition}
+          month={gapData.month}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Gap Waterfall Decomposition Sub-component
+// ---------------------------------------------------------------------------
+
+const CAUSE_COLORS: Record<string, string> = {
+  "Safety Stock Shortfall": "bg-red-500",
+  "Demand Spike (>20% above forecast)": "bg-orange-500",
+  "Lead Time Delay": "bg-yellow-500",
+  "Other / Data Gap": "bg-gray-400",
+};
+
+function GapWaterfall({
+  targetFillRate,
+  actualFillRate,
+  gapPct,
+  decomposition,
+  month,
+}: {
+  targetFillRate: number;
+  actualFillRate: number | null;
+  gapPct: number | null;
+  decomposition: GapDecompositionItem[];
+  month: string | null;
+}) {
+  // Find the max absolute impact for scaling the bars
+  const maxImpact = Math.max(...decomposition.map((d) => Math.abs(d.impact_pct)), 0.01);
+
+  return (
+    <div className="rounded-lg border p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium">
+          Fill Rate Gap Decomposition{month ? ` (${month})` : ""}
+        </p>
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <span>Target: {formatPct(targetFillRate * 100)}</span>
+          <span>Actual: {actualFillRate != null ? formatPct(actualFillRate * 100) : "N/A"}</span>
+          <span className={gapPct != null && gapPct < 0 ? "text-red-600 font-medium" : "text-green-600 font-medium"}>
+            Gap: {gapPct != null ? `${gapPct > 0 ? "+" : ""}${gapPct.toFixed(2)}%` : "N/A"}
+          </span>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {decomposition.map((d) => (
+          <div key={d.cause} className="flex items-center gap-2">
+            <div className="w-44 text-xs truncate" title={d.cause}>{d.cause}</div>
+            <div className="flex-1 bg-muted rounded h-4 overflow-hidden">
+              <div
+                className={`${CAUSE_COLORS[d.cause] ?? "bg-gray-400"} h-4 rounded transition-all`}
+                style={{ width: `${Math.min((Math.abs(d.impact_pct) / maxImpact) * 100, 100)}%` }}
+              />
+            </div>
+            <span className="text-xs font-mono w-16 text-right">{d.impact_pct}%</span>
+            <span className="text-xs text-muted-foreground w-20 text-right">{d.sku_count} SKUs</span>
+            <span className="text-xs text-muted-foreground w-24 text-right">{formatInt(d.shortage_qty)} qty</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

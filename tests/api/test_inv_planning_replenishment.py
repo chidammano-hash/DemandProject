@@ -32,7 +32,7 @@ async def test_summary_default():
     # fetchall calls: (1) policy_type breakdown
     cursor.fetchone.side_effect = [
         ("2026-02",),          # plan_version lookup
-        (172276, 12450, 145.5, 320.8, 12.4),  # summary row
+        (172276, 12450, 145.5, 320.8, 12.4, datetime.datetime(2026, 3, 1, 12, 0)),  # summary row (6 cols incl. last_computed_at)
     ]
     cursor.fetchall.return_value = [
         ("continuous_rop", 80000, 150.0, 300.0, 24000000.0),
@@ -64,7 +64,7 @@ async def test_summary_with_policy_filter():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.side_effect = [
         ("2026-02",),
-        (80000, 5000, 150.0, 300.0, 8.0),
+        (80000, 5000, 150.0, 300.0, 8.0, datetime.datetime(2026, 3, 1, 12, 0)),
     ]
     cursor.fetchall.return_value = [
         ("continuous_rop", 80000, 150.0, 300.0, 24000000.0),
@@ -89,7 +89,7 @@ async def test_summary_with_abc_filter():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.side_effect = [
         ("2026-02",),
-        (5000, 800, 500.0, 1200.0, 18.0),
+        (5000, 800, 500.0, 1200.0, 18.0, datetime.datetime(2026, 3, 1, 12, 0)),
     ]
     cursor.fetchall.return_value = [
         ("continuous_rop", 4000, 520.0, 1250.0, 5000000.0),
@@ -133,7 +133,7 @@ async def test_summary_by_policy_type_keys():
     pool, conn, cursor = _make_pool()
     cursor.fetchone.side_effect = [
         ("2026-02",),
-        (10000, 500, 200.0, 400.0, 5.0),
+        (10000, 500, 200.0, 400.0, 5.0, datetime.datetime(2026, 3, 1, 12, 0)),
     ]
     cursor.fetchall.return_value = [
         ("continuous_rop", 6000, 210.0, 420.0, 2520000.0),
@@ -555,7 +555,7 @@ async def test_summary_explicit_plan_version_skips_lookup():
     """Providing plan_version explicitly skips the version-lookup fetchone call (line 49)."""
     pool, conn, cursor = _make_pool()
     # Only ONE fetchone (summary row) — version lookup is skipped
-    cursor.fetchone.return_value = (50000, 2000, 210.0, 350.0, 6.5)
+    cursor.fetchone.return_value = (50000, 2000, 210.0, 350.0, 6.5, datetime.datetime(2026, 1, 15, 10, 0))
     cursor.fetchall.return_value = [
         ("continuous_rop", 30000, 220.0, 360.0, 10800000.0),
     ]

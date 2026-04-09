@@ -20,7 +20,7 @@ _VALID_SEVERITIES = {"critical", "high", "medium", "low"}
 _VALID_STATUSES = {"open", "acknowledged", "ordered", "resolved"}
 _EXCEPTION_SORT_COLS = {
     "severity", "exception_date", "recommended_order_by",
-    "current_qty_on_hand", "item_id", "loc",
+    "current_qty_on_hand", "item_id", "loc", "financial_impact_total",
 }
 _SEVERITY_ORDER = "CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END"
 
@@ -96,7 +96,10 @@ def get_exceptions(
             exception_id, item_id, loc, exception_date, exception_type, severity,
             current_qty_on_hand, current_dos, ss_combined, reorder_point,
             recommended_order_qty, recommended_order_by, expected_receipt_date,
-            estimated_order_value, policy_id, status, acknowledged_by, notes
+            estimated_order_value, policy_id, status, acknowledged_by, notes,
+            unit_cost, unit_margin, daily_demand_rate,
+            loss_of_sales_7d, loss_of_sales_30d,
+            monthly_holding_cost, financial_impact_total
         FROM fact_replenishment_exceptions t
         {where_clause}
         ORDER BY {order_clause}
@@ -134,6 +137,13 @@ def get_exceptions(
                 "status":                 r[15],
                 "acknowledged_by":        r[16],
                 "notes":                  r[17],
+                "unit_cost":              _f(r[18]),
+                "unit_margin":            _f(r[19]),
+                "daily_demand_rate":      _f(r[20]),
+                "loss_of_sales_7d":       _f(r[21]),
+                "loss_of_sales_30d":      _f(r[22]),
+                "monthly_holding_cost":   _f(r[23]),
+                "financial_impact_total":  _f(r[24]),
             }
             for r in rows
         ],
@@ -181,7 +191,11 @@ def get_exception_summary(
             COALESCE(
                 MAX(EXTRACT(DAY FROM NOW() - exception_date::TIMESTAMPTZ))::INT,
                 0
-            ) AS oldest_open_days
+            ) AS oldest_open_days,
+            COALESCE(SUM(financial_impact_total), 0)                 AS total_financial_impact,
+            COALESCE(SUM(loss_of_sales_7d), 0)                       AS total_loss_of_sales_7d,
+            COALESCE(SUM(monthly_holding_cost), 0)                   AS total_monthly_holding_cost,
+            MAX(load_ts)                                              AS last_generated_at
         FROM fact_replenishment_exceptions t
         {where}
     """
@@ -189,7 +203,11 @@ def get_exception_summary(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
-            row = cur.fetchone() or (0,) * 13
+            row = cur.fetchone() or (0,) * 17
+
+    # row[16] = last_generated_at (TIMESTAMPTZ or None)
+    last_gen = row[16]
+    last_generated_at = last_gen.isoformat() if hasattr(last_gen, "isoformat") else (str(last_gen) if last_gen else None)
 
     return {
         "open_count": int(row[0] or 0),
@@ -209,6 +227,10 @@ def get_exception_summary(
         },
         "total_recommended_order_value": float(row[11] or 0),
         "oldest_open_days":              int(row[12] or 0),
+        "total_financial_impact":        float(row[13] or 0),
+        "total_loss_of_sales_7d":        float(row[14] or 0),
+        "total_monthly_holding_cost":    float(row[15] or 0),
+        "last_generated_at":             last_generated_at,
     }
 
 

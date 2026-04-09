@@ -70,7 +70,7 @@ describe("PortfolioHealthPanel", () => {
       </TestQueryWrapper>,
     );
     await waitFor(() => {
-      expect(screen.getByText("Portfolio Health Score")).toBeInTheDocument();
+      expect(screen.getByText("Portfolio Risk Overview")).toBeInTheDocument();
     });
   });
 
@@ -103,7 +103,7 @@ describe("PortfolioHealthPanel", () => {
         <PortfolioHealthPanel />
       </TestQueryWrapper>,
     );
-    expect(await screen.findByText("SS Coverage")).toBeInTheDocument();
-    expect(await screen.findByText("DOS Target")).toBeInTheDocument();
+    expect(await screen.findByText("Buffer Adequacy")).toBeInTheDocument();
+    expect(await screen.findByText("Supply Coverage")).toBeInTheDocument();
   });
 });

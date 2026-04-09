@@ -68,135 +68,205 @@ def _trend_label(current: float | None, prior: float | None) -> str:
 
 
 # ───────────────────────────────────────────────────────────────────────────
-# 1. GET /inv-planning/action-feed — Unified Action Feed (Expert #1)
+# 1. GET /inv-planning/action-feed — Unified Action Inbox (Issue #13)
 # ───────────────────────────────────────────────────────────────────────────
+
+_URGENCY_THRESHOLDS = {"urgent": 0.75, "high": 0.5, "medium": 0.0}
+
+
+def _urgency_label(score: float) -> str:
+    """Map a 0-1 urgency score to a human-readable label."""
+    if score >= _URGENCY_THRESHOLDS["urgent"]:
+        return "URGENT"
+    if score >= _URGENCY_THRESHOLDS["high"]:
+        return "HIGH"
+    return "MEDIUM"
+
+
+def _severity_from_urgency(score: float) -> str:
+    """Map urgency score to severity for consistent frontend badge styling."""
+    if score >= _URGENCY_THRESHOLDS["urgent"]:
+        return "critical"
+    if score >= _URGENCY_THRESHOLDS["high"]:
+        return "high"
+    return "medium"
+
 
 @router.get("/inv-planning/action-feed")
 def get_action_feed(
     response: FastAPIResponse,
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(20, ge=1, le=100),
+    urgency: str = Query("all"),
 ) -> dict:
-    """Unified priority action feed from exceptions, signals, PO risk and stockouts."""
+    """Unified action inbox: top priority items across exceptions, orders, and projections.
+
+    Combines:
+    1. Open exceptions (from fact_replenishment_exceptions) with financial impact
+    2. Pending planned orders (from fact_planned_orders WHERE status='proposed')
+    3. High-risk items (from mv_integrated_planning_targets WHERE stockout_risk_score >= 60)
+
+    Returns items ranked by urgency + financial impact.
+    """
     set_cache(response, max_age=60)
-    items: list[dict] = []
+
+    # Urgency filter: map label to minimum urgency_score threshold
+    urgency_min = 0.0
+    if urgency == "urgent":
+        urgency_min = _URGENCY_THRESHOLDS["urgent"]
+    elif urgency == "high":
+        urgency_min = _URGENCY_THRESHOLDS["high"]
+    elif urgency == "medium":
+        urgency_min = _URGENCY_THRESHOLDS["medium"]
+    # "all" => 0.0
+
+    actions: list[dict] = []
 
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                # --- Critical / high exceptions ---
+                # --- Source 1: Open exceptions by financial impact ---
                 try:
                     cur.execute("""
-                        SELECT item_id, loc, severity, exception_type,
-                               current_qty_on_hand, recommended_order_qty,
-                               estimated_order_value, exception_date
+                        SELECT 'exception' AS source,
+                               item_id, loc, exception_type AS action_type,
+                               CASE severity
+                                   WHEN 'critical' THEN 0.95
+                                   WHEN 'high' THEN 0.75
+                                   WHEN 'medium' THEN 0.50
+                                   ELSE 0.25
+                               END AS urgency_score,
+                               COALESCE(financial_impact_total, estimated_order_value, 0) AS financial_impact,
+                               'Resolve ' || exception_type || ' exception' AS action_label,
+                               created_at
                         FROM fact_replenishment_exceptions
                         WHERE status = 'open'
-                          AND severity IN ('critical', 'high')
-                        ORDER BY CASE severity WHEN 'critical' THEN 1 ELSE 2 END,
-                                 estimated_order_value DESC NULLS LAST
+                        ORDER BY urgency_score DESC, financial_impact DESC NULLS LAST
                         LIMIT %s
-                    """, [limit])
+                    """, [limit * 2])
                     for r in cur.fetchall():
-                        items.append({
-                            "source": "exception",
-                            "severity": r[2],
-                            "item_id": r[0],
-                            "loc": r[1],
-                            "title": f"{r[3]} exception",
-                            "detail": f"On-hand {_safe_float(r[4])}, recommend order {_safe_float(r[5])}",
-                            "financial_impact": _safe_float(r[6]),
-                            "action_url": f"/inv-planning/exceptions?item={r[0]}&location={r[1]}",
-                            "timestamp": str(r[7]) if r[7] else None,
+                        actions.append({
+                            "source": r[0],
+                            "item_id": r[1],
+                            "loc": r[2],
+                            "action_type": r[3],
+                            "urgency_score": float(r[4]),
+                            "financial_impact": _safe_float(r[5]),
+                            "action_label": r[6],
+                            "created_at": str(r[7]) if r[7] else None,
                         })
-                except psycopg.Error as e:
-                    logger.exception("DB error fetching replenishment exceptions: %s", e)
+                except psycopg.Error as exc:
+                    logger.warning("action-inbox: exceptions table query failed: %s", exc)
 
-                # --- Urgent demand signals ---
+                # --- Source 2: Pending planned orders ---
                 try:
                     cur.execute("""
-                        SELECT item_id, loc, signal_type, signal_strength,
-                               projected_stockout, signal_date
-                        FROM fact_demand_signals
-                        WHERE alert_priority = 'urgent'
-                        ORDER BY signal_date DESC
+                        SELECT 'planned_order' AS source,
+                               item_id, loc, 'approve_order' AS action_type,
+                               CASE WHEN is_past_due THEN 0.9 ELSE 0.6 END AS urgency_score,
+                               COALESCE(order_value, 0) AS financial_impact,
+                               'Approve order: ' || recommended_qty || ' units' AS action_label,
+                               created_at
+                        FROM fact_planned_orders
+                        WHERE status = 'proposed'
+                        ORDER BY urgency_score DESC, order_value DESC NULLS LAST
                         LIMIT %s
-                    """, [limit])
+                    """, [limit * 2])
                     for r in cur.fetchall():
-                        items.append({
-                            "source": "signal",
-                            "severity": "high",
-                            "item_id": r[0],
-                            "loc": r[1],
-                            "title": f"Urgent signal: {r[2]}",
-                            "detail": f"Strength {_safe_float(r[3])}, stockout projected: {r[4]}",
-                            "financial_impact": None,
-                            "action_url": f"/inv-planning/demand-signals?item={r[0]}&location={r[1]}",
-                            "timestamp": str(r[5]) if r[5] else None,
+                        actions.append({
+                            "source": r[0],
+                            "item_id": r[1],
+                            "loc": r[2],
+                            "action_type": r[3],
+                            "urgency_score": float(r[4]),
+                            "financial_impact": _safe_float(r[5]),
+                            "action_label": r[6],
+                            "created_at": str(r[7]) if r[7] else None,
                         })
-                except psycopg.Error as e:
-                    logger.exception("DB error fetching demand signals: %s", e)
+                except psycopg.Error as exc:
+                    logger.warning("action-inbox: planned_orders table query failed: %s", exc)
 
-                # --- At-risk POs (open orders past expected delivery) ---
+                # --- Source 3: High-risk items (stockout risk >= 60) ---
+                # Exclude items that already have an open exception to avoid duplicates
                 try:
                     cur.execute("""
-                        SELECT item_id, loc, expected_receipt_date,
-                               recommended_order_qty, estimated_order_value
-                        FROM fact_replenishment_exceptions
-                        WHERE status = 'ordered'
-                          AND expected_receipt_date < CURRENT_DATE
-                        ORDER BY expected_receipt_date ASC
+                        SELECT 'stockout_risk' AS source,
+                               t.item_id, t.loc, 'review_risk' AS action_type,
+                               t.stockout_risk_score / 100.0 AS urgency_score,
+                               t.monthly_total_holding_cost * 12 AS financial_impact,
+                               'Review stockout risk (score: ' || t.stockout_risk_score || ')' AS action_label,
+                               t.computed_at AS created_at
+                        FROM mv_integrated_planning_targets t
+                        WHERE t.stockout_risk_score >= 60
+                          AND NOT EXISTS (
+                              SELECT 1 FROM fact_replenishment_exceptions e
+                              WHERE e.item_id = t.item_id
+                                AND e.loc = t.loc
+                                AND e.status = 'open'
+                          )
+                        ORDER BY t.stockout_risk_score DESC, financial_impact DESC NULLS LAST
                         LIMIT %s
-                    """, [limit])
+                    """, [limit * 2])
                     for r in cur.fetchall():
-                        items.append({
-                            "source": "po_risk",
-                            "severity": "high",
-                            "item_id": r[0],
-                            "loc": r[1],
-                            "title": "Overdue PO",
-                            "detail": f"Expected {r[2]}, qty {_safe_float(r[3])}",
-                            "financial_impact": _safe_float(r[4]),
-                            "action_url": f"/inv-planning/exceptions?item={r[0]}&location={r[1]}&status=ordered",
-                            "timestamp": str(r[2]) if r[2] else None,
+                        actions.append({
+                            "source": r[0],
+                            "item_id": r[1],
+                            "loc": r[2],
+                            "action_type": r[3],
+                            "urgency_score": float(r[4]),
+                            "financial_impact": _safe_float(r[5]),
+                            "action_label": r[6],
+                            "created_at": str(r[7]) if r[7] else None,
                         })
-                except psycopg.Error as e:
-                    logger.exception("DB error fetching PO risk: %s", e)
+                except psycopg.Error as exc:
+                    logger.warning("action-inbox: integrated_targets MV query failed: %s", exc)
 
-                # --- Projected stockouts ---
-                try:
-                    cur.execute("""
-                        SELECT item_id, loc, signal_date
-                        FROM fact_demand_signals
-                        WHERE projected_stockout = TRUE
-                        ORDER BY signal_date DESC
-                        LIMIT %s
-                    """, [limit])
-                    for r in cur.fetchall():
-                        items.append({
-                            "source": "stockout",
-                            "severity": "critical",
-                            "item_id": r[0],
-                            "loc": r[1],
-                            "title": "Projected stockout",
-                            "detail": "Demand signal projects stockout",
-                            "financial_impact": None,
-                            "action_url": f"/inv-planning/demand-signals?item={r[0]}&location={r[1]}",
-                            "timestamp": str(r[2]) if r[2] else None,
-                        })
-                except psycopg.Error as e:
-                    logger.exception("DB error fetching stockout projections: %s", e)
+    except psycopg.Error as exc:
+        logger.exception("action-inbox: DB connection failed: %s", exc)
+        return {
+            "actions": [],
+            "summary": {
+                "total_actions": 0,
+                "urgent_count": 0,
+                "high_count": 0,
+                "total_financial_impact": 0.0,
+            },
+        }
 
-    except psycopg.Error as e:
-        logger.exception("action-feed: DB connection failed: %s", e)
-        return {"items": [], "total": 0}
+    # Apply urgency filter
+    if urgency_min > 0:
+        actions = [a for a in actions if a["urgency_score"] >= urgency_min]
 
-    # Sort: severity rank first, then financial impact descending
-    items.sort(key=lambda x: (
-        _SEVERITY_RANK.get(x["severity"], 9),
-        -(x["financial_impact"] or 0),
-    ))
-    items = items[:limit]
-    return {"items": items, "total": len(items)}
+    # Sort: urgency desc, then financial impact desc
+    actions.sort(key=lambda a: (-a["urgency_score"], -(a["financial_impact"] or 0)))
+    actions = actions[:limit]
+
+    # Enrich with derived labels + id for the frontend
+    for i, a in enumerate(actions):
+        a["id"] = f"{a['source']}:{a['item_id']}:{a['loc']}:{i}"
+        a["urgency_label"] = _urgency_label(a["urgency_score"])
+        a["severity"] = _severity_from_urgency(a["urgency_score"])
+        a["title"] = a.pop("action_label")
+        a["detail"] = f"{a['action_type'].replace('_', ' ').title()} — {a['item_id']} @ {a['loc']}"
+        a["action_url"] = None
+
+    # Build summary from the full (unsliced) set would be ideal, but for
+    # simplicity we summarise what we return
+    urgent_count = sum(1 for a in actions if a["urgency_score"] >= _URGENCY_THRESHOLDS["urgent"])
+    high_count = sum(
+        1 for a in actions
+        if _URGENCY_THRESHOLDS["high"] <= a["urgency_score"] < _URGENCY_THRESHOLDS["urgent"]
+    )
+    total_impact = sum(a["financial_impact"] or 0 for a in actions)
+
+    return {
+        "actions": actions,
+        "summary": {
+            "total": len(actions),
+            "critical": urgent_count,
+            "high": high_count,
+            "financial_at_risk": round(total_impact, 2) if total_impact else None,
+        },
+    }
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -1259,3 +1329,280 @@ def get_proactive_rebalancing(
     except psycopg.Error as e:
         logger.exception("proactive-rebalancing: query failed: %s", e)
         return empty
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# GET /inv-planning/daily-briefing — Daily Planner Summary Report (Issue #23)
+# ───────────────────────────────────────────────────────────────────────────
+
+@router.get("/inv-planning/daily-briefing")
+def get_daily_briefing(
+    response: FastAPIResponse,
+) -> dict:
+    """Auto-generated daily planner briefing.
+
+    Synthesizes data from exceptions, projections, integrated targets,
+    and planned orders into a prioritized summary with urgent actions,
+    portfolio health, and recommended priorities.
+    """
+    set_cache(response, max_age=120)
+
+    today = date.today()
+    urgent_items: list[dict] = []
+    this_week_items: list[dict] = []
+    portfolio_items: list[dict] = []
+    action_items: list[dict] = []
+    stats: dict = {
+        "total_skus": 0,
+        "below_ss_count": 0,
+        "excess_count": 0,
+        "total_excess_value": 0.0,
+        "total_stockout_risk_value": 0.0,
+        "avg_health_score": None,
+    }
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+
+                # ── Section 1: Urgent items (act within 24 hours) ──
+
+                # 1a. Critical/high open exceptions with stockout risk
+                try:
+                    cur.execute("""
+                        SELECT COUNT(*) AS cnt,
+                               COALESCE(SUM(
+                                   COALESCE(financial_impact_total, estimated_order_value, 0)
+                               ), 0) AS total_value
+                        FROM fact_replenishment_exceptions
+                        WHERE status = 'open'
+                          AND severity IN ('critical', 'high')
+                    """)
+                    row = cur.fetchone()
+                    if row and row[0] and int(row[0]) > 0:
+                        cnt = int(row[0])
+                        val = _safe_float(row[1]) or 0.0
+                        urgent_items.append({
+                            "text": f"{cnt} items at stockout risk requiring immediate action",
+                            "value": f"${val / 1000:.1f}K at risk",
+                            "severity": "critical",
+                        })
+                        stats["total_stockout_risk_value"] = round(val, 2)
+                except psycopg.Error as exc:
+                    logger.warning("daily-briefing: critical exceptions query failed: %s", exc)
+
+                # 1b. Past-due planned orders
+                try:
+                    cur.execute("""
+                        SELECT COUNT(*) AS cnt,
+                               COALESCE(SUM(order_value), 0) AS total_value
+                        FROM fact_planned_orders
+                        WHERE status = 'proposed'
+                          AND is_past_due = TRUE
+                    """)
+                    row = cur.fetchone()
+                    if row and row[0] and int(row[0]) > 0:
+                        cnt = int(row[0])
+                        val = _safe_float(row[1]) or 0.0
+                        urgent_items.append({
+                            "text": f"{cnt} past-due planned orders need approval",
+                            "value": f"${val / 1000:.1f}K",
+                            "severity": "high",
+                        })
+                except psycopg.Error as exc:
+                    logger.warning("daily-briefing: past-due orders query failed: %s", exc)
+
+                # ── Section 2: This week review items ──
+
+                # 2a. Items below safety stock
+                try:
+                    cur.execute("""
+                        SELECT COUNT(*) AS cnt,
+                               COALESCE(SUM(
+                                   GREATEST(0, safety_stock_qty - current_qty_on_hand)
+                                   * unit_cost
+                               ), 0) AS recommended_value
+                        FROM mv_integrated_planning_targets
+                        WHERE is_below_ss = TRUE
+                    """)
+                    row = cur.fetchone()
+                    if row and row[0] and int(row[0]) > 0:
+                        cnt = int(row[0])
+                        val = _safe_float(row[1]) or 0.0
+                        stats["below_ss_count"] = cnt
+                        label = f"${val / 1_000_000:.1f}M" if val >= 1_000_000 else f"${val / 1000:.0f}K"
+                        this_week_items.append({
+                            "text": f"{cnt} items below safety buffer",
+                            "value": f"{label} recommended orders",
+                        })
+                except psycopg.Error as exc:
+                    logger.warning("daily-briefing: below-SS query failed: %s", exc)
+
+                # 2b. Items with high forecast miss (WAPE > 20% in recent period)
+                try:
+                    cur.execute("""
+                        SELECT COUNT(*) AS cnt
+                        FROM (
+                            SELECT item_id, loc,
+                                   SUM(ABS(basefcst_pref - tothist_dmd))
+                                       / NULLIF(ABS(SUM(tothist_dmd)), 0) AS wape
+                            FROM agg_forecast_monthly
+                            WHERE model_id = 'external'
+                              AND month_start >= (CURRENT_DATE - INTERVAL '3 months')
+                            GROUP BY item_id, loc
+                            HAVING SUM(ABS(basefcst_pref - tothist_dmd))
+                                       / NULLIF(ABS(SUM(tothist_dmd)), 0) > 0.20
+                        ) sub
+                    """)
+                    row = cur.fetchone()
+                    if row and row[0] and int(row[0]) > 0:
+                        cnt = int(row[0])
+                        this_week_items.append({
+                            "text": f"{cnt} items with forecast miss >20%",
+                            "value": "Review demand patterns",
+                        })
+                except psycopg.Error as exc:
+                    logger.warning("daily-briefing: forecast miss query failed: %s", exc)
+
+                # ── Section 3: Portfolio health ──
+
+                # 3a. Overall health score + trend
+                try:
+                    cur.execute("""
+                        SELECT AVG(health_score)::numeric(5,1) AS avg_score,
+                               COUNT(*) AS total_skus
+                        FROM mv_inventory_health_score
+                    """)
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        avg_score = float(row[0])
+                        total_skus = int(row[1]) if row[1] else 0
+                        stats["avg_health_score"] = round(avg_score, 1)
+                        stats["total_skus"] = total_skus
+                        # Compute healthy tier percentage
+                        healthy_pct = round(avg_score) if avg_score else 0
+                        portfolio_items.append({
+                            "text": f"{healthy_pct}% portfolio health score",
+                            "trend": "up" if avg_score >= 70 else "flat",
+                            "delta": f"{total_skus:,} SKUs tracked",
+                        })
+                except psycopg.Error as exc:
+                    logger.warning("daily-briefing: health score query failed: %s", exc)
+
+                # 3b. Health by ABC class
+                try:
+                    cur.execute("""
+                        SELECT d.abc_vol,
+                               AVG(h.health_score)::numeric(5,1) AS avg_score
+                        FROM mv_inventory_health_score h
+                        JOIN dim_sku d ON h.item_id = d.item_id AND h.loc = d.loc
+                        WHERE d.abc_vol IN ('A', 'B', 'C')
+                        GROUP BY d.abc_vol
+                        ORDER BY d.abc_vol
+                    """)
+                    for r in cur.fetchall():
+                        abc_class = r[0]
+                        score = float(r[1]) if r[1] is not None else 0
+                        status = "good" if score >= 70 else ("attention" if score >= 50 else "critical")
+                        portfolio_items.append({
+                            "text": f"{abc_class}-class SKUs: Avg health {score:.0f}/100",
+                            "status": status,
+                        })
+                except psycopg.Error as exc:
+                    logger.warning("daily-briefing: ABC health query failed: %s", exc)
+
+                # 3c. Excess inventory stats
+                try:
+                    cur.execute("""
+                        SELECT COUNT(*) AS cnt,
+                               COALESCE(SUM(excess_value_usd), 0) AS total_excess
+                        FROM mv_integrated_planning_targets
+                        WHERE excess_qty > 0
+                    """)
+                    row = cur.fetchone()
+                    if row:
+                        stats["excess_count"] = int(row[0]) if row[0] else 0
+                        stats["total_excess_value"] = round(float(row[1]), 2) if row[1] else 0.0
+                except psycopg.Error as exc:
+                    logger.warning("daily-briefing: excess inventory query failed: %s", exc)
+
+                # ── Section 4: Top 3 recommended actions ──
+                # Re-use the action-feed logic but just pull top 3 by urgency
+                try:
+                    cur.execute("""
+                        (
+                            SELECT 'exception' AS source,
+                                   item_id, loc,
+                                   'Resolve ' || exception_type || ' for ' || item_id || ' @ ' || loc AS action_text,
+                                   COALESCE(financial_impact_total, estimated_order_value, 0) AS impact,
+                                   CASE severity
+                                       WHEN 'critical' THEN 0.95
+                                       WHEN 'high' THEN 0.75
+                                       ELSE 0.50
+                                   END AS urgency_score,
+                                   CASE severity
+                                       WHEN 'critical' THEN 'Today'
+                                       WHEN 'high' THEN 'Today'
+                                       ELSE 'This week'
+                                   END AS deadline
+                            FROM fact_replenishment_exceptions
+                            WHERE status = 'open'
+                            ORDER BY urgency_score DESC,
+                                     COALESCE(financial_impact_total, estimated_order_value, 0) DESC
+                            LIMIT 3
+                        )
+                        UNION ALL
+                        (
+                            SELECT 'planned_order' AS source,
+                                   item_id, loc,
+                                   'Approve order for ' || item_id || ' @ ' || loc AS action_text,
+                                   COALESCE(order_value, 0) AS impact,
+                                   CASE WHEN is_past_due THEN 0.9 ELSE 0.6 END AS urgency_score,
+                                   CASE WHEN is_past_due THEN 'Today' ELSE 'This week' END AS deadline
+                            FROM fact_planned_orders
+                            WHERE status = 'proposed'
+                            ORDER BY urgency_score DESC, order_value DESC NULLS LAST
+                            LIMIT 3
+                        )
+                        ORDER BY urgency_score DESC, impact DESC
+                        LIMIT 3
+                    """)
+                    for i, r in enumerate(cur.fetchall(), start=1):
+                        impact_val = _safe_float(r[4]) or 0
+                        impact_str = (
+                            f"${impact_val / 1000:.0f}K"
+                            if impact_val >= 1000
+                            else f"${impact_val:.0f}"
+                        )
+                        action_items.append({
+                            "priority": i,
+                            "text": r[3],
+                            "impact": impact_str,
+                            "deadline": r[6],
+                        })
+                except psycopg.Error as exc:
+                    logger.warning("daily-briefing: top actions query failed: %s", exc)
+
+    except psycopg.Error as exc:
+        logger.exception("daily-briefing: DB connection failed: %s", exc)
+
+    return {
+        "date": today.isoformat(),
+        "urgent": {
+            "label": "Act within 24 hours",
+            "items": urgent_items,
+        },
+        "this_week": {
+            "label": "Review this week",
+            "items": this_week_items,
+        },
+        "portfolio": {
+            "label": "Portfolio Health",
+            "items": portfolio_items,
+        },
+        "actions": {
+            "label": "Top 3 Recommended Actions",
+            "items": action_items,
+        },
+        "stats": stats,
+    }

@@ -495,6 +495,12 @@ ss-compute-dry:
 ss-all: ss-schema ss-compute
 
 # ---------------------------------------------------------------------------
+# Multi-Algorithm Inventory Comparison
+# ---------------------------------------------------------------------------
+algo-comparison:
+	$(UV) python scripts/compare_inventory_algorithms.py
+
+# ---------------------------------------------------------------------------
 # AI Planning Agent (IPAIfeature1)
 # ---------------------------------------------------------------------------
 
@@ -1298,6 +1304,12 @@ setup-features: setup-data features-compute cluster-all lt-profile-all abc-xyz-a
 setup-backtest: setup-features backtest-all backtest-load-all accuracy-slice-refresh champion-all seed-baselines
 	@echo "✓ Phase 3 complete: backtests, champion selection"
 
+inv-plan-refresh: ## Run end-to-end inventory planning pipeline (SS → EOQ → Repl Plan → Orders → Exceptions)
+	$(UV) run python scripts/run_inventory_planning_pipeline.py
+
+inv-plan-refresh-dry: ## Preview inventory pipeline without DB writes
+	$(UV) run python scripts/run_inventory_planning_pipeline.py --dry-run
+
 setup-inv-planning: eoq-all policy-all ss-all exceptions-generate fill-rate-all health-all supplier-perf-all investment-all intramonth-all control-tower-all rebalancing-all
 	@echo "✓ Phase 4 complete: inventory planning (safety stock, EOQ, policies, exceptions, health)"
 
@@ -1459,7 +1471,8 @@ refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4
 	  mv_inventory_forecast_monthly mv_fill_rate_monthly mv_intramonth_stockout \
 	  mv_supplier_performance mv_supplier_po_performance mv_po_lead_time_analysis \
 	  agg_accuracy_by_dim agg_dfu_coverage \
-	  mv_inventory_health_score mv_control_tower_kpis; do \
+	  mv_inventory_health_score mv_control_tower_kpis \
+	  mv_integrated_planning_targets; do \
 	  echo "  Refreshing $$mv ..."; \
 	  $(PSQL) -c "REFRESH MATERIALIZED VIEW CONCURRENTLY $$mv;" 2>/dev/null \
 	    || $(PSQL) -c "REFRESH MATERIALIZED VIEW $$mv;" 2>/dev/null \

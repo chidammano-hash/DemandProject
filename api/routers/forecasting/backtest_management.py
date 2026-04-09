@@ -95,7 +95,13 @@ def _read_metadata_from_disk(model_id: str) -> dict[str, Any] | None:
 
 
 def _row_to_dict(row: tuple) -> dict[str, Any]:
-    """Convert a backtest_run row tuple to a dict."""
+    """Convert a backtest_run row tuple to a response dict.
+
+    Column order must match SELECT in get_all_backtest_summary() and get_model_runs():
+    0=id, 1=model_id, 2=job_id, 3=status, 4=accuracy_pct, 5=wape, 6=bias,
+    7=n_predictions, 8=n_dfus, 9=n_timeframes, 10=metadata, 11=is_loaded_to_db,
+    12=loaded_at, 13=load_job_id, 14=started_at, 15=completed_at, 16=created_at
+    """
     return {
         "id": row[0],
         "model_id": row[1],
@@ -216,24 +222,20 @@ def get_all_backtest_summary():
     try:
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute("""
-                UPDATE backtest_run br SET status = 'completed', completed_at = NOW()
-                WHERE br.status IN ('queued', 'running')
-                AND EXISTS (
-                    SELECT 1 FROM job_history jh
-                    WHERE jh.job_id = br.job_id AND jh.status = 'completed'
-                )
-            """)
-            cur.execute("""
-                UPDATE backtest_run br SET status = 'failed', completed_at = NOW()
-                WHERE br.status IN ('queued', 'running')
-                AND EXISTS (
-                    SELECT 1 FROM job_history jh
-                    WHERE jh.job_id = br.job_id AND jh.status IN ('failed', 'cancelled')
-                )
+                UPDATE backtest_run br SET
+                    status = CASE
+                        WHEN jh.status = 'completed' THEN 'completed'
+                        ELSE 'failed'
+                    END,
+                    completed_at = NOW()
+                FROM job_history jh
+                WHERE jh.job_id = br.job_id
+                  AND br.status IN ('queued', 'running')
+                  AND jh.status IN ('completed', 'failed', 'cancelled')
             """)
             conn.commit()
-    except Exception:
-        logger.debug("Stale backtest_run cleanup skipped")
+    except Exception as exc:
+        logger.warning("Stale backtest_run cleanup failed: %s", exc)
 
     # Fetch latest run per model_id from DB
     # Try to include is_loaded_to_candidate if column exists (graceful fallback)
@@ -340,20 +342,17 @@ def get_model_runs(model_id: str):
         with get_conn() as conn, conn.cursor() as cur:
             # Auto-fix stale rows before returning
             cur.execute("""
-                UPDATE backtest_run br SET status = 'completed', completed_at = NOW()
-                WHERE br.model_id = %s AND br.status IN ('queued', 'running')
-                AND EXISTS (
-                    SELECT 1 FROM job_history jh
-                    WHERE jh.job_id = br.job_id AND jh.status = 'completed'
-                )
-            """, (model_id,))
-            cur.execute("""
-                UPDATE backtest_run br SET status = 'failed', completed_at = NOW()
-                WHERE br.model_id = %s AND br.status IN ('queued', 'running')
-                AND EXISTS (
-                    SELECT 1 FROM job_history jh
-                    WHERE jh.job_id = br.job_id AND jh.status IN ('failed', 'cancelled')
-                )
+                UPDATE backtest_run br SET
+                    status = CASE
+                        WHEN jh.status = 'completed' THEN 'completed'
+                        ELSE 'failed'
+                    END,
+                    completed_at = NOW()
+                FROM job_history jh
+                WHERE jh.job_id = br.job_id
+                  AND br.model_id = %s
+                  AND br.status IN ('queued', 'running')
+                  AND jh.status IN ('completed', 'failed', 'cancelled')
             """, (model_id,))
             conn.commit()
 
@@ -554,7 +553,12 @@ def _load_dfu_assignments() -> list[tuple[str, str, str]]:
 
 @router.get("/promotion-status")
 def get_promotion_status():
-    """Get the currently active model promotion."""
+    """Get the currently active model promotion.
+
+    Returns {"promoted": {...}} when a model is promoted, or {"promoted": null} when none active.
+    The promoted dict contains: id, model_id, promotion_type, champion_experiment_id,
+    plan_version, promoted_at, dfu_count, total_rows, promoted_by, notes.
+    """
     try:
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute("""

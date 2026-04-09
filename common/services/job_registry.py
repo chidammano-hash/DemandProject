@@ -58,11 +58,14 @@ from common.job_state import (
     _run_classify_abc_xyz,
     _run_cluster_pipeline,
     _run_cluster_scenario,
+    _run_compare_inventory_algorithms,
     _run_compute_demand_signals,
     _run_compute_eoq,
     _run_compute_investment,
     _run_compute_replenishment_plan,
     _run_compute_safety_stock,
+    _run_inventory_backtest,
+    _run_inventory_planning_pipeline,
     _run_compute_sku_features,
     _run_compute_variability,
     _run_data_quality,
@@ -303,13 +306,29 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         params_schema={},
     ),
     # ── Inventory Planning (inventory group) ────────────────────────────────
+    "inventory_planning_pipeline": JobTypeDef(
+        type_id="inventory_planning_pipeline",
+        label="Inventory Planning Pipeline",
+        description="End-to-end: SS → EOQ → Repl Plan → Planned Orders → Exceptions",
+        group="inventory",
+        callable=_run_inventory_planning_pipeline,
+        params_schema={"steps": None},
+    ),
+    "inventory_backtest": JobTypeDef(
+        type_id="inventory_backtest",
+        label="Inventory Backtest",
+        description="Simulate inventory outcomes using historical forecast predictions",
+        group="inventory",
+        callable=_run_inventory_backtest,
+        params_schema={"models": None, "months": 12},
+    ),
     "compute_safety_stock": JobTypeDef(
         type_id="compute_safety_stock",
         label="Safety Stock",
         description="Compute Z-score safety stock targets for all DFUs",
         group="inventory",
         callable=_run_compute_safety_stock,
-        params_schema={},
+        params_schema={"forecast_source": "historical", "model_id": None},
     ),
     "compute_eoq": JobTypeDef(
         type_id="compute_eoq",
@@ -428,6 +447,15 @@ JOB_TYPE_REGISTRY: dict[str, JobTypeDef] = {
         group="backtest_load",
         callable=_run_load_backtest_model,
         params_schema={"model_id": "", "run_id": None},
+    ),
+    # ── Inventory comparison (inventory group) ─────────────────────────────────
+    "compare_inventory_algorithms": JobTypeDef(
+        type_id="compare_inventory_algorithms",
+        label="Algorithm Inventory Comparison",
+        description="Compare SS/EOQ/ROP across forecast algorithms",
+        group="inventory",
+        callable=_run_compare_inventory_algorithms,
+        params_schema={"models": None},
     ),
     # ── Platform (platform group) ─────────────────────────────────────────────
     "data_quality": JobTypeDef(

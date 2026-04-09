@@ -230,11 +230,15 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
     : "Prod Forecast";
   const hasSupplyData = trendData.length > 0;
 
-  // Derive staging model IDs from the chart data (staging_* keys)
+  // Derive staging model IDs from the chart data (staging_* keys),
+  // excluding the promoted production model to avoid duplicate lines.
+  const promotedModelId = prodForecastData?.model_id ?? null;
   const stagingModelIds = useMemo(() => {
     if (!stagingForecastData?.models) return [];
-    return Object.keys(stagingForecastData.models);
-  }, [stagingForecastData]);
+    return Object.keys(stagingForecastData.models).filter(
+      (id) => id !== promotedModelId,
+    );
+  }, [stagingForecastData, promotedModelId]);
 
   const hasStagingModels = stagingModelIds.length > 0;
   const ss = trendParams?.safety_stock ?? null;

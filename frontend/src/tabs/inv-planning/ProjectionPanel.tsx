@@ -15,11 +15,31 @@ import {
   Tooltip, Legend, ReferenceLine, ResponsiveContainer,
 } from "recharts";
 import { AlertTriangle, CheckCircle, RefreshCw, TrendingDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DataFreshnessBanner } from "@/components/DataFreshnessBanner";
 import { projectionKeys, fetchProjection, fetchProjectionAtRisk, refreshProjection, fetchPlanningDate, queryKeys, STALE } from "@/api/queries";
 import { EmptyState } from "@/components/EmptyState";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 const HORIZONS = [30, 60, 90];
+
+type ScenarioId = "demand_up_20" | "demand_down_20" | "lt_double" | "emergency_po";
+
+const scenarioLabels: Record<ScenarioId, string> = {
+  demand_up_20: "Demand +20%",
+  demand_down_20: "Demand -20%",
+  lt_double: "Lead Time Doubled",
+  emergency_po: "Emergency PO (+500 units)",
+};
+
+const scenarioDescriptions: Record<ScenarioId, string> = {
+  demand_up_20: "Shows what happens if demand increases 20% above forecast. Stock depletes faster, stockout date moves earlier.",
+  demand_down_20: "Shows effect of 20% demand reduction. Excess inventory may build up.",
+  lt_double: "Simulates supplier delay doubling lead time. Reorder point shifts, safety buffer needs increase.",
+  emergency_po: "Simulates adding a 500-unit emergency purchase order arriving in 7 days.",
+};
+
+const SCENARIO_IDS: ScenarioId[] = ["demand_up_20", "demand_down_20", "lt_double", "emergency_po"];
 
 export function ProjectionPanel() {
   const { filters: globalFilters } = useGlobalFilterContext();
@@ -27,6 +47,7 @@ export function ProjectionPanel() {
   const [loc, setLoc] = useState("");
   const [horizonDays, setHorizonDays] = useState(90);
   const [activeItem, setActiveItem] = useState<{ item_id: string; loc: string } | null>(null);
+  const [scenario, setScenario] = useState<ScenarioId | null>(null);
   const qc = useQueryClient();
 
   const syncedGlobalRef = useRef<string>("");
@@ -54,8 +75,8 @@ export function ProjectionPanel() {
 
   // DFU projection (only when user has submitted)
   const proj = useQuery({
-    queryKey: projectionKeys.sku({ item_id: activeItem?.item_id, loc: activeItem?.loc, horizon_days: horizonDays }),
-    queryFn: () => fetchProjection({ item_id: activeItem!.item_id, loc: activeItem!.loc, horizon_days: horizonDays }),
+    queryKey: projectionKeys.sku({ item_id: activeItem?.item_id, loc: activeItem?.loc, horizon_days: horizonDays, scenario: scenario ?? undefined }),
+    queryFn: () => fetchProjection({ item_id: activeItem!.item_id, loc: activeItem!.loc, horizon_days: horizonDays, scenario: scenario ?? undefined }),
     enabled: !!activeItem,
     staleTime: 5 * 60_000,
   });
@@ -81,6 +102,13 @@ export function ProjectionPanel() {
 
   return (
     <div className="space-y-4">
+      <DataFreshnessBanner
+        lastRefreshed={data?.computed_at}
+        source="Inventory Projection"
+        staleSec={43200}
+        warnings={data?.forecast_source === "fallback_avg" ? ["Using fallback forecast (no ML model)"] : []}
+      />
+
       {/* At-risk banner */}
       {atRisk.data && atRisk.data.total > 0 && (
         <div className="rounded-md border border-orange-300 bg-orange-50 dark:bg-orange-950/30 p-3 flex items-center gap-3">
@@ -331,6 +359,42 @@ export function ProjectionPanel() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* Quick What-If Scenarios */}
+          <div className="border-t pt-3 mt-3">
+            <p className="text-[10px] font-semibold uppercase text-muted-foreground mb-2">Quick Scenarios</p>
+            <div className="flex flex-wrap gap-2">
+              {SCENARIO_IDS.map(id => (
+                <Button
+                  key={id}
+                  size="sm"
+                  variant={scenario === id ? "default" : "outline"}
+                  className="text-xs"
+                  onClick={() => setScenario(scenario === id ? null : id)}
+                >
+                  {scenarioLabels[id]}
+                </Button>
+              ))}
+              {scenario && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-xs"
+                  onClick={() => setScenario(null)}
+                >
+                  Reset to Baseline
+                </Button>
+              )}
+            </div>
+            {scenario && (
+              <div className="mt-2 p-2 rounded bg-muted/50 text-xs">
+                <p className="font-medium">Scenario: {scenarioLabels[scenario]}</p>
+                <p className="text-muted-foreground">
+                  {scenarioDescriptions[scenario]}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Day-by-day table (sample rows) */}

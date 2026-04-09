@@ -5,7 +5,7 @@
  * Shows KPI cards, filterable table, approve/reject workflow.
  */
 
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   queryKeys,
@@ -17,7 +17,7 @@ import {
   STALE,
 } from "@/api/queries";
 import type { PlannedOrder } from "@/api/queries";
-import { CheckSquare } from "lucide-react";
+import { CheckSquare, ChevronDown, ChevronRight } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
@@ -41,6 +41,130 @@ function confidenceLabel(score: number | null): { label: string; cls: string } {
   return { label: `${(score * 100).toFixed(0)}% LOW`, cls: "text-red-600 dark:text-red-400" };
 }
 
+function getTriggerExplanation(order: PlannedOrder): string {
+  switch (order.trigger_reason) {
+    case "below_rop":
+      return `Projected inventory falls below the reorder point (${(order.reorder_point ?? 0).toLocaleString()}) within the lead time window of ${order.lead_time_days} days.`;
+    case "below_ss":
+      return `Safety stock coverage is at risk. Current on-hand (${(order.current_qty_on_hand ?? 0).toLocaleString()}) will not cover demand during lead time.`;
+    case "stockout":
+      return "A stockout is imminent or has already occurred. Urgent replenishment required.";
+    case "scheduled":
+      return "Regularly scheduled replenishment based on the planning cycle.";
+    default:
+      return order.trigger_reason.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+}
+
+function OrderDetailCard({
+  order,
+  onApprove,
+  onReject,
+  approvePending,
+}: {
+  order: PlannedOrder;
+  onApprove: (id: number) => void;
+  onReject: (id: number) => void;
+  approvePending: boolean;
+}) {
+  const conf = confidenceLabel(order.confidence_score);
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Column 1: Order details */}
+      <div className="space-y-1.5">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Order Details</p>
+        <p className="text-sm font-medium">{order.item_id} @ {order.loc}</p>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <span className="text-muted-foreground">Recommended Qty</span>
+          <span className="font-medium">{order.recommended_qty?.toLocaleString() ?? "--"}</span>
+          <span className="text-muted-foreground">Net Requirement</span>
+          <span className="font-medium">{order.net_requirement_qty?.toLocaleString() ?? "--"}</span>
+          <span className="text-muted-foreground">MOQ</span>
+          <span className="font-medium">{order.moq?.toLocaleString() ?? "--"}</span>
+          <span className="text-muted-foreground">Supplier</span>
+          <span className="font-medium">{order.supplier_name ?? order.supplier_id ?? "--"}</span>
+          <span className="text-muted-foreground">Unit Cost</span>
+          <span className="font-medium">{order.unit_cost != null ? formatCurrency(order.unit_cost) : "--"}</span>
+          <span className="text-muted-foreground">Order Value</span>
+          <span className="font-medium">{order.order_value != null ? formatCurrency(order.order_value) : "--"}</span>
+          <span className="text-muted-foreground">Lead Time</span>
+          <span className="font-medium">{order.lead_time_days}d</span>
+          <span className="text-muted-foreground">Order By</span>
+          <span className={`font-medium ${order.is_past_due ? "text-red-600 dark:text-red-400" : ""}`}>
+            {formatDate(order.order_by_date)}{order.is_past_due ? " (PAST DUE)" : ""}
+          </span>
+          <span className="text-muted-foreground">Expected Receipt</span>
+          <span className="font-medium">{formatDate(order.expected_receipt_date)}</span>
+        </div>
+      </div>
+
+      {/* Column 2: Current position & confidence */}
+      <div className="space-y-1.5">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Current Position</p>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <span className="text-muted-foreground">On Hand</span>
+          <span className="font-medium">{order.current_qty_on_hand?.toLocaleString() ?? "--"}</span>
+          <span className="text-muted-foreground">Safety Stock</span>
+          <span className="font-medium">{order.safety_stock?.toLocaleString() ?? "--"}</span>
+          <span className="text-muted-foreground">Reorder Point</span>
+          <span className="font-medium">{order.reorder_point?.toLocaleString() ?? "--"}</span>
+          <span className="text-muted-foreground">Inbound Qty</span>
+          <span className="font-medium">{order.confirmed_inbound_qty?.toLocaleString() ?? "--"}</span>
+          <span className="text-muted-foreground">LT Forecast Demand</span>
+          <span className="font-medium">{order.lt_forecast_demand?.toLocaleString() ?? "--"}</span>
+        </div>
+
+        {/* Confidence breakdown */}
+        <div className="mt-3 rounded border px-2 py-1.5 bg-background">
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Confidence</p>
+            <span className={`text-xs font-medium ${conf.cls}`}>{conf.label}</span>
+          </div>
+          {order.confidence_reason && (
+            <p className="text-[10px] text-muted-foreground leading-relaxed">{order.confidence_reason}</p>
+          )}
+        </div>
+
+        {/* Trigger reason */}
+        <div className="mt-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Trigger Reason</p>
+          <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">
+            {getTriggerExplanation(order)}
+          </p>
+        </div>
+      </div>
+
+      {/* Column 3: Actions */}
+      <div className="space-y-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Quick Actions</p>
+        {order.status === "proposed" && (
+          <>
+            <button
+              onClick={(e) => { e.stopPropagation(); onApprove(order.id); }}
+              disabled={approvePending}
+              className="w-full px-3 py-1.5 text-xs font-medium rounded border border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-900/20 transition-colors disabled:opacity-50"
+            >
+              Approve Order
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onReject(order.id); }}
+              className="w-full px-3 py-1.5 text-xs font-medium rounded border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+            >
+              Reject Order
+            </button>
+          </>
+        )}
+        <button className="w-full px-3 py-1.5 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-900/20 transition-colors">
+          View Inventory Projection
+        </button>
+        <button className="w-full px-3 py-1.5 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-900/20 transition-colors">
+          Edit Quantity
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function PlannedOrdersPanel() {
   const { filters: globalFilters } = useGlobalFilterContext();
   const qc = useQueryClient();
@@ -50,6 +174,7 @@ export function PlannedOrdersPanel() {
   const [pastDueOnly, setPastDueOnly] = useState(false);
   const [rejectModalId, setRejectModalId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
 
   const syncedGlobalRef = useRef<string>("");
   useEffect(() => {
@@ -247,6 +372,7 @@ export function PlannedOrdersPanel() {
             <thead className="bg-muted/50">
               <tr>
                 {[
+                  { label: "" },
                   { label: "Item" },
                   { label: "Loc" },
                   { label: "Supplier" },
@@ -268,8 +394,20 @@ export function PlannedOrdersPanel() {
               {orders.items.map((order: PlannedOrder) => {
                 const conf = confidenceLabel(order.confidence_score);
                 const isPastDue = order.is_past_due;
+                const isExpanded = expandedOrderId === order.id;
                 return (
-                  <tr key={order.id} className={`hover:bg-muted/30 ${isPastDue ? "bg-red-50/30 dark:bg-red-900/10" : ""}`}>
+                  <React.Fragment key={order.id}>
+                  <tr
+                    className={`cursor-pointer hover:bg-muted/30 ${isPastDue ? "bg-red-50/30 dark:bg-red-900/10" : ""} ${isExpanded ? "ring-1 ring-inset ring-primary/30" : ""}`}
+                    onClick={() => setExpandedOrderId(isExpanded ? null : order.id)}
+                  >
+                    <td className="px-3 py-2 w-6">
+                      {isExpanded ? (
+                        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                      )}
+                    </td>
                     <td className="px-3 py-2 font-mono">{order.item_id}</td>
                     <td className="px-3 py-2">{order.loc}</td>
                     <td className="px-3 py-2 text-muted-foreground">
@@ -297,14 +435,14 @@ export function PlannedOrdersPanel() {
                       {order.status === "proposed" && (
                         <div className="flex gap-1">
                           <button
-                            onClick={() => approveMutation.mutate({ id: order.id, approvedBy: "planner" })}
+                            onClick={(e) => { e.stopPropagation(); approveMutation.mutate({ id: order.id, approvedBy: "planner" }); }}
                             disabled={approveMutation.isPending}
                             className="rounded bg-emerald-600 px-2 py-0.5 text-white text-xs hover:bg-emerald-700 disabled:opacity-50"
                           >
                             Approve
                           </button>
                           <button
-                            onClick={() => { setRejectModalId(order.id); setRejectReason(""); }}
+                            onClick={(e) => { e.stopPropagation(); setRejectModalId(order.id); setRejectReason(""); }}
                             className="rounded bg-red-600 px-2 py-0.5 text-white text-xs hover:bg-red-700"
                           >
                             Reject
@@ -313,6 +451,20 @@ export function PlannedOrdersPanel() {
                       )}
                     </td>
                   </tr>
+                  {/* Inline drill-down expansion */}
+                  {isExpanded && (
+                    <tr className="border-t">
+                      <td colSpan={11} className="bg-muted/30 px-4 py-4">
+                        <OrderDetailCard
+                          order={order}
+                          onApprove={(id) => approveMutation.mutate({ id, approvedBy: "planner" })}
+                          onReject={(id) => { setRejectModalId(id); setRejectReason(""); }}
+                          approvePending={approveMutation.isPending}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 );
               })}
             </tbody>

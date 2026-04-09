@@ -163,10 +163,10 @@ describe("ReplenishmentPlanPanel", () => {
       </TestQueryWrapper>
     );
     expect(await screen.findByText("Total SKUs")).toBeDefined();
-    expect(await screen.findByText("Avg Forward SS")).toBeDefined();
-    expect(await screen.findByText("Avg EOQ")).toBeDefined();
-    // "Below SS" appears in both KPI card and table header
-    expect((await screen.findAllByText("Below SS")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Avg Safety Buffer")).toBeDefined();
+    expect(await screen.findByText("Optimal Order Size")).toBeDefined();
+    // "At Stockout Risk" / "At Risk" appears in KPI card and table header
+    expect((await screen.findAllByText(/At.*Risk/)).length).toBeGreaterThan(0);
     // Check that the total DFU count renders
     expect(await screen.findByText("1,200")).toBeDefined();
   });
@@ -193,7 +193,7 @@ describe("ReplenishmentPlanPanel", () => {
       </TestQueryWrapper>
     );
     expect(
-      await screen.findByText("SS Comparison: Forecast vs Historical by ABC Class")
+      await screen.findByText("Safety Buffer: Forecast-Based vs Historical by ABC Class")
     ).toBeDefined();
     expect(screen.getByTestId("bar-chart")).toBeDefined();
   });

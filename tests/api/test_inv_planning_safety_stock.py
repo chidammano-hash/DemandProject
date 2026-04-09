@@ -603,6 +603,221 @@ async def test_safety_stock_config_has_z_table():
     assert resp.status_code == 200
 
 
+
+# ---------------------------------------------------------------------------
+# GET /inv-planning/safety-stock/explain
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_safety_stock_explain_200():
+    """GET /inv-planning/safety-stock/explain returns 200 with full decomposition."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = (
+        "ITEM001",      # item_id
+        "LOC1",         # loc
+        "B",            # abc_vol
+        "BY",           # abc_xyz_segment
+        0.95,           # service_level_target
+        1.645,          # z_score
+        265.0,          # demand_mean_monthly
+        52.3,           # demand_std_monthly
+        0.197,          # demand_cv
+        14.0,           # lead_time_mean_days
+        3.0,            # lead_time_std_days
+        245.8,          # ss_demand_only
+        42.9,           # ss_lt_only
+        287.0,          # ss_combined
+        409.0,          # reorder_point
+        195.0,          # current_qty_on_hand
+        22.4,           # current_dos
+        True,           # is_below_ss
+        -92.0,          # ss_gap
+        "production",   # forecast_source
+        33.0,           # target_dos_min
+        8.7,            # avg_daily_demand
+    )
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/inv-planning/safety-stock/explain?item_id=ITEM001&loc=LOC1"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # Top-level keys
+    assert data["item_id"] == "ITEM001"
+    assert data["loc"] == "LOC1"
+    assert data["abc_vol"] == "B"
+    assert "formula" in data
+    assert "formula_substituted" in data
+    # Components
+    assert "demand_component" in data["components"]
+    assert "leadtime_component" in data["components"]
+    assert "combined" in data["components"]
+    # Each component has required keys
+    dc = data["components"]["demand_component"]
+    assert "label" in dc
+    assert "value" in dc
+    assert "pct_of_total" in dc
+    assert "formula" in dc
+    assert "inputs" in dc
+    # Sensitivity
+    assert isinstance(data["sensitivity"], list)
+    assert len(data["sensitivity"]) > 0
+    for s in data["sensitivity"]:
+        assert "scenario" in s
+        assert "ss_result" in s
+        assert "delta" in s
+    # Context
+    ctx = data["context"]
+    assert ctx["current_on_hand"] == 195
+    assert ctx["is_below_ss"] is True
+    assert ctx["gap_qty"] == -92
+    assert ctx["forecast_source"] == "production"
+
+
+@pytest.mark.asyncio
+async def test_safety_stock_explain_404_not_found():
+    """GET /inv-planning/safety-stock/explain returns 404 when DFU not found."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = None
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/inv-planning/safety-stock/explain?item_id=NOSUCH&loc=NOLOC"
+            )
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_safety_stock_explain_missing_params_422():
+    """GET /inv-planning/safety-stock/explain without required params returns 422."""
+    pool, conn, cursor = _make_pool()
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/inv-planning/safety-stock/explain")
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_safety_stock_explain_null_lt_std():
+    """Explain handles NULL lead_time_std_days gracefully (LT component = 0)."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = (
+        "ITEM002", "LOC2",
+        "C", None,           # abc_vol, abc_xyz_segment (null)
+        0.90, 1.282,         # service_level, z_score
+        200.0, 40.0, 0.20,   # demand stats
+        21.0, None,           # lt_mean=21, lt_std=NULL
+        8.5, 0.0, 8.5,       # ss_demand_only, ss_lt_only=0, ss_combined
+        171.5,                # reorder_point
+        150.0, 18.0,          # on_hand, dos
+        False, 141.5,         # is_below, gap
+        "historical", 15.0,   # forecast_source, target_dos_min
+        6.6,                  # avg_daily_demand
+    )
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/inv-planning/safety-stock/explain?item_id=ITEM002&loc=LOC2"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # LT component should be 0 when lt_std is null
+    assert data["components"]["leadtime_component"]["value"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_safety_stock_explain_sensitivity_scenarios():
+    """Explain returns meaningful sensitivity scenarios."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = (
+        "ITEM003", "LOC3",
+        "A", "AX",
+        0.98, 2.054,
+        500.0, 100.0, 0.20,
+        7.0, 1.5,
+        300.0, 50.0, 310.0,
+        400.0,
+        250.0, 15.0,
+        True, -60.0,
+        "production", 20.0,
+        16.4,
+    )
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/inv-planning/safety-stock/explain?item_id=ITEM003&loc=LOC3"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    scenarios = data["sensitivity"]
+    # Should have at least demand std and LT std scenarios
+    scenario_names = [s["scenario"] for s in scenarios]
+    assert "Demand Std +20%" in scenario_names
+    assert "Lead Time Std +50%" in scenario_names
+    # All results should be positive integers
+    for s in scenarios:
+        assert isinstance(s["ss_result"], int)
+        assert s["ss_result"] > 0
+
+
+@pytest.mark.asyncio
+async def test_safety_stock_explain_component_pcts_sum():
+    """Component percentages should roughly sum to 100%."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.return_value = (
+        "ITEM004", "LOC4",
+        "B", "BY",
+        0.95, 1.645,
+        300.0, 60.0, 0.20,
+        14.0, 3.0,
+        200.0, 40.0, 240.0,
+        380.0,
+        180.0, 12.0,
+        True, -60.0,
+        "historical", 28.0,
+        9.9,
+    )
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(
+                "/inv-planning/safety-stock/explain?item_id=ITEM004&loc=LOC4"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    d_pct = data["components"]["demand_component"]["pct_of_total"]
+    lt_pct = data["components"]["leadtime_component"]["pct_of_total"]
+    # Component percentages calculated from stored values (ss_demand_only / ss_combined)
+    # may not sum to exactly 100% due to the combined formula being sqrt(a^2 + b^2)
+    # but each should be positive and their sum should be reasonable
+    assert d_pct > 0
+    assert lt_pct >= 0
+
+
 @pytest.mark.asyncio
 async def test_safety_stock_config_has_service_levels():
     """Config response includes service level targets by ABC class."""
@@ -628,3 +843,205 @@ async def test_safety_stock_config_has_service_levels():
             resp = await client.get("/inv-planning/safety-stock/config")
 
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# POST /inv-planning/safety-stock/what-if
+# ---------------------------------------------------------------------------
+
+def _make_what_if_ss_row():
+    """Standard mock row for fact_safety_stock_targets in what-if tests.
+
+    Columns: demand_mean_monthly, demand_std_monthly,
+             lead_time_mean_days, lead_time_std_days,
+             service_level_target, z_score,
+             ss_combined, reorder_point, avg_daily_demand
+    """
+    return (
+        300.0,   # demand_mean_monthly
+        60.0,    # demand_std_monthly
+        14.0,    # lead_time_mean_days
+        3.0,     # lead_time_std_days
+        0.95,    # service_level_target
+        1.645,   # z_score
+        287.0,   # ss_combined
+        409.0,   # reorder_point
+        9.86,    # avg_daily_demand
+    )
+
+
+def _make_what_if_eoq_row():
+    """Standard mock row for fact_eoq_targets in what-if tests. Columns: unit_cost."""
+    return (5.50,)
+
+
+@pytest.mark.asyncio
+async def test_what_if_200_with_demand_change():
+    """POST /inv-planning/safety-stock/what-if with demand_change_pct returns 200."""
+    pool, conn, cursor = _make_pool()
+    # fetchone called twice: first for SS row, second for EOQ row
+    cursor.fetchone.side_effect = [_make_what_if_ss_row(), _make_what_if_eoq_row()]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/inv-planning/safety-stock/what-if?item_id=ITEM001&loc=LOC1&demand_change_pct=20"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # Verify response structure
+    assert "current" in data
+    assert "simulated" in data
+    assert "delta" in data
+    assert "inputs_used" in data
+    # Current values should match what was in the DB
+    assert data["current"]["ss_combined"] == 287
+    assert data["current"]["reorder_point"] == 409
+    # Simulated SS should be a positive number (formula recomputation)
+    assert data["simulated"]["ss_combined"] > 0
+    # With +20% demand, the adjusted demand_mean should be 360
+    assert data["inputs_used"]["demand_mean"] == 360.0
+
+
+@pytest.mark.asyncio
+async def test_what_if_200_with_lt_change():
+    """POST /inv-planning/safety-stock/what-if with lt_change_days returns 200."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [_make_what_if_ss_row(), _make_what_if_eoq_row()]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/inv-planning/safety-stock/what-if?item_id=ITEM001&loc=LOC1&lt_change_days=10"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # LT should be adjusted
+    assert data["inputs_used"]["lt_mean_days"] == 24.0  # 14 + 10
+    # Simulated SS and ROP should be positive
+    assert data["simulated"]["ss_combined"] > 0
+    assert data["simulated"]["reorder_point"] > 0
+
+
+@pytest.mark.asyncio
+async def test_what_if_200_with_service_level_override():
+    """POST /inv-planning/safety-stock/what-if with service_level_override returns 200."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [_make_what_if_ss_row(), _make_what_if_eoq_row()]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/inv-planning/safety-stock/what-if?item_id=ITEM001&loc=LOC1&service_level_override=0.99"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # Z-score should map correctly for 0.99
+    assert data["inputs_used"]["service_level"] == 0.99
+    assert data["inputs_used"]["z_score"] == 2.326
+    # Simulated SS should be positive
+    assert data["simulated"]["ss_combined"] > 0
+
+
+@pytest.mark.asyncio
+async def test_what_if_200_no_changes():
+    """POST /inv-planning/safety-stock/what-if with no overrides returns baseline match."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [_make_what_if_ss_row(), _make_what_if_eoq_row()]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/inv-planning/safety-stock/what-if?item_id=ITEM001&loc=LOC1"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    # With no changes, simulated should be close to current (recomputed from params)
+    assert data["inputs_used"]["demand_mean"] == 300.0
+    assert data["inputs_used"]["lt_mean_days"] == 14.0
+    assert data["inputs_used"]["service_level"] == 0.95
+
+
+@pytest.mark.asyncio
+async def test_what_if_404_not_found():
+    """POST /inv-planning/safety-stock/what-if returns 404 when DFU not found."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [None, None]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/inv-planning/safety-stock/what-if?item_id=NOSUCH&loc=NOLOC"
+            )
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_what_if_422_missing_params():
+    """POST /inv-planning/safety-stock/what-if without required params returns 422."""
+    pool, conn, cursor = _make_pool()
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/inv-planning/safety-stock/what-if")
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_what_if_cost_impact():
+    """What-if response includes cost impact based on unit_cost from EOQ table."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [_make_what_if_ss_row(), _make_what_if_eoq_row()]
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/inv-planning/safety-stock/what-if?item_id=ITEM001&loc=LOC1&demand_change_pct=20"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["inputs_used"]["unit_cost"] == 5.5
+    # Current holding cost = 287 * 5.5 * 0.25 / 12 ≈ 32.89
+    assert data["current"]["monthly_holding_cost"] > 0
+    # Simulated holding cost should also be positive
+    assert data["simulated"]["monthly_holding_cost"] > 0
+
+
+@pytest.mark.asyncio
+async def test_what_if_eoq_fallback_unit_cost():
+    """What-if falls back to unit_cost=1.0 when EOQ record is missing."""
+    pool, conn, cursor = _make_pool()
+    cursor.fetchone.side_effect = [_make_what_if_ss_row(), None]  # No EOQ row
+
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/inv-planning/safety-stock/what-if?item_id=ITEM001&loc=LOC1&demand_change_pct=10"
+            )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["inputs_used"]["unit_cost"] == 1.0

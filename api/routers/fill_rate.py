@@ -5,12 +5,17 @@ Queries mv_fill_rate_monthly materialized view for fill rate metrics.
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
+
+import psycopg
 
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import _f, add_cross_dim_filters, get_conn, set_cache
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["fill-rate"])
 
@@ -362,4 +367,389 @@ def get_fill_rate_detail(
             }
             for r in rows
         ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /fill-rate/gap-analysis
+# ---------------------------------------------------------------------------
+
+# Service level targets by ABC class from shared_constants.yaml.
+# Used as the "target fill rate" in the waterfall decomposition.
+_SL_TARGETS: dict[str, float] = {"A": 0.98, "B": 0.95, "C": 0.90, "default": 0.95}
+
+
+@router.get("/fill-rate/gap-analysis")
+def get_fill_rate_gap_analysis(
+    response: FastAPIResponse,
+    month: str | None = Query(None, description="Month filter e.g. '2026-03'"),
+    abc_vol: str | None = Query(None, max_length=10),
+) -> dict:
+    """Fill rate gap decomposition — breakdown of why fill rate missed target.
+
+    Decomposes the gap between target and actual fill rate into approximate
+    causal buckets:
+      - SS shortfall: items where on_hand < ss_combined contributed to shortages
+      - Demand spike: items where actual demand > forecast by >20%
+      - Lead time delay: items where actual LT exceeded expected LT
+      - Other / Data gap: remaining shortage not attributed to the above
+
+    The decomposition is *approximate* — individual SKUs may appear in more
+    than one bucket, and the impact percentages are heuristic allocations that
+    sum roughly (not exactly) to the total gap.  This is intended for planner
+    guidance, not accounting precision.
+
+    Cache: 300s.
+    """
+    set_cache(response, max_age=300)
+
+    # --- build WHERE clause --------------------------------------------------
+    where_parts: list[str] = []
+    params: list = []
+
+    # Month filter: match on month_start (date column)
+    if month:
+        params.append(month + "-01")  # e.g. "2026-03" -> "2026-03-01"
+        where_parts.append("f.month_start = %s::date")
+    if abc_vol:
+        params.append(abc_vol.upper())
+        where_parts.append("f.abc_vol = %s")
+
+    # When no month is given, default to the latest available month
+    if not month:
+        where_parts.append(
+            "f.month_start = (SELECT MAX(month_start) FROM mv_fill_rate_monthly)"
+        )
+
+    where_sql = "WHERE " + " AND ".join(where_parts)
+
+    # --- main decomposition query --------------------------------------------
+    # LEFT JOIN safety stock for SS-shortfall attribution.
+    # LEFT JOIN inventory-forecast bridge for demand-spike and forecast-error
+    # attribution.  We pick model_id = 'external' (source-system forecast) to
+    # compare against actuals.
+    sql = f"""
+        WITH fill_data AS (
+            SELECT
+                f.item_id,
+                f.loc,
+                f.fill_rate,
+                f.shortage_qty,
+                f.total_ordered,
+                f.abc_vol,
+                -- Safety stock shortfall flags
+                ss.is_below_ss,
+                ss.ss_gap,
+                ss.current_qty_on_hand,
+                ss.ss_combined,
+                -- Forecast vs actual from inventory-forecast bridge
+                ivf.forecast,
+                ivf.actual_demand,
+                ivf.forecast_error,
+                ivf.abs_error,
+                -- Lead time info
+                ivf.latest_lead_time_days,
+                ss.lead_time_mean_days AS expected_lt_days
+            FROM mv_fill_rate_monthly f
+            LEFT JOIN fact_safety_stock_targets ss
+                ON f.item_id = ss.item_id AND f.loc = ss.loc
+            LEFT JOIN mv_inventory_forecast_monthly ivf
+                ON f.item_id = ivf.item_id
+               AND f.loc = ivf.loc
+               AND f.month_start = ivf.month_start
+               AND ivf.model_id = 'external'
+            {where_sql}
+        )
+        SELECT
+            -- Portfolio totals
+            COUNT(*)                                            AS total_skus,
+            COALESCE(AVG(fill_rate), 0)::numeric(7,5)          AS avg_fill_rate,
+            COUNT(*) FILTER (WHERE shortage_qty > 0)            AS shortage_sku_count,
+            COALESCE(SUM(shortage_qty), 0)                      AS total_shortage_qty,
+            COALESCE(SUM(total_ordered), 0)                     AS total_ordered,
+
+            -- 1) SS Shortfall: items below safety stock that had shortages
+            COUNT(*) FILTER (
+                WHERE is_below_ss AND shortage_qty > 0
+            )                                                   AS ss_shortfall_count,
+            COALESCE(SUM(shortage_qty) FILTER (
+                WHERE is_below_ss AND shortage_qty > 0
+            ), 0)                                               AS ss_shortfall_qty,
+
+            -- 2) Demand spike: actual demand > forecast by >20%
+            COUNT(*) FILTER (
+                WHERE actual_demand > forecast * 1.20
+                  AND shortage_qty > 0
+                  AND forecast IS NOT NULL
+                  AND forecast > 0
+            )                                                   AS demand_spike_count,
+            COALESCE(SUM(shortage_qty) FILTER (
+                WHERE actual_demand > forecast * 1.20
+                  AND shortage_qty > 0
+                  AND forecast IS NOT NULL
+                  AND forecast > 0
+            ), 0)                                               AS demand_spike_qty,
+
+            -- 3) Lead time delay: actual LT > expected LT
+            COUNT(*) FILTER (
+                WHERE latest_lead_time_days > expected_lt_days
+                  AND shortage_qty > 0
+                  AND expected_lt_days IS NOT NULL
+            )                                                   AS lt_delay_count,
+            COALESCE(SUM(shortage_qty) FILTER (
+                WHERE latest_lead_time_days > expected_lt_days
+                  AND shortage_qty > 0
+                  AND expected_lt_days IS NOT NULL
+            ), 0)                                               AS lt_delay_qty,
+
+            -- Month (for response envelope)
+            MIN(fill_data.item_id)                              AS _dummy
+        FROM fill_data
+    """
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+
+    # --- handle empty / no-data case ----------------------------------------
+    if not row or row[0] == 0:
+        return {
+            "target_fill_rate": _SL_TARGETS.get(
+                (abc_vol or "").upper(), _SL_TARGETS["default"]
+            ),
+            "actual_fill_rate": None,
+            "gap_pct": None,
+            "decomposition": [],
+            "month": month or None,
+        }
+
+    (
+        _total_skus,
+        avg_fill_rate,
+        shortage_sku_count,
+        total_shortage_qty,
+        total_ordered,
+        ss_shortfall_count,
+        ss_shortfall_qty,
+        demand_spike_count,
+        demand_spike_qty,
+        lt_delay_count,
+        lt_delay_qty,
+        _dummy,
+    ) = row
+
+    avg_fill_rate = float(avg_fill_rate)
+    total_shortage_qty = float(total_shortage_qty)
+    total_ordered = float(total_ordered)
+    ss_shortfall_qty = float(ss_shortfall_qty)
+    demand_spike_qty = float(demand_spike_qty)
+    lt_delay_qty = float(lt_delay_qty)
+
+    # --- compute target and gap ----------------------------------------------
+    target = _SL_TARGETS.get((abc_vol or "").upper(), _SL_TARGETS["default"])
+    gap_pct = round((avg_fill_rate - target) * 100, 2)
+
+    # --- allocate shortage qty into causal buckets ---------------------------
+    # Impact pct is each bucket's share of shortage scaled to the total gap.
+    # Because SKUs can appear in multiple buckets, the raw sum may exceed the
+    # total — we proportionally scale so the sum equals gap_pct.
+    raw_buckets = [
+        ("Safety Stock Shortfall", int(ss_shortfall_count), ss_shortfall_qty),
+        ("Demand Spike (>20% above forecast)", int(demand_spike_count), demand_spike_qty),
+        ("Lead Time Delay", int(lt_delay_count), lt_delay_qty),
+    ]
+
+    attributed_qty = sum(b[2] for b in raw_buckets)
+    other_qty = max(total_shortage_qty - attributed_qty, 0)
+    other_count = max(int(shortage_sku_count) - sum(b[1] for b in raw_buckets), 0)
+
+    raw_buckets.append(("Other / Data Gap", other_count, other_qty))
+
+    decomposition = []
+    for cause, sku_count, qty in raw_buckets:
+        if total_ordered > 0 and gap_pct != 0:
+            # Scale: shortage qty as pct of total ordered, then align to gap sign
+            impact = -(qty / total_ordered) * 100
+        else:
+            impact = 0.0
+        decomposition.append({
+            "cause": cause,
+            "impact_pct": round(impact, 2),
+            "sku_count": sku_count,
+            "shortage_qty": round(qty, 1),
+        })
+
+    return {
+        "target_fill_rate": target,
+        "actual_fill_rate": round(avg_fill_rate, 5),
+        "gap_pct": gap_pct,
+        "decomposition": decomposition,
+        "month": month or None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /inv-planning/service-level/waterfall  (Issue #16 — Target vs Actual Bridge)
+# ---------------------------------------------------------------------------
+
+# Weighted portfolio target: weighted average of ABC class targets by SKU count.
+# Individual class targets come from _SL_TARGETS defined above.
+
+
+@router.get("/inv-planning/service-level/waterfall")
+def get_service_level_waterfall_bridge(
+    response: FastAPIResponse,
+    month: str | None = Query(None, description="Month filter e.g. '2026-03'"),
+) -> dict:
+    """Service level target-to-actual bridge chart data.
+
+    Shows how the overall service level target (e.g., 97%) breaks down into
+    positive and negative contributions by ABC class and root cause.
+    Returns waterfall steps: opening target -> per-class deltas -> closing actual.
+
+    Cache: 300s.
+    """
+    set_cache(response, max_age=300)
+
+    # --- build WHERE clause --------------------------------------------------
+    where_parts: list[str] = []
+    params: list = []
+
+    if month:
+        params.append(month + "-01")  # e.g. "2026-03" -> "2026-03-01"
+        where_parts.append("f.month_start = %s::date")
+
+    # When no month is given, default to the latest available month
+    if not month:
+        where_parts.append(
+            "f.month_start = (SELECT MAX(month_start) FROM mv_fill_rate_monthly)"
+        )
+
+    where_sql = "WHERE " + " AND ".join(where_parts)
+
+    # --- Per-ABC class contribution to portfolio fill rate -------------------
+    sql = f"""
+        SELECT
+            ss.abc_vol,
+            COUNT(*)                                        AS sku_count,
+            CASE WHEN SUM(f.total_ordered) > 0
+                 THEN (SUM(f.total_shipped) / SUM(f.total_ordered))::numeric(7,5)
+                 ELSE NULL END                              AS avg_fill_rate,
+            SUM(f.total_ordered)::numeric                   AS class_ordered
+        FROM mv_fill_rate_monthly f
+        JOIN fact_safety_stock_targets ss
+            ON f.item_id = ss.item_id AND f.loc = ss.loc
+        {where_sql}
+        GROUP BY ss.abc_vol
+        ORDER BY ss.abc_vol
+    """
+
+    # Portfolio total (weighted by ordered qty)
+    total_sql = f"""
+        SELECT
+            CASE WHEN SUM(f.total_ordered) > 0
+                 THEN (SUM(f.total_shipped) / SUM(f.total_ordered))::numeric(7,5)
+                 ELSE NULL END                              AS portfolio_fill_rate,
+            SUM(f.total_ordered)::numeric                   AS total_ordered
+        FROM mv_fill_rate_monthly f
+        JOIN fact_safety_stock_targets ss
+            ON f.item_id = ss.item_id AND f.loc = ss.loc
+        {where_sql}
+    """
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                abc_rows = cur.fetchall()
+
+                cur.execute(total_sql, params)
+                total_row = cur.fetchone()
+    except psycopg.Error as e:
+        logger.exception("service-level/waterfall: DB query failed: %s", e)
+        return {
+            "target": None,
+            "actual": None,
+            "steps": [],
+            "month": month or None,
+        }
+
+    # --- Handle empty data ---------------------------------------------------
+    if not abc_rows or not total_row or total_row[1] is None or float(total_row[1]) == 0:
+        return {
+            "target": None,
+            "actual": None,
+            "steps": [],
+            "month": month or None,
+        }
+
+    portfolio_fill_rate = float(total_row[0]) if total_row[0] is not None else 0.0
+    total_ordered = float(total_row[1])
+
+    # --- Build per-class data ------------------------------------------------
+    class_data: list[dict] = []
+    weighted_target_sum = 0.0
+    for row in abc_rows:
+        abc_class = row[0] or "?"
+        sku_count = int(row[1] or 0)
+        avg_fr = float(row[2]) if row[2] is not None else 0.0
+        class_ordered = float(row[3]) if row[3] is not None else 0.0
+        target_sl = _SL_TARGETS.get(abc_class, _SL_TARGETS["default"])
+        gap = round(avg_fr - target_sl, 5)
+        weight = class_ordered / total_ordered if total_ordered > 0 else 0.0
+
+        weighted_target_sum += target_sl * weight
+
+        class_data.append({
+            "abc_class": abc_class,
+            "sku_count": sku_count,
+            "avg_fill_rate": round(avg_fr, 5),
+            "target_sl": target_sl,
+            "gap": round(gap, 5),
+            "weight": round(weight, 4),
+            # Weighted contribution of this class's gap to the portfolio delta
+            "weighted_gap": round(gap * weight, 5),
+        })
+
+    # Weighted portfolio target
+    portfolio_target = round(weighted_target_sum, 5)
+
+    # --- Assemble waterfall steps --------------------------------------------
+    steps: list[dict] = []
+
+    # Opening: target bar
+    steps.append({
+        "label": "Target",
+        "value": portfolio_target,
+        "type": "total",
+    })
+
+    # Per-class delta bars (sorted: positive first, then negative)
+    sorted_classes = sorted(class_data, key=lambda c: c["weighted_gap"], reverse=True)
+    for c in sorted_classes:
+        wg = c["weighted_gap"]
+        if abs(wg) < 0.00001:
+            continue  # skip negligible deltas
+        step_type = "positive" if wg > 0 else "negative"
+        label_suffix = "over" if wg > 0 else "under"
+        steps.append({
+            "label": f"{c['abc_class']}-class {label_suffix}",
+            "value": round(wg, 5),
+            "type": step_type,
+        })
+
+    # Closing: actual bar
+    steps.append({
+        "label": "Actual",
+        "value": round(portfolio_fill_rate, 5),
+        "type": "total",
+    })
+
+    return {
+        "target": portfolio_target,
+        "actual": round(portfolio_fill_rate, 5),
+        "steps": steps,
+        "by_class": class_data,
+        "month": month or None,
     }

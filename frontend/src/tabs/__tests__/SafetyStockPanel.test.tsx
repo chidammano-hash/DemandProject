@@ -9,10 +9,12 @@ vi.mock("@/api/queries", async () => {
     safetyStockKeys: {
       summary: () => ["ss-summary"],
       detail: (p?: unknown) => ["ss-detail", p],
+      explain: (item: string, loc: string) => ["ss-explain", item, loc],
     },
     STALE: { FIVE_MIN: 300000, ONE_MIN: 60000, TEN_MIN: 600000, TWO_MIN: 120000 },
     fetchSafetyStockSummary: vi.fn(),
     fetchSafetyStockDetail: vi.fn(),
+    fetchSafetyStockExplain: vi.fn(),
   };
 });
 
@@ -59,11 +61,11 @@ describe("SafetyStockPanel", () => {
       </TestQueryWrapper>,
     );
     await waitFor(() => {
-      expect(screen.getByText("Items Below SS")).toBeInTheDocument();
+      expect(screen.getByText("At Stockout Risk")).toBeInTheDocument();
     });
-    expect(screen.getByText("Avg SS Coverage")).toBeInTheDocument();
+    expect(screen.getByText("Buffer Health")).toBeInTheDocument();
     expect(screen.getByText("Total SKUs")).toBeInTheDocument();
-    expect(screen.getByText("Avg SS Days")).toBeInTheDocument();
+    expect(screen.getByText("Buffer Days")).toBeInTheDocument();
   });
 
   it("renders detail table with item data", async () => {
@@ -81,7 +83,7 @@ describe("SafetyStockPanel", () => {
         <SafetyStockPanel />
       </TestQueryWrapper>,
     );
-    expect(await screen.findByText("Safety Stock by ABC Class")).toBeInTheDocument();
+    expect(await screen.findByText("Safety Buffer by ABC Class")).toBeInTheDocument();
   });
 
   it("renders Below SS Only toggle button", async () => {
@@ -90,6 +92,6 @@ describe("SafetyStockPanel", () => {
         <SafetyStockPanel />
       </TestQueryWrapper>,
     );
-    expect(await screen.findByText("Below SS Only")).toBeInTheDocument();
+    expect(await screen.findByText("At Risk Only")).toBeInTheDocument();
   });
 });

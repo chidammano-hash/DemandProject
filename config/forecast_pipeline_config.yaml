@@ -318,7 +318,7 @@ algorithms:
     tune: false
     backtest: true
     compete: true
-    forecast: true                     # Must be true — competes in champion, needs to generate forecasts
+    forecast: true
     expert: true
     output_dir: data/backtest/nbeats
     params:
@@ -335,7 +335,7 @@ algorithms:
     tune: false
     backtest: true
     compete: true
-    forecast: true                     # Must be true — competes in champion, needs to generate forecasts
+    forecast: true
     expert: false
     output_dir: data/backtest/nhits
     params:

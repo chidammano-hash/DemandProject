@@ -6,11 +6,13 @@ Tests the pure-Python detection and recommendation functions in isolation
 from __future__ import annotations
 
 import datetime
+
 import pytest
 
 from scripts.generate_replenishment_exceptions import (
-    detect_exception_type,
+    compute_financial_impact,
     compute_recommendation,
+    detect_exception_type,
 )
 
 TODAY = datetime.date(2026, 3, 4)
@@ -208,3 +210,162 @@ class TestComputeRecommendation:
         )
         assert qty == 0.0
         assert order_by is None
+
+
+# ---------------------------------------------------------------------------
+# compute_financial_impact
+# ---------------------------------------------------------------------------
+
+class TestComputeFinancialImpact:
+    def test_stockout_loss_of_sales(self):
+        """Stockout exception computes lost sales based on demand and margin."""
+        fin = compute_financial_impact(
+            exception_type="stockout",
+            current_qty=0,
+            ss_combined=200,
+            unit_cost=20.0,
+            demand_mean_monthly=304.4,   # daily_demand = 10
+            current_dos=0.0,
+            lead_time_mean_days=14.0,
+        )
+        assert fin["unit_cost"] == 20.0
+        assert fin["unit_margin"] == 6.0   # 20 * 0.30
+        assert fin["daily_demand_rate"] == pytest.approx(10.0, abs=0.01)
+        # days_at_risk = 14 - 0 = 14; loss_7d = 10 * 6 * 7 = 420
+        assert fin["loss_of_sales_7d"] == pytest.approx(420.0, abs=1.0)
+        # loss_30d = 10 * 6 * 14 = 840 (capped at days_at_risk=14 < 30)
+        assert fin["loss_of_sales_30d"] == pytest.approx(840.0, abs=1.0)
+        assert fin["monthly_holding_cost"] == 0.0
+        assert fin["financial_impact_total"] == fin["loss_of_sales_7d"]
+
+    def test_below_ss_uses_days_at_risk(self):
+        """Below-SS computes days_at_risk = lead_time - current_dos."""
+        fin = compute_financial_impact(
+            exception_type="below_ss",
+            current_qty=50,
+            ss_combined=200,
+            unit_cost=10.0,
+            demand_mean_monthly=304.4,   # daily = 10
+            current_dos=5.0,
+            lead_time_mean_days=10.0,
+        )
+        # days_at_risk = 10 - 5 = 5; margin = 3.0
+        # loss_7d = 10 * 3 * min(7, 5) = 150
+        assert fin["loss_of_sales_7d"] == pytest.approx(150.0, abs=1.0)
+
+    def test_excess_holding_cost(self):
+        """Excess exception computes monthly holding cost."""
+        fin = compute_financial_impact(
+            exception_type="excess",
+            current_qty=1000,
+            ss_combined=200,
+            unit_cost=10.0,
+            demand_mean_monthly=100.0,
+            current_dos=300.0,
+            lead_time_mean_days=7.0,
+        )
+        # excess_qty = 1000 - 2*200 = 600
+        # monthly_holding = 600 * 10 * 0.25 / 12 = 125.0
+        assert fin["monthly_holding_cost"] == pytest.approx(125.0, abs=0.01)
+        assert fin["loss_of_sales_7d"] == 0.0
+        assert fin["financial_impact_total"] == fin["monthly_holding_cost"]
+
+    def test_zero_velocity_no_impact(self):
+        """Zero velocity exception has zero financial impact."""
+        fin = compute_financial_impact(
+            exception_type="zero_velocity",
+            current_qty=500,
+            ss_combined=None,
+            unit_cost=10.0,
+            demand_mean_monthly=0.0,
+            current_dos=None,
+            lead_time_mean_days=7.0,
+        )
+        assert fin["financial_impact_total"] == 0.0
+        assert fin["loss_of_sales_7d"] == 0.0
+        assert fin["monthly_holding_cost"] == 0.0
+
+    def test_default_unit_cost_when_none(self):
+        """Uses $10 default when unit_cost is None."""
+        fin = compute_financial_impact(
+            exception_type="stockout",
+            current_qty=0,
+            ss_combined=100,
+            unit_cost=None,
+            demand_mean_monthly=304.4,
+            current_dos=0.0,
+            lead_time_mean_days=7.0,
+        )
+        assert fin["unit_cost"] == 10.0
+        assert fin["unit_margin"] == 3.0
+
+    def test_default_unit_cost_when_zero(self):
+        """Uses $10 default when unit_cost is 0."""
+        fin = compute_financial_impact(
+            exception_type="below_rop",
+            current_qty=150,
+            ss_combined=200,
+            unit_cost=0.0,
+            demand_mean_monthly=304.4,
+            current_dos=30.0,
+            lead_time_mean_days=14.0,
+        )
+        assert fin["unit_cost"] == 10.0
+
+    def test_excess_no_ss_yields_full_qty_excess(self):
+        """When ss_combined is None, excess_qty = current_qty - 0 = current_qty."""
+        fin = compute_financial_impact(
+            exception_type="excess",
+            current_qty=500,
+            ss_combined=None,
+            unit_cost=20.0,
+            demand_mean_monthly=100.0,
+            current_dos=150.0,
+            lead_time_mean_days=7.0,
+        )
+        # excess_qty = 500 - 0 = 500; holding = 500 * 20 * 0.25 / 12 = 208.33
+        assert fin["monthly_holding_cost"] == pytest.approx(208.33, abs=0.01)
+
+    def test_no_days_at_risk_when_dos_exceeds_lead_time(self):
+        """When current_dos > lead_time, days_at_risk = 0 so no lost sales."""
+        fin = compute_financial_impact(
+            exception_type="below_rop",
+            current_qty=150,
+            ss_combined=200,
+            unit_cost=10.0,
+            demand_mean_monthly=304.4,
+            current_dos=20.0,
+            lead_time_mean_days=10.0,
+        )
+        # days_at_risk = max(0, 10 - 20) = 0
+        assert fin["loss_of_sales_7d"] == 0.0
+        assert fin["loss_of_sales_30d"] == 0.0
+
+    def test_stockout_no_lead_time_assumes_7_days(self):
+        """When lead_time is None and DOS=0 (stocked out), assume 7-day risk window."""
+        fin = compute_financial_impact(
+            exception_type="stockout",
+            current_qty=0,
+            ss_combined=100,
+            unit_cost=10.0,
+            demand_mean_monthly=304.4,   # daily = 10
+            current_dos=0.0,
+            lead_time_mean_days=None,    # no lead time data
+        )
+        # days_at_risk = 7 (fallback); margin = 3.0; loss_7d = 10 * 3 * 7 = 210
+        assert fin["loss_of_sales_7d"] == pytest.approx(210.0, abs=1.0)
+        assert fin["financial_impact_total"] == fin["loss_of_sales_7d"]
+
+    def test_below_rop_no_lead_time_with_dos_is_zero(self):
+        """When lead_time is None but DOS > 0, days_at_risk = 0."""
+        fin = compute_financial_impact(
+            exception_type="below_rop",
+            current_qty=150,
+            ss_combined=200,
+            unit_cost=10.0,
+            demand_mean_monthly=304.4,
+            current_dos=10.0,
+            lead_time_mean_days=None,
+        )
+        # DOS > 0 and no lead time: days_at_risk = 0
+        assert fin["loss_of_sales_7d"] == 0.0

@@ -12,6 +12,7 @@ from httpx import ASGITransport
 from tests.api.conftest import make_pool as _make_pool
 
 
+# 18 original columns + 7 financial columns = 25 total
 _EXCEPTION_ROW = (
     "exc-001", "ITEM001", "LOC1",
     datetime.date(2026, 3, 4), "below_rop", "high",
@@ -19,6 +20,9 @@ _EXCEPTION_ROW = (
     100.0, datetime.date(2026, 3, 11), datetime.date(2026, 3, 16),
     1500.0, "A_continuous_v1", "open",
     None, None,
+    # financial columns: unit_cost, unit_margin, daily_demand_rate,
+    # loss_of_sales_7d, loss_of_sales_30d, monthly_holding_cost, financial_impact_total
+    15.0, 4.5, 16.4371, 345.18, 1479.34, 0.0, 345.18,
 )
 
 
@@ -37,6 +41,8 @@ async def test_exceptions_list_200():
         ("current_qty_on_hand",), ("current_dos",), ("ss_combined",), ("reorder_point",),
         ("recommended_order_qty",), ("recommended_order_by",), ("expected_receipt_date",),
         ("estimated_order_value",), ("policy_id",), ("status",), ("acknowledged_by",), ("notes",),
+        ("unit_cost",), ("unit_margin",), ("daily_demand_rate",),
+        ("loss_of_sales_7d",), ("loss_of_sales_30d",), ("monthly_holding_cost",), ("financial_impact_total",),
     ]
 
     with patch("api.core._get_pool", return_value=pool):
@@ -63,6 +69,8 @@ async def test_exceptions_list_row_keys():
         ("current_qty_on_hand",), ("current_dos",), ("ss_combined",), ("reorder_point",),
         ("recommended_order_qty",), ("recommended_order_by",), ("expected_receipt_date",),
         ("estimated_order_value",), ("policy_id",), ("status",), ("acknowledged_by",), ("notes",),
+        ("unit_cost",), ("unit_margin",), ("daily_demand_rate",),
+        ("loss_of_sales_7d",), ("loss_of_sales_30d",), ("monthly_holding_cost",), ("financial_impact_total",),
     ]
 
     with patch("api.core._get_pool", return_value=pool):
@@ -73,7 +81,10 @@ async def test_exceptions_list_row_keys():
 
     row = resp.json()["rows"][0]
     for key in ("exception_id", "item_id", "loc", "exception_type", "severity",
-                "recommended_order_qty", "status"):
+                "recommended_order_qty", "status",
+                "unit_cost", "unit_margin", "daily_demand_rate",
+                "loss_of_sales_7d", "loss_of_sales_30d",
+                "monthly_holding_cost", "financial_impact_total"):
         assert key in row
 
 
@@ -88,6 +99,8 @@ async def test_exceptions_list_severity_filter():
         ("current_qty_on_hand",), ("current_dos",), ("ss_combined",), ("reorder_point",),
         ("recommended_order_qty",), ("recommended_order_by",), ("expected_receipt_date",),
         ("estimated_order_value",), ("policy_id",), ("status",), ("acknowledged_by",), ("notes",),
+        ("unit_cost",), ("unit_margin",), ("daily_demand_rate",),
+        ("loss_of_sales_7d",), ("loss_of_sales_30d",), ("monthly_holding_cost",), ("financial_impact_total",),
     ]
 
     with patch("api.core._get_pool", return_value=pool):
@@ -110,6 +123,8 @@ async def test_exceptions_list_pagination():
         ("current_qty_on_hand",), ("current_dos",), ("ss_combined",), ("reorder_point",),
         ("recommended_order_qty",), ("recommended_order_by",), ("expected_receipt_date",),
         ("estimated_order_value",), ("policy_id",), ("status",), ("acknowledged_by",), ("notes",),
+        ("unit_cost",), ("unit_margin",), ("daily_demand_rate",),
+        ("loss_of_sales_7d",), ("loss_of_sales_30d",), ("monthly_holding_cost",), ("financial_impact_total",),
     ]
 
     with patch("api.core._get_pool", return_value=pool):
@@ -131,7 +146,8 @@ async def test_exceptions_list_pagination():
 async def test_exceptions_summary_200():
     """GET /inv-planning/exceptions/summary returns 200 with expected keys."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = (25, 5, 0, 8, 2, 7, 3, 10, 8, 5, 2, 15000.0, 14)
+    # 17 columns: open_count, 6 types, 4 severities, order_value, oldest_days, fin_impact, loss_7d, holding, last_generated_at
+    cursor.fetchone.return_value = (25, 5, 0, 8, 2, 7, 3, 10, 8, 5, 2, 15000.0, 14, 5200.0, 3400.0, 1800.0, datetime.datetime(2026, 3, 1, 12, 0))
 
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -146,13 +162,16 @@ async def test_exceptions_summary_200():
     assert "by_severity" in data
     assert "total_recommended_order_value" in data
     assert "oldest_open_days" in data
+    assert "total_financial_impact" in data
+    assert "total_loss_of_sales_7d" in data
+    assert "total_monthly_holding_cost" in data
 
 
 @pytest.mark.asyncio
 async def test_exceptions_summary_by_severity_keys():
     """by_severity has all 4 keys."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = (10, 2, 0, 3, 1, 3, 1, 4, 3, 2, 1, 5000.0, 7)
+    cursor.fetchone.return_value = (10, 2, 0, 3, 1, 3, 1, 4, 3, 2, 1, 5000.0, 7, 2100.0, 1400.0, 700.0, datetime.datetime(2026, 3, 1, 12, 0))
 
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
@@ -169,7 +188,7 @@ async def test_exceptions_summary_by_severity_keys():
 async def test_exceptions_summary_by_type_keys():
     """by_type has all 6 exception type keys."""
     pool, conn, cursor = _make_pool()
-    cursor.fetchone.return_value = (10, 2, 0, 3, 1, 3, 1, 4, 3, 2, 1, 5000.0, 7)
+    cursor.fetchone.return_value = (10, 2, 0, 3, 1, 3, 1, 4, 3, 2, 1, 5000.0, 7, 2100.0, 1400.0, 700.0, datetime.datetime(2026, 3, 1, 12, 0))
 
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app

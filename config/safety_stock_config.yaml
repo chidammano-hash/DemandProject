@@ -16,6 +16,27 @@ safety_stock:
   # Inherited from shared_constants.yaml via _includes:
   #   service_levels, z_table, min_ss_days, max_ss_days, lt_std_fallback_pct
 
+  # ═══ SERVICE LEVEL MATRIX (ABC × XYZ) ═══
+  # X = stable demand (CV < 0.3), Y = moderate (0.3-0.8), Z = volatile (> 0.8)
+  # When present, the matrix overrides the ABC-only service_levels lookup.
+  # Falls back to ABC-only service_levels when xyz_class is unavailable.
+  service_level_matrix:
+    AX: 0.99    # High value, stable — near-perfect availability
+    AY: 0.98    # High value, moderate variability
+    AZ: 0.97    # High value, volatile — slightly relaxed due to unpredictability
+    BX: 0.97    # Medium value, stable
+    BY: 0.95    # Medium value, moderate
+    BZ: 0.93    # Medium value, volatile
+    CX: 0.93    # Low value, stable
+    CY: 0.90    # Low value, moderate
+    CZ: 0.85    # Low value, volatile — lowest investment priority
+
+  # XYZ classification thresholds based on demand coefficient of variation (CV).
+  # X = CV < xyz_thresholds.x_max, Y = CV < xyz_thresholds.y_max, Z = CV >= xyz_thresholds.y_max
+  xyz_thresholds:
+    x_max: 0.3   # CV < 0.3 → X (stable demand)
+    y_max: 0.8   # CV < 0.8 → Y (moderate variability), CV >= 0.8 → Z (volatile)
+
   # Minimum months of demand history required for a SKU to receive an SS target.
   # SKUs with fewer months are skipped (insufficient data).
   min_demand_months: 3
@@ -23,6 +44,52 @@ safety_stock:
   # Formula components to include.
   use_demand_variability: true
   use_lt_variability: true
+
+  # ═══ GUARD RAILS ═══
+  # ABC-specific safety stock bounds (days of supply).
+  # Replaces the global min_ss_days / max_ss_days when present.
+  # Falls back to 'default' entry for unknown ABC classes.
+  guard_rails:
+    A:
+      min_ss_days: 5        # High-value items: minimum 5 days buffer
+      max_ss_days: 60       # Cap at 60 days to limit capital tie-up
+    B:
+      min_ss_days: 3        # Medium-value: minimum 3 days
+      max_ss_days: 90       # Slightly more room
+    C:
+      min_ss_days: 1        # Low-value: minimum 1 day
+      max_ss_days: 120      # Most permissive bounds
+    default:
+      min_ss_days: 3        # Fallback for unknown ABC class
+      max_ss_days: 120
+    # Zero-demand items: absolute floor (units, not days)
+    zero_demand_min_units: 3       # At least 3 units for items with zero recent demand
+    # Outlier detection settings applied to monthly demand history
+    outlier_detection:
+      enabled: true                # Enable MAD-based outlier detection
+      method: mad                  # Median Absolute Deviation
+      threshold: 3.0               # Flag demand months > 3 MAD from median as outliers
+      max_outlier_pct: 0.20        # If >20% of months are outliers, flag item as volatile
+      volatile_sl_boost: 0.02      # Increase service level by 2% for volatile items
+
+  # ═══ SEASONAL ADJUSTMENT ═══
+  # Adjusts safety stock based on monthly demand patterns (peaks and troughs).
+  # When enabled, SS is scaled by sqrt(seasonal_factor) for the current planning month.
+  # Dampening blends the seasonal-adjusted SS with the base SS to prevent extreme swings.
+  seasonal_adjustment:
+    enabled: true                # Enable monthly seasonal SS adjustment
+    min_history_months: 24       # Minimum months of demand history required (at least 2 years for seasonal pattern)
+    dampening: 0.5               # Blend factor: 0.5 = 50% seasonal-adjusted + 50% base SS (range 0.0-1.0)
+
+  # ═══ SERVICE LEVEL ADJUSTMENTS ═══
+  # Adjustments applied on top of the base ABC-XYZ matrix service level.
+  # Each adjustment is additive. Final SL is clamped to [sl_floor, sl_ceiling].
+  service_level_adjustments:
+    seasonal_peak_boost: 0.02       # Add 2% during peak months (seasonal_factor > 1.15)
+    seasonal_trough_relax: -0.01    # Reduce 1% during trough months (seasonal_factor < 0.85)
+    intermittent_relax: -0.02       # Reduce 2% if intermittency_ratio > 0.5 (hard to plan)
+    sl_floor: 0.80                  # Never go below 80% (absolute minimum)
+    sl_ceiling: 0.995               # Never go above 99.5% (absolute maximum)
 
   # Batch upsert size (rows per INSERT ... ON CONFLICT batch).
   batch_size: 1000
