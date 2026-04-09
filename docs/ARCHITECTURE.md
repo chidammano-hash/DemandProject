@@ -83,6 +83,7 @@ flowchart TD
         SEAS["Seasonality"]
         BT["Backtesting (10 models)"]
         CHAMP["Champion Selection"]
+        CAND["Candidate Staging"]
         PROD["Production Forecast"]
         INVP["Inventory Planning (15)"]
         AI["AI Insights"]
@@ -581,9 +582,13 @@ erDiagram
 
 `mv_inventory_forecast_monthly`, `mv_inventory_health_score`, `mv_fill_rate_monthly`, `mv_supplier_performance`, `mv_intramonth_stockout`, `mv_network_balance`, `mv_control_tower_kpis`, `mv_supplier_po_performance`, `mv_po_lead_time_analysis`
 
-### Forecasting & Champion (7)
+### Forecasting & Champion (9)
 
-`fact_production_forecast`, `fact_replenishment_plan`, `champion_experiment`, `champion_experiment_lag`, `champion_experiment_month`, `champion_experiment_comparison`, `champion_promotion_log`
+`fact_candidate_forecast`, `fact_production_forecast`, `model_promotion_log`, `fact_replenishment_plan`, `champion_experiment`, `champion_experiment_lag`, `champion_experiment_month`, `champion_experiment_comparison`, `champion_promotion_log`
+
+- **`fact_candidate_forecast`** — staging table where all model predictions land before promotion. Grain: item_id + loc + model_id + forecast_month. Tracks forecast_qty, accuracy_pct, wape, bias, backtest_run_id, is_promoted, promoted_at.
+- **`model_promotion_log`** — audit trail for every promotion/demotion event. Tracks model_id, promotion_type (single/champion), plan_version, is_active, dfu_count, total_rows.
+- **`backtest_run`** extended with `is_loaded_to_candidate` and `candidate_loaded_at` columns to track candidate loading state.
 
 ### AI & Exception Tables (5)
 
@@ -694,6 +699,10 @@ erDiagram
 66. `champion_experiment_comparison` — cached pairwise comparison results for champion experiments (Feature 48); grain: `(id)` SERIAL PK, UNIQUE(experiment_a_id, experiment_b_id); columns: experiment_a_id (FK), experiment_b_id (FK), created_at, overall_comparison (JSONB), per_lag_comparison (JSONB), per_month_comparison (JSONB), model_dist_comparison (JSONB), config_diffs (JSONB); DDL: `sql/102_champion_experiments.sql`
 67. `champion_promotion_log` — audit log for champion strategy promotions (Feature 48); grain: `(id)` SERIAL PK; columns: experiment_id (FK), promoted_at, promoted_by (default 'manual'), previous_experiment_id, strategy, champion_accuracy, config_snapshot (JSONB); DDL: `sql/102_champion_experiments.sql`
 - Champion experiments API router at `/champion-experiments`, `/demand-history` with 15 endpoints: list, templates, promoted, promotions, compare, detail, lags, months, logs, create, promote, promote-results, promote-results/status, cancel, delete
+68. `fact_candidate_forecast` — candidate staging table for model predictions before promotion; grain: `(item_id, loc, model_id, forecast_month)` UNIQUE; columns: forecast_qty, accuracy_pct, wape, bias, backtest_run_id, is_promoted (BOOLEAN DEFAULT FALSE), promoted_at; DDL: `sql/121_candidate_forecast_and_promotion.sql`
+69. `model_promotion_log` — audit trail for every promotion/demotion event; grain: `(id)` SERIAL PK; columns: model_id, promotion_type (single/champion), plan_version, is_active, dfu_count, total_rows, promoted_at; DDL: `sql/121_candidate_forecast_and_promotion.sql`
+- `backtest_run` gains `is_loaded_to_candidate BOOLEAN DEFAULT FALSE` and `candidate_loaded_at TIMESTAMPTZ` columns; DDL: `sql/121_candidate_forecast_and_promotion.sql`
+- Backtest management API router at `/backtest-management` with 6 endpoints: promotion-status, candidate-summary, staging-summary, {model_id}/generate, {model_id}/promote, {model_id}/train (tree-model-only validation)
 
 ---
 
@@ -782,8 +791,9 @@ flowchart TD
         CHAMP["champion-select<br/>→ model_id='champion'+'ceiling'"]
     end
 
-    subgraph P7["Phase 7: Production"]
-        PROD["forecast-generate<br/>→ fact_production_forecast"]
+    subgraph P7["Phase 7: Candidate Staging & Production"]
+        GEN["forecast-generate<br/>→ fact_candidate_forecast"]
+        PROMOTE["promote model/champion<br/>→ fact_production_forecast"]
         REPL["replplan-compute<br/>→ fact_replenishment_plan"]
     end
 
@@ -811,8 +821,9 @@ flowchart TD
     LOAD --> BT_MSTL & BT_NHITS & BT_NBEATS
     BT_L & BT_C & BT_X & BT_MSTL & BT_NHITS & BT_NBEATS --> BT_LOAD
     BT_LOAD --> CHAMP
-    CHAMP --> PROD
-    PROD --> REPL
+    CHAMP --> GEN
+    GEN --> PROMOTE
+    PROMOTE --> REPL
 
     %% Intelligence depends on everything
     CHAMP & SS & HEALTH --> AI & STORY
@@ -849,7 +860,7 @@ flowchart TD
 | **N-BEATS Backtest** | `run_backtest_dl.py --model nbeats` | sales, forecast | `data/backtest/nbeats/` | `forecast_pipeline_config.yaml` (`algorithms.nbeats`) |
 | **Backtest Load** | `load_backtest_forecasts.py` | `data/backtest/*/` CSVs | `fact_external_forecast_monthly`, `backtest_lag_archive` | — (flags: `--models`, `--bulk`, `--main-only`, `--archive-only`) |
 | **Champion** | `run_champion_selection.py` | `fact_external_forecast_monthly`, archive | rows with `model_id='champion'`, `'ceiling'` | `forecast_pipeline_config.yaml` (champion section) |
-| **Prod Forecast** | `generate_production_forecasts.py` | champion assignments, cluster `.pkl` models | `fact_production_forecast` | `forecast_pipeline_config.yaml` (production_forecast section). Horizon: 24 months, lookback: 36 months. Cold-start routing: < 12 mo history -> rolling_mean; < 3 mo -> skipped. Embargo: 1 month. |
+| **Prod Forecast** | `generate_production_forecasts.py` | champion assignments, cluster `.pkl` models | `fact_candidate_forecast` (staging), then promoted to `fact_production_forecast` | `forecast_pipeline_config.yaml` (production_forecast section). Staged workflow: Train → Generate → Load (→ `fact_candidate_forecast`) → Promote (→ `fact_production_forecast`). Horizon: 24 months, lookback: 36 months. Cold-start routing: < 12 mo history -> rolling_mean; < 3 mo -> skipped. Embargo: 1 month. Promotion types: single model (copy all candidates) or champion (DFU-level best-accuracy selection from `data/champion/dfu_assignments.csv`). API: `/backtest-management/{model_id}/generate`, `/backtest-management/{model_id}/promote`. |
 | **Repl Plan** | `compute_replenishment_plan.py` | `fact_production_forecast`, SS, EOQ | `fact_replenishment_plan` | — |
 | **AI Insights** | `generate_ai_insights.py` | multi-table queries (DFU, forecast, inventory, health) | `ai_insights`, `ai_planning_memos`, `ai_call_log` | `ai_planner_config.yaml` |
 | **Storyboard** | `generate_storyboard_exceptions.py` | forecast, inventory, accuracy views | `fact_storyboard_exceptions` | `exception_config.yaml` |
@@ -868,10 +879,10 @@ flowchart TD
 `api/main.py` creates the app, adds middleware, and mounts all 63 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/`. `domains.py` is mounted last (catch-all `{domain}` path parameter). Note: `inv_planning.py` is a thin compatibility shim (not directly mounted); `api_governance.py` does not exist as a router file (governance logic is in `common/rate_limiter.py`).
 
 **63 mounted routers** (as of 08-01 through 08-10 + all evolution features + Feature 46 + Feature 47 + Feature 48):
-accuracy, ai_planner, analysis, auth_router, bias_corrections, blended_forecast, champion_experiments, chat, cluster_experiments, clusters, collaboration, competition, consensus_plan, control_tower, dashboard, data_quality, domains, echelon_planning, events, external_signals, fill_rate, financial_plan, fva, intel, inv_backtest, inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_projection, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, inventory, jobs, lead_time_learning, lgbm_tuning, notifications, production_forecast, reports, service_level, shap, sop, storyboard, supply, supply_scenarios, unified_model_tuning, users, webhooks, demand_history
+accuracy, ai_planner, analysis, auth_router, backtest_management, bias_corrections, blended_forecast, champion_experiments, chat, cluster_experiments, clusters, collaboration, competition, consensus_plan, control_tower, dashboard, data_quality, domains, echelon_planning, events, external_signals, fill_rate, financial_plan, fva, intel, inv_backtest, inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_projection, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, inventory, jobs, lead_time_learning, lgbm_tuning, notifications, production_forecast, reports, service_level, shap, sop, storyboard, supply, supply_scenarios, unified_model_tuning, users, webhooks, demand_history
 
-**33 Vite proxy path prefixes** in `frontend/vite.config.ts`:
-`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/sku`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/auth`, `/users`, `/notifications`, `/collaboration`, `/external-signals`, `/fva`, `/reports`, `/api`, `/webhooks`, `/lgbm-tuning`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`
+**34 Vite proxy path prefixes** in `frontend/vite.config.ts`:
+`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/sku`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/auth`, `/users`, `/notifications`, `/collaboration`, `/external-signals`, `/fva`, `/reports`, `/api`, `/webhooks`, `/lgbm-tuning`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`, `/backtest-management`
 
 **CRITICAL:** Every new API path prefix must be added to `frontend/vite.config.ts` or the frontend receives HTML instead of JSON. Restart the Vite dev server after changes.
 
@@ -904,12 +915,13 @@ accuracy, ai_planner, analysis, auth_router, bias_corrections, blended_forecast,
 | **Cluster Experiments** | `/cluster-experiments`, `/{id}`, `/compare`, `/templates`, `/completed`, `/{id}/promote`, `/{id}/used-by` | `cluster_experiment`, `cluster_experiment_comparison` |
 | **Champion Experiments** | `/champion-experiments`, `/{id}`, `/{id}/lags`, `/{id}/months`, `/{id}/logs`, `/templates`, `/promoted`, `/promotions`, `/compare`, `/{id}/promote`, `/{id}/promote-results`, `/{id}/promote-results/status`, `/{id}/cancel` | `champion_experiment`, `champion_experiment_lag`, `champion_experiment_month`, `champion_experiment_comparison`, `champion_promotion_log` |
 | **Demand History** | `/demand-history/reference`, `/decomposition`, `/comparison`, `/workbench`, `/matrix`, `/matrix/drill` | `fact_customer_demand_monthly`, `dim_customer`, `agg_inventory_monthly`, `backtest_predictions` |
+| **Backtest Management** | `/backtest-management/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/promote`, `/{model_id}/train` | `fact_candidate_forecast`, `fact_production_forecast`, `model_promotion_log`, `backtest_run` |
 
 ### Vite Proxy Routes (frontend/vite.config.ts)
 
 All API prefixes proxied to FastAPI at `http://127.0.0.1:8000`:
 
-`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/sku`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/sop`, `/fva`, `/supply`, `/notifications`, `/reports`, `/webhooks`, `/auth`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`
+`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/sku`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/sop`, `/fva`, `/supply`, `/notifications`, `/reports`, `/webhooks`, `/auth`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`, `/backtest-management`
 
 > **CRITICAL:** When adding a new API path prefix, add a corresponding proxy entry in `vite.config.ts` or the frontend will receive HTML instead of JSON.
 
@@ -1406,7 +1418,7 @@ Large tab files were refactored into shell + panel subfolder pattern for maintai
 | `tabs/JobsTab.tsx` (202L) | `tabs/jobs/` | KpiSection, JobGroupsPanel, ActiveJobsPanel, SchedulesPanel, JobHistoryPanel, jobsShared.ts |
 | `tabs/ClustersTab.tsx` (224L) | `tabs/clusters/` | ClusterOverviewPanel, WhatIfPanel, ScenarioResultsPanel, PastScenariosPanel |
 | `tabs/InvPlanningTab.tsx` | `tabs/inv-planning/` | Two-column layout: fixed 220px grouped sidebar navigation (7 groups with colored dividers, icons, and labels — Daily Operations, Optimize, Analytics, Planning, Sensing, Strategic, Supply) + scrollable main content area with per-panel header bar (title + description). 27 panels: ExceptionQueuePanel, PortfolioHealthPanel, EoqPanel, PolicyManagementPanel, RebalancingPanel, FillRatePanel, AbcXyzPanel, SupplierPanel, IntramonthPanel, SafetyStockPanel, VariabilityPanel, LeadTimePanel, DemandSignalsPanel, SimulationPanel, InvestmentPanel, ReplenishmentPlanPanel, DemandForecastPanel, BlendedDemandPanel, EchelonPanel, FinancialPlanPanel, EventCalendarPanel, ScenarioPlanningPanel, and Supply group panels |
-| `tabs/ModelTuningTab.tsx` | `tabs/model-tuning/` + `tabs/clusters/` + `tabs/champion/` + `tabs/forecast/` | 6 sub-tabs: Experiments (ExperimentBuilder, EnhancedComparisonPanel), Cluster Experiments (ClusterExperimentBuilder, ClusterComparisonPanel, ClusterParamsForm, ClusterPromoteModal), Champion (ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal), Forecast (ForecastPanel — algorithm picker, horizon config, generate job, version history), Cluster EDA, Feature Lab |
+| `tabs/ModelTuningTab.tsx` | `tabs/model-tuning/` + `tabs/clusters/` + `tabs/champion/` + `tabs/forecast/` | 6 sub-tabs: Experiments (ExperimentBuilder, EnhancedComparisonPanel), Cluster Experiments (ClusterExperimentBuilder, ClusterComparisonPanel, ClusterParamsForm, ClusterPromoteModal), Champion (ChampionExperimentsPanel, ChampionExperimentBuilder, ChampionComparisonPanel, ChampionPromoteModal), Forecast (ForecastPanel — Model Readiness table with 4-step action buttons per model: Train → Generate → Load → Promote; "Candidates" column showing loaded DFU count; "Promote Champion" button for DFU-level champion selection; crown badge on currently promoted production model; tree-model-only validation on Train), Cluster EDA, Feature Lab |
 
 ### API Query Sub-modules
 
@@ -1566,9 +1578,12 @@ make backtest-load-all       # Load predictions -> DB
 # --- Phase 6: Champion Selection ----------------------------------------------
 make champion-all            # meta-learner + simulate + select
 
-# --- Phase 7: Production Forecast ---------------------------------------------
-make forecast-generate       # 12-month forward forecast
-make replplan-compute        # Forward replenishment plan (needs forecast + SS + EOQ)
+# --- Phase 7: Candidate Staging & Production Forecast -------------------------
+make forecast-generate       # Generate forecasts → fact_candidate_forecast (staging)
+# Promotion via API: POST /backtest-management/{model_id}/promote
+#   - single model: copies one model's candidates → fact_production_forecast
+#   - champion: DFU-level best-accuracy selection → fact_production_forecast
+make replplan-compute        # Forward replenishment plan (needs promoted forecast + SS + EOQ)
 
 # --- Phase 8-9: Intelligence & Quality ----------------------------------------
 make ai-insights-scan        # Portfolio AI scan

@@ -79,7 +79,7 @@ config/                      # ~37 YAML config files organized by concern:
 │   ├── inventory_planning_config.yaml # Merged inventory planning (lead time, simulation, projection)
 │   ├── tune_strategies.yaml           # Merged tune strategies (LGBM, CatBoost, XGBoost)
 │   └── ...                            # ~30 more configs (inventory, ops, etc.)
-sql/                         # 87 DDL migration files
+sql/                         # 89 DDL migration files
 tests/                       # 2762+ backend tests (api/ + unit/)
 docs/                        # ARCHITECTURE, PLATFORM_GUIDE, RUNBOOK, specs/
 data/                        # Generated ML artifacts + input CSVs (gitignored)
@@ -228,6 +228,8 @@ Source CSV → normalize_dataset_csv.py → clean CSV → load_dataset_postgres.
 - `fact_inventory_snapshot`: grain = item_id + loc + snapshot_date (~198M rows); **monthly range-partitioned** by `snapshot_date`
 - `fact_customer_demand_monthly`: grain = item_id + customer_no + location_id + month; **monthly range-partitioned** by `startdate`
 - `fact_production_forecast`: grain = item_id + loc + plan_version + month
+- `fact_candidate_forecast`: grain = item_id + loc + model_id + forecast_month; staging area for all model predictions before promotion
+- `model_promotion_log`: audit trail for model promotions/demotions; tracks `is_active`, `promotion_type` (single/champion)
 
 ### Archive Tables
 - `backtest_lag_archive`: All-lags (0–4) backtest predictions with `timeframe` column
@@ -254,10 +256,12 @@ These are hard constraints that cause bugs or test failures if violated.
 - **`domains.py` mounted last** in `main.py` — it has catch-all `{domain}` path params that would shadow other routes.
 - **Shared test pool factory**: Import `from tests.api.conftest import make_pool as _make_pool`. For multi-fetchall endpoints use `cursor.fetchall.side_effect = [list1, list2]`; for single-call use `cursor.fetchall.return_value`.
 - **API test pattern**: Use inline `httpx.AsyncClient(transport=ASGITransport(app))` with `patch("api.core._get_pool")`.
+- **`POST /{model_id}/train` only accepts tree models** — foundation and `deep_learning` models return 400. Only `type === "tree"` models (lgbm, catboost, xgboost variants) support production training.
+- **Forecast promotion workflow**: All model predictions load to `fact_candidate_forecast` first. Only the promoted model's rows are copied to `fact_production_forecast` via `POST /backtest-management/{model_id}/promote`. Champion promotion uses DFU-level assignments from `data/champion/dfu_assignments.csv`.
 
 ### Frontend Patterns
 
-- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`, `/demand-history`.
+- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/chat`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`, `/demand-history`, `/backtest-management`.
 - **Theme context, not props**: Use `useThemeContext()` or `useChartColors()` — never pass `theme` as a prop from `App.tsx`.
 - **Test wrappers**: Wrap components with `TestQueryWrapper` from `src/tabs/__tests__/test-utils.tsx`. Mock API with `vi.mock("../api/queries")`. Mock `echarts-for-react` for chart tests. Mock `@tanstack/react-virtual` for virtualized row tests.
 
@@ -365,6 +369,7 @@ When adding a new feature end-to-end, follow these steps in order:
 - [ ] If new input data source: add normalize target to `normalize-all`, load target to `load-all`
 - [ ] If new input data source: register `DomainSpec` in `common/core/domain_specs.py`
 - [ ] If new input data source: add to `etl_config.yaml` `domain_order`
+- [ ] If new forecast table: follow the candidate -> production promotion pattern (`fact_candidate_forecast` -> `fact_production_forecast`)
 
 ### 2. Backend
 - [ ] Create router in correct `api/routers/{domain}/` subdirectory

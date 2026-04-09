@@ -55,7 +55,7 @@ The **Supply Chain Command Center** consolidates demand forecasting, inventory o
 | Metric | Value |
 |---|---|
 | Data Domains | 10 (item, location, customer, time, sku, sales, forecast, inventory, sourcing, purchase_order) |
-| Database Tables | ~85 (6 dimension, 4 fact, 35+ materialized views, 40+ planning/config) |
+| Database Tables | ~87 (6 dimension, 4 fact, 35+ materialized views, 40+ planning/config, 2 candidate/promotion) |
 | Total Database Rows | 349.8M+ (198M in inventory snapshots alone) |
 | DFU Count | 112,000+ demand forecast units |
 | API Routers | 72 mounted routers across 6 domain groups |
@@ -567,14 +567,14 @@ All materialized views support `CONCURRENTLY` refresh for zero-downtime reads du
 | Category | Table Count | Examples |
 |---|---|---|
 | Inventory Planning | 12 | `demand_variability`, `safety_stock`, `eoq_cycle_stock`, `replenishment_policy`, `replenishment_exceptions` |
-| Forecasting & Champion | 7 | `backtest_lag_archive`, `champion_model`, `production_forecast`, `bias_corrections` |
+| Forecasting & Champion | 9 | `backtest_lag_archive`, `champion_model`, `production_forecast`, `bias_corrections`, `fact_candidate_forecast`, `model_promotion_log` |
 | AI & Exception | 5 | `ai_insights`, `ai_call_log`, `ai_recommendation_outcomes`, `storyboard_cards` |
 | Operations | 12 | `fact_sop_cycles`, `fact_financial_plan`, `fact_events`, `fact_scenarios` |
 | Platform | 8 | `dim_user`, `dim_role`, `fact_audit_log`, `notification_log`, `webhook_registrations` |
 
 ### 4.3 Data Flow Architecture
 
-#### 7-Phase Pipeline
+#### 8-Phase Pipeline
 
 ```mermaid
 flowchart LR
@@ -606,11 +606,18 @@ flowchart LR
         META --> CHAMP[Champion<br>Model per DFU]
     end
 
-    subgraph "Phase 6: Forecast"
-        CHAMP --> PROD[Production<br>Forecast<br>P10/P90 CI]
+    subgraph "Phase 6: Candidate Staging"
+        CHAMP --> GEN[Generate<br>Candidate<br>Forecast]
+        GEN --> CAND[(fact_candidate<br>_forecast)]
     end
 
-    subgraph "Phase 7: Planning"
+    subgraph "Phase 7: Promotion"
+        CAND --> PROMOTE[Promote<br>Model]
+        PROMOTE --> PROD[(fact_production<br>_forecast)]
+        PROMOTE --> LOG[(model_promotion<br>_log)]
+    end
+
+    subgraph "Phase 8: Planning"
         PROD --> SS[Safety Stock]
         SS --> EOQ[EOQ]
         EOQ --> POL[Policies]
@@ -618,6 +625,8 @@ flowchart LR
         EXC --> PLAN[Replenishment<br>Plan]
     end
 ```
+
+**Candidate Forecast & Model Promotion**: After champion selection (Phase 5), candidate forecasts are generated per model and staged in `fact_candidate_forecast` (Phase 6). A promotion step (Phase 7) moves validated candidates into `fact_production_forecast` with a full audit trail in `model_promotion_log`. This staged workflow ensures forecasts are reviewed before they reach downstream planning. DDL: `sql/121_candidate_forecast_and_promotion.sql`.
 
 #### Forecast Dual-Path Loading (Critical)
 
@@ -757,7 +766,7 @@ Cache Layer         -      via      -         -      R/W      -          -      
 | Domain Group | Router Count | Path Prefix Examples | Key Responsibilities |
 |---|---|---|---|
 | `api/routers/inventory/` | 23 | `/inv-planning/*`, `/inventory/*`, `/fill-rate/*`, `/demand-history/*` | Safety stock, EOQ, policies, exceptions, health, rebalancing |
-| `api/routers/forecasting/` | 10 | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*` | Accuracy KPIs, SHAP, tuning, champion, model competition |
+| `api/routers/forecasting/` | 10 | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*` | Accuracy KPIs, SHAP, tuning, champion, model competition, candidate staging & promotion (`/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/promote`) |
 | `api/routers/operations/` | 10 | `/sop/*`, `/control-tower/*`, `/storyboard/*`, `/events/*` | S&OP cycle, control tower, storyboard, financial planning |
 | `api/routers/platform/` | 10 | `/auth/*`, `/users/*`, `/notifications/*`, `/webhooks/*` | Auth, RBAC, DQ, config, notifications, collaboration |
 | `api/routers/intelligence/` | 4 | `/ai-planner/*`, `/chat/*`, `/market-intelligence/*` | AI agent, chatbot, analysis, market intel |

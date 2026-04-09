@@ -94,6 +94,8 @@ make ai-insights-schema        # ai_insights + ai_planning_memos + ai_call_log +
 
 # Production Forecast (F1.1)
 make forecast-prod-schema      # fact_production_forecast (source_model_id included in base DDL)
+                               # + fact_candidate_forecast (staging) + model_promotion_log (audit trail)
+                               # DDL: sql/121_candidate_forecast_and_promotion.sql
 
 # Forward-Looking Replenishment Plan (CI Bands + Repl. Plan)
 make replplan-schema           # fact_replenishment_plan
@@ -981,15 +983,27 @@ When `--loc` is used, most sites produce < 200 DFUs → sequential mode is used 
 
 Run after Phase 6. Generates future-period (T+1 to T+24) demand forecasts using champion ML model artifacts. Uses 36 months of lookback history. Cold-start routing sends DFUs with < 12 months history to rolling_mean; DFUs with < 3 months are skipped entirely.
 
+**Staged promotion workflow:** Predictions are first written to `fact_candidate_forecast` (staging table), then promoted to `fact_production_forecast` after validation. The `model_promotion_log` table tracks all promotion events as an audit trail.
+
+```
+Train → Generate → Load (→ fact_candidate_forecast) → Promote (→ fact_production_forecast)
+```
+
 Config: `config/forecast_pipeline_config.yaml` (production_forecast section).
 
 ```bash
-make forecast-generate       # Generate 24-month forward forecasts → fact_production_forecast
+make forecast-generate       # Generate 24-month forward forecasts → fact_candidate_forecast
 # or for a single DFU:
 make forecast-generate-sku ITEM=100320 LOC=1401-BULK
 # preview without writing:
 make forecast-generate-dry
 ```
+
+**Promotion:** After candidate forecasts are generated, promote them to production:
+- **Champion promotion:** Uses per-DFU champion assignments to select the best model per DFU from candidates, then copies those rows to `fact_production_forecast`.
+- **Single model promotion:** Copies all candidate rows for a specified model to `fact_production_forecast`.
+
+Each promotion event is logged in `model_promotion_log` with the promotion type, model(s), row counts, and timestamp.
 
 **Dependency chain for `make forecast-generate`:**
 1. `data/models/lgbm_cluster/cluster_*.pkl` must exist (from Phase 5)
@@ -1902,6 +1916,8 @@ TRUNCATE TABLE fact_rebalancing_plan CASCADE;
 -- Group 9: Forecasting / Backtesting
 TRUNCATE TABLE backtest_lag_archive CASCADE;
 TRUNCATE TABLE fact_external_forecast_monthly CASCADE;
+TRUNCATE TABLE fact_candidate_forecast CASCADE;
+TRUNCATE TABLE model_promotion_log CASCADE;
 TRUNCATE TABLE fact_production_forecast CASCADE;
 TRUNCATE TABLE fact_blended_demand_plan CASCADE;
 TRUNCATE TABLE fact_demand_plan CASCADE;

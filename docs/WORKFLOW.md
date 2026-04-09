@@ -173,13 +173,18 @@ make champion-all      # ~10 min (meta-learner + simulate + select)
 
 ## Stage 5: Production Forecast
 
-**Purpose:** Generate forward-looking demand predictions for the next 24 months using champion model assignments.
+**Purpose:** Generate forward-looking demand predictions for the next 24 months using champion model assignments. Predictions go through a staged promotion workflow before becoming the official production forecast.
 
 **Config:** Settings → Forecasting → Forecast Pipeline → "Forecast Settings" section
 
+**Staged workflow:**
+```
+Train → Generate → Load (→ fact_candidate_forecast) → Promote (→ fact_production_forecast)
+```
+
 **Run:**
 ```bash
-make forecast-generate    # ~30 min (all items, 24-month horizon)
+make forecast-generate    # ~30 min (all items, 24-month horizon → fact_candidate_forecast)
 ```
 
 **What it does:**
@@ -187,7 +192,13 @@ make forecast-generate    # ~30 min (all items, 24-month horizon)
 2. Builds feature matrix for future months (T+1 through T+24)
 3. Generates recursive predictions (T+2 uses T+1's predicted value as input)
 4. Optionally computes P10/P90 confidence intervals
-5. Writes to `fact_production_forecast` with plan version tag
+5. Writes predictions to `fact_candidate_forecast` (staging table)
+
+**Promotion to production:**
+After reviewing candidate forecasts, promote them to `fact_production_forecast`:
+- **Champion promotion:** Uses per-DFU champion assignments to pick the best model's predictions for each DFU from the candidate pool, then copies those rows to `fact_production_forecast`.
+- **Single model promotion:** Copies all candidate rows for one specified model to `fact_production_forecast`.
+- **Audit trail:** Every promotion event is logged in `model_promotion_log` with promotion type, model(s), row counts, and timestamp.
 
 **Cold-start routing:**
 - Items with < 12 months history → routed to Rolling Mean model
@@ -238,7 +249,8 @@ make cluster-all                    # Segment items (if clustering enabled)
 make backtest-lgbm backtest-catboost backtest-xgboost  # Core tree models
 make backtest-load-bulk             # Load results to DB
 make champion-all                   # Select best models
-make forecast-generate              # Generate 24-month forecasts
+make forecast-generate              # Generate candidates → fact_candidate_forecast
+                                    # Then promote → fact_production_forecast
 ```
 
 ### Monthly refresh:
@@ -247,7 +259,7 @@ make pipeline-refresh               # Incremental data reload
 make backtest-lgbm backtest-catboost backtest-xgboost
 make backtest-load-bulk
 make champion-select
-make forecast-generate
+make forecast-generate              # Generate candidates → promote to production
 ```
 
 ### After tuning improvements:
@@ -257,7 +269,7 @@ make lgbm-auto-tune-promote         # Promote params
 make backtest-lgbm                  # Re-backtest with new params
 make backtest-load MODEL=lgbm_cluster
 make champion-select                # Re-select with updated predictions
-make forecast-generate              # Re-generate forecasts
+make forecast-generate              # Re-generate candidates → promote to production
 ```
 
 ---
