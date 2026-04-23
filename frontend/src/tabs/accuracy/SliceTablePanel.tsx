@@ -221,14 +221,14 @@ export function SliceTablePanel({
           </p>
           <div className="max-h-[400px] overflow-auto rounded-md border border-input">
             <Table>
-              <TableHeader>
-                <TableRow className="border-muted bg-muted/30">
-                  <TableHead className="text-xs sticky left-0 bg-muted/30">
+              <TableHeader className="sticky top-0 z-20 bg-background">
+                <TableRow className="border-muted bg-muted">
+                  <TableHead className="text-xs sticky left-0 z-30 bg-muted">
                     {titleCase(sliceGroupBy)}
                   </TableHead>
                   {allModels.flatMap((m) =>
                     ACCURACY_KPI_OPTIONS.filter((k) => sliceKpis.includes(k.key)).map((k) => (
-                      <TableHead key={`${m}-${k.key}`} className="text-xs text-right">
+                      <TableHead key={`${m}-${k.key}`} className="text-xs text-right bg-muted">
                         {m} {k.label}
                       </TableHead>
                     )),

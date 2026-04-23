@@ -23,35 +23,19 @@ def _round_or_none(value: float | None, digits: int = 2) -> float | None:
 
 def _build_stage(stage_id: str, label: str, description: str, default_state: str, model: dict | None) -> dict:
     if default_state == "planned":
-        return {
-            "stage_id": stage_id,
-            "label": label,
-            "description": description,
-            "state": "planned",
-            "accuracy_pct": None,
-            "delta_vs_prev": None,
-            "n_rows": 0,
-        }
-
-    if model is None:
-        return {
-            "stage_id": stage_id,
-            "label": label,
-            "description": description,
-            "state": "missing",
-            "accuracy_pct": None,
-            "delta_vs_prev": None,
-            "n_rows": 0,
-        }
-
+        state, accuracy, n_rows = "planned", None, 0
+    elif model is None:
+        state, accuracy, n_rows = "missing", None, 0
+    else:
+        state, accuracy, n_rows = "actual", model["accuracy_pct"], model["n_rows"]
     return {
         "stage_id": stage_id,
         "label": label,
         "description": description,
-        "state": "actual",
-        "accuracy_pct": model["accuracy_pct"],
+        "state": state,
+        "accuracy_pct": accuracy,
         "delta_vs_prev": None,
-        "n_rows": model["n_rows"],
+        "n_rows": n_rows,
     }
 
 
@@ -60,28 +44,60 @@ async def fva_waterfall(
     months: int = Query(12, ge=1, le=36),
 ):
     """FVA ladder data: naive seasonal -> external -> champion -> future adjustment stages."""
+    # Shared DFU-month filter: execution-lag rows within the requested horizon.
+    # See docs/specs/01-foundation/06-execution-lag.md for the canonical pattern.
+    dfu_filter = (
+        "FROM fact_external_forecast_monthly f "
+        "JOIN dim_sku d ON d.item_id = f.item_id AND d.loc = f.loc "
+        "WHERE f.startdate >= current_date - (%s * interval '1 month') "
+        "AND f.lag = COALESCE(d.execution_lag, 0) "
+        "AND f.tothist_dmd IS NOT NULL"
+    )
     with get_conn() as conn, conn.cursor() as cur:
-        # Get accuracy by model_id for the FVA waterfall
+        # Accuracy per model_id at each DFU's execution lag (planning-relevant horizon).
         cur.execute(
-               """SELECT model_id,
-                      100.0 - (100.0 * sum(abs(basefcst_pref - tothist_dmd)) / NULLIF(abs(sum(tothist_dmd)), 0)) AS accuracy_pct,
-                      count(*) AS n_rows
-               FROM fact_external_forecast_monthly
-               WHERE startdate >= current_date - (%s * interval '1 month')
-                 AND lag = 0
-                 AND tothist_dmd IS NOT NULL
-               GROUP BY model_id
-               ORDER BY accuracy_pct DESC NULLS LAST""",
+            f"""SELECT f.model_id,
+                       100.0 - (100.0 * sum(abs(f.basefcst_pref - f.tothist_dmd)) / NULLIF(abs(sum(f.tothist_dmd)), 0)) AS accuracy_pct,
+                       count(*) AS n_rows
+                {dfu_filter}
+                GROUP BY f.model_id
+                ORDER BY accuracy_pct DESC NULLS LAST""",
             (months,),
         )
         rows = cur.fetchall()
 
-    models = {}
-    for r in rows:
-        models[r[0]] = {
-            "model_id": r[0],
-            "accuracy_pct": _round_or_none(r[1]),
-            "n_rows": r[2],
+        # Seasonal naive: same-month-last-year sales as the forecast, evaluated
+        # over the DFU-month universe at execution lag. Computed on the fly — no
+        # seasonal_naive rows are loaded into fact_external_forecast_monthly.
+        cur.execute(
+            f"""WITH dfu_months AS (
+                   SELECT DISTINCT f.item_id, f.customer_group, f.loc, f.startdate, f.tothist_dmd
+                   {dfu_filter}
+               )
+               SELECT
+                   100.0 - 100.0 * sum(abs(coalesce(s.qty, 0) - m.tothist_dmd))
+                       / NULLIF(abs(sum(m.tothist_dmd)), 0) AS accuracy_pct,
+                   count(*) AS n_rows
+               FROM dfu_months m
+               LEFT JOIN fact_sales_monthly s
+                 ON s.item_id = m.item_id
+                AND s.customer_group = m.customer_group
+                AND s.loc = m.loc
+                AND s.type = 1
+                AND s.startdate = m.startdate - interval '12 months'""",
+            (months,),
+        )
+        naive_row = cur.fetchone()
+
+    models = {
+        r[0]: {"model_id": r[0], "accuracy_pct": _round_or_none(r[1]), "n_rows": r[2]}
+        for r in rows
+    }
+    if naive_row and naive_row[0] is not None and naive_row[1]:
+        models["seasonal_naive"] = {
+            "model_id": "seasonal_naive",
+            "accuracy_pct": _round_or_none(naive_row[0]),
+            "n_rows": naive_row[1],
         }
 
     stages = [

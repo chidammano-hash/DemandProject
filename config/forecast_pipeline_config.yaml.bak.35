@@ -397,11 +397,11 @@ tuning:
   output_dir: data/tuning
   search_space_ref: hyperparameter_tuning.yaml
 champion:
-  strategy: expanding
+  strategy: rolling
   strategy_params:
-    min_prior_months: 5
+    window_months: 6
   fallback_model_id: seasonal_naive
-  metric: accuracy_pct
+  metric: wape
   lag: execution
   min_sku_rows: 3
   min_dfu_rows: 3
@@ -413,7 +413,7 @@ champion:
     test_months: 3
     performance_window: 6
   models:
-  - chronos_bolt
+  - lgbm_cluster
   - nbeats
 production_forecast:
   horizon_months: 24

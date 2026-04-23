@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -679,7 +680,7 @@ def promote_model(model_id: str, notes: str | None = None, promoted_by: str | No
     """
     is_champion = model_id == "champion"
     plan_version = datetime.now(UTC).strftime("%Y-%m")
-    run_id_str = str(__import__("uuid").uuid4())
+    run_id_str = str(uuid.uuid4())
     champion_experiment_id: int | None = None
 
     with get_conn() as conn, conn.cursor() as cur:
@@ -708,30 +709,79 @@ def promote_model(model_id: str, notes: str | None = None, promoted_by: str | No
 
         # 4. Copy from staging to production
         if is_champion:
-            # Get promoted champion experiment for DFU assignments
-            try:
-                cur.execute("""
-                    SELECT experiment_id, models FROM champion_experiment
-                    WHERE is_promoted = TRUE ORDER BY promoted_at DESC LIMIT 1
-                """)
-                champ_row = cur.fetchone()
-                if champ_row:
-                    champion_experiment_id = champ_row[0]
-            except Exception:
-                logger.debug("champion_experiment table not available")
+            # Find the currently promoted champion experiment.
+            cur.execute("""
+                SELECT experiment_id FROM champion_experiment
+                WHERE is_promoted = TRUE ORDER BY promoted_at DESC LIMIT 1
+            """)
+            champ_row = cur.fetchone()
+            if not champ_row:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No promoted champion experiment found. Promote one on the Champion tab first.",
+                )
+            champion_experiment_id = champ_row[0]
 
-            # For champion: copy ALL staged rows (the generate script already
-            # applied champion routing per-DFU during inference)
+            # Load per-DFU winning model from the experiment's winners CSV. This
+            # file is the source of truth for DFU→model routing (written by
+            # run_champion_experiment.py). fact_external_forecast_monthly.source_model_id
+            # can be stale from prior runs, so we don't rely on it here.
+            winners_path = (
+                _PROJECT_ROOT / "data" / "champion"
+                / f"experiment_{champion_experiment_id}_winners.csv"
+            )
+            if not winners_path.exists():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Winners file missing for experiment {champion_experiment_id}: {winners_path.name}. "
+                           "Re-run the champion experiment or promote a different one.",
+                )
+
+            # Latest assignment per (item_id, loc) wins (tracks startdate for tie-breaking).
+            latest: dict[tuple[str, str], tuple[str, str]] = {}
+            with winners_path.open(newline="") as f:
+                for row in csv.DictReader(f):
+                    key = (row["item_id"], row["loc"])
+                    startdate = row["startdate"]
+                    prev = latest.get(key)
+                    if prev is None or startdate > prev[0]:
+                        latest[key] = (startdate, row["model_id"])
+
+            if not latest:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Winners file for experiment {champion_experiment_id} is empty.",
+                )
+
+            # Bulk-load assignments into a temp table via COPY, then join on promote.
+            cur.execute("""
+                CREATE TEMP TABLE _dfu_champion (
+                    item_id text NOT NULL,
+                    loc text NOT NULL,
+                    winning_model_id text NOT NULL,
+                    PRIMARY KEY (item_id, loc)
+                ) ON COMMIT DROP
+            """)
+            with cur.copy("COPY _dfu_champion (item_id, loc, winning_model_id) FROM STDIN") as copy:
+                for (dfu_item_id, dfu_loc), (_, winning_model_id) in latest.items():
+                    copy.write_row((dfu_item_id, dfu_loc, winning_model_id))
+
             cur.execute("""
                 INSERT INTO fact_production_forecast
                     (plan_version, item_id, loc, forecast_month, forecast_qty,
                      forecast_qty_lower, forecast_qty_upper, model_id, cluster_id,
-                     horizon_months, is_recursive, lag_source, generated_at, run_id)
+                     horizon_months, is_recursive, lag_source, generated_at, run_id,
+                     source_model_id)
                 SELECT
-                    %s, item_id, loc, forecast_month, forecast_qty,
-                    forecast_qty_lower, forecast_qty_upper, model_id, cluster_id,
-                    horizon_months, is_recursive, lag_source, generated_at, %s::uuid
-                FROM fact_production_forecast_staging
+                    %s, s.item_id, s.loc, s.forecast_month, s.forecast_qty,
+                    s.forecast_qty_lower, s.forecast_qty_upper, 'champion', s.cluster_id,
+                    s.horizon_months, s.is_recursive, s.lag_source, s.generated_at, %s::uuid,
+                    s.model_id
+                FROM fact_production_forecast_staging s
+                JOIN _dfu_champion c
+                  ON c.item_id = s.item_id
+                 AND c.loc = s.loc
+                 AND c.winning_model_id = s.model_id
             """, (plan_version, run_id_str))
         else:
             # Single model: copy only that model's staged rows
@@ -757,6 +807,7 @@ def promote_model(model_id: str, notes: str | None = None, promoted_by: str | No
         dfu_count = cur.fetchone()[0]
 
         # 6. Log promotion
+        promotion_type = "champion" if is_champion else "single"
         cur.execute("""
             INSERT INTO model_promotion_log
                 (model_id, promotion_type, champion_experiment_id, plan_version,
@@ -764,7 +815,7 @@ def promote_model(model_id: str, notes: str | None = None, promoted_by: str | No
             VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s, %s)
         """, (
             model_id,
-            "champion" if is_champion else "single",
+            promotion_type,
             champion_experiment_id,
             plan_version,
             dfu_count,
@@ -777,7 +828,7 @@ def promote_model(model_id: str, notes: str | None = None, promoted_by: str | No
 
     return {
         "model_id": model_id,
-        "promotion_type": "champion" if is_champion else "single",
+        "promotion_type": promotion_type,
         "plan_version": plan_version,
         "rows_promoted": rows_promoted,
         "dfu_count": dfu_count,

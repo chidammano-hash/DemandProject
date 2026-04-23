@@ -121,6 +121,14 @@ function saveSupplyDefaults(hiddenKeys: Set<string>) {
   localStorage.setItem(LS_KEY_SUPPLY, JSON.stringify([...hiddenKeys]));
 }
 
+/** Return a new Set with `key` toggled (added if absent, removed if present). */
+function toggleInSet<T>(prev: Set<T>, key: T): Set<T> {
+  const next = new Set(prev);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
+}
+
 /**
  * Build the visible-series set for a new SKU load, using saved defaults.
  * Forecast model keys are always included; sales measures follow user prefs.
@@ -223,6 +231,9 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
 
   // Staging forecast model visibility (hidden set — hidden by default until toggled on)
   const [hiddenStaging, setHiddenStaging] = useState<Set<string>>(new Set());
+  // Staging pills hidden from the toolbar entirely (Defaults menu unchecks them).
+  // Pill click only dims via hiddenStaging; Defaults menu removes the pill.
+  const [hiddenStagingPills, setHiddenStagingPills] = useState<Set<string>>(new Set());
 
   const hasProdForecast = (prodForecastData?.forecasts.length ?? 0) > 0;
   const prodForecastLabel = hasProdForecast
@@ -313,34 +324,14 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
     return data;
   }, [skuFilteredSeries, trendData, hasSupplyData, correctionOverlay]);
 
-  // Demand toggle helper — controls whether pill is shown (Defaults checkbox)
-  function toggleDemandSeries(key: string, checked: boolean) {
-    setSkuVisibleSeries((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(key);
-      else next.delete(key);
-      return next;
-    });
-  }
-
   // Toggle chart line visibility — pill stays but dims (clicking pill)
   function toggleDemandLineVisibility(key: string) {
-    setHiddenDemand((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setHiddenDemand((prev) => toggleInSet(prev, key));
   }
 
   // Staging model toggle
   const toggleStagingModel = useCallback((modelId: string) => {
-    setHiddenStaging((prev) => {
-      const next = new Set(prev);
-      if (next.has(modelId)) next.delete(modelId);
-      else next.add(modelId);
-      return next;
-    });
+    setHiddenStaging((prev) => toggleInSet(prev, modelId));
   }, []);
 
   // Toggle all staging models
@@ -356,12 +347,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
 
   // Supply toggle
   const toggleSupply = useCallback((key: string) => {
-    setHiddenSupply((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setHiddenSupply((prev) => toggleInSet(prev, key));
   }, []);
 
   const showSupply = useCallback((key: string) => !hiddenSupply.has(key), [hiddenSupply]);
@@ -505,19 +491,21 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
             >
               {allStagingOn ? "Staging \u2212" : "Staging +"}
             </button>
-            {stagingModelIds.map((mid) => {
-              const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
-              return (
-                <TogglePill
-                  key={`staging_${mid}`}
-                  label={modelLabel(mid)}
-                  color={color}
-                  active={!hiddenStaging.has(mid)}
-                  onClick={() => toggleStagingModel(mid)}
-                  dashed
-                />
-              );
-            })}
+            {stagingModelIds
+              .filter((mid) => !hiddenStagingPills.has(mid))
+              .map((mid) => {
+                const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+                return (
+                  <TogglePill
+                    key={`staging_${mid}`}
+                    label={modelLabel(mid)}
+                    color={color}
+                    active={!hiddenStaging.has(mid)}
+                    onClick={() => toggleStagingModel(mid)}
+                    dashed
+                  />
+                );
+              })}
           </div>
         )}
 
@@ -579,8 +567,11 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
           prodForecastLabel={prodForecastLabel}
           hasSupplyData={hasSupplyData}
           availableSupply={availableSupply}
+          stagingModelIds={stagingModelIds}
+          hiddenStagingPills={hiddenStagingPills}
           setSkuVisibleSeries={setSkuVisibleSeries}
           setHiddenSupply={setHiddenSupply}
+          setHiddenStagingPills={setHiddenStagingPills}
         />
       </div>
 
@@ -779,7 +770,7 @@ export const UnifiedChartPanel = memo(function UnifiedChartPanel({
 
               {/* ---- Staging forecast lines ---- */}
               {stagingModelIds
-                .filter((mid) => !hiddenStaging.has(mid))
+                .filter((mid) => !hiddenStaging.has(mid) && !hiddenStagingPills.has(mid))
                 .map((mid) => {
                   const key = `staging_${mid}`;
                   const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
@@ -887,16 +878,22 @@ const MeasureDefaultsMenu = memo(function MeasureDefaultsMenu({
   prodForecastLabel,
   hasSupplyData,
   availableSupply,
+  stagingModelIds,
+  hiddenStagingPills,
   setSkuVisibleSeries,
   setHiddenSupply,
+  setHiddenStagingPills,
 }: {
   models: string[];
   hasProdForecast: boolean;
   prodForecastLabel: string;
   hasSupplyData: boolean;
   availableSupply: SupplySeriesDef[];
+  stagingModelIds: string[];
+  hiddenStagingPills: Set<string>;
   setSkuVisibleSeries: (updater: (prev: Set<string>) => Set<string>) => void;
   setHiddenSupply: React.Dispatch<React.SetStateAction<Set<string>>>;
+  setHiddenStagingPills: React.Dispatch<React.SetStateAction<Set<string>>>;
 }) {
   const [open, setOpen] = useState(false);
   const [demandDefaults, setDemandDefaults] = useState<Set<string>>(loadDefaultMeasures);
@@ -927,33 +924,27 @@ const MeasureDefaultsMenu = memo(function MeasureDefaultsMenu({
 
   const toggleDemand = useCallback((key: string) => {
     setDemandDefaults((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
+      const next = toggleInSet(prev, key);
       saveDemandDefaults(next);
       return next;
     });
     // Update live chart state immediately
-    setSkuVisibleSeries((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
+    setSkuVisibleSeries((prev) => toggleInSet(prev, key));
   }, [setSkuVisibleSeries]);
 
   const toggleSupply = useCallback((key: string) => {
     setSupplyHidden((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
+      const next = toggleInSet(prev, key);
       saveSupplyDefaults(next);
       return next;
     });
     // Update live chart state immediately
-    setHiddenSupply((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
+    setHiddenSupply((prev) => toggleInSet(prev, key));
   }, [setHiddenSupply]);
+
+  const toggleStaging = useCallback((mid: string) => {
+    setHiddenStagingPills((prev) => toggleInSet(prev, mid));
+  }, [setHiddenStagingPills]);
 
   const demandItems: { key: string; label: string; color: string }[] = [
     { key: "tothist_dmd", label: "Sale Qty (ext)", color: SKU_SALES_COLORS.tothist_dmd },
@@ -985,52 +976,52 @@ const MeasureDefaultsMenu = memo(function MeasureDefaultsMenu({
       {open && (
         <div
           ref={menuRef}
-          className="fixed z-[9999] min-w-[200px] rounded-md border bg-white p-2.5 shadow-lg dark:bg-zinc-900"
-          style={{ top: pos.top, right: pos.right }}
+          className="fixed z-[9999] min-w-[200px] overflow-y-auto rounded-md border bg-white p-2.5 shadow-lg dark:bg-zinc-900"
+          style={{ top: pos.top, right: pos.right, maxHeight: `calc(100vh - ${pos.top}px - 16px)` }}
         >
           {/* Demand section */}
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Demand
-          </p>
+          <DefaultsSectionHeader label="Demand" withDivider={false} />
           {demandItems.map(({ key, label, color }) => (
-            <label
+            <DefaultCheckboxRow
               key={key}
-              className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[11px] hover:bg-muted"
-            >
-              <input
-                type="checkbox"
-                checked={demandDefaults.has(key)}
-                onChange={() => toggleDemand(key)}
-                className="h-3 w-3 rounded border-muted-foreground accent-current"
-                style={{ accentColor: color }}
-              />
-              <span className="inline-block h-0.5 w-3 rounded-full" style={{ backgroundColor: color }} />
-              {label}
-            </label>
+              label={label}
+              color={color}
+              checked={demandDefaults.has(key)}
+              onChange={() => toggleDemand(key)}
+            />
           ))}
+
+          {/* Staging section */}
+          {stagingModelIds.length > 0 && (
+            <>
+              <DefaultsSectionHeader label="Staging" />
+              {stagingModelIds.map((mid) => {
+                const color = STAGING_COLORS[mid] ?? STAGING_FALLBACK_COLOR;
+                return (
+                  <DefaultCheckboxRow
+                    key={`staging_${mid}`}
+                    label={modelLabel(mid)}
+                    color={color}
+                    checked={!hiddenStagingPills.has(mid)}
+                    onChange={() => toggleStaging(mid)}
+                  />
+                );
+              })}
+            </>
+          )}
 
           {/* Supply section */}
           {hasSupplyData && availableSupply.length > 0 && (
             <>
-              <div className="my-1.5 border-t border-border" />
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Supply
-              </p>
+              <DefaultsSectionHeader label="Supply" />
               {availableSupply.map((s) => (
-                <label
+                <DefaultCheckboxRow
                   key={s.key}
-                  className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[11px] hover:bg-muted"
-                >
-                  <input
-                    type="checkbox"
-                    checked={!supplyHidden.has(s.key)}
-                    onChange={() => toggleSupply(s.key)}
-                    className="h-3 w-3 rounded border-muted-foreground accent-current"
-                    style={{ accentColor: s.color }}
-                  />
-                  <span className="inline-block h-0.5 w-3 rounded-full" style={{ backgroundColor: s.color }} />
-                  {s.label}
-                </label>
+                  label={s.label}
+                  color={s.color}
+                  checked={!supplyHidden.has(s.key)}
+                  onChange={() => toggleSupply(s.key)}
+                />
               ))}
             </>
           )}
@@ -1039,6 +1030,46 @@ const MeasureDefaultsMenu = memo(function MeasureDefaultsMenu({
     </>
   );
 });
+
+// ---------------------------------------------------------------------------
+// Defaults menu row — checkbox + color dot + label (shared by Demand/Staging/Supply)
+// ---------------------------------------------------------------------------
+function DefaultsSectionHeader({ label, withDivider = true }: { label: string; withDivider?: boolean }) {
+  return (
+    <>
+      {withDivider && <div className="my-1.5 border-t border-border" />}
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
+    </>
+  );
+}
+
+function DefaultCheckboxRow({
+  label,
+  color,
+  checked,
+  onChange,
+}: {
+  label: string;
+  color: string;
+  checked: boolean;
+  onChange: () => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[11px] hover:bg-muted">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        className="h-3 w-3 rounded border-muted-foreground accent-current"
+        style={{ accentColor: color }}
+      />
+      <span className="inline-block h-0.5 w-3 rounded-full" style={{ backgroundColor: color }} />
+      {label}
+    </label>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // TogglePill — reusable pill button for series visibility

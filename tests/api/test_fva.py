@@ -16,12 +16,12 @@ from tests.api.conftest import make_pool as _make_pool
 async def test_fva_waterfall():
     """GET /fva/waterfall returns staged FVA ladder plus benchmark."""
     rows = [
-        ("seasonal_naive", 60.2, 1000),
         ("external", 72.5, 1000),
         ("champion", 78.3, 1000),
         ("ceiling", 85.1, 1000),
     ]
     pool, conn, cursor = _make_pool(fetchall_return=rows)
+    cursor.fetchone.return_value = (60.2, 1000)  # seasonal naive row
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -56,7 +56,7 @@ async def test_fva_waterfall():
     assert wf["external"]["accuracy_pct"] == 72.5
     assert wf["champion"]["accuracy_pct"] == 78.3
     assert wf["ceiling"]["accuracy_pct"] == 85.1
-    assert len(wf["models"]) == 4
+    assert len(wf["models"]) == 4  # external, champion, ceiling, seasonal_naive
     executed_sql = cursor.execute.call_args_list[0].args[0]
     assert "current_date - (%s * interval '1 month')" in executed_sql
 
@@ -65,6 +65,7 @@ async def test_fva_waterfall():
 async def test_fva_waterfall_empty():
     """GET /fva/waterfall returns placeholder stages when no data is available."""
     pool, conn, cursor = _make_pool(fetchall_return=[])
+    cursor.fetchone.return_value = (None, 0)
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -86,6 +87,7 @@ async def test_fva_waterfall_custom_months():
     """GET /fva/waterfall accepts months param."""
     rows = [("external", 70.0, 500)]
     pool, conn, cursor = _make_pool(fetchall_return=rows)
+    cursor.fetchone.return_value = (None, 0)
     with patch("api.core._get_pool", return_value=pool):
         from api.main import app
         transport = ASGITransport(app=app)

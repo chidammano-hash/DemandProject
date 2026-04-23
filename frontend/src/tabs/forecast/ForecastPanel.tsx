@@ -333,6 +333,18 @@ export function ForecastPanel() {
     (id) => staging[id].row_count > 0,
   ).length;
 
+  // Champion row prerequisites: all constituent models need staged forecasts.
+  const championConstituents: string[] = promotedExperiment?.models ?? [];
+  const championMissingModels = championConstituents.filter(
+    (id) => (staging[id]?.row_count ?? 0) === 0,
+  );
+  const championReady =
+    championConstituents.length > 0 && championMissingModels.length === 0;
+  const championDfuCount = championReady
+    ? Math.max(0, ...championConstituents.map((id) => staging[id]?.dfu_count ?? 0))
+    : 0;
+  const isChampionPromoted = promotedModel?.model_id === "champion";
+
   // -- Handlers ------------------------------------------------------------
 
   async function handleTrain(modelId: string) {
@@ -423,16 +435,18 @@ export function ForecastPanel() {
     }
   }, [stagingData, generatingModelId]);
 
+  /** Submit the legacy champion job (per-DFU routing via assignments). */
+  async function submitChampionJob() {
+    const params: Record<string, unknown> = { horizon: effectiveHorizon };
+    if (includeCI) params.confidence_intervals = true;
+    await submitJob("generate_production_forecast", params, "Production Forecast");
+  }
+
   async function handleGenerateForecast() {
     setIsSubmitting(true);
     try {
       if (selectedModel === "champion") {
-        // For champion: use the legacy job submission
-        const params: Record<string, unknown> = { horizon: effectiveHorizon };
-        if (includeCI) {
-          params.confidence_intervals = true;
-        }
-        await submitJob("generate_production_forecast", params, "Production Forecast");
+        await submitChampionJob();
       } else {
         // For a specific model: use the new generate endpoint
         await submitGenerateForecast(selectedModel);
@@ -519,27 +533,6 @@ export function ForecastPanel() {
                   All Ready
                 </Badge>
               )}
-              {stagedModelCount >= 2 && (
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={() => handlePromote("champion")}
-                  disabled={promotingModelId !== null}
-                  className="gap-1.5"
-                >
-                  {promotingModelId === "champion" ? (
-                    <>
-                      <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                      Promoting...
-                    </>
-                  ) : (
-                    <>
-                      <Crown className="mr-1.5 h-3 w-3" />
-                      Promote Champion
-                    </>
-                  )}
-                </Button>
-              )}
             </div>
           </div>
         </CardHeader>
@@ -556,6 +549,106 @@ export function ForecastPanel() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {promotedExperiment && (
+                <TableRow key="champion" className="bg-amber-50/40 dark:bg-amber-950/20">
+                  <TableCell>
+                    <div className="flex items-center gap-1.5">
+                      <Crown className="h-3.5 w-3.5 text-amber-600" />
+                      <div>
+                        <div className="text-sm font-medium">Champion</div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {championConstituents.join(", ") || "no promoted experiment"}
+                        </div>
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200 text-[10px] px-1.5 py-0">
+                      ensemble
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-sm tabular-nums">
+                    {promotedExperiment.champion_accuracy != null ? (
+                      `${promotedExperiment.champion_accuracy.toFixed(1)}%`
+                    ) : (
+                      <span className="text-muted-foreground">--</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-[10px] gap-0.5 text-blue-600 border-blue-200">
+                      <CheckCircle2 className="h-3 w-3" /> No training needed
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs tabular-nums">
+                    {championReady ? (
+                      <span className="text-emerald-600 dark:text-emerald-400">
+                        {championDfuCount.toLocaleString()} DFUs ready
+                      </span>
+                    ) : (
+                      <span className="text-amber-600" title={`Generate forecasts for: ${championMissingModels.join(", ")}`}>
+                        Waiting: {championMissingModels.join(", ")}
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <Badge variant="outline" className="text-[10px] gap-0.5 text-blue-600 border-blue-200">
+                        <CheckCircle2 className="h-3 w-3" /> N/A
+                      </Badge>
+                      {/* Generate uses the legacy production forecast job — routes per-DFU using champion assignments. */}
+                      <Button
+                        size="sm" variant="outline"
+                        className="h-7 px-2 text-[11px] gap-1"
+                        onClick={async () => {
+                          setIsSubmitting(true);
+                          try {
+                            const params: Record<string, unknown> = { horizon: effectiveHorizon };
+                            if (includeCI) params.confidence_intervals = true;
+                            await submitJob("generate_production_forecast", params, "Production Forecast");
+                            queryClient.invalidateQueries({ queryKey: forecastPanelKeys.jobs(0) });
+                            queryClient.invalidateQueries({ queryKey: backtestMgmtKeys.stagingSummary });
+                          } finally {
+                            setIsSubmitting(false);
+                          }
+                        }}
+                        disabled={isSubmitting || !championReady}
+                        title={championReady ? "Run champion inference" : `Generate first: ${championMissingModels.join(", ")}`}
+                      >
+                        <BarChart3 className="h-3 w-3" />
+                        Generate
+                      </Button>
+                      {promotingModelId === "champion" ? (
+                        <Button size="sm" variant="outline" className="h-7 px-2 text-[11px] gap-1" disabled>
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Promoting...
+                        </Button>
+                      ) : isChampionPromoted ? (
+                        <Button
+                          size="sm" variant="outline"
+                          className="h-7 px-2 text-[11px] gap-1 text-amber-700 border-amber-200 bg-amber-50 hover:bg-amber-100"
+                          onClick={() => handlePromote("champion")}
+                          disabled={promotingModelId !== null}
+                          title="Click to re-promote"
+                        >
+                          <Crown className="h-3 w-3" /> Promoted
+                          <RotateCcw className="h-3 w-3 opacity-50" />
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm" variant="outline"
+                          className="h-7 px-2 text-[11px] gap-1"
+                          onClick={() => handlePromote("champion")}
+                          disabled={!championReady || promotingModelId !== null}
+                          title={championReady ? "Promote champion forecasts to production" : `Generate first: ${championMissingModels.join(", ")}`}
+                        >
+                          <Crown className="h-3 w-3" />
+                          Promote
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
               {forecastAlgos.map((algo) => {
                 const status = trainingStatus?.[algo.id];
                 const needsTraining = requiresTraining(algo.type);
