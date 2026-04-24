@@ -180,3 +180,67 @@ async def test_control_tower_trend_empty():
             resp = await client.get("/control-tower/trend")
     assert resp.status_code == 200
     assert resp.json()["trend"] == []
+
+
+# ---------------------------------------------------------------------------
+# MV-not-populated resilience: endpoints must return empty envelope + warning
+# instead of 500 when `REFRESH MATERIALIZED VIEW` has not yet been run.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_control_tower_trend_handles_unpopulated_mv():
+    import psycopg
+    pool, conn, cursor = _make_pool()
+    cursor.execute.side_effect = psycopg.errors.ObjectNotInPrerequisiteState(
+        'materialized view "mv_inventory_health_score" has not been populated'
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        from httpx import AsyncClient, ASGITransport
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/control-tower/trend")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["trend"] == []
+    assert "warning" in data
+    assert "refresh" in data["warning"].lower()
+
+
+@pytest.mark.asyncio
+async def test_control_tower_kpis_handles_unpopulated_mv():
+    import psycopg
+    pool, conn, cursor = _make_pool()
+    cursor.execute.side_effect = psycopg.errors.ObjectNotInPrerequisiteState(
+        'materialized view "mv_control_tower_kpis" has not been populated'
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        from httpx import AsyncClient, ASGITransport
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/control-tower/kpis")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["health"]["total_dfus"] == 0
+    assert "warning" in data
+
+
+@pytest.mark.asyncio
+async def test_control_tower_kpis_financial_handles_unpopulated_mv():
+    import psycopg
+    pool, conn, cursor = _make_pool()
+    cursor.execute.side_effect = psycopg.errors.ObjectNotInPrerequisiteState(
+        'materialized view "mv_inventory_health_score" has not been populated'
+    )
+    with patch("api.core._get_pool", return_value=pool):
+        from api.main import app
+        from httpx import AsyncClient, ASGITransport
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/control-tower/kpis-financial")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["inventory_value"] == 0.0
+    assert "warning" in data

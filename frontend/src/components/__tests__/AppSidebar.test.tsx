@@ -29,6 +29,20 @@ describe("AppSidebar", () => {
     expect(NAV_ITEMS.length).toBe(16);
   });
 
+  it("sections appear in Tower -> Demand -> Supply -> Operations -> System order (UX-1)", () => {
+    // First occurrence of each section in NAV_ITEMS.
+    const firstIndexBySection: Record<string, number> = {};
+    NAV_ITEMS.forEach((item, i) => {
+      if (firstIndexBySection[item.section] === undefined) {
+        firstIndexBySection[item.section] = i;
+      }
+    });
+    expect(firstIndexBySection.tower).toBeLessThan(firstIndexBySection.demand);
+    expect(firstIndexBySection.demand).toBeLessThan(firstIndexBySection.supply);
+    expect(firstIndexBySection.supply).toBeLessThan(firstIndexBySection.operations);
+    expect(firstIndexBySection.operations).toBeLessThan(firstIndexBySection.system);
+  });
+
   it("active item has aria-current='page'", () => {
     renderSidebar({ activeTab: "explorer" });
     const activeButton = screen.getByText("Explorer").closest("button");

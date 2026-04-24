@@ -4,7 +4,7 @@ Provides:
 - Canonical ↔ native parameter name mapping per model library
 - Unified ``fit_model()`` that replaces duplicate if/elif/else fit blocks
 - ``get_best_iteration()`` abstracting attribute name differences
-- ``compute_early_stop_patience()`` for standardized 3% patience
+- ``compute_early_stop_patience()`` for standardized 5% patience
 - WAPE eval callbacks for early stopping alignment (LGBM, CatBoost, XGBoost)
 """
 
@@ -211,6 +211,120 @@ def _wape_xgb(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 # Unified fit function
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Algorithm factory (build_model)
+# ---------------------------------------------------------------------------
+
+class UnknownAlgorithm(ValueError):
+    """Raised when ``build_model`` is called with an unknown algorithm id.
+
+    Subclasses ``ValueError`` so existing ``except ValueError`` blocks
+    continue to catch it, but also lets callers discriminate if they want.
+    """
+
+
+def _base_model_name(model_id: str, algo_type: str) -> str:
+    """Map a config-level model_id to the canonical backend name used by fit/params helpers.
+
+    Examples:
+        ``lgbm_cluster``        -> ``lgbm``
+        ``catboost_cust_enriched`` -> ``catboost``
+        ``xgboost_cluster``     -> ``xgboost``
+        ``chronos2``            -> ``chronos2`` (foundation; returned as-is)
+
+    For foundation / deep_learning / statistical models we just return the
+    model_id — they do not use the tree param mapping.
+    """
+    if algo_type == "tree":
+        for prefix in ("lgbm", "catboost", "xgboost"):
+            if model_id.startswith(prefix):
+                return prefix
+    return model_id
+
+
+def build_model(algorithm_id: str, params: dict | None = None) -> Any:
+    """Construct a configured estimator for ``algorithm_id``.
+
+    Looks the algorithm up in ``forecast_pipeline_config.yaml`` ``algorithms:``
+    section and returns an instantiated estimator:
+
+    - Tree models (``type: tree``) return real ``LGBMRegressor`` /
+      ``CatBoostRegressor`` / ``XGBRegressor`` instances with hyperparameters
+      taken from the config (overridable via ``params``).  Canonical keys are
+      translated to each library's native names via :func:`to_native_params`.
+    - Foundation / deep_learning / statistical models return a small stub
+      object that records the algorithm id and params but does not load the
+      underlying model weights.  The stub's docstring contains a ``TODO``
+      explaining where the real loader should live; call sites for those
+      families currently dispatch through their own script-level loaders
+      (e.g. ``run_backtest_chronos.py``).
+
+    Raises:
+        UnknownAlgorithm: if ``algorithm_id`` is not present in the config.
+    """
+    # Import inside the function to avoid a hard dependency at import time
+    # (model_registry is imported from scripts that don't all load the YAML).
+    from common.utils import get_algorithm_params, load_forecast_pipeline_config
+
+    cfg = load_forecast_pipeline_config()
+    algorithms = cfg.get("algorithms", {}) or {}
+    entry = algorithms.get(algorithm_id)
+    if entry is None:
+        raise UnknownAlgorithm(
+            f"Unknown algorithm id: {algorithm_id!r}. "
+            f"Expected one of: {sorted(algorithms.keys())}"
+        )
+
+    algo_type = entry.get("type", "tree")
+    base_name = _base_model_name(algorithm_id, algo_type)
+
+    # Resolve params: start with config defaults, override with caller kwargs.
+    resolved = dict(get_algorithm_params(algorithm_id))
+    if params:
+        resolved.update(params)
+
+    if algo_type == "tree":
+        native = to_native_params(base_name, resolved)
+        if base_name == "lgbm":
+            from lightgbm import LGBMRegressor
+            return LGBMRegressor(**native)
+        if base_name == "catboost":
+            from catboost import CatBoostRegressor
+            # CatBoost ignores unknown kwargs via allow_writing_files style
+            # semantics but common unsupported keys should be dropped first.
+            return CatBoostRegressor(**native)
+        if base_name == "xgboost":
+            from xgboost import XGBRegressor
+            return XGBRegressor(**native)
+        raise UnknownAlgorithm(
+            f"Tree algorithm {algorithm_id!r} mapped to unknown backend {base_name!r}"
+        )
+
+    # Non-tree families: return a lightweight stub. Real loaders live in
+    # scripts/run_backtest_<family>.py for now.
+    return _FoundationStub(algorithm_id=algorithm_id, algo_type=algo_type, params=resolved)
+
+
+class _FoundationStub:
+    """Lightweight stand-in for foundation / DL / statistical algorithms.
+
+    TODO: replace with real loaders once we have a common foundation-model
+    wrapper.  For now, scripts like ``run_backtest_chronos.py`` still call
+    their own loaders directly; ``build_model`` just surfaces the declared
+    algorithm so tests and generic orchestration code can introspect it.
+    """
+
+    __slots__ = ("algorithm_id", "algo_type", "params")
+
+    def __init__(self, algorithm_id: str, algo_type: str, params: dict):
+        self.algorithm_id = algorithm_id
+        self.algo_type = algo_type
+        self.params = dict(params)
+
+    def __repr__(self) -> str:
+        return f"_FoundationStub({self.algorithm_id!r}, type={self.algo_type!r})"
+
 
 def fit_model(
     model: Any,

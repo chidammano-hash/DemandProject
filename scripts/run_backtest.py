@@ -1116,6 +1116,14 @@ def persist_cluster_models(
 
 
 def main() -> None:
+    # TODO(gen-4 cross-cutting): bias correction + quantile heads.
+    # If `algorithms.<model_id>.params.quantile_heads` is non-empty in
+    # config/forecast_pipeline_config.yaml, run one fit per quantile
+    # using LightGBM's `objective: quantile` with each `alpha`. That
+    # will triple fit time per cluster and produce three parallel
+    # prediction sets (p10/p50/p90) to write alongside the existing
+    # regression column. Scaffold-only today — the config key is live
+    # but not yet consumed by the fit loop.
     import argparse
     parser = argparse.ArgumentParser(
         description="Run tree-model per-cluster backtest (settings from forecast_pipeline_config.yaml)",

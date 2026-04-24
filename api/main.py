@@ -10,14 +10,64 @@ load_dotenv()
 
 import logging
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.pool import open_pool, close_pool
 
-app = FastAPI(title="Demand Unified MVP API")
+
+logger = logging.getLogger("api.access")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan handler: open pool + start scheduler on startup, close on shutdown.
+
+    Replaces the legacy ``@app.on_event("startup")`` / ``@app.on_event("shutdown")``
+    decorators (deprecated in FastAPI 0.109+). The scheduler is started lazily
+    via ``JobManager.instance()`` — importing it here guarantees the APScheduler
+    BackgroundScheduler is live before the first request.
+    """
+    # Pool: best-effort open — in offline/test modes where POSTGRES_PASSWORD is
+    # unset we continue without a live pool so unit tests (which patch the pool)
+    # can still import the app.
+    try:
+        open_pool()
+        logger.info("DB connection pool opened on startup")
+    except RuntimeError as exc:
+        logger.warning("DB pool not opened on startup: %s", exc)
+
+    # Scheduler: initialised lazily on demand. Pre-warm it so background jobs
+    # start on boot rather than on the first /jobs request.
+    scheduler_started = False
+    try:
+        from common.services.job_registry import JobManager
+        JobManager.instance()
+        scheduler_started = True
+        logger.info("APScheduler BackgroundScheduler started on startup")
+    except Exception as exc:  # noqa: BLE001 — scheduler init is best-effort; app must still serve API if jobs backend is down
+        logger.warning("Scheduler not started on startup: %s", exc)
+
+    try:
+        yield
+    finally:
+        if scheduler_started:
+            try:
+                from common.services.job_registry import JobManager
+                mgr = JobManager.instance()
+                if hasattr(mgr, "shutdown"):
+                    mgr.shutdown()
+            except Exception as exc:  # noqa: BLE001 — shutdown cleanup
+                logger.warning("Scheduler shutdown raised: %s", exc)
+        close_pool()
+        logger.info("DB connection pool closed on shutdown")
+
+
+app = FastAPI(title="Demand Unified MVP API", lifespan=lifespan)
 
 # --- Middleware (outermost first) ---
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -27,8 +77,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
-
-logger = logging.getLogger("api.access")
 
 
 @app.middleware("http")
@@ -73,14 +121,11 @@ async def log_requests(request: Request, call_next):
 # ---------------------------------------------------------------------------
 from api.routers import accuracy   # noqa: E402
 from api.routers import analysis   # noqa: E402
-from api.routers import chat       # noqa: E402
 from api.routers import clusters   # noqa: E402
 from api.routers import competition  # noqa: E402
-from api.routers import dashboard  # noqa: E402
 from api.routers import intel      # noqa: E402
 from api.routers import inv_backtest  # noqa: E402
 from api.routers import inventory  # noqa: E402
-from api.routers import jobs       # noqa: E402
 from api.routers import shap       # noqa: E402
 from api.routers import inv_planning_variability    # noqa: E402
 from api.routers import inv_planning_lead_time      # noqa: E402
@@ -98,7 +143,6 @@ from api.routers import inv_planning_safety_stock   # noqa: E402
 from api.routers import inv_planning_replenishment  # noqa: E402
 from api.routers import fill_rate    # noqa: E402
 from api.routers import control_tower  # noqa: E402
-from api.routers import ai_planner  # noqa: E402
 from api.routers import storyboard  # noqa: E402
 from api.routers import production_forecast  # noqa: E402
 from api.routers import consensus_plan      # noqa: E402
@@ -110,14 +154,21 @@ from api.routers import lead_time_learning  # noqa: E402
 from api.routers import blended_forecast  # noqa: E402
 from api.routers import echelon_planning  # noqa: E402
 from api.routers import financial_plan    # noqa: E402
-from api.routers import sop               # noqa: E402
 from api.routers import events            # noqa: E402
 from api.routers import supply_scenarios  # noqa: E402
 from api.routers import inv_planning_rebalancing  # noqa: E402
 from api.routers import inv_planning_insights     # noqa: E402
+# --- Gen-4 subdirectory imports ---
+from api.routers.operations import sop              # noqa: E402
+from api.routers.intelligence import ai_planner      # noqa: E402
+from api.routers.intelligence import chat            # noqa: E402
+from api.routers.intelligence import explain as explain_router  # noqa: E402  # Gen-4 G: forecast explain
+from api.routers.core import dashboard               # noqa: E402
+from api.routers.core import jobs                    # noqa: E402
+from api.routers.platform import auth_router         # noqa: E402  # 08-02 RBAC
+from api.routers.platform import users               # noqa: E402  # 08-02 User mgmt
+from api.routers.platform import admin as admin_router  # noqa: E402  # Gen-4 J: LLM reset / tuning invalidation
 # --- Spec 08-xx: Next-gen platform routers ---
-from api.routers import auth_router       # noqa: E402  # 08-02 RBAC
-from api.routers import users             # noqa: E402  # 08-02 User mgmt
 from api.routers import data_quality      # noqa: E402  # 08-01 DQ
 from api.routers import medallion         # noqa: E402  # Medallion lineage
 from api.routers import notifications     # noqa: E402  # 08-04 Alerts
@@ -147,6 +198,7 @@ from api.routers import customer_analytics  # noqa: E402  # Customer Analytics
 from api.routers.inventory import demand_history  # noqa: E402  # Demand History Workbench
 from api.routers.inventory import inv_planning_algorithm_comparison  # noqa: E402  # Algorithm Inventory Comparison
 from api.routers.inventory import integrated_targets  # noqa: E402  # Integrated Planning Targets (SS+EOQ+ROP)
+from api.routers.inventory import working_capital  # noqa: E402  # Gen-4 SC-10: DIO/DPO/DSO/C2C + rolling-13-week
 from api.routers import domains    # noqa: E402
 
 # Specific-path routers first
@@ -198,6 +250,7 @@ app.include_router(shap.router)
 # --- Spec 08-xx: Next-gen platform routers ---
 app.include_router(auth_router.router)
 app.include_router(users.router)
+app.include_router(admin_router.router)
 app.include_router(data_quality.router)
 app.include_router(medallion.router)
 app.include_router(notifications.router)
@@ -228,6 +281,8 @@ app.include_router(customer_analytics.router)
 app.include_router(demand_history.router)
 app.include_router(inv_planning_algorithm_comparison.router)
 app.include_router(integrated_targets.router)
+app.include_router(working_capital.router)
+app.include_router(explain_router.router)
 
 # domains.py has catch-all /domains/{domain}/* — mount last
 app.include_router(domains.router)

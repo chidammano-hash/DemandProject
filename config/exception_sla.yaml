@@ -1,0 +1,26 @@
+# Gen-4 Roadmap SC-8: Exception SLA configuration.
+#
+# Maps severity bands to SLA response deadlines (in hours). Used by
+# common/engines/exception_engine.py to compute sla_due_at when an
+# exception is generated and to flag overdue exceptions in the UI.
+
+exception_sla:
+  # Severity band thresholds (derived from severity score 0.0-1.0)
+  severity_bands:
+    critical: 0.75   # severity >= 0.75 → critical band
+    high:     0.50   # severity >= 0.50 → high band
+    medium:   0.25   # severity >= 0.25 → medium band
+    # everything below 0.25 is `low`
+
+  # Response-time SLAs by band (in hours from generated_at)
+  response_hours:
+    critical: 4      # critical: respond within 4 hours
+    high:     24     # high: respond within 1 business day
+    medium:   72     # medium: respond within 3 days
+    low:      168    # low: respond within 1 week
+
+  # Grouping for root-cause key — which fields participate in the dedupe hash.
+  # Keep this list short and stable; changing it invalidates existing hashes.
+  root_cause_key_fields:
+    - exception_type
+    - primary_metric_bucket   # e.g. 'bias_direction', 'dos_band'

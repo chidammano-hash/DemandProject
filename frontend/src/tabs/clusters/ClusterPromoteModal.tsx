@@ -147,17 +147,28 @@ export function ClusterPromoteModal({
             </p>
           </div>
 
-          {/* Confirmation checkbox */}
-          <label className="flex items-start gap-2 cursor-pointer">
+          {/* Confirmation checkbox (UX-8 a11y: explicit htmlFor + id pair). */}
+          <label
+            htmlFor="cluster-promote-confirm"
+            className="flex items-start gap-2 cursor-pointer"
+          >
             <input
+              id="cluster-promote-confirm"
+              name="cluster-promote-confirm"
               type="checkbox"
               checked={confirmed}
               onChange={(e) => setConfirmed(e.target.checked)}
+              aria-required="true"
+              aria-describedby="cluster-promote-confirm-desc"
               className="mt-0.5 rounded border-border"
             />
-            <span className="text-[11px] text-muted-foreground">
+            <span
+              id="cluster-promote-confirm-desc"
+              className="text-[11px] text-muted-foreground"
+            >
               I understand this will overwrite production cluster assignments for
               all {experiment.total_dfus?.toLocaleString() ?? "N"} DFUs
+              <span aria-hidden="true" className="ml-0.5 text-destructive">*</span>
             </span>
           </label>
 

@@ -254,19 +254,37 @@ export function ExperimentBuilder({
 
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          {/* Label + Notes */}
+          {/* Label + Notes (UX-8 a11y: explicit htmlFor + onBlur validation + consistent required marker). */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-foreground mb-1 block">
-                Experiment Label *
+              <label
+                htmlFor="experiment-run-label"
+                className="text-xs font-medium text-foreground mb-1 block"
+              >
+                Experiment Label
+                <span aria-hidden="true" className="ml-0.5 text-destructive">*</span>
+                <span className="sr-only"> (required)</span>
               </label>
               <Input
+                id="experiment-run-label"
+                name="run_label"
                 value={runLabel}
+                aria-required="true"
+                aria-invalid={getError("run_label") ? true : undefined}
+                aria-describedby={getError("run_label") ? "experiment-run-label-err" : undefined}
                 onChange={(e) => {
                   setRunLabel(e.target.value);
                   setErrors((prev) =>
                     prev.filter((er) => er.field !== "run_label"),
                   );
+                }}
+                onBlur={(e) => {
+                  if (!e.target.value.trim()) {
+                    setErrors((prev) => [
+                      ...prev.filter((er) => er.field !== "run_label"),
+                      { field: "run_label", message: "Label is required" },
+                    ]);
+                  }
                 }}
                 placeholder="e.g., Aggressive Depth + Heavy Reg"
                 className={cn(
@@ -275,16 +293,22 @@ export function ExperimentBuilder({
                 )}
               />
               {getError("run_label") && (
-                <p className="text-[10px] text-red-600 mt-0.5">
+                <p id="experiment-run-label-err" role="alert" className="text-[10px] text-red-600 mt-0.5">
                   {getError("run_label")}
                 </p>
               )}
             </div>
             <div>
-              <label className="text-xs font-medium text-foreground mb-1 block">
-                Notes (optional)
+              <label
+                htmlFor="experiment-notes"
+                className="text-xs font-medium text-foreground mb-1 block"
+              >
+                Notes
+                <span className="ml-1 text-muted-foreground font-normal">(optional)</span>
               </label>
               <Input
+                id="experiment-notes"
+                name="notes"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Hypothesis or rationale..."

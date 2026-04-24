@@ -221,3 +221,22 @@ class TestYAMLConfigIntegration:
         assert backtest["tweedie_variance_power"] == 1.5
         assert backtest["intermittent_threshold"] == 0.7
         assert backtest["lumpy_threshold"] == 0.3
+
+    def test_baseline_intermittent_explicit(self) -> None:
+        """Gen-4 roadmap 1.2: baseline_intermittent must be explicit in config."""
+        from common.utils import load_config
+
+        cfg = load_config("forecast_pipeline_config.yaml")
+        backtest = cfg["backtest"]
+        assert "baseline_intermittent" in backtest
+        assert "baseline_intermittent_window" in backtest
+        assert backtest["baseline_intermittent"] is True
+        assert backtest["baseline_intermittent_window"] == 12
+
+    def test_embargo_months_non_zero(self) -> None:
+        """Gen-4 roadmap 1.3: embargo_months must be non-zero to prevent leakage."""
+        from common.utils import load_config
+
+        cfg = load_config("forecast_pipeline_config.yaml")
+        backtest = cfg["backtest"]
+        assert backtest["embargo_months"] >= 1

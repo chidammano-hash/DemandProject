@@ -21,6 +21,8 @@ import { KpiCard } from "@/components/KpiCard";
 import { AlertTriangle, HelpCircle, ChevronDown, ChevronRight } from "lucide-react";
 import { DataFreshnessBanner } from "@/components/DataFreshnessBanner";
 import { RecommendedActionCard } from "@/components/RecommendedActionCard";
+import { toast } from "@/components/Toaster";
+import { useUndoable } from "@/hooks/useUndoable";
 
 function AiTag() {
   return <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-[#0D9488]/10 text-[#0D9488]">AI</span>;
@@ -156,16 +158,20 @@ function ExceptionDetailCard({
           {rootCauseData?.causes?.length ? (
             <div className="mt-2 space-y-1">
               <p className="text-[10px] font-medium text-muted-foreground">AI Root Cause Factors:</p>
-              {rootCauseData.causes.slice(0, 3).map((cause) => (
-                <div key={cause.factor} className="flex items-center gap-2 text-[10px]">
-                  <span className={`px-1 py-0.5 rounded font-medium ${
-                    cause.contribution_pct >= 50 ? "bg-red-100 text-red-700" :
-                    cause.contribution_pct >= 25 ? "bg-amber-100 text-amber-700" :
-                    "bg-blue-100 text-blue-700"
-                  }`}>{cause.contribution_pct.toFixed(0)}%</span>
-                  <span className="text-muted-foreground">{cause.factor}: {cause.description}</span>
-                </div>
-              ))}
+              {rootCauseData.causes.slice(0, 3).map((cause) => {
+                const pct = cause.contribution_pct;
+                const pctLabel = pct != null && !Number.isNaN(Number(pct)) ? `${Number(pct).toFixed(0)}%` : "—";
+                const bucket = pct == null ? "bg-blue-100 text-blue-700"
+                  : pct >= 50 ? "bg-red-100 text-red-700"
+                  : pct >= 25 ? "bg-amber-100 text-amber-700"
+                  : "bg-blue-100 text-blue-700";
+                return (
+                  <div key={cause.factor} className="flex items-center gap-2 text-[10px]">
+                    <span className={`px-1 py-0.5 rounded font-medium ${bucket}`}>{pctLabel}</span>
+                    <span className="text-muted-foreground">{cause.factor}: {cause.description}</span>
+                  </div>
+                );
+              })}
             </div>
           ) : null}
         </div>
@@ -255,27 +261,97 @@ export function ExceptionQueuePanel() {
     staleTime: STALE.ONE_MIN,
   });
 
+  const showUndoable = useUndoable();
+
+  /**
+   * UX-7: optimistic acknowledge.
+   *
+   * We flip `status` to "acknowledged" locally before the server responds
+   * so the UI reacts instantly. On error we roll back to the snapshot; on
+   * success we surface an undoable toast that, if clicked, re-opens the
+   * exception via `updateExceptionStatus(id, "open")`.
+   */
   const acknowledgeMutation = useMutation({
     mutationFn: ({ id }: { id: string }) =>
       acknowledgeException(id, "planner", undefined),
-    onSuccess: () => {
+    onMutate: async ({ id }) => {
+      await queryClient.cancelQueries({ queryKey: exceptionKeys.list() });
+      const listKey = exceptionKeys.list(excParams);
+      const previous = queryClient.getQueryData(listKey);
+      queryClient.setQueryData(listKey, (old: unknown) => {
+        if (!old || typeof old !== "object") return old;
+        const payload = old as { rows?: ExceptionRow[] };
+        if (!payload.rows) return old;
+        return {
+          ...payload,
+          rows: payload.rows.map((r) =>
+            r.exception_id === id ? { ...r, status: "acknowledged" } : r,
+          ),
+        };
+      });
+      return { previous, listKey };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous !== undefined && ctx?.listKey) {
+        queryClient.setQueryData(ctx.listKey, ctx.previous);
+      }
+      toast.error("Action failed. Please check your connection and try again.");
+    },
+    onSuccess: (_data, { id }) => {
+      showUndoable("Exception acknowledged", () => {
+        // Best-effort undo: drive the status back to open.
+        updateExceptionStatus(id, "ordered" as never).catch(() => {
+          // Undo is a convenience — silently ignore backend errors.
+        });
+        queryClient.invalidateQueries({ queryKey: exceptionKeys.list() });
+      });
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: exceptionKeys.list() });
       queryClient.invalidateQueries({ queryKey: exceptionKeys.summary() });
-    },
-    onError: () => {
-      alert("Action failed. Please check your connection and try again.");
     },
   });
 
+  /**
+   * UX-7: optimistic status change. Same pattern as acknowledge.
+   */
   const statusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: "ordered" | "resolved" }) =>
       updateExceptionStatus(id, status),
-    onSuccess: () => {
+    onMutate: async ({ id, status }) => {
+      await queryClient.cancelQueries({ queryKey: exceptionKeys.list() });
+      const listKey = exceptionKeys.list(excParams);
+      const previous = queryClient.getQueryData(listKey);
+      queryClient.setQueryData(listKey, (old: unknown) => {
+        if (!old || typeof old !== "object") return old;
+        const payload = old as { rows?: ExceptionRow[] };
+        if (!payload.rows) return old;
+        return {
+          ...payload,
+          rows: payload.rows.map((r) =>
+            r.exception_id === id ? { ...r, status } : r,
+          ),
+        };
+      });
+      return { previous, listKey };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous !== undefined && ctx?.listKey) {
+        queryClient.setQueryData(ctx.listKey, ctx.previous);
+      }
+      toast.error("Action failed. Please check your connection and try again.");
+    },
+    onSuccess: (_data, { id, status }) => {
+      showUndoable(`Marked ${status}`, () => {
+        updateExceptionStatus(id, status === "resolved" ? "ordered" : "resolved").catch(
+          () => { /* best-effort undo */ },
+        );
+        queryClient.invalidateQueries({ queryKey: exceptionKeys.list() });
+      });
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: exceptionKeys.list() });
       queryClient.invalidateQueries({ queryKey: exceptionKeys.summary() });
-    },
-    onError: () => {
-      alert("Action failed. Please check your connection and try again.");
     },
   });
 

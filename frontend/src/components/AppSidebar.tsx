@@ -33,24 +33,27 @@ interface NavItem {
   shortcut?: string;
 }
 
+// UX-1 order: Tower -> Demand -> Supply -> Operations -> System.
+// Matches the user's morning-triage mental model: start with the overview
+// (Tower), drill to root cause in Demand, plan in Supply, execute in Ops.
 const NAV_ITEMS: NavItem[] = [
   // Tower — control tower triage (no section header)
   { key: "commandCenter",     label: "Command Center", icon: Monitor,         section: "tower",       shortcut: "1" },
-  // Operations — planning processes & admin
-  { key: "sop",               label: "S&OP",           icon: CalendarDays,    section: "operations",  shortcut: "2" },
-  { key: "jobs",              label: "Jobs",           icon: PlayCircle,      section: "operations",  shortcut: "3" },
-  { key: "dataQuality",      label: "Data Quality",   icon: Shield,          section: "operations" },
-  // Supply — inventory & replenishment
-  { key: "invPlanning",  label: "Inv. Planning", icon: Brain,        section: "supply",  shortcut: "4" },
-  { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,     section: "supply" },
   // Demand — analysis & forecasting
-  { key: "aggregateAnalysis", label: "Portfolio",      icon: LayoutDashboard, section: "demand",   shortcut: "6" },
-  { key: "itemAnalysis",      label: "Item Analysis",  icon: TrendingUp,      section: "demand",   shortcut: "7" },
+  { key: "aggregateAnalysis", label: "Portfolio",      icon: LayoutDashboard, section: "demand",   shortcut: "2" },
+  { key: "itemAnalysis",      label: "Item Analysis",  icon: TrendingUp,      section: "demand",   shortcut: "3" },
   { key: "fva",               label: "FVA & ROI",      icon: BarChart3,       section: "demand" },
   { key: "lgbmTuning",        label: "Model Tuning",  icon: Activity,        section: "demand" },
   { key: "customerAnalytics", label: "Customer Analytics", icon: MapPin,       section: "demand" },
   { key: "demandHistory",     label: "Demand History",     icon: History,      section: "demand" },
   { key: "skuFeatures",       label: "SKU Features",       icon: FlaskConical, section: "demand" },
+  // Supply — inventory & replenishment
+  { key: "invPlanning",  label: "Inv. Planning", icon: Brain,        section: "supply",  shortcut: "4" },
+  { key: "invBacktest",  label: "Inv. Backtest", icon: Activity,     section: "supply" },
+  // Operations — planning processes & admin
+  { key: "sop",               label: "S&OP",           icon: CalendarDays,    section: "operations",  shortcut: "5" },
+  { key: "jobs",              label: "Jobs",           icon: PlayCircle,      section: "operations",  shortcut: "6" },
+  { key: "dataQuality",      label: "Data Quality",   icon: Shield,          section: "operations" },
   // System — data tools
   { key: "explorer",     label: "Explorer",      icon: Database,     section: "system" },
   { key: "sqlRunner",    label: "SQL Runner",    icon: TerminalSquare, section: "system" },

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
@@ -130,7 +131,7 @@ def create_policy(body: PolicyCreateBody) -> dict:
                 conn.commit()
                 row = cur.fetchone()
                 cols = [d[0] for d in cur.description]
-            except Exception as exc:
+            except psycopg.Error as exc:
                 conn.rollback()
                 raise HTTPException(status_code=409, detail="Policy with this ID already exists.") from exc
 
@@ -345,7 +346,7 @@ def assign_policy(body: PolicyAssignBody) -> dict:
                         body.override_reason, effective_date,
                     ))
                     assigned_count = 1
-                except Exception:
+                except psycopg.Error:
                     failed_count = 1
 
             elif body.segment and body.policy_id:
@@ -375,7 +376,7 @@ def assign_policy(body: PolicyAssignBody) -> dict:
                         body.segment.upper(), body.segment.lower(),
                     ))
                     assigned_count = cur.rowcount
-                except Exception:
+                except psycopg.Error:
                     failed_count = 1
             else:
                 raise HTTPException(

@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import type { Job, JobType } from "@/types/jobs";
 import { GROUP_CONFIG } from "@/types/jobs";
 import { fetchJobLogs, queryKeys } from "@/api/queries";
+import { EmptyState } from "@/components/EmptyState";
 import { formatTimestamp, jobDuration, getGroupKey, GROUP_ICONS } from "./jobsShared";
 import { StatusBadge } from "./StatusBadge";
 
@@ -255,11 +256,25 @@ export function JobHistoryPanel({
       </div>
 
       {historyJobs.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border bg-card/30 p-12 text-center">
-          <BarChart3 className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
-          <p className="text-sm font-medium text-muted-foreground">No jobs in history yet</p>
-          <p className="text-xs text-muted-foreground/60 mt-1">Submit a job above to get started</p>
-        </div>
+        (historyFilter || historyTypeFilter) ? (
+          <EmptyState
+            variant="filtered"
+            title="No jobs match your filters"
+            description="Try clearing the status or type filter to see more jobs."
+            onAction={() => {
+              onHistoryFilterChange("");
+              onHistoryTypeFilterChange("");
+            }}
+            actionLabel="Clear filters"
+          />
+        ) : (
+          <EmptyState
+            variant="no-data"
+            icon={BarChart3}
+            title="No jobs in history yet"
+            description="Submit a job above or schedule one to start building a history."
+          />
+        )
       ) : (
         <div className="rounded-xl border border-border overflow-hidden">
           <table className="w-full text-sm">

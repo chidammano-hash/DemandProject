@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import psycopg
 from dateutil.relativedelta import relativedelta
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
@@ -106,7 +107,7 @@ def demand_reference(
         try:
             cur.execute(sql_inventory, [item_id, loc])
             inv_row = cur.fetchone()
-        except Exception:
+        except psycopg.Error:
             conn.rollback()
             inv_row = None
 
@@ -293,7 +294,7 @@ def demand_comparison(
         try:
             cur.execute(sql_predictions, [item_id, loc, cutoff, all_model_ids])
             pred_rows = cur.fetchall()
-        except Exception:
+        except psycopg.Error:
             logger.debug("backtest_predictions table not available")
             pred_rows = []
 

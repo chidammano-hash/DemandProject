@@ -1,10 +1,20 @@
 /**
  * ConfirmModal — confirmation dialog before Accept/Resolve actions.
  * Shows recommendation, key metrics, and causal chain.
+ *
+ * Gen-4 UX: uses Radix Dialog for focus trap, aria-modal, focus restore.
  */
 import { formatCurrency as fmtCurrency } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
-import { Loader2, X } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Loader2 } from "lucide-react";
 import type { ConfirmActionState } from "./aiPlannerShared";
 import { CausalChainCard } from "./CausalChainCard";
 
@@ -21,23 +31,14 @@ export function ConfirmModal({
 }) {
   const { insight, label, verb } = action;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-xl border bg-card shadow-xl">
-        {/* Modal header */}
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <div>
-            <p className="text-sm font-semibold text-foreground">{label}</p>
-            <p className="text-xs text-muted-foreground">
-              {insight.item_id} @ {insight.loc}
-            </p>
-          </div>
-          <button
-            onClick={onCancel}
-            className="rounded-md p-1 text-muted-foreground hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+    <Dialog open onOpenChange={(o) => { if (!o) onCancel(); }}>
+      <DialogContent size="md">
+        <DialogHeader>
+          <DialogTitle>{label}</DialogTitle>
+          <DialogDescription>
+            {insight.item_id} @ {insight.loc}
+          </DialogDescription>
+        </DialogHeader>
 
         {/* Modal body */}
         <div className="space-y-4 px-5 py-4">
@@ -76,8 +77,7 @@ export function ConfirmModal({
           <CausalChainCard insight={insight} />
         </div>
 
-        {/* Actions */}
-        <div className="flex justify-end gap-2 border-t px-5 py-3">
+        <DialogFooter>
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
             Cancel
           </Button>
@@ -85,8 +85,8 @@ export function ConfirmModal({
             {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {verb}
           </Button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

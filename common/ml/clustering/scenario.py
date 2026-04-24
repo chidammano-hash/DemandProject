@@ -213,6 +213,40 @@ def promote_scenario(scenario_id: str) -> dict[str, Any]:
                     WHERE d.sku_ck = u.sku_ck
                 """)
                 updated_count = cur.rowcount
+
+                # Gen-4 SC-9: mark per-cluster tuning profiles stale so the
+                # next tuning run re-trains them against the new partitions.
+                # Best-effort — the table is created by sql/148; missing table
+                # is fine (feature flag disabled).
+                try:
+                    cur.execute("SAVEPOINT invalidate_profiles")
+                    stale_reason = f"cluster_promotion:{scenario_id}"
+                    cluster_names = (
+                        df["cluster_label"].dropna().astype(str).unique().tolist()
+                        if "cluster_label" in df.columns else []
+                    )
+                    for cname in cluster_names:
+                        cur.execute("""
+                            INSERT INTO cluster_tuning_profile_state
+                                (cluster_name, stale, stale_reason, stale_since, modified_ts)
+                            VALUES (%s, TRUE, %s, NOW(), NOW())
+                            ON CONFLICT (cluster_name) DO UPDATE
+                            SET stale = TRUE,
+                                stale_reason = EXCLUDED.stale_reason,
+                                stale_since = EXCLUDED.stale_since,
+                                modified_ts = NOW()
+                        """, (cname, stale_reason))
+                    logger.info(
+                        "Marked %d cluster_tuning_profile_state rows stale",
+                        len(cluster_names),
+                    )
+                except psycopg.Error as exc:
+                    cur.execute("ROLLBACK TO SAVEPOINT invalidate_profiles")
+                    logger.warning(
+                        "cluster_tuning_profile_state update skipped "
+                        "(apply sql/148 if persistence needed): %s", exc,
+                    )
+
                 conn.commit()
 
                 # Refresh accuracy MVs so Accuracy Comparison reflects new clusters

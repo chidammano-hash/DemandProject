@@ -1,8 +1,92 @@
-"""Shared forecast accuracy metrics (WAPE, bias, accuracy)."""
+"""Shared forecast accuracy metrics (WAPE, bias, accuracy).
 
+Gen-4 Roadmap SC-10 (P2): the three historical call-sites (dashboard KPI,
+FVA reporting, backtest framework) diverged on accuracy denominators. This
+module is the canonical source; new code MUST call ``compute_accuracy`` /
+``compute_bias_pct`` / ``compute_wape`` below, and existing call-sites should
+migrate with a TODO marker pointing here.
+
+Canonical formulas:
+    WAPE         = SUM(|F - A|) / NULLIF(ABS(SUM(A)), 0)
+    accuracy_pct = max(0, 100 * (1 - WAPE))
+    bias_pct     = 100 * (SUM(F) / NULLIF(SUM(A), 0) - 1)
+
+For SQL-level usage, use ``ACCURACY_SQL_TEMPLATE``.
+"""
+
+from collections.abc import Sequence
 from typing import Any
 
 import pandas as pd
+
+# SQL template — callers should standardize on this exact expression.
+# Usage:
+#   sql = ACCURACY_SQL_TEMPLATE.format(forecast="forecast_qty", actual="actual_qty")
+ACCURACY_SQL_TEMPLATE = (
+    "CASE WHEN ABS(SUM({actual})) > 0 "
+    "THEN GREATEST(0.0, 100.0 - 100.0 * SUM(ABS({forecast} - {actual})) "
+    "/ ABS(SUM({actual}))) "
+    "ELSE NULL END"
+)
+
+
+def compute_accuracy(
+    actuals: Sequence[float],
+    forecasts: Sequence[float],
+) -> float | None:
+    """Canonical accuracy metric = 100 * (1 - WAPE), clamped to [0, 100].
+
+    Returns None when the absolute sum of actuals is zero (undefined).
+
+    Raises:
+        ValueError: when sequences differ in length.
+    """
+    if len(actuals) != len(forecasts):
+        raise ValueError(
+            f"Length mismatch: actuals={len(actuals)}, forecasts={len(forecasts)}"
+        )
+    if not actuals:
+        return None
+
+    abs_sum_actual = abs(sum(actuals))
+    if abs_sum_actual == 0:
+        return None
+
+    sum_abs_error = sum(abs(f - a) for f, a in zip(forecasts, actuals))
+    wape = sum_abs_error / abs_sum_actual
+    return max(0.0, 100.0 * (1.0 - wape))
+
+
+def compute_bias_pct(
+    actuals: Sequence[float],
+    forecasts: Sequence[float],
+) -> float | None:
+    """Canonical bias = (SUM(F) / SUM(A) - 1) * 100. Returns None when SUM(A) = 0."""
+    if len(actuals) != len(forecasts):
+        raise ValueError(
+            f"Length mismatch: actuals={len(actuals)}, forecasts={len(forecasts)}"
+        )
+    sum_a = sum(actuals)
+    if sum_a == 0:
+        return None
+    return (sum(forecasts) / sum_a - 1.0) * 100.0
+
+
+def compute_wape(
+    actuals: Sequence[float],
+    forecasts: Sequence[float],
+) -> float | None:
+    """WAPE as a fraction (not percentage). Returns None when SUM(|A|) = 0."""
+    if len(actuals) != len(forecasts):
+        raise ValueError(
+            f"Length mismatch: actuals={len(actuals)}, forecasts={len(forecasts)}"
+        )
+    if not actuals:
+        return None
+    abs_sum = abs(sum(actuals))
+    if abs_sum == 0:
+        return None
+    return sum(abs(f - a) for f, a in zip(forecasts, actuals)) / abs_sum
 
 
 def compute_accuracy_metrics(

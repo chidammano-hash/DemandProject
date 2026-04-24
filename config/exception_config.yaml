@@ -4,6 +4,11 @@
 # All configurable parameters live here; no magic numbers in Python scripts.
 
 exception_engine:
+  # Gen-4 Roadmap 1.8 — wire `financial_impact` into every detector. Margin is
+  # rarely stored, so detectors derive unit_margin = unit_cost * unit_margin_assumption
+  # when unit_margin is missing. Override in env-specific configs as needed.
+  unit_margin_assumption: 0.30   # 30% gross margin assumption for dollar-impact
+
   # Exception types to detect (order determines processing priority)
   exception_types:
     - forecast_bias
@@ -25,6 +30,7 @@ exception_engine:
       dos_threshold: 14           # days of supply below this = risk
       critical_dos_threshold: 7   # days of supply below this = critical
       min_daily_sales: 1.0        # skip items with trivial daily sales
+      financial_horizon_days: 7   # lost-sales horizon used for dollar-impact score
 
     accuracy_drop:
       accuracy_drop_pct: 15.0    # % accuracy drop vs prior 3 months to flag

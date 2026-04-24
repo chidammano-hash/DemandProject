@@ -1,0 +1,85 @@
+# Agent Autonomy Policies — Gen-4 Roadmap AI-1 P0.
+#
+# Every AI write action is tagged with a `policy_id` looked up in this file.
+# The policy declares the maximum autonomy tier the agent may operate at
+# plus declarative guardrails the policy engine enforces before the write
+# is permitted. See common/ai/policy_engine.py.
+#
+# Autonomy tiers (least → most autonomous):
+#   advisory            — propose only; a human must accept
+#   suggestive          — propose with a UI default-yes; a human confirms
+#   auto_within_policy  — auto-apply when guardrail checks pass
+#   autonomous          — auto-apply without confirmation (rare, never default)
+
+version: 1
+
+# Default policy used when an action is not covered by a specific rule.
+# Deliberately conservative so new agents ship safely.
+default:
+  tier: advisory
+  guardrails:
+    max_blast_radius_skus: 0   # 0 = may not write anything without a specific policy
+
+policies:
+
+  # ── Demand agent ─────────────────────────────────────────────────────
+  demand.promote_champion_model:
+    tier: suggestive
+    description: Promote a backtest-winning model to fact_production_forecast.
+    guardrails:
+      requires_human_review: true
+      min_wape_improvement_pct: 2.0     # must beat current champion by >=2% WAPE
+      min_coverage_pct: 95              # model must cover >=95% of DFUs
+    owner: demand_pod
+
+  demand.retrain_cold_start:
+    tier: auto_within_policy
+    description: Retrain rolling_mean baseline for new cold-start DFUs.
+    guardrails:
+      max_blast_radius_skus: 500
+      cooldown_hours: 6
+
+  # ── Inventory / supply agent ─────────────────────────────────────────
+  supply.adjust_safety_stock:
+    tier: suggestive
+    description: Change safety stock targets based on fresh demand stats.
+    guardrails:
+      max_pct_change_per_sku: 25.0      # clip SS adjustments to +/-25%
+      max_blast_radius_skus: 1000
+
+  supply.auto_transfer:
+    tier: advisory
+    description: Open DC->DC transfer to rebalance stock.
+    guardrails:
+      requires_human_review: true
+      max_units_per_action: 10000
+      max_dollar_per_action: 50000
+
+  # ── Exception agent ──────────────────────────────────────────────────
+  exception.auto_resolve_stockout:
+    tier: auto_within_policy
+    description: Close a stockout exception after replenishment posts.
+    guardrails:
+      max_blast_radius_skus: 200
+      cooldown_hours: 1
+
+  exception.ack_and_route:
+    tier: auto_within_policy
+    description: Acknowledge an exception and assign to an owner queue.
+    guardrails:
+      max_blast_radius_skus: 5000
+
+  # ── S&OP agent ───────────────────────────────────────────────────────
+  sop.publish_scenario:
+    tier: advisory
+    description: Publish a scenario as the active S&OP plan.
+    guardrails:
+      requires_human_review: true
+      requires_open_exceptions_resolved: true
+
+  # ── Negotiator agent ─────────────────────────────────────────────────
+  negotiator.draft_po_revision:
+    tier: advisory
+    description: Draft a revised PO to propose to a supplier.
+    guardrails:
+      requires_human_review: true

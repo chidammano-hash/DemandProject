@@ -5,12 +5,16 @@ Aggregates KPIs from all upstream IP features into a single command center view.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
+import psycopg
 from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import _f, get_conn, set_cache
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["control-tower"])
 
@@ -44,27 +48,34 @@ def get_control_tower_kpis(
         LIMIT 1
     """
 
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, [])
-            row = cur.fetchone()
-            if not row:
-                # Return zeros if view not yet populated
-                return {
-                    "computed_at": None,
-                    "health": {k: 0 for k in [
-                        "total_dfus", "healthy_count", "monitor_count", "at_risk_count",
-                        "critical_count", "avg_health_score", "avg_ss_coverage",
-                        "below_ss_count", "below_ss_pct", "avg_portfolio_dos"
-                    ]},
-                    "exceptions": {k: 0 for k in [
-                        "open_exceptions_total", "critical_exceptions",
-                        "high_exceptions", "recommended_order_value"
-                    ]},
-                    "fill_rate": {"portfolio_fill_rate_3m": None, "total_shortage_qty_3m": 0},
-                    "demand_signals": {"urgent_demand_signals": 0, "projected_stockouts_today": 0},
-                    "intramonth": {"items_with_stockout_this_month": 0, "extended_stockouts_this_month": 0},
-                }
+    empty_payload = {
+        "computed_at": None,
+        "health": {k: 0 for k in [
+            "total_dfus", "healthy_count", "monitor_count", "at_risk_count",
+            "critical_count", "avg_health_score", "avg_ss_coverage",
+            "below_ss_count", "below_ss_pct", "avg_portfolio_dos"
+        ]},
+        "exceptions": {k: 0 for k in [
+            "open_exceptions_total", "critical_exceptions",
+            "high_exceptions", "recommended_order_value"
+        ]},
+        "fill_rate": {"portfolio_fill_rate_3m": None, "total_shortage_qty_3m": 0},
+        "demand_signals": {"urgent_demand_signals": 0, "projected_stockouts_today": 0},
+        "intramonth": {"items_with_stockout_this_month": 0, "extended_stockouts_this_month": 0},
+    }
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, [])
+                row = cur.fetchone()
+    except psycopg.errors.ObjectNotInPrerequisiteState as exc:
+        logger.warning("control-tower/kpis: MV not populated (%s)", exc)
+        return {**empty_payload, "warning": "mv_control_tower_kpis not yet refreshed. Run `make refresh-mvs-tiered`."}
+
+    if not row:
+        # View exists and is populated, just has no rows
+        return empty_payload
 
     return {
         "computed_at": str(row[0]) if row[0] else None,
@@ -298,10 +309,14 @@ def get_top_critical_items(
     """
     params.append(limit)
 
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            rows = cur.fetchall()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+    except psycopg.errors.ObjectNotInPrerequisiteState as exc:
+        logger.warning("control-tower/drill-down: MV not populated (%s)", exc)
+        return {"items": [], "warning": "Upstream MV not refreshed. Run `make refresh-mvs-tiered`."}
 
     return {
         "items": [
@@ -324,6 +339,120 @@ def get_top_critical_items(
             }
             for r in rows
         ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /control-tower/kpis-financial — Gen-4 Roadmap 1.7
+# ---------------------------------------------------------------------------
+
+
+@router.get("/control-tower/kpis-financial")
+def get_control_tower_kpis_financial(
+    response: FastAPIResponse,
+) -> dict:
+    """$-denominated Control Tower KPIs.
+
+    Joins unit cost (``fact_eoq_targets.unit_cost``) against inventory / below-SS
+    / exception unit counts so the Command Center can render dollar-weighted
+    KPIs next to the existing unit-count KPIs.
+
+    Cache: 120s.
+    """
+    set_cache(response, max_age=120)
+
+    # Aggregate in-stock value, below-SS exposure, excess exposure, open
+    # exception dollar impact. All numbers are denominated in USD (or the unit
+    # currency of fact_eoq_targets.unit_cost, whichever the caller configured).
+    sql = """
+        WITH inv_value AS (
+            SELECT
+                SUM(h.eom_qty_on_hand * COALESCE(eoq.unit_cost, 0)) AS inventory_value,
+                SUM(CASE WHEN h.is_below_ss
+                         THEN GREATEST(0, (h.dos_min_target - h.current_dos))
+                              * h.avg_daily_sls
+                              * COALESCE(eoq.unit_cost, 0)
+                         ELSE 0 END)                                AS below_ss_value_gap,
+                SUM(CASE WHEN h.current_dos > h.dos_max_target
+                         THEN (h.current_dos - h.dos_max_target)
+                              * h.avg_daily_sls
+                              * COALESCE(eoq.unit_cost, 0)
+                         ELSE 0 END)                                AS excess_value
+            FROM mv_inventory_health_score h
+            LEFT JOIN fact_eoq_targets eoq
+                ON eoq.item_id = h.item_id AND eoq.loc = h.loc
+        ),
+        exc_value AS (
+            SELECT
+                COALESCE(SUM(financial_impact_total), 0)            AS open_exception_value,
+                COALESCE(SUM(CASE WHEN severity = 'critical'
+                                   THEN financial_impact_total ELSE 0 END), 0)
+                                                                    AS critical_exception_value,
+                COALESCE(SUM(loss_of_sales_7d), 0)                  AS loss_of_sales_7d_value,
+                COALESCE(SUM(monthly_holding_cost), 0)              AS monthly_holding_cost
+            FROM fact_replenishment_exceptions
+            WHERE status = 'open'
+        ),
+        fr_value AS (
+            -- 3-month weighted fill rate revenue-style value: ordered_value * (1 - fill_rate)
+            SELECT
+                COALESCE(SUM(
+                    GREATEST(0, fr.total_ordered - fr.total_shipped)
+                    * COALESCE(eoq.unit_cost, 0)
+                ), 0)                                               AS shortage_value_3m
+            FROM mv_fill_rate_monthly fr
+            LEFT JOIN fact_eoq_targets eoq
+                ON eoq.item_id = fr.item_id AND eoq.loc = fr.loc
+            WHERE fr.month_start >= (
+                SELECT MAX(month_start) FROM mv_fill_rate_monthly
+            ) - INTERVAL '2 months'
+        )
+        SELECT
+            i.inventory_value,
+            i.below_ss_value_gap,
+            i.excess_value,
+            e.open_exception_value,
+            e.critical_exception_value,
+            e.loss_of_sales_7d_value,
+            e.monthly_holding_cost,
+            f.shortage_value_3m
+        FROM inv_value i, exc_value e, fr_value f
+    """
+
+    empty_fin = {
+        "currency": "USD",
+        "inventory_value": 0.0,
+        "below_ss_value_gap": 0.0,
+        "excess_value": 0.0,
+        "open_exception_value": 0.0,
+        "critical_exception_value": 0.0,
+        "loss_of_sales_7d_value": 0.0,
+        "monthly_holding_cost": 0.0,
+        "shortage_value_3m": 0.0,
+    }
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, [])
+                row = cur.fetchone()
+    except psycopg.errors.ObjectNotInPrerequisiteState as exc:
+        logger.warning("control-tower/kpis-financial: MV not populated (%s)", exc)
+        return {**empty_fin, "warning": "Upstream MV not refreshed. Run `make refresh-mvs-tiered`."}
+
+    if not row:
+        return empty_fin
+
+    return {
+        "currency": "USD",
+        "inventory_value":          _f(row[0]) or 0.0,
+        "below_ss_value_gap":       _f(row[1]) or 0.0,
+        "excess_value":             _f(row[2]) or 0.0,
+        "open_exception_value":     _f(row[3]) or 0.0,
+        "critical_exception_value": _f(row[4]) or 0.0,
+        "loss_of_sales_7d_value":   _f(row[5]) or 0.0,
+        "monthly_holding_cost":     _f(row[6]) or 0.0,
+        "shortage_value_3m":        _f(row[7]) or 0.0,
     }
 
 
@@ -362,10 +491,21 @@ def get_control_tower_trend(
         ORDER BY fr.month_start
     """
 
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, [months])
-            rows = cur.fetchall()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, [months])
+                rows = cur.fetchall()
+    except psycopg.errors.ObjectNotInPrerequisiteState as exc:
+        # An upstream MV (mv_fill_rate_monthly / mv_inventory_health_score /
+        # mv_intramonth_stockout) has been created but not yet refreshed.
+        # Return an empty trend with a hint so the UI can render the empty
+        # state instead of a 500. Run `make refresh-mvs-tiered` to populate.
+        logger.warning("control-tower/trend: MV not populated (%s)", exc)
+        return {
+            "trend": [],
+            "warning": "Upstream materialized view not yet refreshed. Run `make refresh-mvs-tiered`.",
+        }
 
     return {
         "trend": [

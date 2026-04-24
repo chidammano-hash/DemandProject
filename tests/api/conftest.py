@@ -9,17 +9,43 @@ import httpx
 from httpx import ASGITransport
 
 
-def make_pool(fetchall_return=None, fetchone_return=None):
+def make_pool(
+    fetchall_return=None,
+    fetchone_return=None,
+    *,
+    fetchall_returns=None,
+    fetchone_returns=None,
+):
     """Shared factory for mock DB pool used across API tests.
 
     Args:
-        fetchall_return: return value for cursor.fetchall() calls. Defaults to [].
-        fetchone_return: return value for cursor.fetchone() calls. Defaults to (0,).
+        fetchall_return: single return value for cursor.fetchall() calls. Defaults to [].
+        fetchone_return: single return value for cursor.fetchone() calls. Defaults to (0,).
+        fetchall_returns: optional list of per-call fetchall return values
+            (wires up ``cursor.fetchall.side_effect``). Takes precedence over
+            ``fetchall_return`` when set.
+        fetchone_returns: optional list of per-call fetchone return values
+            (wires up ``cursor.fetchone.side_effect``). Takes precedence over
+            ``fetchone_return`` when set.
+
+    Backwards compatible: callers passing only scalar ``fetchall_return`` /
+    ``fetchone_return`` get identical behaviour to before the multi-call
+    extension.
     """
     from unittest.mock import MagicMock
     cursor = MagicMock()
-    cursor.fetchall.return_value = fetchall_return if fetchall_return is not None else []
-    cursor.fetchone.return_value = fetchone_return if fetchone_return is not None else (0,)
+
+    if fetchall_returns is not None:
+        # Sequential per-call fetchall; copy so callers can reuse the list.
+        cursor.fetchall.side_effect = list(fetchall_returns)
+    else:
+        cursor.fetchall.return_value = fetchall_return if fetchall_return is not None else []
+
+    if fetchone_returns is not None:
+        cursor.fetchone.side_effect = list(fetchone_returns)
+    else:
+        cursor.fetchone.return_value = fetchone_return if fetchone_return is not None else (0,)
+
     cursor.description = [("col",)]
     cursor.rowcount = 1
 

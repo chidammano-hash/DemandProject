@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import json
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from api.auth import require_api_key
 from api.core import get_conn
 from common.auth import CurrentUser, get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/collaboration", tags=["collaboration"])
 
@@ -67,8 +71,8 @@ async def create_annotation(
                     body=f"On {req.resource_type} {req.resource_id}: {req.body[:200]}",
                     recipient=mention,
                 )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 — mention notifications are best-effort; annotation creation must succeed even if delivery fails
+            logger.exception("Mention notification failed for annotation %s", annotation_id)
 
     return {"annotation_id": annotation_id}
 

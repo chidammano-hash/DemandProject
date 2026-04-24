@@ -1,11 +1,21 @@
 /**
  * AutoAcceptModal — bulk auto-accept workflow with preview/execute flow.
+ *
+ * Gen-4 UX: uses Radix Dialog for focus trap, aria-modal, focus restore.
  */
 import { useState } from "react";
 import type { InsightSeverity } from "@/types/ai-planner";
 import type { AutoAcceptResponse } from "@/api/queries/ai-planner";
 import { Button } from "@/components/ui/button";
-import { Loader2, X } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Loader2 } from "lucide-react";
 import { SEVERITY_THRESHOLD_LABELS } from "./aiPlannerShared";
 
 export function AutoAcceptModal({
@@ -30,19 +40,14 @@ export function AutoAcceptModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-xl border bg-card shadow-xl">
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <div>
-            <p className="text-sm font-semibold">Auto-Accept Rules</p>
-            <p className="text-xs text-muted-foreground">
-              Bulk-accept open insights by severity threshold
-            </p>
-          </div>
-          <button onClick={onCancel} className="rounded-md p-1 text-muted-foreground hover:text-foreground">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+    <Dialog open onOpenChange={(o) => { if (!o) onCancel(); }}>
+      <DialogContent size="sm">
+        <DialogHeader>
+          <DialogTitle>Auto-Accept Rules</DialogTitle>
+          <DialogDescription>
+            Bulk-accept open insights by severity threshold
+          </DialogDescription>
+        </DialogHeader>
 
         <div className="space-y-4 px-5 py-4">
           {isExecuteResult ? (
@@ -98,7 +103,7 @@ export function AutoAcceptModal({
           )}
         </div>
 
-        <div className="flex justify-end gap-2 border-t px-5 py-3">
+        <DialogFooter>
           <Button variant="ghost" size="sm" onClick={onCancel}>
             {isExecuteResult ? "Close" : "Cancel"}
           </Button>
@@ -120,8 +125,8 @@ export function AutoAcceptModal({
               Confirm — Accept {result!.accepted}
             </Button>
           )}
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

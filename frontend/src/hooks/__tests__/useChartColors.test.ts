@@ -106,4 +106,29 @@ describe("useChartColors", () => {
       expect(result.current.trendColors).toHaveLength(6);
     }
   });
+
+  it("exposes the Okabe-Ito color-blind-safe palette (UX-3)", () => {
+    const { result } = renderHook(() => useChartColors(), {
+      wrapper: makeWrapper("light"),
+    });
+    const { okabeIto } = result.current;
+    expect(Array.isArray(okabeIto)).toBe(true);
+    // Okabe-Ito is a fixed 8-color palette.
+    expect(okabeIto).toHaveLength(8);
+    // Sanity: signature first (#E69F00 — orange) and last (#000000 — black).
+    expect(okabeIto[0]).toBe("#E69F00");
+    expect(okabeIto[7]).toBe("#000000");
+  });
+
+  it("okabeIto is identical across themes (palette is theme-agnostic)", () => {
+    const themes: Theme[] = ["light", "dark", "soft"];
+    const palettes = themes.map((t) => {
+      const { result } = renderHook(() => useChartColors(), {
+        wrapper: makeWrapper(t),
+      });
+      return result.current.okabeIto;
+    });
+    expect(palettes[0]).toEqual(palettes[1]);
+    expect(palettes[1]).toEqual(palettes[2]);
+  });
 });

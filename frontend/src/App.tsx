@@ -27,6 +27,7 @@ import {
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { CommandPalette } from "@/components/CommandPalette";
+import { Toaster } from "@/components/Toaster";
 
 import ChatPanel from "./tabs/ChatPanel";
 
@@ -312,6 +313,7 @@ export default function App() {
             {/* Chat panel (hidden on lgbmTuning — has its own AI Tuning Advisor) */}
             {activeTab !== "lgbmTuning" && <ChatPanel domain={domain} />}
           </div>
+          <Toaster />
         </div>
         </JobNotificationProvider>
         </ScenarioNotificationProvider>

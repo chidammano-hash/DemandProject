@@ -342,16 +342,22 @@ def get_exception_root_cause(
                     logger.exception("DB error fetching forecast accuracy for root cause: %s", e)
 
                 # --- Supplier lead time reliability ---
+                # Gen-4 Roadmap 1.6 — switched to mv_supplier_po_performance.
                 try:
                     cur.execute("""
-                        SELECT supplier_no, supplier_name,
-                               avg_lt_mean_days, avg_lt_cv,
-                               avg_lt_variability_class
-                        FROM mv_supplier_performance sp
+                        SELECT supplier_id AS supplier_no,
+                               supplier_name,
+                               avg_lead_time_days AS avg_lt_mean_days,
+                               CASE WHEN avg_lead_time_days > 0
+                                    THEN stddev_lead_time_days / avg_lead_time_days END AS avg_lt_cv,
+                               CASE WHEN reliability_score >= 80 THEN 'stable'
+                                    WHEN reliability_score >= 50 THEN 'moderate'
+                                    ELSE 'volatile' END AS avg_lt_variability_class
+                        FROM mv_supplier_po_performance sp
                         WHERE EXISTS (
                             SELECT 1 FROM dim_item i
                             WHERE i.item_id = %s
-                              AND i.supplier_no = sp.supplier_no
+                              AND i.supplier_no = sp.supplier_id
                         )
                         LIMIT 1
                     """, [item_id])
@@ -751,11 +757,15 @@ def get_service_level_waterfall(
                 })
 
                 # --- Lead time buffer ---
+                # Gen-4 Roadmap 1.6 — switched to mv_supplier_po_performance.
                 lt_contribution = 0.0
                 try:
                     cur.execute("""
-                        SELECT AVG(1.0 - LEAST(avg_lt_cv, 1.0)) AS reliability
-                        FROM mv_supplier_performance
+                        SELECT AVG(1.0 - LEAST(
+                            CASE WHEN avg_lead_time_days > 0
+                                 THEN stddev_lead_time_days / avg_lead_time_days END,
+                            1.0)) AS reliability
+                        FROM mv_supplier_po_performance
                     """)
                     row = cur.fetchone()
                     if row and row[0] is not None:

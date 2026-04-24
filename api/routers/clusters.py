@@ -290,8 +290,8 @@ def get_clustering_defaults():
                     "model_params": {**_defaults["model_params"], **mp},
                     "label_params": {**_defaults["label_params"], **lp},
                 }
-    except Exception:
-        logger.exception("Failed to fetch promoted experiment params for /clustering/defaults")
+    except Exception:  # noqa: BLE001 — defaults endpoint must never 500; log and fall back
+        log.exception("Failed to fetch promoted experiment params for /clustering/defaults")
 
     return _defaults
 
@@ -393,7 +393,7 @@ def _find_job_by_scenario_id(scenario_id: str) -> dict[str, Any] | None:
                     continue
             if params and params.get("scenario_id") == scenario_id:
                 return job
-    except Exception:
+    except Exception:  # noqa: BLE001 — job-store lookup: any backend error must degrade to "no running job" rather than 500
         log.warning("Job lookup failed for scenario %s", scenario_id, exc_info=True)
     return None
 
@@ -471,6 +471,6 @@ def promote_clustering_scenario(scenario_id: str):
         return result
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found")
-    except Exception as e:
+    except (ValueError, RuntimeError, OSError) as e:
         log.exception("Promote scenario failed for %s", scenario_id)
         raise HTTPException(status_code=500, detail="Promote failed. Check server logs for details.") from e

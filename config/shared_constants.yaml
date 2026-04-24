@@ -8,11 +8,17 @@
 
 # ── Canonical definitions ────────────────────────────────────────────────
 
+# Service-level targets by ABC class. DB table `fact_service_level_targets`
+# is the AUTHORITATIVE source at runtime — this YAML block is a fallback for
+# bootstrap, tests, and scripts that have not yet been DB-wired. Resolution
+# is centralized in `common.core.service_levels.load_sl_targets_by_abc`
+# (DB → YAML fallback priority). See docs/specs/04-inventory-planning/
+# 10-service-level-unification.md for details.
 service_levels_by_abc: &sla
-  A: 0.98
-  B: 0.95
-  C: 0.90
-  default: 0.95
+  A: 0.98   # A-class cycle service level (high-volume SKUs)
+  B: 0.95   # B-class cycle service level (mid-volume SKUs)
+  C: 0.90   # C-class cycle service level (low-volume SKUs)
+  default: 0.95  # fallback when ABC class is unknown
 
 z_table: &ztable
   0.85: 1.036

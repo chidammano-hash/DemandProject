@@ -34,7 +34,10 @@ import {
   AlertTriangle,
   Shield,
   Clock,
+  GitBranch,
+  ClipboardList,
 } from "lucide-react";
+import { EmptyState } from "@/components/EmptyState";
 
 import {
   CheckCatalogPanel,
@@ -230,8 +233,17 @@ export default function DataQualityTab() {
             );
           })}
           {domains.length === 0 && (
-            <div className="col-span-full py-8 text-center text-sm text-muted-foreground">
-              No data quality checks have been run yet. Click &quot;Run Checks Now&quot; to trigger a check.
+            <div className="col-span-full">
+              <EmptyState
+                variant="no-data"
+                icon={Shield}
+                title="No data quality checks have been run yet"
+                description='Run the full DQ battery to populate domain health scores and issue catalogs.'
+                steps={[
+                  { label: "Run checks via API", command: 'curl -X POST http://localhost:8000/dq/run' },
+                  { label: "Or trigger manually", command: "uv run python scripts/dq_run_checks.py" },
+                ]}
+              />
             </div>
           )}
         </div>
@@ -280,7 +292,16 @@ function PipelineLineageSection() {
     <div className="rounded-lg border border-border bg-card p-4">
       <h3 className="mb-3 text-sm font-medium text-foreground">Pipeline Lineage</h3>
       {batches.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No pipeline batches yet. Run <code className="rounded bg-muted px-1">make load-all</code> to ingest data.</p>
+        <EmptyState
+          variant="no-data"
+          icon={GitBranch}
+          title="No pipeline batches yet"
+          description='Batches appear after the ETL pipeline runs. Trigger an ingest to start the lineage log.'
+          steps={[
+            { label: "Normalize source CSVs", command: "make normalize-all" },
+            { label: "Load into Postgres", command: "make load-all" },
+          ]}
+        />
       ) : (
         <div className="space-y-2">
           {batches.map((b) => (
@@ -391,10 +412,25 @@ function CorrectionsSection() {
         {summaryLoading ? (
           <p className="text-xs text-muted-foreground">Loading\u2026</p>
         ) : skus.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            No DQ corrections recorded. Corrections appear after running{" "}
-            <code className="rounded bg-muted px-1">uv run python scripts/fix_dq_issues.py --apply</code>.
-          </p>
+          (domainFilter || fixTypeFilter) ? (
+            <EmptyState
+              variant="filtered"
+              title="No corrections match your filters"
+              description="Try switching to All Domains or All Fix Types to see more history."
+              onAction={() => { setDomainFilter(""); setFixTypeFilter(""); setOffset(0); }}
+              actionLabel="Clear filters"
+            />
+          ) : (
+            <EmptyState
+              variant="no-data"
+              icon={ClipboardList}
+              title="No DQ corrections recorded"
+              description='Corrections appear after the DQ auto-fixer runs against loaded data.'
+              steps={[
+                { label: "Apply auto-fixes", command: "uv run python scripts/fix_dq_issues.py --apply" },
+              ]}
+            />
+          )
         ) : (
           <>
             <div className="overflow-x-auto">

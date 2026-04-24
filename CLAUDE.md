@@ -34,18 +34,25 @@
 
 ```
 api/                         # FastAPI backend
-├── main.py                  # App entry point — mounts 69 routers
+├── main.py                  # App entry point — mounts 76 routers, FastAPI lifespan handler opens pool + starts APScheduler
 ├── core.py                  # SQL helpers, filtering, pagination
-├── pool.py                  # Connection pool management
+├── pool.py                  # Connection pool management (delegates env-var defaults to common/core/db.py)
 ├── llm.py                   # OpenAI client management
 └── routers/
-    ├── inventory/           # 22 routers — inv_planning_*, inventory, supply, fill_rate
-    ├── forecasting/         # 10 routers — accuracy, shap, competition, blended, fva, unified_model_tuning, cluster_experiments
-    ├── operations/          # 10 routers — sop, control_tower, storyboard, events
-    ├── platform/            # 10 routers — auth, users, config, notifications, webhooks
-    ├── intelligence/        # 4 routers — ai_planner, chat, intel, analysis
-    ├── core/                # 2 routers — dashboard, jobs
+    ├── inventory/           # 6 routers (sourcing, purchase_orders, demand_history, inventory_main, integrated_targets, inv_planning_algorithm_comparison)
+    ├── forecasting/         # 13 routers (accuracy_budget, backtest_management, champion_experiments, cluster_eda, cluster_experiments, expsys_accuracy, feature_lab, lgbm_tuning, model_tuning, sampled_backtest, sku_features, tuning_chat, unified_model_tuning)
+    ├── operations/          # 1 router (sop) — backward-compat shim at api/routers/sop.py
+    ├── platform/            # 2 routers (auth_router, users) — backward-compat shims at api/routers/
+    ├── intelligence/        # 2 routers (ai_planner, chat) — backward-compat shims at api/routers/
+    ├── core/                # 2 routers (dashboard, jobs) — backward-compat shims at api/routers/
     └── domains.py           # Catch-all generic domain endpoint (mounted LAST)
+
+NOTE: many legacy routers still live at the flat `api/routers/` root
+(supply.py, inv_planning_*.py, production_forecast.py, storyboard.py,
+events.py, shap.py, clusters.py, etc.). Only clearly-owned cases were
+moved into the new subdirectories in the first pass. New routers MUST
+be placed directly in the correct subdirectory — do not add files to
+the flat `api/routers/` root.
 
 common/                      # Shared Python modules (backward-compat shims at root)
 ├── core/                    # db, utils, planning_date, constants, sql_helpers, domain_specs
@@ -118,6 +125,8 @@ make pipeline-customer-demand  # Normalize + load customer demand
 make api               # FastAPI on :8000
 make ui-init           # Install npm deps
 make ui                # React dev server on :5173
+# From frontend/ with API on :8000:
+#   npm run gen:types  # Regenerate src/api/generated/schema.ts from /openapi.json
 
 # ML Pipelines
 make cluster-all       # Unified clustering pipeline (creates experiment, runs features + training + labeling, auto-promotes)
@@ -258,6 +267,8 @@ These are hard constraints that cause bugs or test failures if violated.
 - **API test pattern**: Use inline `httpx.AsyncClient(transport=ASGITransport(app))` with `patch("api.core._get_pool")`.
 - **`POST /{model_id}/train` only accepts tree models** — foundation and `deep_learning` models return 400. Only `type === "tree"` models (lgbm, catboost, xgboost variants) support production training.
 - **Forecast promotion workflow**: All model predictions load to `fact_candidate_forecast` first. Only the promoted model's rows are copied to `fact_production_forecast` via `POST /backtest-management/{model_id}/promote`. Champion promotion uses DFU-level assignments from `data/champion/dfu_assignments.csv`.
+- **Admin endpoints (`/admin/*`)**: Platform-ops tooling lives in `api/routers/platform/admin.py`, guarded by `require_api_key`. `POST /admin/llm/reset` closes + clears the OpenAI/Anthropic client singletons so the next LLM call picks up rotated keys. `POST /admin/tuning/invalidate-stale` clears the `stale` flag on `cluster_tuning_profile` rows when the column exists; degrades to a logged no-op (status `noop`) when the column is absent or the DB returns `psycopg.Error`.
+- **`model_registry.build_model(algorithm_id, params=None)`**: Generic estimator factory. Reads the algorithm entry from `forecast_pipeline_config.yaml` `algorithms:`, translates canonical param names via `to_native_params()`, and returns a configured `LGBMRegressor` / `CatBoostRegressor` / `XGBRegressor` for tree models. Foundation / DL / statistical families return a lightweight `_FoundationStub` (real loaders still live in their `run_backtest_*` scripts). Unknown ids raise `UnknownAlgorithm` (a `ValueError` subclass).
 
 ### Frontend Patterns
 
@@ -283,7 +294,7 @@ These are hard constraints that cause bugs or test failures if violated.
 - **Multi-stage feature selection**: `shap_selector.py` runs 4 stages per timeframe: (0) duplicate alias removal, (1) near-zero variance filter, (2) correlation pre-filter, (3) SHAP cumulative selection. Configured via `correlation_filter`, `variance_filter` params in `forecast_pipeline_config.yaml`. **Per-cluster SHAP**: `compute_timeframe_shap_per_cluster()` runs SHAP independently per cluster, returning `dict[str, list[str]]` (cluster -> selected features). Sparse clusters with too few non-zero rows skip SHAP and keep all features. Stratified sampling (50/50 zero/non-zero) used for clusters with >50% zeros.
 - **Per-cluster tuning profiles**: `config/cluster_tuning_profiles.yaml` defines per-cluster hyperparameter overrides. Profiles are matched in two phases: Phase 1 matches by `cluster_name` (exact match against `ml_cluster` label via `match_criteria.cluster_name`); Phase 2 falls back to statistical criteria (mean_demand, cv_demand, zero_demand_pct, etc.). First match wins per `_PROFILE_PRIORITY` order. Resolved via `resolve_cluster_params()` in `backtest_framework.py`.
 - **Intermittent cluster routing**: Clusters with >70% zero-demand rows (`intermittent_threshold`) are routed to rolling mean baseline instead of tree models during backtest. Configured via `backtest.baseline_intermittent` and `backtest.intermittent_threshold` in `forecast_pipeline_config.yaml`.
-- **Model registry for tree backtests**: Use `common/ml/model_registry.py` for all model-specific logic — `fit_model()`, `get_best_iteration()`, `to_native_params()`. Do NOT add new if/elif/else fit blocks in backtest scripts. Early stopping uses standardized 3% patience via `compute_early_stop_patience()`.
+- **Model registry for tree backtests**: Use `common/ml/model_registry.py` for all model-specific logic — `fit_model()`, `get_best_iteration()`, `to_native_params()`. Do NOT add new if/elif/else fit blocks in backtest scripts. Early stopping uses standardized 5% patience via `compute_early_stop_patience()` (10% for sparse/intermittent clusters).
 - **Stub table pattern**: When a materialized view depends on a future feature's table, create it with `CREATE TABLE IF NOT EXISTS` and minimum columns. LEFT JOIN produces NULL → neutral scores until real data flows.
 - **Backward-compatible imports**: `common/` root has shim modules that re-export from subpackages (e.g., `from common.db import get_db_params` works via shim → `common/core/db.py`). New code may use either path; existing imports remain valid.
 - **Structured logging**: Scripts use `logging.getLogger(__name__)` — no raw `print()`. `basicConfig()` only in `__main__` blocks.

@@ -7,6 +7,15 @@
  * - Storyboard exceptions (rule-based threshold alerts)
  *
  * Layout: KPI Summary Bar -> Unified Exception Feed -> Trend Chart
+ *
+ * TODO (UX-2 Gen-4 Roadmap): Consolidate with ControlTowerTab.
+ *
+ * CommandCenterTab is the canonical triage overview wired into the sidebar
+ * ("commandCenter"). ControlTowerTab is a 433-line legacy 5-zone dashboard
+ * that was superseded by this screen but remains reachable via URL state
+ * (`?tab=controlTower`). Merging them requires reconciling overlapping KPI
+ * queries, migrating the trend-window chooser, and verifying no deep-link
+ * consumers rely on the old key. Deferred pending UX review.
  */
 import { useState, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";

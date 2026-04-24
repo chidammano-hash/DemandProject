@@ -4,8 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { KeyboardShortcutHelp } from "@/components/KeyboardShortcutHelp";
 
 describe("KeyboardShortcutHelp", () => {
-  it("renders the title", () => {
+  it("renders as an accessible dialog with a title", () => {
     render(<KeyboardShortcutHelp onClose={vi.fn()} />);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeInTheDocument();
     expect(screen.getByText("Keyboard Shortcuts")).toBeInTheDocument();
   });
 
@@ -21,26 +23,17 @@ describe("KeyboardShortcutHelp", () => {
     expect(screen.getByText("Toggle column fields")).toBeInTheDocument();
   });
 
-  it("calls onClose when backdrop clicked", async () => {
+  it("calls onClose when Escape is pressed (Radix Dialog default)", async () => {
     const onClose = vi.fn();
-    const { container } = render(<KeyboardShortcutHelp onClose={onClose} />);
-    // Click the backdrop (outermost div)
-    const backdrop = container.firstChild as HTMLElement;
-    await userEvent.click(backdrop);
+    render(<KeyboardShortcutHelp onClose={onClose} />);
+    await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("does not call onClose when content clicked", async () => {
-    const onClose = vi.fn();
-    render(<KeyboardShortcutHelp onClose={onClose} />);
-    // Click on the title (inside the modal content)
-    await userEvent.click(screen.getByText("Keyboard Shortcuts"));
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
   it("renders kbd elements for keys", () => {
-    const { container } = render(<KeyboardShortcutHelp onClose={vi.fn()} />);
-    const kbdElements = container.querySelectorAll("kbd");
+    render(<KeyboardShortcutHelp onClose={vi.fn()} />);
+    // Radix renders into a portal — query the document, not the test container.
+    const kbdElements = document.querySelectorAll("kbd");
     expect(kbdElements.length).toBeGreaterThan(10);
   });
 });

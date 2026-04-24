@@ -37,8 +37,21 @@ import psycopg
 from common.db import get_db_params  # noqa: E402
 from common.planning_date import get_planning_date  # noqa: E402
 from common.services.perf_profiler import profiled_section  # noqa: E402
+from common.twin import TwinState  # noqa: E402
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "inventory_planning_config.yaml"
+
+
+def load_twin_state(
+    conn, item_id: str, loc: str, *, lookback_months: int = 24
+) -> TwinState:
+    """Thin wrapper around ``TwinState.from_db``.
+
+    Uses the unified Digital Twin state loader (Gen-4 Cross-cutting #7).
+    Kept as a module-level function so callers (tests, other scripts) can
+    import it without instantiating psycopg connections themselves.
+    """
+    return TwinState.from_db(conn, item_id, loc, lookback_months=lookback_months)
 
 
 def compute_service_level_curve(
@@ -96,12 +109,75 @@ def find_recommended_ss(curve: list[dict], target_csl: float) -> float | None:
     return None
 
 
+def empirical_quantile_ss(
+    demand_obs: list[float],
+    lt_obs: list[float],
+    n_simulations: int,
+    target_csl: float,
+    random_seed: int = 42,
+) -> float:
+    """Compute safety stock from the empirical quantile of simulated lead-time demand.
+
+    Instead of sweeping a grid of SS levels and looking up the first one that
+    hits target CSL (normal_approx grid), we simulate the total demand-during-LT
+    distribution once and take the ``target_csl`` percentile as SS.
+
+    This is exact (no z-score / normality assumption) and much cheaper since
+    it's one pass over the sim arrays.
+
+    Gen-4 Roadmap item #2.
+    """
+    xp = _xp
+    if not demand_obs or not lt_obs:
+        raise ValueError("empirical_quantile_ss requires non-empty demand and LT observations")
+    if not (0.0 < target_csl < 1.0):
+        raise ValueError(f"target_csl must be in (0, 1); got {target_csl!r}")
+
+    rng = np.random.default_rng(random_seed)
+    demand_pool_np = np.array(demand_obs, dtype=float)
+    lt_pool_np = np.array(lt_obs, dtype=float)
+
+    lt_sim_np = rng.choice(lt_pool_np, size=n_simulations, replace=True)
+    lt_ints_np = np.maximum(1, np.round(lt_sim_np).astype(int))
+    max_lt = int(lt_ints_np.max())
+    all_demand_np = rng.choice(demand_pool_np, size=(n_simulations, max_lt), replace=True)
+
+    if _GPU_AVAILABLE:
+        lt_ints = cp.asarray(lt_ints_np)
+        all_demand = cp.asarray(all_demand_np)
+    else:
+        lt_ints = lt_ints_np
+        all_demand = all_demand_np
+
+    cumsum = xp.cumsum(all_demand, axis=1)
+    demand_during_lt = cumsum[xp.arange(n_simulations), lt_ints - 1]
+
+    # Empirical target_csl-percentile of LT demand = SS target.
+    if _GPU_AVAILABLE:
+        demand_during_lt = demand_during_lt.get()
+    ss_value = float(np.quantile(demand_during_lt, target_csl))
+    return max(0.0, ss_value)
+
+
 def run(
     item_id: str,
     loc: str,
     n_simulations: int | None = None,
     target_csl: float | None = None,
+    method: str = "normal_approx",
 ) -> dict:
+    """Run Monte Carlo SS simulation.
+
+    method:
+        'normal_approx'     -> grid sweep → SS where CSL hits target (legacy).
+        'empirical_quantile'-> SS = empirical target_csl-percentile of lead-time
+                               demand distribution. See empirical_quantile_ss().
+    """
+    if method not in {"normal_approx", "empirical_quantile"}:
+        raise ValueError(
+            f"method must be 'normal_approx' or 'empirical_quantile'; got {method!r}"
+        )
+
     with profiled_section("load_config"):
         config = yaml.safe_load(open(CONFIG_PATH))
         sim_cfg = config.get("simulation", {})
@@ -169,8 +245,21 @@ def run(
     ss_levels = list(np.linspace(0, max_ss, ss_levels_to_test))
 
     with profiled_section("run_simulation"):
-        curve = compute_service_level_curve(daily_demand_obs, lt_obs, n_simulations, ss_levels, random_seed)
-        recommended_ss = find_recommended_ss(curve, target_csl)
+        if method == "empirical_quantile":
+            # Single-pass percentile of simulated LT-demand distribution.
+            recommended_ss = empirical_quantile_ss(
+                daily_demand_obs, lt_obs, n_simulations, target_csl, random_seed
+            )
+            # Also build a coarse CSL curve for the audit record so the UI
+            # can still show a sweep if method=empirical_quantile.
+            curve = compute_service_level_curve(
+                daily_demand_obs, lt_obs, n_simulations, ss_levels, random_seed
+            )
+        else:
+            curve = compute_service_level_curve(
+                daily_demand_obs, lt_obs, n_simulations, ss_levels, random_seed
+            )
+            recommended_ss = find_recommended_ss(curve, target_csl)
 
     avg_daily_demand = demand_mean if demand_mean > 0 else 1.0
     recommended_ss_days = (recommended_ss / avg_daily_demand) if recommended_ss is not None else None
@@ -234,10 +323,20 @@ if __name__ == "__main__":
     parser.add_argument("--loc", required=True, help="Location code")
     parser.add_argument("--n-simulations", type=int, help="Number of simulations (default: config)")
     parser.add_argument("--target-csl", type=float, help="Target cycle service level (0-1)")
+    parser.add_argument(
+        "--method",
+        choices=["normal_approx", "empirical_quantile"],
+        default="normal_approx",
+        help=(
+            "SS derivation method. 'empirical_quantile' drives SS from the "
+            "target_csl-percentile of simulated LT demand (Gen-4 roadmap #2)."
+        ),
+    )
     args = parser.parse_args()
     run(
         item_id=args.item,
         loc=args.loc,
         n_simulations=args.n_simulations,
         target_csl=args.target_csl,
+        method=args.method,
     )

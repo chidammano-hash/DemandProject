@@ -7,13 +7,17 @@ Endpoints:
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from api.auth import require_api_key
 from api.core import get_conn
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["inv-planning-projection"])
 
@@ -263,8 +267,8 @@ async def refresh_projection(body: ProjectionRefreshRequest, api_key: str = Depe
         )
         try:
             refresh_summary_view(conn)
-        except Exception:
-            pass
+        except psycopg.Error:
+            logger.exception("Failed to refresh projection summary view for %s@%s", body.item_id, body.loc)
 
     return {
         "status": "ok",

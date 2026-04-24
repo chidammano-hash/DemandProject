@@ -32,6 +32,31 @@ export default tseslint.config(
       ],
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-empty-object-type": "off",
+
+      // Gen-4 Roadmap conventions. See frontend/CONTRIBUTING.md.
+      //
+      // (a) Discourage inline `queryKey: [ ... ]` array literals. Query keys
+      //     must come from a `<domain>Keys` factory in src/api/queries/.
+      // (b) Discourage accepting `theme` as a prop. Read it from the theme
+      //     context (`useThemeContext()`) instead.
+      //
+      // Uses `warn` (not `error`) so in-flight branches aren't blocked;
+      // code review + this warn is enough to prevent drift.
+      "no-restricted-syntax": [
+        "warn",
+        {
+          selector:
+            "Property[key.name='queryKey'][value.type='ArrayExpression']",
+          message:
+            "Use a `<domain>Keys` factory from src/api/queries/ instead of a raw array literal for queryKey. See frontend/CONTRIBUTING.md §1.",
+        },
+        {
+          selector:
+            "TSPropertySignature[key.name='theme']",
+          message:
+            "Do not accept `theme` as a prop. Read from `useThemeContext()` instead. See frontend/CONTRIBUTING.md §2.",
+        },
+      ],
     },
   }
 );

@@ -26,8 +26,14 @@ import { formatFixed as fmt } from "@/lib/formatters";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
 
 function pct(n: number | null | undefined, scale = 1): string {
-  if (n == null) return "—";
+  if (n == null || Number.isNaN(Number(n))) return "—";
   return `${(Number(n) * scale).toFixed(1)}%`;
+}
+
+/** Safe integer formatter that never throws on undefined/null/NaN. */
+function num(n: number | null | undefined): string {
+  if (n == null || Number.isNaN(Number(n))) return "—";
+  return Number(n).toLocaleString();
 }
 
 import { getSeverityConfig } from "@/constants/severity";
@@ -131,6 +137,13 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
 
       {kpisLoading && <p className="text-sm text-muted-foreground">Loading control tower data...</p>}
 
+      {/* Warn if any upstream MV has not yet been refreshed. */}
+      {kpis?.warning && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+          {kpis.warning}
+        </div>
+      )}
+
       {/* ZONE 1: KPI Strip — 2-row layout: primary + secondary */}
       <div className="space-y-2">
         {/* Row 1: Primary KPIs */}
@@ -195,27 +208,31 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
           <h3 className="text-sm font-semibold">Health Distribution</h3>
           {h && (
             <div className="space-y-2">
-              {[
-                { tier: "healthy", count: h.healthy_count, color: "bg-green-500" },
-                { tier: "monitor", count: h.monitor_count, color: "bg-amber-500" },
-                { tier: "at_risk", count: h.at_risk_count, color: "bg-orange-500" },
-                { tier: "critical", count: h.critical_count, color: "bg-red-600" },
-              ].map(({ tier, count, color }) => (
-                <div key={tier} className="flex items-center gap-2 text-xs">
-                  <div className={`w-2 h-2 rounded-full ${color}`} />
-                  <span className="capitalize w-16">{tier.replace("_", " ")}</span>
-                  <div className="flex-1 rounded-full bg-muted h-2">
-                    <div
-                      className={`${color} h-2 rounded-full`}
-                      style={{ width: `${h.total_skus > 0 ? (count / h.total_skus) * 100 : 0}%` }}
-                    />
+              {(() => {
+                // Backend column is `total_dfus`; fall back to legacy `total_skus` when present.
+                const total = h.total_dfus ?? h.total_skus ?? 0;
+                return [
+                  { tier: "healthy", count: h.healthy_count ?? 0, color: "bg-green-500" },
+                  { tier: "monitor", count: h.monitor_count ?? 0, color: "bg-amber-500" },
+                  { tier: "at_risk", count: h.at_risk_count ?? 0, color: "bg-orange-500" },
+                  { tier: "critical", count: h.critical_count ?? 0, color: "bg-red-600" },
+                ].map(({ tier, count, color }) => (
+                  <div key={tier} className="flex items-center gap-2 text-xs">
+                    <div className={`w-2 h-2 rounded-full ${color}`} />
+                    <span className="capitalize w-16">{tier.replace("_", " ")}</span>
+                    <div className="flex-1 rounded-full bg-muted h-2">
+                      <div
+                        className={`${color} h-2 rounded-full`}
+                        style={{ width: `${total > 0 ? (count / total) * 100 : 0}%` }}
+                      />
+                    </div>
+                    <span className="w-10 text-right">{num(count)}</span>
                   </div>
-                  <span className="w-10 text-right">{count.toLocaleString()}</span>
-                </div>
-              ))}
+                ));
+              })()}
               <p className="text-xs text-muted-foreground mt-2">
-                Avg health: {h.avg_health_score?.toFixed(1) ?? "—"} |
-                Below SS: {h.below_ss_count.toLocaleString()} SKUs
+                Avg health: {h.avg_health_score != null ? h.avg_health_score.toFixed(1) : "—"} |
+                Below SS: {num(h.below_ss_count)} SKUs
               </p>
             </div>
           )}
@@ -305,8 +322,8 @@ export default function ControlTowerTab({ onNavigate }: { onNavigate?: (tab: str
                 {item.is_below_ss && (
                   <p className="text-red-600 font-semibold">⚠ Below SS</p>
                 )}
-                {item.recommended_order_qty != null && (
-                  <p>Order: {Math.round(item.recommended_order_qty).toLocaleString()} units</p>
+                {item.recommended_order_qty != null && !Number.isNaN(item.recommended_order_qty) && (
+                  <p>Order: {num(Math.round(item.recommended_order_qty))} units</p>
                 )}
                 {item.fill_rate_last_3m != null && (
                   <p>Fill Rate: {pct(item.fill_rate_last_3m, 100)}</p>

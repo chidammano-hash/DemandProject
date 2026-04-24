@@ -1,6 +1,71 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+// Gen-4 Roadmap Coder-2 P0: array-driven proxy loop.
+// Add a new API path prefix by appending one line below. `make audit-routers`
+// compares this list against FastAPI mounts in api/main.py.
+const API_PATH_PREFIXES: readonly string[] = [
+  "/domains",
+  "/health",
+  "/chat",
+  "/forecast",
+  "/sku",
+  "/sku-features",
+  "/competition",
+  "/market-intelligence",
+  "/inventory",
+  "/dashboard",
+  "/clustering",
+  "/jobs",
+  "/inv-planning",
+  "/fill-rate",
+  "/ai-planner",
+  "/control-tower",
+  "/storyboard",
+  "/supply",
+  "/analytics",
+  "/finance",
+  "/sop",
+  "/events",
+  "/scenarios",
+  "/auth",
+  "/users",
+  "/data-quality",
+  "/notifications",
+  "/collaboration",
+  "/demand-signals",
+  "/demand-history",
+  "/fva",
+  "/reports",
+  "/webhooks",
+  "/cache",
+  "/config",
+  "/sql-runner",
+  "/sourcing",
+  "/purchase-orders",
+  "/lgbm-tuning",
+  "/catboost-tuning",
+  "/xgboost-tuning",
+  "/cluster-eda",
+  "/cluster-experiments",
+  "/champion-experiments",
+  "/feature-lab",
+  "/accuracy-budget",
+  "/model-tuning",
+  "/expsys",
+  "/customer-analytics",
+  "/backtest-management",
+];
+
+const API_TARGET = "http://127.0.0.1:8000";
+
+const apiProxy = Object.fromEntries(
+  API_PATH_PREFIXES.map((prefix) => [
+    prefix,
+    { target: API_TARGET, changeOrigin: true },
+  ]),
+);
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -11,208 +76,7 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
-    proxy: {
-      "/domains": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/health": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/chat": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/forecast": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/sku": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/competition": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/market-intelligence": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/inventory": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/dashboard": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/clustering": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/jobs": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/inv-planning": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/fill-rate": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/ai-planner": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/control-tower": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/storyboard": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/supply": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/analytics": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/finance": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/sop": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/events": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/scenarios": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/auth": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/users": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/data-quality": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/notifications": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/collaboration": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/demand-signals": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/fva": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/reports": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/webhooks": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/cache": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/config": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/sql-runner": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/sourcing": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/purchase-orders": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/lgbm-tuning": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/catboost-tuning": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/xgboost-tuning": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/cluster-eda": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/feature-lab": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/accuracy-budget": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/model-tuning": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/cluster-experiments": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/champion-experiments": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/expsys": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/customer-analytics": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/demand-history": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/sku-features": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/backtest-management": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-    },
+    proxy: apiProxy,
   },
   build: {
     outDir: "dist",

@@ -1,3 +1,11 @@
+fm_spine:
+  enabled: true
+  model_id: chronos2_enriched
+  quantiles:
+  - 0.1
+  - 0.5
+  - 0.9
+  collapse_tree_variants: false
 algorithms:
   lgbm_cluster:
     type: tree
@@ -36,6 +44,7 @@ algorithms:
       reg_alpha: 0.1
       path_smooth: 0.5
       max_bin: 255
+      quantile_heads: []
   catboost_cluster:
     type: tree
     enabled: true
@@ -371,13 +380,15 @@ algorithms:
       window: 6
 backtest:
   n_timeframes: 10
-  embargo_months: 0
+  embargo_months: 1
   forecast_horizon: 6
   early_stop_pct: 0.05
   shap_retrain_threshold: 0.5
   shap_min_features: 20
   n_seeds: 1
   tweedie_variance_power: 1.5
+  baseline_intermittent: true
+  baseline_intermittent_window: 12
   intermittent_threshold: 0.7
   lumpy_threshold: 0.3
   output_dir: data/backtest
@@ -397,24 +408,27 @@ tuning:
   output_dir: data/tuning
   search_space_ref: hyperparameter_tuning.yaml
 champion:
-  strategy: expanding
+  strategy: rolling
   strategy_params:
-    min_prior_months: 5
+    window_months: 6
   fallback_model_id: seasonal_naive
-  metric: accuracy_pct
+  metric: wape
   lag: execution
   min_sku_rows: 3
   min_dfu_rows: 3
   champion_model_id: champion
+  promote_gate:
+    enabled: true
+    min_wape_improvement_pct: 1.0
+    min_coverage_frac: 0.8
+    bypass_token: null
   meta_learner:
     model_type: random_forest
     n_estimators: 200
     max_depth: 15
     test_months: 3
     performance_window: 6
-  models:
-  - chronos_bolt
-  - nbeats
+  models: null
 production_forecast:
   horizon_months: 24
   lookback_months: 36

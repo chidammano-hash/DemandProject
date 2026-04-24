@@ -34,7 +34,7 @@ describe("EChartContainer", () => {
   const baseOption = {
     xAxis: { type: "category" as const, data: ["A", "B", "C"] },
     yAxis: { type: "value" as const },
-    series: [{ type: "line" as const, data: [1, 2, 3] }],
+    series: [{ name: "sales", type: "line" as const, data: [1, 2, 3] }],
   };
 
   it("renders chart container", () => {
@@ -44,7 +44,7 @@ describe("EChartContainer", () => {
     expect(getByTestId("echarts-mock")).toBeInTheDocument();
   });
 
-  it("applies default height", () => {
+  it("applies default height to inner chart", () => {
     const { getByTestId } = render(
       <EChartContainer option={baseOption} theme="light" />
     );
@@ -60,10 +60,47 @@ describe("EChartContainer", () => {
     expect(el.style.height).toBe("500px");
   });
 
-  it("applies className", () => {
-    const { getByTestId } = render(
+  it("applies className to wrapper", () => {
+    const { getByRole } = render(
       <EChartContainer option={baseOption} theme="light" className="my-chart" />
     );
-    expect(getByTestId("echarts-mock").className).toContain("my-chart");
+    const wrapper = getByRole("img");
+    expect(wrapper.className).toContain("my-chart");
+  });
+
+  it("wraps chart with role=img for accessibility", () => {
+    const { getByRole } = render(
+      <EChartContainer option={baseOption} theme="light" />
+    );
+    const wrapper = getByRole("img");
+    expect(wrapper).toBeInTheDocument();
+    expect(wrapper.getAttribute("aria-label")).toMatch(/chart/i);
+  });
+
+  it("computes aria-label from series names", () => {
+    const { getByRole } = render(
+      <EChartContainer option={baseOption} theme="light" />
+    );
+    const wrapper = getByRole("img");
+    const label = wrapper.getAttribute("aria-label") ?? "";
+    expect(label).toContain("sales");
+    expect(label).toContain("3 data points");
+  });
+
+  it("respects explicit ariaLabel override", () => {
+    const { getByRole } = render(
+      <EChartContainer option={baseOption} theme="light" ariaLabel="Monthly sales trend" />
+    );
+    expect(getByRole("img").getAttribute("aria-label")).toBe("Monthly sales trend");
+  });
+
+  it("renders sr-only data table fallback", () => {
+    const { container } = render(
+      <EChartContainer option={baseOption} theme="light" />
+    );
+    const table = container.querySelector("table.sr-only");
+    expect(table).not.toBeNull();
+    // Header + 3 data rows
+    expect(table?.querySelectorAll("tbody tr").length).toBe(3);
   });
 });

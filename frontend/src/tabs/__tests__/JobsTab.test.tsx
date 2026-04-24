@@ -63,6 +63,7 @@ vi.mock("lucide-react", () => {
     Network: Stub, TrendingUp: Stub, Calendar: Stub, Timer: Stub,
     Repeat: Stub, X: Stub, Sparkles: Stub, Package: Stub, Boxes: Stub,
     Play: Stub, Plus: Stub, ArrowRight: Stub, ScrollText: Stub,
+    Database: Stub, FilterX: Stub, AlertTriangle: Stub,
   };
 });
 

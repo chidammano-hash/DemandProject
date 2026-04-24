@@ -1,18 +1,48 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { ErrorBoundary } from "react-error-boundary";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  MutationCache,
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import App from "./App";
 import "./index.css";
+import { toast } from "./components/Toaster";
+import { formatApiError, extractStatus } from "./lib/formatApiError";
+
+/**
+ * Retry at most twice on network / 5xx errors, never on 4xx (client errors
+ * won't fix themselves on retry).
+ */
+function shouldRetry(failureCount: number, error: unknown): boolean {
+  const status = extractStatus(error);
+  if (status != null && status >= 400 && status < 500) return false;
+  return failureCount < 2;
+}
+
+/**
+ * Global error handler — sanitizes and surfaces a non-blocking toast so one
+ * failing query doesn't crash the UI or silently fail.
+ */
+function handleGlobalError(error: unknown): void {
+  toast.error(formatApiError(error));
+}
 
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({ onError: handleGlobalError }),
+  mutationCache: new MutationCache({ onError: handleGlobalError }),
   defaultOptions: {
     queries: {
       staleTime: 30_000,
       gcTime: 5 * 60_000,
-      retry: 2,
+      retry: shouldRetry,
       refetchOnWindowFocus: true,
+    },
+    mutations: {
+      retry: false,
     },
   },
 });

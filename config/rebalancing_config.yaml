@@ -14,6 +14,33 @@ optimization:
   time_limit_seconds: 60         # solver wall clock limit
   objective: "min_cost"          # min_cost | max_service | equalize_dos
 
+# ═══ GEN-4 SC-4: OBJECTIVE SELECTION ═══
+# Defines behavior for each objective branch. min_cost is the default
+# cost-minimising greedy. max_service prioritises filling the largest
+# shortages first (ignore transfer cost if ROI is positive). equalize_dos
+# targets a level DOS across the network by moving surplus to deficit.
+objectives:
+  min_cost:
+    description: "Cost-optimal greedy (default)"
+  max_service:
+    description: "Fill largest shortage first; tiebreak by urgency"
+    shortage_weight: 1.0            # weight on absolute shortage qty
+    urgency_tiebreak: true          # when shortage equal, prefer higher urgency
+  equalize_dos:
+    description: "Balance days-of-supply across the network"
+    target_dos_tolerance_pct: 0.10  # within ±10% of network mean DOS = balanced (skip)
+    max_move_per_item: 1000         # cap qty moved per item per run (safety)
+
+# ═══ GEN-4 SC-4: AVAILABLE-SUPPLY SOURCES ═══
+# Rebalancing now considers on-hand + in-transit + open POs when projecting
+# supply. Toggle each source independently for A/B experiments.
+available_supply:
+  include_on_hand: true
+  include_in_transit: true          # fact_inventory_in_transit (if present)
+  include_open_pos: true            # fact_purchase_orders WHERE is_closed = FALSE
+  projected_stockout_trigger: true  # trigger when projected_stockout_date < planning_date + transfer_lt
+
+
 triggers:
   excess_threshold_pct: 1.50     # on_hand / ss_target > 150% = excess
   shortage_threshold_pct: 0.80   # on_hand / ss_target < 80% = shortage

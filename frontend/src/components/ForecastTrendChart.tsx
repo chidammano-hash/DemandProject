@@ -1,14 +1,26 @@
 import { memo } from "react";
 import { EChartContainer } from "@/components/EChartContainer";
 
+interface ForecastTrendPoint {
+  month: string;
+  forecast: number;
+  actual: number;
+  /** Lower 80% quantile. When paired with `upper_80` and `includeCI` is true, renders as a shaded band. */
+  lower_80?: number;
+  /** Upper 80% quantile. */
+  upper_80?: number;
+}
+
 interface ForecastTrendChartProps {
-  data: { month: string; forecast: number; actual: number }[];
+  data: ForecastTrendPoint[];
   theme: "light" | "dark";
   chartColors: { grid: string; axis: string; tooltip: string };
   seriesColors: string[];
+  /** UX-3: render the 80% confidence-interval band when data has lower_80/upper_80. */
+  includeCI?: boolean;
 }
 
-export const ForecastTrendChart = memo(function ForecastTrendChart({ data, theme, chartColors, seriesColors }: ForecastTrendChartProps) {
+export const ForecastTrendChart = memo(function ForecastTrendChart({ data, theme, chartColors, seriesColors, includeCI = false }: ForecastTrendChartProps) {
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
@@ -20,6 +32,16 @@ export const ForecastTrendChart = memo(function ForecastTrendChart({ data, theme
   const months = data.map((d) => d.month);
   const forecasts = data.map((d) => d.forecast);
   const actuals = data.map((d) => d.actual);
+  // The CI band renders as two stacked "line" series: the lower bound drawn
+  // invisibly, then the delta (upper - lower) stacked on top with areaStyle.
+  // This is the canonical ECharts pattern for a filled band between two lines.
+  const hasCI =
+    includeCI &&
+    data.every((d) => d.lower_80 != null && d.upper_80 != null);
+  const lowers = hasCI ? data.map((d) => d.lower_80 as number) : [];
+  const bandHeights = hasCI
+    ? data.map((d) => (d.upper_80 as number) - (d.lower_80 as number))
+    : [];
 
   const option = {
     tooltip: {
@@ -29,7 +51,7 @@ export const ForecastTrendChart = memo(function ForecastTrendChart({ data, theme
       textStyle: { color: theme === "dark" ? "#e5e5e5" : "#171717", fontSize: 12 },
     },
     legend: {
-      data: ["Forecast", "Actual"],
+      data: hasCI ? ["Forecast", "Actual", "80% CI"] : ["Forecast", "Actual"],
       bottom: 0,
       textStyle: { color: chartColors.axis, fontSize: 11 },
     },
@@ -55,6 +77,33 @@ export const ForecastTrendChart = memo(function ForecastTrendChart({ data, theme
       },
     },
     series: [
+      // CI band (drawn first so it sits behind the forecast/actual lines).
+      ...(hasCI
+        ? [
+            {
+              name: "_ci_lower",
+              type: "line" as const,
+              data: lowers,
+              stack: "ci",
+              symbol: "none",
+              lineStyle: { opacity: 0 },
+              itemStyle: { opacity: 0 },
+              silent: true,
+              showInLegend: false,
+              tooltip: { show: false },
+            },
+            {
+              name: "80% CI",
+              type: "line" as const,
+              data: bandHeights,
+              stack: "ci",
+              symbol: "none",
+              lineStyle: { opacity: 0 },
+              areaStyle: { color: seriesColors[0], opacity: 0.18 },
+              tooltip: { show: false },
+            },
+          ]
+        : []),
       {
         name: "Forecast",
         type: "line" as const,

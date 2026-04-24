@@ -307,3 +307,113 @@ async def test_submit_load_no_predictions():
 
     assert resp.status_code == 404
     assert "No predictions CSV" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# 6. POST /backtest-management/{model_id}/promote — Gen-4 CC#6 gating
+# ---------------------------------------------------------------------------
+
+
+def _gate_cfg_enabled(min_wape_impr: float = 1.0, min_cov: float = 0.8) -> dict:
+    return {
+        "champion": {
+            "promote_gate": {
+                "enabled": True,
+                "min_wape_improvement_pct": min_wape_impr,
+                "min_coverage_frac": min_cov,
+                "bypass_token": None,
+            }
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_promote_gate_rejects_when_wape_regresses():
+    pool, conn, cursor = _make_pool()
+    # Sequence of cursor calls inside promote_model when the gate triggers:
+    #  1) SELECT active champion      -> row
+    #  2) SELECT champion wape        -> row
+    #  3) SELECT candidate wape       -> row (worse)
+    #  4) append_decision: SELECT latest ledger hash (fetchone)
+    #  5) append_decision: INSERT ... RETURNING id (fetchone)
+    # After raising we expect the HTTP response to be 409.
+    cursor.fetchone.side_effect = [
+        ("catboost_cluster", 1000),      # active champion row (model, dfu_count)
+        (0.25,),                          # champion wape
+        (0.30,),                          # candidate wape (worse)
+        (None,),                          # ledger previous hash (none)
+        (1,),                             # ledger insert RETURNING id
+    ]
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.load_forecast_pipeline_config", return_value=_gate_cfg_enabled()),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/lgbm_cluster/promote")
+
+    assert resp.status_code == 409
+    assert "wape_improvement_too_small" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_promote_gate_first_promotion_allowed_and_logs_to_ledger():
+    pool, conn, cursor = _make_pool()
+    # No active champion -> gate allows as first_promotion; ledger logs success.
+    # Then the rest of promote_model proceeds: COUNT staging, DELETE production,
+    # INSERT from staging, COUNT DFUs, INSERT into model_promotion_log.
+    cursor.fetchone.side_effect = [
+        None,           # SELECT active champion -> no row -> first_promotion
+        (None,),        # ledger prev hash (genesis)
+        (1,),           # ledger insert returning id
+        (500,),         # staging count
+        (250,),         # DFU count
+        (99,),          # lineage emit returning id (Gen-4 G)
+    ]
+    cursor.rowcount = 500
+
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.load_forecast_pipeline_config", return_value=_gate_cfg_enabled()),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/lgbm_cluster/promote")
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["model_id"] == "lgbm_cluster"
+    assert data["promotion_type"] == "single"
+
+
+@pytest.mark.asyncio
+async def test_promote_gate_disabled_skips_checks():
+    pool, conn, cursor = _make_pool()
+    # Gate disabled -> short-circuits to "applied" ledger log, then:
+    #   staging COUNT -> DFU COUNT -> ledger prev_hash -> ledger insert id.
+    cursor.fetchone.side_effect = [
+        (None,),        # ledger prev_hash (genesis fallback)
+        (1,),           # ledger insert returning id (for applied log)
+        (500,),         # staging count
+        (250,),         # DFU count
+        (99,),          # lineage emit returning id (Gen-4 G)
+    ]
+    cursor.rowcount = 500
+
+    cfg = {"champion": {"promote_gate": {"enabled": False}}}
+    with (
+        patch("api.core._get_pool", return_value=pool),
+        patch(f"{_ROUTER_MOD}.load_forecast_pipeline_config", return_value=cfg),
+    ):
+        from api.main import app
+
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/backtest-management/lgbm_cluster/promote")
+
+    assert resp.status_code == 201

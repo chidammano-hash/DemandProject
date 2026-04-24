@@ -8,7 +8,10 @@ import { buildSearchParams } from "./helpers";
 export interface ControlTowerKpis {
   computed_at: string | null;
   health: {
-    total_skus: number; healthy_count: number; monitor_count: number;
+    // Backend field is `total_dfus`; legacy `total_skus` retained as alias for in-flight components.
+    total_dfus: number;
+    total_skus?: number;
+    healthy_count: number; monitor_count: number;
     at_risk_count: number; critical_count: number;
     avg_health_score: number | null; avg_ss_coverage: number | null;
     below_ss_count: number; below_ss_pct: number | null; avg_portfolio_dos: number | null;
@@ -20,6 +23,8 @@ export interface ControlTowerKpis {
   fill_rate: { portfolio_fill_rate_3m: number | null; total_shortage_qty_3m: number | null };
   demand_signals: { urgent_demand_signals: number; projected_stockouts_today: number };
   intramonth: { items_with_stockout_this_month: number; extended_stockouts_this_month: number };
+  /** Present when upstream materialized views have not yet been refreshed. */
+  warning?: string;
 }
 
 export interface ControlTowerAlert {

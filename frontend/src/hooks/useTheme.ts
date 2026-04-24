@@ -5,13 +5,23 @@ import { PRODUCT_THEMES } from "@/constants/themes";
 export type ColorMode = "light" | "soft" | "dark";
 
 const MODE_KEY = "ds-color-mode";
+const EXPLICIT_KEY = "ds-color-mode-explicit";
+
+function prefersDark(): boolean {
+  try {
+    return typeof window !== "undefined"
+      && typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  } catch { return false; }
+}
 
 function getInitialMode(): ColorMode {
   try {
     const stored = localStorage.getItem(MODE_KEY) as ColorMode | null;
     if (stored && (stored === "light" || stored === "soft" || stored === "dark")) return stored;
   } catch { /* ignore */ }
-  return "light";
+  // No explicit user choice — follow OS
+  return prefersDark() ? "dark" : "light";
 }
 
 /** Map a ThemePalette to CSS custom properties on the root element */
@@ -93,11 +103,33 @@ export function useTheme() {
     return () => clearTimeout(timer);
   }, [colorMode, productTheme]);
 
+  // Listen for OS prefers-color-scheme changes — only when the user has not
+  // made an explicit choice via the mode toggle.
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mql = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e: MediaQueryListEvent) => {
+      try {
+        if (localStorage.getItem(EXPLICIT_KEY) === "1") return;
+      } catch { /* ignore */ }
+      setColorModeState(e.matches ? "dark" : "light");
+    };
+    if (typeof mql.addEventListener === "function") {
+      mql.addEventListener("change", handler);
+      return () => mql.removeEventListener("change", handler);
+    }
+    // Safari fallback
+    mql.addListener(handler);
+    return () => mql.removeListener(handler);
+  }, []);
+
   const setColorMode = useCallback((mode: ColorMode) => {
+    try { localStorage.setItem(EXPLICIT_KEY, "1"); } catch { /* ignore */ }
     setColorModeState(mode);
   }, []);
 
   const toggleColorMode = useCallback(() => {
+    try { localStorage.setItem(EXPLICIT_KEY, "1"); } catch { /* ignore */ }
     setColorModeState((m) => {
       if (m === "light") return "soft";
       if (m === "soft") return "dark";

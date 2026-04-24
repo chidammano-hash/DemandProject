@@ -1,8 +1,10 @@
 """Inventory Planning — IPfeature7: Exception Queue & Replenishment Recommendations endpoints."""
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
@@ -10,7 +12,53 @@ from pydantic import BaseModel
 from api.auth import require_api_key
 from api.core import _f, add_cross_dim_filters, get_conn, set_cache
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["inv-planning"])
+
+
+# ---------------------------------------------------------------------------
+# Exception lifecycle writer — Gen-4 Roadmap 1.9
+# ---------------------------------------------------------------------------
+def _record_lifecycle_transition(
+    cur,
+    *,
+    exception_id: str,
+    from_state: str | None,
+    to_state: str,
+    actor: str | None,
+    notes: str | None,
+    exception_type: str | None = None,
+    severity: str | None = None,
+    item_id: str | None = None,
+    loc: str | None = None,
+    financial_impact: float | None = None,
+) -> None:
+    """Append a row to fact_exception_lifecycle.
+
+    Best-effort: the table may not exist yet on older deployments, so we
+    catch psycopg.Error and log without failing the parent transaction's
+    user-visible outcome. Callers MUST commit the parent transaction.
+    """
+    try:
+        cur.execute(
+            """
+            INSERT INTO fact_exception_lifecycle
+                (exception_id, from_state, to_state, actor, notes,
+                 exception_type, severity, item_id, loc, financial_impact)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            [
+                exception_id, from_state, to_state, actor, notes,
+                exception_type, severity, item_id, loc, financial_impact,
+            ],
+        )
+    except psycopg.Error as exc:
+        # Table may be missing (older env). Log + continue so the business
+        # endpoint still succeeds.
+        logger.exception(
+            "Failed to write fact_exception_lifecycle row for %s: %s", exception_id, exc
+        )
 
 
 _VALID_EXCEPTION_TYPES = {
@@ -262,6 +310,20 @@ def acknowledge_exception(
         with conn.cursor() as cur:
             cur.execute(sql, [body.acknowledged_by, now, body.notes, now, exception_id])
             row = cur.fetchone()
+            if row:
+                # Gen-4 Roadmap 1.9 — log state transition open -> acknowledged.
+                _record_lifecycle_transition(
+                    cur,
+                    exception_id=str(row[0]),
+                    from_state="open",
+                    to_state="acknowledged",
+                    actor=body.acknowledged_by,
+                    notes=body.notes,
+                    exception_type=row[3],
+                    severity=row[4],
+                    item_id=row[1],
+                    loc=row[2],
+                )
         conn.commit()
 
     if not row:
@@ -311,6 +373,23 @@ def update_exception_status(
         with conn.cursor() as cur:
             cur.execute(sql, [body.status, now, body.notes, now, exception_id])
             row = cur.fetchone()
+            if row:
+                # Gen-4 Roadmap 1.9 — log transition into ordered / resolved.
+                # The UPDATE does not return the pre-update status, so from_state
+                # is recorded as NULL (unknown). A future read-modify-write
+                # should capture it; keeping the audit entry is the priority.
+                _record_lifecycle_transition(
+                    cur,
+                    exception_id=str(row[0]),
+                    from_state=None,
+                    to_state=body.status,
+                    actor=row[6],  # acknowledged_by (most recent actor)
+                    notes=body.notes,
+                    exception_type=row[3],
+                    severity=row[4],
+                    item_id=row[1],
+                    loc=row[2],
+                )
         conn.commit()
 
     if not row:
@@ -326,6 +405,94 @@ def update_exception_status(
         "acknowledged_by": row[6],
         ts_col:           row[7].isoformat() if row[7] else None,
         "notes":          row[8],
+    }
+
+
+@router.get("/inv-planning/exceptions/{exception_id}/lifecycle")
+def get_exception_lifecycle(
+    exception_id: str,
+    response: FastAPIResponse,
+) -> dict:
+    """Return the append-only lifecycle trail for one exception (Gen-4 1.9)."""
+    set_cache(response, max_age=30)
+    sql = """
+        SELECT lifecycle_id, from_state, to_state, transitioned_at, actor, notes
+        FROM fact_exception_lifecycle
+        WHERE exception_id = %s
+        ORDER BY transitioned_at ASC
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(sql, [exception_id])
+                rows = cur.fetchall()
+            except psycopg.Error as exc:
+                logger.exception("lifecycle query failed: %s", exc)
+                return {"exception_id": exception_id, "transitions": []}
+
+    return {
+        "exception_id": exception_id,
+        "transitions": [
+            {
+                "lifecycle_id":    int(r[0]),
+                "from_state":      r[1],
+                "to_state":        r[2],
+                "transitioned_at": r[3].isoformat() if r[3] else None,
+                "actor":           r[4],
+                "notes":           r[5],
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/inv-planning/exceptions/mttr")
+def get_exception_mttr(
+    response: FastAPIResponse,
+    exception_type: Optional[str] = None,
+    severity: Optional[str] = None,
+) -> dict:
+    """Mean time to resolve from the exception lifecycle audit (Gen-4 1.9)."""
+    set_cache(response, max_age=300)
+
+    wheres: list[str] = []
+    params: list = []
+    if exception_type:
+        wheres.append("exception_type = %s")
+        params.append(exception_type)
+    if severity and severity in _VALID_SEVERITIES:
+        wheres.append("severity = %s")
+        params.append(severity)
+    where_sql = ("WHERE " + " AND ".join(wheres)) if wheres else ""
+
+    sql = f"""
+        SELECT exception_type, severity, resolved_count,
+               mttr_hours_avg, mttr_hours_p50, mttr_hours_p90
+        FROM v_exception_mttr_summary
+        {where_sql}
+        ORDER BY exception_type, severity
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+            except psycopg.Error as exc:
+                logger.exception("mttr query failed: %s", exc)
+                return {"rows": []}
+
+    return {
+        "rows": [
+            {
+                "exception_type": r[0],
+                "severity":       r[1],
+                "resolved_count": int(r[2] or 0),
+                "mttr_hours_avg": _f(r[3]),
+                "mttr_hours_p50": _f(r[4]),
+                "mttr_hours_p90": _f(r[5]),
+            }
+            for r in rows
+        ],
     }
 
 

@@ -16,11 +16,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth import require_api_key
 from api.core import get_conn
-from common.utils import get_algorithm_roster
+from common.ai.decision_ledger import DecisionRecord, append_decision
+from common.ai.lineage import emit_event as emit_lineage_event
+from common.utils import get_algorithm_roster, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 
@@ -671,12 +674,177 @@ def submit_generate_forecast(model_id: str):
     return {"job_id": job_id, "model_id": model_id}
 
 
+# ---------------------------------------------------------------------------
+# Gen-4 Cross-cutting #6: Promotion Gate
+# ---------------------------------------------------------------------------
+
+
+def _load_promote_gate_config() -> dict[str, Any]:
+    """Read the promotion gate policy from forecast_pipeline_config.yaml.
+
+    Returns the ``champion.promote_gate`` block, or an empty dict if the
+    config can't be loaded. A disabled gate (``enabled: false``) or a
+    missing block both short-circuit to a no-op at the call site.
+    """
+    try:
+        cfg = load_forecast_pipeline_config()
+    except Exception:
+        logger.warning("Failed to load forecast pipeline config for promote gate; defaulting to no gating")
+        return {}
+    champ_cfg = (cfg or {}).get("champion", {}) or {}
+    return champ_cfg.get("promote_gate", {}) or {}
+
+
+def _evaluate_promotion_gate(
+    cur: Any,
+    model_id: str,
+    gate_cfg: dict[str, Any],
+    *,
+    bypass_token_from_caller: str | None = None,
+) -> tuple[bool, str, dict[str, Any]]:
+    """Return (allowed, reason, metrics) after checking the WAPE + coverage gates.
+
+    When the gate is disabled or absent, returns ``(True, "gate_disabled", {})``.
+    The caller is responsible for ledger logging regardless of outcome.
+    """
+    if not gate_cfg or not gate_cfg.get("enabled", False):
+        return True, "gate_disabled", {}
+
+    # Bypass path — audited at the call site.
+    configured_bypass = gate_cfg.get("bypass_token")
+    if configured_bypass and bypass_token_from_caller and configured_bypass == bypass_token_from_caller:
+        return True, "bypass_token_accepted", {}
+
+    min_impr_pct = float(gate_cfg.get("min_wape_improvement_pct", 0.0))
+    min_coverage = float(gate_cfg.get("min_coverage_frac", 0.0))
+    metrics: dict[str, Any] = {
+        "min_wape_improvement_pct": min_impr_pct,
+        "min_coverage_frac": min_coverage,
+    }
+
+    # Current champion metrics from the latest active promotion + its backtest row.
+    cur.execute(
+        """
+        SELECT mpl.model_id, mpl.dfu_count
+          FROM model_promotion_log mpl
+         WHERE mpl.is_active = TRUE
+         ORDER BY mpl.promoted_at DESC
+         LIMIT 1
+        """
+    )
+    active_row = cur.fetchone()
+    if active_row is None:
+        # Nothing to compare against — first-ever promotion is allowed.
+        metrics["reason_detail"] = "no_active_champion"
+        return True, "first_promotion", metrics
+
+    champion_model_id = active_row[0]
+    champion_dfu_count = int(active_row[1] or 0)
+    metrics["champion_model_id"] = champion_model_id
+    metrics["champion_dfu_count"] = champion_dfu_count
+
+    # Latest WAPE for both candidate and champion from backtest_run.
+    def _latest_wape(mid: str) -> float | None:
+        cur.execute(
+            """
+            SELECT wape FROM backtest_run
+             WHERE model_id = %s AND wape IS NOT NULL
+             ORDER BY created_at DESC
+             LIMIT 1
+            """,
+            (mid,),
+        )
+        row = cur.fetchone()
+        return float(row[0]) if row and row[0] is not None else None
+
+    champion_wape = _latest_wape(champion_model_id)
+    candidate_wape = _latest_wape(model_id)
+    metrics["champion_wape"] = champion_wape
+    metrics["candidate_wape"] = candidate_wape
+
+    if candidate_wape is None:
+        return False, "candidate_has_no_wape", metrics
+    if champion_wape is None:
+        # Missing baseline — allow but record, so the next run has a baseline.
+        metrics["reason_detail"] = "champion_wape_missing"
+        return True, "no_champion_baseline", metrics
+
+    # Relative WAPE improvement (lower is better).
+    if champion_wape <= 0:
+        rel_improvement_pct = 0.0
+    else:
+        rel_improvement_pct = (champion_wape - candidate_wape) / champion_wape * 100.0
+    metrics["wape_improvement_pct"] = rel_improvement_pct
+    if rel_improvement_pct < min_impr_pct:
+        return False, "wape_improvement_too_small", metrics
+
+    # Coverage gate: fraction of champion DFUs scored by the candidate's staging rows.
+    if champion_dfu_count > 0:
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT item_id || '|' || loc)
+              FROM fact_production_forecast_staging
+             WHERE model_id = %s
+            """,
+            (model_id,),
+        )
+        candidate_dfu_count = int((cur.fetchone() or (0,))[0] or 0)
+        coverage = candidate_dfu_count / champion_dfu_count if champion_dfu_count else 1.0
+        metrics["candidate_dfu_count"] = candidate_dfu_count
+        metrics["coverage_frac"] = coverage
+        if coverage < min_coverage:
+            return False, "coverage_below_min", metrics
+
+    return True, "all_gates_passed", metrics
+
+
+def _log_promotion_to_ledger(
+    cur: Any,
+    *,
+    model_id: str,
+    outcome: str,
+    payload: dict[str, Any],
+    actor: str | None,
+) -> None:
+    """Append a promotion decision to the AI decision ledger.
+
+    Failures are swallowed so a ledger outage cannot block a valid promotion;
+    they are logged at WARNING level for operator visibility.
+    """
+    try:
+        append_decision(
+            cur,
+            DecisionRecord(
+                agent_id="model_registry",
+                action_type="promote_model",
+                autonomy_tier="auto_within_policy",
+                subject_kind="model_id",
+                subject_id=model_id,
+                payload=payload,
+                policy_id="promote_gate",
+                actor=actor or "api",
+                outcome=outcome,
+            ),
+        )
+    except Exception as exc:
+        logger.warning("Failed to append promotion to decision ledger: %s", exc)
+
+
 @router.post("/{model_id}/promote", status_code=201, dependencies=[Depends(require_api_key)])
-def promote_model(model_id: str, notes: str | None = None, promoted_by: str | None = None):
+def promote_model(
+    model_id: str,
+    notes: str | None = None,
+    promoted_by: str | None = None,
+    bypass_token: str | None = None,
+):
     """Promote a model's staged forecasts to production.
 
     For model_id='champion', promotes per-DFU best-model selection.
     For any other model_id, promotes all staged rows for that single model.
+
+    Gen-4 Cross-cutting #6: a gate enforces a minimum WAPE improvement and
+    DFU coverage against the currently active champion. Every allow/reject
+    is recorded to the AI decision ledger.
     """
     is_champion = model_id == "champion"
     plan_version = datetime.now(UTC).strftime("%Y-%m")
@@ -684,6 +852,39 @@ def promote_model(model_id: str, notes: str | None = None, promoted_by: str | No
     champion_experiment_id: int | None = None
 
     with get_conn() as conn, conn.cursor() as cur:
+        # 0. Gate check (champion promotions bypass — they use experiment-level gating separately).
+        gate_cfg = _load_promote_gate_config()
+        if not is_champion:
+            allowed, reason, metrics = _evaluate_promotion_gate(
+                cur, model_id, gate_cfg, bypass_token_from_caller=bypass_token,
+            )
+            payload = {
+                "reason": reason,
+                "metrics": metrics,
+                "plan_version": plan_version,
+                "notes": notes,
+            }
+            if not allowed:
+                _log_promotion_to_ledger(
+                    cur,
+                    model_id=model_id,
+                    outcome="rejected",
+                    payload=payload,
+                    actor=promoted_by,
+                )
+                conn.commit()
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Promotion blocked by policy gate: {reason}. metrics={metrics}",
+                )
+            # Log the allow decision before mutating state.
+            _log_promotion_to_ledger(
+                cur,
+                model_id=model_id,
+                outcome="applied",
+                payload=payload,
+                actor=promoted_by,
+            )
         # 1. Validate staging has rows
         if is_champion:
             cur.execute("SELECT COUNT(*) FROM fact_production_forecast_staging")
@@ -823,6 +1024,30 @@ def promote_model(model_id: str, notes: str | None = None, promoted_by: str | No
             promoted_by or "api",
             notes,
         ))
+
+        # Gen-4 G / AI-10: emit an OpenLineage-compatible COMPLETE event
+        # for the promotion so downstream lineage tooling sees the
+        # model_id -> fact_production_forecast dataflow. Best-effort —
+        # a missing fact_lineage_event table should not block a valid
+        # promotion, so swallow errors and log them.
+        try:
+            emit_lineage_event(
+                cur,
+                kind="COMPLETE",
+                job_id="promote_model",
+                run_id=run_id_str,
+                inputs=[{"namespace": "postgres", "name": "fact_production_forecast_staging"}],
+                outputs=[{"namespace": "postgres", "name": "fact_production_forecast"}],
+                facets={
+                    "model_id": model_id,
+                    "promotion_type": promotion_type,
+                    "plan_version": plan_version,
+                    "dfu_count": dfu_count,
+                    "rows_promoted": rows_promoted,
+                },
+            )
+        except (ValueError, KeyError, psycopg.Error) as exc:  # best-effort
+            logger.warning("Failed to emit lineage event for promotion: %s", exc)
 
         conn.commit()
 

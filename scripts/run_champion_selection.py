@@ -108,8 +108,26 @@ def load_config(config_path: Path) -> dict[str, Any]:
     for k, v in _DEFAULTS.items():
         cfg.setdefault(k, v)
     # Validate
-    if cfg["metric"] not in ("wape", "accuracy_pct"):
-        raise ValueError(f"Invalid metric '{cfg['metric']}'; must be wape or accuracy_pct")
+    # Gen-4 Stream G (AI-2 P1): probabilistic metrics are accepted but
+    # currently fall back to WAPE when quantile data is absent. Full
+    # CRPS/pinball selection requires per-DFU quantile rows in
+    # fact_candidate_forecast.
+    if cfg["metric"] not in ("wape", "accuracy_pct", "crps", "pinball"):
+        raise ValueError(
+            f"Invalid metric '{cfg['metric']}'; must be wape, accuracy_pct, crps, or pinball"
+        )
+    if cfg["metric"] in ("crps", "pinball"):
+        # TODO(gen-4): Wire compute_crps/compute_pinball_loss once candidate
+        # quantile columns (forecast_qty_p10/p50/p90) are consistently populated
+        # by the champion FM for every DFU. For now we log & fall back so the
+        # pipeline doesn't fail silently on partially-quantiled data.
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "champion.metric=%s requested; falling back to WAPE because per-DFU "
+            "quantile data is not yet guaranteed. See common.ml.crps.",
+            cfg["metric"],
+        )
+        cfg["metric"] = "wape"
     valid_lags = {"execution", "0", "1", "2", "3", "4"}
     if str(cfg["lag"]) not in valid_lags:
         raise ValueError(f"Invalid lag '{cfg['lag']}'; must be one of {sorted(valid_lags)}")

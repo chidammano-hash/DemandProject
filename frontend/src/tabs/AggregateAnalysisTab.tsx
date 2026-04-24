@@ -426,23 +426,38 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
             </div>
           ) : kpi ? (
             <div className="grid grid-cols-5 gap-3">
+              {/* UX-2: enriched hero KPIs with target thresholds + sparkline when trend data present. */}
               <KpiCard
                 label="Accuracy %"
+                size="lg"
                 value={kpi.accuracy_pct != null ? `${kpi.accuracy_pct.toFixed(1)}%` : "N/A"}
                 trend={kpi.deltas?.accuracy_pct != null ? { delta: kpi.deltas.accuracy_pct, direction: trendDirection(kpi.deltas.accuracy_pct), unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
                 severity={kpi.accuracy_pct != null ? (kpi.accuracy_pct >= 90 ? "best" : kpi.accuracy_pct >= 80 ? "neutral" : "warning") : "neutral"}
+                target={{ value: ">= 90%", label: "Target" }}
+                sparkline={(() => {
+                  const rows = (trendQ.data as { trend?: Array<{ accuracy_pct?: number | null }> } | undefined)?.trend;
+                  return Array.isArray(rows) ? rows.slice(-12).map((p) => Number(p.accuracy_pct ?? 0)) : undefined;
+                })()}
               />
               <KpiCard
                 label="WAPE %"
+                size="lg"
                 value={kpi.wape_pct != null ? `${kpi.wape_pct.toFixed(1)}%` : "N/A"}
                 trend={kpi.deltas?.wape_pct != null ? { delta: -kpi.deltas.wape_pct, direction: trendDirection(-kpi.deltas.wape_pct), unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
                 severity={kpi.wape_pct != null ? (kpi.wape_pct <= 10 ? "best" : kpi.wape_pct <= 20 ? "neutral" : "warning") : "neutral"}
+                target={{ value: "<= 10%", label: "Target" }}
+                sparkline={(() => {
+                  const rows = (trendQ.data as { trend?: Array<{ wape_pct?: number | null }> } | undefined)?.trend;
+                  return Array.isArray(rows) ? rows.slice(-12).map((p) => Number(p.wape_pct ?? 0)) : undefined;
+                })()}
               />
               <KpiCard
                 label="Bias %"
+                size="lg"
                 value={kpi.bias_pct != null ? `${kpi.bias_pct.toFixed(1)}%` : "N/A"}
                 trend={kpi.deltas?.bias_pct != null ? { delta: -Math.abs(kpi.deltas.bias_pct), direction: trendDirection(-Math.abs(kpi.deltas.bias_pct)), unit: "pp", period: `prev ${kpiWindow}mo` } : undefined}
                 severity={kpi.bias_pct != null ? (Math.abs(kpi.bias_pct) <= 5 ? "best" : Math.abs(kpi.bias_pct) <= 15 ? "neutral" : "warning") : "neutral"}
+                target={{ value: "+/- 5%", label: "Target" }}
               />
               <KpiCard
                 label="Forecast Vol"

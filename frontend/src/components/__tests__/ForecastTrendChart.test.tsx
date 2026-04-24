@@ -146,4 +146,37 @@ describe("ForecastTrendChart", () => {
     );
     expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
   });
+
+  it("renders with includeCI + quantile band data without crashing (UX-3)", () => {
+    const dataWithCI = [
+      { month: "2024-01", forecast: 1000, actual: 950, lower_80: 900, upper_80: 1100 },
+      { month: "2024-02", forecast: 1100, actual: 1050, lower_80: 990, upper_80: 1210 },
+      { month: "2024-03", forecast: 1200, actual: 1180, lower_80: 1080, upper_80: 1320 },
+    ];
+    render(
+      <ForecastTrendChart
+        data={dataWithCI}
+        theme="light"
+        chartColors={defaultChartColors}
+        seriesColors={defaultSeriesColors}
+        includeCI
+      />,
+    );
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
+  });
+
+  it("ignores includeCI flag when data lacks quantile fields", () => {
+    // includeCI=true but data doesn't have lower_80/upper_80 — should
+    // degrade gracefully to the regular forecast/actual view.
+    render(
+      <ForecastTrendChart
+        data={sampleData}
+        theme="light"
+        chartColors={defaultChartColors}
+        seriesColors={defaultSeriesColors}
+        includeCI
+      />,
+    );
+    expect(screen.getByTestId("echarts-mock")).toBeInTheDocument();
+  });
 });

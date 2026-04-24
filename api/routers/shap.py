@@ -275,7 +275,7 @@ async def shap_timeframes(model_id: str) -> dict:
                 "label": label,
                 "cutoff_date": str(cutoff),
             })
-        except Exception:
+        except (ValueError, TypeError, KeyError, IndexError):
             continue
     return {"model_id": model_id, "timeframes": timeframes}
 
@@ -453,7 +453,7 @@ def _extract_model_feature_names(model, model_id: str) -> list[str] | None:
         if names is not None and isinstance(names, (list, tuple)) and len(names) > 0 and isinstance(names[0], str):
             return list(names)
         return None
-    except Exception:
+    except (AttributeError, TypeError):
         return None
 
 
@@ -795,7 +795,7 @@ async def shap_dfu(
     # -- Step 8: compute SHAP --
     try:
         shap_values, base_values = _compute_shap_full(model, X_model, model_id, avail)
-    except Exception as exc:
+    except (ValueError, RuntimeError, MemoryError) as exc:
         raise HTTPException(status_code=500, detail=f"SHAP computation failed: {exc}") from exc
 
     # shap_values shape: (n_rows, n_avail_features)

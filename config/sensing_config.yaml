@@ -1,0 +1,25 @@
+# Near-term demand sensing config — Gen-4 Roadmap AI-3.
+#
+# Blends a long-range forecast (tree / foundation model output) with a
+# near-term sensing forecast (POS pulls, recent-order signal). The blend
+# weight is horizon-dependent: the near-term forecast dominates at short
+# horizons; the long-range forecast dominates at long horizons. Weights
+# between the short and long horizons are linearly interpolated.
+#
+# See `common/ml/sensing.py` for the math.
+
+# Near-term-forecast weight when the horizon day-offset is <= short_horizon_days.
+short_weight_horizon_0_7: 0.8     # near-term dominates at 0-7 days (0.8 weight on near-term)
+
+# Long-range-forecast weight when the horizon day-offset is >= long_horizon_days.
+long_weight_horizon_30_plus: 0.95  # long-range dominates at 30+ days (0.95 weight on long-range, so 0.05 on near-term)
+
+# Horizon (days out) at which the short-side weight applies unchanged.
+short_horizon_days: 7              # <= 7 days out: use short-side weight verbatim
+
+# Horizon (days out) at which the long-side weight applies unchanged.
+long_horizon_days: 30              # >= 30 days out: use long-side weight verbatim
+
+# Floor on the near-term weight to avoid completely zeroing out the sensing
+# signal when horizon >> long_horizon_days.
+min_near_term_weight: 0.0          # allow full attenuation; raise for a softer blend

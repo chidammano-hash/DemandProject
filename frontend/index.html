@@ -4,6 +4,29 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Supply Chain Command Center</title>
+    <!--
+      FOUC fix: apply stored or OS-preferred color mode to <html> BEFORE React
+      paints, so the first frame matches the final theme. Mirrors the logic in
+      hooks/useTheme.ts (localStorage key: ds-color-mode).
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("ds-color-mode");
+          var mode;
+          if (stored === "light" || stored === "soft" || stored === "dark") {
+            mode = stored;
+          } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+            mode = "dark";
+          } else {
+            mode = "light";
+          }
+          var root = document.documentElement;
+          root.classList.add(mode === "dark" ? "dark" : "light");
+          root.setAttribute("data-theme", "general");
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

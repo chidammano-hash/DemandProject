@@ -46,7 +46,6 @@ from typing import Any
 
 import numpy as np
 import psycopg
-import yaml
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
@@ -125,10 +124,15 @@ def compute_ss_combined(
     lt_mean_days: float,
     avg_daily_demand: float,
     lt_std_days: float,
+    yield_std_days: float = 0.0,
 ) -> float:
     """Combined (uncorrelated) safety stock using the full formula.
 
-    SS_combined = Z * sqrt(LT_mean * sigma_D^2 + D_avg^2 * lt_std^2)
+    SS_combined = Z * sqrt(LT_mean * sigma_D^2 + D_avg^2 * (lt_std^2 + yield_std^2))
+
+    The yield term (Gen-4 SC-2) is added under the uncorrelated-variance
+    assumption: supplier-yield variability — measured as stddev of actual vs
+    scheduled delivery — adds to the effective lead-time uncertainty.
 
     Args:
         z_score:           Z-score for the target service level.
@@ -136,13 +140,41 @@ def compute_ss_combined(
         lt_mean_days:      Mean lead time in days.
         avg_daily_demand:  Mean daily demand (units/day).
         lt_std_days:       Standard deviation of lead time in days.
+        yield_std_days:    Supplier-yield std (days) from mv_supplier_po_performance.
+                           Default 0 (feature disabled / data missing).
 
     Returns:
         SS_combined in units.
     """
     demand_var = lt_mean_days * (sigma_demand ** 2)
-    lt_var = (avg_daily_demand ** 2) * (lt_std_days ** 2)
+    lt_var = (avg_daily_demand ** 2) * ((lt_std_days ** 2) + (yield_std_days ** 2))
     return z_score * math.sqrt(demand_var + lt_var)
+
+
+def compute_reorder_point_periodic(
+    ss_combined: float,
+    avg_daily_demand: float,
+    lt_mean_days: float,
+    review_cycle_days: float,
+) -> float:
+    """Gen-4 SC-2: ROP for periodic-review policies protects (LT + R/2).
+
+    Pure LT protection understates exposure because the next inspection may
+    be up to R days away. Industry-standard formula:
+
+        ROP_periodic = D_avg * (LT_mean + R/2) + SS_combined
+
+    Args:
+        ss_combined:       Safety stock quantity.
+        avg_daily_demand:  Mean daily demand (units/day).
+        lt_mean_days:      Mean lead time (days).
+        review_cycle_days: Review interval R (days).
+
+    Returns:
+        Periodic-review reorder point in units.
+    """
+    protection_days = lt_mean_days + (review_cycle_days / 2.0)
+    return avg_daily_demand * protection_days + ss_combined
 
 
 def compute_reorder_point(
@@ -429,6 +461,7 @@ def compute_ss_components(
     demand_std_monthly: float,
     lt_mean_days: float,
     lt_std_days: float,
+    yield_std_days: float = 0.0,
 ) -> dict[str, float | None]:
     """Compute safety stock components.
 
@@ -438,19 +471,26 @@ def compute_ss_components(
         demand_std_monthly:   Std dev of monthly demand (units).
         lt_mean_days:         Mean lead time in days.
         lt_std_days:          Std dev of lead time in days.
+        yield_std_days:       Gen-4 SC-2: supplier-yield std (days) from
+                              mv_supplier_po_performance.stddev_lead_time_days.
+                              0 when unavailable / disabled. Folded into the
+                              lt-variance term under uncorrelated assumption.
 
     Returns dict with:
         avg_daily_demand, sigma_d_daily,
-        ss_demand_only, ss_lt_only, ss_combined, ss_method
+        ss_demand_only, ss_lt_only, ss_combined, ss_method,
+        ss_yield (new)
     """
     avg_daily = demand_mean_monthly / DAYS_PER_MONTH if DAYS_PER_MONTH else 0.0
     sigma_d_daily = demand_std_monthly / math.sqrt(DAYS_PER_MONTH) if demand_std_monthly else 0.0
 
     demand_variance_term = lt_mean_days * (sigma_d_daily ** 2)
-    lt_variance_term = (avg_daily ** 2) * (lt_std_days ** 2)
+    # Fold supplier-yield variance into the LT-variance term (uncorrelated).
+    lt_variance_term = (avg_daily ** 2) * ((lt_std_days ** 2) + (yield_std_days ** 2))
 
     ss_demand = z * math.sqrt(demand_variance_term) if demand_variance_term >= 0 else 0.0
     ss_lt = z * avg_daily * lt_std_days if lt_std_days else 0.0
+    ss_yield = z * avg_daily * yield_std_days if yield_std_days else 0.0
     ss_combined = z * math.sqrt(demand_variance_term + lt_variance_term)
 
     # Determine method label
@@ -466,6 +506,7 @@ def compute_ss_components(
         "sigma_d_daily": sigma_d_daily,
         "ss_demand_only": ss_demand,
         "ss_lt_only": ss_lt,
+        "ss_yield_only": ss_yield,
         "ss_combined": ss_combined,
         "ss_method": ss_method,
     }
@@ -949,7 +990,9 @@ def run(
         ss_cfg = cfg["safety_stock"]
 
         pv = policy_version or ss_cfg.get("policy_version", "v1")
-        service_levels: dict[str, float] = ss_cfg["service_levels"]
+        # YAML-level SL targets (fallback). DB overrides from
+        # fact_service_level_targets are applied inside the transaction below.
+        service_levels: dict[str, float] = dict(ss_cfg["service_levels"])
         z_table: dict[str, float] = {str(k): float(v) for k, v in ss_cfg["z_table"].items()}
         min_ss_days: float = float(ss_cfg.get("min_ss_days", 3))
         max_ss_days: float = float(ss_cfg.get("max_ss_days", 120))
@@ -995,6 +1038,15 @@ def run(
     conn.autocommit = False
 
     with conn.cursor() as cur:
+        # Priority #1 (gen-4 roadmap): DB `fact_service_level_targets`
+        # overrides YAML-level service_levels so SS, fill-rate, and S&OP
+        # share the same numbers.
+        with profiled_section("load_sl_targets"):
+            from common.core.service_levels import load_sl_targets_by_abc
+            db_sl_targets = load_sl_targets_by_abc(cursor=cur)
+            service_levels.update(db_sl_targets)
+        log.info("  SL targets resolved: %s", service_levels)
+
         log.info("Loading DFU demand data from dim_sku …")
         with profiled_section("load_dfu_data"):
             dfu_rows = _load_dfu_data(cur)
@@ -1040,7 +1092,7 @@ def run(
             log.info("  %d DFUs with dated demand history loaded", len(demand_hist_dates))
 
     # -- Compute SS per DFU --------------------------------------------------
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     today = now.date()
     planning_month = get_planning_date().month
 

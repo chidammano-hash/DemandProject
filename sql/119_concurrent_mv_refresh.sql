@@ -31,9 +31,9 @@ ON mv_intramonth_stockout (item_id, loc, month_start);
 -- ==========================================================================
 -- Supplier Performance (refreshed daily)
 -- ==========================================================================
--- Already has unique on supplier_no in the MV definition, verify:
-CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_supplier_perf_supplier
-ON mv_supplier_performance (supplier_no);
+-- Gen-4 Roadmap 1.6 — mv_supplier_performance retired in sql/143.
+-- Index creation removed; mv_supplier_po_performance is now the sole supplier
+-- performance MV.
 
 -- ==========================================================================
 -- Supplier PO Performance (refreshed daily)

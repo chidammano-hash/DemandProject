@@ -1,11 +1,16 @@
 /**
- * EmptyState — reusable panel placeholder shown when no data is available.
+ * EmptyState — reusable panel placeholder for the "empty-state triad":
+ *   - "no-data": no rows exist yet; show CLI steps to populate.
+ *   - "filtered": rows exist but current filter yields none; offer a reset.
+ *   - "error": fetch failed; show sanitized message + optional retry.
  *
- * Displays a title, description, and optional step-by-step CLI instructions
- * so planners immediately know what to run to populate the panel.
+ * Gen-4 UX P0: tabs should distinguish "never populated" from "filtered out"
+ * from "server failure" instead of a single undifferentiated "No data".
  */
-import { type LucideIcon, Database } from "lucide-react";
+import { type LucideIcon, AlertTriangle, Database, FilterX } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+export type EmptyStateVariant = "no-data" | "filtered" | "error";
 
 export interface EmptyStateStep {
   /** Short label describing the step (e.g. "Compute safety stock") */
@@ -15,40 +20,91 @@ export interface EmptyStateStep {
 }
 
 interface EmptyStateProps {
-  /** Lucide icon component — defaults to Database */
+  /** Which of the empty-state triad this is. Defaults to "no-data". */
+  variant?: EmptyStateVariant;
+  /** Lucide icon override — variant picks a sensible default */
   icon?: LucideIcon;
   /** Primary headline (e.g. "No safety stock targets yet") */
   title: string;
   /** One-sentence explanation of what this panel shows when populated */
   description: string;
-  /** Ordered list of make/CLI commands to run */
+  /** Ordered list of make/CLI commands to run (no-data variant) */
   steps?: EmptyStateStep[];
+  /** Optional action callback (e.g. reset filters / retry). Renders a button if provided. */
+  onAction?: () => void;
+  /** Label for the action button. */
+  actionLabel?: string;
   /** Extra Tailwind classes on the outer container */
   className?: string;
 }
 
+const DEFAULT_ICON: Record<EmptyStateVariant, LucideIcon> = {
+  "no-data": Database,
+  filtered: FilterX,
+  error: AlertTriangle,
+};
+
+const VARIANT_CLASSES: Record<EmptyStateVariant, string> = {
+  "no-data": "border-dashed bg-muted/20 text-muted-foreground",
+  filtered: "border-dashed bg-muted/10 text-muted-foreground",
+  error: "border-destructive/40 bg-destructive/5 text-destructive",
+};
+
+const BADGE_CLASSES: Record<EmptyStateVariant, string> = {
+  "no-data": "bg-muted/50 text-muted-foreground",
+  filtered: "bg-muted/60 text-muted-foreground",
+  error: "bg-destructive/10 text-destructive",
+};
+
 export function EmptyState({
-  icon: Icon = Database,
+  variant = "no-data",
+  icon,
   title,
   description,
   steps,
+  onAction,
+  actionLabel,
   className,
 }: EmptyStateProps) {
+  const Icon = icon ?? DEFAULT_ICON[variant];
   return (
     <div
+      role={variant === "error" ? "alert" : "status"}
+      aria-live={variant === "error" ? "assertive" : "polite"}
       className={cn(
-        "flex flex-col items-center justify-center rounded-xl border border-dashed bg-muted/20 px-8 py-12 text-center",
+        "flex flex-col items-center justify-center rounded-xl border px-8 py-12 text-center",
+        VARIANT_CLASSES[variant],
         className,
       )}
     >
-      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted/50 text-muted-foreground">
+      <div
+        className={cn(
+          "mb-4 flex h-14 w-14 items-center justify-center rounded-full",
+          BADGE_CLASSES[variant],
+        )}
+      >
         <Icon size={26} strokeWidth={1.5} />
       </div>
 
       <h3 className="mb-1 text-sm font-semibold text-foreground">{title}</h3>
-      <p className="mb-5 max-w-xs text-xs text-muted-foreground leading-relaxed">{description}</p>
+      <p className="mb-5 max-w-xs text-xs leading-relaxed">{description}</p>
 
-      {steps && steps.length > 0 && (
+      {onAction && actionLabel && (
+        <button
+          type="button"
+          onClick={onAction}
+          className={cn(
+            "mb-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
+            variant === "error"
+              ? "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20"
+              : "border-border bg-card text-foreground hover:bg-muted",
+          )}
+        >
+          {actionLabel}
+        </button>
+      )}
+
+      {variant === "no-data" && steps && steps.length > 0 && (
         <div className="w-full max-w-sm rounded-lg border bg-card p-4 text-left">
           <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             How to populate

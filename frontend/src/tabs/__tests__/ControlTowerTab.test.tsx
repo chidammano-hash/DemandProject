@@ -124,3 +124,46 @@ describe("ControlTowerTab", () => {
     });
   });
 });
+
+// Regression: when upstream MVs are not yet refreshed, the backend returns
+// a zero-filled payload + `warning` field. Control Tower must render without
+// throwing `Cannot read properties of undefined (reading 'toFixed')`.
+describe("ControlTowerTab — unpopulated MV state", () => {
+  it("renders without crashing when the backend returns zeros + warning", async () => {
+    const queries = await import("@/api/queries");
+    (queries.fetchControlTowerKpis as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      computed_at: null,
+      health: {
+        total_dfus: 0, healthy_count: 0, monitor_count: 0,
+        at_risk_count: 0, critical_count: 0,
+        avg_health_score: null, avg_ss_coverage: null,
+        below_ss_count: 0, below_ss_pct: null, avg_portfolio_dos: null,
+      },
+      exceptions: {
+        open_exceptions_total: 0, critical_exceptions: 0,
+        high_exceptions: 0, recommended_order_value: null,
+      },
+      fill_rate: { portfolio_fill_rate_3m: null, total_shortage_qty_3m: 0 },
+      demand_signals: { urgent_demand_signals: 0, projected_stockouts_today: 0 },
+      intramonth: { items_with_stockout_this_month: 0, extended_stockouts_this_month: 0 },
+      warning: "mv_control_tower_kpis not yet refreshed. Run `make refresh-mvs-tiered`.",
+    });
+    (queries.fetchControlTowerTrend as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      trend: [],
+      warning: "Upstream materialized view not yet refreshed.",
+    });
+
+    render(
+      <TestQueryWrapper>
+        <ControlTowerTab />
+      </TestQueryWrapper>
+    );
+
+    await waitFor(() => {
+      // The surface heading must still render (proving no ErrorBoundary fired).
+      expect(screen.getByText(/Inventory Control Tower/i)).toBeDefined();
+      // The warning banner should appear.
+      expect(screen.getByText(/refresh-mvs-tiered/)).toBeDefined();
+    });
+  });
+});

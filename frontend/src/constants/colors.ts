@@ -6,6 +6,28 @@ export const TREND_COLORS_BY_THEME: Record<Theme, string[]> = {
   soft: ["#2667C7", "#0E9E72", "#D4890A", "#0891B2", "#D44040", "#0598B0"],
 };
 
+/**
+ * Okabe-Ito color-blind-safe categorical palette (UX-3).
+ *
+ * Published by Okabe & Ito (2008) — 8 colors chosen so every pair is
+ * distinguishable for deuteranopia, protanopia, and tritanopia. Prefer this
+ * over `TREND_COLORS_BY_THEME` for new charts that encode category/series
+ * (not magnitude).
+ *
+ * Legacy theme-keyed palettes stay in place for existing charts with
+ * signed-off visuals; new code can opt in via `useChartColors().okabeIto`.
+ */
+export const OKABE_ITO: string[] = [
+  "#E69F00", // orange
+  "#56B4E9", // sky blue
+  "#009E73", // bluish green
+  "#F0E442", // yellow
+  "#0072B2", // blue
+  "#D55E00", // vermillion
+  "#CC79A7", // reddish purple
+  "#000000", // black
+];
+
 export const CHART_COLORS: Record<Theme, { grid: string; axis: string; tooltip_bg: string; tooltip_border: string }> = {
   light: { grid: "#e2e8f0", axis: "#64748b", tooltip_bg: "#ffffff", tooltip_border: "#e2e8f0" },
   dark: { grid: "#2d3548", axis: "#94a3b8", tooltip_bg: "#1e2433", tooltip_border: "#2d3548" },

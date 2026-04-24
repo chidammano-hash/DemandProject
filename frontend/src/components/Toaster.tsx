@@ -1,0 +1,101 @@
+/**
+ * Minimal non-blocking toast system.
+ *
+ * Gen-4 roadmap UX-7 P0: replaces `window.alert()` so users can keep
+ * working while an error is acknowledged. Sized to match the sonner API
+ * so migration to sonner later is a two-line swap.
+ *
+ * Usage:
+ *   // once, at the root of the app:
+ *   <Toaster />
+ *   // anywhere in the tree:
+ *   toast.error("Action failed.");
+ *   toast.success("Saved.");
+ */
+
+import { useEffect, useState } from "react";
+
+type ToastKind = "info" | "success" | "warning" | "error";
+
+interface Toast {
+  id: number;
+  kind: ToastKind;
+  message: string;
+}
+
+type ToastListener = (toasts: Toast[]) => void;
+
+let nextId = 1;
+let toastStack: Toast[] = [];
+const listeners: Set<ToastListener> = new Set();
+
+const TOAST_DURATION_MS = 4500;
+
+function notify() {
+  for (const listener of listeners) listener([...toastStack]);
+}
+
+function push(kind: ToastKind, message: string): number {
+  const id = nextId++;
+  toastStack = [...toastStack, { id, kind, message }];
+  notify();
+  window.setTimeout(() => dismiss(id), TOAST_DURATION_MS);
+  return id;
+}
+
+function dismiss(id: number) {
+  const before = toastStack.length;
+  toastStack = toastStack.filter((t) => t.id !== id);
+  if (toastStack.length !== before) notify();
+}
+
+export const toast = {
+  info: (message: string) => push("info", message),
+  success: (message: string) => push("success", message),
+  warning: (message: string) => push("warning", message),
+  error: (message: string) => push("error", message),
+  dismiss,
+};
+
+const KIND_STYLES: Record<ToastKind, string> = {
+  info: "bg-slate-800 text-slate-100 border-slate-600",
+  success: "bg-emerald-800 text-emerald-50 border-emerald-600",
+  warning: "bg-amber-700 text-amber-50 border-amber-500",
+  error: "bg-rose-800 text-rose-50 border-rose-600",
+};
+
+export function Toaster() {
+  const [toasts, setToasts] = useState<Toast[]>(toastStack);
+
+  useEffect(() => {
+    const listener: ToastListener = (next) => setToasts(next);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }, []);
+
+  if (toasts.length === 0) return null;
+
+  return (
+    <div
+      aria-live="polite"
+      role="status"
+      className="pointer-events-none fixed bottom-4 right-4 z-[9999] flex flex-col gap-2"
+    >
+      {toasts.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          onClick={() => dismiss(t.id)}
+          className={`pointer-events-auto min-w-[240px] max-w-[420px] rounded border px-4 py-3 text-left text-sm shadow-lg transition-opacity ${KIND_STYLES[t.kind]}`}
+        >
+          {t.message}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Test-only exports
+export const __test__ = { push, dismiss, get toastStack() { return toastStack; } };

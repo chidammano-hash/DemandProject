@@ -782,7 +782,8 @@ class DQEngine:
                 )
             else:
                 result = {"status": "skip", "metric_value": None, "details": {"message": f"Unknown check type: {check_type}"}}
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — DQ checks run arbitrary user-configured SQL; any failure must become an "error" check result, not a 500
+            logger.exception("DQ check %s raised", check_name)
             result = {"status": "error", "metric_value": None, "details": {"error": str(e)}}
 
         return {
@@ -813,8 +814,8 @@ class DQEngine:
                         json.dumps(result.get("details")),
                     ),
                 )
-        except Exception:
-            logger.warning("Failed to record DQ check result: %s", result.get("check_name", "unknown"))
+        except Exception:  # noqa: BLE001 — best-effort audit insert: never fail the caller if the audit table is missing / misconfigured
+            logger.exception("Failed to record DQ check result: %s", result.get("check_name", "unknown"))
 
     def get_domain_score(self, domain: str) -> dict:
         """Get health score for a domain (weighted pass rate)."""

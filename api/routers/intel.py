@@ -101,6 +101,7 @@ def market_intelligence(req: MarketIntelRequest):
     search_query = " ".join(search_query_parts)
 
     if google_api_key and google_cx:
+        import urllib.error
         import urllib.request
         import urllib.parse
         try:
@@ -116,7 +117,7 @@ def market_intelligence(req: MarketIntelRequest):
                         "link": hit.get("link", ""),
                         "snippet": hit.get("snippet", ""),
                     })
-        except Exception:
+        except (urllib.error.URLError, TimeoutError, ValueError):
             logger.warning("Google Custom Search failed for query %r", search_query, exc_info=True)
 
     # 6. Generate narrative with OpenAI
@@ -163,7 +164,7 @@ Be specific and actionable. Focus on factors that would help a planner or analys
                                     "link": ann.url,
                                     "snippet": getattr(ann, "title", ""),
                                 })
-        except Exception:
+        except Exception:  # noqa: BLE001 — OpenAI SDK raises many provider-specific errors; we must always fall back
             logger.warning("OpenAI web search fallback failed", exc_info=True)
             use_web_search = False
 
@@ -179,7 +180,7 @@ Be specific and actionable. Focus on factors that would help a planner or analys
                 temperature=0.7,
             )
             narrative = chat_resp.choices[0].message.content or ""
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — OpenAI SDK raises provider-specific errors; surface as 502
             raise HTTPException(status_code=502, detail=f"AI generation failed: {e}")
 
     from datetime import datetime, timezone

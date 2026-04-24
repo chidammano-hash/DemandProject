@@ -120,11 +120,11 @@ export function KpiCard({ label, value, sublabel, colorClass, borderClass, class
       {target && (
         <p className="text-xs text-muted-foreground mt-0.5">{target.label ?? "Target"}: {target.value}</p>
       )}
-      {trend && TrendIcon && (
+      {trend && TrendIcon && trend.delta != null && !Number.isNaN(Number(trend.delta)) && (
         <div className={cn("flex items-center gap-1 text-xs", trendColor)}>
           <TrendIcon className="h-3 w-3" />
           <span className="tabular-nums">
-            {trend.delta > 0 ? "+" : ""}{trend.delta.toFixed(1)}{trend.unit ?? "%"} vs {trend.period ?? "prior"}
+            {trend.delta > 0 ? "+" : ""}{Number(trend.delta).toFixed(1)}{trend.unit ?? "%"} vs {trend.period ?? "prior"}
           </span>
         </div>
       )}

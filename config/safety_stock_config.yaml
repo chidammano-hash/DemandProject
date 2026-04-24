@@ -9,6 +9,27 @@ safety_stock:
   # 'demand_only' uses only demand variability (when LT data is unavailable).
   default_method: combined
 
+  # Gen-4 Roadmap #2 — Empirical quantile SS.
+  # method: 'normal_approx'     -> classic z × σ analytical formula (default)
+  #         'empirical_quantile' -> drive SS from the empirical quantile of the
+  #                                 Monte Carlo stockout distribution built by
+  #                                 scripts/run_ss_simulation.py. Assumes the
+  #                                 simulation has been run and a service-level
+  #                                 curve is available in fact_ss_simulation_results.
+  # The switch is opt-in and does NOT change the SS table schema — it just
+  # replaces how ss_combined is computed for the item.
+  method: normal_approx
+  # Empirical quantile source: which distribution/percentile to use when
+  # method=empirical_quantile.
+  empirical_quantile:
+    # Target cycle service level used to pick the empirical-quantile SS value
+    # from the simulated stockout distribution. If absent, the service level
+    # resolved from the ABC-XYZ matrix is used.
+    target_csl: null
+    # Minimum number of Monte Carlo trials before we'll trust the empirical
+    # quantile. Below this, fall back to normal_approx for the SKU.
+    min_simulations: 5000
+
   # Policy version tag written to fact_safety_stock_targets.policy_version.
   # Override via --policy-version CLI flag.
   policy_version: v1
@@ -44,6 +65,31 @@ safety_stock:
   # Formula components to include.
   use_demand_variability: true
   use_lt_variability: true
+
+  # ═══ GEN-4 SC-2: PERIODIC-REVIEW PROTECTION (LT + R/2) ═══
+  # When True, ROP protects lead-time + half the review period (R/2) for
+  # periodic-review policies. Pure LT protection understates exposure because
+  # the next inspection may be up to R days away. Formula:
+  #   protection_days = LT_mean_days + (review_cycle_days / 2)
+  # R is sourced from fact_replenishment_policy.review_cycle_days (per SKU)
+  # or falls back to `default_review_cycle_days` below.
+  periodic_review_protection:
+    enabled: true                  # wrap periodic-review SKUs with (LT + R/2) protection
+    default_review_cycle_days: 7   # fallback when policy row is missing or R is NULL
+
+  # ═══ GEN-4 SC-2: SUPPLY-YIELD / FILL VARIABILITY ═══
+  # When enabled, extends the combined SS formula with a supplier-yield
+  # variability term computed from mv_supplier_po_performance.stddev_lead_time_days
+  # (proxy for delivery reliability). Produces:
+  #   SS_supply = Z * avg_daily_demand * yield_std_days
+  # and folds it into SS_combined under the uncorrelated-variance assumption.
+  include_supply_yield_variability: false   # opt-in; requires mv_supplier_po_performance populated
+
+  # ═══ GEN-4 SC-5 (P2): INCLUDE est_lost_sales IN DEMAND STATS ═══
+  # When True, demand_mean and demand_std are computed over the sum of shipped
+  # units + est_lost_sales (rather than shipped alone). Surfaces true demand
+  # signal for items that frequently stock out. Safe default: False (legacy).
+  include_est_lost_sales_in_demand: false
 
   # ═══ GUARD RAILS ═══
   # ABC-specific safety stock bounds (days of supply).

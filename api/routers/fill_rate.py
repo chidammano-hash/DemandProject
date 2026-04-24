@@ -14,6 +14,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import _f, add_cross_dim_filters, get_conn, set_cache
+from common.core.service_levels import load_sl_targets_by_abc
 
 logger = logging.getLogger(__name__)
 
@@ -374,9 +375,10 @@ def get_fill_rate_detail(
 # GET /fill-rate/gap-analysis
 # ---------------------------------------------------------------------------
 
-# Service level targets by ABC class from shared_constants.yaml.
-# Used as the "target fill rate" in the waterfall decomposition.
-_SL_TARGETS: dict[str, float] = {"A": 0.98, "B": 0.95, "C": 0.90, "default": 0.95}
+# Service level targets: authoritative source is `fact_service_level_targets`
+# (resolved via `common.core.service_levels.load_sl_targets_by_abc`).
+# YAML `shared_constants.service_levels_by_abc` serves as fallback.
+# See docs/specs/04-inventory-planning/10-service-level-unification.md.
 
 
 @router.get("/fill-rate/gap-analysis")
@@ -511,12 +513,13 @@ def get_fill_rate_gap_analysis(
         with conn.cursor() as cur:
             cur.execute(sql, params)
             row = cur.fetchone()
+            sl_targets = load_sl_targets_by_abc(cursor=cur)
 
     # --- handle empty / no-data case ----------------------------------------
     if not row or row[0] == 0:
         return {
-            "target_fill_rate": _SL_TARGETS.get(
-                (abc_vol or "").upper(), _SL_TARGETS["default"]
+            "target_fill_rate": sl_targets.get(
+                (abc_vol or "").upper(), sl_targets["default"]
             ),
             "actual_fill_rate": None,
             "gap_pct": None,
@@ -547,7 +550,7 @@ def get_fill_rate_gap_analysis(
     lt_delay_qty = float(lt_delay_qty)
 
     # --- compute target and gap ----------------------------------------------
-    target = _SL_TARGETS.get((abc_vol or "").upper(), _SL_TARGETS["default"])
+    target = sl_targets.get((abc_vol or "").upper(), sl_targets["default"])
     gap_pct = round((avg_fill_rate - target) * 100, 2)
 
     # --- allocate shortage qty into causal buckets ---------------------------
@@ -594,7 +597,8 @@ def get_fill_rate_gap_analysis(
 # ---------------------------------------------------------------------------
 
 # Weighted portfolio target: weighted average of ABC class targets by SKU count.
-# Individual class targets come from _SL_TARGETS defined above.
+# Targets are resolved via `common.core.service_levels.load_sl_targets_by_abc`
+# (DB `fact_service_level_targets` with YAML fallback).
 
 
 @router.get("/inv-planning/service-level/waterfall")
@@ -666,6 +670,8 @@ def get_service_level_waterfall_bridge(
 
                 cur.execute(total_sql, params)
                 total_row = cur.fetchone()
+
+                sl_targets = load_sl_targets_by_abc(cursor=cur)
     except psycopg.Error as e:
         logger.exception("service-level/waterfall: DB query failed: %s", e)
         return {
@@ -695,7 +701,7 @@ def get_service_level_waterfall_bridge(
         sku_count = int(row[1] or 0)
         avg_fr = float(row[2]) if row[2] is not None else 0.0
         class_ordered = float(row[3]) if row[3] is not None else 0.0
-        target_sl = _SL_TARGETS.get(abc_class, _SL_TARGETS["default"])
+        target_sl = sl_targets.get(abc_class, sl_targets["default"])
         gap = round(avg_fr - target_sl, 5)
         weight = class_ordered / total_ordered if total_ordered > 0 else 0.0
 

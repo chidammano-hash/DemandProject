@@ -30,6 +30,45 @@ def get_openai():
     return _openai_client
 
 
+def reset_llm_client() -> dict[str, bool]:
+    """Reset LLM client singletons to force reinitialization on next use.
+
+    Closes the existing OpenAI / Anthropic clients if they expose ``close()`` and
+    clears the module-level singletons.  The next call to :func:`get_openai`
+    or :func:`get_anthropic` will rebuild the client from the current
+    ``OPENAI_API_KEY`` / ``ANTHROPIC_API_KEY`` environment variables.
+
+    Returns a dict flagging which clients were reset (so callers can log /
+    audit key rotation).
+    """
+    global _openai_client, _anthropic_client
+
+    result = {"openai_reset": False, "anthropic_reset": False}
+
+    if _openai_client is not None:
+        close_fn = getattr(_openai_client, "close", None)
+        if callable(close_fn):
+            try:
+                close_fn()
+            except (RuntimeError, OSError) as exc:
+                logger.warning("OpenAI client close raised: %s", exc)
+        _openai_client = None
+        result["openai_reset"] = True
+
+    if _anthropic_client is not None:
+        close_fn = getattr(_anthropic_client, "close", None)
+        if callable(close_fn):
+            try:
+                close_fn()
+            except (RuntimeError, OSError) as exc:
+                logger.warning("Anthropic client close raised: %s", exc)
+        _anthropic_client = None
+        result["anthropic_reset"] = True
+
+    logger.info("LLM clients reset: %s", result)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Anthropic client (fallback)
 # ---------------------------------------------------------------------------
@@ -78,7 +117,7 @@ def chat_completion(
         return response.choices[0].message.content or ""
     except HTTPException:
         raise  # Don't catch our own 503
-    except Exception as openai_err:
+    except Exception as openai_err:  # noqa: BLE001 — OpenAI SDK raises provider-specific errors; any must trigger Anthropic failover
         logger.warning("OpenAI request failed: %s — attempting Anthropic failover", openai_err)
 
     # Fallback to Anthropic
@@ -109,7 +148,7 @@ def chat_completion(
             messages=anthropic_messages,
         )
         return response.content[0].text
-    except Exception as anthropic_err:
+    except Exception as anthropic_err:  # noqa: BLE001 — Anthropic SDK raises provider-specific errors; all must return 503
         logger.exception("Both OpenAI and Anthropic failed")
         raise HTTPException(
             status_code=503,

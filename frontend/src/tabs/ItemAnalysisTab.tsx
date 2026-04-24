@@ -38,6 +38,9 @@ import { SkuShapPanel } from "./dfu-analysis/DfuShapPanel";
 // Unified chart (demand + supply in one view)
 import { UnifiedChartPanel, loadDefaultMeasures, buildInitialVisibleSeries } from "./item-analysis/UnifiedChartPanel";
 
+// UX-1: deep-state breadcrumbs.
+import { Breadcrumbs } from "@/components/Breadcrumbs";
+
 // ---------------------------------------------------------------------------
 // Panel toggle defaults
 // ---------------------------------------------------------------------------
@@ -419,8 +422,20 @@ export function ItemAnalysisTab() {
   // ========================================================================
   // Render
   // ========================================================================
+  // UX-1: breadcrumb trail renders only when a DFU is selected.
+  const breadcrumbItems = skuItem
+    ? [
+        { label: "Item Analysis", onClick: () => { setSkuItem(""); setSkuLocation(""); } },
+        { label: `Item ${skuItem}`, ...(skuLocation ? { onClick: () => setSkuLocation("") } : {}) },
+        ...(skuLocation ? [{ label: skuLocation }] : []),
+      ]
+    : [];
+
   return (
     <section className="mt-4 space-y-4">
+      {breadcrumbItems.length > 0 && (
+        <Breadcrumbs items={breadcrumbItems} />
+      )}
       {/* ---- Selector (always visible) ---- */}
       <Card className="animate-fade-in">
         <SelectorPanel

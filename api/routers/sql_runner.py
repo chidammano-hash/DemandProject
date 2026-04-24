@@ -132,7 +132,7 @@ async def execute_query(body: SqlRequest):
                     rows = rows[:max_rows]
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — SQL Runner runs arbitrary user SQL; any DB/driver error must surface as HTTP 400
         elapsed = (time.perf_counter() - start) * 1000
         _record_history(sql, elapsed, 0, "error")
         logger.warning("SQL Runner error: %s", exc)

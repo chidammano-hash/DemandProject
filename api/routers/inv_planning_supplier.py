@@ -31,17 +31,21 @@ def get_supplier_performance_summary(
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
+    # Gen-4 Roadmap 1.6 — switched to mv_supplier_po_performance (the legacy
+    # mv_supplier_performance was retired in sql/143).
     sql = f"""
         SELECT
             COUNT(*)                             AS total_suppliers,
-            AVG(supplier_reliability_score)      AS avg_reliability_score,
-            AVG(avg_lt_mean_days)                AS avg_lead_time_days,
-            AVG(avg_lt_cv)                       AS avg_lt_cv,
-            AVG(pct_stable_lt)                   AS avg_pct_stable,
-            AVG(pct_volatile_lt)                 AS avg_pct_volatile,
-            SUM(total_ss_value)                  AS total_ss_value,
-            COUNT(*) FILTER (WHERE supplier_reliability_score < 40) AS low_reliability_count
-        FROM mv_supplier_performance t
+            AVG(reliability_score)               AS avg_reliability_score,
+            AVG(avg_lead_time_days)              AS avg_lead_time_days,
+            AVG(CASE WHEN avg_lead_time_days > 0
+                     THEN stddev_lead_time_days / avg_lead_time_days END)
+                                                 AS avg_lt_cv,
+            AVG(otd_pct / 100.0)                 AS avg_otd,
+            AVG(otif_pct / 100.0)                AS avg_otif,
+            SUM(total_value)                     AS total_value,
+            COUNT(*) FILTER (WHERE reliability_score < 40) AS low_reliability_count
+        FROM mv_supplier_po_performance t
         {where_sql}
     """
     with get_conn() as conn:
@@ -72,8 +76,17 @@ def get_supplier_performance_detail(
     """Paginated supplier performance detail."""
     set_cache(response, max_age=3600)
 
-    allowed_sort = {"supplier_reliability_score", "avg_lt_mean_days", "avg_lt_cv", "sku_loc_count"}
-    order_col = sort_by if sort_by in allowed_sort else "supplier_reliability_score"
+    # Gen-4 Roadmap 1.6 — view renamed from mv_supplier_performance.
+    # Column aliases preserve the old JSON shape for clients that depend on it.
+    allowed_sort_map = {
+        "supplier_reliability_score": "reliability_score",
+        "avg_lt_mean_days": "avg_lead_time_days",
+        "avg_lt_cv": "avg_lt_cv",
+        "sku_loc_count": "distinct_items",
+        "otif_pct": "otif_pct",
+        "otd_pct": "otd_pct",
+    }
+    order_col = allowed_sort_map.get(sort_by, "reliability_score")
     order_dir = "DESC" if sort_dir.lower() == "desc" else "ASC"
 
     where_clauses: list[str] = []
@@ -81,30 +94,39 @@ def get_supplier_performance_detail(
 
     if supplier:
         params.append(f"%{supplier}%")
-        where_clauses.append("(supplier_no ILIKE %s OR supplier_name ILIKE %s)")
+        where_clauses.append("(supplier_id ILIKE %s OR supplier_name ILIKE %s)")
         params.append(f"%{supplier}%")
     if min_score is not None:
         params.append(min_score)
-        where_clauses.append("supplier_reliability_score >= %s")
+        where_clauses.append("reliability_score >= %s")
     if max_score is not None:
         params.append(max_score)
-        where_clauses.append("supplier_reliability_score <= %s")
+        where_clauses.append("reliability_score <= %s")
     add_cross_dim_filters(where_clauses, params, brand=brand, category=category, market=market,
-                          item_col="t.supplier_no")
+                          item_col="t.supplier_id")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
-    count_sql = f"SELECT COUNT(*) FROM mv_supplier_performance t {where_sql}"
+    count_sql = f"SELECT COUNT(*) FROM mv_supplier_po_performance t {where_sql}"
     filter_params = list(params)
     params.append(limit)
     params.append(offset)
     data_sql = f"""
-        SELECT supplier_no, supplier_name, sku_loc_count, distinct_items,
-               avg_lt_mean_days, avg_lt_cv, avg_lt_std_days,
-               pct_stable_lt, pct_volatile_lt,
-               total_safety_stock_units, total_ss_value,
-               supplier_reliability_score
-        FROM mv_supplier_performance t
+        SELECT supplier_id                 AS supplier_no,
+               supplier_name,
+               distinct_items              AS sku_loc_count,
+               distinct_items,
+               avg_lead_time_days          AS avg_lt_mean_days,
+               CASE WHEN avg_lead_time_days > 0
+                    THEN stddev_lead_time_days / avg_lead_time_days END
+                                           AS avg_lt_cv,
+               stddev_lead_time_days       AS avg_lt_std_days,
+               otd_pct,
+               otif_pct,
+               in_full_pct,
+               total_value                 AS total_ss_value,
+               reliability_score           AS supplier_reliability_score
+        FROM mv_supplier_po_performance t
         {where_sql}
         ORDER BY {order_col} {order_dir} NULLS LAST
         LIMIT %s OFFSET %s
@@ -128,9 +150,9 @@ def get_supplier_performance_detail(
                 "avg_lt_mean_days":           _f(r[4]),
                 "avg_lt_cv":                  _f(r[5]),
                 "avg_lt_std_days":            _f(r[6]),
-                "pct_stable_lt":              _f(r[7]),
-                "pct_volatile_lt":            _f(r[8]),
-                "total_safety_stock_units":   _f(r[9]),
+                "otd_pct":                    _f(r[7]),
+                "otif_pct":                   _f(r[8]),
+                "in_full_pct":                _f(r[9]),
                 "total_ss_value":             _f(r[10]),
                 "supplier_reliability_score": int(r[11]) if r[11] is not None else None,
             }

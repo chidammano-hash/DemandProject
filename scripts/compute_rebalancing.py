@@ -20,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import yaml
 import psycopg
+
 from common.db import get_db_params
 from common.planning_date import get_planning_date
 from common.scripts_base import add_common_args, setup_logging
@@ -64,8 +64,21 @@ def load_network(conn) -> list[dict]:
     ]
 
 
-def load_inventory_state(conn, item_filter: str | None = None) -> dict[tuple[str, str], dict]:
-    """Load latest month inventory + safety stock targets per item-loc."""
+def load_inventory_state(
+    conn,
+    item_filter: str | None = None,
+    available_supply_cfg: dict | None = None,
+) -> dict[tuple[str, str], dict]:
+    """Load latest month inventory + safety stock targets per item-loc.
+
+    Gen-4 SC-4: ``available_supply`` = on_hand + in_transit + open_pos. Each
+    source can be toggled via rebalancing_config.yaml. When a dependent table
+    is missing, that source contributes 0 (degrades gracefully).
+    """
+    cfg = available_supply_cfg or {}
+    include_in_transit = bool(cfg.get("include_in_transit", True))
+    include_open_pos = bool(cfg.get("include_open_pos", True))
+
     wheres = ["a.month_start = (SELECT MAX(month_start) FROM agg_inventory_monthly)"]
     params: list = []
     if item_filter:
@@ -96,9 +109,58 @@ def load_inventory_state(conn, item_filter: str | None = None) -> dict[tuple[str
         state[(r[0], r[1])] = {
             "item_id": r[0], "loc": r[1],
             "on_hand": on_hand, "daily_sales": daily_sales,
+            "in_transit": 0.0, "open_po_qty": 0.0,
             "ss_target": ss, "dos": dos,
             "abc_vol": r[5], "reorder_point": float(r[6]),
         }
+
+    # Gen-4 SC-4: augment with in-transit qty (best-effort)
+    if include_in_transit:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("SAVEPOINT load_in_transit")
+                cur.execute("""
+                    SELECT item_id, dest_loc, COALESCE(SUM(qty_in_transit), 0)
+                    FROM fact_inventory_in_transit
+                    WHERE expected_arrival_date >= CURRENT_DATE
+                    GROUP BY item_id, dest_loc
+                """)
+                for item_id, loc, qty in cur.fetchall():
+                    key = (item_id, loc)
+                    if key in state:
+                        state[key]["in_transit"] = float(qty or 0)
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT load_in_transit")
+
+    # Gen-4 SC-4: augment with open PO qty (best-effort)
+    if include_open_pos:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("SAVEPOINT load_open_pos")
+                cur.execute("""
+                    SELECT item_id, loc, COALESCE(SUM(order_qty - COALESCE(received_qty, 0)), 0)
+                    FROM fact_purchase_orders
+                    WHERE is_closed = FALSE
+                    GROUP BY item_id, loc
+                """)
+                for item_id, loc, qty in cur.fetchall():
+                    key = (item_id, loc)
+                    if key in state:
+                        state[key]["open_po_qty"] = float(qty or 0)
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT load_open_pos")
+
+    # Compute available_supply and projected_dos for each SKU
+    for info in state.values():
+        avail = info["on_hand"]
+        if include_in_transit:
+            avail += info["in_transit"]
+        if include_open_pos:
+            avail += info["open_po_qty"]
+        info["available_supply"] = avail
+        info["projected_dos"] = (
+            avail / info["daily_sales"] if info["daily_sales"] > 0 else None
+        )
     return state
 
 
@@ -375,6 +437,101 @@ def lp_solver(
     return selected
 
 
+def max_service_solver(
+    candidates: list[dict],
+    config: dict,
+) -> list[dict]:
+    """Gen-4 SC-4: max_service objective — fill largest shortage first.
+
+    Ignores net_benefit threshold (pure service-level optimization). Sorts
+    candidates by shortage severity * abc-priority and greedily assigns
+    transfers until excess/shortage pools drain.
+    """
+    abc_weight = {"A": 3, "B": 2, "C": 1}
+
+    for c in candidates:
+        dst_ss = max(c.get("dest_ss_target", 0), 1)
+        shortage_weight = c.get("dest_shortage_qty", 0) / dst_ss
+        c["service_score"] = (
+            shortage_weight
+            * abc_weight.get(c.get("abc_class") or "C", 1)
+        )
+
+    candidates.sort(key=lambda x: -x["service_score"])
+
+    remaining_excess: dict[tuple[str, str], float] = {}
+    remaining_shortage: dict[tuple[str, str], float] = {}
+    for c in candidates:
+        key_src = (c["item_id"], c["source_loc"])
+        key_dst = (c["item_id"], c["dest_loc"])
+        remaining_excess.setdefault(key_src, c["source_excess_qty"])
+        remaining_shortage.setdefault(key_dst, c["dest_shortage_qty"])
+
+    selected = []
+    for c in candidates:
+        key_src = (c["item_id"], c["source_loc"])
+        key_dst = (c["item_id"], c["dest_loc"])
+        avail_excess = remaining_excess.get(key_src, 0)
+        avail_shortage = remaining_shortage.get(key_dst, 0)
+        qty = min(c["recommended_qty"], avail_excess, avail_shortage)
+        if qty <= 0:
+            continue
+        c["recommended_qty"] = qty
+        c["transfer_cost"] = qty * c["cost_per_unit"] + c["fixed_cost"]
+        remaining_excess[key_src] = avail_excess - qty
+        remaining_shortage[key_dst] = avail_shortage - qty
+        selected.append(c)
+    return selected
+
+
+def equalize_dos_solver(
+    candidates: list[dict],
+    config: dict,
+    state: dict[tuple[str, str], dict],
+) -> list[dict]:
+    """Gen-4 SC-4: equalize_dos objective — level DOS across network.
+
+    For each item, compute network-mean DOS and flag locations >10% above
+    (surplus) or <10% below (deficit). Only keep candidate transfers that
+    move from surplus to deficit (by DOS).
+    """
+    obj_cfg = config.get("objectives", {}).get("equalize_dos", {})
+    tol = float(obj_cfg.get("target_dos_tolerance_pct", 0.10))
+    max_move = float(obj_cfg.get("max_move_per_item", 1000))
+
+    # Per-item network mean
+    from collections import defaultdict
+    dos_by_item: dict[str, list[float]] = defaultdict(list)
+    for (item_id, _), info in state.items():
+        if info.get("dos") is not None:
+            dos_by_item[item_id].append(float(info["dos"]))
+
+    mean_dos: dict[str, float] = {
+        item_id: sum(v) / len(v) for item_id, v in dos_by_item.items() if v
+    }
+
+    # Track qty moved per item to enforce max_move_per_item safety cap
+    moved_per_item: dict[str, float] = defaultdict(float)
+
+    selected = []
+    for c in candidates:
+        m = mean_dos.get(c["item_id"])
+        if m is None or m <= 0:
+            continue
+        src_dos = c.get("source_dos") or 0
+        dst_dos = c.get("dest_dos") or 0
+        src_surplus = src_dos > m * (1 + tol)
+        dst_deficit = dst_dos < m * (1 - tol)
+        if not (src_surplus and dst_deficit):
+            continue
+        if moved_per_item[c["item_id"]] + c["recommended_qty"] > max_move:
+            continue
+        moved_per_item[c["item_id"]] += c["recommended_qty"]
+        c["transfer_cost"] = c["recommended_qty"] * c["cost_per_unit"] + c["fixed_cost"]
+        selected.append(c)
+    return selected
+
+
 def compute_network_balance(state: dict[tuple[str, str], dict]) -> float:
     """Compute network DOS coefficient of variation across all items."""
     from collections import defaultdict
@@ -474,7 +631,12 @@ def run(
     with profiled_section("load_network_and_inventory"):
         with psycopg.connect(**get_db_params()) as conn:
             lanes = load_network(conn)
-            state = load_inventory_state(conn, item_filter)
+            # Gen-4 SC-4: pass available_supply config so loader folds in
+            # in-transit + open POs alongside on-hand.
+            state = load_inventory_state(
+                conn, item_filter,
+                available_supply_cfg=config.get("available_supply"),
+            )
 
     if not state:
         print("No inventory data found.")
@@ -497,7 +659,13 @@ def run(
         candidates = compute_financials(candidates, config)
         candidates = assign_urgency(candidates)
 
-        if solver_method == "lp":
+        # Gen-4 SC-4: honor `objective` knob
+        objective = config.get("optimization", {}).get("objective", "min_cost")
+        if objective == "max_service":
+            selected = max_service_solver(candidates, config)
+        elif objective == "equalize_dos":
+            selected = equalize_dos_solver(candidates, config, state)
+        elif solver_method == "lp":
             selected = lp_solver(candidates, config)
         else:
             selected = greedy_solver(candidates, config)

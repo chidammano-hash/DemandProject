@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { TestQueryWrapper } from "./test-utils";
 
 vi.mock("@/api/queries", async () => {
@@ -22,6 +22,7 @@ vi.mock("@/api/queries", async () => {
 import {
   fetchExceptionSummary,
   fetchExceptions,
+  acknowledgeException,
 } from "@/api/queries";
 import { ExceptionQueuePanel } from "@/tabs/inv-planning/ExceptionQueuePanel";
 
@@ -92,5 +93,34 @@ describe("ExceptionQueuePanel", () => {
       </TestQueryWrapper>,
     );
     expect(await screen.findByText("Acknowledge")).toBeInTheDocument();
+  });
+
+  it("optimistically flips status to 'acknowledged' before the server responds (UX-7)", async () => {
+    // Hold the ack mutation open so we can observe the pre-resolve state.
+    let resolveAck: (v: unknown) => void = () => {};
+    (acknowledgeException as unknown as { mockImplementation: (fn: () => Promise<unknown>) => void }).mockImplementation(
+      () => new Promise((res) => { resolveAck = res; }),
+    );
+
+    render(
+      <TestQueryWrapper>
+        <ExceptionQueuePanel />
+      </TestQueryWrapper>,
+    );
+
+    // The button's text node is "Acknowledge"; closest() finds the button element.
+    const textNode = await screen.findByText("Acknowledge");
+    const btn = textNode.closest("button") as HTMLButtonElement;
+    expect(btn).toBeTruthy();
+    fireEvent.click(btn);
+
+    // Optimistic update: row status visibly flipped to "acknowledged" in the
+    // status badge column, and the ack button is no longer rendered for it.
+    await waitFor(() => {
+      expect(screen.getByText("acknowledged")).toBeInTheDocument();
+    });
+
+    // Clean up.
+    resolveAck({ ...mockException, status: "acknowledged" });
   });
 });

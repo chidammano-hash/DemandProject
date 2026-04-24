@@ -27,6 +27,10 @@ from pydantic import BaseModel
 from api.core import get_conn
 from api.auth import require_api_key
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["supply"])
 
 
@@ -301,7 +305,7 @@ async def upload_open_pos_csv(
         with __import__("psycopg").connect(**get_conn.__module__) as conn:  # type: ignore
             loaded, skipped, reasons = load_pos(tmp_path, conn, dry_run=False, config=config)
             reconcile_received_qty(conn)
-    except Exception:
+    except Exception:  # noqa: BLE001 — upload fallback: if load_pos fails, return empty summary rather than 500
         # Fallback: just return summary without DB
         loaded, skipped, reasons = 0, 0, {}
     finally:
@@ -425,10 +429,10 @@ async def generate_planned_orders_async(
                             o["confidence_score"] = score
                             o["confidence_reason"] = reason
                         write_planned_orders(orders, dry_run=False, conn=conn)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    except Exception:  # noqa: BLE001 — background planner job: keep iterating on per-DFU failures
+                        logger.exception("Planned-order generation failed for item=%s loc=%s", item_id, loc)
+        except Exception:  # noqa: BLE001 — background thread must never raise to scheduler
+            logger.exception("Planned-order background job crashed")
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
