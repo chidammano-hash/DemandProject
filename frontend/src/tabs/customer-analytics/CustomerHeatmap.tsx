@@ -8,7 +8,7 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
-import { EmptyState } from "./EmptyState";
+import { PanelStateGate } from "@/components/PanelStateGate";
 
 type HeatmapMetric = "demand_qty" | "customer_count" | "fill_rate";
 type ValueMode = "absolute" | "percentile";
@@ -174,11 +174,11 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
         </div>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div className="h-[400px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
-        ) : !data?.cells || data.cells.length === 0 ? (
-          <EmptyState height={400} />
-        ) : (
+        <PanelStateGate
+          isLoading={isLoading}
+          isEmpty={!data?.cells || data.cells.length === 0}
+          height={400}
+        >
           <div role="img" aria-roledescription="Item by state heatmap chart">
             <ReactECharts
               option={option}
@@ -196,7 +196,7 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
               }}
             />
           </div>
-        )}
+        </PanelStateGate>
       </CardContent>
     </Card>
   );

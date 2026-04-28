@@ -11,7 +11,7 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
-import { EmptyState } from "./EmptyState";
+import { PanelStateGate } from "@/components/PanelStateGate";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
@@ -104,11 +104,11 @@ export function CustomerLifecycle({ filters }: Props) {
         <p className="text-xs text-muted-foreground">Cohort retention heatmap and new/churned waterfall</p>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div className="h-[400px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
-        ) : cohortMonths.length === 0 && waterfallBars.length === 0 ? (
-          <EmptyState height={400} />
-        ) : (
+        <PanelStateGate
+          isLoading={isLoading}
+          isEmpty={cohortMonths.length === 0 && waterfallBars.length === 0}
+          height={400}
+        >
           <div className="space-y-4">
             <div role="img" aria-roledescription="Cohort retention heatmap">
               <ReactECharts option={heatmapOption} style={{ height: 260 }} lazyUpdate notMerge={false} />
@@ -129,7 +129,7 @@ export function CustomerLifecycle({ filters }: Props) {
               </ResponsiveContainer>
             </div>
           </div>
-        )}
+        </PanelStateGate>
       </CardContent>
     </Card>
   );

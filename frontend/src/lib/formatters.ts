@@ -60,6 +60,22 @@ export function formatCurrency(value: number | null | undefined): string {
   return `$${n.toFixed(0)}`;
 }
 
+/**
+ * Format a number as compact K/M (e.g. 1234567 → "1.2M", 12345 → "12.3K").
+ * Intentionally uses our own thresholds rather than `Intl.NumberFormat`
+ * compact notation — Intl rounds more aggressively (12345 → "12K" vs our
+ * "12.3K"), and several panels already render this exact format.
+ *
+ * Replaces 5 inline `fmtNum` definitions across customer-analytics panels.
+ */
+export function formatCompactKMB(value: number | null | undefined): string {
+  if (value == null || isNaN(value as number)) return "—";
+  const n = Number(value);
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toFixed(0);
+}
+
 // ---------------------------------------------------------------------------
 // Cluster label formatting — standardized 4-letter code system
 // ---------------------------------------------------------------------------

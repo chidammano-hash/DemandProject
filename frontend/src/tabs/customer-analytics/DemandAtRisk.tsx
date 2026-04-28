@@ -10,6 +10,7 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
+import { formatCompactKMB as fmtNum } from "@/lib/formatters";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
@@ -20,12 +21,6 @@ const BAR_COLORS: Record<string, string> = {
   risk: "#ef4444",
   secure: "#22c55e",
 };
-
-function fmtNum(n: number): string {
-  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toFixed(0);
-}
 
 // Backend returns `waterfall` as [{category, value}, ...] with categories:
 // total_demand, concentration_risk, oos_loss, churn_risk, secure_demand.

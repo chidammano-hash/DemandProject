@@ -8,6 +8,7 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters, SegmentRow } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
+import { formatCompactKMB as fmtNum } from "@/lib/formatters";
 
 type SegmentBy = "rpt_channel_desc" | "store_type_desc" | "chain_type_desc" | "state";
 
@@ -22,12 +23,6 @@ interface Props {
   filters: CustomerAnalyticsFilters;
   segmentBy: SegmentBy;
   onSegmentByChange: (s: SegmentBy) => void;
-}
-
-function fmtNum(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toFixed(0);
 }
 
 type SortField = "segment" | "total_customers" | "total_demand" | "fill_rate" | "mom_change";

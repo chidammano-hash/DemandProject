@@ -8,7 +8,7 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
-import { EmptyState } from "./EmptyState";
+import { PanelStateGate } from "@/components/PanelStateGate";
 
 type Grain = "customer" | "state";
 
@@ -149,15 +149,15 @@ export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
         )}
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div className="h-[400px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
-        ) : !data?.bubbles || data.bubbles.length === 0 ? (
-          <EmptyState height={400} />
-        ) : (
+        <PanelStateGate
+          isLoading={isLoading}
+          isEmpty={!data?.bubbles || data.bubbles.length === 0}
+          height={400}
+        >
           <div role="img" aria-roledescription="OOS impact bubble scatter chart">
             <ReactECharts option={option} style={{ height: 400 }} lazyUpdate notMerge={false} />
           </div>
-        )}
+        </PanelStateGate>
       </CardContent>
     </Card>
   );

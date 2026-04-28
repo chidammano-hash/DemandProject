@@ -11,7 +11,7 @@ import {
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { useMemo } from "react";
 import { ExportButtons } from "./ExportButtons";
-import { EmptyState } from "./EmptyState";
+import { PanelStateGate } from "@/components/PanelStateGate";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
@@ -103,11 +103,11 @@ export function OrderPatterns({ filters }: Props) {
         <p className="text-xs text-muted-foreground">Order frequency histogram and regularity scatter</p>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div className="h-[400px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
-        ) : freqRaw.length === 0 && regRaw.length === 0 ? (
-          <EmptyState height={400} />
-        ) : (
+        <PanelStateGate
+          isLoading={isLoading}
+          isEmpty={freqRaw.length === 0 && regRaw.length === 0}
+          height={400}
+        >
           <div className="space-y-4">
             <div>
               <p className="text-xs font-medium text-muted-foreground mb-1">Order Frequency</p>
@@ -127,7 +127,7 @@ export function OrderPatterns({ filters }: Props) {
               </div>
             </div>
           </div>
-        )}
+        </PanelStateGate>
       </CardContent>
     </Card>
   );

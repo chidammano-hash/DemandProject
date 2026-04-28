@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { queryKeys, fetchCustomerMap, STALE } from "@/api/queries";
 import type { CustomerMapLocation } from "@/api/queries/core";
 import usStatesGeo from "@/assets/us-states.json";
+import { formatInt as fmtNum } from "@/lib/formatters";
 
 // ---------------------------------------------------------------------------
 // US States GeoJSON (bundled static asset)
@@ -65,10 +66,6 @@ function markerColor(count: number, maxCount: number): string {
 function radius(count: number, maxCount: number): number {
   if (maxCount <= 0) return 4;
   return 4 + 18 * Math.sqrt(count / maxCount);
-}
-
-function fmtNum(n: number): string {
-  return n.toLocaleString();
 }
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
-import { EmptyState } from "./EmptyState";
+import { PanelStateGate } from "@/components/PanelStateGate";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
@@ -54,15 +54,15 @@ export function DemandFlowSankey({ filters }: Props) {
         <p className="text-xs text-muted-foreground">Warehouse to State to Channel demand flow</p>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div className="h-[400px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
-        ) : !data?.links || data.links.length === 0 ? (
-          <EmptyState height={400} />
-        ) : (
+        <PanelStateGate
+          isLoading={isLoading}
+          isEmpty={!data?.links || data.links.length === 0}
+          height={400}
+        >
           <div role="img" aria-roledescription="Demand flow sankey diagram">
             <ReactECharts option={option} style={{ height: 400 }} lazyUpdate notMerge={false} />
           </div>
-        )}
+        </PanelStateGate>
       </CardContent>
     </Card>
   );

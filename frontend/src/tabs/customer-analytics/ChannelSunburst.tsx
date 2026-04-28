@@ -8,7 +8,8 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
-import { EmptyState } from "./EmptyState";
+import { PanelStateGate } from "@/components/PanelStateGate";
+import { formatCompactKMB as fmtNum } from "@/lib/formatters";
 
 type SunburstMetric = "demand" | "customers";
 
@@ -27,12 +28,6 @@ const CHANNEL_PALETTE = [
   "#ec4899", // pink
   "#64748b", // slate
 ];
-
-function fmtNum(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toFixed(0);
-}
 
 export function ChannelSunburst({ filters }: Props) {
   const [sunburstMetric, setSunburstMetric] = useState<SunburstMetric>("demand");
@@ -201,15 +196,15 @@ export function ChannelSunburst({ filters }: Props) {
         </div>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div className="h-[420px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
-        ) : !data?.tree || data.tree.length === 0 ? (
-          <EmptyState height={420} />
-        ) : (
+        <PanelStateGate
+          isLoading={isLoading}
+          isEmpty={!data?.tree || data.tree.length === 0}
+          height={420}
+        >
           <div role="img" aria-roledescription="Channel mix sunburst chart">
             <ReactECharts option={option} style={{ height: 420 }} lazyUpdate notMerge={false} />
           </div>
-        )}
+        </PanelStateGate>
       </CardContent>
     </Card>
   );

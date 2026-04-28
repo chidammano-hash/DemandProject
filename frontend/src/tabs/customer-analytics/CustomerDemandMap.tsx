@@ -12,6 +12,7 @@ import type { CustomerAnalyticsFilters, MapLocation } from "@/api/queries/custom
 import usStatesGeo from "@/assets/us-states.json";
 import { useDashboardFilter } from "./DashboardFilterContext";
 import { ExportButtons } from "./ExportButtons";
+import { formatInt as fmtNum } from "@/lib/formatters";
 
 const statesGeoJSON = usStatesGeo as unknown as GeoJSON.FeatureCollection;
 
@@ -106,9 +107,7 @@ function clusterByGrid(points: MapLocation[]): ClusteredBubble[] {
   }));
 }
 
-function fmtNum(n: number): string {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
-}
+// fmtNum aliased to canonical formatInt — replaces local thousands-separator helper.
 
 // Single composite tileset: doubles as base + labels in one request, halving
 // network/tile-decode work. Previously stacked light_nolabels + light_only_labels.

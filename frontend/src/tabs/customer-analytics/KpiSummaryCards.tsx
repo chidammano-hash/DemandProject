@@ -6,6 +6,7 @@ import {
   fetchCustomerAnalyticsKpis,
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters, KpiMetric } from "@/api/queries/customer-analytics";
+import { formatCompactKMB as fmtNum } from "@/lib/formatters";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
@@ -16,12 +17,6 @@ interface KpiCardDef {
   label: string;
   format: (v: number) => string;
   suffix?: string;
-}
-
-function fmtNum(n: number): string {
-  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toFixed(0);
 }
 
 function fmtPct(n: number): string {

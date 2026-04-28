@@ -11,6 +11,7 @@ import { fetchOpenPOs, fetchOpenPOSummary, fetchPastDuePOs } from "@/api/queries
 import { queryKeys } from "@/api/queries/core";
 import { EmptyState } from "@/components/EmptyState";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
+import { formatInt as fmtNum } from "@/lib/formatters";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -24,11 +25,6 @@ function fmtCurrency(v: number | null): string {
     notation: v >= 1_000_000 ? "compact" : "standard",
     maximumFractionDigits: 0,
   }).format(v);
-}
-
-function fmtNum(v: number | null | undefined): string {
-  if (v == null) return "—";
-  return new Intl.NumberFormat("en-US").format(v);
 }
 
 function deliveryColor(days_past_due: number): string {

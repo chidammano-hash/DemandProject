@@ -8,6 +8,7 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters, RankedCustomer } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
+import { formatCompactKMB as fmtNum } from "@/lib/formatters";
 
 const ROW_HEIGHT = 28;
 const VIEWPORT_HEIGHT = 480;
@@ -85,12 +86,6 @@ function fillRateColor(fr: number): string {
   if (fr >= 85) return "#eab308";
   if (fr >= 80) return "#f97316";
   return "#ef4444";
-}
-
-function fmtNum(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toFixed(0);
 }
 
 export function CustomerRanking({ filters, sort, topN, onSortChange }: Props) {
