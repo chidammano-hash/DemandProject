@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { AreaChart, Area, ResponsiveContainer } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -39,7 +39,8 @@ export function SegmentSparklines({ filters, segmentBy, onSegmentByChange }: Pro
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.segmentTrends(segmentBy, filters),
     queryFn: () => fetchCustomerAnalyticsSegmentTrends(segmentBy, filters),
-    staleTime: 5 * 60_000,
+    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
+    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
   const rawSegments = data?.segments ?? [];

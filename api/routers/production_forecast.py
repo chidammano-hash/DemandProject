@@ -32,62 +32,104 @@ router = APIRouter(tags=["production-forecast"])
 @router.get("/forecast/production")
 async def get_production_forecast(
     item_id: str,
-    loc: str,
+    loc: str | None = None,
     horizon: int = 24,
     plan_version: str | None = None,
 ):
-    """Return production forecast series for a specific DFU.
+    """Return production forecast series for a DFU, or aggregated across all
+    locations when ``loc`` is omitted.
 
     Args:
         item_id: Item number (exact match).
-        loc: Location code (exact match).
+        loc: Location code (exact match). Optional — when omitted, forecasts
+            are summed across every location for the item, and per-month CI
+            bounds become the sum of lower/upper bounds (a coarse proxy).
         horizon: Max months ahead to return (1–24).
         plan_version: Specific plan version (e.g. '2026-02'). Defaults to latest.
 
     Returns:
         Forecast rows with confidence intervals and lag source metadata.
+        When loc is None, ``loc`` in the response is set to "ALL" and
+        per-row ``model_id`` / ``cluster_id`` / ``lag_source`` reflect a
+        representative row from the aggregated set.
     """
     horizon = max(1, min(horizon, 24))
+    aggregate = loc is None
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             # Resolve plan_version if not provided
             if not plan_version:
-                cur.execute("""
-                    SELECT plan_version
-                    FROM fact_production_forecast
-                    WHERE item_id = %s AND loc = %s
-                    ORDER BY generated_at DESC
-                    LIMIT 1
-                """, [item_id, loc])
+                if aggregate:
+                    cur.execute("""
+                        SELECT plan_version
+                        FROM fact_production_forecast
+                        WHERE item_id = %s
+                        ORDER BY generated_at DESC
+                        LIMIT 1
+                    """, [item_id])
+                else:
+                    cur.execute("""
+                        SELECT plan_version
+                        FROM fact_production_forecast
+                        WHERE item_id = %s AND loc = %s
+                        ORDER BY generated_at DESC
+                        LIMIT 1
+                    """, [item_id, loc])
                 row = cur.fetchone()
                 if not row:
+                    target = item_id if aggregate else f"{item_id}/{loc}"
                     raise HTTPException(
                         status_code=404,
-                        detail=f"No production forecast found for {item_id}/{loc}. "
+                        detail=f"No production forecast found for {target}. "
                                f"Run 'make forecast-generate' to generate forecasts."
                     )
                 plan_version = row[0]
 
-            cur.execute("""
-                SELECT
-                    forecast_month,
-                    forecast_qty,
-                    forecast_qty_lower,
-                    forecast_qty_upper,
-                    model_id,
-                    cluster_id,
-                    horizon_months,
-                    is_recursive,
-                    lag_source,
-                    generated_at
-                FROM fact_production_forecast
-                WHERE item_id = %s
-                  AND loc = %s
-                  AND plan_version = %s
-                  AND horizon_months <= %s
-                ORDER BY forecast_month
-            """, [item_id, loc, plan_version, horizon])
+            if aggregate:
+                # Sum forecast_qty across all locations per month. CI bounds
+                # are summed too (coarse — assumes independence). Pick a
+                # representative model_id/cluster_id/lag_source per month
+                # using MAX so the response shape stays compatible.
+                cur.execute("""
+                    SELECT
+                        forecast_month,
+                        SUM(forecast_qty) AS forecast_qty,
+                        SUM(forecast_qty_lower) AS forecast_qty_lower,
+                        SUM(forecast_qty_upper) AS forecast_qty_upper,
+                        MAX(model_id) AS model_id,
+                        MAX(cluster_id::text) AS cluster_id,
+                        MAX(horizon_months) AS horizon_months,
+                        BOOL_OR(is_recursive) AS is_recursive,
+                        MAX(lag_source) AS lag_source,
+                        MAX(generated_at) AS generated_at
+                    FROM fact_production_forecast
+                    WHERE item_id = %s
+                      AND plan_version = %s
+                      AND horizon_months <= %s
+                    GROUP BY forecast_month
+                    ORDER BY forecast_month
+                """, [item_id, plan_version, horizon])
+            else:
+                cur.execute("""
+                    SELECT
+                        forecast_month,
+                        forecast_qty,
+                        forecast_qty_lower,
+                        forecast_qty_upper,
+                        model_id,
+                        cluster_id,
+                        horizon_months,
+                        is_recursive,
+                        lag_source,
+                        generated_at
+                    FROM fact_production_forecast
+                    WHERE item_id = %s
+                      AND loc = %s
+                      AND plan_version = %s
+                      AND horizon_months <= %s
+                    ORDER BY forecast_month
+                """, [item_id, loc, plan_version, horizon])
             rows = cur.fetchall()
 
             # Look up promoted tuning run matching the forecast model_id
@@ -112,9 +154,10 @@ async def get_production_forecast(
                     pass
 
     if not rows:
+        target = item_id if aggregate else f"{item_id}/{loc}"
         raise HTTPException(
             status_code=404,
-            detail=f"No forecast rows found for {item_id}/{loc} in version {plan_version}."
+            detail=f"No forecast rows found for {target} in version {plan_version}."
         )
 
     model_id = rows[0][4]
@@ -122,7 +165,7 @@ async def get_production_forecast(
 
     return {
         "item_id": item_id,
-        "loc": loc,
+        "loc": loc if loc is not None else "ALL",
         "plan_version": plan_version,
         "model_id": model_id,
         "generated_at": generated_at.isoformat() if generated_at else None,

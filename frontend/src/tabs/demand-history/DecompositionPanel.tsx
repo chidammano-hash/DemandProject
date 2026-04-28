@@ -34,22 +34,23 @@ export function DecompositionPanel() {
   const { data, isLoading, isError } = useDecomposition(activeItem, activeLoc);
 
   // Pivot monthly data: month → { month, cust1: qty, cust2: qty, ... }
+  // API returns `series` (not `monthly`) and `pct_share` is already 0-100.
   const { pivotData, customerKeys } = useMemo(() => {
-    if (!data?.monthly?.length) return { pivotData: [], customerKeys: [] };
+    if (!data?.series?.length) return { pivotData: [], customerKeys: [] };
 
     const custSet = new Set<string>();
     const byMonth = new Map<string, Record<string, string | number>>();
 
-    for (const row of data.monthly) {
+    for (const row of data.series) {
       custSet.add(row.customer_no);
       const rec = byMonth.get(row.month) ?? { month: row.month } as Record<string, string | number>;
-      rec[row.customer_no] = viewMode === "percent" ? row.pct_share * 100 : row.demand_qty;
+      rec[row.customer_no] = viewMode === "percent" ? row.pct_share : row.demand_qty;
       byMonth.set(row.month, rec);
     }
 
     const keys = Array.from(custSet);
     return { pivotData: Array.from(byMonth.values()), customerKeys: keys };
-  }, [data?.monthly, viewMode]);
+  }, [data?.series, viewMode]);
 
   function handleApply() {
     setSelection(inputItem, inputLoc);

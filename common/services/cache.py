@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from functools import wraps
@@ -16,6 +17,8 @@ from typing import Any, Callable
 from common.utils import load_config, reset_config as _reset_utils_config
 
 _CONFIG_NAME = "cache_config.yaml"
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -105,16 +108,30 @@ class InMemoryBackend(CacheBackend):
 
 
 class RedisBackend(CacheBackend):
-    """Redis-based cache backend."""
+    """Redis-based cache backend.
+
+    All operations degrade to cache-miss/no-op on Redis errors rather than
+    propagating exceptions. A flaky cache should never take down the API —
+    requests should just hit the DB instead.
+    """
 
     def __init__(self, redis_url: str):
         import redis
         self._client = redis.from_url(redis_url, decode_responses=True)
         self._hits = 0
         self._misses = 0
+        # Probe the connection up front so callers can fall back to
+        # InMemoryBackend on bad URLs / unreachable Redis. Without this the
+        # backend "succeeds" at init but every request later raises.
+        self._client.ping()
 
     def get(self, key: str) -> Any | None:
-        raw = self._client.get(key)
+        try:
+            raw = self._client.get(key)
+        except Exception as exc:  # noqa: BLE001 — never propagate cache errors
+            logger.warning("Redis GET failed for %s: %s", key, exc)
+            self._misses += 1
+            return None
         if raw is None:
             self._misses += 1
             return None
@@ -125,16 +142,26 @@ class RedisBackend(CacheBackend):
             return raw
 
     def set(self, key: str, value: Any, ttl: int = 120) -> None:
-        self._client.setex(key, ttl, json.dumps(value, default=str))
+        try:
+            self._client.setex(key, ttl, json.dumps(value, default=str))
+        except Exception as exc:  # noqa: BLE001 — failed cache write != failed request
+            logger.warning("Redis SET failed for %s: %s", key, exc)
 
     def delete(self, key: str) -> None:
-        self._client.delete(key)
+        try:
+            self._client.delete(key)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Redis DELETE failed for %s: %s", key, exc)
 
     def invalidate(self, pattern: str) -> int:
-        keys = list(self._client.scan_iter(match=pattern, count=1000))
-        if keys:
-            self._client.delete(*keys)
-        return len(keys)
+        try:
+            keys = list(self._client.scan_iter(match=pattern, count=1000))
+            if keys:
+                self._client.delete(*keys)
+            return len(keys)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Redis INVALIDATE failed for %s: %s", pattern, exc)
+            return 0
 
     def stats(self) -> dict:
         total = self._hits + self._misses
@@ -165,13 +192,32 @@ def get_cache() -> CacheBackend:
         with _backend_lock:
             if _backend is None:
                 redis_url = os.getenv("REDIS_URL", "")
+                env = os.getenv("ENVIRONMENT", "").lower()
+                workers = int(os.getenv("GUNICORN_WORKERS", "1"))
                 if redis_url:
                     try:
                         _backend = RedisBackend(redis_url)
                         _backend.stats()  # Test connection
-                    except Exception:
+                        logger.info("Cache: using Redis backend at %s", redis_url)
+                    except Exception as exc:
+                        logger.warning("Cache: Redis init failed (%s); falling back to in-memory", exc)
                         _backend = InMemoryBackend()
                 else:
+                    # In-memory cache is per-worker — with N gunicorn workers
+                    # the cache hit rate degrades to ~1/N because each worker
+                    # has its own cache. Loud warning under multi-worker prod.
+                    if env == "production" and workers > 1:
+                        logger.error(
+                            "Cache: REDIS_URL not set under %d gunicorn workers in production. "
+                            "Each worker has an isolated cache; hit rate will degrade ~%dx. "
+                            "Set REDIS_URL=redis://... to share cache across workers.",
+                            workers, workers,
+                        )
+                    elif workers > 1:
+                        logger.warning(
+                            "Cache: REDIS_URL not set under %d workers; cache is per-worker.",
+                            workers,
+                        )
                     _backend = InMemoryBackend()
     return _backend
 
@@ -210,6 +256,28 @@ def cached(ttl: int = 120, group: str = "default"):
             if hit is not None:
                 return hit
             result = await func(*args, **kwargs)
+            backend.set(key, result, ttl)
+            return result
+        return wrapper
+    return decorator
+
+
+def cached_sync(ttl: int = 300, group: str = "default", skip_kwargs: tuple[str, ...] = ("response",)):
+    """Cache decorator for sync FastAPI route handlers.
+
+    FastAPI passes its `Response` object via kwargs — exclude it (and any
+    other non-hashable injectables) from the cache key via `skip_kwargs`.
+    """
+    def decorator(func: Callable):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            backend = get_cache()
+            cache_kwargs = {k: v for k, v in kwargs.items() if k not in skip_kwargs}
+            key = cache_key_for(f"{group}:{func.__name__}", cache_kwargs or None)
+            hit = backend.get(key)
+            if hit is not None:
+                return hit
+            result = func(*args, **kwargs)
             backend.set(key, result, ttl)
             return result
         return wrapper

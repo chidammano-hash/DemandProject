@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { GlobalFilters } from "@/types/theme";
 import { fetchPlanningDate, queryKeys, STALE } from "@/api/queries";
@@ -86,11 +86,16 @@ export function useGlobalFilters() {
     filters.item.length > 0 || filters.location.length > 0 ||
     filters.cluster.length > 0;
 
-  return {
-    filters,
-    setFilters,
-    resetFilters,
-    hasActiveFilters,
-    planningDate: planningDateInfo?.planning_date ?? null,
-  };
+  const planningDate = planningDateInfo?.planning_date ?? null;
+
+  return useMemo(
+    () => ({
+      filters,
+      setFilters,
+      resetFilters,
+      hasActiveFilters,
+      planningDate,
+    }),
+    [filters, setFilters, resetFilters, hasActiveFilters, planningDate],
+  );
 }

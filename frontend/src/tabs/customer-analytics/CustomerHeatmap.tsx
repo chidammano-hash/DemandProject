@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import ReactECharts from "echarts-for-react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { ModularReactECharts as ReactECharts } from "@/components/echarts-modular";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
@@ -8,6 +8,7 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
+import { EmptyState } from "./EmptyState";
 
 type HeatmapMetric = "demand_qty" | "customer_count" | "fill_rate";
 type ValueMode = "absolute" | "percentile";
@@ -26,13 +27,17 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.heatmap(metric, topN, filters),
     queryFn: () => fetchCustomerAnalyticsHeatmap(metric, topN, filters),
-    staleTime: 5 * 60_000,
+    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
+    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
   const option = useMemo(() => {
     if (!data) return {};
     const items = data.items.map((i) => i.item_desc);
     let states = [...data.states];
+
+    // O(1) item_id -> item_desc lookup, replacing per-cell Array.find.
+    const itemDescById = new Map<string, string>(data.items.map((i) => [i.item_id, i.item_desc]));
 
     // Sort states if a column is selected for sorting
     if (sortCol) {
@@ -49,16 +54,20 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
     if (sortRow) {
       const itemValues = new Map<string, number>();
       for (const c of data.cells) {
-        const itemDesc = data.items.find((i) => i.item_id === c.item_id)?.item_desc ?? "";
+        const itemDesc = itemDescById.get(c.item_id) ?? "";
         const val = metric === "fill_rate" ? c.fill_rate : metric === "customer_count" ? c.customer_count : c.demand_qty;
         itemValues.set(itemDesc, (itemValues.get(itemDesc) ?? 0) + val);
       }
       sortedItems.sort((a, b) => (itemValues.get(b) ?? 0) - (itemValues.get(a) ?? 0));
     }
 
+    // Build O(1) axis index maps — cellData becomes O(n) instead of O(n * axis).
+    const stateIdx = new Map(states.map((s, i) => [s, i]));
+    const itemIdx = new Map(sortedItems.map((s, i) => [s, i]));
+
     const rawCellData = data.cells.map((c) => {
-      const x = states.indexOf(c.state);
-      const y = sortedItems.indexOf(data.items.find((i) => i.item_id === c.item_id)?.item_desc ?? "");
+      const x = stateIdx.get(c.state) ?? -1;
+      const y = itemIdx.get(itemDescById.get(c.item_id) ?? "") ?? -1;
       const val = metric === "fill_rate" ? c.fill_rate : metric === "customer_count" ? c.customer_count : c.demand_qty;
       return [x, y, val];
     });
@@ -77,6 +86,7 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
     const maxVal = Math.max(...cellData.map((c) => c[2] as number), 1);
 
     return {
+      animation: false,  // 1000+ heatmap cells: animation freezes the main thread
       tooltip: {
         position: "top",
         formatter: (p: { value: [number, number, number] }) => {
@@ -166,11 +176,15 @@ export function CustomerHeatmap({ filters, metric: initialMetric, topN }: Props)
       <CardContent>
         {isLoading ? (
           <div className="h-[400px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
+        ) : !data?.cells || data.cells.length === 0 ? (
+          <EmptyState height={400} />
         ) : (
           <div role="img" aria-roledescription="Item by state heatmap chart">
             <ReactECharts
               option={option}
               style={{ height: 400 }}
+              lazyUpdate
+              notMerge={false}
               onEvents={{
                 click: (params: { componentType: string; targetType: string; value: string }) => {
                   if (params.componentType === "xAxis") {

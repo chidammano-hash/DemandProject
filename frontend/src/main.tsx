@@ -1,4 +1,4 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import { ErrorBoundary } from "react-error-boundary";
 import {
@@ -7,11 +7,18 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import App from "./App";
 import "./index.css";
 import { toast } from "./components/Toaster";
 import { formatApiError, extractStatus } from "./lib/formatApiError";
+
+// Devtools are dev-only and ~80KB. Lazy + dev-gated so the prod bundle
+// doesn't ship them. Vite strips this branch entirely in `npm run build`.
+const ReactQueryDevtools = import.meta.env.DEV
+  ? lazy(() =>
+      import("@tanstack/react-query-devtools").then((m) => ({ default: m.ReactQueryDevtools })),
+    )
+  : null;
 
 /**
  * Retry at most twice on network / 5xx errors, never on 4xx (client errors
@@ -36,10 +43,11 @@ const queryClient = new QueryClient({
   mutationCache: new MutationCache({ onError: handleGlobalError }),
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
+      staleTime: 120_000,
       gcTime: 5 * 60_000,
       retry: shouldRetry,
-      refetchOnWindowFocus: true,
+      refetchOnWindowFocus: false,
+      refetchIntervalInBackground: false,
     },
     mutations: {
       retry: false,
@@ -71,7 +79,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <ErrorBoundary FallbackComponent={CrashFallback} onReset={() => window.location.reload()}>
       <QueryClientProvider client={queryClient}>
         <App />
-        <ReactQueryDevtools initialIsOpen={false} />
+        {ReactQueryDevtools && (
+          <Suspense fallback={null}>
+            <ReactQueryDevtools initialIsOpen={false} />
+          </Suspense>
+        )}
       </QueryClientProvider>
     </ErrorBoundary>
   </React.StrictMode>,

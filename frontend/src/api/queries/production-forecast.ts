@@ -65,15 +65,15 @@ export interface ProductionForecastVersionsPayload {
 
 export async function fetchProductionForecast(params: {
   item_id: string;
-  loc: string;
+  loc?: string;
   horizon?: number;
   plan_version?: string;
 }): Promise<ProductionForecastPayload> {
   const qs = new URLSearchParams({
     item_id: params.item_id,
-    loc: params.loc,
     horizon: String(params.horizon ?? 18),
   });
+  if (params.loc) qs.set("loc", params.loc);
   if (params.plan_version) qs.set("plan_version", params.plan_version);
   return fetchJson(`/forecast/production?${qs}`);
 }

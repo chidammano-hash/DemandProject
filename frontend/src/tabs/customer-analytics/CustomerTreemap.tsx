@@ -1,5 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
-import ReactECharts from "echarts-for-react";
+import { useMemo } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { ModularReactECharts as ReactECharts } from "@/components/echarts-modular";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
@@ -16,10 +17,14 @@ export function CustomerTreemap({ filters }: Props) {
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.treemap(filters),
     queryFn: () => fetchCustomerAnalyticsTreemap(filters),
-    staleTime: 5 * 60_000,
+    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
+    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
-  const option = {
+  // Memoize so the option object identity is stable across parent re-renders
+  // (filter keystrokes, theme toggles, etc.). Without this ECharts re-runs the
+  // full treemap layout on every render even when `data` is unchanged.
+  const option = useMemo(() => ({
     tooltip: {
       formatter: (p: { name: string; value: number; data?: { fill_rate?: number } }) => {
         const fr = p.data?.fill_rate;
@@ -46,6 +51,7 @@ export function CustomerTreemap({ filters }: Props) {
         data: data?.tree ?? [],
         leafDepth: 2,
         roam: false,
+        animation: false, // skip layout animation on large trees
         label: { show: true, formatter: "{b}", fontSize: 11 },
         breadcrumb: { show: true },
         levels: [
@@ -55,7 +61,7 @@ export function CustomerTreemap({ filters }: Props) {
         ],
       },
     ],
-  };
+  }), [data]);
 
   return (
     <Card aria-label="Customer concentration treemap">
@@ -69,9 +75,14 @@ export function CustomerTreemap({ filters }: Props) {
       <CardContent>
         {isLoading ? (
           <div className="h-[360px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
+        ) : !data?.tree || data.tree.length === 0 ? (
+          <div className="h-[360px] flex flex-col items-center justify-center text-sm text-muted-foreground gap-1">
+            <span className="font-medium">No data for the selected filters</span>
+            <span className="text-xs">Try a different item or widen the date range</span>
+          </div>
         ) : (
           <div role="img" aria-roledescription="Customer concentration treemap chart">
-            <ReactECharts option={option} style={{ height: 360 }} />
+            <ReactECharts option={option} style={{ height: 360 }} lazyUpdate notMerge={false} />
           </div>
         )}
       </CardContent>

@@ -79,6 +79,28 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # API container — built from the project root Dockerfile (gunicorn +
+  # uvicorn workers). Uses the Docker network to reach postgres + redis,
+  # so POSTGRES_HOST/REDIS_URL override the localhost defaults from .env.
+  api:
+    build: .
+    env_file:
+      - .env
+    environment:
+      # Override .env values that point at host-machine names (localhost,
+      # 5440) so the container hits the in-network service names instead.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "${API_HOST_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pg_data:
   mlflow_data:

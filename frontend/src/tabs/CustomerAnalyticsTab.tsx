@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -7,20 +7,67 @@ import {
   fetchCustomerAnalyticsFilterOptions,
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
+import { useDebounce } from "@/hooks/useDebounce";
 import { DashboardFilterProvider, useDashboardFilter } from "./customer-analytics/DashboardFilterContext";
+// Eager: above-the-fold panels visible on first paint.
 import { KpiSummaryCards } from "./customer-analytics/KpiSummaryCards";
 import { CustomerDemandMap } from "./customer-analytics/CustomerDemandMap";
 import { CustomerTreemap } from "./customer-analytics/CustomerTreemap";
-import { CustomerHeatmap } from "./customer-analytics/CustomerHeatmap";
-import { ChannelSunburst } from "./customer-analytics/ChannelSunburst";
-import { SegmentSparklines } from "./customer-analytics/SegmentSparklines";
-import { CustomerRanking } from "./customer-analytics/CustomerRanking";
-import { OosImpactBubble } from "./customer-analytics/OosImpactBubble";
-import { CustomerLifecycle } from "./customer-analytics/CustomerLifecycle";
-import { DemandAtRisk } from "./customer-analytics/DemandAtRisk";
-import { CustomerItemAffinity } from "./customer-analytics/CustomerItemAffinity";
-import { OrderPatterns } from "./customer-analytics/OrderPatterns";
-import { DemandFlowSankey } from "./customer-analytics/DemandFlowSankey";
+
+// Lazy: below-the-fold or chart-heavy panels. Each gets its own JS chunk so
+// initial bundle stays small and ECharts init is deferred until scrolled.
+const CustomerHeatmap = lazy(() =>
+  import("./customer-analytics/CustomerHeatmap").then((m) => ({ default: m.CustomerHeatmap })),
+);
+const ChannelSunburst = lazy(() =>
+  import("./customer-analytics/ChannelSunburst").then((m) => ({ default: m.ChannelSunburst })),
+);
+const SegmentSparklines = lazy(() =>
+  import("./customer-analytics/SegmentSparklines").then((m) => ({ default: m.SegmentSparklines })),
+);
+const CustomerRanking = lazy(() =>
+  import("./customer-analytics/CustomerRanking").then((m) => ({ default: m.CustomerRanking })),
+);
+const OosImpactBubble = lazy(() =>
+  import("./customer-analytics/OosImpactBubble").then((m) => ({ default: m.OosImpactBubble })),
+);
+const CustomerLifecycle = lazy(() =>
+  import("./customer-analytics/CustomerLifecycle").then((m) => ({ default: m.CustomerLifecycle })),
+);
+const DemandAtRisk = lazy(() =>
+  import("./customer-analytics/DemandAtRisk").then((m) => ({ default: m.DemandAtRisk })),
+);
+const CustomerItemAffinity = lazy(() =>
+  import("./customer-analytics/CustomerItemAffinity").then((m) => ({ default: m.CustomerItemAffinity })),
+);
+const OrderPatterns = lazy(() =>
+  import("./customer-analytics/OrderPatterns").then((m) => ({ default: m.OrderPatterns })),
+);
+const DemandFlowSankey = lazy(() =>
+  import("./customer-analytics/DemandFlowSankey").then((m) => ({ default: m.DemandFlowSankey })),
+);
+
+function PanelFallback({ height = 300 }: { height?: number }) {
+  return (
+    <div
+      className="flex items-center justify-center text-sm text-muted-foreground rounded-md border border-dashed"
+      style={{ height }}
+    >
+      Loading...
+    </div>
+  );
+}
+
+// Last 12 months window, aligned to the first of the month — matches the
+// backend's _default_date_range() so the picker shows what the API would
+// have used implicitly anyway.
+function defaultDateRange(): { from: string; to: string } {
+  const now = new Date();
+  const to = new Date(now.getFullYear(), now.getMonth(), 1);
+  const from = new Date(to.getFullYear(), to.getMonth() - 12, 1);
+  const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+  return { from: fmt(from), to: fmt(to) };
+}
 
 type MapMetric = "customer_count" | "demand_qty" | "sales_qty" | "oos_qty" | "fill_rate";
 type GroupBy = "state" | "city" | "zip";
@@ -34,8 +81,9 @@ function CustomerAnalyticsContent() {
   // Shared filters
   const [itemId, setItemId] = useState<string>("");
   const [itemSearch, setItemSearch] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const initialRange = useMemo(defaultDateRange, []);
+  const [dateFrom, setDateFrom] = useState(initialRange.from);
+  const [dateTo, setDateTo] = useState(initialRange.to);
   const [channel, setChannel] = useState("");
   const [storeType, setStoreType] = useState("");
   const [stateFilter, setStateFilter] = useState("");
@@ -51,28 +99,35 @@ function CustomerAnalyticsContent() {
   const effectiveChannel = dashFilter.selectedChannel || channel;
   const effectiveState = dashFilter.selectedState || stateFilter;
 
-  const filters: CustomerAnalyticsFilters = {
-    item_id: itemId || undefined,
-    date_from: dateFrom || undefined,
-    date_to: dateTo || undefined,
-    channel: effectiveChannel || undefined,
-    store_type: storeType || undefined,
-    state: effectiveState || undefined,
-  };
+  // Stable identity across unrelated renders — otherwise every keystroke
+  // recreates `filters` and cache-busts the 13 panels that spread it into
+  // their React Query keys.
+  const filters: CustomerAnalyticsFilters = useMemo(
+    () => ({
+      item_id: itemId || undefined,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
+      channel: effectiveChannel || undefined,
+      store_type: storeType || undefined,
+      state: effectiveState || undefined,
+    }),
+    [itemId, dateFrom, dateTo, effectiveChannel, storeType, effectiveState],
+  );
 
-  // Item search typeahead
+  // Debounced typeahead — each keystroke hits an ILIKE scan on dim_item.
+  const debouncedItemSearch = useDebounce(itemSearch, 300);
   const { data: itemsData } = useQuery({
-    queryKey: customerAnalyticsKeys.items(itemSearch),
-    queryFn: () => fetchCustomerAnalyticsItems(itemSearch),
+    queryKey: customerAnalyticsKeys.items(debouncedItemSearch),
+    queryFn: () => fetchCustomerAnalyticsItems(debouncedItemSearch),
     staleTime: 5 * 60_000,
-    enabled: itemSearch.length >= 1 || itemSearch === "",
+    enabled: debouncedItemSearch.length >= 1 || debouncedItemSearch === "",
   });
 
   // Filter options for dropdowns
   const { data: filterOptions } = useQuery({
     queryKey: customerAnalyticsKeys.filterOptions(),
     queryFn: () => fetchCustomerAnalyticsFilterOptions(),
-    staleTime: 10 * 60_000,
+    staleTime: 60 * 60_000, // enums are essentially static; 1h is plenty
   });
 
   const handleItemSelect = useCallback((val: string) => {
@@ -81,7 +136,8 @@ function CustomerAnalyticsContent() {
   }, [itemsData]);
 
   const handleClear = () => {
-    setItemId(""); setItemSearch(""); setDateFrom(""); setDateTo("");
+    const r = defaultDateRange();
+    setItemId(""); setItemSearch(""); setDateFrom(r.from); setDateTo(r.to);
     setChannel(""); setStoreType(""); setStateFilter("");
     dispatch({ type: "CLEAR_ALL" });
   };
@@ -249,46 +305,66 @@ function CustomerAnalyticsContent() {
 
       {/* 4. Heatmap | Sunburst */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <CustomerHeatmap filters={filters} metric="demand_qty" topN={25} />
-        <ChannelSunburst filters={filters} />
+        <Suspense fallback={<PanelFallback height={400} />}>
+          <CustomerHeatmap filters={filters} metric="demand_qty" topN={25} />
+        </Suspense>
+        <Suspense fallback={<PanelFallback height={420} />}>
+          <ChannelSunburst filters={filters} />
+        </Suspense>
       </div>
 
       {/* 5. Sparklines | OOS Bubble */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <SegmentSparklines
-          filters={filters}
-          segmentBy={segmentBy}
-          onSegmentByChange={setSegmentBy}
-        />
-        <OosImpactBubble
-          filters={filters}
-          grain={oosGrain}
-          onGrainChange={setOosGrain}
-        />
+        <Suspense fallback={<PanelFallback height={300} />}>
+          <SegmentSparklines
+            filters={filters}
+            segmentBy={segmentBy}
+            onSegmentByChange={setSegmentBy}
+          />
+        </Suspense>
+        <Suspense fallback={<PanelFallback height={400} />}>
+          <OosImpactBubble
+            filters={filters}
+            grain={oosGrain}
+            onGrainChange={setOosGrain}
+          />
+        </Suspense>
       </div>
 
       {/* 6. Full-width ranking */}
-      <CustomerRanking
-        filters={filters}
-        sort={rankSort}
-        topN={20}
-        onSortChange={setRankSort}
-      />
+      <Suspense fallback={<PanelFallback height={400} />}>
+        <CustomerRanking
+          filters={filters}
+          sort={rankSort}
+          topN={20}
+          onSortChange={setRankSort}
+        />
+      </Suspense>
 
       {/* 7. Lifecycle | Demand at Risk */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <CustomerLifecycle filters={filters} />
-        <DemandAtRisk filters={filters} />
+        <Suspense fallback={<PanelFallback />}>
+          <CustomerLifecycle filters={filters} />
+        </Suspense>
+        <Suspense fallback={<PanelFallback />}>
+          <DemandAtRisk filters={filters} />
+        </Suspense>
       </div>
 
       {/* 8. Affinity | Order Patterns */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <CustomerItemAffinity filters={filters} />
-        <OrderPatterns filters={filters} />
+        <Suspense fallback={<PanelFallback height={400} />}>
+          <CustomerItemAffinity filters={filters} />
+        </Suspense>
+        <Suspense fallback={<PanelFallback />}>
+          <OrderPatterns filters={filters} />
+        </Suspense>
       </div>
 
       {/* 9. Full-width Demand Flow Sankey */}
-      <DemandFlowSankey filters={filters} />
+      <Suspense fallback={<PanelFallback height={500} />}>
+        <DemandFlowSankey filters={filters} />
+      </Suspense>
     </div>
   );
 }

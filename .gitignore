@@ -47,3 +47,16 @@ archive/
 
 # Claude Code settings
 .claude/
+
+# Cleanup staging — files moved out of the project pending deletion
+_to_remove/
+
+# Backup/scratch files (should not be tracked)
+*.bak
+*.bak.*
+*.backup
+*.old
+*~
+
+# TypeScript incremental compile cache (regenerable on every build)
+*.tsbuildinfo

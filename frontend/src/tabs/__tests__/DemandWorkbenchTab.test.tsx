@@ -73,9 +73,7 @@ describe("DemandWorkbenchPanel (via DemandHistoryTab)", () => {
       </TestQueryWrapper>,
     );
 
-    expect(
-      screen.getByText("Select a series from the tree to view demand history"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("No series selected")).toBeInTheDocument();
   });
 
   it("shows chart when a series is selected", () => {
@@ -86,7 +84,7 @@ describe("DemandWorkbenchPanel (via DemandHistoryTab)", () => {
     );
 
     fireEvent.click(screen.getByText("Item A (Loc 1)"));
-    expect(screen.getByTestId("area-chart")).toBeInTheDocument();
+    expect(screen.getByTestId("composed-chart")).toBeInTheDocument();
   });
 
   it("filters series by search input", () => {
@@ -96,7 +94,7 @@ describe("DemandWorkbenchPanel (via DemandHistoryTab)", () => {
       </TestQueryWrapper>,
     );
 
-    const search = screen.getByPlaceholderText("Search...");
+    const search = screen.getByPlaceholderText("Search items...");
     fireEvent.change(search, { target: { value: "Item A" } });
 
     expect(screen.getByText("Item A (Loc 1)")).toBeInTheDocument();
@@ -110,8 +108,8 @@ describe("DemandWorkbenchPanel (via DemandHistoryTab)", () => {
       </TestQueryWrapper>,
     );
 
-    expect(screen.getByText("item")).toBeInTheDocument();
-    expect(screen.getByText("item + loc")).toBeInTheDocument();
-    expect(screen.getByText("item + loc + customer")).toBeInTheDocument();
+    expect(screen.getByText("Item")).toBeInTheDocument();
+    expect(screen.getByText("Item + Loc")).toBeInTheDocument();
+    expect(screen.getByText("Item + Loc + Cust")).toBeInTheDocument();
   });
 });

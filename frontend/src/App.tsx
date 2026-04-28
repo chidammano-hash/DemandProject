@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 
 import { Button } from "@/components/ui/button";
@@ -158,8 +158,12 @@ export default function App() {
     />
   );
 
+  // Memoize provider values so palette/sidebar/url state changes do not
+  // re-render every consumer of theme or global filters.
+  const themeValue = useMemo(() => ({ theme }), [theme]);
+
   return (
-    <ThemeProvider value={{ theme }}>
+    <ThemeProvider value={themeValue}>
       <GlobalFilterProvider value={globalFilters}>
         <ScenarioNotificationProvider>
         <JobNotificationProvider>

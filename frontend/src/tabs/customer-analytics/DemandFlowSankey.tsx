@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import ReactECharts from "echarts-for-react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { ModularReactECharts as ReactECharts } from "@/components/echarts-modular";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
@@ -8,6 +8,7 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
+import { EmptyState } from "./EmptyState";
 
 interface Props {
   filters: CustomerAnalyticsFilters;
@@ -17,12 +18,14 @@ export function DemandFlowSankey({ filters }: Props) {
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.demandFlow(filters),
     queryFn: () => fetchCustomerAnalyticsDemandFlow(filters),
-    staleTime: 5 * 60_000,
+    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
+    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
   const option = useMemo(() => {
     if (!data) return {};
     return {
+      animation: false,  // sankey can have hundreds of links — no point animating
       tooltip: {
         trigger: "item" as const,
         triggerOn: "mousemove" as const,
@@ -53,9 +56,11 @@ export function DemandFlowSankey({ filters }: Props) {
       <CardContent>
         {isLoading ? (
           <div className="h-[400px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
+        ) : !data?.links || data.links.length === 0 ? (
+          <EmptyState height={400} />
         ) : (
           <div role="img" aria-roledescription="Demand flow sankey diagram">
-            <ReactECharts option={option} style={{ height: 400 }} />
+            <ReactECharts option={option} style={{ height: 400 }} lazyUpdate notMerge={false} />
           </div>
         )}
       </CardContent>

@@ -50,7 +50,7 @@ export interface ParetoEntry {
 export interface DecompositionData {
   item_id: string;
   loc: string;
-  monthly: DecompositionMonthly[];
+  series: DecompositionMonthly[];
   pareto: ParetoEntry[];
 }
 
@@ -65,7 +65,7 @@ export interface ComparisonMonthly {
 export interface ComparisonData {
   item_id: string;
   loc: string;
-  monthly: ComparisonMonthly[];
+  comparison: ComparisonMonthly[];
 }
 
 export interface WorkbenchSeriesMonth {
@@ -238,10 +238,12 @@ export function useWorkbench(
   months?: number,
   limit?: number,
   offset?: number,
+  enabled = true,
 ) {
   return useQuery({
     queryKey: demandHistoryKeys.workbench(grain, itemId, loc, customerNo, months, limit, offset),
     queryFn: () => fetchWorkbench(grain, itemId, loc, customerNo, months, limit, offset),
+    enabled,
   });
 }
 

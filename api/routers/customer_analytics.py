@@ -19,6 +19,15 @@ from fastapi.responses import Response as FastAPIResponse
 
 from api.core import get_conn, set_cache
 from common.planning_date import get_planning_date
+from common.services.cache import cached_sync
+
+# All customer-analytics aggregates hit fact_customer_demand_monthly with
+# the same join pattern. They are heavy (single-digit to ~16 second queries
+# on a year of data) but the inputs are stable per-filter, so a 5-minute
+# server-side cache turns repeat hits — which dominate dashboard usage —
+# into millisecond responses. Invalidate via the "customer_analytics" group
+# after a customer demand reload.
+_CA_CACHE = cached_sync(ttl=300, group="customer_analytics")
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +70,12 @@ _STATE_CENTROIDS: dict[str, tuple[float, float]] = {
     "WI": (44.27, -89.62), "WY": (43.08, -107.29), "DC": (38.91, -77.01),
 }
 
-_MARKER_LIMIT = 500
+# Marker count cap for the choropleth/bubble map. State-level needs all 50,
+# but city/zip can return thousands — and the frontend grid-clusters anything
+# above ~100 anyway, so shipping more is wasted bandwidth + render cost.
+_MARKER_LIMIT_STATE = 60
+_MARKER_LIMIT_CITY_ZIP = 150
+_MARKER_LIMIT = _MARKER_LIMIT_STATE  # back-compat alias
 
 
 # ---------------------------------------------------------------------------
@@ -84,10 +98,22 @@ def _build_where(
     channel: str | None,
     store_type: str | None,
 ) -> str:
-    """Build WHERE clause fragments and append params. Returns SQL fragment."""
+    """Build WHERE clause fragments and append params. Returns SQL fragment.
+
+    The startdate range is mandatory: without it Postgres can't prune the
+    monthly partitions of fact_customer_demand_monthly and degrades to a full
+    scan across millions of rows. We always emit `f.startdate >= %s AND
+    f.startdate < %s` and fall back to the last 12 months if the caller
+    passes empty values. The empty-string check guards against callers that
+    pass query-string params through unsanitized.
+    """
     df, dt = _default_date_range()
+    actual_from = (date_from or "").strip() or df
+    actual_to = (date_to or "").strip() or dt
+    if not actual_from or not actual_to:  # belt-and-braces — _default_date_range never returns empty
+        raise ValueError("startdate range is mandatory for fact_customer_demand_monthly queries")
     clauses = ["f.startdate >= %s", "f.startdate < %s"]
-    params.extend([date_from or df, date_to or dt])
+    params.extend([actual_from, actual_to])
     if item_id:
         clauses.append("f.item_id = %s")
         params.append(item_id)
@@ -98,6 +124,51 @@ def _build_where(
         clauses.append("c.store_type_desc = %s")
         params.append(store_type)
     return " AND ".join(clauses)
+
+
+def _build_where_mv(
+    params: list[Any],
+    date_from: str | None,
+    date_to: str | None,
+    channel: str | None,
+    store_type: str | None,
+) -> str:
+    """Variant of _build_where for queries that hit mv_customer_activity_monthly.
+
+    The MV has the dim_customer columns inlined under the same `f` alias used
+    by the original queries, so callers can swap source tables with minimal
+    changes. No item_id filter — the MV is item-aggregated by design (use the
+    raw fact table when an item filter is required).
+    """
+    df, dt = _default_date_range()
+    actual_from = (date_from or "").strip() or df
+    actual_to = (date_to or "").strip() or dt
+    if not actual_from or not actual_to:
+        raise ValueError("startdate range is mandatory for mv_customer_activity_monthly queries")
+    clauses = ["f.startdate >= %s", "f.startdate < %s"]
+    params.extend([actual_from, actual_to])
+    if channel:
+        clauses.append("f.rpt_channel_desc = %s")
+        params.append(channel)
+    if store_type:
+        clauses.append("f.store_type_desc = %s")
+        params.append(store_type)
+    return " AND ".join(clauses)
+
+
+def _customer_activity_source(item_id: str | None) -> tuple[str, bool]:
+    """Pick fact vs MV. Returns (FROM clause fragment, uses_mv).
+
+    The MV pre-joins fact_customer_demand_monthly with dim_customer and
+    aggregates to (customer_no, site, startdate) granularity — ~10x smaller
+    than the raw fact join. We can only use it when item_id is NOT filtered.
+    """
+    if item_id:
+        return (
+            "fact_customer_demand_monthly f "
+            "JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site"
+        ), False
+    return "mv_customer_activity_monthly f", True
 
 
 def _geocode_zip(zip_code: str) -> tuple[float | None, float | None]:
@@ -126,6 +197,7 @@ def _add_state_coords(entries: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/map")
+@_CA_CACHE
 def customer_analytics_map(
     response: FastAPIResponse,
     metric: str = Query(default="demand_qty", pattern="^(customer_count|demand_qty|sales_qty|oos_qty|fill_rate)$"),
@@ -158,7 +230,7 @@ def customer_analytics_map(
         ORDER BY SUM(f.demand_qty) DESC
         LIMIT %s
     """
-    params.append(_MARKER_LIMIT)
+    params.append(_MARKER_LIMIT_STATE if group_by == "state" else _MARKER_LIMIT_CITY_ZIP)
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
@@ -231,6 +303,7 @@ def customer_analytics_map(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/treemap")
+@_CA_CACHE
 def customer_analytics_treemap(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
@@ -310,6 +383,7 @@ def customer_analytics_treemap(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/heatmap")
+@_CA_CACHE
 def customer_analytics_heatmap(
     response: FastAPIResponse,
     metric: str = Query(default="demand_qty", pattern="^(demand_qty|customer_count|fill_rate)$"),
@@ -324,64 +398,76 @@ def customer_analytics_heatmap(
     params: list[Any] = []
     where = _build_where(params, None, date_from, date_to, channel, store_type)
 
+    # Push the (top_n items x 30 states) reduction into Postgres so we don't
+    # ship every (item, state) aggregate row to Python just to discard most.
     sql = f"""
-        SELECT f.item_id,
-               COALESCE(i.item_desc, f.item_id) AS item_desc,
-               c.state,
-               COUNT(DISTINCT c.customer_no) AS customer_count,
-               COALESCE(SUM(f.demand_qty), 0) AS demand_qty,
-               COALESCE(SUM(f.sales_qty), 0) AS sales_qty
-        FROM fact_customer_demand_monthly f
-        JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
-        LEFT JOIN dim_item i ON i.item_id = f.item_id
-        WHERE {where}
-          AND c.state IS NOT NULL AND TRIM(c.state) != ''
-        GROUP BY f.item_id, i.item_desc, c.state
-        ORDER BY SUM(f.demand_qty) DESC
+        WITH agg AS (
+            SELECT f.item_id,
+                   COALESCE(i.item_desc, f.item_id) AS item_desc,
+                   c.state,
+                   COUNT(DISTINCT c.customer_no) AS customer_count,
+                   COALESCE(SUM(f.demand_qty), 0) AS demand_qty,
+                   COALESCE(SUM(f.sales_qty), 0) AS sales_qty
+            FROM fact_customer_demand_monthly f
+            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            LEFT JOIN dim_item i ON i.item_id = f.item_id
+            WHERE {where}
+              AND c.state IS NOT NULL AND TRIM(c.state) != ''
+            GROUP BY f.item_id, i.item_desc, c.state
+        ),
+        top_items AS (
+            SELECT item_id
+            FROM agg
+            GROUP BY item_id
+            ORDER BY SUM(demand_qty) DESC
+            LIMIT %s
+        ),
+        top_states AS (
+            SELECT state
+            FROM agg
+            GROUP BY state
+            ORDER BY SUM(demand_qty) DESC
+            LIMIT 30
+        )
+        SELECT a.item_id, a.item_desc, a.state, a.customer_count, a.demand_qty, a.sales_qty
+        FROM agg a
+        JOIN top_items ti ON ti.item_id = a.item_id
+        JOIN top_states ts ON ts.state = a.state
+        ORDER BY a.demand_qty DESC
     """
+    params.append(top_n)
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
 
-    # Determine top N items by total demand
+    # SQL already filtered to top_n items × top 30 states. Just compute axis
+    # ordering from the returned rows (no second top-N pass).
     item_totals: dict[str, float] = {}
     item_descs: dict[str, str] = {}
-    for item_id, item_desc, _state, _cc, demand, _sales in rows:
-        item_totals[item_id] = item_totals.get(item_id, 0) + float(demand or 0)
-        item_descs[item_id] = item_desc or item_id
-
-    top_items = sorted(item_totals, key=item_totals.get, reverse=True)[:top_n]  # type: ignore[arg-type]
-    top_item_set = set(top_items)
-
-    # Determine states (sorted by total demand)
     state_totals: dict[str, float] = {}
-    for _item_id, _desc, state, _cc, demand, _sales in rows:
-        state = str(state).strip()
-        state_totals[state] = state_totals.get(state, 0) + float(demand or 0)
-    top_states = sorted(state_totals, key=state_totals.get, reverse=True)[:30]  # type: ignore[arg-type]
-    top_state_set = set(top_states)
-
-    # Build matrix
     cells: list[dict[str, Any]] = []
-    for item_id, _desc, state, cc, demand, sales in rows:
+    for item_id, item_desc, state, cc, demand, sales in rows:
         state = str(state).strip()
-        if item_id not in top_item_set or state not in top_state_set:
-            continue
         d = float(demand or 0)
         s = float(sales or 0)
-        fr = round(s / d * 100, 1) if d > 0 else 100.0
+        item_totals[item_id] = item_totals.get(item_id, 0) + d
+        item_descs[item_id] = item_desc or item_id
+        state_totals[state] = state_totals.get(state, 0) + d
         cells.append({
             "item_id": item_id,
             "state": state,
             "demand_qty": round(d, 1),
             "customer_count": int(cc),
-            "fill_rate": fr,
+            "fill_rate": round(s / d * 100, 1) if d > 0 else 100.0,
         })
 
+    items_sorted = sorted(item_totals, key=item_totals.get, reverse=True)  # type: ignore[arg-type]
+    states_sorted = sorted(state_totals, key=state_totals.get, reverse=True)  # type: ignore[arg-type]
+
     return {
-        "items": [{"item_id": it, "item_desc": item_descs[it]} for it in top_items],
-        "states": top_states,
+        "items": [{"item_id": it, "item_desc": item_descs[it]} for it in items_sorted],
+        "states": states_sorted,
         "cells": cells,
         "metric": metric,
     }
@@ -392,6 +478,7 @@ def customer_analytics_heatmap(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/channel-mix")
+@_CA_CACHE
 def customer_analytics_channel_mix(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
@@ -407,6 +494,9 @@ def customer_analytics_channel_mix(
         where += " AND c.state = %s"
         params.append(state)
 
+    # Cap groups: the rendered sunburst only keeps the top channels with
+    # 12 store-types x 15 sub-channels each. A 1000-row LIMIT is far above
+    # that and prevents a runaway when a tenant has thousands of sub-channels.
     sql = f"""
         SELECT COALESCE(c.rpt_channel_desc, 'Unknown') AS channel,
                COALESCE(c.store_type_desc, 'Unknown') AS store_type,
@@ -419,6 +509,7 @@ def customer_analytics_channel_mix(
         WHERE {where}
         GROUP BY c.rpt_channel_desc, c.store_type_desc, c.rpt_sub_channel_desc
         ORDER BY SUM(f.demand_qty) DESC
+        LIMIT 1000
     """
 
     with get_conn() as conn, conn.cursor() as cur:
@@ -527,6 +618,7 @@ def customer_analytics_channel_mix(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/segment-trends")
+@_CA_CACHE
 def customer_analytics_segment_trends(
     response: FastAPIResponse,
     segment_by: str = Query(default="rpt_channel_desc", pattern="^(rpt_channel_desc|store_type_desc|chain_type_desc|state)$"),
@@ -541,19 +633,33 @@ def customer_analytics_segment_trends(
 
     seg_col = f"c.{segment_by}" if segment_by != "state" else "c.state"
 
+    # Pre-rank segments so we only return monthly rows for the top 30 we
+    # actually render (was returning every segment x month combination).
     sql = f"""
-        SELECT {seg_col} AS segment,
-               f.startdate,
-               COUNT(DISTINCT c.customer_no) AS customer_count,
-               COALESCE(SUM(f.demand_qty), 0) AS demand_qty,
-               COALESCE(SUM(f.sales_qty), 0) AS sales_qty,
-               COALESCE(SUM(f.oos_qty), 0) AS oos_qty
-        FROM fact_customer_demand_monthly f
-        JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
-        WHERE {where}
-          AND {seg_col} IS NOT NULL AND TRIM({seg_col}) != ''
-        GROUP BY {seg_col}, f.startdate
-        ORDER BY {seg_col}, f.startdate
+        WITH agg AS (
+            SELECT {seg_col} AS segment,
+                   f.startdate,
+                   COUNT(DISTINCT c.customer_no) AS customer_count,
+                   COALESCE(SUM(f.demand_qty), 0) AS demand_qty,
+                   COALESCE(SUM(f.sales_qty), 0) AS sales_qty,
+                   COALESCE(SUM(f.oos_qty), 0) AS oos_qty
+            FROM fact_customer_demand_monthly f
+            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            WHERE {where}
+              AND {seg_col} IS NOT NULL AND TRIM({seg_col}) != ''
+            GROUP BY {seg_col}, f.startdate
+        ),
+        top_segments AS (
+            SELECT segment
+            FROM agg
+            GROUP BY segment
+            ORDER BY SUM(demand_qty) DESC
+            LIMIT 30
+        )
+        SELECT a.segment, a.startdate, a.customer_count, a.demand_qty, a.sales_qty, a.oos_qty
+        FROM agg a
+        JOIN top_segments ts ON ts.segment = a.segment
+        ORDER BY a.segment, a.startdate
     """
 
     with get_conn() as conn, conn.cursor() as cur:
@@ -603,6 +709,7 @@ def customer_analytics_segment_trends(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/ranking")
+@_CA_CACHE
 def customer_analytics_ranking(
     response: FastAPIResponse,
     sort: str = Query(default="demand_desc", pattern="^(demand_desc|fill_rate_asc)$"),
@@ -668,6 +775,7 @@ def customer_analytics_ranking(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/oos-impact")
+@_CA_CACHE
 def customer_analytics_oos_impact(
     response: FastAPIResponse,
     grain: str = Query(default="customer", pattern="^(customer|state)$"),
@@ -743,32 +851,46 @@ def customer_analytics_oos_impact(
 def customer_analytics_items(
     response: FastAPIResponse,
     search: str = Query(default="", min_length=0),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
 ):
-    """Typeahead item search for the customer analytics filter bar."""
+    """Typeahead item search for the customer analytics filter bar.
+
+    Filters dim_item to only items that have at least one row in
+    fact_customer_demand_monthly for the selected date range. Without this
+    scoping, planners would pick items that look valid in dim_item but have
+    zero demand history (we observed this with item 100012 — exists in
+    dim_item, zero rows in fact, panels rendered as visually-blank).
+
+    Date range defaults to the same trailing 12 months used by the rest of
+    the CA endpoints so the picker matches the default filter window.
+    """
     set_cache(response, max_age=600)
     search = search.strip()
+    df, dt = _default_date_range()
+    actual_from = (date_from or "").strip() or df
+    actual_to = (date_to or "").strip() or dt
+
+    base_sql = """
+        SELECT DISTINCT i.item_id, i.item_desc
+        FROM dim_item i
+        WHERE EXISTS (
+            SELECT 1 FROM fact_customer_demand_monthly f
+            WHERE f.item_id = i.item_id
+              AND f.startdate >= %s AND f.startdate < %s
+        )
+    """
+    query_params: list[Any] = [actual_from, actual_to]
 
     if search:
-        sql = """
-            SELECT DISTINCT i.item_id, i.item_desc
-            FROM dim_item i
-            WHERE i.item_id ILIKE %s OR i.item_desc ILIKE %s
-            ORDER BY i.item_id
-            LIMIT 50
-        """
+        base_sql += " AND (i.item_id ILIKE %s OR i.item_desc ILIKE %s)"
         pattern = f"%{search}%"
-        query_params = [pattern, pattern]
-    else:
-        sql = """
-            SELECT DISTINCT i.item_id, i.item_desc
-            FROM dim_item i
-            ORDER BY i.item_id
-            LIMIT 50
-        """
-        query_params = []
+        query_params.extend([pattern, pattern])
+
+    base_sql += " ORDER BY i.item_id LIMIT 50"
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(sql, query_params)
+        cur.execute(base_sql, query_params)
         rows = cur.fetchall()
 
     items = [{"item_id": r[0], "item_desc": r[1] or r[0]} for r in rows]
@@ -780,6 +902,7 @@ def customer_analytics_items(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/kpis")
+@_CA_CACHE
 def customer_analytics_kpis(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
@@ -882,6 +1005,7 @@ def customer_analytics_kpis(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/lifecycle")
+@_CA_CACHE
 def customer_analytics_lifecycle(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
@@ -891,14 +1015,24 @@ def customer_analytics_lifecycle(
     """Cohort retention + waterfall (new vs churned)."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, None, None)
+    # Use the pre-aggregated MV when no item filter is requested (the common
+    # case) — it avoids the fact x dim_customer JOIN + DISTINCT for every
+    # request. With an item filter we have to hit the raw fact table since
+    # the MV is item-aggregated.
+    source_from, uses_mv = _customer_activity_source(item_id)
+    if uses_mv:
+        where = _build_where_mv(params, date_from, date_to, None, None)
+    else:
+        where = _build_where(params, item_id, date_from, date_to, None, None)
 
     # --- cohort retention ---
+    # Cap the result set: the UI only renders ~24 cohorts x ~24 months_since
+    # cells. Without a cap, datasets with many cohort months produce huge
+    # payloads that dominate both DB time and JSON serialization.
     cohort_sql = f"""
         WITH base AS (
             SELECT DISTINCT f.customer_no, f.startdate
-            FROM fact_customer_demand_monthly f
-            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            FROM {source_from}
             WHERE {where}
         ),
         first_order AS (
@@ -923,51 +1057,51 @@ def customer_analytics_lifecycle(
         SELECT ca.cohort_month, ca.months_since::int, ca.active_customers, cs.size
         FROM cohort_activity ca
         JOIN cohort_size cs ON cs.cohort_month = ca.cohort_month
+        WHERE ca.months_since <= 24
         ORDER BY ca.cohort_month, ca.months_since
+        LIMIT 1000
     """
 
     # --- waterfall (new / churned) ---
     params2: list[Any] = []
-    where2 = _build_where(params2, item_id, date_from, date_to, None, None)
+    if uses_mv:
+        where2 = _build_where_mv(params2, date_from, date_to, None, None)
+    else:
+        where2 = _build_where(params2, item_id, date_from, date_to, None, None)
+    # Window-function rewrite of the churn waterfall. The previous version
+    # had two `months × base` range joins (`b.startdate >= m.month - 6mo`)
+    # which materialize an N×M intermediate set. Here we instead annotate each
+    # base row with `last_order_per_customer` via a window function, then
+    # detect churn at the customer level (last activity 3-6 mo before MAX),
+    # and finally aggregate per month. One pass over `base`, no Cartesian.
     waterfall_sql = f"""
         WITH base AS (
             SELECT DISTINCT f.customer_no, f.startdate
-            FROM fact_customer_demand_monthly f
-            JOIN dim_customer c ON c.customer_no = f.customer_no AND c.site = f.site
+            FROM {source_from}
             WHERE {where2}
         ),
         months AS (
-            SELECT DISTINCT startdate AS month FROM base ORDER BY startdate
+            SELECT DISTINCT startdate AS month FROM base
         ),
         first_order AS (
-            SELECT customer_no, MIN(startdate) AS first_month
+            SELECT customer_no, MIN(startdate) AS first_month, MAX(startdate) AS last_month
             FROM base GROUP BY customer_no
         ),
         new_per_month AS (
             SELECT first_month AS month, COUNT(*) AS new_customers
             FROM first_order GROUP BY first_month
         ),
-        active_prev AS (
-            SELECT m.month,
-                   b.customer_no
-            FROM months m
-            JOIN base b ON b.startdate >= m.month - INTERVAL '6 months'
-                       AND b.startdate < m.month - INTERVAL '0 months'
-        ),
-        active_recent AS (
-            SELECT m.month,
-                   b.customer_no
-            FROM months m
-            JOIN base b ON b.startdate >= m.month - INTERVAL '3 months'
-                       AND b.startdate < m.month
-        ),
+        -- For each month m, churn = customers whose last activity falls in
+        -- [m - 6mo, m - 3mo) — i.e. they were active in the older window
+        -- but NOT in the recent window. Computed without re-joining base.
         churned AS (
-            SELECT ap.month,
-                   COUNT(DISTINCT ap.customer_no) AS churned_customers
-            FROM active_prev ap
-            LEFT JOIN active_recent ar ON ar.month = ap.month AND ar.customer_no = ap.customer_no
-            WHERE ar.customer_no IS NULL
-            GROUP BY ap.month
+            SELECT m.month,
+                   COUNT(*) AS churned_customers
+            FROM months m
+            JOIN first_order fo
+              ON fo.last_month >= m.month - INTERVAL '6 months'
+             AND fo.last_month <  m.month - INTERVAL '3 months'
+            GROUP BY m.month
         )
         SELECT m.month,
                COALESCE(n.new_customers, 0) AS new_customers,
@@ -1016,6 +1150,7 @@ def customer_analytics_lifecycle(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/demand-at-risk")
+@_CA_CACHE
 def customer_analytics_demand_at_risk(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
@@ -1126,6 +1261,7 @@ def customer_analytics_demand_at_risk(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/affinity")
+@_CA_CACHE
 def customer_analytics_affinity(
     response: FastAPIResponse,
     date_from: str | None = Query(default=None),
@@ -1202,6 +1338,7 @@ def customer_analytics_affinity(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/order-patterns")
+@_CA_CACHE
 def customer_analytics_order_patterns(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
@@ -1213,6 +1350,12 @@ def customer_analytics_order_patterns(
     params: list[Any] = []
     where = _build_where(params, item_id, date_from, date_to, None, None)
 
+    # Two-stage shape: rank customers by total demand FIRST, keep only the
+    # top ~1000, then run the expensive STDDEV/window work on that bounded
+    # set. The previous version computed LAG, AVG, STDDEV across all ~33K
+    # customers and only sliced the top 200 at the very end — wasted work
+    # since the response only renders 200 rows anyway. Top 1000 (5x the
+    # display cap) gives some headroom for ties at the boundary.
     sql = f"""
         WITH base AS (
             SELECT f.customer_no,
@@ -1224,17 +1367,29 @@ def customer_analytics_order_patterns(
             WHERE {where}
             GROUP BY f.customer_no, c.customer_name, f.startdate
         ),
+        cust_total AS (
+            SELECT customer_no,
+                   MAX(customer_name) AS customer_name,
+                   SUM(demand_qty) AS total_demand
+            FROM base
+            GROUP BY customer_no
+            ORDER BY SUM(demand_qty) DESC
+            LIMIT 1000
+        ),
+        base_topn AS (
+            SELECT b.customer_no, b.startdate
+            FROM base b
+            JOIN cust_total ct ON ct.customer_no = b.customer_no
+        ),
         intervals AS (
             SELECT customer_no,
-                   customer_name,
                    startdate,
                    EXTRACT(YEAR FROM age(startdate, LAG(startdate) OVER (PARTITION BY customer_no ORDER BY startdate))) * 12
                      + EXTRACT(MONTH FROM age(startdate, LAG(startdate) OVER (PARTITION BY customer_no ORDER BY startdate))) AS gap_months
-            FROM base
+            FROM base_topn
         ),
         cust_stats AS (
             SELECT customer_no,
-                   MAX(customer_name) AS customer_name,
                    AVG(gap_months) AS avg_interval,
                    CASE WHEN AVG(gap_months) > 0
                         THEN STDDEV(gap_months) / AVG(gap_months)
@@ -1243,17 +1398,13 @@ def customer_analytics_order_patterns(
             FROM intervals
             WHERE gap_months IS NOT NULL
             GROUP BY customer_no
-        ),
-        total_demand AS (
-            SELECT customer_no, SUM(demand_qty) AS total_demand
-            FROM base GROUP BY customer_no
         )
-        SELECT cs.customer_no, cs.customer_name,
+        SELECT ct.customer_no, ct.customer_name,
                cs.avg_interval, cs.interval_cv, cs.order_count,
-               td.total_demand
-        FROM cust_stats cs
-        JOIN total_demand td ON td.customer_no = cs.customer_no
-        ORDER BY td.total_demand DESC
+               ct.total_demand
+        FROM cust_total ct
+        LEFT JOIN cust_stats cs ON cs.customer_no = ct.customer_no
+        ORDER BY ct.total_demand DESC
         LIMIT 200
     """
 
@@ -1298,6 +1449,7 @@ def customer_analytics_order_patterns(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/demand-flow")
+@_CA_CACHE
 def customer_analytics_demand_flow(
     response: FastAPIResponse,
     item_id: str | None = Query(default=None),
@@ -1364,7 +1516,10 @@ def customer_analytics_filter_options(
     response: FastAPIResponse,
 ):
     """Distinct dropdown values for channel, store type, state."""
-    set_cache(response, max_age=600)
+    # Filter enums change at most when dim_customer is reloaded (~daily).
+    # Long browser cache (1h) + 6h stale-while-revalidate eliminates the
+    # repeat fetch on every tab switch / tab reopen.
+    set_cache(response, max_age=3600, stale_while_revalidate=21600)
 
     sql = """
         SELECT
@@ -1393,6 +1548,7 @@ def customer_analytics_filter_options(
 # ---------------------------------------------------------------------------
 
 @router.get("/customer-analytics/alerts")
+@_CA_CACHE
 def customer_analytics_alerts(
     response: FastAPIResponse,
     date_from: str | None = Query(default=None),

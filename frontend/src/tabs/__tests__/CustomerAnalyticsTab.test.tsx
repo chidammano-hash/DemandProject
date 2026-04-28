@@ -25,6 +25,17 @@ vi.mock("echarts-for-react", () => ({
   ),
 }));
 
+// Mock the modular ECharts wrapper used by CA panels (it pulls in
+// echarts/core + canvas renderer, which jsdom can't satisfy).
+vi.mock("@/components/echarts-modular", () => ({
+  ModularReactECharts: (props: { style?: React.CSSProperties }) => (
+    <div data-testid="echart" style={props.style} />
+  ),
+  default: (props: { style?: React.CSSProperties }) => (
+    <div data-testid="echart" style={props.style} />
+  ),
+}));
+
 vi.mock("recharts");
 
 // Mock US states GeoJSON

@@ -56,7 +56,7 @@ describe("DemandHistoryTab", () => {
     );
 
     // Workbench shows the grain selector buttons
-    expect(screen.getByText("item")).toBeInTheDocument();
+    expect(screen.getByText("Item")).toBeInTheDocument();
   });
 
   it("switches to Decomposition panel on click", () => {

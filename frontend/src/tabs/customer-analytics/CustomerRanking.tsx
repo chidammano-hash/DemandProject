@@ -1,12 +1,74 @@
-import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useRef, useState, useMemo } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
   fetchCustomerAnalyticsRanking,
 } from "@/api/queries/customer-analytics";
-import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
+import type { CustomerAnalyticsFilters, RankedCustomer } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
+
+const ROW_HEIGHT = 28;
+const VIEWPORT_HEIGHT = 480;
+
+// Virtualized rows: render only what's in the viewport. With ~50 rows the
+// gain is small, but ranking grows to topN=200+ quickly when planners change
+// the sort, and DOM-row count was the largest paint-time cost on this card.
+function VirtualizedRankingTable({ rows, maxDemand }: { rows: RankedCustomer[]; maxDemand: number }) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8,
+  });
+  return (
+    <div
+      ref={parentRef}
+      className="overflow-y-auto"
+      style={{ maxHeight: VIEWPORT_HEIGHT }}
+    >
+      <div className="grid grid-cols-[1fr_50px_120px_80px_160px_60px_60px] gap-2 text-xs font-medium text-muted-foreground sticky top-0 bg-white z-10 px-2 py-1 border-b">
+        <span>Customer</span>
+        <span>State</span>
+        <span>Channel</span>
+        <span className="text-right">Demand</span>
+        <span></span>
+        <span className="text-right">Fill</span>
+        <span className="text-right">OOS</span>
+      </div>
+      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        {virtualizer.getVirtualItems().map((vRow) => {
+          const c = rows[vRow.index];
+          const barWidth = maxDemand > 0 ? Math.round((c.demand_qty / maxDemand) * 100) : 0;
+          return (
+            <div
+              key={c.customer_no}
+              className="grid grid-cols-[1fr_50px_120px_80px_160px_60px_60px] gap-2 items-center text-xs px-2 border-b hover:bg-gray-50 absolute left-0 right-0"
+              style={{ height: ROW_HEIGHT, transform: `translateY(${vRow.start}px)` }}
+            >
+              <span className="truncate font-medium" title={c.customer_name}>{c.customer_name}</span>
+              <span>{c.state}</span>
+              <span className="truncate">{c.channel}</span>
+              <span className="text-right tabular-nums">{fmtNum(c.demand_qty)}</span>
+              <div className="bg-gray-100 rounded-sm h-3">
+                <div
+                  className="h-3 rounded-sm"
+                  style={{ width: `${barWidth}%`, backgroundColor: fillRateColor(c.fill_rate) }}
+                />
+              </div>
+              <span className={`text-right tabular-nums font-medium ${c.fill_rate < 90 ? "text-red-600" : "text-green-600"}`}>
+                {c.fill_rate}%
+              </span>
+              <span className="text-right tabular-nums text-red-600">{fmtNum(c.oos_qty)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 type SortMode = "demand_desc" | "fill_rate_asc";
 
@@ -37,7 +99,8 @@ export function CustomerRanking({ filters, sort, topN, onSortChange }: Props) {
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.ranking(sort, topN, filters),
     queryFn: () => fetchCustomerAnalyticsRanking(sort, topN, filters),
-    staleTime: 5 * 60_000,
+    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
+    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
   const customers = data?.customers ?? [];
@@ -91,51 +154,7 @@ export function CustomerRanking({ filters, sort, topN, onSortChange }: Props) {
         ) : filtered.length === 0 ? (
           <div className="h-[400px] flex items-center justify-center text-sm text-muted-foreground">No data</div>
         ) : (
-          <div className="max-h-[500px] overflow-y-auto">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-white">
-                <tr className="border-b text-left text-muted-foreground">
-                  <th className="py-1.5 px-2 font-medium">Customer</th>
-                  <th className="py-1.5 px-2 font-medium">State</th>
-                  <th className="py-1.5 px-2 font-medium">Channel</th>
-                  <th className="py-1.5 px-2 font-medium text-right">Demand</th>
-                  <th className="py-1.5 px-2 font-medium w-40"></th>
-                  <th className="py-1.5 px-2 font-medium text-right">Fill Rate</th>
-                  <th className="py-1.5 px-2 font-medium text-right">OOS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((c) => {
-                  const barWidth = maxDemand > 0 ? Math.round((c.demand_qty / maxDemand) * 100) : 0;
-                  return (
-                    <tr key={c.customer_no} className="border-b hover:bg-gray-50">
-                      <td className="py-1.5 px-2 font-medium truncate max-w-[200px]" title={c.customer_name}>
-                        {c.customer_name}
-                      </td>
-                      <td className="py-1.5 px-2">{c.state}</td>
-                      <td className="py-1.5 px-2">{c.channel}</td>
-                      <td className="py-1.5 px-2 text-right">{fmtNum(c.demand_qty)}</td>
-                      <td className="py-1.5 px-2">
-                        <div className="w-full bg-gray-100 rounded-sm h-3">
-                          <div
-                            className="h-3 rounded-sm"
-                            style={{
-                              width: `${barWidth}%`,
-                              backgroundColor: fillRateColor(c.fill_rate),
-                            }}
-                          />
-                        </div>
-                      </td>
-                      <td className={`py-1.5 px-2 text-right font-medium ${c.fill_rate < 90 ? "text-red-600" : "text-green-600"}`}>
-                        {c.fill_rate}%
-                      </td>
-                      <td className="py-1.5 px-2 text-right text-red-600">{fmtNum(c.oos_qty)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <VirtualizedRankingTable rows={filtered} maxDemand={maxDemand} />
         )}
       </CardContent>
     </Card>

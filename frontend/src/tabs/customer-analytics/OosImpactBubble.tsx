@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import ReactECharts from "echarts-for-react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { ModularReactECharts as ReactECharts } from "@/components/echarts-modular";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
@@ -8,6 +8,7 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
+import { EmptyState } from "./EmptyState";
 
 type Grain = "customer" | "state";
 
@@ -38,7 +39,8 @@ export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.oosImpact(grain, filters),
     queryFn: () => fetchCustomerAnalyticsOosImpact(grain, filters),
-    staleTime: 5 * 60_000,
+    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
+    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
   const totalOos = useMemo(() => {
@@ -149,9 +151,11 @@ export function OosImpactBubble({ filters, grain, onGrainChange }: Props) {
       <CardContent>
         {isLoading ? (
           <div className="h-[400px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
+        ) : !data?.bubbles || data.bubbles.length === 0 ? (
+          <EmptyState height={400} />
         ) : (
           <div role="img" aria-roledescription="OOS impact bubble scatter chart">
-            <ReactECharts option={option} style={{ height: 400 }} />
+            <ReactECharts option={option} style={{ height: 400 }} lazyUpdate notMerge={false} />
           </div>
         )}
       </CardContent>

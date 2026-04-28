@@ -51,7 +51,7 @@ export function ComparisonPanel() {
   }
 
   const hasSelection = activeItem && activeLoc;
-  const hasHierarchical = data?.monthly?.some(
+  const hasHierarchical = data?.comparison?.some(
     (m) => m.bottom_up_qty != null || m.top_down_qty != null,
   );
 
@@ -129,7 +129,7 @@ export function ComparisonPanel() {
 
           {/* Chart */}
           <ResponsiveContainer width="100%" height={420}>
-            <ComposedChart data={data.monthly}>
+            <ComposedChart data={data.comparison}>
               <CartesianGrid stroke={chartColors.grid} strokeDasharray="3 3" />
               <XAxis
                 dataKey="month"

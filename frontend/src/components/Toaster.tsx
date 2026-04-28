@@ -30,16 +30,46 @@ let toastStack: Toast[] = [];
 const listeners: Set<ToastListener> = new Set();
 
 const TOAST_DURATION_MS = 4500;
+// Cap visible toasts so a request storm (e.g. server unreachable while 12
+// queries fire in parallel) cannot fill the screen.
+const MAX_VISIBLE = 4;
+// Window during which a duplicate (kind, message) is collapsed instead of
+// pushing a new toast.
+const DEDUPE_WINDOW_MS = 5000;
+const recentByKey = new Map<string, { id: number; ts: number; count: number }>();
 
 function notify() {
   for (const listener of listeners) listener([...toastStack]);
 }
 
 function push(kind: ToastKind, message: string): number {
+  const key = `${kind}::${message}`;
+  const now = Date.now();
+  const recent = recentByKey.get(key);
+
+  if (recent && now - recent.ts < DEDUPE_WINDOW_MS) {
+    // Still on screen — bump count and update message in place.
+    recent.count += 1;
+    recent.ts = now;
+    const stamped = `${message} (x${recent.count})`;
+    toastStack = toastStack.map((t) => (t.id === recent.id ? { ...t, message: stamped } : t));
+    notify();
+    return recent.id;
+  }
+
   const id = nextId++;
   toastStack = [...toastStack, { id, kind, message }];
+  // Trim from the top once we exceed the visible cap.
+  if (toastStack.length > MAX_VISIBLE) {
+    toastStack = toastStack.slice(-MAX_VISIBLE);
+  }
+  recentByKey.set(key, { id, ts: now, count: 1 });
   notify();
-  window.setTimeout(() => dismiss(id), TOAST_DURATION_MS);
+  window.setTimeout(() => {
+    dismiss(id);
+    const cur = recentByKey.get(key);
+    if (cur && cur.id === id) recentByKey.delete(key);
+  }, TOAST_DURATION_MS);
   return id;
 }
 

@@ -32,6 +32,20 @@ async def lifespan(app: FastAPI):
     via ``JobManager.instance()`` — importing it here guarantees the APScheduler
     BackgroundScheduler is live before the first request.
     """
+    # Anyio threadpool: FastAPI offloads sync `def` handlers (which is most of
+    # this codebase) to this pool. Default is 40 tokens — bump to 100 so the
+    # 13-endpoint Customer Analytics tab × multiple planners doesn't queue.
+    # Total concurrency = N gunicorn workers × this number; keep it well under
+    # the DB pool size × workers to avoid pool exhaustion.
+    try:
+        import os as _os
+        from anyio import to_thread
+        _tp_size = int(_os.getenv("ANYIO_THREADPOOL_SIZE", "100"))
+        to_thread.current_default_thread_limiter().total_tokens = _tp_size
+        logger.info("Anyio threadpool sized to %d tokens", _tp_size)
+    except Exception as exc:  # noqa: BLE001 — best effort; default 40 is fine
+        logger.warning("Could not resize anyio threadpool: %s", exc)
+
     # Pool: best-effort open — in offline/test modes where POSTGRES_PASSWORD is
     # unset we continue without a live pool so unit tests (which patch the pool)
     # can still import the app.
@@ -98,15 +112,32 @@ async def rate_limit_middleware(request: Request, call_next):
 
 
 @app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Stamp every request with a short request-id so slow-query logs and
+    pool-exhaustion errors can be correlated end-to-end.
+
+    Honours an inbound `X-Request-ID` header (e.g. from nginx / a load
+    balancer) so the same id flows through the full stack.
+    """
+    from uuid import uuid4
+    rid = request.headers.get("X-Request-ID") or uuid4().hex[:12]
+    request.state.request_id = rid
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = rid
+    return response
+
+
+@app.middleware("http")
 async def log_requests(request: Request, call_next):
     if request.url.path == "/health":
         return await call_next(request)
     start = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
+    rid = getattr(request.state, "request_id", "-")
     logger.info(
-        "%s %s %d %.1fms",
-        request.method, request.url.path, response.status_code, duration_ms,
+        "rid=%s %s %s %d %.1fms",
+        rid, request.method, request.url.path, response.status_code, duration_ms,
     )
     return response
 

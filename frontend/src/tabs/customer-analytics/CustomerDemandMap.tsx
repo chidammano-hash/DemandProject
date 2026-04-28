@@ -1,5 +1,5 @@
-import { useMemo, useRef, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useCallback } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { MapContainer, TileLayer, GeoJSON, CircleMarker, Tooltip } from "react-leaflet";
 import type { Layer, PathOptions } from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -55,12 +55,64 @@ function bubbleRadius(val: number, maxVal: number): number {
   return 5 + 20 * Math.sqrt(val / maxVal);
 }
 
+// Lightweight grid clustering — aggregates markers into ~1° lat/lon cells
+// (≈ 70 mile bins). One bubble per non-empty cell, sized by total demand,
+// with a click-to-expand affordance handled by the existing pan/zoom UX.
+// Avoids adding a marker-cluster npm dep at the cost of less polished UX.
+const GRID_DEG = 1;
+interface ClusteredBubble {
+  lat: number;
+  lon: number;
+  count: number;
+  total_demand: number;
+  total_oos: number;
+  fill_rate: number;
+}
+function clusterByGrid(points: MapLocation[]): ClusteredBubble[] {
+  const cells = new Map<string, ClusteredBubble & { _wlat: number; _wlon: number; _wsum: number }>();
+  for (const p of points) {
+    if (p.lat == null || p.lon == null) continue;
+    const cellLat = Math.round(p.lat / GRID_DEG) * GRID_DEG;
+    const cellLon = Math.round(p.lon / GRID_DEG) * GRID_DEG;
+    const key = `${cellLat}:${cellLon}`;
+    const w = p.demand_qty || 1;
+    const cur = cells.get(key);
+    if (!cur) {
+      cells.set(key, {
+        lat: cellLat, lon: cellLon, count: 1,
+        total_demand: p.demand_qty, total_oos: p.oos_qty,
+        fill_rate: p.fill_rate,
+        _wlat: p.lat * w, _wlon: p.lon * w, _wsum: w,
+      });
+    } else {
+      cur.count += 1;
+      cur.total_demand += p.demand_qty;
+      cur.total_oos += p.oos_qty;
+      cur._wlat += p.lat * w;
+      cur._wlon += p.lon * w;
+      cur._wsum += w;
+      // weighted-mean fill rate by demand
+      cur.fill_rate = cur.total_demand > 0
+        ? Math.round(((cur.total_demand - cur.total_oos) / cur.total_demand) * 1000) / 10
+        : cur.fill_rate;
+    }
+  }
+  // Replace cell-center coords with demand-weighted centroid for nicer placement
+  return Array.from(cells.values()).map((c) => ({
+    lat: c._wsum > 0 ? c._wlat / c._wsum : c.lat,
+    lon: c._wsum > 0 ? c._wlon / c._wsum : c.lon,
+    count: c.count, total_demand: c.total_demand,
+    total_oos: c.total_oos, fill_rate: c.fill_rate,
+  }));
+}
+
 function fmtNum(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
-const TILE_URL = "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png";
-const LABEL_URL = "https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png";
+// Single composite tileset: doubles as base + labels in one request, halving
+// network/tile-decode work. Previously stacked light_nolabels + light_only_labels.
+const TILE_URL = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
 
 type MapMetric = "customer_count" | "demand_qty" | "sales_qty" | "oos_qty" | "fill_rate";
 
@@ -87,7 +139,8 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.map(metric, groupBy, filters),
     queryFn: () => fetchCustomerAnalyticsMap(metric, groupBy, filters),
-    staleTime: 5 * 60_000,
+    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
+    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
   const locations = data?.locations ?? [];
@@ -140,9 +193,30 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
     [stateLookup, maxVal, metric],
   );
 
-  geoRef.current += 1;
+  // Force GeoJSON to remount only when the styling inputs actually change.
+  // Previously we incremented on EVERY render, which destroyed Leaflet's
+  // layer caching and rebuilt the whole choropleth on each parent re-render.
+  useEffect(() => {
+    geoRef.current += 1;
+  }, [stateLookup, maxVal, metric]);
 
-  const bubbles = locations.filter((l) => l.lat != null && l.lon != null);
+  const bubbles = useMemo(
+    () => locations.filter((l) => l.lat != null && l.lon != null),
+    [locations],
+  );
+
+  // Cluster bubbles into ~1° grid cells when there are too many to render
+  // smoothly as individual markers. 100 markers is the empirical knee on a
+  // mid-spec laptop; below that, render individuals so tooltips read raw
+  // city/zip names instead of grid cells.
+  const clustered = useMemo(
+    () => (bubbles.length > 100 ? clusterByGrid(bubbles) : null),
+    [bubbles],
+  );
+  const maxClusterDemand = useMemo(
+    () => (clustered ? Math.max(...clustered.map((c) => c.total_demand), 1) : 1),
+    [clustered],
+  );
 
   return (
     <Card aria-label="Customer demand map">
@@ -184,6 +258,11 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
       <CardContent>
         {isLoading ? (
           <div className="h-[480px] flex items-center justify-center text-sm text-muted-foreground">Loading map...</div>
+        ) : locations.length === 0 ? (
+          <div className="h-[480px] flex flex-col items-center justify-center text-sm text-muted-foreground gap-1">
+            <span className="font-medium">No data for the selected filters</span>
+            <span className="text-xs">Try a different item or widen the date range</span>
+          </div>
         ) : (
           <MapContainer
             center={[39.5, -98.35]}
@@ -198,7 +277,22 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
               style={geoStyle}
               onEachFeature={onEachFeature}
             />
-            {groupBy !== "state" &&
+            {groupBy !== "state" && clustered &&
+              clustered.map((c, i) => (
+                <CircleMarker
+                  key={`cluster-${i}`}
+                  center={[c.lat, c.lon]}
+                  radius={bubbleRadius(c.total_demand, maxClusterDemand)}
+                  pathOptions={{ color: fillRateColor(c.fill_rate), fillColor: fillRateColor(c.fill_rate), fillOpacity: 0.7, weight: 1 }}
+                >
+                  <Tooltip>
+                    <b>{c.count} locations</b>
+                    <br />
+                    Demand: {fmtNum(c.total_demand)} | Fill Rate: {c.fill_rate}%
+                  </Tooltip>
+                </CircleMarker>
+              ))}
+            {groupBy !== "state" && !clustered &&
               bubbles.map((loc, i) => (
                 <CircleMarker
                   key={`${loc.label}-${i}`}
@@ -216,7 +310,6 @@ export function CustomerDemandMap({ filters, metric, groupBy, onMetricChange, on
                   </Tooltip>
                 </CircleMarker>
               ))}
-            <TileLayer url={LABEL_URL} />
           </MapContainer>
         )}
       </CardContent>

@@ -8,6 +8,16 @@ import httpx
 from httpx import ASGITransport
 
 from tests.api.conftest import make_pool as _make_pool
+from common.services.cache import reset_cache
+
+
+# Per-test cache reset — endpoints share an in-memory cache singleton, so
+# without this each test sees the prior test's response under a matching key.
+@pytest.fixture(autouse=True)
+def _isolate_cache():
+    reset_cache()
+    yield
+    reset_cache()
 
 
 # ---------------------------------------------------------------------------

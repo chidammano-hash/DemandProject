@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import ReactECharts from "echarts-for-react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { ModularReactECharts as ReactECharts } from "@/components/echarts-modular";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
@@ -8,6 +8,7 @@ import {
 } from "@/api/queries/customer-analytics";
 import type { CustomerAnalyticsFilters } from "@/api/queries/customer-analytics";
 import { ExportButtons } from "./ExportButtons";
+import { EmptyState } from "./EmptyState";
 
 type SunburstMetric = "demand" | "customers";
 
@@ -39,7 +40,8 @@ export function ChannelSunburst({ filters }: Props) {
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.channelMix(filters),
     queryFn: () => fetchCustomerAnalyticsChannelMix(filters),
-    staleTime: 5 * 60_000,
+    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
+    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
 
   const topChannelName = useMemo(() => {
@@ -201,9 +203,11 @@ export function ChannelSunburst({ filters }: Props) {
       <CardContent>
         {isLoading ? (
           <div className="h-[420px] flex items-center justify-center text-sm text-muted-foreground">Loading...</div>
+        ) : !data?.tree || data.tree.length === 0 ? (
+          <EmptyState height={420} />
         ) : (
           <div role="img" aria-roledescription="Channel mix sunburst chart">
-            <ReactECharts option={option} style={{ height: 420 }} />
+            <ReactECharts option={option} style={{ height: 420 }} lazyUpdate notMerge={false} />
           </div>
         )}
       </CardContent>

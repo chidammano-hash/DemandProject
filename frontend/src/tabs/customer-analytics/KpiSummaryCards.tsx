@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   customerAnalyticsKeys,
@@ -11,7 +12,7 @@ interface Props {
 }
 
 interface KpiCardDef {
-  key: keyof ReturnType<typeof useKpiData>["kpis"];
+  key: string;
   label: string;
   format: (v: number) => string;
   suffix?: string;
@@ -40,16 +41,37 @@ const KPI_DEFS: KpiCardDef[] = [
   { key: "order_to_demand_ratio", label: "Order-to-Demand Ratio", format: fmtRatio },
 ];
 
+// Backend returns {kpis: [{key, value, delta}, ...]} with keys like
+// `oos_volume`, `concentration_top10`, `order_demand_ratio`. Map to the
+// planner-facing labels the cards expect, and tolerate the older keyed
+// {total_demand: {...}, ...} shape as a fallback.
+const BACKEND_KEY_MAP: Record<string, string> = {
+  oos_volume: "lost_sales_oos",
+  concentration_top10: "demand_concentration",
+  order_demand_ratio: "order_to_demand_ratio",
+};
+
 function useKpiData(filters: CustomerAnalyticsFilters) {
   const { data, isLoading } = useQuery({
     queryKey: customerAnalyticsKeys.kpis(filters),
     queryFn: () => fetchCustomerAnalyticsKpis(filters),
-    staleTime: 5 * 60_000,
+    staleTime: 60 * 60_000, // monthly data; pin to 1h to suppress thundering-herd refetches
+    placeholderData: keepPreviousData, // keep prior chart visible during filter-change refetch
   });
-  return {
-    kpis: data ?? null,
-    isLoading,
-  };
+  const kpis = useMemo(() => {
+    if (!data) return null;
+    const maybeList = (data as { kpis?: Array<{ key: string; value: number; delta: number }> }).kpis;
+    if (Array.isArray(maybeList)) {
+      const out: Record<string, KpiMetric> = {};
+      for (const row of maybeList) {
+        const mapped = BACKEND_KEY_MAP[row.key] ?? row.key;
+        out[mapped] = { value: row.value, delta: row.delta };
+      }
+      return out;
+    }
+    return data as unknown as Record<string, KpiMetric>;
+  }, [data]);
+  return { kpis, isLoading };
 }
 
 function DeltaBadge({ delta }: { delta: number }) {

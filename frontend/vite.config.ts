@@ -82,15 +82,27 @@ export default defineConfig({
     outDir: "dist",
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ["react", "react-dom"],
-          charts: ["recharts"],
-          icons: ["lucide-react"],
-          radix: ["@radix-ui/react-checkbox", "@radix-ui/react-slot"],
-          query: ["@tanstack/react-query"],
-          "table-grid": ["@tanstack/react-table", "@tanstack/react-virtual"],
-          echarts: ["echarts", "echarts-for-react"],
-          leaflet: ["leaflet", "react-leaflet"],
+        // Function-form so vendor packages with many sub-packages (e.g. all
+        // 37 @radix-ui/* modules) collapse into a single shared chunk
+        // instead of leaking into the main bundle.
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("/react/") || id.includes("/react-dom/") || id.includes("/scheduler/")) {
+            return "vendor";
+          }
+          if (id.includes("/@radix-ui/")) return "radix";
+          if (id.includes("/recharts/") || id.includes("/d3-")) return "charts";
+          if (id.includes("/echarts/") || id.includes("/echarts-for-react/") || id.includes("/zrender/")) {
+            return "echarts";
+          }
+          if (id.includes("/leaflet") || id.includes("/react-leaflet")) return "leaflet";
+          if (id.includes("/lucide-react/")) return "icons";
+          if (id.includes("/@tanstack/react-query")) return "query";
+          if (id.includes("/@tanstack/react-table") || id.includes("/@tanstack/react-virtual")) {
+            return "table-grid";
+          }
+          if (id.includes("/papaparse/")) return "papaparse";
+          return undefined;
         },
       },
     },

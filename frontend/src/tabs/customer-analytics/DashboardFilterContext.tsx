@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react";
+import { createContext, useContext, useMemo, useReducer, type ReactNode, type Dispatch } from "react";
 
 // ---------------------------------------------------------------------------
 // State shape
@@ -59,8 +59,11 @@ const DashboardFilterContext = createContext<DashboardFilterContextValue | null>
 
 export function DashboardFilterProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  // dispatch is stable; memoize the value object so consumers don't re-render
+  // (and re-fire React Query subscriptions) on unrelated parent renders.
+  const value = useMemo(() => ({ state, dispatch }), [state]);
   return (
-    <DashboardFilterContext.Provider value={{ state, dispatch }}>
+    <DashboardFilterContext.Provider value={value}>
       {children}
     </DashboardFilterContext.Provider>
   );
