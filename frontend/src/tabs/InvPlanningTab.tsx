@@ -8,6 +8,7 @@
 
 import { useState, useMemo, useCallback, Fragment } from "react";
 import { cn } from "@/lib/utils";
+import { InvPlanningNavProvider } from "@/context/InvPlanningNavContext";
 import {
   AlertTriangle,
   Activity,
@@ -361,7 +362,13 @@ export function InvPlanningTab() {
     }
   }, []);
 
+  const navValue = useMemo(
+    () => ({ navigateTo: (panel: string) => setActivePanel(panel as SubTabKey) }),
+    [],
+  );
+
   return (
+    <InvPlanningNavProvider value={navValue}>
     <div className="flex flex-col overflow-hidden" style={{ height: "calc(100vh - 108px)" }}>
       {/* ------------------------------------------------------------------ */}
       {/* Today's Plan Banner (Issue #14)                                     */}
@@ -607,5 +614,6 @@ export function InvPlanningTab() {
         </div>
       </div>
     </div>
+    </InvPlanningNavProvider>
   );
 }

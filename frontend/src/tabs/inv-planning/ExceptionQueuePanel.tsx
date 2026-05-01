@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useGlobalFilterContext } from "@/context/GlobalFilterContext";
+import { useInvPlanningNav } from "@/context/InvPlanningNavContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   exceptionKeys,
@@ -102,6 +103,15 @@ function ExceptionDetailCard({
   rootCauseData: { causes: { factor: string; contribution_pct: number; description: string }[] } | undefined;
   rootCauseLoading: boolean;
 }) {
+  const { setFilters } = useGlobalFilterContext();
+  const nav = useInvPlanningNav();
+  // Push the row's item/loc into the global filter so the destination panel
+  // (ProjectionPanel, PlannedOrdersPanel, SafetyStockPanel) auto-loads it
+  // through its existing useGlobalFilterContext sync, then switch tabs.
+  const navigateWithContext = (panel: string) => {
+    setFilters({ item: [exception.item_id], location: [exception.loc] });
+    nav?.navigateTo(panel);
+  };
   return (
     <div className="space-y-4">
       {/* Main 3-column grid */}
@@ -190,13 +200,22 @@ function ExceptionDetailCard({
               )}
             </div>
           )}
-          <button className="w-full px-3 py-1.5 text-xs font-medium rounded border border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors">
+          <button
+            onClick={() => navigateWithContext("plannedorders")}
+            className="w-full px-3 py-1.5 text-xs font-medium rounded border border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+          >
             Create Replenishment Order
           </button>
-          <button className="w-full px-3 py-1.5 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-900/20 transition-colors">
+          <button
+            onClick={() => navigateWithContext("projection")}
+            className="w-full px-3 py-1.5 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-900/20 transition-colors"
+          >
             View Inventory Projection
           </button>
-          <button className="w-full px-3 py-1.5 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-900/20 transition-colors">
+          <button
+            onClick={() => navigateWithContext("safetystock")}
+            className="w-full px-3 py-1.5 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-900/20 transition-colors"
+          >
             Review Safety Stock
           </button>
         </div>

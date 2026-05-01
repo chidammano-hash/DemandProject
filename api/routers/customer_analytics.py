@@ -97,6 +97,7 @@ def _build_where(
     date_to: str | None,
     channel: str | None,
     store_type: str | None,
+    state: str | None = None,
 ) -> str:
     """Build WHERE clause fragments and append params. Returns SQL fragment.
 
@@ -123,6 +124,9 @@ def _build_where(
     if store_type:
         clauses.append("c.store_type_desc = %s")
         params.append(store_type)
+    if state:
+        clauses.append("UPPER(c.state) = %s")
+        params.append(state.strip().upper())
     return " AND ".join(clauses)
 
 
@@ -207,11 +211,12 @@ def customer_analytics_map(
     date_to: str | None = Query(default=None),
     channel: str | None = Query(default=None),
     store_type: str | None = Query(default=None),
+    state: str | None = Query(default=None),
 ):
     """Demand-aware customer map with metric selection."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, channel, store_type)
+    where = _build_where(params, item_id, date_from, date_to, channel, store_type, state=state)
 
     geo_col = {"state": "c.state", "city": "c.city", "zip": "c.zip"}[group_by]
 
@@ -910,12 +915,19 @@ def customer_analytics_kpis(
     date_to: str | None = Query(default=None),
     channel: str | None = Query(default=None),
     store_type: str | None = Query(default=None),
+    state: str | None = Query(default=None),
 ):
-    """Six KPI values with MoM deltas."""
+    """KPI values aggregated over the selected date range, with MoM deltas
+    computed from the latest two months in the range."""
     set_cache(response, max_age=300)
     params: list[Any] = []
-    where = _build_where(params, item_id, date_from, date_to, channel, store_type)
+    where = _build_where(params, item_id, date_from, date_to, channel, store_type, state=state)
 
+    # Values use full-range totals so they line up with the map / treemap /
+    # other panels on this dashboard. Deltas are still month-over-month
+    # (latest available month vs prior month) — that's the only meaningful
+    # comparison for monthly-grain data and matches how planners read the
+    # arrows ("did things move this month?").
     sql = f"""
         WITH base AS (
             SELECT f.startdate,
@@ -931,6 +943,13 @@ def customer_analytics_kpis(
             SELECT MAX(startdate) AS cur_month,
                    MAX(startdate) - INTERVAL '1 month' AS prev_month
             FROM base
+        ),
+        totals AS (
+            SELECT COALESCE(SUM(b.demand_qty), 0) AS demand,
+                   COALESCE(SUM(b.sales_qty), 0) AS sales,
+                   COALESCE(SUM(b.oos_qty), 0) AS oos,
+                   COUNT(DISTINCT b.customer_no) AS active_cust
+            FROM base b
         ),
         cur AS (
             SELECT COALESCE(SUM(b.demand_qty), 0) AS demand,
@@ -952,17 +971,17 @@ def customer_analytics_kpis(
             SELECT COALESCE(SUM(sub.demand), 0) AS top10_demand
             FROM (
                 SELECT b.customer_no, SUM(b.demand_qty) AS demand
-                FROM base b, bounds
-                WHERE b.startdate = bounds.cur_month
+                FROM base b
                 GROUP BY b.customer_no
                 ORDER BY SUM(b.demand_qty) DESC
                 LIMIT 10
             ) sub
         )
-        SELECT cur.demand, cur.sales, cur.oos, cur.active_cust,
+        SELECT totals.demand, totals.sales, totals.oos, totals.active_cust,
+               cur.demand, cur.sales, cur.oos, cur.active_cust,
                prev.demand, prev.sales, prev.oos, prev.active_cust,
                top10.top10_demand
-        FROM cur, prev, top10
+        FROM totals, cur, prev, top10
     """
 
     with get_conn() as conn, conn.cursor() as cur:
@@ -972,28 +991,36 @@ def customer_analytics_kpis(
     if not row:
         return {"kpis": []}
 
-    c_demand, c_sales, c_oos, c_cust, p_demand, p_sales, p_oos, p_cust, top10_d = (
-        float(v or 0) for v in row
-    )
-    c_cust = int(row[3] or 0)
-    p_cust = int(row[7] or 0)
-    top10_d = float(row[8] or 0)
+    t_demand = float(row[0] or 0)
+    t_sales = float(row[1] or 0)
+    t_oos = float(row[2] or 0)
+    t_cust = int(row[3] or 0)
+    c_demand = float(row[4] or 0)
+    c_sales = float(row[5] or 0)
+    c_oos = float(row[6] or 0)
+    c_cust = int(row[7] or 0)
+    p_demand = float(row[8] or 0)
+    p_sales = float(row[9] or 0)
+    p_oos = float(row[10] or 0)
+    p_cust = int(row[11] or 0)
+    top10_d = float(row[12] or 0)
 
     def _delta(cur_val: float, prev_val: float) -> float:
         if prev_val == 0:
             return 0.0
         return round((cur_val - prev_val) / prev_val * 100, 1)
 
+    t_fr = round(t_sales / t_demand * 100, 1) if t_demand > 0 else 100.0
     c_fr = round(c_sales / c_demand * 100, 1) if c_demand > 0 else 100.0
     p_fr = round(p_sales / p_demand * 100, 1) if p_demand > 0 else 100.0
-    conc = round(top10_d / c_demand * 100, 1) if c_demand > 0 else 0.0
-    odr = round(c_sales / c_demand, 3) if c_demand > 0 else 0.0
+    conc = round(top10_d / t_demand * 100, 1) if t_demand > 0 else 0.0
+    odr = round(t_sales / t_demand, 3) if t_demand > 0 else 0.0
 
     kpis = [
-        {"key": "total_demand", "value": round(c_demand, 1), "delta": _delta(c_demand, p_demand)},
-        {"key": "fill_rate", "value": c_fr, "delta": round(c_fr - p_fr, 1)},
-        {"key": "oos_volume", "value": round(c_oos, 1), "delta": _delta(c_oos, p_oos)},
-        {"key": "active_customers", "value": c_cust, "delta": _delta(float(c_cust), float(p_cust))},
+        {"key": "total_demand", "value": round(t_demand, 1), "delta": _delta(c_demand, p_demand)},
+        {"key": "fill_rate", "value": t_fr, "delta": round(c_fr - p_fr, 1)},
+        {"key": "oos_volume", "value": round(t_oos, 1), "delta": _delta(c_oos, p_oos)},
+        {"key": "active_customers", "value": t_cust, "delta": _delta(float(c_cust), float(p_cust))},
         {"key": "concentration_top10", "value": conc, "delta": 0.0},
         {"key": "order_demand_ratio", "value": odr, "delta": 0.0},
     ]

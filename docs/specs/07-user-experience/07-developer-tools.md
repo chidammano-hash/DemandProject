@@ -1,17 +1,28 @@
-# Claude Code Skills, Agents & Commands — Developer Guide
+# Developer Tools — Claude Code Skills, Agents & Commands
 
-This guide covers the 9 skills, 5 agents, and 6 commands installed in `.claude/` for the DemandProject. These are tailored for the Python + FastAPI + React + PostgreSQL stack used here.
+> A developer guide to the 9 skills, 5 agents, and 6 commands installed in `.claude/` for the DemandProject. These are tailored for the Python + FastAPI + React + PostgreSQL stack used here. Skills auto-activate based on context, agents are spawned for specialized tasks, and commands are invoked manually with slash syntax.
+
+| | |
+|---|---|
+| **Status** | Implemented |
+| **UI Tab** | N/A (developer tooling) |
+| **Key Files** | `.claude/skills/`, `.claude/agents/`, `.claude/commands/` |
 
 ---
 
-## Table of Contents
+## Problem
 
-- [How It All Fits Together](#how-it-all-fits-together)
-- [Skills](#skills) — auto-activated by Claude based on context
-- [Agents](#agents) — specialized subagents you delegate tasks to
-- [Commands](#commands) — slash commands you invoke manually
-- [Recommended Workflows](#recommended-workflows)
-- [Quick Reference](#quick-reference)
+A platform with 76 API routers, 21 frontend tabs, dozens of computation scripts, and strict architectural conventions (psycopg3 `%s` placeholders, `get_conn()` for inv_planning routers, Vite proxy entries, mandatory test coverage) needs disciplined developer workflows. Without standardized tooling, contributors miss conventions, skip tests, or commit security issues. The team needs always-on context for Claude (skills), specialized review subprocesses (agents), and explicit slash commands for common workflows (commands) — all tailored to this codebase.
+
+---
+
+## Solution
+
+Three layers of developer tooling installed in `.claude/`:
+
+- **Skills** — always-on context that auto-activates based on what the developer is working on (e.g., writing SQL triggers `postgres-patterns`).
+- **Agents** — specialized subprocesses with focused roles and limited tool access (e.g., `code-reviewer` scans git diffs for issues).
+- **Commands** — explicit slash commands that expand into full prompts and usually invoke an agent under the hood (e.g., `/tdd` invokes the `tdd-guide` agent).
 
 ---
 
@@ -501,3 +512,21 @@ This runs: build → types → lint → `make test-all` → security → coverag
 ```
 
 Source: `everything-claude-code-main/` — see that directory for 65+ additional skills and 16 agents not installed here.
+
+---
+
+## Dependencies
+
+| Dependency | Reason |
+|---|---|
+| Claude Code CLI | Hosts the skills, agents, and commands |
+| `.claude/settings.json` | Configures PostToolUse and PreToolUse hooks that auto-run ruff, anti-pattern checks, and tests |
+| `uv`, `ruff`, `mypy`, `pytest` | Python tooling invoked by `python-reviewer` and `verification-loop` |
+| `vitest`, `@playwright/test` | Frontend tooling invoked by `verify` and `quality-gate` |
+
+---
+
+## See Also
+
+- `07-user-experience/05-testing.md` -- testing pyramid that verification commands exercise
+- CLAUDE.md "Automatic Quality Workflow" section -- always-on rules driving auto-agent invocation

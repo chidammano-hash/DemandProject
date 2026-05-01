@@ -80,7 +80,7 @@ class TestConstants:
     def test_protected_features_includes_temporal(self):
         assert "month" in PROTECTED_FEATURES
         assert "quarter" in PROTECTED_FEATURES
-        # ml_cluster removed — causes leakage (see KNOWN_GAPS.md §1)
+        # ml_cluster removed — causes leakage (see docs/specs/01-foundation/08-known-gaps.md §1)
         assert "ml_cluster" not in PROTECTED_FEATURES
         # fourier_sin_12/cos_12 replace legacy month_sin/cos
         assert "fourier_sin_12" in PROTECTED_FEATURES
@@ -109,7 +109,7 @@ class TestConstants:
         assert "croston_probability" in CROSTON_FEATURES
 
     def test_cross_dfu_features(self):
-        # Cross-DFU features removed — ml_cluster leakage (see KNOWN_GAPS.md §1)
+        # Cross-DFU features removed — ml_cluster leakage (see docs/specs/01-foundation/08-known-gaps.md §1)
         assert len(CROSS_DFU_FEATURES) == 0
 
     def test_external_forecast_features(self):

@@ -73,7 +73,7 @@ def _recompute_derived_features(df: pd.DataFrame) -> None:
     if "croston_demand_size" in df.columns:
         _compute_croston_features(df)
 
-    # Cross-DFU cluster aggregates removed (ml_cluster leakage — see KNOWN_GAPS.md)
+    # Cross-DFU cluster aggregates removed (ml_cluster leakage — see docs/specs/01-foundation/08-known-gaps.md)
 
 
 def _compute_rolling_numpy(qty_2d: np.ndarray, windows: list[int]) -> dict[str, np.ndarray]:
@@ -908,4 +908,4 @@ def update_grid_incremental(
     # these depend on rolling windows across all DFUs so partial update is unsafe)
     if "croston_demand_size" in grid.columns:
         _compute_croston_features(grid)
-    # Cross-DFU cluster aggregates removed (ml_cluster leakage — see KNOWN_GAPS.md)
+    # Cross-DFU cluster aggregates removed (ml_cluster leakage — see docs/specs/01-foundation/08-known-gaps.md)

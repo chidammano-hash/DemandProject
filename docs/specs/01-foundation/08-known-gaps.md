@@ -1,6 +1,12 @@
 # Known Gaps
 
-Technical debt and known limitations tracked for future resolution.
+> Technical debt and known limitations tracked for future resolution.
+
+| | |
+|---|---|
+| **Status** | Living document |
+| **UI Tab** | N/A (engineering reference) |
+| **Key Files** | `common/core/constants.py`, `common/ml/feature_engineering.py`, `config/forecast_pipeline_config.yaml` |
 
 ---
 

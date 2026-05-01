@@ -368,8 +368,14 @@ async def test_ranking_invalid_sort():
 @pytest.mark.asyncio
 async def test_kpis_returns_six_metrics():
     pool, _, cursor = _make_pool()
-    # Row: c_demand, c_sales, c_oos, c_cust, p_demand, p_sales, p_oos, p_cust, top10_demand
-    cursor.fetchone.return_value = (10000.0, 9000.0, 1000.0, 50, 8000.0, 7000.0, 1000.0, 45, 4000.0)
+    # Row: totals(demand,sales,oos,cust), cur(demand,sales,oos,cust),
+    # prev(demand,sales,oos,cust), top10_demand. Values are full-range; delta is MoM.
+    cursor.fetchone.return_value = (
+        10000.0, 9000.0, 1000.0, 50,   # totals (full range)
+        10000.0, 9000.0, 1000.0, 50,   # cur month
+        8000.0, 7000.0, 1000.0, 45,    # prev month
+        4000.0,                        # top10 demand (full range)
+    )
     with patch("api.core._get_pool", return_value=pool), \
          _patch_planning_date():
         from api.main import app
@@ -387,10 +393,10 @@ async def test_kpis_returns_six_metrics():
     assert "active_customers" in keys
     assert "concentration_top10" in keys
     assert "order_demand_ratio" in keys
-    # total_demand should be 10000
+    # total_demand value is full-range total = 10000
     td = next(k for k in data["kpis"] if k["key"] == "total_demand")
     assert td["value"] == 10000.0
-    # delta = (10000-8000)/8000 * 100 = 25.0
+    # delta is MoM (cur 10000 vs prev 8000) = 25.0
     assert td["delta"] == 25.0
 
 

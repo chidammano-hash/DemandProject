@@ -35,8 +35,8 @@ for _period in [12, 6, 4, 3]:
 CROSTON_FEATURES = ["croston_demand_size", "croston_demand_interval", "croston_probability"]
 
 # Cross-DFU cluster aggregate features — REMOVED (ml_cluster leaks future info
-# into backtesting; see docs/KNOWN_GAPS.md §1). Kept as empty list for backward
-# compat with code that iterates over it.
+# into backtesting; see docs/specs/01-foundation/08-known-gaps.md §1). Kept as
+# empty list for backward compat with code that iterates over it.
 CROSS_DFU_FEATURES: list[str] = []
 
 # External forecast signal features — optional enrichment
@@ -85,7 +85,7 @@ ENHANCED_FEATURES = FOURIER_FEATURES + CROSTON_FEATURES + CROSS_DFU_FEATURES + E
 # Features always kept by SHAP selection (never dropped regardless of SHAP rank).
 # These provide essential temporal/categorical context the model needs.
 # Fourier terms are calendar-derived (no leakage), so they are also protected.
-# NOTE: ml_cluster removed — causes leakage in backtesting (see docs/KNOWN_GAPS.md §1).
+# NOTE: ml_cluster removed — causes leakage in backtesting (see docs/specs/01-foundation/08-known-gaps.md §1).
 PROTECTED_FEATURES = {
     "month", "quarter",
     *FOURIER_FEATURES,

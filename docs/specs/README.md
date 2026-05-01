@@ -49,6 +49,8 @@ The data layer everything else depends on.
 | 05 | [Performance Profiling](01-foundation/05-performance-profiling.md) | Centralized profiling, suggestion engine, production-safe |
 | 06 | [Execution Lag](01-foundation/06-execution-lag.md) | DFU-level planning horizon, forecast lag vs execution lag, lag filter semantics |
 | 07 | [Customer Demand Fact](01-foundation/07-customer-demand-fact.md) | Customer-level demand fact table, monthly range-partitioned by startdate |
+| 08 | [Known Gaps](01-foundation/08-known-gaps.md) | Technical debt and known limitations tracked for future resolution |
+| 09 | [Pipeline Validation Report](01-foundation/09-pipeline-validation-report.md) | Full pipeline load + validation report (row counts, MV refresh, fill rate findings, gap tickets) |
 
 ---
 
@@ -80,8 +82,10 @@ Predict future demand using ML models, then select the best forecast per item.
 | 21 | [Customer-Enriched Features](02-forecasting/21-customer-enriched-features.md) | 34 customer-derived features (concentration, churn, OOS, channel mix, customer attribute mix) for tree model enrichment |
 | 22 | [Expert Panel Flow](02-forecasting/22-expert-panel-flow.md) | Mermaid process flow diagram for the advanced expert panel algorithm selection pipeline |
 | 23 | [LGBM Accuracy Tuning](02-forecasting/23-lgbm-accuracy-tuning.md) | Systematic LGBM accuracy improvement (59% -> 68%): data fixes, per-cluster SHAP, MAE objective, tuning profiles, intermittent routing, per-cluster Bayesian tuning pipeline |
+| 25 | [Forecast Pipeline Workflow Guide](02-forecasting/25-forecast-pipeline-workflow-guide.md) | Concise 7-stage workflow guide (data → clustering → tuning → backtesting → load → champion → production forecast) with quick-reference commands and config table |
+| 26 | [Forecast Pipeline Operational Reference](02-forecasting/26-forecast-pipeline-operational-reference.md) | Comprehensive operational reference: per-stage detail, dependency DAG, configuration reference, database reference, experimentation workflows, expert panel testing, and gap analysis |
 
-**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 10b (LGBM tuning) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config) → 20-21 (customer-enriched) → 22 (expert panel flow) → 23 (LGBM accuracy tuning)
+**Reading order:** 01-03 (foundations) → 04-06 (engine) → 07 (selection) → 08-10 (production) → 10b (LGBM tuning) → 11-14 (tuning studio) → 15 (expert panel) → 18 (foundation models) → 19 (pipeline config) → 20-21 (customer-enriched) → 22 (expert panel flow) → 23 (LGBM accuracy tuning) → 25-26 (workflow guide & operational reference)
 
 ---
 
@@ -160,6 +164,8 @@ The React UI, automation, and testing infrastructure.
 | 04 | [Job Scheduler](07-user-experience/04-job-scheduler.md) | APScheduler engine: 7 job types, queuing, cron scheduling |
 | 05 | [Testing](07-user-experience/05-testing.md) | pytest + Vitest + Playwright testing pyramid |
 | 06 | [Backtest Cleanup](07-user-experience/06-backtest-cleanup.md) | Model and date-range forecast deletion utilities |
+| 07 | [Developer Tools](07-user-experience/07-developer-tools.md) | Claude Code skills, agents, and slash commands installed in `.claude/` |
+| 08 | [SKU Validation Plan](07-user-experience/08-sku-validation-plan.md) | End-to-end SKU-level validation plan with SQL assertion blocks for every pipeline stage (21 steps) |
 
 ---
 
@@ -179,6 +185,17 @@ Connect Supply Chain Command Center to the rest of the enterprise.
 | 08 | [Reporting](08-integration/08-reporting.md) | Scheduled report generation and delivery |
 | 09 | [API Governance](08-integration/09-api-governance.md) | Rate limiting, versioning, usage tracking |
 | 10 | [Webhooks](08-integration/10-webhooks.md) | Event-driven outbound notifications with retry |
+
+---
+
+## Cross-Domain — Roadmap & Backlog
+
+Top-level specs that span multiple domains.
+
+| File | Summary |
+|------|---------|
+| [10-gen4-roadmap](10-gen4-roadmap.md) | Gen-4 multi-agent design review synthesis — 31-agent review, cross-cutting priorities, P0/P1 implementation plan |
+| [11-parking-lot-improvements](11-parking-lot-improvements.md) | 135 ranked improvements (Critical → Future) covering inventory planning, backtesting, and UI/UX, scored by 3 expert judges |
 
 ---
 
