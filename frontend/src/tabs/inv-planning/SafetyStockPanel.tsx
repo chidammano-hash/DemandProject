@@ -385,12 +385,13 @@ export function SafetyStockPanel() {
             title: "Items that may run out within their lead time",
             description: "Higher means more urgent reordering needed.",
           }}
-          trend={!summaryLoading && summary ? (() => {
-            const riskPct = summary.total_skus > 0 ? summary.below_ss_count / summary.total_skus : 0;
+          trend={!summaryLoading && summary && summary.total_skus > 0 ? (() => {
+            const riskPct = summary.below_ss_count / summary.total_skus;
+            const deltaPct = Math.round(riskPct * 100);
             // >20% of portfolio at risk = worsening; <5% = improving; otherwise flat
-            if (riskPct > 0.2) return { delta: Math.round(riskPct * 100), direction: "up" as const, unit: "% of SKUs at risk", period: "threshold" };
-            if (riskPct < 0.05) return { delta: Math.round(riskPct * 100), direction: "down" as const, unit: "% of SKUs at risk", period: "threshold" };
-            return { delta: Math.round(riskPct * 100), direction: "flat" as const, unit: "% of SKUs at risk", period: "threshold" };
+            if (riskPct > 0.2) return { delta: deltaPct, direction: "up" as const, unit: "% of SKUs at risk", period: "threshold" };
+            if (riskPct < 0.05) return { delta: deltaPct, direction: "down" as const, unit: "% of SKUs at risk", period: "threshold" };
+            return { delta: deltaPct, direction: "flat" as const, unit: "% of SKUs at risk", period: "threshold" };
           })() : undefined}
           sparkline={summary?.below_ss_count != null ? [
             summary.below_ss_count * 1.3,
@@ -404,17 +405,17 @@ export function SafetyStockPanel() {
         <KpiCard
           className={PANEL_KPI}
           label="Buffer Health"
-          value={summaryLoading ? "..." : formatPct(summary?.avg_ss_coverage != null ? summary.avg_ss_coverage * 100 : null)}
+          value={summaryLoading ? "..." : formatPct(summary?.avg_ss_coverage != null ? Math.min(summary.avg_ss_coverage, 5) * 100 : null)}
           tooltip={{
-            title: "Ratio of current stock to safety stock",
-            description: "Below 1.0x means insufficient buffer against stockouts.",
+            title: "Median ratio of current stock to safety stock (capped at 500%)",
+            description: "Below 100% means insufficient buffer against stockouts. Median is shown to avoid distortion from a few overstocked SKUs.",
           }}
           trend={!summaryLoading && summary?.avg_ss_coverage != null ? (() => {
-            const cov = summary.avg_ss_coverage;
-            // Coverage >= 1.5 = healthy (up-good); < 1.0 = concerning (down-bad); otherwise flat
-            if (cov >= 1.5) return { delta: +(cov * 100).toFixed(0), direction: "up" as const, unit: "% coverage", period: "target" };
-            if (cov < 1.0) return { delta: +(cov * 100).toFixed(0), direction: "down" as const, unit: "% coverage", period: "target" };
-            return { delta: +(cov * 100).toFixed(0), direction: "flat" as const, unit: "% coverage", period: "target" };
+            const cov = Math.min(summary.avg_ss_coverage, 5);
+            const deltaPct = +(cov * 100).toFixed(0);
+            if (cov >= 1.5) return { delta: deltaPct, direction: "up" as const, unit: "% coverage", period: "target" };
+            if (cov < 1.0) return { delta: deltaPct, direction: "down" as const, unit: "% coverage", period: "target" };
+            return { delta: deltaPct, direction: "flat" as const, unit: "% coverage", period: "target" };
           })() : undefined}
         />
         <KpiCard

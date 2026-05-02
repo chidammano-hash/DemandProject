@@ -80,7 +80,9 @@ def get_ss_summary(
             SELECT
                 COUNT(*)                                                AS total_dfus,
                 SUM(CASE WHEN is_below_ss THEN 1 ELSE 0 END)          AS below_ss_count,
-                AVG(ss_coverage)                                       AS avg_ss_coverage,
+                -- Median is robust to overstocked outliers (single SKU at 100x coverage
+                -- would otherwise drag the mean to absurd values like 4000%).
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ss_coverage) AS avg_ss_coverage,
                 AVG(target_dos_min)                                    AS avg_ss_days,
                 SUM(CASE WHEN ss_gap < 0 THEN ss_gap ELSE 0 END)      AS total_ss_gap_units,
                 MAX(computed_at)                                        AS last_computed_at
@@ -193,6 +195,7 @@ def get_ss_summary(
 
     return {
         "total_dfus":         total_dfus,
+        "total_skus":         total_dfus,
         "below_ss_count":     below_ss,
         "below_ss_pct":       below_ss_pct,
         "total_ss_gap_units": _f(summary_row[4]),
