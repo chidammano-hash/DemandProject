@@ -274,18 +274,18 @@ def demand_comparison(
         ORDER BY f.startdate
     """
 
-    # fact_candidate_forecast holds every model's predictions before promotion.
-    # Use forecast_qty (point forecast) at the forecast_month grain.
+    # fact_external_forecast_monthly is where backtest_load writes execution-lag
+    # predictions. basefcst_pref is the point forecast; startdate is the period.
     sql_predictions = """
-        SELECT TO_CHAR(b.forecast_month, 'YYYY-MM') AS month,
+        SELECT TO_CHAR(b.startdate, 'YYYY-MM') AS month,
                b.model_id,
-               SUM(b.forecast_qty) AS pred_qty
-        FROM fact_candidate_forecast b
+               SUM(b.basefcst_pref) AS pred_qty
+        FROM fact_external_forecast_monthly b
         WHERE b.item_id = %s AND b.loc = %s
-          AND b.forecast_month >= %s::date
+          AND b.startdate >= %s::date
           AND b.model_id = ANY(%s)
-        GROUP BY b.forecast_month, b.model_id
-        ORDER BY b.forecast_month
+        GROUP BY b.startdate, b.model_id
+        ORDER BY b.startdate
     """
 
     with get_conn() as conn, conn.cursor() as cur:
@@ -297,7 +297,7 @@ def demand_comparison(
             cur.execute(sql_predictions, [item_id, loc, cutoff, all_model_ids])
             pred_rows = cur.fetchall()
         except psycopg.Error:
-            logger.debug("fact_candidate_forecast not yet populated for this DFU")
+            logger.debug("fact_external_forecast_monthly not yet populated for this DFU")
             pred_rows = []
 
     pred_map: dict[tuple[str, str], float] = {}

@@ -22,6 +22,19 @@ if str(ROOT) not in sys.path:
 from common.db import get_db_params
 
 
+_DEPENDENCIES = ("agg_inventory_monthly", "mv_inventory_forecast_monthly")
+
+
+def _refresh_mv(cur: psycopg.Cursor, name: str) -> None:
+    row = cur.execute(
+        "SELECT relispopulated FROM pg_class WHERE relname = %s", (name,)
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(f"materialized view {name!r} does not exist — apply DDL first")
+    concurrently = "CONCURRENTLY " if row[0] else ""
+    cur.execute(f"REFRESH MATERIALIZED VIEW {concurrently}{name}")
+
+
 def refresh(conn_params: dict) -> dict:
     """Refresh the health score view. Returns timing and row count."""
     start = time.perf_counter()
@@ -29,11 +42,15 @@ def refresh(conn_params: dict) -> dict:
     with psycopg.connect(**conn_params) as conn:
         conn.autocommit = True
         with conn.cursor() as cur:
-            row = cur.execute(
-                "SELECT relispopulated FROM pg_class WHERE relname = 'mv_inventory_health_score'"
-            ).fetchone()
-            concurrently = "CONCURRENTLY " if row and row[0] else ""
-            cur.execute(f"REFRESH MATERIALIZED VIEW {concurrently}mv_inventory_health_score")
+            for dep in _DEPENDENCIES:
+                row = cur.execute(
+                    "SELECT relispopulated FROM pg_class WHERE relname = %s", (dep,)
+                ).fetchone()
+                if row is not None and not row[0]:
+                    print(f"[health] Dependency {dep} not populated — refreshing first…")
+                    _refresh_mv(cur, dep)
+
+            _refresh_mv(cur, "mv_inventory_health_score")
             cur.execute("SELECT COUNT(*) FROM mv_inventory_health_score")
             row_count = cur.fetchone()[0] or 0
 
