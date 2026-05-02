@@ -146,7 +146,7 @@ Automated intelligence that surfaces exceptions and recommends actions.
 | # | Spec | Summary |
 |---|------|---------|
 | 01 | [AI Planning Agent](06-ai-platform/01-ai-planning-agent.md) | Claude-powered proactive exception work queue (not a chatbot) |
-| 02 | [Chatbot & Market Intel](06-ai-platform/02-chatbot-market-intel.md) | Ask questions in English + Google/GPT market briefings |
+| 02 | [Market Intel](06-ai-platform/02-market-intel.md) | Google search + GPT-4o market briefings for item-location pairs |
 | 03 | [Control Tower](06-ai-platform/03-control-tower.md) | Single pane of glass for supply chain health KPIs |
 | 04 | [Storyboard](06-ai-platform/04-storyboard.md) | Exception cards with causal chains and decision logging |
 

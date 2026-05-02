@@ -100,10 +100,6 @@ make forecast-prod-schema      # fact_production_forecast (source_model_id inclu
 # Forward-Looking Replenishment Plan (CI Bands + Repl. Plan)
 make replplan-schema           # fact_replenishment_plan
 
-# Chat
-make db-apply-chat             # pgvector + chat_embeddings (requires OPENAI_API_KEY)
-make generate-embeddings       # Embed schema descriptions (requires OPENAI_API_KEY)
-
 # Storyboard
 make storyboard-schema         # fact_storyboard_exceptions
 
@@ -192,16 +188,6 @@ make normalize-inventory    # Merge 14 monthly CSVs → single clean CSV
 make load-inventory         # Load into Postgres + refresh agg view
 make inventory-pipeline     # normalize + load + refresh (all-in-one)
 ```
-
-### 2.4 Chatbot Embeddings (Requires `OPENAI_API_KEY` in `.env`)
-
-```bash
-make generate-embeddings
-```
-
-Parses all domain specs, generates OpenAI embeddings for schema metadata, and stores them in the `chat_embeddings` pgvector table. Re-run after adding new datasets or changing schema.
-
----
 
 ## Phase 2b: Data Quality Checks
 
@@ -1504,7 +1490,6 @@ rate_limiting:
   burst_limit: "20/second"
   per_endpoint:
     /ai-planner/portfolio-scan: "5/hour"
-    /chat: "30/minute"
   per_user: true          # Apply limits per authenticated user (vs global)
   backend: "memory"       # "memory" or "redis" (for multi-worker deployments)
 ```
@@ -1871,12 +1856,11 @@ Run as a single SQL transaction. Ordered by FK dependency (children before paren
 docker compose exec -T postgres psql -U demand -d demand_mvp -v ON_ERROR_STOP=1 <<'EOSQL'
 BEGIN;
 
--- Group 1: AI / Chat / Analytics
+-- Group 1: AI / Analytics
 TRUNCATE TABLE ai_recommendation_outcomes CASCADE;
 TRUNCATE TABLE ai_insights CASCADE;
 TRUNCATE TABLE ai_planning_memos CASCADE;
 TRUNCATE TABLE ai_call_log CASCADE;
-TRUNCATE TABLE chat_embeddings CASCADE;
 
 -- Group 2: Exceptions / Decisions
 TRUNCATE TABLE planner_decisions CASCADE;

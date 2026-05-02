@@ -408,11 +408,11 @@ tuning:
   output_dir: data/tuning
   search_space_ref: hyperparameter_tuning.yaml
 champion:
-  strategy: per_cluster
+  strategy: rolling
   strategy_params:
-    min_prior_months: 5
+    window_months: 6
   fallback_model_id: seasonal_naive
-  metric: accuracy_pct
+  metric: wape
   lag: execution
   min_sku_rows: 3
   min_dfu_rows: 3

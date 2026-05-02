@@ -7,7 +7,6 @@ import react from "@vitejs/plugin-react";
 const API_PATH_PREFIXES: readonly string[] = [
   "/domains",
   "/health",
-  "/chat",
   "/forecast",
   "/sku",
   "/sku-features",

@@ -138,9 +138,6 @@ export type { CompetitionConfig, ChampionSummary } from "./competition";
 export { fetchSkuAnalysis, fetchMarketIntel } from "./sku-analysis";
 export type { SkuAnalysisParams } from "./sku-analysis";
 
-export { sendChatMessage } from "./chat";
-export type { ChatResponse } from "./chat";
-
 export {
   fetchInventoryPosition, fetchInventoryKpis,
   fetchInventoryTrend, fetchInventoryItemDetail,

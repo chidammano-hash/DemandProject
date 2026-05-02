@@ -44,7 +44,7 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 6. **Promote MLflow to authoritative Model Registry with gated promotion.** ✅ **LANDED** (2026-04-23). `api/routers/forecasting/backtest_management.py` gate: min WAPE improvement + min coverage; every accept/reject writes `DecisionRecord` to the ledger; `config/forecast_pipeline_config.yaml` `champion.promote_gate` block.
 7. **Unified Digital Twin + closed-loop exception orchestrator.** ✅ **TWIN SCAFFOLD LANDED** (2026-04-23). `common/twin/state.py` with `TwinState.simulate(scenario, n_iter)`; `scripts/run_ss_simulation.py` wired as first consumer. Closed-loop orchestrator still pending.
 8. **Chronos-2 as FM spine, not one of 10 competing models.** ✅ **CONFIG LANDED** (2026-04-23). `config/forecast_pipeline_config.yaml` `fm_spine` block marks `chronos2_enriched` as production champion default; `collapse_tree_variants` flag gated off. CRPS-vs-WAPE champion selection still pending.
-9. **pgvector-backed RAG + knowledge graph in one engine.** ✅ **LANDED** (2026-04-23). `sql/139_create_rag_chunk.sql` (VECTOR(1536) + HNSW + GIN + tsvector trigger); `sql/140_create_knowledge_graph.sql` (kg_node + kg_edge); `common/ai/rag.py` with RRF fusion (9 tests). Legacy `chat_embeddings` kept with deprecation note.
+9. **pgvector-backed RAG + knowledge graph in one engine.** ✅ **LANDED** (2026-04-23). `sql/139_create_rag_chunk.sql` (VECTOR(1536) + HNSW + GIN + tsvector trigger); `sql/140_create_knowledge_graph.sql` (kg_node + kg_edge); `common/ai/rag.py` with RRF fusion (9 tests). Legacy `chat_embeddings` table and the NL→SQL `/chat` surface have since been removed; `rag_chunk` is the single embedding store.
 10. **Vite proxy drift + hand-maintained TS types are structural debt.** Collapse proxy to array-driven loop; generate TS from FastAPI OpenAPI. ✅ **Proxy refactor done** (2026-04-23) — `frontend/vite.config.ts` uses a single `API_PATH_PREFIXES` array; `scripts/tools/audit_routes.py` parses both forms and verifies consistency. OpenAPI → TS codegen still pending.
 
 ---
@@ -175,7 +175,7 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 - ✅ Encode autonomy tiers in `config/agent_autonomy.yaml`; wrap all writes in `common/ai/policy_engine.py` (AI-1, AI-10) — (2026-04-23)
 - ✅ Immutable `ai_decision_ledger` with hash-chained rows + DB-trigger append-only (AI-10) — (2026-04-23)
 - ✅ Three-tier memory (working / episodic / semantic) — `common/ai/memory.py` with `WorkingMemory` (TTL), `EpisodicMemory` (FK to ai_decision_ledger via `fact_decision` in `sql/142`), `SemanticMemory` (pgvector via rag.py); 12 tests. (2026-04-23) (AI-1, AI-5)
-- ✅ `chat_embeddings` → `rag_chunk` upgrade (HNSW + GIN); `kg_node` / `kg_edge` added. (2026-04-23) (AI-5)
+- ✅ `chat_embeddings` retired in favour of `rag_chunk` (HNSW + GIN); `kg_node` / `kg_edge` added. (2026-04-23) (AI-5)
 - ✅ Digital Twin service `common/twin/state.py` scaffolded; first consumer = `run_ss_simulation.py`. (2026-04-23) (AI-8)
 - ✅ Feature store — local-Postgres scaffold `common/feature_store.py` + `sql/138` entity/view metadata tables; Feast-compatible API. (2026-04-23) (AI-9)
 - ✅ MLflow promote gate — WAPE-improvement + coverage floors; every accept/reject logged to decision ledger. (2026-04-23) (AI-9)

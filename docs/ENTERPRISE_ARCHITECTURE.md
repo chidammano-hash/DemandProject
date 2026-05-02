@@ -170,7 +170,7 @@ graph TB
 | Demand Intelligence | KMeans clustering (14 features), seasonality detection, blended demand | 5 |
 | Inventory Planning | Safety stock, EOQ, 4 replenishment policies, exception queue, fill rate, rebalancing | 11 |
 | Operations | S&OP 6-stage cycle, financial planning, event calendar, scenario planning | 4 |
-| AI & Decision Support | Claude planning agent, NL-to-SQL chatbot, control tower, storyboard | 4 |
+| AI & Decision Support | Claude planning agent, market intelligence, control tower, storyboard | 4 |
 | User Experience | 25 lazy-loaded tabs, global filters, theming, job scheduler UI | 6 |
 | Integration | JWT + RBAC, notifications (4 channels), webhooks (HMAC-SHA256), API governance | 10 |
 
@@ -268,8 +268,6 @@ Supply Chain Command Center
 ├── L1: AI & DECISION SUPPORT
 │   ├── L2: AI Planning Agent
 │   │   └── Claude-powered, 10 tools (9 read-only SQL + 1 create_insight), portfolio scans
-│   ├── L2: NL-to-SQL Chatbot
-│   │   └── GPT-4o with pgvector schema retrieval, read-only SQL execution
 │   ├── L2: Control Tower
 │   │   └── Cross-dimensional KPI command center with drill-down
 │   ├── L2: Market Intelligence
@@ -737,11 +735,10 @@ All data mutations are logged to `fact_audit_log` with: user_id, action, resourc
 | 5 | **Forecasting Pipeline** | Python scripts | Production forecast, consensus, blended demand | `scripts/forecasting/` |
 | 6 | **Inventory Pipeline** | Python scripts | Safety stock through rebalancing (18 scripts) | `scripts/inventory/` |
 | 7 | **AI Planning Agent** | Claude API (tool_use) | Proactive exception analysis across portfolio | `common/ai/ai_planner.py` |
-| 8 | **NL-to-SQL Chatbot** | GPT-4o, pgvector | Natural language database query | `api/routers/intelligence/chat.py` |
-| 9 | **Job Scheduler** | APScheduler 3.11 | Cron/interval job management, 8 job types | `common/services/job_scheduler.py` |
-| 10 | **Notification Engine** | Python adapters | Multi-channel alert delivery | `common/services/notification_engine.py` |
-| 11 | **Cache Layer** | In-memory LRU + Redis | Multi-tier response caching with TTL | `common/services/cache.py` |
-| 12 | **ML Tracking** | MLflow v3 | Experiment logging and artifact storage | Docker service, port 5003 |
+| 8 | **Job Scheduler** | APScheduler 3.11 | Cron/interval job management, 8 job types | `common/services/job_scheduler.py` |
+| 9 | **Notification Engine** | Python adapters | Multi-channel alert delivery | `common/services/notification_engine.py` |
+| 10 | **Cache Layer** | In-memory LRU + Redis | Multi-tier response caching with TTL | `common/services/cache.py` |
+| 11 | **ML Tracking** | MLflow v3 | Experiment logging and artifact storage | Docker service, port 5003 |
 
 ### 5.2 Application Interaction Matrix
 
@@ -752,7 +749,6 @@ API (FastAPI)     Serve     -      R/W        -      R/W      -           -     
 ETL Scripts         -       -      Write      -       -       -           -       -       -
 ML Scripts          -       -      R/W      Write    -       -           -       -       -
 AI Planner          -      via     Read       -       -       -         R/W      -       -
-NL-to-SQL           -      via     Read       -       -       -          -      R/W      -
 Market Intel        -      via      -         -       -       -          -      R/W     Read
 Notification        -      via      -         -       -     Write        -       -       -
 Job Scheduler       -      via     R/W        -       -       -          -       -       -
@@ -769,7 +765,7 @@ Cache Layer         -      via      -         -      R/W      -          -      
 | `api/routers/forecasting/` | 10 | `/forecast/*`, `/accuracy-budget/*`, `/champion-experiments/*` | Accuracy KPIs, SHAP, tuning, champion, model competition, candidate staging & promotion (`/promotion-status`, `/candidate-summary`, `/staging-summary`, `/{model_id}/generate`, `/{model_id}/promote`) |
 | `api/routers/operations/` | 10 | `/sop/*`, `/control-tower/*`, `/storyboard/*`, `/events/*` | S&OP cycle, control tower, storyboard, financial planning |
 | `api/routers/platform/` | 10 | `/auth/*`, `/users/*`, `/notifications/*`, `/webhooks/*` | Auth, RBAC, DQ, config, notifications, collaboration |
-| `api/routers/intelligence/` | 4 | `/ai-planner/*`, `/chat/*`, `/market-intelligence/*` | AI agent, chatbot, analysis, market intel |
+| `api/routers/intelligence/` | 3 | `/ai-planner/*`, `/forecast/explain/*`, `/market-intelligence/*` | AI agent, forecast explain, market intel |
 | `api/routers/core/` | 2 | `/dashboard/*`, `/jobs/*` | Dashboard KPIs, job management |
 | `api/routers/domains.py` | 1 | `/domains/{domain}/*` | Generic CRUD for all 10 domains (**mounted LAST**) |
 
@@ -876,7 +872,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 | **Web Framework** | FastAPI | latest | Async REST API with OpenAPI docs | Adopt |
 | **ASGI Server** | Uvicorn | latest | Production ASGI server | Adopt |
 | **Database** | PostgreSQL | 16 | Primary relational data store | Adopt |
-| **Vector Extension** | pgvector | pg16 | Embedding storage for NL-to-SQL | Adopt |
+| **Vector Extension** | pgvector | pg16 | Embedding storage for RAG retrieval (`rag_chunk`) | Adopt |
 | **DB Driver** | psycopg | v3 | Async-capable connection pool | Adopt |
 | **Validation** | Pydantic | v2 | Request/response model validation | Adopt |
 | **Frontend Framework** | React | 18.3.1 | Single-page application | Adopt |
@@ -892,7 +888,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 | **ML: Tuning** | Optuna | latest | Bayesian hyperparameter optimization | Adopt |
 | **ML Tracking** | MLflow | v3.0.0 | Experiment logging + artifact storage | Trial |
 | **AI: Planning** | Anthropic Claude | opus-4-6 | Tool-use agent for exception triage | Trial |
-| **AI: NL-to-SQL** | OpenAI GPT-4o | latest | SQL generation + market intelligence | Trial |
+| **AI: Market Intelligence** | OpenAI GPT-4o | latest | Web search + narrative briefing synthesis | Trial |
 | **Job Scheduling** | APScheduler | 3.11 | Cron/interval background jobs | Adopt |
 | **Caching** | Redis | 7-alpine | Distributed cache (256MB, allkeys-lru) | Adopt |
 | **Containerization** | Docker Compose | latest | Service orchestration | Adopt |
@@ -1014,7 +1010,7 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  EXTERNAL APIs (Outbound Only)                               │
 │                                                              │
 │  [FastAPI] ───> api.anthropic.com  (Claude, AI Planning)    │
-│  [FastAPI] ───> api.openai.com     (GPT-4o, NL-to-SQL)     │
+│  [FastAPI] ───> api.openai.com     (GPT-4o, Market Intel)  │
 │  [FastAPI] ───> customsearch.googleapis.com (Market Intel)  │
 │                                                              │
 ├─────────────────────────────────────────────────────────────┤
@@ -1239,15 +1235,15 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │                     AI AGENTS                                     │
 │                                                                   │
 │  ┌────────────────────────────┐  ┌────────────────────────────┐  │
-│  │ AI Planning Agent          │  │ NL-to-SQL Chatbot          │  │
-│  │ (Claude opus-4-6)         │  │ (GPT-4o)                   │  │
+│  │ AI Planning Agent          │  │ Market Intelligence        │  │
+│  │ (Claude opus-4-6)         │  │ (GPT-4o + Google)          │  │
 │  │                            │  │                            │  │
-│  │ 10 tools:                 │  │ pgvector schema retrieval  │  │
-│  │  9 read-only SQL          │  │ text-embedding-3-small     │  │
-│  │  1 create_insight         │  │ Read-only SQL execution    │  │
-│  │                            │  │  SELECT only, 5s timeout  │  │
-│  │ Circuit breakers:         │  │  500-row cap               │  │
-│  │  40 turns                 │  │  Regex DML/DDL rejection   │  │
+│  │ 10 tools:                 │  │ Google Custom Search       │  │
+│  │  9 read-only SQL          │  │ GPT-4o narrative synthesis │  │
+│  │  1 create_insight         │  │                            │  │
+│  │                            │  │                            │  │
+│  │ Circuit breakers:         │  │                            │  │
+│  │  40 turns                 │  │                            │  │
 │  │  100K tokens              │  │                            │  │
 │  │  $10M financial cap       │  │                            │  │
 │  │                            │  │                            │  │
@@ -1259,15 +1255,15 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 │  │  supplier_risk            │  │                            │  │
 │  └────────────────────────────┘  └────────────────────────────┘  │
 │                                                                   │
-│  ┌────────────────────────────┐  ┌────────────────────────────┐  │
-│  │ AI Tuning Advisor          │  │ Market Intelligence        │  │
-│  │ (OpenAI/Anthropic)         │  │ (GPT-4o + Google)          │  │
-│  │                            │  │                            │  │
-│  │ 7 tools, 20-turn loop    │  │ Google Custom Search       │  │
-│  │ Reviews runs, recommends  │  │ GPT-4o narrative synthesis │  │
-│  │ params, triggers backtests│  │                            │  │
-│  │ 1 concurrent, 5-min cool  │  │                            │  │
-│  └────────────────────────────┘  └────────────────────────────┘  │
+│  ┌────────────────────────────┐                                   │
+│  │ AI Tuning Advisor          │                                   │
+│  │ (OpenAI/Anthropic)         │                                   │
+│  │                            │                                   │
+│  │ 7 tools, 20-turn loop    │                                   │
+│  │ Reviews runs, recommends  │                                   │
+│  │ params, triggers backtests│                                   │
+│  │ 1 concurrent, 5-min cool  │                                   │
+│  └────────────────────────────┘                                   │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1499,9 +1495,9 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | Attribute | Value |
 |---|---|
 | **Status** | Accepted |
-| **Context** | Two distinct AI use cases -- proactive exception analysis (multi-step agentic) and natural language query (single-shot SQL generation) |
-| **Decision** | Claude (opus-4-6) for AI Planning Agent; GPT-4o for NL-to-SQL chatbot and market intelligence |
-| **Rationale** | Claude's tool_use API provides structured tool calling ideal for multi-step agentic loops (10 tools, up to 40 turns). GPT-4o excels at SQL generation with pgvector-assisted schema context. Dual-model avoids vendor lock-in and uses each model's strengths. |
+| **Context** | Two distinct AI use cases -- proactive exception analysis (multi-step agentic) and external narrative synthesis (web search summarization) |
+| **Decision** | Claude (opus-4-6) for AI Planning Agent; GPT-4o for market intelligence narrative synthesis |
+| **Rationale** | Claude's tool_use API provides structured tool calling ideal for multi-step agentic loops (10 tools, up to 40 turns). GPT-4o excels at synthesizing web search results into coherent narratives. Dual-model avoids vendor lock-in and uses each model's strengths. |
 | **Consequences** | Two API key dependencies (ANTHROPIC_API_KEY, OPENAI_API_KEY). Both are optional -- platform degrades gracefully when keys are absent. Higher operational complexity monitoring two AI providers. |
 
 ### ADR-008: Expanding-Window Backtest over Time-Series Cross-Validation

@@ -126,7 +126,6 @@ These are honest gaps where docs/CLAUDE.md and code disagree. Each is flagged in
 | `make tune-cust-enriched-all` referenced in CLAUDE.md but not in Makefile | §5 | Use direct script invocation |
 | `scripts/inventory/`, `scripts/forecasting/`, `scripts/ops/` don't exist on this branch — most scripts at `scripts/` root | §6, §7, §8 | Per CLAUDE.md, NEW scripts must go in subdirectories |
 | `scripts/ai/ingest_docs.py` only `--dry-run` mode (TODO) | §9 | Real ingestion not yet wired |
-| `chat_embeddings` table has no refresh script | §9 | Bootstrapped out-of-band |
 | `deploy-frontend` skips `tsc -b` due to ~30 pre-existing type errors | §10 | Tracked on restructure branch |
 
 ---

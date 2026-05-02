@@ -29,8 +29,6 @@ import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { CommandPalette } from "@/components/CommandPalette";
 import { Toaster } from "@/components/Toaster";
 
-import ChatPanel from "./tabs/ChatPanel";
-
 // ---------------------------------------------------------------------------
 // Lazy-loaded tab components
 // ---------------------------------------------------------------------------
@@ -313,9 +311,6 @@ export default function App() {
                 )}
               </div>
             </div>
-
-            {/* Chat panel (hidden on lgbmTuning — has its own AI Tuning Advisor) */}
-            {activeTab !== "lgbmTuning" && <ChatPanel domain={domain} />}
           </div>
           <Toaster />
         </div>

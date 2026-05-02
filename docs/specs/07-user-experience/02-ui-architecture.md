@@ -88,7 +88,7 @@ Every tab is loaded via `React.lazy()` with a per-tab error boundary. This keeps
 |---|
 | `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard` |
 | `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard` |
-| `/chat`, `/market-intelligence`, `/sku`, `/competition`, `/health`, `/bench` |
+| `/market-intelligence`, `/sku`, `/competition`, `/health`, `/bench` |
 
 ---
 

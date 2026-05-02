@@ -154,7 +154,7 @@ Files are applied in the order returned by `ls sql/*.sql | sort`. The numeric pr
 | Range | Group | Examples |
 |---|---|---|
 | `001-007` | Core dims + facts | `dim_item`, `dim_location`, `dim_customer`, `dim_time`, `dim_sku`, `fact_sales_monthly`, `fact_external_forecast_monthly` |
-| `008-013` | Indexes + chat embeddings + accuracy views | `perf_indexes_and_agg`, `chat_embeddings`, `backtest_lag_archive`, `accuracy_slice_views` |
+| `008-013` | Indexes + accuracy views | `perf_indexes_and_agg`, `backtest_lag_archive`, `accuracy_slice_views` |
 | `015-035` | Inventory + planning tables | `fact_inventory_snapshot`, `lead_time_profile`, `eoq_targets`, `replenishment_policy`, `safety_stock_targets`, `fill_rate_monthly`, `control_tower_kpis` |
 | `036-058` | AI insights + S&OP + scenarios | `ai_insights`, `storyboard`, `production_forecast`, `replenishment_plan`, `sop_module`, `event_planning`, `supply_scenarios` |
 | `062-073` | RBAC + DQ + collaboration + transfer network | `users_rbac`, `data_quality`, `notification_log`, `webhook_registrations`, `transfer_network`, `rebalancing_plan` |
@@ -166,7 +166,6 @@ A subset of the early DDL files (`001-007`, `009`) are also auto-applied on **fi
 ### 5.2 Targeted re-applies (rarely needed)
 
 ```bash
-make db-apply-chat          # 009_create_chat_embeddings.sql
 make db-apply-inventory     # 017_create_fact_inventory_snapshot.sql
 make db-apply-inv-backtest  # 019_inventory_forecast_view.sql
 make db-apply-jobs          # 020 + 021 job_history DDL

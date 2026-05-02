@@ -192,7 +192,6 @@ from api.routers import inv_planning_insights     # noqa: E402
 # --- Gen-4 subdirectory imports ---
 from api.routers.operations import sop              # noqa: E402
 from api.routers.intelligence import ai_planner      # noqa: E402
-from api.routers.intelligence import chat            # noqa: E402
 from api.routers.intelligence import explain as explain_router  # noqa: E402  # Gen-4 G: forecast explain
 from api.routers.core import dashboard               # noqa: E402
 from api.routers.core import jobs                    # noqa: E402
@@ -235,7 +234,6 @@ from api.routers import domains    # noqa: E402
 # Specific-path routers first
 app.include_router(accuracy.router)
 app.include_router(analysis.router)
-app.include_router(chat.router)
 app.include_router(clusters.router)
 app.include_router(competition.router)
 app.include_router(dashboard.router)

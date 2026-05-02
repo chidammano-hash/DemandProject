@@ -16,7 +16,7 @@ A full-stack supply chain analytics platform for demand planning and inventory o
 | ML Tracking | MLflow |
 | Job Scheduler | APScheduler 3.11 (BackgroundScheduler + ThreadPoolExecutor) |
 | AI Agent | Claude (Anthropic) via tool_use API |
-| AI / Chatbot | OpenAI GPT-4o (NL-to-SQL, market intelligence) |
+| Market Intelligence | OpenAI GPT-4o + Google Custom Search |
 | E2E Testing | Playwright |
 | Build | Make, uv, Docker Compose (2 services: Postgres + MLflow) |
 
@@ -241,7 +241,6 @@ Proactive exception work-queue (not a chatbot) powered by Claude (`claude-opus-4
 - **Control Tower**: cross-dimensional KPI command center with alerts and top-critical items
 - **Storyboard**: exception-driven planner workflow with causal chain cards and decision logging
 - **Market Intelligence**: Google Search + GPT-4o narrative briefing per item/location
-- **NL-to-SQL Chatbot**: pgvector-powered schema retrieval + GPT-4o SQL generation (read-only)
 - **Financial Planning**: inventory value, carrying cost, budget utilization
 - **Event Calendar**: promotion and event planning with approval status
 - **Scenario Planning**: disruption what-if scenarios with financial impact results

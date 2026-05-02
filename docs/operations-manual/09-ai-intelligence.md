@@ -1,6 +1,6 @@
 # 09 — AI Intelligence Operations
 
-This section covers running and operating the LLM-powered features of the Supply Chain Command Center: the **AI Planner** (proactive exception agent), the **Chat** natural-language SQL surface, the **Tuning Chat** assistant for LGBM hyperparameter tuning, the document **Insights / Embeddings** ingestion pipeline, and the **admin tooling** required to keep clients healthy across key rotations.
+This section covers running and operating the LLM-powered features of the Supply Chain Command Center: the **AI Planner** (proactive exception agent), the **Tuning Chat** assistant for LGBM hyperparameter tuning, the document **Insights / Embeddings** ingestion pipeline, and the **admin tooling** required to keep clients healthy across key rotations.
 
 All components share a single LLM client layer (`api/llm.py`) that prefers OpenAI and silently fails over to Anthropic when configured. Every LLM turn (and tool call) is logged to `ai_call_log` for cost / latency observability.
 
@@ -23,19 +23,18 @@ All components share a single LLM client layer (`api/llm.py`) that prefers OpenA
 
 | Variable | Required for | Notes |
 |---|---|---|
-| `OPENAI_API_KEY` | Chat, AI Planner (default provider), embeddings via `text-embedding-3-small` | Must be ≥ 20 characters or `get_openai()` returns 503. |
+| `OPENAI_API_KEY` | AI Planner (default provider), Market Intelligence, embeddings via `text-embedding-3-small` | Must be ≥ 20 characters or `get_openai()` returns 503. |
 | `ANTHROPIC_API_KEY` | Failover from OpenAI, AI Planner when `provider: "anthropic"` is set in `config/ai_planner_config.yaml` | Optional. Without it, `chat_completion` will raise 503 if OpenAI is down. |
-| `API_KEY` | Auth gate on `/admin/*`, `/ai-planner/*` write endpoints, `/chat` | When unset, `require_api_key` is a no-op (development only). |
+| `API_KEY` | Auth gate on `/admin/*` and `/ai-planner/*` write endpoints | When unset, `require_api_key` is a no-op (development only). |
 
 ### 9.1.3 Model Defaults & Overrides
 
 | Surface | Default model | Override |
 |---|---|---|
 | `chat_completion()` | `gpt-4o-mini`, `temperature=0.3`, `max_tokens=2000` | Per-call kwargs. |
-| `/chat` endpoint | `gpt-4o`, `temperature=0.1`, `max_tokens=2000`, `response_format=json_object` | Hard-coded in `api/routers/intelligence/chat.py`. |
 | AI Planner agent | `gpt-4o`, `temperature=0.2`, `max_tokens=4096` | `config/ai_planner_config.yaml` keys: `provider`, `model`, `max_tokens`, `temperature`. |
 | Anthropic failover model | `claude-sonnet-4-20250514` | Hard-coded in `chat_completion`. |
-| Embeddings (Chat RAG) | `text-embedding-3-small` (1536 dims) | Hard-coded in `chat.py`; matches `chat_embeddings.embedding` column. |
+| Embeddings (RAG) | `text-embedding-3-small` (1536 dims) | Used by `common/ai/rag.py` against the `rag_chunk` table. |
 
 ---
 
@@ -147,49 +146,13 @@ When either is hit the agent logs a warning and exits cleanly with whatever insi
 
 ---
 
-## 9.4 Chat (NL → SQL)
+## 9.4 Insights Generation
 
-### 9.4.1 What it is
-
-A conversational, read-only natural-language SQL surface backed by RAG over `chat_embeddings`.
-
-- Router: `api/routers/intelligence/chat.py`
-- Frontend: `frontend/src/tabs/ChatPanel.tsx` (rendered as a side panel on every tab except `lgbmTuning`, which has its own Tuning Chat)
-- Endpoint: `POST /chat` (guarded by `require_api_key`)
-
-### 9.4.2 Pipeline
-
-1. Embed the user question with `text-embedding-3-small`.
-2. pgvector cosine-similarity search against `chat_embeddings` (`ORDER BY embedding <=> %s::vector LIMIT 10`).
-3. Build a system prompt that includes the compact `DOMAIN_SPECS` schema summary, retrieved context, and project business rules (accuracy / bias / WAPE formulas, type=1 sales filter, lag semantics, etc.).
-4. Call `gpt-4o` with `response_format=json_object`, expecting `{"answer": ..., "sql": ...}`.
-5. If the model returns SQL, run it through `_is_safe_sql()`:
-   - Must start with `SELECT` after stripping comments.
-   - No `;` (blocks multi-statement attacks).
-   - Forbidden tokens: `INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, GRANT, REVOKE, COPY`.
-6. If safe, execute inside `SET LOCAL statement_timeout = '5000'` + `SET TRANSACTION READ ONLY`, capped at 500 rows.
-
-### 9.4.3 Data sources it can query
-
-- All tables registered in `common/domain_specs.py` (sales, forecast, inventory, dimensions, etc.).
-- The compact schema and business rules in the system prompt steer the model toward correct columns (`item_id`, `basefcst_pref`, `tothist_dmd`, `model_id`, `lag`).
-
-### 9.4.4 Failure modes returned to the UI
-
-- Empty question → `422`.
-- Generated DDL/DML → `error: "Generated SQL was blocked for safety reasons (only SELECT allowed)."`, `sql: null`.
-- Execution error → `error: "SQL execution error: ..."`.
-- Otherwise: `{answer, sql, data, columns, row_count}`.
-
----
-
-## 9.5 Insights Generation
-
-### 9.5.1 Where insights come from
+### 9.4.1 Where insights come from
 
 There is **no standalone CLI script** for insight generation. Insights are produced by the AI Planner agent (`AIPlannerAgent.run_portfolio_scan` / `run_sku_analysis`) and reach the `ai_insights` table only via `create_insight`.
 
-### 9.5.2 When to run
+### 9.4.2 When to run
 
 | Trigger | How |
 |---|---|
@@ -197,7 +160,7 @@ There is **no standalone CLI script** for insight generation. Insights are produ
 | On-demand DFU drill-down | `POST /ai-planner/analyze` from the UI |
 | Memo generation | `AIPlannerAgent.generate_portfolio_memo(period)` (writes to `ai_planning_memos`) |
 
-### 9.5.3 Validation rules — `CreateInsightInput`
+### 9.4.3 Validation rules — `CreateInsightInput`
 
 `common/ai/ai_planner.py` enforces a Pydantic model on every `create_insight` tool call. **Common gotchas you must respect when writing tests or new producers:**
 
@@ -207,7 +170,7 @@ There is **no standalone CLI script** for insight generation. Insights are produ
 - `severity` must be one of `critical | high | medium | low`.
 - `financial_impact_estimate` must be in `[0, 10_000_000]`.
 
-### 9.5.4 Status updates — 11-column `RETURNING`
+### 9.4.4 Status updates — 11-column `RETURNING`
 
 `POST /ai-planner/insights/{insight_id}/status` runs:
 
@@ -223,16 +186,15 @@ Tests must mock this RETURNING with an **11-tuple** (see `MEMORY.md` "Important 
 
 ---
 
-## 9.6 Embeddings
+## 9.5 Embeddings
 
-### 9.6.1 Two embedding stores
+### 9.5.1 Embedding store
 
 | Store | Populated by | Used by |
 |---|---|---|
-| `chat_embeddings` (1536-dim pgvector) | One-time bootstrap of the schema / business-glossary corpus | `_vector_search()` in `/chat` |
-| `rag_chunks` (1536-dim pgvector + tsvector) | `scripts/ai/ingest_docs.py` | `common/ai/rag.upsert_chunks` / RAG retrieval (Gen-4 AI-5) |
+| `rag_chunk` (1536-dim pgvector + tsvector) | `scripts/ai/ingest_docs.py` | `common/ai/rag.upsert_chunks` / RAG retrieval (Gen-4 AI-5) |
 
-### 9.6.2 `scripts/ai/ingest_docs.py`
+### 9.5.2 `scripts/ai/ingest_docs.py`
 
 Walks a directory of markdown (e.g., `docs/sop`), chunks each file into overlapping fixed-size windows (default `chunk_size=500`, `chunk_overlap=50`), and upserts via `common.ai.rag.upsert_chunks`.
 
@@ -246,15 +208,11 @@ python -m scripts.ai.ingest_docs --root docs/sop --source sop --dry-run
 - The non-`--dry-run` path is intentionally not wired yet (returns `1` and logs `connection wiring not implemented; rerun with --dry-run.`). Treat the script as a scaffold for content extraction; do not rely on it for production embedding refresh until the connection wiring lands.
 - Re-ingesting the same file is safe: chunks are upserted via `(doc_id, chunk_index)` unique key.
 
-### 9.6.3 Refreshing `chat_embeddings`
-
-`chat_embeddings` is currently bootstrapped out-of-band. If RAG retrieval starts returning `(no embeddings available)` chunks, repopulate the table from the schema / glossary source and verify the dim matches the `text-embedding-3-small` 1536-dim vector or the `<=>` operator will error.
-
 ---
 
-## 9.7 Tuning Chat
+## 9.6 Tuning Chat
 
-### 9.7.1 What it is
+### 9.6.1 What it is
 
 An interactive debugging assistant for LGBM hyperparameter tuning runs. It seeds a chat session with the last 10 `lgbm_tuning_run` rows so the model has context, then lets a planner converse about why a tune did/didn't move WAPE.
 
@@ -262,7 +220,7 @@ An interactive debugging assistant for LGBM hyperparameter tuning runs. It seeds
 - Frontend: `frontend/src/tabs/lgbm-tuning/TuningChatPanel.tsx` (inside `ModelTuningTab` / LgbmTuningTab)
 - Tables: `tuning_chat_session`, `tuning_chat_message`
 
-### 9.7.2 Endpoints (prefix `/lgbm-tuning/chat`)
+### 9.6.2 Endpoints (prefix `/lgbm-tuning/chat`)
 
 | Method & Path | Purpose |
 |---|---|
@@ -270,15 +228,15 @@ An interactive debugging assistant for LGBM hyperparameter tuning runs. It seeds
 | `GET  /lgbm-tuning/chat/sessions?status=active&limit=20` | List sessions with message counts |
 | (`POST /sessions/{id}/messages`, `POST /sessions/{id}/confirm-run` and the rest of the surface live in the same file) | Send messages / confirm a recommended re-run |
 
-### 9.7.3 Frontend integration note
+### 9.6.3 Frontend integration note
 
 `App.tsx` hides the global ChatPanel on `lgbmTuning` to avoid two competing assistants on the same screen — Tuning Chat is shown instead.
 
 ---
 
-## 9.8 Operational Concerns — Cost, Tokens, Rate Limits
+## 9.7 Operational Concerns — Cost, Tokens, Rate Limits
 
-### 9.8.1 Observability via `ai_call_log`
+### 9.7.1 Observability via `ai_call_log`
 
 Every LLM turn and every tool dispatch writes a row through `log_ai_call()` (best-effort, swallows failures so the agent never fails because logging failed):
 
@@ -293,17 +251,17 @@ Query the rollup via `GET /ai-planner/metrics?days=7`:
 - Per-model: LLM turns vs tool calls, total tokens, avg / p95 latency, error rate %.
 - Per-tool: total calls, failures, avg latency.
 
-### 9.8.2 Cost guard rails
+### 9.7.2 Cost guard rails
 
 - AI Planner: `MAX_TURNS=40`, `TOKEN_BUDGET=100_000` per scan (hard caps in `common/ai/ai_planner.py`).
 - Chat: `max_tokens=2000`, single round trip, no tool loop.
 - Tune defaults via `config/ai_planner_config.yaml` (`portfolio_scan_limit`, `forecast_lookback_months`, `max_tokens`).
 
-### 9.8.3 Rate limits
+### 9.7.3 Rate limits
 
 OpenAI / Anthropic rate-limit errors surface as exceptions inside `chat_completion` and trigger the failover path. The portfolio-scan loop is **single-threaded per scan** (`ThreadPoolExecutor(max_workers=2)` shared across scans) so it cannot fan-out beyond two concurrent agentic loops.
 
-### 9.8.4 OpenAI mock pattern (tests)
+### 9.7.4 OpenAI mock pattern (tests)
 
 When mocking `client.chat.completions.create` in unit tests, the response object's `usage` field MUST expose **integer** attributes:
 
@@ -317,39 +275,36 @@ Otherwise `total_tokens += usage.total_tokens or 0` raises `TypeError` and the l
 
 ---
 
-## 9.9 Frontend Integration
+## 9.8 Frontend Integration
 
 | Surface | File | Sidebar location |
 |---|---|---|
 | AI Planner tab | `frontend/src/tabs/AIPlannerTab.tsx` (+ sub-panels in `ai-planner/`) | First entry — keyboard shortcut `1` (see `KeyboardShortcutHelp.tsx`) |
-| Chat side-panel | `frontend/src/tabs/ChatPanel.tsx` | Floating panel, rendered on every tab except `lgbmTuning` (`App.tsx:317-318`) |
 | Tuning Chat | `frontend/src/tabs/lgbm-tuning/TuningChatPanel.tsx` | Inside `ModelTuningTab` / LGBM Tuning tab |
 
-### 9.9.1 Vite proxy entries
+### 9.8.1 Vite proxy entries
 
 `frontend/vite.config.ts` must proxy these prefixes to `:8000` (already wired):
 
-- `/chat`
 - `/ai-planner`
 - `/lgbm-tuning` (covers Tuning Chat)
 - `/admin` (covers `/admin/llm/reset`, `/admin/tuning/invalidate-stale`)
 
 If you add a new AI router under a new prefix, update the proxy and run `make audit-routers`.
 
-### 9.9.2 API mounts (in `api/main.py`)
+### 9.8.2 API mounts (in `api/main.py`)
 
 ```
-chat.router            (line 238)
 ai_planner.router      (line 262)
 admin_router.router    (line 284)
 tuning_chat.router     (line 301)
 ```
 
-All four are mounted **before** `domains.py` (which holds catch-all path params and must remain last).
+All three are mounted **before** `domains.py` (which holds catch-all path params and must remain last).
 
 ---
 
-## 9.10 Troubleshooting
+## 9.9 Troubleshooting
 
 ### Symptom: `503 OPENAI_API_KEY not configured`
 
@@ -364,23 +319,15 @@ The cached singleton still holds the old key. Call `POST /admin/llm/reset` and r
 Check `ai_call_log` for the `scan_run_id` returned by the endpoint:
 
 - Lots of rows but zero `tool_name = create_insight` entries → the model decided nothing crossed a severity threshold; rare but possible.
-- `create_insight` calls present but no rows in `ai_insights` → the Pydantic validator rejected the payload. The most common cause is `summary must contain at least one metric value (number)`. Check the API logs for the `create_insight validation failed:` warning and see §9.5.3.
+- `create_insight` calls present but no rows in `ai_insights` → the Pydantic validator rejected the payload. The most common cause is `summary must contain at least one metric value (number)`. Check the API logs for the `create_insight validation failed:` warning and see §9.4.3.
 
 ### Symptom: Portfolio scan logs `MAX_TURNS` or `TOKEN_BUDGET` warning
 
 The agent hit a circuit breaker. Either the prompt is sending the model in circles or the portfolio is too large. Tune `portfolio_scan_limit` in `config/ai_planner_config.yaml`, or split the scan into multiple smaller runs.
 
-### Symptom: `/chat` returns `(no embeddings available)`
-
-`chat_embeddings` is empty or the pgvector extension is missing. Verify `SELECT COUNT(*) FROM chat_embeddings;` and rebuild the corpus. Falling back to lexical-only context is non-fatal — answers will be lower quality but the endpoint still functions.
-
-### Symptom: `/chat` returns `Generated SQL was blocked for safety reasons`
-
-The model returned non-SELECT SQL. Re-prompt with a more constrained question; do not relax `_is_safe_sql()` — its block-list is the only thing keeping the read-only contract.
-
 ### Symptom: LLM timeouts / hangs
 
-`chat_completion` does not set an explicit timeout — relies on SDK defaults. If you see hangs, set `OPENAI_TIMEOUT` / `ANTHROPIC_TIMEOUT` in the environment or wrap calls in `asyncio.wait_for` for the async paths. The `/chat` endpoint also bounds the SQL it generates with `SET LOCAL statement_timeout = '5000'` (5 s) so DB-side hangs cannot pile up.
+`chat_completion` does not set an explicit timeout — relies on SDK defaults. If you see hangs, set `OPENAI_TIMEOUT` / `ANTHROPIC_TIMEOUT` in the environment or wrap calls in `asyncio.wait_for` for the async paths.
 
 ### Symptom: Anthropic failover not triggering
 
@@ -388,11 +335,11 @@ Verify (a) `anthropic` is installed (`uv pip show anthropic`), (b) `ANTHROPIC_AP
 
 ### Symptom: Test fails with `TypeError: unsupported operand type(s) for +=: 'int' and 'MagicMock'`
 
-The mocked `response.usage` did not expose integer fields. Fix the fixture per §9.8.4.
+The mocked `response.usage` did not expose integer fields. Fix the fixture per §9.7.4.
 
 ### Symptom: Test fails on insight status update with index error / wrong tuple length
 
-The mock for the `RETURNING` clause must be an **11-tuple** matching the column list in §9.5.4.
+The mock for the `RETURNING` clause must be an **11-tuple** matching the column list in §9.4.4.
 
 ### Symptom: `admin/tuning/invalidate-stale` always returns `noop`
 
@@ -400,7 +347,7 @@ Expected until the `cluster_tuning_profile.stale` column lands (Stream F). The e
 
 ---
 
-## 9.11 Quick Reference
+## 9.10 Quick Reference
 
 ```bash
 # Rotate keys then refresh in-process clients
@@ -417,11 +364,6 @@ curl -X POST http://api:8000/ai-planner/analyze \
 
 # Inspect AI cost / latency over the last week
 curl http://api:8000/ai-planner/metrics?days=7 | jq .
-
-# Ask a question (NL → SQL)
-curl -X POST http://api:8000/chat \
-     -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
-     -d '{"question":"What is the YoY sales change for brand X in Q1?"}'
 
 # Dry-run doc ingest into RAG corpus
 python -m scripts.ai.ingest_docs --root docs/sop --source sop --dry-run

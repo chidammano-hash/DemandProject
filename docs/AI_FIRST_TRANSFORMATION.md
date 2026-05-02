@@ -24,7 +24,7 @@ The transformation is not "add AI to the app." It is "stop hiding the AI we alre
 | The month is the planning unit | `cron: 0 6 2 * *` in `forecast_pipeline_config.yaml` | Real shocks (port closure, viral SKU, weather) move in hours. 30-day cadence is malpractice. |
 | Planners triage exceptions | `ExceptionQueuePanel.tsx` (750 LOC), `_VALID_EXCEPTION_TYPES` in `inv_planning_exceptions.py` | Exceptions arrive *with* proposed resolutions. Humans approve, they don't triage. |
 | The dashboard is where work happens | `ControlTowerTab.tsx`, `CommandCenterTab.tsx` (798 LOC) | Work happens in an Inbox, not a wall of charts. Dashboards are the artifact of pre-agent thinking. |
-| ML is a feature you click | "AI Planner" tab, "Chat" panel as collapsible drawer in `ChatPanel.tsx` | ML is the substrate. The UI is the interface to a fleet of agents, not a button labeled "AI". |
+| ML is a feature you click | "AI Planner" tab as a single sidebar entry | ML is the substrate. The UI is the interface to a fleet of agents, not a button labeled "AI". |
 | ABC/XYZ classes are a planning primitive | `dim_sku.abc_vol`, `inv_planning_abc_xyz.py`, `inv_planning_policy.py` `segment` | A 1950s storage heuristic. With per-SKU ML, bucketing is information loss. |
 | Static service levels per class | `abc_xyz_service_level` config | Service level is *derived* from margin × stockout cost × customer tier. Stop storing it. |
 | Periodic review is a real thing | `_VALID_POLICY_TYPES = {"periodic_review", ...}` | Calendars are pre-streaming. With live snapshots, planning is event-driven. |
@@ -44,7 +44,6 @@ The transformation is not "add AI to the app." It is "stop hiding the AI we alre
 
 - **Sidebar with 16 items + 21 tab files.** `frontend/src/tabs/` is a memory test. Default entry should be one screen, not a tab matrix.
 - **`InvPlanningTab.tsx`'s 33-panel mega-tab.** With 5 `VIEW_PRESETS` ("Daily Essentials", "Weekly Review", ...) — a confession that nobody can find anything.
-- **`ChatPanel.tsx` as a 400px collapsible drawer.** Wrong polarity. Chat is the page, not an accessory.
 - **`SettingsTab.tsx`'s 3-pane field grid** for ~37 YAML files. The classic 30-field configuration screen antipattern.
 - **`JobsTab.tsx` polling every 2-10s.** An ops-engineer view shoved at planners.
 - **KPI tile rows everywhere.** `KpiCard.tsx` wallpapered across `ControlTowerTab.tsx`, `CommandCenterTab.tsx`. Decontextualized numbers, no spatial meaning.
@@ -179,7 +178,7 @@ Each item is a card. Default action is highlighted. The 33 panels become on-dema
 | `inv-planning/ExceptionQueuePanel.tsx` (table of 750 LOC) | Inbox of resolution cards. Each card: tiny on-hand vs ROP gauge, 90-day sparkline, projected stockout countdown, one-tap "simulate the fix" inline (no modal). |
 | `NetworkHeatmapPanel.tsx` (HTML `<table>`) | 3D inventory positioning (deck.gl `ColumnLayer`): X = location, Y = category, Z = DOS, color = service risk. Tilt + orbit reveals ridges of excess and valleys of shortage. |
 | `StoryboardTab.tsx` (left-list/right-detail) | Film-strip timeline: each frame = one exception's projected next 12 weeks, autoplaying. Click to pause and act. |
-| `ChatPanel.tsx` (400px drawer) | Persistent bottom command bar (Linear-style) on every route, with `/sku`, `/customer`, `/forecast`, `/jobs` slash-mentions resolving to typed entities. |
+| _(no current chat surface — removed)_ | Persistent bottom command bar (Linear-style) on every route, with `/sku`, `/customer`, `/forecast`, `/jobs` slash-mentions resolving to typed entities. |
 | `SettingsTab.tsx` (37-YAML field grid) | Conversational config: "Loosen safety stock for B-class items in Texas" → diff preview → commit. |
 | `JobsTab.tsx` (polling KPI cards) | Slack-like activity stream. Jobs are messages with reactions ("retry", "cancel", "schedule like this"). Pipelines are threaded replies. |
 | `KpiCard.tsx` rows | Vital-signs cards: single sparkline + delta + tiny semantic icon. No standalone numeric tiles — every number lives next to its 12-month spark. |
@@ -270,7 +269,7 @@ The cheapest, highest-impact moves. Pure surfacing.
 
 1. **Surface `decision_ledger` as a UI tab.** Filterable, with `prior_state → new_state` diff view.
 2. **Wire `ExceptionOrchestrator` to `inv_planning_exceptions.py`.** Exceptions arrive with proposed actions today.
-3. **Promote `ChatPanel.tsx` to a global command bar.** Same backend, new polarity.
+3. **Build a global command bar (Linear-style).** New surface, new backend — replaces the removed NL→SQL `ChatPanel.tsx`.
 4. **Add `inapp` channel to `notification_engine.py`** + bell icon. Stop losing conversations to Slack.
 5. **Replace one `KpiCard` row with vital-signs cards.** Prove the pattern.
 6. **Wire OpenLineage emitter** into `profiled_section()`. Populate `fact_lineage_event`. Add `/lineage/*` endpoint.
@@ -321,7 +320,7 @@ The transformation is complete when:
 - [ ] Every L3+ agent decision has an inverse SQL row and a revert window.
 - [ ] Forecasts are distributions everywhere; the word "point forecast" is unsaid.
 - [ ] Champion promotions happen without human intervention >70% of the time.
-- [ ] The `/chat` endpoint can answer "what would have happened if..." questions.
+- [ ] The global command bar can answer "what would have happened if..." questions.
 - [ ] No external signal source requires a Make target — they all flow as events.
 - [ ] No planner needs to screenshot a chart into Slack.
 - [ ] The AI Planner tab no longer exists — because the AI is everywhere.

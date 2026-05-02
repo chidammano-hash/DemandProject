@@ -54,7 +54,6 @@ vi.mock("@/api/queries", () => ({
   saveCompetitionConfig: vi.fn(),
   runCompetition: vi.fn(),
   fetchMarketIntel: vi.fn().mockResolvedValue({}),
-  sendChatMessage: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock("@/components/DataTable", () => ({
