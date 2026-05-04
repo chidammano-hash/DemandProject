@@ -11,6 +11,7 @@ import {
 import { CanvasRenderer } from "echarts/renderers";
 import type { Theme } from "@/types";
 import { CHART_COLORS } from "@/constants/colors";
+import { useThemeContext } from "@/context/ThemeContext";
 
 // Register required ECharts modules
 echarts.use([
@@ -24,7 +25,8 @@ echarts.use([
 
 type EChartContainerProps = {
   option: echarts.EChartsCoreOption;
-  theme: Theme;
+  /** Optional override; defaults to ThemeContext. */
+  theme?: Theme;
   height?: string | number;
   className?: string;
   /** Accessible label. Defaults to a generic "Chart" if not provided. */
@@ -107,11 +109,13 @@ function summarize(option: unknown): { label: string; table: string[][] | null }
 
 function EChartContainerInner({
   option,
-  theme,
+  theme: themeProp,
   height = 380,
   className,
   ariaLabel,
 }: EChartContainerProps) {
+  const { theme: ctxTheme } = useThemeContext();
+  const theme: Theme = themeProp ?? ctxTheme;
   const colors = CHART_COLORS[theme];
   const isDark = theme === "dark";
 

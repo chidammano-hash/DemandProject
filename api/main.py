@@ -150,45 +150,45 @@ async def log_requests(request: Request, call_next):
 # with catch-all {domain} path params (domains.py) so that literal paths
 # take precedence.
 # ---------------------------------------------------------------------------
-from api.routers import accuracy   # noqa: E402
-from api.routers import analysis   # noqa: E402
-from api.routers import clusters   # noqa: E402
-from api.routers import competition  # noqa: E402
-from api.routers import intel      # noqa: E402
-from api.routers import inv_backtest  # noqa: E402
+from api.routers.forecasting import accuracy   # noqa: E402
+from api.routers.forecasting import analysis   # noqa: E402
+from api.routers.forecasting import clusters   # noqa: E402
+from api.routers.forecasting import competition  # noqa: E402
+from api.routers.intelligence import intel      # noqa: E402
+from api.routers.inventory import inv_backtest  # noqa: E402
 from api.routers import inventory  # noqa: E402
-from api.routers import shap       # noqa: E402
-from api.routers import inv_planning_variability    # noqa: E402
-from api.routers import inv_planning_lead_time      # noqa: E402
-from api.routers import inv_planning_eoq            # noqa: E402
-from api.routers import inv_planning_policy         # noqa: E402
-from api.routers import inv_planning_health         # noqa: E402
-from api.routers import inv_planning_exceptions     # noqa: E402
-from api.routers import inv_planning_abc_xyz        # noqa: E402
-from api.routers import inv_planning_supplier       # noqa: E402
-from api.routers import inv_planning_intramonth     # noqa: E402
-from api.routers import inv_planning_demand_signals # noqa: E402
-from api.routers import inv_planning_simulation     # noqa: E402
-from api.routers import inv_planning_investment     # noqa: E402
-from api.routers import inv_planning_safety_stock   # noqa: E402
-from api.routers import inv_planning_replenishment  # noqa: E402
-from api.routers import fill_rate    # noqa: E402
-from api.routers import control_tower  # noqa: E402
-from api.routers import storyboard  # noqa: E402
-from api.routers import production_forecast  # noqa: E402
-from api.routers import consensus_plan      # noqa: E402
-from api.routers import supply      # noqa: E402
-from api.routers import inv_planning_projection  # noqa: E402
-from api.routers import bias_corrections  # noqa: E402
-from api.routers import service_level     # noqa: E402
-from api.routers import lead_time_learning  # noqa: E402
-from api.routers import blended_forecast  # noqa: E402
-from api.routers import echelon_planning  # noqa: E402
-from api.routers import financial_plan    # noqa: E402
-from api.routers import events            # noqa: E402
-from api.routers import supply_scenarios  # noqa: E402
-from api.routers import inv_planning_rebalancing  # noqa: E402
-from api.routers import inv_planning_insights     # noqa: E402
+from api.routers.forecasting import shap       # noqa: E402
+from api.routers.inventory import inv_planning_variability    # noqa: E402
+from api.routers.inventory import inv_planning_lead_time      # noqa: E402
+from api.routers.inventory import inv_planning_eoq            # noqa: E402
+from api.routers.inventory import inv_planning_policy         # noqa: E402
+from api.routers.inventory import inv_planning_health         # noqa: E402
+from api.routers.inventory import inv_planning_exceptions     # noqa: E402
+from api.routers.inventory import inv_planning_abc_xyz        # noqa: E402
+from api.routers.inventory import inv_planning_supplier       # noqa: E402
+from api.routers.inventory import inv_planning_intramonth     # noqa: E402
+from api.routers.inventory import inv_planning_demand_signals # noqa: E402
+from api.routers.inventory import inv_planning_simulation     # noqa: E402
+from api.routers.inventory import inv_planning_investment     # noqa: E402
+from api.routers.inventory import inv_planning_safety_stock   # noqa: E402
+from api.routers.inventory import inv_planning_replenishment  # noqa: E402
+from api.routers.operations import fill_rate    # noqa: E402
+from api.routers.operations import control_tower  # noqa: E402
+from api.routers.intelligence import storyboard  # noqa: E402
+from api.routers.forecasting import production_forecast  # noqa: E402
+from api.routers.forecasting import consensus_plan      # noqa: E402
+from api.routers.operations import supply      # noqa: E402
+from api.routers.inventory import inv_planning_projection  # noqa: E402
+from api.routers.forecasting import bias_corrections  # noqa: E402
+from api.routers.operations import service_level     # noqa: E402
+from api.routers.inventory import lead_time_learning  # noqa: E402
+from api.routers.forecasting import blended_forecast  # noqa: E402
+from api.routers.operations import echelon_planning  # noqa: E402
+from api.routers.operations import financial_plan    # noqa: E402
+from api.routers.operations import events            # noqa: E402
+from api.routers.operations import supply_scenarios  # noqa: E402
+from api.routers.inventory import inv_planning_rebalancing  # noqa: E402
+from api.routers.inventory import inv_planning_insights     # noqa: E402
 # --- Gen-4 subdirectory imports ---
 from api.routers.operations import sop              # noqa: E402
 from api.routers.intelligence import ai_planner      # noqa: E402
@@ -199,16 +199,16 @@ from api.routers.platform import auth_router         # noqa: E402  # 08-02 RBAC
 from api.routers.platform import users               # noqa: E402  # 08-02 User mgmt
 from api.routers.platform import admin as admin_router  # noqa: E402  # Gen-4 J: LLM reset / tuning invalidation
 # --- Spec 08-xx: Next-gen platform routers ---
-from api.routers import data_quality      # noqa: E402  # 08-01 DQ
-from api.routers import medallion         # noqa: E402  # Medallion lineage
-from api.routers import notifications     # noqa: E402  # 08-04 Alerts
-from api.routers import collaboration     # noqa: E402  # 08-05 Annotations
-from api.routers import external_signals  # noqa: E402  # 08-06 Demand signals
-from api.routers import fva              # noqa: E402  # 08-07 FVA tracking
-from api.routers import reports          # noqa: E402  # 08-08 Reporting
-from api.routers import webhooks         # noqa: E402  # 08-10 Webhooks
-from api.routers import config_manager   # noqa: E402  # Config management UI
-from api.routers import sql_runner       # noqa: E402  # SQL Runner
+from api.routers.platform import data_quality      # noqa: E402  # 08-01 DQ
+from api.routers.platform import medallion         # noqa: E402  # Medallion lineage
+from api.routers.platform import notifications     # noqa: E402  # 08-04 Alerts
+from api.routers.platform import collaboration     # noqa: E402  # 08-05 Annotations
+from api.routers.intelligence import external_signals  # noqa: E402  # 08-06 Demand signals
+from api.routers.forecasting import fva              # noqa: E402  # 08-07 FVA tracking
+from api.routers.platform import reports          # noqa: E402  # 08-08 Reporting
+from api.routers.platform import webhooks         # noqa: E402  # 08-10 Webhooks
+from api.routers.platform import config_manager   # noqa: E402  # Config management UI
+from api.routers.platform import sql_runner       # noqa: E402  # SQL Runner
 from api.routers.inventory import sourcing as sourcing_router   # noqa: E402
 from api.routers.inventory import purchase_orders as po_router  # noqa: E402
 from api.routers.forecasting import accuracy_budget  # noqa: E402  # Accuracy budget
@@ -224,7 +224,7 @@ from api.routers.forecasting import backtest_management  # noqa: E402  # Backtes
 from api.routers.forecasting import champion_experiments  # noqa: E402  # Champion experiments
 from api.routers.forecasting import expsys_accuracy  # noqa: E402  # ExpSys backtest accuracy
 from api.routers.forecasting import sku_features     # noqa: E402  # SKU feature explorer
-from api.routers import customer_analytics  # noqa: E402  # Customer Analytics
+from api.routers.intelligence import customer_analytics  # noqa: E402  # Customer Analytics
 from api.routers.inventory import demand_history  # noqa: E402  # Demand History Workbench
 from api.routers.inventory import inv_planning_algorithm_comparison  # noqa: E402  # Algorithm Inventory Comparison
 from api.routers.inventory import integrated_targets  # noqa: E402  # Integrated Planning Targets (SS+EOQ+ROP)

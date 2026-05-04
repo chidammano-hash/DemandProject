@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { EChartContainer } from "@/components/EChartContainer";
+import { useChartColors } from "@/hooks/useChartColors";
 
 interface ForecastTrendPoint {
   month: string;
@@ -13,14 +14,31 @@ interface ForecastTrendPoint {
 
 interface ForecastTrendChartProps {
   data: ForecastTrendPoint[];
-  theme: "light" | "dark";
-  chartColors: { grid: string; axis: string; tooltip: string };
-  seriesColors: string[];
+  /** Optional override; defaults to ThemeContext. */
+  theme?: "light" | "dark";
+  /** Optional override; defaults to useChartColors() values. */
+  chartColors?: { grid: string; axis: string; tooltip: string };
+  /** Optional override; defaults to useChartColors().trendColors. */
+  seriesColors?: string[];
   /** UX-3: render the 80% confidence-interval band when data has lower_80/upper_80. */
   includeCI?: boolean;
 }
 
-export const ForecastTrendChart = memo(function ForecastTrendChart({ data, theme, chartColors, seriesColors, includeCI = false }: ForecastTrendChartProps) {
+export const ForecastTrendChart = memo(function ForecastTrendChart({
+  data,
+  theme: themeProp,
+  chartColors: chartColorsProp,
+  seriesColors: seriesColorsProp,
+  includeCI = false,
+}: ForecastTrendChartProps) {
+  const { theme: ctxTheme, chartColors: ctxChartColors, trendColors } = useChartColors();
+  const theme: "light" | "dark" = themeProp ?? (ctxTheme === "dark" ? "dark" : "light");
+  const chartColors = chartColorsProp ?? {
+    grid: ctxChartColors.grid,
+    axis: ctxChartColors.axis,
+    tooltip: ctxChartColors.tooltip_bg,
+  };
+  const seriesColors = seriesColorsProp ?? trendColors;
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">

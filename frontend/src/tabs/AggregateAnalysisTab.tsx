@@ -19,7 +19,6 @@ import { CollapsibleSection } from "@/components/CollapsibleSection";
 
 import { useDebounce } from "@/hooks/useDebounce";
 import { usePanelToggles } from "@/hooks/usePanelToggles";
-import { useChartColors } from "@/hooks/useChartColors";
 import { cn } from "@/lib/utils";
 
 import {
@@ -123,8 +122,7 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
   const [heatmapColGrain, setHeatmapColGrain] = useState<HmGrain>("date");
   const [heatmapModel, setHeatmapModel] = useState("external");
 
-  // --------------- theme ---------------
-  const { theme, chartColors, trendColors } = useChartColors();
+  // theme/colors are now consumed directly by leaf chart components via context.
 
   // --------------- Accuracy slice / filter state ---------------
   const [sliceGroupBy, setSliceGroupBy] = useState("cluster_assignment");
@@ -496,12 +494,7 @@ export function AggregateAnalysisTab(_props: AggregateAnalysisTabProps) {
           {trendQ.isLoading ? (
             <Skeleton className="h-[260px]" />
           ) : (
-            <ForecastTrendChart
-              data={trendQ.data?.months ?? []}
-              theme={theme === "soft" ? "light" : theme}
-              chartColors={{ grid: chartColors.grid, axis: chartColors.axis, tooltip: chartColors.tooltip_bg }}
-              seriesColors={trendColors}
-            />
+            <ForecastTrendChart data={trendQ.data?.months ?? []} />
           )}
         </CollapsibleSection>
       )}

@@ -42,6 +42,7 @@ from algorithm_testing.comparison import (  # noqa: E402
     format_comparison_summary,
 )
 from algorithm_testing.demand_classifier import classify_demand, get_segment_summary  # noqa: E402
+from common.services.perf_profiler import profiled_section  # noqa: E402
 from algorithm_testing.golden_set import (  # noqa: E402
     create_golden_set,
     create_loc_golden_set,
@@ -294,7 +295,7 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Full comparison results dict.
     """
-    t0 = time.time()
+    t0 = time.perf_counter()
     exp = config["experiment"]
     output_dir = Path(ROOT) / exp["output_dir"]
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -302,46 +303,49 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     loc_filter: str | None = exp.get("loc_filter")
 
     # -- Step 1: Build golden set --------------------------------------------
-    t1 = time.time()
-    if loc_filter:
-        logger.info("Step 1/10: Using all DFUs at loc='%s' (no sampling)...", loc_filter)
-        golden_skus = create_loc_golden_set(loc=loc_filter, output_dir=output_dir)
-    else:
-        logger.info("Step 1/10: Sampling golden set (%d DFUs)...", exp["n_dfus"])
-        golden_skus = create_golden_set(
-            n_dfus=exp["n_dfus"],
-            sampling_method=exp["sampling_method"],
-            seed=exp["seed"],
-            output_dir=output_dir,
-        )
-    logger.info("  Golden set: %d DFUs in %.1fs", len(golden_skus), time.time() - t1)
+    with profiled_section("step_1_golden_set"):
+        t1 = time.perf_counter()
+        if loc_filter:
+            logger.info("Step 1/10: Using all DFUs at loc='%s' (no sampling)...", loc_filter)
+            golden_skus = create_loc_golden_set(loc=loc_filter, output_dir=output_dir)
+        else:
+            logger.info("Step 1/10: Sampling golden set (%d DFUs)...", exp["n_dfus"])
+            golden_skus = create_golden_set(
+                n_dfus=exp["n_dfus"],
+                sampling_method=exp["sampling_method"],
+                seed=exp["seed"],
+                output_dir=output_dir,
+            )
+        logger.info("  Golden set: %d DFUs in %.1fs", len(golden_skus), time.perf_counter() - t1)
 
     # -- Step 2: Load data ---------------------------------------------------
-    logger.info("Step 2/10: Loading data for golden set...")
-    t2 = time.time()
-    sales_df, dfu_attrs, item_attrs = load_golden_set_data(golden_skus)
-    logger.info(
-        "  Loaded %d sales rows, %d DFU attrs, %d item attrs in %.1fs",
-        len(sales_df), len(dfu_attrs), len(item_attrs), time.time() - t2,
-    )
+    with profiled_section("step_2_load_data"):
+        logger.info("Step 2/10: Loading data for golden set...")
+        t2 = time.perf_counter()
+        sales_df, dfu_attrs, item_attrs = load_golden_set_data(golden_skus)
+        logger.info(
+            "  Loaded %d sales rows, %d DFU attrs, %d item attrs in %.1fs",
+            len(sales_df), len(dfu_attrs), len(item_attrs), time.perf_counter() - t2,
+        )
 
     # -- Step 3: Classify demand ---------------------------------------------
-    logger.info("Step 3/10: Classifying demand archetypes...")
-    t3 = time.time()
-    dc = config["demand_classification"]
-    classification_df = classify_demand(
-        sales_df,
-        adi_threshold=dc["adi_threshold"],
-        cv2_threshold=dc["cv2_threshold"],
-        high_volume_percentile=dc["high_volume_percentile"],
-        min_history_months=dc["min_history_months"],
-    )
-    seg_summary = get_segment_summary(classification_df)
-    logger.info(
-        "  Classified %d DFUs into %d archetypes in %.1fs",
-        len(classification_df), classification_df["archetype"].nunique(),
-        time.time() - t3,
-    )
+    with profiled_section("step_3_classify_demand"):
+        logger.info("Step 3/10: Classifying demand archetypes...")
+        t3 = time.perf_counter()
+        dc = config["demand_classification"]
+        classification_df = classify_demand(
+            sales_df,
+            adi_threshold=dc["adi_threshold"],
+            cv2_threshold=dc["cv2_threshold"],
+            high_volume_percentile=dc["high_volume_percentile"],
+            min_history_months=dc["min_history_months"],
+        )
+        seg_summary = get_segment_summary(classification_df)
+        logger.info(
+            "  Classified %d DFUs into %d archetypes in %.1fs",
+            len(classification_df), classification_df["archetype"].nunique(),
+            time.perf_counter() - t3,
+        )
     for _, row in seg_summary.iterrows():
         logger.info(
             "    %-25s %5d DFUs  mean_demand=%.0f",
@@ -349,143 +353,152 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
         )
 
     # -- Step 4: Generate timeframes -----------------------------------------
-    logger.info("Step 4/10: Generating %d timeframes...", exp["n_timeframes"])
-    all_months = sorted(sales_df["startdate"].unique())
-    earliest = pd.Timestamp(min(all_months))
-    latest = pd.Timestamp(max(all_months))
-    timeframes = generate_timeframes(earliest, latest, n=exp["n_timeframes"])
-    for tf in timeframes:
-        predict_months = _timeframe_predict_months(tf)
-        logger.info(
-            "  Timeframe %s: train_end=%s, predict=%s..%s (%d months)",
-            tf["label"], tf["train_end"].strftime("%Y-%m-%d"),
-            predict_months[0].strftime("%Y-%m-%d") if predict_months else "?",
-            predict_months[-1].strftime("%Y-%m-%d") if predict_months else "?",
-            len(predict_months),
-        )
+    with profiled_section("step_4_timeframes"):
+        logger.info("Step 4/10: Generating %d timeframes...", exp["n_timeframes"])
+        all_months = sorted(sales_df["startdate"].unique())
+        earliest = pd.Timestamp(min(all_months))
+        latest = pd.Timestamp(max(all_months))
+        timeframes = generate_timeframes(earliest, latest, n=exp["n_timeframes"])
+        for tf in timeframes:
+            predict_months = _timeframe_predict_months(tf)
+            logger.info(
+                "  Timeframe %s: train_end=%s, predict=%s..%s (%d months)",
+                tf["label"], tf["train_end"].strftime("%Y-%m-%d"),
+                predict_months[0].strftime("%Y-%m-%d") if predict_months else "?",
+                predict_months[-1].strftime("%Y-%m-%d") if predict_months else "?",
+                len(predict_months),
+            )
 
     # -- Step 5: Build feature matrix (for tree models + Ridge) --------------
-    logger.info("Step 5/10: Building feature matrix...")
-    t5 = time.time()
-    grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, all_months)
-    feature_cols = get_feature_columns(grid)
-    logger.info(
-        "  Built grid: %d rows x %d features in %.1fs",
-        len(grid), len(feature_cols), time.time() - t5,
-    )
+    with profiled_section("step_5_feature_matrix"):
+        logger.info("Step 5/10: Building feature matrix...")
+        t5 = time.perf_counter()
+        grid = build_feature_matrix(sales_df, dfu_attrs, item_attrs, all_months)
+        feature_cols = get_feature_columns(grid)
+        logger.info(
+            "  Built grid: %d rows x %d features in %.1fs",
+            len(grid), len(feature_cols), time.perf_counter() - t5,
+        )
 
     # -- Step 6-7: Run all algorithms per timeframe --------------------------
-    logger.info("Step 6-7/10: Running algorithms across %d timeframes...", len(timeframes))
-    all_predictions: list[pd.DataFrame] = []
-    stat_config = {
-        k: v for k, v in config["statistical_models"].items()
-        if v.get("enabled", False)
-    }
-    tree_config = {
-        k: v for k, v in config["tree_models"].items()
-        if v.get("enabled", False)
-    }
-    baseline_config = config["baselines"]
+    with profiled_section("step_6_7_algorithms"):
+        logger.info("Step 6-7/10: Running algorithms across %d timeframes...", len(timeframes))
+        all_predictions: list[pd.DataFrame] = []
+        stat_config = {
+            k: v for k, v in config["statistical_models"].items()
+            if v.get("enabled", False)
+        }
+        tree_config = {
+            k: v for k, v in config["tree_models"].items()
+            if v.get("enabled", False)
+        }
+        baseline_config = config["baselines"]
 
-    for tf_idx, tf in enumerate(timeframes):
-        tf_start = time.time()
-        train_end: pd.Timestamp = tf["train_end"]
-        predict_months = _timeframe_predict_months(tf)
+        for tf_idx, tf in enumerate(timeframes):
+            with profiled_section(f"timeframe_{tf['label']}"):
+                tf_start = time.perf_counter()
+                train_end: pd.Timestamp = tf["train_end"]
+                predict_months = _timeframe_predict_months(tf)
 
-        if not predict_months:
-            logger.warning("  Timeframe %s: no predict months, skipping", tf["label"])
-            continue
+                if not predict_months:
+                    logger.warning("  Timeframe %s: no predict months, skipping", tf["label"])
+                    continue
 
-        logger.info(
-            "  Timeframe %s (%d/%d): train_end=%s, predicting %d months...",
-            tf["label"], tf_idx + 1, len(timeframes),
-            train_end.strftime("%Y-%m-%d"), len(predict_months),
-        )
+                logger.info(
+                    "  Timeframe %s (%d/%d): train_end=%s, predicting %d months...",
+                    tf["label"], tf_idx + 1, len(timeframes),
+                    train_end.strftime("%Y-%m-%d"), len(predict_months),
+                )
 
-        # Filter training sales (up to train_end inclusive)
-        train_sales = sales_df[sales_df["startdate"] <= train_end].copy()
+                # Filter training sales (up to train_end inclusive)
+                train_sales = sales_df[sales_df["startdate"] <= train_end].copy()
 
-        # 6a. Statistical models (parallel per-DFU)
-        if stat_config:
-            logger.info("    Running %d statistical models...", len(stat_config))
-            ts = time.time()
-            stat_preds = run_statistical_models(
-                train_sales, predict_months, stat_config,
-                n_workers=exp.get("n_workers", 8),
-            )
-            stat_preds["timeframe_idx"] = tf_idx
-            all_predictions.append(stat_preds)
-            logger.info(
-                "    Statistical: %d predictions in %.1fs",
-                len(stat_preds), time.time() - ts,
-            )
+                # 6a. Statistical models (parallel per-DFU)
+                if stat_config:
+                    with profiled_section("statistical_models"):
+                        logger.info("    Running %d statistical models...", len(stat_config))
+                        ts = time.perf_counter()
+                        stat_preds = run_statistical_models(
+                            train_sales, predict_months, stat_config,
+                            n_workers=exp.get("n_workers", 8),
+                        )
+                        stat_preds["timeframe_idx"] = tf_idx
+                        all_predictions.append(stat_preds)
+                        logger.info(
+                            "    Statistical: %d predictions in %.1fs",
+                            len(stat_preds), time.perf_counter() - ts,
+                        )
 
-        # 6b. Baselines — Seasonal Naive
-        if baseline_config.get("seasonal_naive", {}).get("enabled", False):
-            ts = time.time()
-            naive_preds = predict_seasonal_naive(train_sales, predict_months)
-            naive_preds["timeframe_idx"] = tf_idx
-            all_predictions.append(naive_preds)
-            logger.info(
-                "    Seasonal Naive: %d predictions in %.1fs",
-                len(naive_preds), time.time() - ts,
-            )
+                # 6b. Baselines — Seasonal Naive
+                if baseline_config.get("seasonal_naive", {}).get("enabled", False):
+                    with profiled_section("seasonal_naive"):
+                        ts = time.perf_counter()
+                        naive_preds = predict_seasonal_naive(train_sales, predict_months)
+                        naive_preds["timeframe_idx"] = tf_idx
+                        all_predictions.append(naive_preds)
+                        logger.info(
+                            "    Seasonal Naive: %d predictions in %.1fs",
+                            len(naive_preds), time.perf_counter() - ts,
+                        )
 
-        # 6b. Baselines — Rolling Mean
-        if baseline_config.get("rolling_mean", {}).get("enabled", False):
-            ts = time.time()
-            rm_preds = predict_rolling_mean(
-                train_sales, predict_months,
-                window=baseline_config["rolling_mean"].get("window", 6),
-            )
-            rm_preds["timeframe_idx"] = tf_idx
-            all_predictions.append(rm_preds)
-            logger.info(
-                "    Rolling Mean: %d predictions in %.1fs",
-                len(rm_preds), time.time() - ts,
-            )
+                # 6b. Baselines — Rolling Mean
+                if baseline_config.get("rolling_mean", {}).get("enabled", False):
+                    with profiled_section("rolling_mean"):
+                        ts = time.perf_counter()
+                        rm_preds = predict_rolling_mean(
+                            train_sales, predict_months,
+                            window=baseline_config["rolling_mean"].get("window", 6),
+                        )
+                        rm_preds["timeframe_idx"] = tf_idx
+                        all_predictions.append(rm_preds)
+                        logger.info(
+                            "    Rolling Mean: %d predictions in %.1fs",
+                            len(rm_preds), time.perf_counter() - ts,
+                        )
 
-        # 6c. Tree models (per-cluster, using masked grid)
-        if tree_config:
-            logger.info("    Running %d tree models...", len(tree_config))
-            ts = time.time()
-            masked_grid = mask_future_sales(grid.copy(), train_end)
-            tree_preds = run_tree_models(
-                masked_grid, train_end, predict_months, tree_config,
-                classification_df=classification_df,
-            )
-            tree_preds["timeframe_idx"] = tf_idx
-            all_predictions.append(tree_preds)
-            logger.info(
-                "    Tree models: %d predictions in %.1fs",
-                len(tree_preds), time.time() - ts,
-            )
+                # 6c. Tree models (per-cluster, using masked grid)
+                if tree_config:
+                    with profiled_section("tree_models"):
+                        logger.info("    Running %d tree models...", len(tree_config))
+                        ts = time.perf_counter()
+                        masked_grid = mask_future_sales(grid.copy(), train_end)
+                        tree_preds = run_tree_models(
+                            masked_grid, train_end, predict_months, tree_config,
+                            classification_df=classification_df,
+                        )
+                        tree_preds["timeframe_idx"] = tf_idx
+                        all_predictions.append(tree_preds)
+                        logger.info(
+                            "    Tree models: %d predictions in %.1fs",
+                            len(tree_preds), time.perf_counter() - ts,
+                        )
 
-        # 6d. Ridge Regression
-        if baseline_config.get("ridge", {}).get("enabled", False):
-            ts = time.time()
-            masked_grid_ridge = mask_future_sales(grid.copy(), train_end)
-            train_grid = masked_grid_ridge[masked_grid_ridge["startdate"] <= train_end]
-            pred_grid = masked_grid_ridge[masked_grid_ridge["startdate"].isin(predict_months)]
-            cat_cols = [
-                c for c in feature_cols
-                if c in ["ml_cluster", "region", "brand", "abc_vol"]
-            ]
-            ridge_preds = predict_ridge(
-                train_grid, pred_grid, feature_cols, cat_cols,
-                alpha=baseline_config["ridge"].get("alpha", 1.0),
-            )
-            ridge_preds["timeframe_idx"] = tf_idx
-            all_predictions.append(ridge_preds)
-            logger.info(
-                "    Ridge: %d predictions in %.1fs",
-                len(ridge_preds), time.time() - ts,
-            )
+                # 6d. Ridge Regression
+                if baseline_config.get("ridge", {}).get("enabled", False):
+                    with profiled_section("ridge"):
+                        ts = time.perf_counter()
+                        masked_grid_ridge = mask_future_sales(grid.copy(), train_end)
+                        train_grid = masked_grid_ridge[masked_grid_ridge["startdate"] <= train_end]
+                        pred_grid = masked_grid_ridge[masked_grid_ridge["startdate"].isin(predict_months)]
+                        cat_cols = [
+                            c for c in feature_cols
+                            if c in ["ml_cluster", "region", "brand", "abc_vol"]
+                        ]
+                        ridge_preds = predict_ridge(
+                            train_grid, pred_grid, feature_cols, cat_cols,
+                            alpha=baseline_config["ridge"].get("alpha", 1.0),
+                        )
+                        ridge_preds["timeframe_idx"] = tf_idx
+                        all_predictions.append(ridge_preds)
+                        logger.info(
+                            "    Ridge: %d predictions in %.1fs",
+                            len(ridge_preds), time.perf_counter() - ts,
+                        )
 
-        logger.info(
-            "  Timeframe %s complete in %.1fs",
-            tf["label"], time.time() - tf_start,
-        )
+                logger.info(
+                    "  Timeframe %s complete in %.1fs",
+                    tf["label"], time.perf_counter() - tf_start,
+                )
 
     # Combine all predictions
     if all_predictions:
@@ -501,75 +514,77 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
     )
 
     # -- Step 8: Load comparison baselines from DB ---------------------------
-    logger.info("Step 8/10: Loading external forecast and existing predictions...")
-    t8 = time.time()
-    # Collect all predict months across timeframes
-    all_predict_months_set: set[pd.Timestamp] = set()
-    for tf in timeframes:
-        all_predict_months_set.update(_timeframe_predict_months(tf))
-    all_predict_ts = sorted(all_predict_months_set)
+    with profiled_section("step_8_load_comparison_baselines"):
+        logger.info("Step 8/10: Loading external forecast and existing predictions...")
+        t8 = time.perf_counter()
+        # Collect all predict months across timeframes
+        all_predict_months_set: set[pd.Timestamp] = set()
+        for tf in timeframes:
+            all_predict_months_set.update(_timeframe_predict_months(tf))
+        all_predict_ts = sorted(all_predict_months_set)
 
-    external_df = load_external_forecast(golden_skus, all_predict_ts)
-    existing_df = load_existing_predictions(
-        golden_skus, all_predict_ts,
-        config["comparison"]["champion_model_ids"],
-    )
-    logger.info(
-        "  External forecast: %d rows, Existing predictions: %d rows in %.1fs",
-        len(external_df) if external_df is not None and not external_df.empty else 0,
-        len(existing_df) if existing_df is not None and not existing_df.empty else 0,
-        time.time() - t8,
-    )
+        external_df = load_external_forecast(golden_skus, all_predict_ts)
+        existing_df = load_existing_predictions(
+            golden_skus, all_predict_ts,
+            config["comparison"]["champion_model_ids"],
+        )
+        logger.info(
+            "  External forecast: %d rows, Existing predictions: %d rows in %.1fs",
+            len(external_df) if external_df is not None and not external_df.empty else 0,
+            len(existing_df) if existing_df is not None and not existing_df.empty else 0,
+            time.perf_counter() - t8,
+        )
 
     # -- Step 9: Build affinity matrix + optimize ----------------------------
-    logger.info("Step 9/10: Building affinity matrix and optimizing portfolio...")
-    t9 = time.time()
+    with profiled_section("step_9_affinity_optimize"):
+        logger.info("Step 9/10: Building affinity matrix and optimizing portfolio...")
+        t9 = time.perf_counter()
 
-    # Actuals for the predict months
-    actuals_df = sales_df[
-        sales_df["startdate"].isin(all_predict_ts)
-    ][["sku_ck", "startdate", "qty"]].copy()
+        # Actuals for the predict months
+        actuals_df = sales_df[
+            sales_df["startdate"].isin(all_predict_ts)
+        ][["sku_ck", "startdate", "qty"]].copy()
 
-    affinity_matrix, affinity_detail = build_affinity_matrix(
-        all_predictions_df, actuals_df, classification_df,
-    )
-    logger.info(
-        "  Affinity matrix: %d segments x %d algorithms",
-        affinity_matrix.shape[0], affinity_matrix.shape[1],
-    )
-    logger.info("\n%s", format_affinity_heatmap(affinity_matrix, affinity_detail))
-
-    # Portfolio optimization
-    opt_config = config.get("portfolio_optimizer", {})
-    max_algos = opt_config.get("max_algorithms")
-    min_seg = opt_config.get("min_segment_dfus", 30)
-
-    min_cov = opt_config.get("min_dfu_coverage_pct", 0.5)
-    cov_weighted = opt_config.get("coverage_weighted", True)
-    n_floor = opt_config.get("naive_floor", True)
-    if max_algos:
-        assignments_df = optimize_constrained(
-            affinity_matrix, affinity_detail,
-            max_algorithms=max_algos, min_segment_dfus=min_seg,
-            min_dfu_coverage_pct=min_cov,
-            coverage_weighted=cov_weighted, naive_floor=n_floor,
+        affinity_matrix, affinity_detail = build_affinity_matrix(
+            all_predictions_df, actuals_df, classification_df,
         )
-    else:
-        assignments_df = optimize_greedy(
-            affinity_matrix, affinity_detail, min_segment_dfus=min_seg,
-            min_dfu_coverage_pct=min_cov,
-            coverage_weighted=cov_weighted, naive_floor=n_floor,
+        logger.info(
+            "  Affinity matrix: %d segments x %d algorithms",
+            affinity_matrix.shape[0], affinity_matrix.shape[1],
         )
+        logger.info("\n%s", format_affinity_heatmap(affinity_matrix, affinity_detail))
 
-    portfolio_stats = compute_portfolio_accuracy(assignments_df, affinity_detail)
-    logger.info("\n%s", format_portfolio_summary(assignments_df, portfolio_stats))
+        # Portfolio optimization
+        opt_config = config.get("portfolio_optimizer", {})
+        max_algos = opt_config.get("max_algorithms")
+        min_seg = opt_config.get("min_segment_dfus", 30)
 
-    # Ceiling accuracy (theoretical upper bound)
-    ceiling_df = compute_ceiling_accuracy(all_predictions_df, actuals_df, classification_df)
-    logger.info(
-        "  Ceiling accuracy computed for %d segments in %.1fs",
-        len(ceiling_df), time.time() - t9,
-    )
+        min_cov = opt_config.get("min_dfu_coverage_pct", 0.5)
+        cov_weighted = opt_config.get("coverage_weighted", True)
+        n_floor = opt_config.get("naive_floor", True)
+        if max_algos:
+            assignments_df = optimize_constrained(
+                affinity_matrix, affinity_detail,
+                max_algorithms=max_algos, min_segment_dfus=min_seg,
+                min_dfu_coverage_pct=min_cov,
+                coverage_weighted=cov_weighted, naive_floor=n_floor,
+            )
+        else:
+            assignments_df = optimize_greedy(
+                affinity_matrix, affinity_detail, min_segment_dfus=min_seg,
+                min_dfu_coverage_pct=min_cov,
+                coverage_weighted=cov_weighted, naive_floor=n_floor,
+            )
+
+        portfolio_stats = compute_portfolio_accuracy(assignments_df, affinity_detail)
+        logger.info("\n%s", format_portfolio_summary(assignments_df, portfolio_stats))
+
+        # Ceiling accuracy (theoretical upper bound)
+        ceiling_df = compute_ceiling_accuracy(all_predictions_df, actuals_df, classification_df)
+        logger.info(
+            "  Ceiling accuracy computed for %d segments in %.1fs",
+            len(ceiling_df), time.perf_counter() - t9,
+        )
 
     # -- Step 9b: Per-DFU hybrid ensemble ------------------------------------
     hybrid_cfg = config.get("hybrid_ensemble", {})
@@ -583,97 +598,99 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
         columns=["sku_ck", "predicted_algorithm", "confidence"]
     )
     if hybrid_cfg.get("enabled", True) and not all_predictions_df.empty:
-        logger.info("Step 9b/10: Building per-DFU hybrid ensemble...")
-        t9b = time.time()
-        try:
-            dfu_accuracy_matrix = build_dfu_accuracy_matrix(
-                all_predictions_df, actuals_df,
-                min_n_months=hybrid_cfg.get("min_n_months", 2),
-            )
-            meta_model = train_meta_router(
-                dfu_accuracy_matrix, dfu_attrs, classification_df,
-                n_estimators=hybrid_cfg.get("meta_n_estimators", 300),
-                learning_rate=hybrid_cfg.get("meta_learning_rate", 0.05),
-                num_leaves=hybrid_cfg.get("meta_num_leaves", 31),
-            )
-            hybrid_preds = compute_hybrid_predictions(
-                all_predictions_df=all_predictions_df,
-                dfu_accuracy_matrix=dfu_accuracy_matrix,
-                dfu_attrs=dfu_attrs,
-                classification_df=classification_df,
-                meta_model=meta_model,
-                blend_top_k=hybrid_cfg.get("blend_top_k", 3),
-                confidence_threshold=hybrid_cfg.get("confidence_threshold", 0.6),
-            )
-            from algorithm_testing.meta_router import predict_meta_router  # noqa: E402
-            hybrid_routing_df = predict_meta_router(meta_model, dfu_attrs, classification_df)
-            logger.info(
-                "  Hybrid ensemble: %d predictions, %d DFUs in %.1fs",
-                len(hybrid_preds),
-                hybrid_preds["sku_ck"].nunique() if not hybrid_preds.empty else 0,
-                time.time() - t9b,
-            )
-        except (ValueError, Exception) as exc:  # noqa: BLE001
-            logger.warning("  Hybrid ensemble skipped: %s", exc)
+        with profiled_section("step_9b_hybrid_ensemble"):
+            logger.info("Step 9b/10: Building per-DFU hybrid ensemble...")
+            t9b = time.perf_counter()
+            try:
+                dfu_accuracy_matrix = build_dfu_accuracy_matrix(
+                    all_predictions_df, actuals_df,
+                    min_n_months=hybrid_cfg.get("min_n_months", 2),
+                )
+                meta_model = train_meta_router(
+                    dfu_accuracy_matrix, dfu_attrs, classification_df,
+                    n_estimators=hybrid_cfg.get("meta_n_estimators", 300),
+                    learning_rate=hybrid_cfg.get("meta_learning_rate", 0.05),
+                    num_leaves=hybrid_cfg.get("meta_num_leaves", 31),
+                )
+                hybrid_preds = compute_hybrid_predictions(
+                    all_predictions_df=all_predictions_df,
+                    dfu_accuracy_matrix=dfu_accuracy_matrix,
+                    dfu_attrs=dfu_attrs,
+                    classification_df=classification_df,
+                    meta_model=meta_model,
+                    blend_top_k=hybrid_cfg.get("blend_top_k", 3),
+                    confidence_threshold=hybrid_cfg.get("confidence_threshold", 0.6),
+                )
+                from algorithm_testing.meta_router import predict_meta_router  # noqa: E402
+                hybrid_routing_df = predict_meta_router(meta_model, dfu_attrs, classification_df)
+                logger.info(
+                    "  Hybrid ensemble: %d predictions, %d DFUs in %.1fs",
+                    len(hybrid_preds),
+                    hybrid_preds["sku_ck"].nunique() if not hybrid_preds.empty else 0,
+                    time.perf_counter() - t9b,
+                )
+            except (ValueError, RuntimeError, KeyError) as exc:
+                logger.warning("  Hybrid ensemble skipped: %s", exc)
 
     # -- Step 10: Compare and report -----------------------------------------
-    logger.info("Step 10/10: Comparing portfolio vs baselines...")
-    t10 = time.time()
+    with profiled_section("step_10_compare_report"):
+        logger.info("Step 10/10: Comparing portfolio vs baselines...")
+        t10 = time.perf_counter()
 
-    portfolio_preds = compute_portfolio_predictions(
-        all_predictions_df, assignments_df, classification_df,
-    )
-
-    # Get naive predictions specifically for comparison
-    naive_preds_all = all_predictions_df[
-        all_predictions_df["algorithm_id"] == "seasonal_naive"
-    ]
-
-    # Handle empty DataFrames for optional baselines
-    ext_for_compare = external_df if (external_df is not None and not external_df.empty) else None
-    exist_for_compare = existing_df if (existing_df is not None and not existing_df.empty) else None
-
-    comparison = compare_all(
-        portfolio_predictions=portfolio_preds,
-        naive_predictions=naive_preds_all,
-        external_predictions=ext_for_compare,
-        existing_predictions=exist_for_compare,
-        actuals_df=actuals_df,
-        classification_df=classification_df,
-        all_predictions_df=all_predictions_df,
-    )
-
-    logger.info("\n%s", format_comparison_summary(comparison))
-
-    # Inject hybrid ensemble metrics into the comparison dict
-    if not hybrid_preds.empty:
-        from algorithm_testing.comparison import compute_baseline_accuracy  # noqa: E402
-        import numpy as np  # noqa: E402 (already imported at top but guard for clarity)
-        hybrid_metrics = compute_baseline_accuracy(
-            hybrid_preds, actuals_df, "hybrid", classification_df
-        )
-        comparison["baselines"]["hybrid"] = hybrid_metrics
-        port_acc = comparison["portfolio"]["accuracy_pct"]
-        hyb_acc = hybrid_metrics["accuracy_pct"]
-        naive_acc = comparison["baselines"]["seasonal_naive"]["accuracy_pct"]
-        if not (np.isnan(hyb_acc) or np.isnan(port_acc)):
-            comparison["lift"]["hybrid_vs_portfolio_bps"] = round(
-                (hyb_acc - port_acc) * 100
-            )
-        if not (np.isnan(hyb_acc) or np.isnan(naive_acc)):
-            comparison["lift"]["hybrid_vs_naive_bps"] = round(
-                (hyb_acc - naive_acc) * 100
-            )
-        logger.info(
-            "  Hybrid ensemble: Accuracy=%.2f%%  WAPE=%.2f%%  "
-            "vs Portfolio=%+d bps  vs Naive=%+d bps",
-            hyb_acc,
-            hybrid_metrics["wape"],
-            comparison["lift"].get("hybrid_vs_portfolio_bps", 0),
-            comparison["lift"].get("hybrid_vs_naive_bps", 0),
+        portfolio_preds = compute_portfolio_predictions(
+            all_predictions_df, assignments_df, classification_df,
         )
 
-    logger.info("  Comparison complete in %.1fs", time.time() - t10)
+        # Get naive predictions specifically for comparison
+        naive_preds_all = all_predictions_df[
+            all_predictions_df["algorithm_id"] == "seasonal_naive"
+        ]
+
+        # Handle empty DataFrames for optional baselines
+        ext_for_compare = external_df if (external_df is not None and not external_df.empty) else None
+        exist_for_compare = existing_df if (existing_df is not None and not existing_df.empty) else None
+
+        comparison = compare_all(
+            portfolio_predictions=portfolio_preds,
+            naive_predictions=naive_preds_all,
+            external_predictions=ext_for_compare,
+            existing_predictions=exist_for_compare,
+            actuals_df=actuals_df,
+            classification_df=classification_df,
+            all_predictions_df=all_predictions_df,
+        )
+
+        logger.info("\n%s", format_comparison_summary(comparison))
+
+        # Inject hybrid ensemble metrics into the comparison dict
+        if not hybrid_preds.empty:
+            from algorithm_testing.comparison import compute_baseline_accuracy  # noqa: E402
+            import numpy as np  # noqa: E402 (already imported at top but guard for clarity)
+            hybrid_metrics = compute_baseline_accuracy(
+                hybrid_preds, actuals_df, "hybrid", classification_df
+            )
+            comparison["baselines"]["hybrid"] = hybrid_metrics
+            port_acc = comparison["portfolio"]["accuracy_pct"]
+            hyb_acc = hybrid_metrics["accuracy_pct"]
+            naive_acc = comparison["baselines"]["seasonal_naive"]["accuracy_pct"]
+            if not (np.isnan(hyb_acc) or np.isnan(port_acc)):
+                comparison["lift"]["hybrid_vs_portfolio_bps"] = round(
+                    (hyb_acc - port_acc) * 100
+                )
+            if not (np.isnan(hyb_acc) or np.isnan(naive_acc)):
+                comparison["lift"]["hybrid_vs_naive_bps"] = round(
+                    (hyb_acc - naive_acc) * 100
+                )
+            logger.info(
+                "  Hybrid ensemble: Accuracy=%.2f%%  WAPE=%.2f%%  "
+                "vs Portfolio=%+d bps  vs Naive=%+d bps",
+                hyb_acc,
+                hybrid_metrics["wape"],
+                comparison["lift"].get("hybrid_vs_portfolio_bps", 0),
+                comparison["lift"].get("hybrid_vs_naive_bps", 0),
+            )
+
+        logger.info("  Comparison complete in %.1fs", time.perf_counter() - t10)
 
     # Add execution-lag columns to combined predictions
     tf_train_end_map = {idx: tf["train_end"] for idx, tf in enumerate(timeframes)}
@@ -718,7 +735,7 @@ def run_experiment(config: dict[str, Any]) -> dict[str, Any]:
         logger.info("Saved hybrid assignments to %s", routing_path)
 
     # Save outputs
-    runtime = time.time() - t0
+    runtime = time.perf_counter() - t0
     save_all_outputs(
         output_dir=output_dir,
         golden_skus=golden_skus,

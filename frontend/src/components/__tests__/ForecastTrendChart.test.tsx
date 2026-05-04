@@ -1,5 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render as rtlRender, screen } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
+import { ThemeProvider } from "@/context/ThemeContext";
+
+const ThemeWrapper = ({ children }: { children: ReactNode }) => (
+  <ThemeProvider value={{ theme: "light" }}>{children}</ThemeProvider>
+);
+
+const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ThemeWrapper });
 
 // Mock all ECharts modules before importing the component
 vi.mock("echarts-for-react/lib/core", () => ({

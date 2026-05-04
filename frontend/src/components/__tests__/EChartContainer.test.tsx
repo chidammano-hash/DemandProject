@@ -1,5 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render as rtlRender } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
+import { ThemeProvider } from "@/context/ThemeContext";
+
+const ThemeWrapper = ({ children }: { children: ReactNode }) => (
+  <ThemeProvider value={{ theme: "light" }}>{children}</ThemeProvider>
+);
+
+const render = (ui: ReactElement) => rtlRender(ui, { wrapper: ThemeWrapper });
 
 // Mock echarts-for-react to avoid canvas rendering in jsdom
 vi.mock("echarts-for-react/lib/core", () => ({
