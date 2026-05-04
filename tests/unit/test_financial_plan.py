@@ -1,7 +1,7 @@
 """Unit tests for scripts/compute_financial_plan.py — F4.1."""
 
 import pytest
-from scripts.compute_financial_plan import (
+from scripts.ops.compute_financial_plan import (
     compute_inventory_value,
     compute_carrying_cost,
     compute_excess_value,

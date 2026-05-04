@@ -43,7 +43,7 @@ class TestLoadMonthlyErrorsLagMode:
         mock_connect.return_value.__enter__ = MagicMock()
         mock_connect.return_value.__exit__ = MagicMock(return_value=False)
 
-        from scripts.run_champion_selection import load_monthly_errors_df
+        from scripts.ml.run_champion_selection import load_monthly_errors_df
         df = load_monthly_errors_df(
             db={"host": "x", "dbname": "x", "user": "x", "password": "x"},
             models=["lgbm_cluster", "catboost_cluster"],
@@ -59,7 +59,7 @@ class TestLoadMonthlyErrorsLagMode:
         mock_connect.return_value.__enter__ = MagicMock()
         mock_connect.return_value.__exit__ = MagicMock(return_value=False)
 
-        from scripts.run_champion_selection import load_monthly_errors_df
+        from scripts.ml.run_champion_selection import load_monthly_errors_df
         df = load_monthly_errors_df(
             db={"host": "x", "dbname": "x", "user": "x", "password": "x"},
             models=["lgbm_cluster"],
@@ -74,7 +74,7 @@ class TestLoadMonthlyErrorsLagMode:
         mock_connect.return_value.__enter__ = MagicMock()
         mock_connect.return_value.__exit__ = MagicMock(return_value=False)
 
-        from scripts.run_champion_selection import load_monthly_errors_df
+        from scripts.ml.run_champion_selection import load_monthly_errors_df
         df = load_monthly_errors_df(
             db={"host": "x", "dbname": "x", "user": "x", "password": "x"},
             models=["lgbm_cluster"],
@@ -101,7 +101,7 @@ class TestLoadMonthlyErrorsLagMode:
         mock_connect.return_value.__enter__ = MagicMock()
         mock_connect.return_value.__exit__ = MagicMock(return_value=False)
 
-        from scripts.run_champion_selection import load_monthly_errors_df
+        from scripts.ml.run_champion_selection import load_monthly_errors_df
         load_monthly_errors_df(
             db={"host": "x", "dbname": "x", "user": "x", "password": "x"},
             models=["lgbm_cluster"],
@@ -130,7 +130,7 @@ class TestLoadMonthlyErrorsLagMode:
         mock_connect.return_value.__enter__ = MagicMock()
         mock_connect.return_value.__exit__ = MagicMock(return_value=False)
 
-        from scripts.run_champion_selection import load_monthly_errors_df
+        from scripts.ml.run_champion_selection import load_monthly_errors_df
         load_monthly_errors_df(
             db={"host": "x", "dbname": "x", "user": "x", "password": "x"},
             models=["lgbm_cluster"],

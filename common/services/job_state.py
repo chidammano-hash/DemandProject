@@ -254,7 +254,7 @@ def _run_cluster_scenario(
     to ``status='running'`` before starting, and the experiment_id is forwarded to
     ``run_scenario()`` so it can write results on completion/failure.
     """
-    from scripts.run_clustering_scenario import run_scenario, generate_scenario_id, get_scenario_result
+    from scripts.ml.run_clustering_scenario import run_scenario, generate_scenario_id, get_scenario_result
 
     scenario_id = params.get("scenario_id") or generate_scenario_id()
     experiment_id: int | None = params.get("experiment_id")
@@ -404,10 +404,10 @@ def _run_backtest(
     }
     # Foundation models: python -m invocation
     foundation_modules = {
-        "chronos": "scripts.run_backtest_chronos",
-        "chronos_bolt": "scripts.run_backtest_chronos_bolt",
-        "chronos2": "scripts.run_backtest_chronos2",
-        "chronos2_enriched": "scripts.run_backtest_chronos2_enriched",
+        "chronos": "scripts.ml.run_backtest_chronos",
+        "chronos_bolt": "scripts.ml.run_backtest_chronos_bolt",
+        "chronos2": "scripts.ml.run_backtest_chronos2",
+        "chronos2_enriched": "scripts.ml.run_backtest_chronos2_enriched",
     }
     # Special scripts: direct file path
     special_scripts = {

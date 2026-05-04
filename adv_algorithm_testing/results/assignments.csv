@@ -1,6 +1,0 @@
-archetype,best_algorithm,accuracy_pct,runner_up_algorithm,runner_up_accuracy,margin_bps,n_dfus,confidence
-smooth_high,mstl,80.37779815696001,holt_winters,80.06248183842575,31,914,high
-smooth_low,mstl,71.56387175147232,nhits,71.29057866848845,27,4875,high
-erratic_high,nhits,49.271737177222164,catboost_cluster,48.77420085263808,49,129,high
-erratic_low,tft,40.3793893681479,nhits,39.848476829950656,53,3158,high
-insufficient,mstl,18.46101827421863,ridge,18.192614251110726,26,1406,high

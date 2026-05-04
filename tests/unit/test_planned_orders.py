@@ -7,7 +7,7 @@ from datetime import date, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-from scripts.generate_planned_orders import (
+from scripts.inventory.generate_planned_orders import (
     round_to_moq,
     compute_net_requirements,
     compute_confidence_score,

@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 # Helpers to import functions under test
 # ---------------------------------------------------------------------------
 
-from scripts.generate_production_forecasts import (
+from scripts.forecasting.generate_production_forecasts import (
     build_inference_grid,
     build_sales_index,
     build_attrs_index,
@@ -510,7 +510,7 @@ def test_generate_forecasts_batch_18_months():
 def test_load_recent_sales_uses_planning_date():
     """load_recent_sales must use get_planning_date(), not Timestamp.now()."""
     import inspect
-    from scripts.generate_production_forecasts import load_recent_sales
+    from scripts.forecasting.generate_production_forecasts import load_recent_sales
     source = inspect.getsource(load_recent_sales)
     assert "get_planning_date" in source, "load_recent_sales must use get_planning_date()"
     assert "Timestamp.now()" not in source, "load_recent_sales must NOT use Timestamp.now()"
@@ -519,7 +519,7 @@ def test_load_recent_sales_uses_planning_date():
 def test_main_plan_version_uses_planning_date():
     """plan_version generation must use get_planning_date(), not datetime.now()."""
     import inspect
-    from scripts.generate_production_forecasts import main
+    from scripts.forecasting.generate_production_forecasts import main
     source = inspect.getsource(main)
     assert "get_planning_date" in source, "plan_version must use get_planning_date()"
 
@@ -530,7 +530,7 @@ def test_main_plan_version_uses_planning_date():
 
 def test_load_config_reads_pipeline_config():
     """load_config reads from forecast_pipeline_config.yaml and maps fields correctly."""
-    from scripts.generate_production_forecasts import load_config
+    from scripts.forecasting.generate_production_forecasts import load_config
     config = load_config()
     assert config["inference"]["horizon_months"] == 24
     assert config["model_selection"]["fallback_model_id"] == "lgbm_cluster"
@@ -543,7 +543,7 @@ def test_load_config_reads_pipeline_config():
 
 def test_load_config_ci_section():
     """load_config preserves confidence_interval settings from pipeline config."""
-    from scripts.generate_production_forecasts import load_config
+    from scripts.forecasting.generate_production_forecasts import load_config
     config = load_config()
     ci = config["confidence_interval"]
     assert ci["enabled"] is True

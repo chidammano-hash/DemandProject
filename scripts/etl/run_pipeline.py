@@ -190,7 +190,7 @@ def normalize_inventory(source_dir: Path, output: Path | None = None,
 def load_domain(domain: str, csv_path: Path,
                 incremental_delete: str | None = None) -> dict:
     """Load a domain via direct CSV->table load."""
-    from scripts.load_dataset_postgres import load_domain as _load
+    from scripts.etl.load_dataset_postgres import load_domain as _load
     spec = get_spec(domain)
     return _load(spec, csv_path, incremental_delete=incremental_delete)
 

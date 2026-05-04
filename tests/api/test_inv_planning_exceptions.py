@@ -316,7 +316,7 @@ async def test_generate_with_auth_returns_200():
 
     with patch("api.core._get_pool", return_value=pool), \
          patch.dict("os.environ", {"API_KEY": "secret-key"}), \
-         patch("scripts.generate_replenishment_exceptions.run", return_value=mock_result):
+         patch("scripts.inventory.generate_replenishment_exceptions.run", return_value=mock_result):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

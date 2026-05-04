@@ -32,21 +32,21 @@ class TestClassifyClusterDemand:
     """Test demand pattern classification based on zero-demand percentage."""
 
     def test_60pct_zeros_is_intermittent(self) -> None:
-        from scripts.run_backtest import _classify_cluster_demand
+        from scripts.ml.run_backtest import _classify_cluster_demand
 
         df = _make_train_df(100, zero_pct=0.60)
         result = _classify_cluster_demand(df)
         assert result == "intermittent"
 
     def test_40pct_zeros_is_lumpy(self) -> None:
-        from scripts.run_backtest import _classify_cluster_demand
+        from scripts.ml.run_backtest import _classify_cluster_demand
 
         df = _make_train_df(100, zero_pct=0.40)
         result = _classify_cluster_demand(df)
         assert result == "lumpy"
 
     def test_10pct_zeros_is_continuous(self) -> None:
-        from scripts.run_backtest import _classify_cluster_demand
+        from scripts.ml.run_backtest import _classify_cluster_demand
 
         df = _make_train_df(100, zero_pct=0.10)
         result = _classify_cluster_demand(df)
@@ -54,14 +54,14 @@ class TestClassifyClusterDemand:
 
     def test_boundary_50pct_zeros_is_intermittent(self) -> None:
         """50% is exactly at the threshold (>=), so it should be intermittent."""
-        from scripts.run_backtest import _classify_cluster_demand
+        from scripts.ml.run_backtest import _classify_cluster_demand
 
         df = _make_train_df(100, zero_pct=0.50)
         result = _classify_cluster_demand(df)
         assert result == "intermittent"
 
     def test_0pct_zeros_is_continuous(self) -> None:
-        from scripts.run_backtest import _classify_cluster_demand
+        from scripts.ml.run_backtest import _classify_cluster_demand
 
         df = _make_train_df(100, zero_pct=0.0)
         result = _classify_cluster_demand(df)
@@ -69,7 +69,7 @@ class TestClassifyClusterDemand:
 
     def test_30pct_zeros_is_continuous(self) -> None:
         """30% is at the lumpy boundary (> 0.3 required), so it stays continuous."""
-        from scripts.run_backtest import _classify_cluster_demand
+        from scripts.ml.run_backtest import _classify_cluster_demand
 
         df = _make_train_df(100, zero_pct=0.30)
         result = _classify_cluster_demand(df)
@@ -77,7 +77,7 @@ class TestClassifyClusterDemand:
 
     def test_custom_thresholds(self) -> None:
         """Thresholds can be overridden via keyword arguments."""
-        from scripts.run_backtest import _classify_cluster_demand
+        from scripts.ml.run_backtest import _classify_cluster_demand
 
         df = _make_train_df(100, zero_pct=0.25)
         # With lower thresholds, 25% should be intermittent
@@ -87,14 +87,14 @@ class TestClassifyClusterDemand:
         assert result == "intermittent"
 
     def test_empty_dataframe_is_continuous(self) -> None:
-        from scripts.run_backtest import _classify_cluster_demand
+        from scripts.ml.run_backtest import _classify_cluster_demand
 
         df = pd.DataFrame({"qty": pd.Series(dtype=float)})
         result = _classify_cluster_demand(df)
         assert result == "continuous"
 
     def test_missing_qty_column_is_continuous(self) -> None:
-        from scripts.run_backtest import _classify_cluster_demand
+        from scripts.ml.run_backtest import _classify_cluster_demand
 
         df = pd.DataFrame({"other_col": [1, 2, 3]})
         result = _classify_cluster_demand(df)
@@ -102,7 +102,7 @@ class TestClassifyClusterDemand:
 
     def test_threshold_configurable_from_yaml(self) -> None:
         """Verify the YAML config keys are read and used as thresholds."""
-        from scripts.run_backtest import _classify_cluster_demand
+        from scripts.ml.run_backtest import _classify_cluster_demand
 
         # 45% zeros: with default thresholds (0.5/0.3) this is lumpy
         df = _make_train_df(100, zero_pct=0.45)
@@ -127,7 +127,7 @@ class TestApplyTweedieObjective:
     """
 
     def test_lgbm_intermittent_gets_mae(self) -> None:
-        from scripts.run_backtest import _apply_tweedie_objective
+        from scripts.ml.run_backtest import _apply_tweedie_objective
 
         params = {"n_estimators": 300, "learning_rate": 0.05, "verbosity": -1}
         result = _apply_tweedie_objective(params, "lgbm", "intermittent")
@@ -137,7 +137,7 @@ class TestApplyTweedieObjective:
         assert result["n_estimators"] == 300
 
     def test_catboost_intermittent_gets_mae(self) -> None:
-        from scripts.run_backtest import _apply_tweedie_objective
+        from scripts.ml.run_backtest import _apply_tweedie_objective
 
         params = {"iterations": 300, "loss_function": "RMSE", "verbose": 0}
         result = _apply_tweedie_objective(params, "catboost", "intermittent")
@@ -145,7 +145,7 @@ class TestApplyTweedieObjective:
         assert result["iterations"] == 300
 
     def test_xgboost_intermittent_gets_absoluteerror(self) -> None:
-        from scripts.run_backtest import _apply_tweedie_objective
+        from scripts.ml.run_backtest import _apply_tweedie_objective
 
         params = {"n_estimators": 500, "learning_rate": 0.05, "verbosity": 0}
         result = _apply_tweedie_objective(params, "xgboost", "intermittent")
@@ -153,7 +153,7 @@ class TestApplyTweedieObjective:
         assert "tweedie_variance_power" not in result
 
     def test_continuous_keeps_default_objective(self) -> None:
-        from scripts.run_backtest import _apply_tweedie_objective
+        from scripts.ml.run_backtest import _apply_tweedie_objective
 
         params = {"n_estimators": 300, "learning_rate": 0.05}
         result = _apply_tweedie_objective(params, "lgbm", "continuous")
@@ -162,7 +162,7 @@ class TestApplyTweedieObjective:
         assert result == params
 
     def test_lumpy_keeps_default_objective(self) -> None:
-        from scripts.run_backtest import _apply_tweedie_objective
+        from scripts.ml.run_backtest import _apply_tweedie_objective
 
         params = {"n_estimators": 300}
         result = _apply_tweedie_objective(params, "lgbm", "lumpy")
@@ -171,7 +171,7 @@ class TestApplyTweedieObjective:
 
     def test_lgbm_intermittent_strips_existing_tweedie_vp(self) -> None:
         """If params already have tweedie_variance_power, it must be removed."""
-        from scripts.run_backtest import _apply_tweedie_objective
+        from scripts.ml.run_backtest import _apply_tweedie_objective
 
         params = {"n_estimators": 300, "tweedie_variance_power": 1.8}
         result = _apply_tweedie_objective(params, "lgbm", "intermittent")
@@ -180,7 +180,7 @@ class TestApplyTweedieObjective:
 
     def test_catboost_intermittent_strips_boost_from_average(self) -> None:
         """CatBoost boost_from_average is removed when switching to MAE for intermittent."""
-        from scripts.run_backtest import _apply_tweedie_objective
+        from scripts.ml.run_backtest import _apply_tweedie_objective
 
         params = {"iterations": 300, "loss_function": "RMSE", "boost_from_average": True}
         result = _apply_tweedie_objective(params, "catboost", "intermittent")
@@ -188,7 +188,7 @@ class TestApplyTweedieObjective:
         assert "boost_from_average" not in result
 
     def test_original_params_not_mutated(self) -> None:
-        from scripts.run_backtest import _apply_tweedie_objective
+        from scripts.ml.run_backtest import _apply_tweedie_objective
 
         params = {"n_estimators": 300, "learning_rate": 0.05}
         original = dict(params)

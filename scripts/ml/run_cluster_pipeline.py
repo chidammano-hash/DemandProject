@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.db import get_db_params  # noqa: E402
-from scripts.run_clustering_scenario import (  # noqa: E402
+from scripts.ml.run_clustering_scenario import (  # noqa: E402
     generate_scenario_id,
     promote_scenario,
     run_scenario,

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from scripts.compute_demand_signals import (
+from scripts.inventory.compute_demand_signals import (
     compute_projected_monthly,
     compute_demand_vs_forecast_pct,
     classify_signal_type,
@@ -156,12 +156,12 @@ def test_projected_stockout_zero_days_remaining():
 class TestDemandSignalsBatching:
     """Verify the run() function batches upserts in 10K chunks."""
 
-    @patch("scripts.compute_demand_signals.get_planning_date", return_value=date(2026, 3, 15))
-    @patch("scripts.compute_demand_signals.get_db_params", return_value={})
-    @patch("scripts.compute_demand_signals.psycopg")
+    @patch("scripts.inventory.compute_demand_signals.get_planning_date", return_value=date(2026, 3, 15))
+    @patch("scripts.inventory.compute_demand_signals.get_db_params", return_value={})
+    @patch("scripts.inventory.compute_demand_signals.psycopg")
     def test_upsert_batches_at_10k(self, mock_psycopg, mock_db, mock_pd):
         """Signals exceeding 10K should be split into multiple executemany calls."""
-        from scripts.compute_demand_signals import run
+        from scripts.inventory.compute_demand_signals import run
 
         # Build mock connection for the read phase
         mock_read_conn = MagicMock()

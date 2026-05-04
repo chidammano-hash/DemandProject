@@ -229,9 +229,9 @@ async def test_post_projection_refresh():
 
     # Patch at the script module level (imported inside function body)
     with patch("api.core._get_pool", return_value=pool), \
-         patch("scripts.compute_inventory_projection.compute_dfu_projection",
+         patch("scripts.inventory.compute_inventory_projection.compute_dfu_projection",
                return_value=(270, "test-run-id")), \
-         patch("scripts.compute_inventory_projection.refresh_summary_view"):
+         patch("scripts.inventory.compute_inventory_projection.refresh_summary_view"):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

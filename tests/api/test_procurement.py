@@ -106,10 +106,10 @@ async def test_create_po_from_exception_returns_201():
     cursor.fetchone.return_value = (7584.0, datetime.date(2026, 4, 28))
 
     # Patch at the source module where the function is defined.
-    # The endpoint does `from scripts.release_planned_orders import create_po_from_exception as _create_po`
+    # The endpoint does `from scripts.inventory.release_planned_orders import create_po_from_exception as _create_po`
     # inside the function body, so we must patch the original module.
     with patch("api.core._get_pool", return_value=pool), \
-         patch("scripts.release_planned_orders.create_po_from_exception",
+         patch("scripts.inventory.release_planned_orders.create_po_from_exception",
                return_value="DS-2026-04-001"):
 
         from api.main import app

@@ -607,7 +607,7 @@ async def test_generate_with_auth_200():
 
     with patch("api.core._get_pool", return_value=pool), \
          patch.dict("os.environ", {"API_KEY": "secret"}), \
-         patch("scripts.generate_storyboard_exceptions.run", return_value=mock_result):
+         patch("scripts.ops.generate_storyboard_exceptions.run", return_value=mock_result):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -637,7 +637,7 @@ async def test_generate_dry_run_with_auth():
 
     with patch("api.core._get_pool", return_value=pool), \
          patch.dict("os.environ", {"API_KEY": "secret"}), \
-         patch("scripts.generate_storyboard_exceptions.run", return_value=mock_result):
+         patch("scripts.ops.generate_storyboard_exceptions.run", return_value=mock_result):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

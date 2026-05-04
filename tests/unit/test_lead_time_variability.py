@@ -6,7 +6,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from scripts.compute_lead_time_variability import (
+from scripts.inventory.compute_lead_time_variability import (
     extract_lt_change_points,
     compute_lt_metrics,
     classify_lt_variability_class,

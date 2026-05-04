@@ -4,7 +4,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from scripts.run_backtest_bolt_hierarchical import (
+from scripts.ml.run_backtest_bolt_hierarchical import (
     _build_customer_series,
     _pre_aggregate_demand,
     _build_agg_series,

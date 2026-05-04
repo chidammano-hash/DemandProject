@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import pytest
 
-from scripts.run_backtest import (
+from scripts.ml.run_backtest import (
     MODEL_REGISTRY,
     _BASELINE_PREDICT_FNS,
     _RollingMeanModel,

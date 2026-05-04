@@ -2,7 +2,7 @@
 
 import math
 import pytest
-from scripts.compute_echelon_targets import (
+from scripts.inventory.compute_echelon_targets import (
     compute_pooled_sigma,
     compute_echelon_ss,
     compute_echelon_rop,

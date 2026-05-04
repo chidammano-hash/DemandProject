@@ -1,7 +1,7 @@
 """Unit tests for scripts/run_supply_chain_scenario.py — F4.4."""
 
 import pytest
-from scripts.run_supply_chain_scenario import (
+from scripts.inventory.run_supply_chain_scenario import (
     compute_adjusted_lead_time,
     compute_available_supply,
     compute_stockout_days,

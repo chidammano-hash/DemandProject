@@ -1,7 +1,7 @@
 """Unit tests for scripts/compute_bias_corrections.py — F3.1."""
 
 import pytest
-from scripts.compute_bias_corrections import (
+from scripts.forecasting.compute_bias_corrections import (
     compute_rolling_bias,
     derive_correction_factor,
     apply_correction_to_forecast,

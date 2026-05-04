@@ -501,7 +501,7 @@ def generate_exceptions(
     _: None = Depends(require_api_key),
 ) -> dict:
     """Trigger exception detection and insert new exceptions into the queue."""
-    from scripts.generate_replenishment_exceptions import run as _gen_run
+    from scripts.inventory.generate_replenishment_exceptions import run as _gen_run
 
     result = _gen_run(dry_run=False)
     return {

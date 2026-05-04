@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from scripts.classify_abc_xyz import classify_xyz, compute_abc_xyz_segment
+from scripts.inventory.classify_abc_xyz import classify_xyz, compute_abc_xyz_segment
 
 
 # ---------------------------------------------------------------------------

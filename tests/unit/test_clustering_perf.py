@@ -25,7 +25,7 @@ class TestSeasonalR2Vectorized:
     """Verify _seasonal_r2 vectorized design matrix matches original logic."""
 
     def test_basic_seasonal_pattern(self):
-        from scripts.generate_clustering_features import _seasonal_r2
+        from scripts.ml.generate_clustering_features import _seasonal_r2
 
         np.random.seed(42)
         n = 36
@@ -38,7 +38,7 @@ class TestSeasonalR2Vectorized:
         assert r2 > 0.5
 
     def test_flat_signal_returns_zero(self):
-        from scripts.generate_clustering_features import _seasonal_r2
+        from scripts.ml.generate_clustering_features import _seasonal_r2
 
         y = np.ones(36)
         months = np.array([(i % 12) + 1 for i in range(36)], dtype=np.float64)
@@ -46,7 +46,7 @@ class TestSeasonalR2Vectorized:
         assert r2 == 0.0
 
     def test_short_series_returns_zero(self):
-        from scripts.generate_clustering_features import _seasonal_r2
+        from scripts.ml.generate_clustering_features import _seasonal_r2
 
         y = np.array([1.0, 2.0, 3.0])
         months = np.array([1.0, 2.0, 3.0])
@@ -55,7 +55,7 @@ class TestSeasonalR2Vectorized:
 
     def test_month_12_is_reference_level(self):
         """Month 12 should be excluded from dummies (reference level)."""
-        from scripts.generate_clustering_features import _seasonal_r2
+        from scripts.ml.generate_clustering_features import _seasonal_r2
 
         n = 24
         months = np.array([(i % 12) + 1 for i in range(n)], dtype=np.float64)
@@ -70,7 +70,7 @@ class TestComputeFeaturesForGroup:
     """Test the multiprocessing-compatible wrapper function."""
 
     def test_produces_correct_keys(self):
-        from scripts.generate_clustering_features import _compute_features_for_group
+        from scripts.ml.generate_clustering_features import _compute_features_for_group
 
         dates = pd.date_range("2023-01-01", periods=24, freq="MS")
         qty = np.random.RandomState(42).randint(50, 500, size=24).astype(float)
@@ -86,7 +86,7 @@ class TestComputeFeaturesForGroup:
         assert "adi" in result
 
     def test_empty_group_returns_sku_ck(self):
-        from scripts.generate_clustering_features import _compute_features_for_group
+        from scripts.ml.generate_clustering_features import _compute_features_for_group
 
         result = _compute_features_for_group((
             "DFU_EMPTY",
@@ -95,7 +95,7 @@ class TestComputeFeaturesForGroup:
         assert result["sku_ck"] == "DFU_EMPTY"
 
     def test_single_month(self):
-        from scripts.generate_clustering_features import _compute_features_for_group
+        from scripts.ml.generate_clustering_features import _compute_features_for_group
 
         result = _compute_features_for_group((
             "DFU_ONE",
@@ -110,7 +110,7 @@ class TestComputeFeaturesForGroup:
 
     def test_result_matches_direct_call(self):
         """Parallel wrapper should produce same output as direct call."""
-        from scripts.generate_clustering_features import _compute_features_for_group
+        from scripts.ml.generate_clustering_features import _compute_features_for_group
         from common.ml.clustering.features import compute_time_series_features
 
         dates = pd.date_range("2023-01-01", periods=36, freq="MS")
@@ -136,7 +136,7 @@ class TestPeriodicityStrength:
     """Verify _periodicity_strength helper."""
 
     def test_pure_sine(self):
-        from scripts.generate_clustering_features import _periodicity_strength
+        from scripts.ml.generate_clustering_features import _periodicity_strength
 
         t = np.arange(48)
         y = np.sin(2 * np.pi * t / 12)  # annual cycle
@@ -144,13 +144,13 @@ class TestPeriodicityStrength:
         assert strength > 0.5
 
     def test_flat_returns_zero(self):
-        from scripts.generate_clustering_features import _periodicity_strength
+        from scripts.ml.generate_clustering_features import _periodicity_strength
 
         y = np.ones(24)
         assert _periodicity_strength(y) == 0.0
 
     def test_short_returns_zero(self):
-        from scripts.generate_clustering_features import _periodicity_strength
+        from scripts.ml.generate_clustering_features import _periodicity_strength
 
         y = np.array([1.0, 2.0, 3.0])
         assert _periodicity_strength(y) == 0.0
@@ -160,21 +160,21 @@ class TestAdi:
     """Verify _adi helper."""
 
     def test_regular_demand(self):
-        from scripts.generate_clustering_features import _adi
+        from scripts.ml.generate_clustering_features import _adi
 
         y = np.array([10, 20, 30, 40, 50], dtype=float)
         # All nonzero, gaps = [1,1,1,1], mean = 1.0
         assert _adi(y) == 1.0
 
     def test_intermittent_demand(self):
-        from scripts.generate_clustering_features import _adi
+        from scripts.ml.generate_clustering_features import _adi
 
         y = np.array([10, 0, 0, 20, 0, 0, 30], dtype=float)
         # Nonzero at 0, 3, 6 -> gaps = [3, 3], mean = 3.0
         assert _adi(y) == 3.0
 
     def test_all_zero(self):
-        from scripts.generate_clustering_features import _adi
+        from scripts.ml.generate_clustering_features import _adi
 
         y = np.zeros(10)
         assert _adi(y) == 10.0
@@ -187,7 +187,7 @@ class TestEvaluateSingleK:
     """Test the per-K evaluation function used in parallel K-search."""
 
     def test_returns_expected_keys(self):
-        from scripts.train_clustering_model import _evaluate_single_k
+        from scripts.ml.train_clustering_model import _evaluate_single_k
 
         np.random.seed(42)
         X = np.random.randn(200, 5)
@@ -203,7 +203,7 @@ class TestEvaluateSingleK:
         assert result["smallest"] > 0
 
     def test_feasibility_check(self):
-        from scripts.train_clustering_model import _evaluate_single_k
+        from scripts.ml.train_clustering_model import _evaluate_single_k
 
         np.random.seed(42)
         X = np.random.randn(100, 3)
@@ -215,7 +215,7 @@ class TestEvaluateSingleK:
         assert result["feasible"] is True
 
     def test_with_silhouette_sampling(self):
-        from scripts.train_clustering_model import _evaluate_single_k
+        from scripts.ml.train_clustering_model import _evaluate_single_k
 
         np.random.seed(42)
         X = np.random.randn(500, 4)
@@ -283,7 +283,7 @@ class TestMergeSmallClusters:
     """Verify merge_small_clusters preserves data integrity."""
 
     def test_no_merge_when_all_large(self):
-        from scripts.train_clustering_model import merge_small_clusters
+        from scripts.ml.train_clustering_model import merge_small_clusters
 
         X = np.random.randn(100, 3)
         labels = np.array([0] * 50 + [1] * 50)
@@ -292,7 +292,7 @@ class TestMergeSmallClusters:
         assert len(set(new_labels)) == 2
 
     def test_merge_small_cluster(self):
-        from scripts.train_clustering_model import merge_small_clusters
+        from scripts.ml.train_clustering_model import merge_small_clusters
 
         X = np.random.randn(100, 3)
         labels = np.array([0] * 90 + [1] * 5 + [2] * 5)
@@ -325,14 +325,14 @@ class TestPlanningDateClustering:
     def test_generate_features_caps_at_planning_date(self):
         """generate_clustering_features.py SQL must filter by planning_upper."""
         # Read the main() function source to verify SQL includes planning date
-        import scripts.generate_clustering_features as gcf
+        import scripts.ml.generate_clustering_features as gcf
         source = inspect.getsource(gcf)
         assert "planning_upper" in source
         assert "get_planning_date" in source
 
     def test_scenario_caps_at_planning_date(self):
         """run_clustering_scenario.py SQL must filter by planning_upper."""
-        import scripts.run_clustering_scenario as rcs
+        import scripts.ml.run_clustering_scenario as rcs
         source = inspect.getsource(rcs)
         assert "planning_upper" in source
         assert "get_planning_date" in source

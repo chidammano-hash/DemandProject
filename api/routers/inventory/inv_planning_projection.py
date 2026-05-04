@@ -245,7 +245,7 @@ class ProjectionRefreshRequest(BaseModel):
 async def refresh_projection(body: ProjectionRefreshRequest, api_key: str = Depends(require_api_key)):
     """Trigger a synchronous projection recompute for one DFU."""
     from common.utils import load_config as _load_config
-    from scripts.compute_inventory_projection import (
+    from scripts.inventory.compute_inventory_projection import (
         compute_dfu_projection,
         refresh_summary_view,
     )

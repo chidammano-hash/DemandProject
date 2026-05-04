@@ -1,7 +1,7 @@
 """Unit tests for scripts/compute_blended_forecast.py — F3.4."""
 
 import pytest
-from scripts.compute_blended_forecast import (
+from scripts.forecasting.compute_blended_forecast import (
     compute_alpha,
     compute_velocity_signal,
     monthly_to_weekly,

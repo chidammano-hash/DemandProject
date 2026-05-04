@@ -26,7 +26,7 @@ if str(ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 
 def test_periodic_rop_adds_half_review_period():
-    from scripts.compute_safety_stock import compute_reorder_point_periodic
+    from scripts.inventory.compute_safety_stock import compute_reorder_point_periodic
 
     # D_avg=10, LT=14, R=7  →  ROP = 10 * (14 + 3.5) + SS = 175 + SS
     rop = compute_reorder_point_periodic(
@@ -40,7 +40,7 @@ def test_periodic_rop_adds_half_review_period():
 
 def test_periodic_rop_zero_review_period_equals_continuous():
     """R=0 degenerates to LT-only protection (continuous ROP)."""
-    from scripts.compute_safety_stock import (
+    from scripts.inventory.compute_safety_stock import (
         compute_reorder_point,
         compute_reorder_point_periodic,
     )
@@ -58,7 +58,7 @@ def test_periodic_rop_zero_review_period_equals_continuous():
 # ---------------------------------------------------------------------------
 
 def test_ss_combined_with_yield_variance_adds_component():
-    from scripts.compute_safety_stock import compute_ss_combined
+    from scripts.inventory.compute_safety_stock import compute_ss_combined
 
     # z=1.64, sigma_d=2, LT=14, d_avg=10, lt_std=2
     base = compute_ss_combined(
@@ -77,7 +77,7 @@ def test_ss_combined_with_yield_variance_adds_component():
 
 
 def test_ss_components_returns_ss_yield_only():
-    from scripts.compute_safety_stock import compute_ss_components
+    from scripts.inventory.compute_safety_stock import compute_ss_components
 
     result = compute_ss_components(
         z=1.64,
@@ -119,7 +119,7 @@ def _mk_candidate(**kw):
 
 
 def test_max_service_solver_prefers_largest_shortage():
-    from scripts.compute_rebalancing import max_service_solver
+    from scripts.inventory.compute_rebalancing import max_service_solver
 
     c1 = _mk_candidate(item_id="X1", dest_shortage_qty=10, dest_ss_target=100)
     c2 = _mk_candidate(item_id="X2", dest_shortage_qty=90, dest_ss_target=100,
@@ -129,7 +129,7 @@ def test_max_service_solver_prefers_largest_shortage():
 
 
 def test_equalize_dos_skips_when_all_within_tolerance():
-    from scripts.compute_rebalancing import equalize_dos_solver
+    from scripts.inventory.compute_rebalancing import equalize_dos_solver
 
     # Both locs at DOS=10, mean=10, tolerance=0.10 → no move should happen
     state = {
@@ -144,7 +144,7 @@ def test_equalize_dos_skips_when_all_within_tolerance():
 
 
 def test_equalize_dos_selects_surplus_to_deficit():
-    from scripts.compute_rebalancing import equalize_dos_solver
+    from scripts.inventory.compute_rebalancing import equalize_dos_solver
 
     state = {
         ("X1", "A"): {"item_id": "X1", "loc": "A", "dos": 30, "daily_sales": 10},

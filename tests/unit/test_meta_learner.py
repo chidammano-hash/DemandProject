@@ -69,7 +69,7 @@ MONTHS_12 = [date(2024, m, 1) for m in range(1, 13)]
 
 class TestBuildTrainingData:
     def test_output_shape(self):
-        from scripts.train_meta_learner import build_training_data
+        from scripts.ml.train_meta_learner import build_training_data
 
         df = _make_monthly_errors(
             models=["A", "B"],
@@ -94,7 +94,7 @@ class TestBuildTrainingData:
 
     def test_ceiling_labels_correct(self):
         """Verify ceiling labels: model with lowest error wins each month."""
-        from scripts.train_meta_learner import build_training_data
+        from scripts.ml.train_meta_learner import build_training_data
 
         df = _make_monthly_errors(
             models=["A", "B"],
@@ -120,7 +120,7 @@ class TestBuildTrainingData:
         Specifically: roll_wape columns should use shift(1) before rolling,
         so the first few rows should have NaN roll_wape values.
         """
-        from scripts.train_meta_learner import build_training_data
+        from scripts.ml.train_meta_learner import build_training_data
 
         df = _make_monthly_errors(
             models=["A", "B"],
@@ -144,7 +144,7 @@ class TestBuildTrainingData:
 
     def test_min_prior_months_filtering(self):
         """Increasing min_prior_months should reduce output rows."""
-        from scripts.train_meta_learner import build_training_data
+        from scripts.ml.train_meta_learner import build_training_data
 
         df = _make_monthly_errors(
             models=["A", "B"],
@@ -169,7 +169,7 @@ class TestBuildTrainingData:
 
     def test_feature_columns_include_expected(self):
         """Check that expected feature columns are present."""
-        from scripts.train_meta_learner import build_training_data
+        from scripts.ml.train_meta_learner import build_training_data
 
         df = _make_monthly_errors(
             models=["A", "B"],
@@ -205,7 +205,7 @@ class TestBuildTrainingData:
 class TestTemporalSplit:
     def test_no_future_data_in_train(self):
         """Verify that training data does not contain future months."""
-        from scripts.train_meta_learner import build_training_data
+        from scripts.ml.train_meta_learner import build_training_data
 
         df = _make_monthly_errors(
             models=["A", "B"],
@@ -246,7 +246,7 @@ class TestTemporalSplit:
 class TestTrainPredict:
     def test_classifier_trains_and_predicts(self):
         """Verify train_classifier produces a working model."""
-        from scripts.train_meta_learner import build_training_data, train_classifier
+        from scripts.ml.train_meta_learner import build_training_data, train_classifier
 
         df = _make_monthly_errors(
             models=["A", "B"],

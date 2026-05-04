@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import date
-from scripts.run_sop_cycle import (
+from scripts.ops.run_sop_cycle import (
     next_stage,
     is_terminal_stage,
     compute_cycle_dates,

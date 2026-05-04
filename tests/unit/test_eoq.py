@@ -3,7 +3,7 @@
 import math
 import pytest
 
-from scripts.compute_eoq import (
+from scripts.inventory.compute_eoq import (
     compute_eoq,
     compute_effective_eoq,
     compute_eoq_metrics,

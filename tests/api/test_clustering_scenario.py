@@ -72,8 +72,8 @@ async def test_clustering_scenario_post(mock_pool):
     mock_mgr.start_job_in_background = MagicMock()
     with patch("api.core._get_pool", return_value=pool), \
          patch("common.job_registry.JobManager", return_value=mock_mgr), \
-         patch("scripts.run_clustering_scenario.run_scenario"), \
-         patch("scripts.run_clustering_scenario.generate_scenario_id", return_value="sc_test_123"):
+         patch("scripts.ml.run_clustering_scenario.run_scenario"), \
+         patch("scripts.ml.run_clustering_scenario.generate_scenario_id", return_value="sc_test_123"):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -96,7 +96,7 @@ async def test_clustering_scenario_get_not_found(mock_pool):
     """Verify GET /clustering/scenario/<id> returns 404 for unknown ID."""
     pool, _, _ = mock_pool
     with patch("api.core._get_pool", return_value=pool), \
-         patch("scripts.run_clustering_scenario.get_scenario_result", return_value=None):
+         patch("scripts.ml.run_clustering_scenario.get_scenario_result", return_value=None):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -110,7 +110,7 @@ async def test_clustering_scenario_get_found(mock_pool):
     pool, _, _ = mock_pool
     saved = {"scenario_id": "sc_20250101_120000_ab34", "status": "completed", "result": {"optimal_k": 5}}
     with patch("api.core._get_pool", return_value=pool), \
-         patch("scripts.run_clustering_scenario.get_scenario_result", return_value=saved):
+         patch("scripts.ml.run_clustering_scenario.get_scenario_result", return_value=saved):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -125,7 +125,7 @@ async def test_promote_scenario_not_found(mock_pool):
     """Verify promote returns 404 for unknown scenario."""
     pool, _, _ = mock_pool
     with patch("api.core._get_pool", return_value=pool), \
-         patch("scripts.run_clustering_scenario.promote_scenario", side_effect=FileNotFoundError("not found")):
+         patch("scripts.ml.run_clustering_scenario.promote_scenario", side_effect=FileNotFoundError("not found")):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -139,7 +139,7 @@ async def test_promote_scenario_success(mock_pool):
     pool, _, _ = mock_pool
     result = {"status": "promoted", "scenario_id": "sc_20250101_120000_cd56", "dfus_updated": 100, "cluster_distribution": {"a": 50, "b": 50}}
     with patch("api.core._get_pool", return_value=pool), \
-         patch("scripts.run_clustering_scenario.promote_scenario", return_value=result):
+         patch("scripts.ml.run_clustering_scenario.promote_scenario", return_value=result):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -210,7 +210,7 @@ async def test_scenario_status_running(mock_pool):
     mock_manager.list_jobs.return_value = ([running_job], 1)
     with patch("api.core._get_pool", return_value=pool), \
          patch("api.routers.clusters._get_job_manager", return_value=mock_manager), \
-         patch("scripts.run_clustering_scenario.get_scenario_result", return_value=None):
+         patch("scripts.ml.run_clustering_scenario.get_scenario_result", return_value=None):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -232,7 +232,7 @@ async def test_scenario_status_completed(mock_pool):
         "result": {"optimal_k": 5},
     }
     with patch("api.core._get_pool", return_value=pool), \
-         patch("scripts.run_clustering_scenario.get_scenario_result", return_value=completed):
+         patch("scripts.ml.run_clustering_scenario.get_scenario_result", return_value=completed):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -248,7 +248,7 @@ async def test_scenario_status_not_found(mock_pool):
     """Verify status returns 404 for unknown scenario."""
     pool, _, _ = mock_pool
     with patch("api.core._get_pool", return_value=pool), \
-         patch("scripts.run_clustering_scenario.get_scenario_result", return_value=None), \
+         patch("scripts.ml.run_clustering_scenario.get_scenario_result", return_value=None), \
          patch("api.routers.clusters._find_job_by_scenario_id", return_value=None):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -266,7 +266,7 @@ async def test_scenario_queued_when_busy(mock_pool):
     mock_mgr.get_status.return_value = {"status": "queued"}
     with patch("api.core._get_pool", return_value=pool), \
          patch("common.job_registry.JobManager", return_value=mock_mgr), \
-         patch("scripts.run_clustering_scenario.generate_scenario_id", return_value="sc_queued_123"):
+         patch("scripts.ml.run_clustering_scenario.generate_scenario_id", return_value="sc_queued_123"):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

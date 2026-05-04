@@ -613,7 +613,7 @@ def create_experiment(body: CreateExperimentBody):
     then submits a cluster_scenario job via JobManager.
     Returns 202 with experiment_id, scenario_id, status, job_id.
     """
-    from scripts.run_clustering_scenario import generate_scenario_id
+    from scripts.ml.run_clustering_scenario import generate_scenario_id
 
     scenario_id = generate_scenario_id()
 
@@ -843,7 +843,7 @@ def promote_experiment(experiment_id: int):
 
     # Promote via the existing clustering scenario promote logic
     try:
-        from scripts.run_clustering_scenario import promote_scenario
+        from scripts.ml.run_clustering_scenario import promote_scenario
         result = promote_scenario(scenario_id)
     except FileNotFoundError:
         raise HTTPException(

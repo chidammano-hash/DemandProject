@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from scripts.run_ss_simulation import (
+from scripts.inventory.run_ss_simulation import (
     compute_service_level_curve,
     empirical_quantile_ss,
     find_recommended_ss,

@@ -210,7 +210,7 @@ async def test_dq_fix_preview_200():
          "affected_rows": 100, "recommendation": None, "status": "pending"},
     ]
     with patch("api.core._get_pool", return_value=pool), \
-         patch.dict("sys.modules", {"scripts.fix_dq_issues": MagicMock(
+         patch.dict("sys.modules", {"scripts.ops.fix_dq_issues": MagicMock(
              preview_all_fixes=MagicMock(return_value=mock_items),
              FIX_REGISTRY={"range": None, "completeness": None, "orphans": None},
          )}):
@@ -232,7 +232,7 @@ async def test_dq_fix_preview_invalid_type():
     """Preview with unknown fix_type returns error."""
     pool, conn, cursor = _make_pool()
     with patch("api.core._get_pool", return_value=pool), \
-         patch.dict("sys.modules", {"scripts.fix_dq_issues": MagicMock(
+         patch.dict("sys.modules", {"scripts.ops.fix_dq_issues": MagicMock(
              FIX_REGISTRY={"range": None, "completeness": None, "orphans": None},
          )}):
         from api.main import app
@@ -248,7 +248,7 @@ async def test_dq_fix_preview_empty():
     """Preview with no fixable issues returns empty list."""
     pool, conn, cursor = _make_pool()
     with patch("api.core._get_pool", return_value=pool), \
-         patch.dict("sys.modules", {"scripts.fix_dq_issues": MagicMock(
+         patch.dict("sys.modules", {"scripts.ops.fix_dq_issues": MagicMock(
              preview_all_fixes=MagicMock(return_value=[]),
              FIX_REGISTRY={"range": None},
          )}):
@@ -284,7 +284,7 @@ async def test_dq_fix_apply_200():
         "total_rows_fixed": 500,
     }
     with patch("api.core._get_pool", return_value=pool), \
-         patch.dict("sys.modules", {"scripts.fix_dq_issues": MagicMock(
+         patch.dict("sys.modules", {"scripts.ops.fix_dq_issues": MagicMock(
              apply_selected_fixes=MagicMock(return_value=mock_result),
          )}):
         from api.main import app

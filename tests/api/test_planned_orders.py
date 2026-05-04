@@ -261,7 +261,7 @@ async def test_generate_planned_orders_async_202():
     pool, conn, cursor = _make_pool()
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("scripts.generate_planned_orders.get_active_dfus_for_recommendation", return_value=[]), \
+         patch("scripts.inventory.generate_planned_orders.get_active_dfus_for_recommendation", return_value=[]), \
          patch("threading.Thread") as mock_thread:
         mock_thread.return_value.start = lambda: None
         from api.main import app

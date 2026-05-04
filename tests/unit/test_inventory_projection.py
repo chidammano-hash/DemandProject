@@ -43,7 +43,7 @@ def _run(
     horizon: int = 30,
     scenario: str = "no_order",
 ):
-    from scripts.compute_inventory_projection import run_projection_scenario
+    from scripts.inventory.compute_inventory_projection import run_projection_scenario
     start = _today()
     demand = _make_demand(daily_rate, horizon)
     rcpts = receipts or {}
@@ -252,7 +252,7 @@ class TestWriteAllProjectionRowsBatching:
 
     def test_small_batch_single_executemany(self):
         """Rows fewer than 50K should result in a single executemany call for inserts."""
-        from scripts.compute_inventory_projection import write_all_projection_rows
+        from scripts.inventory.compute_inventory_projection import write_all_projection_rows
 
         mock_conn = MagicMock()
         mock_cur = MagicMock()
@@ -269,7 +269,7 @@ class TestWriteAllProjectionRowsBatching:
 
     def test_large_batch_multiple_executemany(self):
         """Rows exceeding 50K should be split into multiple executemany calls."""
-        from scripts.compute_inventory_projection import write_all_projection_rows
+        from scripts.inventory.compute_inventory_projection import write_all_projection_rows
 
         mock_conn = MagicMock()
         mock_cur = MagicMock()
@@ -286,7 +286,7 @@ class TestWriteAllProjectionRowsBatching:
 
     def test_dry_run_no_writes(self):
         """Dry run should not call executemany at all."""
-        from scripts.compute_inventory_projection import write_all_projection_rows
+        from scripts.inventory.compute_inventory_projection import write_all_projection_rows
 
         mock_conn = MagicMock()
         rows = self._make_rows(10)
@@ -297,7 +297,7 @@ class TestWriteAllProjectionRowsBatching:
 
     def test_empty_rows_no_writes(self):
         """Empty row list should not call executemany."""
-        from scripts.compute_inventory_projection import write_all_projection_rows
+        from scripts.inventory.compute_inventory_projection import write_all_projection_rows
 
         mock_conn = MagicMock()
         written = write_all_projection_rows([], dry_run=False, conn=mock_conn)

@@ -79,7 +79,7 @@ class TestComputeNaiveFallback:
 
     def test_fallback_uses_per_month_historical_mean(self):
         """Predictions should use the mean demand for the matching calendar month."""
-        from scripts.run_backtest import _compute_naive_fallback
+        from scripts.ml.run_backtest import _compute_naive_fallback
 
         # Training data with seasonal pattern: Jan=110, Feb=120, Mar=130, ...
         train = _make_train_df("small_cluster", 12, seasonal=True)
@@ -98,7 +98,7 @@ class TestComputeNaiveFallback:
 
     def test_fallback_uses_overall_mean_for_missing_months(self):
         """If prediction month has no training history, use the overall mean."""
-        from scripts.run_backtest import _compute_naive_fallback
+        from scripts.ml.run_backtest import _compute_naive_fallback
 
         # Training data only for Jan, Feb, Mar (months 1-3)
         train = _make_train_df("small_cluster", 3, seasonal=True)
@@ -112,7 +112,7 @@ class TestComputeNaiveFallback:
 
     def test_fallback_zero_demand_history_returns_zero(self):
         """If all training demand is zero, fallback should legitimately be zero."""
-        from scripts.run_backtest import _compute_naive_fallback
+        from scripts.ml.run_backtest import _compute_naive_fallback
 
         train = _make_train_df("small_cluster", 12, base_qty=0.0)
         pred = _make_pred_df("small_cluster", 3)
@@ -123,7 +123,7 @@ class TestComputeNaiveFallback:
 
     def test_fallback_empty_train_returns_zero(self):
         """If training data is empty, fallback should be zero."""
-        from scripts.run_backtest import _compute_naive_fallback
+        from scripts.ml.run_backtest import _compute_naive_fallback
 
         train = _make_train_df("small_cluster", 0)
         pred = _make_pred_df("small_cluster", 3)
@@ -134,7 +134,7 @@ class TestComputeNaiveFallback:
 
     def test_fallback_negative_clipped_to_zero(self):
         """Negative historical means should be clipped to zero."""
-        from scripts.run_backtest import _compute_naive_fallback
+        from scripts.ml.run_backtest import _compute_naive_fallback
 
         train = _make_train_df("small_cluster", 3, base_qty=-50.0)
         pred = _make_pred_df("small_cluster", 3)
@@ -145,7 +145,7 @@ class TestComputeNaiveFallback:
 
     def test_fallback_has_correct_columns(self):
         """Result DataFrame must have exactly the expected columns."""
-        from scripts.run_backtest import _compute_naive_fallback
+        from scripts.ml.run_backtest import _compute_naive_fallback
 
         train = _make_train_df("small_cluster", 10, seasonal=True)
         pred = _make_pred_df("small_cluster", 5)
@@ -174,7 +174,7 @@ class TestTrainSingleClusterFallback:
 
     def test_small_cluster_returns_fallback_marker(self):
         """Cluster with fewer than MIN_CLUSTER_ROWS should return 'fallback_needed'."""
-        from scripts.run_backtest import _train_single_cluster
+        from scripts.ml.run_backtest import _train_single_cluster
 
         small_n = MIN_CLUSTER_ROWS - 1  # 49 rows
         train = _make_train_df("tiny", small_n)
@@ -197,7 +197,7 @@ class TestTrainSingleClusterFallback:
 
     def test_cluster_at_min_rows_is_not_fallback(self):
         """Cluster with exactly MIN_CLUSTER_ROWS should train normally (not fallback)."""
-        from scripts.run_backtest import _train_single_cluster
+        from scripts.ml.run_backtest import _train_single_cluster
 
         n = MIN_CLUSTER_ROWS  # 50 rows
         train = _make_train_df("normal", n, base_qty=100.0, seasonal=True)
@@ -212,13 +212,13 @@ class TestTrainSingleClusterFallback:
         ]
         mock_model_class = MagicMock(return_value=mock_model_instance)
 
-        with patch("scripts.run_backtest.fit_model"):
-            with patch("scripts.run_backtest.get_best_iteration", return_value=100):
-                with patch("scripts.run_backtest.compute_cluster_demand_stats", return_value={
+        with patch("scripts.ml.run_backtest.fit_model"):
+            with patch("scripts.ml.run_backtest.get_best_iteration", return_value=100):
+                with patch("scripts.ml.run_backtest.compute_cluster_demand_stats", return_value={
                     "mean_demand": 100.0, "cv_demand": 0.1,
                     "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
                 }):
-                    with patch("scripts.run_backtest.resolve_cluster_params", return_value=({}, "default")):
+                    with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({}, "default")):
                         cl, result, model, meta = _train_single_cluster(
                             "normal", 1, 1,
                             train, pred,
@@ -237,7 +237,7 @@ class TestTrainSingleClusterFallback:
 
     def test_empty_pred_returns_none(self):
         """Cluster with no prediction rows should return None result."""
-        from scripts.run_backtest import _train_single_cluster
+        from scripts.ml.run_backtest import _train_single_cluster
 
         train = _make_train_df("empty_pred", 10)
         pred = _make_pred_df("empty_pred", 0)
@@ -280,7 +280,7 @@ class TestPerClusterWithFallback:
 
     def test_small_cluster_uses_naive_fallback_not_zero(self):
         """Small clusters should get naive fallback, not basefcst_pref=0."""
-        from scripts.run_backtest import train_and_predict_per_cluster
+        from scripts.ml.run_backtest import train_and_predict_per_cluster
 
         train_df, pred_df = self._make_mixed_data()
 
@@ -296,13 +296,13 @@ class TestPerClusterWithFallback:
             "fit_extras_per_cluster": lambda p, i: {},
         }
 
-        with patch("scripts.run_backtest.fit_model"):
-            with patch("scripts.run_backtest.get_best_iteration", return_value=100):
-                with patch("scripts.run_backtest.compute_cluster_demand_stats", return_value={
+        with patch("scripts.ml.run_backtest.fit_model"):
+            with patch("scripts.ml.run_backtest.get_best_iteration", return_value=100):
+                with patch("scripts.ml.run_backtest.compute_cluster_demand_stats", return_value={
                     "mean_demand": 200.0, "cv_demand": 0.1,
                     "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
                 }):
-                    with patch("scripts.run_backtest.resolve_cluster_params", return_value=({}, "default")):
+                    with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({}, "default")):
                         result, models, meta = train_and_predict_per_cluster(
                             train_df, pred_df,
                             ["month"], [], {"n_estimators": 100},
@@ -329,7 +329,7 @@ class TestPerClusterWithFallback:
 
     def test_large_cluster_unaffected_by_fallback(self):
         """Clusters at or above MIN_CLUSTER_ROWS should train normally."""
-        from scripts.run_backtest import train_and_predict_per_cluster
+        from scripts.ml.run_backtest import train_and_predict_per_cluster
 
         train_df, pred_df = self._make_mixed_data()
 
@@ -344,13 +344,13 @@ class TestPerClusterWithFallback:
             "fit_extras_per_cluster": lambda p, i: {},
         }
 
-        with patch("scripts.run_backtest.fit_model"):
-            with patch("scripts.run_backtest.get_best_iteration", return_value=100):
-                with patch("scripts.run_backtest.compute_cluster_demand_stats", return_value={
+        with patch("scripts.ml.run_backtest.fit_model"):
+            with patch("scripts.ml.run_backtest.get_best_iteration", return_value=100):
+                with patch("scripts.ml.run_backtest.compute_cluster_demand_stats", return_value={
                     "mean_demand": 200.0, "cv_demand": 0.1,
                     "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
                 }):
-                    with patch("scripts.run_backtest.resolve_cluster_params", return_value=({}, "default")):
+                    with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({}, "default")):
                         result, models, meta = train_and_predict_per_cluster(
                             train_df, pred_df,
                             ["month"], [], {"n_estimators": 100},
@@ -367,7 +367,7 @@ class TestPerClusterWithFallback:
 
     def test_all_clusters_above_min_no_fallback(self):
         """When all clusters are large enough, no fallback is triggered."""
-        from scripts.run_backtest import train_and_predict_per_cluster
+        from scripts.ml.run_backtest import train_and_predict_per_cluster
 
         train_a = _make_train_df("cluster_a", 60, base_qty=100.0, seasonal=True)
         train_b = _make_train_df("cluster_b", 55, base_qty=200.0, seasonal=True)
@@ -388,13 +388,13 @@ class TestPerClusterWithFallback:
             "fit_extras_per_cluster": lambda p, i: {},
         }
 
-        with patch("scripts.run_backtest.fit_model"):
-            with patch("scripts.run_backtest.get_best_iteration", return_value=100):
-                with patch("scripts.run_backtest.compute_cluster_demand_stats", return_value={
+        with patch("scripts.ml.run_backtest.fit_model"):
+            with patch("scripts.ml.run_backtest.get_best_iteration", return_value=100):
+                with patch("scripts.ml.run_backtest.compute_cluster_demand_stats", return_value={
                     "mean_demand": 150.0, "cv_demand": 0.1,
                     "zero_demand_pct": 0.0, "seasonal_amplitude": 0.0,
                 }):
-                    with patch("scripts.run_backtest.resolve_cluster_params", return_value=({}, "default")):
+                    with patch("scripts.ml.run_backtest.resolve_cluster_params", return_value=({}, "default")):
                         result, models, meta = train_and_predict_per_cluster(
                             train_df, pred_df,
                             ["month"], [], {"n_estimators": 100},

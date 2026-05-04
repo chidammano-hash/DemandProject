@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from scripts.run_clustering_scenario import (
+from scripts.ml.run_clustering_scenario import (
     generate_scenario_id,
     get_scenario_result,
     SCENARIO_BASE,
@@ -55,9 +55,9 @@ class TestGetScenarioResult:
 class TestRunScenarioErrorHandling:
     def test_returns_failed_on_exception(self):
         """run_scenario should catch exceptions and return failed status."""
-        from scripts.run_clustering_scenario import run_scenario
+        from scripts.ml.run_clustering_scenario import run_scenario
 
-        with patch("scripts.run_clustering_scenario._run_full_pipeline", side_effect=ValueError("test error")), \
+        with patch("scripts.ml.run_clustering_scenario._run_full_pipeline", side_effect=ValueError("test error")), \
              patch("common.ml.clustering.scenario.SCENARIO_BASE", Path(tempfile.mkdtemp())):
             result = run_scenario(
                 feature_params={"time_window_months": 24, "min_months_history": 1},
@@ -69,11 +69,11 @@ class TestRunScenarioErrorHandling:
 
     def test_merges_default_params(self):
         """run_scenario should merge user params with config-driven defaults."""
-        from scripts.run_clustering_scenario import run_scenario
+        from scripts.ml.run_clustering_scenario import run_scenario
 
-        with patch("scripts.run_clustering_scenario._run_full_pipeline", side_effect=ValueError("skip")), \
+        with patch("scripts.ml.run_clustering_scenario._run_full_pipeline", side_effect=ValueError("skip")), \
              patch("common.ml.clustering.scenario.SCENARIO_BASE", Path(tempfile.mkdtemp())), \
-             patch("scripts.run_clustering_scenario._load_config_defaults", return_value={
+             patch("scripts.ml.run_clustering_scenario._load_config_defaults", return_value={
                  "time_window_months": 36, "min_months_history": 12,
                  "k_range": [9, 18], "min_cluster_size_pct": 2.0,
                  "use_pca": False, "pca_components": None,
@@ -99,9 +99,9 @@ class TestRunScenarioErrorHandling:
 class TestRelabelOnly:
     def test_relabel_requires_previous_scenario(self):
         """relabel_only should fail gracefully when previous scenario doesn't exist."""
-        from scripts.run_clustering_scenario import run_scenario
+        from scripts.ml.run_clustering_scenario import run_scenario
 
-        with patch("scripts.run_clustering_scenario.SCENARIO_BASE", Path(tempfile.mkdtemp())):
+        with patch("scripts.ml.run_clustering_scenario.SCENARIO_BASE", Path(tempfile.mkdtemp())):
             result = run_scenario(
                 label_params={"volume_high": 0.8},
                 relabel_only=True,

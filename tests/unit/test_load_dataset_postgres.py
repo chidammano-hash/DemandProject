@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from scripts.load_dataset_postgres import (
+from scripts.etl.load_dataset_postgres import (
     _get_all_indexes,
     _get_unique_constraints,
     _drop_indexes,
@@ -271,11 +271,11 @@ class TestPartitionHelpers:
 # ---------- TestLoadDomain ----------
 
 class TestLoadDomain:
-    @patch("scripts.load_dataset_postgres.complete_batch")
-    @patch("scripts.load_dataset_postgres.create_batch", return_value=1)
-    @patch("scripts.load_dataset_postgres.file_hash", return_value="abc123")
-    @patch("scripts.load_dataset_postgres.get_db_params", return_value={"dbname": "test"})
-    @patch("scripts.load_dataset_postgres.psycopg")
+    @patch("scripts.etl.load_dataset_postgres.complete_batch")
+    @patch("scripts.etl.load_dataset_postgres.create_batch", return_value=1)
+    @patch("scripts.etl.load_dataset_postgres.file_hash", return_value="abc123")
+    @patch("scripts.etl.load_dataset_postgres.get_db_params", return_value={"dbname": "test"})
+    @patch("scripts.etl.load_dataset_postgres.psycopg")
     def test_load_returns_summary(self, mock_pg, mock_db, mock_hash, mock_batch, mock_complete, tmp_path):
         csv_file = tmp_path / "clean_sales.csv"
         csv_file.write_text("col1,col2\na,b\n")
@@ -321,8 +321,8 @@ class TestLoadDomain:
         assert any("CREATE TEMP TABLE" in s for s in executed_sqls)
         assert any("TRUNCATE" in s for s in executed_sqls)
 
-    @patch("scripts.load_dataset_postgres.get_db_params", return_value={"dbname": "test"})
-    @patch("scripts.load_dataset_postgres.psycopg")
+    @patch("scripts.etl.load_dataset_postgres.get_db_params", return_value={"dbname": "test"})
+    @patch("scripts.etl.load_dataset_postgres.psycopg")
     def test_load_skips_missing_csv(self, mock_pg, mock_db, tmp_path):
         spec = MagicMock()
         spec.name = "sales"

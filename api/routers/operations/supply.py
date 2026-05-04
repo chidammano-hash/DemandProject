@@ -291,7 +291,7 @@ async def upload_open_pos_csv(
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-    from scripts.load_open_pos import load_pos, load_config, reconcile_received_qty
+    from scripts.etl.load_open_pos import load_pos, load_config, reconcile_received_qty
 
     content = await file.read()
     config = load_config()
@@ -400,7 +400,7 @@ async def generate_planned_orders_async(
 
     def _run():
         try:
-            from scripts.generate_planned_orders import (
+            from scripts.inventory.generate_planned_orders import (
                 get_dfu_inputs,
                 get_active_dfus_for_recommendation,
                 compute_net_requirements,
@@ -804,7 +804,7 @@ async def create_po_from_exception(
     """Convert a replenishment exception to a proposed purchase order."""
     await require_api_key(x_api_key=request.headers.get("x-api-key"))
 
-    from scripts.release_planned_orders import (
+    from scripts.inventory.release_planned_orders import (
         create_po_from_exception as _create_po,
     )
 

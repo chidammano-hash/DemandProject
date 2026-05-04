@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import scripts.release_planned_orders as rpo
+import scripts.inventory.release_planned_orders as rpo
 
 
 # ---------------------------------------------------------------------------

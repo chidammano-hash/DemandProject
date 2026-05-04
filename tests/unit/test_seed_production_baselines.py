@@ -136,7 +136,7 @@ def clustering_artifacts(tmp_path: Path) -> Path:
 
 def _import_module():
     """Import the seeding module."""
-    import scripts.seed_production_baselines as mod
+    import scripts.etl.seed_production_baselines as mod
     return mod
 
 
@@ -426,7 +426,7 @@ def test_insert_timeframe_rows_computes_metrics(backtest_artifacts):
 
 def test_insert_timeframe_rows_no_timeframes():
     """Empty timeframes list should return 0."""
-    import scripts.seed_production_baselines as mod
+    import scripts.etl.seed_production_baselines as mod
     cursor = MagicMock()
     count = mod._insert_timeframe_rows(cursor, 1, {"timeframes": []}, Path("/nonexistent"))
     assert count == 0

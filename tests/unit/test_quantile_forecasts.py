@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-from scripts.generate_quantile_forecasts import (
+from scripts.forecasting.generate_quantile_forecasts import (
     compute_sigma_forecast,
     compute_sigma_combined,
     get_weekly_weights,

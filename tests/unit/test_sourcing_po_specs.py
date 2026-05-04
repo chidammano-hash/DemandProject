@@ -77,7 +77,7 @@ class TestNormalizeFunctions:
     """Test normalize helper functions used by sourcing/PO transforms."""
 
     def test_to_iso_date_yyyymmdd(self):
-        from scripts.normalize_dataset_csv import to_iso_date_yyyymmdd
+        from scripts.etl.normalize_dataset_csv import to_iso_date_yyyymmdd
         assert to_iso_date_yyyymmdd("20230830") == "2023-08-30"
         assert to_iso_date_yyyymmdd("20220308") == "2022-03-08"
         assert to_iso_date_yyyymmdd("") == ""
@@ -85,7 +85,7 @@ class TestNormalizeFunctions:
         assert to_iso_date_yyyymmdd("invalid") == ""
 
     def test_dedupe_headers(self):
-        from scripts.normalize_dataset_csv import dedupe_headers
+        from scripts.etl.normalize_dataset_csv import dedupe_headers
         headers = ["col_a", "col_b", "col_a"]
         result = dedupe_headers(headers)
         assert result == ["col_a", "col_b", "col_a_2"]

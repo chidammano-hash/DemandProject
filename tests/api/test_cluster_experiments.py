@@ -158,7 +158,7 @@ async def test_create_experiment():
             mock_gen,
             create=True,
         ),
-        patch("scripts.run_clustering_scenario.generate_scenario_id", mock_gen),
+        patch("scripts.ml.run_clustering_scenario.generate_scenario_id", mock_gen),
         patch("common.services.job_registry.JobManager", return_value=mock_mgr),
     ):
         from api.main import app
@@ -192,7 +192,7 @@ async def test_create_experiment_minimal():
 
     with (
         patch("api.core._get_pool", return_value=pool),
-        patch("scripts.run_clustering_scenario.generate_scenario_id", mock_gen),
+        patch("scripts.ml.run_clustering_scenario.generate_scenario_id", mock_gen),
         patch("common.services.job_registry.JobManager", return_value=mock_mgr),
     ):
         from api.main import app
@@ -375,7 +375,7 @@ async def test_promote_experiment():
 
     with (
         patch("api.core._get_pool", return_value=pool),
-        patch("scripts.run_clustering_scenario.promote_scenario", mock_promote),
+        patch("scripts.ml.run_clustering_scenario.promote_scenario", mock_promote),
     ):
         from api.main import app
         transport = ASGITransport(app=app)
@@ -432,7 +432,7 @@ async def test_promote_experiment_artifacts_missing():
 
     with (
         patch("api.core._get_pool", return_value=pool),
-        patch("scripts.run_clustering_scenario.promote_scenario", mock_promote),
+        patch("scripts.ml.run_clustering_scenario.promote_scenario", mock_promote),
     ):
         from api.main import app
         transport = ASGITransport(app=app)

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.populate_dq_checks import (
+from scripts.ops.populate_dq_checks import (
     _completeness_template,
     _domain_from_table,
     _range_template,
@@ -300,7 +300,7 @@ class TestUpsertChecks:
 
 class TestRun:
     @patch.dict("sys.modules", {"dotenv": MagicMock()})
-    @patch("scripts.populate_dq_checks.load_config")
+    @patch("scripts.ops.populate_dq_checks.load_config")
     def test_run_dry_run(self, mock_load_config):
         mock_load_config.return_value = MINIMAL_CONFIG
 
@@ -313,7 +313,7 @@ class TestRun:
             mock_connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
             mock_connect.return_value.__exit__ = MagicMock(return_value=False)
 
-            from scripts.populate_dq_checks import run
+            from scripts.ops.populate_dq_checks import run
             result = run(dry_run=True)
 
         assert result["dry_run"] is True
@@ -323,7 +323,7 @@ class TestRun:
         mock_cursor.execute.assert_not_called()
 
     @patch.dict("sys.modules", {"dotenv": MagicMock()})
-    @patch("scripts.populate_dq_checks.load_config")
+    @patch("scripts.ops.populate_dq_checks.load_config")
     def test_run_writes(self, mock_load_config):
         mock_load_config.return_value = MINIMAL_CONFIG
 
@@ -336,7 +336,7 @@ class TestRun:
             mock_connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
             mock_connect.return_value.__exit__ = MagicMock(return_value=False)
 
-            from scripts.populate_dq_checks import run
+            from scripts.ops.populate_dq_checks import run
             result = run(dry_run=False)
 
         assert result["dry_run"] is False

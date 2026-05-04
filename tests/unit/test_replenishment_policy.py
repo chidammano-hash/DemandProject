@@ -5,7 +5,7 @@ import os
 import pytest
 from unittest.mock import MagicMock, patch
 
-from scripts.assign_replenishment_policies import (
+from scripts.inventory.assign_replenishment_policies import (
     load_config,
     determine_policy_id,
     upsert_policies,

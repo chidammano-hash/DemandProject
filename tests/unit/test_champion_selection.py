@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from scripts.run_champion_selection import (
+from scripts.ml.run_champion_selection import (
     _compute_segment_accuracy,
     _load_cached_winners,
     generate_summary,
@@ -169,18 +169,18 @@ class TestLoadConfig:
     """Test config loading and validation via forecast_pipeline_config.yaml."""
 
     def test_load_config_missing_pipeline_config(self, tmp_path):
-        from scripts.run_champion_selection import load_config
+        from scripts.ml.run_champion_selection import load_config
         with patch(
-            "scripts.run_champion_selection._load_config_from_pipeline",
+            "scripts.ml.run_champion_selection._load_config_from_pipeline",
             return_value=None,
         ):
             with pytest.raises(FileNotFoundError):
                 load_config(tmp_path / "unused.yaml")
 
     def test_load_config_invalid_metric(self):
-        from scripts.run_champion_selection import load_config
+        from scripts.ml.run_champion_selection import load_config
         with patch(
-            "scripts.run_champion_selection._load_config_from_pipeline",
+            "scripts.ml.run_champion_selection._load_config_from_pipeline",
             return_value={
                 "metric": "bad_metric",
                 "models": ["a", "b"],
@@ -190,9 +190,9 @@ class TestLoadConfig:
                 load_config(Path("unused.yaml"))
 
     def test_load_config_too_few_models(self):
-        from scripts.run_champion_selection import load_config
+        from scripts.ml.run_champion_selection import load_config
         with patch(
-            "scripts.run_champion_selection._load_config_from_pipeline",
+            "scripts.ml.run_champion_selection._load_config_from_pipeline",
             return_value={
                 "metric": "wape",
                 "models": ["only_one"],
@@ -202,9 +202,9 @@ class TestLoadConfig:
                 load_config(Path("unused.yaml"))
 
     def test_load_config_valid(self):
-        from scripts.run_champion_selection import load_config
+        from scripts.ml.run_champion_selection import load_config
         with patch(
-            "scripts.run_champion_selection._load_config_from_pipeline",
+            "scripts.ml.run_champion_selection._load_config_from_pipeline",
             return_value={
                 "metric": "wape",
                 "lag": "execution",
@@ -219,9 +219,9 @@ class TestLoadConfig:
             assert cfg["champion_model_id"] == "champion"  # default
 
     def test_load_config_default_strategy(self):
-        from scripts.run_champion_selection import load_config
+        from scripts.ml.run_champion_selection import load_config
         with patch(
-            "scripts.run_champion_selection._load_config_from_pipeline",
+            "scripts.ml.run_champion_selection._load_config_from_pipeline",
             return_value={
                 "metric": "wape",
                 "models": ["a", "b"],
@@ -232,9 +232,9 @@ class TestLoadConfig:
             assert cfg["strategy_params"] == {}  # default
 
     def test_load_config_valid_strategy(self):
-        from scripts.run_champion_selection import load_config
+        from scripts.ml.run_champion_selection import load_config
         with patch(
-            "scripts.run_champion_selection._load_config_from_pipeline",
+            "scripts.ml.run_champion_selection._load_config_from_pipeline",
             return_value={
                 "metric": "wape",
                 "models": ["a", "b"],
@@ -247,9 +247,9 @@ class TestLoadConfig:
             assert cfg["strategy_params"]["window_months"] == 6
 
     def test_load_config_invalid_strategy(self):
-        from scripts.run_champion_selection import load_config
+        from scripts.ml.run_champion_selection import load_config
         with patch(
-            "scripts.run_champion_selection._load_config_from_pipeline",
+            "scripts.ml.run_champion_selection._load_config_from_pipeline",
             return_value={
                 "metric": "wape",
                 "models": ["a", "b"],
@@ -261,9 +261,9 @@ class TestLoadConfig:
 
     def test_load_config_fallback_model_id_default(self):
         """fallback_model_id defaults to lgbm_cluster when not specified."""
-        from scripts.run_champion_selection import load_config
+        from scripts.ml.run_champion_selection import load_config
         with patch(
-            "scripts.run_champion_selection._load_config_from_pipeline",
+            "scripts.ml.run_champion_selection._load_config_from_pipeline",
             return_value={
                 "metric": "wape",
                 "models": ["lgbm_cluster", "catboost_cluster"],
@@ -274,9 +274,9 @@ class TestLoadConfig:
 
     def test_load_config_fallback_model_id_custom(self):
         """fallback_model_id can be overridden in the YAML."""
-        from scripts.run_champion_selection import load_config
+        from scripts.ml.run_champion_selection import load_config
         with patch(
-            "scripts.run_champion_selection._load_config_from_pipeline",
+            "scripts.ml.run_champion_selection._load_config_from_pipeline",
             return_value={
                 "metric": "wape",
                 "models": ["lgbm_cluster", "catboost_cluster"],

@@ -7,7 +7,7 @@ import pytest
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from scripts.detect_seasonality import compute_seasonality_metrics, compute_acf_lag12
+from scripts.ml.detect_seasonality import compute_seasonality_metrics, compute_acf_lag12
 
 
 @pytest.fixture

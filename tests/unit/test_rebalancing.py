@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from scripts.compute_rebalancing import (
+from scripts.inventory.compute_rebalancing import (
     assign_urgency,
     build_transfer_candidates,
     compute_financials,

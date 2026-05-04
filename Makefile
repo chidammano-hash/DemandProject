@@ -337,77 +337,77 @@ logs:
 	$(DC) logs -f
 
 normalize-item:
-	$(UV) python scripts/normalize_dataset_csv.py --dataset item
+	$(UV) python scripts/etl/normalize_dataset_csv.py --dataset item
 
 normalize-location:
-	$(UV) python scripts/normalize_dataset_csv.py --dataset location
+	$(UV) python scripts/etl/normalize_dataset_csv.py --dataset location
 
 normalize-customer:
-	$(UV) python scripts/normalize_dataset_csv.py --dataset customer
+	$(UV) python scripts/etl/normalize_dataset_csv.py --dataset customer
 
 normalize-time:
-	$(UV) python scripts/normalize_dataset_csv.py --dataset time
+	$(UV) python scripts/etl/normalize_dataset_csv.py --dataset time
 
 normalize-dfu:
-	$(UV) python scripts/normalize_dataset_csv.py --dataset sku
+	$(UV) python scripts/etl/normalize_dataset_csv.py --dataset sku
 
 normalize-sales:
-	$(UV) python scripts/normalize_dataset_csv.py --dataset sales
+	$(UV) python scripts/etl/normalize_dataset_csv.py --dataset sales
 
 normalize-forecast:
-	$(UV) python scripts/normalize_dataset_csv.py --dataset forecast
+	$(UV) python scripts/etl/normalize_dataset_csv.py --dataset forecast
 
 normalize-inventory:
-	$(UV) python scripts/normalize_inventory_csv.py
+	$(UV) python scripts/etl/normalize_inventory_csv.py
 
 normalize-sourcing:
-	$(UV) python scripts/normalize_dataset_csv.py --dataset sourcing
+	$(UV) python scripts/etl/normalize_dataset_csv.py --dataset sourcing
 
 normalize-purchase-order:
-	$(UV) python scripts/normalize_dataset_csv.py --dataset purchase_order
+	$(UV) python scripts/etl/normalize_dataset_csv.py --dataset purchase_order
 
 normalize-all: normalize-item normalize-location normalize-customer normalize-time normalize-dfu normalize-sales normalize-forecast normalize-inventory normalize-sourcing normalize-purchase-order normalize-customer-demand
 
 load-item:
-	$(UV) python scripts/load_dataset_postgres.py --dataset item
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset item
 
 load-location:
-	$(UV) python scripts/load_dataset_postgres.py --dataset location
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset location
 
 load-customer:
-	$(UV) python scripts/load_dataset_postgres.py --dataset customer
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset customer
 
 load-time:
-	$(UV) python scripts/load_dataset_postgres.py --dataset time
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset time
 
 load-dfu:
-	$(UV) python scripts/load_dataset_postgres.py --dataset sku
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset sku
 
 load-sales:
-	$(UV) python scripts/load_dataset_postgres.py --dataset sales
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset sales
 	$(MAKE) refresh-agg-sales
 
 load-forecast:
-	$(UV) python scripts/load_dataset_postgres.py --dataset forecast
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset forecast
 	$(MAKE) refresh-agg-forecast
 
 load-forecast-replace:
-	$(UV) python scripts/load_dataset_postgres.py --dataset forecast --replace
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset forecast --replace
 	$(MAKE) refresh-agg-forecast
 
 load-forecast-replace-no-archive:
-	$(UV) python scripts/load_dataset_postgres.py --dataset forecast --replace --skip-archive
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset forecast --replace --skip-archive
 	$(MAKE) refresh-agg-forecast
 
 load-inventory:
-	$(UV) python scripts/load_dataset_postgres.py --dataset inventory
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset inventory
 	$(MAKE) refresh-agg-inventory
 
 load-sourcing:
-	$(UV) python scripts/load_dataset_postgres.py --dataset sourcing
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset sourcing
 
 load-purchase-order:
-	$(UV) python scripts/load_dataset_postgres.py --dataset purchase_order
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset purchase_order
 
 normalize-customer-demand:  ## Normalize customer demand CSVs
 	$(UV) python scripts/etl/normalize_customer_demand_csv.py
@@ -421,16 +421,16 @@ load-customer-demand-month:  ## Load single month: make load-customer-demand-mon
 pipeline-customer-demand: normalize-customer-demand load-customer-demand  ## Full customer demand pipeline
 
 load-all:
-	$(UV) python scripts/load_dataset_postgres.py --dataset item
-	$(UV) python scripts/load_dataset_postgres.py --dataset location
-	$(UV) python scripts/load_dataset_postgres.py --dataset customer
-	$(UV) python scripts/load_dataset_postgres.py --dataset time
-	$(UV) python scripts/load_dataset_postgres.py --dataset sku
-	$(UV) python scripts/load_dataset_postgres.py --dataset sales
-	$(UV) python scripts/load_dataset_postgres.py --dataset forecast
-	$(UV) python scripts/load_dataset_postgres.py --dataset inventory
-	$(UV) python scripts/load_dataset_postgres.py --dataset sourcing
-	$(UV) python scripts/load_dataset_postgres.py --dataset purchase_order
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset item
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset location
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset customer
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset time
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset sku
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset sales
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset forecast
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset inventory
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset sourcing
+	$(UV) python scripts/etl/load_dataset_postgres.py --dataset purchase_order
 	$(UV) python scripts/etl/load_customer_demand_postgres.py --replace
 	$(MAKE) refresh-agg
 
@@ -540,7 +540,7 @@ lt-profile-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/023_create_lead_time_profile.sql').read()); conn.close(); print('Lead time profile DDL applied')"
 
 lt-profile-compute:
-	$(UV) python scripts/compute_lead_time_variability.py
+	$(UV) python scripts/inventory/compute_lead_time_variability.py
 
 lt-profile-all: lt-profile-schema lt-profile-compute
 
@@ -551,7 +551,7 @@ eoq-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/024_create_eoq_targets.sql').read()); conn.close(); print('EOQ targets DDL applied')"
 
 eoq-compute:
-	$(UV) python scripts/compute_eoq.py
+	$(UV) python scripts/inventory/compute_eoq.py
 
 eoq-all: eoq-schema eoq-compute
 
@@ -562,7 +562,7 @@ policy-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/025_create_replenishment_policy.sql').read()); conn.close(); print('Replenishment policy DDL applied')"
 
 policy-assign:
-	$(UV) python scripts/assign_replenishment_policies.py --config config/replenishment_policy_config.yaml
+	$(UV) python scripts/inventory/assign_replenishment_policies.py --config config/replenishment_policy_config.yaml
 
 policy-all: policy-schema policy-assign
 
@@ -570,7 +570,7 @@ health-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/026_create_inventory_health_score.sql').read()); conn.close(); print('Health score DDL applied')"
 
 health-refresh:
-	$(UV) python scripts/refresh_health_scores.py
+	$(UV) python scripts/inventory/refresh_health_scores.py
 
 health-all: health-schema health-refresh
 
@@ -582,10 +582,10 @@ exceptions-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/027_create_replenishment_exceptions.sql').read()); conn.close(); print('Exceptions DDL applied')"
 
 exceptions-generate:
-	$(UV) python scripts/generate_replenishment_exceptions.py
+	$(UV) python scripts/inventory/generate_replenishment_exceptions.py
 
 exceptions-generate-dry:
-	$(UV) python scripts/generate_replenishment_exceptions.py --dry-run
+	$(UV) python scripts/inventory/generate_replenishment_exceptions.py --dry-run
 
 # ---------------------------------------------------------------------------
 # Safety Stock Engine (IPfeature3)
@@ -595,10 +595,10 @@ ss-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/037_create_safety_stock_targets.sql').read()); conn.close(); print('Safety Stock DDL applied')"
 
 ss-compute:
-	$(UV) python scripts/compute_safety_stock.py
+	$(UV) python scripts/inventory/compute_safety_stock.py
 
 ss-compute-dry:
-	$(UV) python scripts/compute_safety_stock.py --dry-run
+	$(UV) python scripts/inventory/compute_safety_stock.py --dry-run
 
 ss-all: ss-schema ss-compute
 
@@ -606,7 +606,7 @@ ss-all: ss-schema ss-compute
 # Multi-Algorithm Inventory Comparison
 # ---------------------------------------------------------------------------
 algo-comparison:
-	$(UV) python scripts/compare_inventory_algorithms.py
+	$(UV) python scripts/inventory/compare_inventory_algorithms.py
 
 # ---------------------------------------------------------------------------
 # AI Planning Agent (IPAIfeature1)
@@ -618,13 +618,13 @@ ai-insights-schema:
 	$(UV) psql $(DATABASE_URL) -f sql/040_create_ai_recommendation_outcomes.sql
 
 ai-insights-scan:
-	$(UV) python scripts/generate_ai_insights.py --portfolio
+	$(UV) python scripts/ai/generate_ai_insights.py --portfolio
 
 ai-insights-scan-dry:
-	$(UV) python scripts/generate_ai_insights.py --portfolio --dry-run
+	$(UV) python scripts/ai/generate_ai_insights.py --portfolio --dry-run
 
 ai-insights-dfu:
-	$(UV) python scripts/generate_ai_insights.py --item $(ITEM) --loc $(LOC)
+	$(UV) python scripts/ai/generate_ai_insights.py --item $(ITEM) --loc $(LOC)
 
 ai-insights-all: ai-insights-schema ai-insights-scan
 
@@ -633,35 +633,35 @@ ai-insights-all: ai-insights-schema ai-insights-scan
 # Options (recursive, SHAP, tuning, params) are set in config/forecast_pipeline_config.yaml
 # ---------------------------------------------------------------------------
 backtest-lgbm:
-	$(UV) python scripts/run_backtest.py --parallel --workers 8 $(ARGS)
+	$(UV) python scripts/ml/run_backtest.py --parallel --workers 8 $(ARGS)
 
 backtest-catboost:
-	$(UV) python scripts/run_backtest_catboost.py --parallel --workers 8 $(ARGS)
+	$(UV) python scripts/ml/run_backtest_catboost.py --parallel --workers 8 $(ARGS)
 
 backtest-xgboost:
-	$(UV) python scripts/run_backtest_xgboost.py --parallel --workers 8 $(ARGS)
+	$(UV) python scripts/ml/run_backtest_xgboost.py --parallel --workers 8 $(ARGS)
 
 backtest-chronos:
-	$(UV) python -m scripts.run_backtest_chronos
+	$(UV) python -m scripts.ml.run_backtest_chronos
 
 backtest-load-chronos:
-	$(UV) python -m scripts.load_backtest_forecasts --model chronos --replace
+	$(UV) python -m scripts.etl.load_backtest_forecasts --model chronos --replace
 
 backtest-chronos-full: backtest-chronos backtest-load-chronos
 
 backtest-bolt:
-	$(UV) python -m scripts.run_backtest_chronos_bolt
+	$(UV) python -m scripts.ml.run_backtest_chronos_bolt
 
 backtest-load-bolt:
-	$(UV) python -m scripts.load_backtest_forecasts --model chronos_bolt --replace
+	$(UV) python -m scripts.etl.load_backtest_forecasts --model chronos_bolt --replace
 
 backtest-bolt-full: backtest-bolt backtest-load-bolt
 
 backtest-bolt-hier:
-	$(UV) python -m scripts.run_backtest_bolt_hierarchical
+	$(UV) python -m scripts.ml.run_backtest_bolt_hierarchical
 
 backtest-load-bolt-hier:
-	$(UV) python -m scripts.load_backtest_forecasts --model bolt_hierarchical --replace
+	$(UV) python -m scripts.etl.load_backtest_forecasts --model bolt_hierarchical --replace
 
 backtest-bolt-hier-full: backtest-bolt-hier backtest-load-bolt-hier
 
@@ -672,70 +672,70 @@ customer-features-python:
 	$(UV) python -m scripts.ml.generate_customer_features
 
 backtest-lgbm-cust:
-	$(UV) python -m scripts.run_backtest --model lgbm --model-id lgbm_cust_enriched
+	$(UV) python -m scripts.ml.run_backtest --model lgbm --model-id lgbm_cust_enriched
 
 backtest-catboost-cust:
-	$(UV) python -m scripts.run_backtest --model catboost --model-id catboost_cust_enriched
+	$(UV) python -m scripts.ml.run_backtest --model catboost --model-id catboost_cust_enriched
 
 backtest-xgboost-cust:
-	$(UV) python -m scripts.run_backtest --model xgboost --model-id xgboost_cust_enriched
+	$(UV) python -m scripts.ml.run_backtest --model xgboost --model-id xgboost_cust_enriched
 
 backtest-cust-enriched-all: backtest-lgbm-cust backtest-catboost-cust backtest-xgboost-cust
 
 backtest-load-cust-enriched:
-	$(UV) python -m scripts.load_backtest_forecasts --model lgbm_cust_enriched --replace
-	$(UV) python -m scripts.load_backtest_forecasts --model catboost_cust_enriched --replace
-	$(UV) python -m scripts.load_backtest_forecasts --model xgboost_cust_enriched --replace
+	$(UV) python -m scripts.etl.load_backtest_forecasts --model lgbm_cust_enriched --replace
+	$(UV) python -m scripts.etl.load_backtest_forecasts --model catboost_cust_enriched --replace
+	$(UV) python -m scripts.etl.load_backtest_forecasts --model xgboost_cust_enriched --replace
 
 backtest-chronos2:
-	$(UV) python -m scripts.run_backtest_chronos2
+	$(UV) python -m scripts.ml.run_backtest_chronos2
 
 backtest-load-chronos2:
-	$(UV) python -m scripts.load_backtest_forecasts --model chronos2 --replace
+	$(UV) python -m scripts.etl.load_backtest_forecasts --model chronos2 --replace
 
 backtest-chronos2-full: backtest-chronos2 backtest-load-chronos2
 
 backtest-chronos2e:
-	$(UV) python -m scripts.run_backtest_chronos2_enriched
+	$(UV) python -m scripts.ml.run_backtest_chronos2_enriched
 
 backtest-load-chronos2e:
-	$(UV) python -m scripts.load_backtest_forecasts --model chronos2_enriched --replace
+	$(UV) python -m scripts.etl.load_backtest_forecasts --model chronos2_enriched --replace
 
 backtest-chronos2e-full: backtest-chronos2e backtest-load-chronos2e
 
 backtest-seasonal-naive:
-	$(UV) python scripts/run_backtest.py --model seasonal_naive $(ARGS)
+	$(UV) python scripts/ml/run_backtest.py --model seasonal_naive $(ARGS)
 
 backtest-load-seasonal-naive:
-	$(UV) python scripts/load_backtest_forecasts.py --model seasonal_naive --replace
+	$(UV) python scripts/etl/load_backtest_forecasts.py --model seasonal_naive --replace
 
 backtest-rolling-mean:
-	$(UV) python scripts/run_backtest.py --model rolling_mean $(ARGS)
+	$(UV) python scripts/ml/run_backtest.py --model rolling_mean $(ARGS)
 
 backtest-load-rolling-mean:
-	$(UV) python scripts/load_backtest_forecasts.py --model rolling_mean --replace
+	$(UV) python scripts/etl/load_backtest_forecasts.py --model rolling_mean --replace
 
 backtest-mstl:
-	$(UV) python scripts/run_backtest_mstl.py $(ARGS)
+	$(UV) python scripts/ml/run_backtest_mstl.py $(ARGS)
 
 backtest-load-mstl:
-	$(UV) python scripts/load_backtest_forecasts.py --model mstl --replace
+	$(UV) python scripts/etl/load_backtest_forecasts.py --model mstl --replace
 
 backtest-mstl-full: backtest-mstl backtest-load-mstl
 
 backtest-nhits:
-	$(UV) python scripts/run_backtest_dl.py --model nhits $(ARGS)
+	$(UV) python scripts/ml/run_backtest_dl.py --model nhits $(ARGS)
 
 backtest-load-nhits:
-	$(UV) python scripts/load_backtest_forecasts.py --model nhits --replace
+	$(UV) python scripts/etl/load_backtest_forecasts.py --model nhits --replace
 
 backtest-nhits-full: backtest-nhits backtest-load-nhits
 
 backtest-nbeats:
-	$(UV) python scripts/run_backtest_dl.py --model nbeats $(ARGS)
+	$(UV) python scripts/ml/run_backtest_dl.py --model nbeats $(ARGS)
 
 backtest-load-nbeats:
-	$(UV) python scripts/load_backtest_forecasts.py --model nbeats --replace
+	$(UV) python scripts/etl/load_backtest_forecasts.py --model nbeats --replace
 
 backtest-nbeats-full: backtest-nbeats backtest-load-nbeats
 
@@ -746,31 +746,31 @@ backtest-all: backtest-lgbm backtest-catboost backtest-xgboost backtest-chronos 
 backtest-all-parallel:
 	@mkdir -p data/backtest/logs
 	@echo "[parallel] Starting LGBM, CatBoost, XGBoost, Chronos, Bolt, Chronos2 concurrently — logs in data/backtest/logs/"
-	$(UV) python scripts/run_backtest.py $(ARGS) > data/backtest/logs/lgbm.log 2>&1 & \
-	$(UV) python scripts/run_backtest_catboost.py $(ARGS) > data/backtest/logs/catboost.log 2>&1 & \
-	$(UV) python scripts/run_backtest_xgboost.py $(ARGS) > data/backtest/logs/xgboost.log 2>&1 & \
-	$(UV) python -m scripts.run_backtest_chronos > data/backtest/logs/chronos.log 2>&1 & \
-	$(UV) python -m scripts.run_backtest_chronos_bolt > data/backtest/logs/chronos_bolt.log 2>&1 & \
-	$(UV) python -m scripts.run_backtest_chronos2 > data/backtest/logs/chronos2.log 2>&1 & \
+	$(UV) python scripts/ml/run_backtest.py $(ARGS) > data/backtest/logs/lgbm.log 2>&1 & \
+	$(UV) python scripts/ml/run_backtest_catboost.py $(ARGS) > data/backtest/logs/catboost.log 2>&1 & \
+	$(UV) python scripts/ml/run_backtest_xgboost.py $(ARGS) > data/backtest/logs/xgboost.log 2>&1 & \
+	$(UV) python -m scripts.ml.run_backtest_chronos > data/backtest/logs/chronos.log 2>&1 & \
+	$(UV) python -m scripts.ml.run_backtest_chronos_bolt > data/backtest/logs/chronos_bolt.log 2>&1 & \
+	$(UV) python -m scripts.ml.run_backtest_chronos2 > data/backtest/logs/chronos2.log 2>&1 & \
 	wait && echo "[parallel] All six backtests complete. Check data/backtest/logs/ for output."
 
 backtest-load:
-	$(UV) python scripts/load_backtest_forecasts.py --model $(MODEL) --replace
+	$(UV) python scripts/etl/load_backtest_forecasts.py --model $(MODEL) --replace
 
 backtest-load-all:
-	$(UV) python scripts/load_backtest_forecasts.py --all --replace
+	$(UV) python scripts/etl/load_backtest_forecasts.py --all --replace
 
 backtest-load-all-bulk:
-	$(UV) python scripts/load_backtest_forecasts.py --all --replace --bulk
+	$(UV) python scripts/etl/load_backtest_forecasts.py --all --replace --bulk
 
 backtest-load-bulk:  ## Load 4 core models with single index cycle (~4x faster)
-	$(UV) python scripts/load_backtest_forecasts.py --models lgbm_cluster catboost_cluster xgboost_cluster chronos --replace --bulk
+	$(UV) python scripts/etl/load_backtest_forecasts.py --models lgbm_cluster catboost_cluster xgboost_cluster chronos --replace --bulk
 
 backtest-load-main-only:  ## Load specific models to main table only (skip archive). Usage: make backtest-load-main-only MODELS="lgbm_cluster chronos"
-	$(UV) python scripts/load_backtest_forecasts.py --models $(MODELS) --replace --bulk --main-only
+	$(UV) python scripts/etl/load_backtest_forecasts.py --models $(MODELS) --replace --bulk --main-only
 
 backtest-load-archive-only:  ## Load specific models to archive only (skip main). Usage: make backtest-load-archive-only MODELS="lgbm_cluster chronos"
-	$(UV) python scripts/load_backtest_forecasts.py --models $(MODELS) --replace --bulk --archive-only
+	$(UV) python scripts/etl/load_backtest_forecasts.py --models $(MODELS) --replace --bulk --archive-only
 
 # ---------------------------------------------------------------------------
 # External ML forecast loading (ext_lgbm, ext_cat, ext_xg, ext_best)
@@ -791,19 +791,19 @@ load-ext-all: load-ext-lgbm load-ext-cat load-ext-xg load-ext-best  ## Load all 
 	@echo "All external ML forecasts loaded."
 
 backtest-clean:
-	$(UV) python scripts/clean_backtest_models.py $(MODELS)
+	$(UV) python scripts/ml/clean_backtest_models.py $(MODELS)
 
 backtest-list:
-	$(UV) python scripts/clean_backtest_models.py --list
+	$(UV) python scripts/ml/clean_backtest_models.py --list
 
 # ---------------------------------------------------------------------------
 # Forecast date-range cleanup
 # ---------------------------------------------------------------------------
 forecast-clean:
-	$(UV) python scripts/clean_forecasts_by_date.py $(ARGS)
+	$(UV) python scripts/ml/clean_forecasts_by_date.py $(ARGS)
 
 forecast-clean-list:
-	$(UV) python scripts/clean_forecasts_by_date.py --list
+	$(UV) python scripts/ml/clean_forecasts_by_date.py --list
 
 accuracy-slice-refresh:
 	$(PSQL) -v ON_ERROR_STOP=1 \
@@ -814,50 +814,50 @@ accuracy-slice-check:
 	curl -s "http://localhost:8000/forecast/accuracy/lag-curve" | python3 -m json.tool | head -40
 
 champion-select:
-	$(UV) python scripts/run_champion_selection.py
+	$(UV) python scripts/ml/run_champion_selection.py
 
 champion-simulate:
-	$(UV) python scripts/simulate_champion_strategies.py
+	$(UV) python scripts/ml/simulate_champion_strategies.py
 
 champion-train-meta:
-	$(UV) python scripts/train_meta_learner.py
+	$(UV) python scripts/ml/train_meta_learner.py
 
 champion-all: champion-train-meta champion-simulate champion-select
 
 tune-lgbm:
-	$(UV) python scripts/tune_hyperparams.py --model lgbm
+	$(UV) python scripts/ml/tune_hyperparams.py --model lgbm
 
 tune-catboost:
-	$(UV) python scripts/tune_hyperparams.py --model catboost
+	$(UV) python scripts/ml/tune_hyperparams.py --model catboost
 
 tune-xgboost:
-	$(UV) python scripts/tune_hyperparams.py --model xgboost
+	$(UV) python scripts/ml/tune_hyperparams.py --model xgboost
 
 tune-all: tune-lgbm tune-catboost tune-xgboost
 
 tune-lgbm-clusters:
-	$(UV) python scripts/tune_cluster_hyperparams.py --model lgbm --trials 30
+	$(UV) python scripts/ml/tune_cluster_hyperparams.py --model lgbm --trials 30
 
 tune-catboost-clusters:
-	$(UV) python scripts/tune_cluster_hyperparams.py --model catboost --trials 30
+	$(UV) python scripts/ml/tune_cluster_hyperparams.py --model catboost --trials 30
 
 tune-xgboost-clusters:
-	$(UV) python scripts/tune_cluster_hyperparams.py --model xgboost --trials 30
+	$(UV) python scripts/ml/tune_cluster_hyperparams.py --model xgboost --trials 30
 
 tune-clusters: tune-lgbm-clusters tune-catboost-clusters tune-xgboost-clusters
 
 # ── Production Baseline Seeding ──────────────────────────────────────────────
 seed-baselines:          ## Seed production baselines into experiment tables
-	$(UV) python scripts/seed_production_baselines.py
+	$(UV) python scripts/etl/seed_production_baselines.py
 
 seed-baselines-tuning:
-	$(UV) python scripts/seed_production_baselines.py --scope tuning
+	$(UV) python scripts/etl/seed_production_baselines.py --scope tuning
 
 seed-baselines-champion:
-	$(UV) python scripts/seed_production_baselines.py --scope champion
+	$(UV) python scripts/etl/seed_production_baselines.py --scope champion
 
 seed-baselines-clustering:
-	$(UV) python scripts/seed_production_baselines.py --scope clustering
+	$(UV) python scripts/etl/seed_production_baselines.py --scope clustering
 
 # ── LGBM Tuning ──────────────────────────────────────────────────────────────
 lgbm-tuning-list:
@@ -870,7 +870,7 @@ lgbm-tuning-backup:
 	$(UV) python scripts/ml/compare_backtest_runs.py --backup $(RUN)
 
 lgbm-tuning-run:
-	$(UV) python scripts/run_backtest.py --model lgbm
+	$(UV) python scripts/ml/run_backtest.py --model lgbm
 	$(UV) python scripts/ml/compare_backtest_runs.py --register-latest --auto-compare
 
 lgbm-auto-tune:
@@ -970,10 +970,10 @@ demand-signals-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/029_create_demand_signals.sql').read()); conn.close(); print('Demand signals DDL applied')"
 
 demand-signals-compute:
-	$(UV) python scripts/compute_demand_signals.py
+	$(UV) python scripts/inventory/compute_demand_signals.py
 
 demand-signals-dry:
-	$(UV) python scripts/compute_demand_signals.py --dry-run
+	$(UV) python scripts/inventory/compute_demand_signals.py --dry-run
 
 demand-signals-all: demand-signals-schema demand-signals-compute
 
@@ -984,7 +984,7 @@ sim-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/030_create_ss_simulation_results.sql').read()); conn.close(); print('Simulation DDL applied')"
 
 sim-run:
-	$(UV) python scripts/run_ss_simulation.py --item $(ITEM) --loc $(LOC)
+	$(UV) python scripts/inventory/run_ss_simulation.py --item $(ITEM) --loc $(LOC)
 
 # ---------------------------------------------------------------------------
 # IPfeature11: ABC-XYZ Classification
@@ -993,10 +993,10 @@ abc-xyz-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/031_add_xyz_classification.sql').read()); conn.close(); print('ABC-XYZ DDL applied')"
 
 abc-xyz-classify:
-	$(UV) python scripts/classify_abc_xyz.py
+	$(UV) python scripts/inventory/classify_abc_xyz.py
 
 abc-xyz-classify-dry:
-	$(UV) python scripts/classify_abc_xyz.py --dry-run
+	$(UV) python scripts/inventory/classify_abc_xyz.py --dry-run
 
 abc-xyz-all: abc-xyz-schema abc-xyz-classify
 
@@ -1018,7 +1018,7 @@ investment-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/033_create_investment_plan.sql').read()); conn.close(); print('Investment plan DDL applied')"
 
 investment-plan:
-	$(UV) python scripts/compute_investment_plan.py
+	$(UV) python scripts/inventory/compute_investment_plan.py
 
 investment-all: investment-schema investment-plan
 
@@ -1029,7 +1029,7 @@ intramonth-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/034_create_intramonth_stockout.sql').read()); conn.close(); print('Intramonth stockout DDL applied')"
 
 intramonth-refresh:
-	$(UV) python scripts/refresh_intramonth_stockout.py
+	$(UV) python scripts/inventory/refresh_intramonth_stockout.py
 
 intramonth-all: intramonth-schema intramonth-refresh
 
@@ -1051,10 +1051,10 @@ storyboard-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/038_create_storyboard.sql').read()); conn.close(); print('Storyboard DDL applied')"
 
 storyboard-generate:
-	$(UV) python scripts/generate_storyboard_exceptions.py
+	$(UV) python scripts/ops/generate_storyboard_exceptions.py
 
 storyboard-generate-dry:
-	$(UV) python scripts/generate_storyboard_exceptions.py --dry-run
+	$(UV) python scripts/ops/generate_storyboard_exceptions.py --dry-run
 
 storyboard-all: storyboard-schema storyboard-generate
 
@@ -1073,13 +1073,13 @@ train-production-all: ## Train all forecastable tree models on full history
 	$(UV) python scripts/ml/train_production_models.py --all
 
 forecast-generate:
-	$(UV) python scripts/generate_production_forecasts.py
+	$(UV) python scripts/forecasting/generate_production_forecasts.py
 
 forecast-generate-dfu:
-	$(UV) python scripts/generate_production_forecasts.py --dfu $(ITEM) $(LOC)
+	$(UV) python scripts/forecasting/generate_production_forecasts.py --dfu $(ITEM) $(LOC)
 
 forecast-generate-dry:
-	$(UV) python scripts/generate_production_forecasts.py --dry-run
+	$(UV) python scripts/forecasting/generate_production_forecasts.py --dry-run
 
 forecast-prod-all: forecast-prod-schema forecast-generate
 
@@ -1087,7 +1087,7 @@ forecast-full: train-production-all forecast-generate ## Full pipeline: train al
 
 forecast-model: ## Train + generate for one model: make forecast-model MODEL=lgbm_cluster
 	$(UV) python scripts/ml/train_production_models.py --model $(MODEL) && \
-	$(UV) python scripts/generate_production_forecasts.py --model-id $(MODEL)
+	$(UV) python scripts/forecasting/generate_production_forecasts.py --model-id $(MODEL)
 
 # ---------------------------------------------------------------------------
 # Forward-Looking Replenishment Plan (CI Bands + Repl. Plan)
@@ -1097,10 +1097,10 @@ replplan-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/041_create_replenishment_plan.sql').read()); conn.close(); print('Replenishment plan schema applied')"
 
 replplan-compute:
-	$(UV) python scripts/compute_replenishment_plan.py
+	$(UV) python scripts/inventory/compute_replenishment_plan.py
 
 replplan-compute-dry:
-	$(UV) python scripts/compute_replenishment_plan.py --dry-run
+	$(UV) python scripts/inventory/compute_replenishment_plan.py --dry-run
 
 replplan-all: replplan-schema replplan-compute
 
@@ -1112,16 +1112,16 @@ po-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; [conn.execute(open(f).read()) for f in ['sql/042_create_supplier_master.sql','sql/043_create_open_purchase_orders.sql','sql/044_create_po_receipts.sql']]; conn.close(); print('PO schema applied')"
 
 po-load:
-	$(UV) python scripts/load_open_pos.py
+	$(UV) python scripts/etl/load_open_pos.py
 
 po-load-file:
-	$(UV) python scripts/load_open_pos.py --file $(FILE)
+	$(UV) python scripts/etl/load_open_pos.py --file $(FILE)
 
 po-load-dry:
-	$(UV) python scripts/load_open_pos.py --dry-run
+	$(UV) python scripts/etl/load_open_pos.py --dry-run
 
 po-receipts-load:
-	$(UV) python scripts/load_open_pos.py --receipts
+	$(UV) python scripts/etl/load_open_pos.py --receipts
 
 po-all: po-schema po-load
 
@@ -1133,13 +1133,13 @@ projection-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/045_create_inventory_projection.sql').read()); conn.close(); print('Projection schema applied')"
 
 projection-compute:
-	$(UV) python scripts/compute_inventory_projection.py --horizon 90
+	$(UV) python scripts/inventory/compute_inventory_projection.py --horizon 90
 
 projection-compute-dfu:
-	$(UV) python scripts/compute_inventory_projection.py --dfu $(ITEM) $(LOC) --horizon 90
+	$(UV) python scripts/inventory/compute_inventory_projection.py --dfu $(ITEM) $(LOC) --horizon 90
 
 projection-dry:
-	$(UV) python scripts/compute_inventory_projection.py --dry-run --horizon 90
+	$(UV) python scripts/inventory/compute_inventory_projection.py --dry-run --horizon 90
 
 projection-all: projection-schema projection-compute
 
@@ -1151,13 +1151,13 @@ planned-orders-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/046_create_planned_orders.sql').read()); conn.close(); print('Planned orders schema applied')"
 
 planned-orders-generate:
-	$(UV) python scripts/generate_planned_orders.py
+	$(UV) python scripts/inventory/generate_planned_orders.py
 
 planned-orders-generate-dfu:
-	$(UV) python scripts/generate_planned_orders.py --dfu $(ITEM) $(LOC)
+	$(UV) python scripts/inventory/generate_planned_orders.py --dfu $(ITEM) $(LOC)
 
 planned-orders-dry:
-	$(UV) python scripts/generate_planned_orders.py --dry-run
+	$(UV) python scripts/inventory/generate_planned_orders.py --dry-run
 
 planned-orders-all: planned-orders-schema planned-orders-generate
 
@@ -1170,13 +1170,13 @@ quantile-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/047_create_demand_plan.sql').read()); conn.commit(); conn.close(); print('quantile schema applied')"
 
 quantile-train:
-	$(UV) scripts/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION)
+	$(UV) scripts/forecasting/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION)
 
 quantile-train-dfu:
-	$(UV) scripts/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION) --dfu $(ITEM) $(LOC)
+	$(UV) scripts/forecasting/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION) --dfu $(ITEM) $(LOC)
 
 quantile-dry:
-	$(UV) scripts/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION) --dry-run
+	$(UV) scripts/forecasting/generate_quantile_forecasts.py --horizon 12 --plan-version $(VERSION) --dry-run
 
 quantile-all: quantile-schema quantile-train
 
@@ -1185,10 +1185,10 @@ consensus-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/048_create_consensus_plan.sql').read()); conn.commit(); conn.close(); print('consensus schema applied')"
 
 consensus-generate:
-	$(UV) scripts/generate_consensus_plan.py --plan-version $(VERSION) --months-ahead 12
+	$(UV) scripts/forecasting/generate_consensus_plan.py --plan-version $(VERSION) --months-ahead 12
 
 consensus-generate-dry:
-	$(UV) scripts/generate_consensus_plan.py --plan-version $(VERSION) --months-ahead 12 --dry-run
+	$(UV) scripts/forecasting/generate_consensus_plan.py --plan-version $(VERSION) --months-ahead 12 --dry-run
 
 consensus-all: consensus-schema consensus-generate
 
@@ -1197,10 +1197,10 @@ procurement-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/049_create_procurement_workflow.sql').read()); conn.commit(); conn.close(); print('procurement schema applied')"
 
 procurement-export:
-	$(UV) scripts/release_planned_orders.py --action export_csv --po-numbers $(PO_NUMBERS) --output-dir data/po_exports/
+	$(UV) scripts/inventory/release_planned_orders.py --action export_csv --po-numbers $(PO_NUMBERS) --output-dir data/po_exports/
 
 procurement-send-erp:
-	$(UV) scripts/release_planned_orders.py --action send_erp --po-numbers $(PO_NUMBERS) --integration-id $(INTEGRATION_ID)
+	$(UV) scripts/inventory/release_planned_orders.py --action send_erp --po-numbers $(PO_NUMBERS) --integration-id $(INTEGRATION_ID)
 
 procurement-all: procurement-schema
 
@@ -1212,10 +1212,10 @@ bias-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/050_create_bias_corrections.sql').read()); conn.commit(); conn.close(); print('bias corrections schema applied')"
 
 bias-compute:
-	$(UV) python scripts/compute_bias_corrections.py --plan-version $(VERSION)
+	$(UV) python scripts/forecasting/compute_bias_corrections.py --plan-version $(VERSION)
 
 bias-compute-dry:
-	$(UV) python scripts/compute_bias_corrections.py --plan-version $(VERSION) --dry-run
+	$(UV) python scripts/forecasting/compute_bias_corrections.py --plan-version $(VERSION) --dry-run
 
 bias-all: bias-schema bias-compute
 
@@ -1226,10 +1226,10 @@ service-level-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/051_create_service_level_tracking.sql').read()); conn.commit(); conn.close(); print('service level schema applied')"
 
 service-level-compute:
-	$(UV) python scripts/compute_service_level_actuals.py
+	$(UV) python scripts/ops/compute_service_level_actuals.py
 
 service-level-dry:
-	$(UV) python scripts/compute_service_level_actuals.py --dry-run
+	$(UV) python scripts/ops/compute_service_level_actuals.py --dry-run
 
 service-level-all: service-level-schema service-level-compute
 
@@ -1240,10 +1240,10 @@ lead-time-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/052_create_lead_time_learning.sql').read()); conn.commit(); conn.close(); print('lead time schema applied')"
 
 lead-time-update:
-	$(UV) python scripts/update_lead_time_actuals.py
+	$(UV) python scripts/inventory/update_lead_time_actuals.py
 
 lead-time-dry:
-	$(UV) python scripts/update_lead_time_actuals.py --dry-run
+	$(UV) python scripts/inventory/update_lead_time_actuals.py --dry-run
 
 lead-time-all: lead-time-schema lead-time-update
 
@@ -1254,13 +1254,13 @@ blended-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/053_create_blended_forecast.sql').read()); conn.commit(); conn.close(); print('blended forecast schema applied')"
 
 blended-compute:
-	$(UV) python scripts/compute_blended_forecast.py
+	$(UV) python scripts/forecasting/compute_blended_forecast.py
 
 blended-compute-dfu:
-	$(UV) python scripts/compute_blended_forecast.py --item-no $(ITEM) --loc $(LOC)
+	$(UV) python scripts/forecasting/compute_blended_forecast.py --item-no $(ITEM) --loc $(LOC)
 
 blended-dry:
-	$(UV) python scripts/compute_blended_forecast.py --dry-run
+	$(UV) python scripts/forecasting/compute_blended_forecast.py --dry-run
 
 blended-all: blended-schema blended-compute
 
@@ -1271,13 +1271,13 @@ echelon-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/054_create_echelon_planning.sql').read()); conn.commit(); conn.close(); print('echelon planning schema applied')"
 
 echelon-compute:
-	$(UV) python scripts/compute_echelon_targets.py
+	$(UV) python scripts/inventory/compute_echelon_targets.py
 
 echelon-compute-item:
-	$(UV) python scripts/compute_echelon_targets.py --item-no $(ITEM)
+	$(UV) python scripts/inventory/compute_echelon_targets.py --item-no $(ITEM)
 
 echelon-dry:
-	$(UV) python scripts/compute_echelon_targets.py --dry-run
+	$(UV) python scripts/inventory/compute_echelon_targets.py --dry-run
 
 echelon-all: echelon-schema echelon-compute
 
@@ -1288,10 +1288,10 @@ financial-plan-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/055_create_financial_plan.sql').read()); conn.commit(); conn.close(); print('financial plan schema applied')"
 
 financial-plan-compute:
-	$(UV) python scripts/compute_financial_plan.py
+	$(UV) python scripts/ops/compute_financial_plan.py
 
 financial-plan-dry:
-	$(UV) python scripts/compute_financial_plan.py --dry-run
+	$(UV) python scripts/ops/compute_financial_plan.py --dry-run
 
 financial-plan-all: financial-plan-schema financial-plan-compute
 
@@ -1302,16 +1302,16 @@ sop-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/056_create_sop_module.sql').read()); conn.commit(); conn.close(); print('S&OP schema applied')"
 
 sop-create:
-	$(UV) python scripts/run_sop_cycle.py --action create --cycle-month $(CYCLE_MONTH)
+	$(UV) python scripts/ops/run_sop_cycle.py --action create --cycle-month $(CYCLE_MONTH)
 
 sop-advance:
-	$(UV) python scripts/run_sop_cycle.py --action advance --cycle-id $(CYCLE_ID)
+	$(UV) python scripts/ops/run_sop_cycle.py --action advance --cycle-id $(CYCLE_ID)
 
 sop-populate:
-	$(UV) python scripts/run_sop_cycle.py --action populate-demand --cycle-id $(CYCLE_ID)
+	$(UV) python scripts/ops/run_sop_cycle.py --action populate-demand --cycle-id $(CYCLE_ID)
 
 sop-seed:
-	$(UV) python -c "from datetime import date; m=date.today().replace(day=1).isoformat(); import subprocess, sys; subprocess.run([sys.executable, 'scripts/run_sop_cycle.py', '--action', 'create', '--cycle-month', m], check=True)"
+	$(UV) python -c "from datetime import date; m=date.today().replace(day=1).isoformat(); import subprocess, sys; subprocess.run([sys.executable, 'scripts/ops/run_sop_cycle.py', '--action', 'create', '--cycle-month', m], check=True)"
 
 sop-all: sop-schema sop-seed
 
@@ -1322,10 +1322,10 @@ events-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/057_create_event_planning.sql').read()); conn.commit(); conn.close(); print('event planning schema applied')"
 
 events-apply:
-	$(UV) python scripts/apply_event_adjustments.py
+	$(UV) python scripts/forecasting/apply_event_adjustments.py
 
 events-apply-dry:
-	$(UV) python scripts/apply_event_adjustments.py --dry-run
+	$(UV) python scripts/forecasting/apply_event_adjustments.py --dry-run
 
 events-all: events-schema events-apply
 
@@ -1336,13 +1336,13 @@ scenarios-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/058_create_supply_scenarios.sql').read()); conn.commit(); conn.close(); print('supply scenarios schema applied')"
 
 scenarios-list:
-	$(UV) python scripts/run_supply_chain_scenario.py --action list
+	$(UV) python scripts/inventory/run_supply_chain_scenario.py --action list
 
 scenarios-run:
-	$(UV) python scripts/run_supply_chain_scenario.py --action run --scenario-id $(SCENARIO_ID)
+	$(UV) python scripts/inventory/run_supply_chain_scenario.py --action run --scenario-id $(SCENARIO_ID)
 
 scenarios-run-dry:
-	$(UV) python scripts/run_supply_chain_scenario.py --action run --scenario-id $(SCENARIO_ID) --dry-run
+	$(UV) python scripts/inventory/run_supply_chain_scenario.py --action run --scenario-id $(SCENARIO_ID) --dry-run
 
 scenarios-all: scenarios-schema
 
@@ -1353,10 +1353,10 @@ rebalancing-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); cur=conn.cursor(); cur.execute(open('sql/071_create_transfer_network.sql').read()); cur.execute(open('sql/072_create_rebalancing_plan.sql').read()); cur.execute(open('sql/073_create_rebalancing_views.sql').read()); conn.commit(); conn.close(); print('Rebalancing DDL applied')"
 
 rebalancing-compute:
-	$(UV) python scripts/compute_rebalancing.py
+	$(UV) python scripts/inventory/compute_rebalancing.py
 
 rebalancing-compute-dry:
-	$(UV) python scripts/compute_rebalancing.py --dry-run
+	$(UV) python scripts/inventory/compute_rebalancing.py --dry-run
 
 rebalancing-refresh:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.autocommit=True; populated=conn.execute(\"SELECT relispopulated FROM pg_class WHERE relname='mv_network_balance'\").fetchone(); conn.execute('REFRESH MATERIALIZED VIEW ' + ('CONCURRENTLY ' if populated and populated[0] else '') + 'mv_network_balance'); conn.close(); print('mv_network_balance refreshed')"
@@ -1376,7 +1376,7 @@ dq-schema:
 	$(UV) python -c "import psycopg; from common.db import get_db_params; conn=psycopg.connect(**get_db_params()); conn.cursor().execute(open('sql/063_create_data_quality.sql').read()); conn.commit(); conn.close(); print('Data quality schema applied')"
 
 dq-populate:
-	$(UV) python scripts/populate_dq_checks.py
+	$(UV) python scripts/ops/populate_dq_checks.py
 
 dq-run:
 	$(UV) python -c "from common.dq_engine import DQEngine; e=DQEngine(); results=e.run_all_checks(); print(f'Ran {len(results)} checks')"
@@ -1413,10 +1413,10 @@ setup-backtest: setup-features backtest-all backtest-load-all accuracy-slice-ref
 	@echo "✓ Phase 3 complete: backtests, champion selection"
 
 inv-plan-refresh: ## Run end-to-end inventory planning pipeline (SS → EOQ → Repl Plan → Orders → Exceptions)
-	$(UV) run python scripts/run_inventory_planning_pipeline.py
+	$(UV) run python scripts/inventory/run_inventory_planning_pipeline.py
 
 inv-plan-refresh-dry: ## Preview inventory pipeline without DB writes
-	$(UV) run python scripts/run_inventory_planning_pipeline.py --dry-run
+	$(UV) run python scripts/inventory/run_inventory_planning_pipeline.py --dry-run
 
 setup-inv-planning: eoq-all policy-all ss-all exceptions-generate fill-rate-all health-all supplier-perf-all investment-all intramonth-all control-tower-all rebalancing-all
 	@echo "✓ Phase 4 complete: inventory planning (safety stock, EOQ, policies, exceptions, health)"

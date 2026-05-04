@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from datetime import date
 
 try:
-    from scripts.compute_safety_stock import (
+    from scripts.inventory.compute_safety_stock import (
         apply_guard_rails,
         apply_seasonal_adjustment,
         classify_xyz,

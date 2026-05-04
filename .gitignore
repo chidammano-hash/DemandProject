@@ -27,6 +27,10 @@ Thumbs.db
 lightning_logs/
 catboost_info/
 
+# Algorithm-testing experiment outputs (regenerated per run)
+algorithm_testing/results/
+adv_algorithm_testing/results/
+
 # ML model files
 *.pkl
 *.joblib

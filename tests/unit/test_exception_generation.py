@@ -9,7 +9,7 @@ import datetime
 
 import pytest
 
-from scripts.generate_replenishment_exceptions import (
+from scripts.inventory.generate_replenishment_exceptions import (
     compute_financial_impact,
     compute_recommendation,
     detect_exception_type,

@@ -8,7 +8,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from scripts.compute_demand_variability import (
+from scripts.ml.compute_demand_variability import (
     winsorize,
     compute_variability_metrics,
     classify_variability_class,

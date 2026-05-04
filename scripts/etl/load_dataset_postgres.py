@@ -1,0 +1,904 @@
+"""Load normalized CSV directly into PostgreSQL tables.
+
+Usage:
+    python scripts/load_dataset_postgres.py --dataset <domain> [--replace] [--skip-archive]
+
+Single-pass loader: CSV → temp staging → main table. No intermediate layers.
+"""
+import argparse
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
+from pathlib import Path
+import sys
+
+import psycopg
+import psycopg.errors
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from common.db import get_db_params
+from common.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
+from common.sql_helpers import (
+    NULL_SQL,
+    EXTERNAL_MODEL_ID,
+    HASH_CHUNK_SIZE,
+    MV_REFRESH_ARCHIVE,
+    _elapsed,
+    qident,
+    typed_expr_sets,
+    business_key_expr,
+)
+from common.engines.medallion import file_hash, create_batch, complete_batch, fail_batch
+from common.services.perf_profiler import profiled_section
+from common.planning_date import get_planning_date
+
+logger = logging.getLogger(__name__)
+
+# PG session tuning
+_PG_WORK_MEM = "512MB"
+_PG_MAINTENANCE_WORK_MEM = "1GB"
+
+# Unmatched DFU warning threshold
+_UNMATCHED_DFU_WARN_PCT = 10.0
+
+
+# ---------------------------------------------------------------------------
+# Index management — drop before bulk load, recreate after
+# ---------------------------------------------------------------------------
+
+def _get_all_indexes(cur, table: str) -> list[tuple[str, str]]:
+    """Return (index_name, index_def) for non-PK, non-constraint-backing indexes on table."""
+    cur.execute("""
+        SELECT i.indexname, i.indexdef
+        FROM pg_indexes i
+        WHERE i.tablename = %s
+          AND i.schemaname = 'public'
+          AND i.indexname NOT LIKE '%%_pkey'
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_constraint c
+              WHERE c.conindid = (
+                  SELECT oid FROM pg_class
+                  WHERE relname = i.indexname
+                    AND relnamespace = 'public'::regnamespace
+              )
+          )
+        ORDER BY i.indexname
+    """, (table,))
+    return cur.fetchall()
+
+
+def _get_unique_constraints(cur, table: str) -> list[tuple[str, str, list[str]]]:
+    """Return (constraint_name, type, [columns]) for UNIQUE constraints."""
+    cur.execute("""
+        SELECT con.conname, con.contype::text,
+               array_agg(att.attname ORDER BY u.pos)
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS u(attnum, pos) ON true
+        JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = u.attnum
+        WHERE rel.relname = %s AND con.contype = 'u'
+        GROUP BY con.conname, con.contype
+    """, (table,))
+    return [(r[0], r[1], r[2]) for r in cur.fetchall()]
+
+
+def _drop_indexes(cur, indexes: list[tuple[str, str]]) -> None:
+    for idx_name, _ in indexes:
+        cur.execute(f"DROP INDEX IF EXISTS {qident(idx_name)}")
+
+
+def _drop_unique_constraints(cur, table: str,
+                             constraints: list[tuple[str, str, list[str]]]) -> None:
+    for con_name, _, _ in constraints:
+        cur.execute(
+            f"ALTER TABLE {qident(table)} DROP CONSTRAINT IF EXISTS {qident(con_name)}"
+        )
+
+
+def _recreate_indexes(cur, indexes: list[tuple[str, str]]) -> None:
+    for _, idx_def in indexes:
+        cur.execute(idx_def + ";")
+
+
+def _recreate_unique_constraints(cur, table: str,
+                                 constraints: list[tuple[str, str, list[str]]]) -> None:
+    for con_name, _, cols in constraints:
+        col_list = ", ".join(qident(c) for c in cols)
+        cur.execute(
+            f"ALTER TABLE {qident(table)} ADD CONSTRAINT {qident(con_name)} "
+            f"UNIQUE ({col_list})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Partition helpers — for partitioned tables (e.g., fact_inventory_snapshot)
+# ---------------------------------------------------------------------------
+
+def _is_partitioned(cur, table: str) -> bool:
+    """Check if a table uses declarative partitioning."""
+    cur.execute("""
+        SELECT relkind = 'p'
+        FROM pg_class
+        WHERE relname = %s AND relnamespace = 'public'::regnamespace
+    """, (table,))
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def _ensure_partition_exists(cur, parent: str, start_date: str, end_date: str) -> str:
+    """Create a monthly partition if it doesn't exist. Returns partition name."""
+    # Parse YYYY-MM from start_date
+    parts = start_date.split("-")
+    part_name = f"{parent}_{parts[0]}_{parts[1]}"
+    cur.execute("""
+        SELECT 1 FROM pg_class
+        WHERE relname = %s AND relnamespace = 'public'::regnamespace
+    """, (part_name,))
+    if not cur.fetchone():
+        # DDL doesn't support %s parameters — use validated date literals
+        # start_date/end_date are always YYYY-MM-DD from _month_range_from_filename
+        cur.execute(
+            f"CREATE TABLE {qident(part_name)} PARTITION OF {qident(parent)} "
+            f"FOR VALUES FROM ('{start_date}') TO ('{end_date}')"
+        )
+        logger.info("  Created partition %s", part_name)
+    return part_name
+
+
+# ---------------------------------------------------------------------------
+# DFU matching — only load rows that exist in dim_sku
+# ---------------------------------------------------------------------------
+
+# Domains that require a matching DFU in dim_sku to be loaded.
+_DFU_MATCH_DOMAINS = {"sales", "forecast", "inventory"}
+
+
+def _filter_unmatched_dfus(cur, stg_table: str, domain: str) -> int:
+    """Delete staging rows that have no matching DFU in dim_sku.
+
+    Returns number of deleted rows.
+    Sales/forecast match on item_id + customer_group + loc (full sku_ck).
+    Inventory matches on item_id + loc only (no customer_group in inventory data).
+    """
+    cur.execute("""
+        SELECT EXISTS(
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'dim_sku' AND table_schema = 'public'
+        )
+    """)
+    if not cur.fetchone()[0]:
+        logger.warning("dim_sku not found — skipping DFU match filter for %s", domain)
+        return 0
+
+    if domain == "inventory":
+        # Inventory has no customer_group — match on item_id + loc
+        cur.execute(f"""
+            DELETE FROM {qident(stg_table)} s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dim_sku d
+                WHERE d.item_id = trim(s."item_id")
+                  AND d.loc = trim(s."loc")
+            )
+        """)
+    else:
+        # Sales/forecast — match on full sku_ck (item_id_customer_group_loc)
+        cur.execute(f"""
+            DELETE FROM {qident(stg_table)} s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dim_sku d
+                WHERE d.sku_ck = trim(s."item_id") || '_' || trim(s."customer_group") || '_' || trim(s."loc")
+            )
+        """)
+
+    deleted = cur.rowcount
+    if deleted:
+        logger.info("  Deleted %s staging rows with no matching DFU in dim_sku",
+                     f"{deleted:,}")
+    return deleted
+
+
+# ---------------------------------------------------------------------------
+# FK orphan filter — remove staging rows referencing missing dimension values
+# ---------------------------------------------------------------------------
+
+# Map: (domain, staging_column) → (dimension_table, dimension_column)
+_FK_CHECKS: dict[str, list[tuple[str, str, str]]] = {
+    "sales":     [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
+    "forecast":  [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
+    "inventory": [("loc", "dim_location", "location_id"), ("item_id", "dim_item", "item_id")],
+}
+
+
+def _filter_fk_orphans(cur, stg_table: str, domain: str) -> int:
+    """Delete staging rows that reference missing dimension values.
+
+    Prevents FK violation errors during INSERT. Returns total deleted rows.
+    """
+    checks = _FK_CHECKS.get(domain)
+    if not checks:
+        return 0
+
+    total_deleted = 0
+    for stg_col, dim_table, dim_col in checks:
+        # Check if dimension table exists
+        cur.execute("""
+            SELECT EXISTS(
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = %s AND table_schema = 'public'
+            )
+        """, (dim_table,))
+        if not cur.fetchone()[0]:
+            continue
+
+        # Check if staging table has this column
+        cur.execute(f"""
+            SELECT EXISTS(
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = %s AND column_name = %s
+            )
+        """, (stg_table, stg_col))
+        if not cur.fetchone()[0]:
+            continue
+
+        cur.execute(f"""
+            DELETE FROM {qident(stg_table)} s
+            WHERE trim(s.{qident(stg_col)}) IS NOT NULL
+              AND trim(s.{qident(stg_col)}) != ''
+              AND NOT EXISTS (
+                SELECT 1 FROM {qident(dim_table)} d
+                WHERE d.{qident(dim_col)} = trim(s.{qident(stg_col)})
+            )
+        """)
+        deleted = cur.rowcount
+        if deleted:
+            logger.info("  Removed %s staging rows: %s not in %s.%s",
+                         f"{deleted:,}", stg_col, dim_table, dim_col)
+            total_deleted += deleted
+
+    return total_deleted
+
+
+# ---------------------------------------------------------------------------
+# Forecast-specific helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_forecast_execution_lag(cur, stg_table: str) -> int:
+    """Set lag and execution_lag from dim_sku on staging table.
+
+    Assumes unmatched rows have already been deleted by _filter_unmatched_dfus().
+    All external forecasts are assumed to be at execution lag — the source
+    file's lag/execution_lag fields are ignored and overwritten from dim_sku.
+    Returns number of matched (updated) rows.
+    """
+    cur.execute("""
+        SELECT EXISTS(
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'dim_sku' AND table_schema = 'public'
+        )
+    """)
+    if not cur.fetchone()[0]:
+        logger.warning("dim_sku not found — cannot resolve execution lag")
+        return 0
+
+    cur.execute(f"""
+        UPDATE {qident(stg_table)} s
+        SET "execution_lag" = d.execution_lag::text,
+            "lag" = d.execution_lag::text
+        FROM dim_sku d
+        WHERE d.sku_ck = trim(s."item_id") || '_' || trim(s."customer_group") || '_' || trim(s."loc")
+    """)
+    return cur.rowcount
+
+
+def _load_forecast_archive(cur, stg_table: str, stg_alias: str) -> int:
+    """Load ALL forecast lags into backtest_lag_archive (preserves multi-lag accuracy).
+
+    Optimized: when no non-external rows exist, skips ON CONFLICT for ~3x speedup.
+    """
+    archive_table = "backtest_lag_archive"
+
+    cur.execute(
+        f"DELETE FROM {archive_table} WHERE model_id = %s",
+        [EXTERNAL_MODEL_ID],
+    )
+    deleted = cur.rowcount
+    if deleted:
+        logger.info("Deleted %s existing '%s' archive rows", f"{deleted:,}", EXTERNAL_MODEL_ID)
+
+    # Check if non-external rows exist — if not, skip ON CONFLICT (massive speedup)
+    cur.execute(
+        f"SELECT EXISTS(SELECT 1 FROM {archive_table} WHERE model_id != %s LIMIT 1)",
+        [EXTERNAL_MODEL_ID],
+    )
+    has_other_models = cur.fetchone()[0]
+
+    ck_expr = (
+        f"trim({stg_alias}.\"item_id\") || '_' || trim({stg_alias}.\"customer_group\") || '_' || "
+        f"trim({stg_alias}.\"loc\") || '_' || trim({stg_alias}.\"fcstdate\") || '_' || "
+        f"trim({stg_alias}.\"startdate\")"
+    )
+
+    select_sql = f"""
+        SELECT
+            {ck_expr},
+            {stg_alias}."item_id",
+            {stg_alias}."customer_group",
+            {stg_alias}."loc",
+            {stg_alias}."fcstdate"::date,
+            {stg_alias}."startdate"::date,
+            {stg_alias}."lag"::integer,
+            CASE WHEN lower(trim({stg_alias}."execution_lag")) IN ({NULL_SQL})
+                 THEN NULL ELSE {stg_alias}."execution_lag"::integer END,
+            CASE WHEN lower(trim({stg_alias}."basefcst_pref")) IN ({NULL_SQL})
+                 THEN NULL ELSE {stg_alias}."basefcst_pref"::numeric END,
+            CASE WHEN lower(trim({stg_alias}."tothist_dmd")) IN ({NULL_SQL})
+                 THEN NULL ELSE {stg_alias}."tothist_dmd"::numeric END,
+            {stg_alias}."model_id",
+            NULL
+        FROM {qident(stg_table)} {stg_alias}
+    """
+
+    if has_other_models:
+        # Other model rows exist — use ON CONFLICT to merge
+        cur.execute(f"""
+            INSERT INTO {archive_table}
+                (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
+                 lag, execution_lag, basefcst_pref, tothist_dmd, model_id, timeframe)
+            {select_sql}
+            ON CONFLICT (forecast_ck, model_id, lag) DO UPDATE SET
+                basefcst_pref = EXCLUDED.basefcst_pref,
+                tothist_dmd   = EXCLUDED.tothist_dmd,
+                execution_lag = EXCLUDED.execution_lag
+        """)
+    else:
+        # No conflicting rows — plain INSERT (much faster, no conflict check)
+        logger.info("  Fast-path: no other model rows — skipping ON CONFLICT")
+        cur.execute(f"""
+            INSERT INTO {archive_table}
+                (forecast_ck, item_id, customer_group, loc, fcstdate, startdate,
+                 lag, execution_lag, basefcst_pref, tothist_dmd, model_id, timeframe)
+            {select_sql}
+        """)
+    return cur.rowcount
+
+
+# ---------------------------------------------------------------------------
+# Post-load hooks (domain-specific)
+# ---------------------------------------------------------------------------
+
+def _post_load_purchase_order(cur) -> None:
+    """Populate lead time actuals + sync open POs after loading purchase orders."""
+    cur.execute("""
+        INSERT INTO fact_lead_time_actuals
+            (po_number, line_number, supplier_id, item_id, loc,
+             promised_delivery_date, actual_receipt_date,
+             lead_time_days_promised, lead_time_days_actual, source_file)
+        SELECT po.po_number,
+            ROW_NUMBER() OVER (PARTITION BY po.po_number ORDER BY po.item_id, po.loc)::integer,
+            po.supplier_id, po.item_id, po.loc,
+            po.original_delivery_date, po.delivery_date,
+            (po.original_delivery_date - po.original_ship_date),
+            (po.delivery_date - po.original_ship_date),
+            'purchase_orders.csv'
+        FROM fact_purchase_orders po
+        WHERE po.closure_code = 'CLOSED'
+          AND po.delivery_date IS NOT NULL
+          AND po.original_ship_date IS NOT NULL
+        ON CONFLICT (po_number, line_number) DO UPDATE SET
+            supplier_id             = EXCLUDED.supplier_id,
+            actual_receipt_date     = EXCLUDED.actual_receipt_date,
+            lead_time_days_actual   = EXCLUDED.lead_time_days_actual,
+            lead_time_days_promised = EXCLUDED.lead_time_days_promised
+    """)
+    logger.info("  Upserted %s lead time actuals from closed POs", f"{cur.rowcount:,}")
+
+    cur.execute("SAVEPOINT sp_open_po")
+    try:
+        cur.execute("""
+            INSERT INTO fact_open_purchase_orders
+                (po_number, po_line_number, item_id, loc, supplier_id,
+                 po_date, ordered_qty, received_qty, unit_cost,
+                 promised_delivery_date, po_status, line_status, source_file)
+            SELECT po.po_number,
+                ROW_NUMBER() OVER (PARTITION BY po.po_number ORDER BY po.item_id, po.loc)::integer,
+                po.item_id, po.loc, po.supplier_id,
+                po.original_ship_date, po.ordered_qty,
+                COALESCE(po.orig_po_qty - po.ordered_qty, 0),
+                po.net_price, po.delivery_date, 'open', 'open', 'purchase_orders.csv'
+            FROM fact_purchase_orders po
+            WHERE (po.closure_code IS NULL OR po.closure_code = '')
+              AND po.ordered_qty IS NOT NULL
+              AND po.original_ship_date IS NOT NULL
+            ON CONFLICT (po_number, po_line_number) DO UPDATE SET
+                ordered_qty            = EXCLUDED.ordered_qty,
+                received_qty           = EXCLUDED.received_qty,
+                unit_cost              = EXCLUDED.unit_cost,
+                promised_delivery_date = EXCLUDED.promised_delivery_date,
+                modified_ts            = NOW()
+        """)
+        open_po_count = cur.rowcount
+        cur.execute("RELEASE SAVEPOINT sp_open_po")
+        logger.info("  Upserted %s open POs", f"{open_po_count:,}")
+    except psycopg.errors.ForeignKeyViolation:
+        cur.execute("ROLLBACK TO SAVEPOINT sp_open_po")
+        logger.warning("  Skipped open PO sync — dim_supplier not yet populated")
+
+
+def _post_load_sourcing(cur) -> None:
+    """Sync sourcing data into dim_item_supplier."""
+    cur.execute("""
+        SELECT EXISTS(
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'dim_item_supplier' AND table_schema = 'public'
+        )
+    """)
+    if not cur.fetchone()[0]:
+        logger.info("  dim_item_supplier not found, skipping sourcing sync")
+        return
+
+    cur.execute("SAVEPOINT sp_item_supplier")
+    try:
+        cur.execute("""
+            INSERT INTO dim_item_supplier (item_id, loc, supplier_id, is_preferred, lead_time_days)
+            SELECT DISTINCT ON (s.item_id, s.loc, s.supplier_id)
+                s.item_id, s.loc, s.supplier_id, FALSE, NULL
+            FROM dim_sourcing s
+            WHERE s.supplier_id IS NOT NULL AND s.supplier_id != ''
+            ON CONFLICT (item_id, loc, supplier_id) DO NOTHING
+        """)
+        logger.info("  Synced %s sourcing rows into dim_item_supplier", f"{cur.rowcount:,}")
+
+        cur.execute("""
+            UPDATE dim_item_supplier dis SET is_preferred = TRUE
+            WHERE dis.id IN (
+                SELECT DISTINCT ON (item_id, loc) id
+                FROM dim_item_supplier ORDER BY item_id, loc, id
+            ) AND NOT dis.is_preferred
+        """)
+        logger.info("  Marked %s preferred suppliers", f"{cur.rowcount:,}")
+        cur.execute("RELEASE SAVEPOINT sp_item_supplier")
+    except psycopg.errors.ForeignKeyViolation:
+        cur.execute("ROLLBACK TO SAVEPOINT sp_item_supplier")
+        logger.warning("  Skipped item-supplier sync — dim_supplier not yet populated")
+
+
+# ---------------------------------------------------------------------------
+# Main load function
+# ---------------------------------------------------------------------------
+
+def load_domain(spec: DomainSpec, csv_path: Path,
+                replace_mode: bool = False,
+                skip_archive: bool = False,
+                incremental_delete: str | None = None) -> dict:
+    """Load CSV directly into main table. Single transaction, minimal overhead.
+
+    Returns summary dict: {domain, rows_in, rows_loaded}.
+    """
+    t_total = time.time()
+    csv_size_mb = csv_path.stat().st_size / (1024 ** 2) if csv_path.exists() else 0
+    logger.info("=" * 60)
+    logger.info("Loading %s -> %s (%.0f MB)", spec.name, spec.table, csv_size_mb)
+    logger.info("=" * 60)
+
+    if not csv_path.exists():
+        logger.info("SKIPPED — %s not found. Run 'make normalize-all' first.", csv_path.name)
+        return {"domain": spec.name, "skipped": True}
+
+    db = get_db_params()
+    src_hash = file_hash(csv_path)
+    is_forecast = spec.name == "forecast"
+    stg_table = f"_stg_{spec.name}"
+    stg_alias = "d"
+    src_alias = "s"
+
+    # Build SQL for staging table and COPY
+    create_stg_sql = (
+        f"CREATE TEMP TABLE {qident(stg_table)} ("
+        f"_load_seq bigserial, "
+        + ", ".join(f"{qident(c)} text" for c in spec.columns)
+        + ") ON COMMIT DROP"
+    )
+    copy_sql = (
+        f"COPY {qident(stg_table)} ("
+        + ", ".join(qident(c) for c in spec.columns)
+        + ") FROM STDIN WITH (FORMAT CSV, HEADER TRUE)"
+    )
+
+    # Build INSERT SQL: type-cast + optional dedup
+    key_col = "_ck"
+    target_cols = [spec.ck_field, *spec.columns]
+    select_exprs = [
+        f"{src_alias}.{qident(key_col)} AS {qident(spec.ck_field)}",
+        *[
+            f"{typed_expr_sets(c, spec.int_fields, spec.float_fields, spec.date_fields, src_alias, spec.bool_fields)} AS {qident(c)}"
+            for c in spec.columns
+        ],
+    ]
+
+    # Domains with unique-by-design data (e.g. inventory: item_id+loc+date is unique
+    # in source) skip DISTINCT ON + ORDER BY for ~10x faster INSERT on large datasets.
+    _SKIP_DEDUP_DOMAINS = {"inventory"}
+
+    if spec.name in _SKIP_DEDUP_DOMAINS:
+        # Direct INSERT: no DISTINCT ON, no ORDER BY — much faster for large datasets
+        insert_sql = (
+            f"INSERT INTO {qident(spec.table)} ("
+            + ", ".join(qident(c) for c in target_cols)
+            + ") SELECT "
+            + ", ".join(select_exprs)
+            + " FROM (SELECT *, "
+            + business_key_expr(spec, stg_alias)
+            + " AS "
+            + qident(key_col)
+            + " FROM "
+            + qident(stg_table)
+            + " "
+            + stg_alias
+            + ") "
+            + src_alias
+        )
+    else:
+        # Dedup INSERT: DISTINCT ON business key, keep latest row by _load_seq
+        insert_sql = (
+            f"INSERT INTO {qident(spec.table)} ("
+            + ", ".join(qident(c) for c in target_cols)
+            + ") SELECT "
+            + ", ".join(select_exprs)
+            + " FROM (SELECT DISTINCT ON ("
+            + qident(key_col)
+            + ") * FROM (SELECT *, "
+            + business_key_expr(spec, stg_alias)
+            + " AS "
+            + qident(key_col)
+            + " FROM "
+            + qident(stg_table)
+            + " "
+            + stg_alias
+            + ") x ORDER BY "
+            + qident(key_col)
+            + ", _load_seq DESC) "
+            + src_alias
+        )
+
+    # Forecast: filter to execution-lag rows only (added after lag resolution)
+    forecast_filter = ""
+
+    with psycopg.connect(**db) as conn, conn.cursor() as cur:
+        # Session tuning for bulk load
+        cur.execute(f"SET work_mem = '{_PG_WORK_MEM}'")
+        cur.execute(f"SET maintenance_work_mem = '{_PG_MAINTENANCE_WORK_MEM}'")
+        cur.execute("SET synchronous_commit = 'off'")
+        cur.execute("SET max_parallel_maintenance_workers = 4")
+        cur.execute("SET effective_io_concurrency = 200")
+
+        # Batch tracking (for change detection in incremental mode)
+        batch_id = create_batch(cur, spec.name, csv_path.name, src_hash)
+
+        try:
+            # Phase 1: COPY CSV into staging
+            with profiled_section("create_staging"):
+                logger.info("[1/4] COPY %s -> staging ...", csv_path.name)
+                t0 = time.time()
+                cur.execute(create_stg_sql)
+
+            with profiled_section("copy_csv"):
+                with cur.copy(copy_sql) as copy:
+                    with csv_path.open("r", encoding="utf-8", newline="") as f:
+                        while chunk := f.read(HASH_CHUNK_SIZE):
+                            copy.write(chunk)
+                cur.execute(f"SELECT count(*) FROM {qident(stg_table)}")
+                stg_rows = cur.fetchone()[0]
+                logger.info("  %s rows staged (%s)", f"{stg_rows:,}", _elapsed(t0))
+
+                # Check once: is the target table partitioned?
+                is_partitioned = _is_partitioned(cur, spec.table)
+
+                # For large datasets (>1M rows), create an index on the business key
+                # to speed up the DISTINCT ON dedup in the INSERT.
+                # Skip for partitioned targets (e.g. inventory) — these datasets
+                # have unique rows by design so the dedup index adds no value.
+                if stg_rows > 1_000_000 and not is_partitioned:
+                    t_idx = time.time()
+                    # Build key expression without table alias (CREATE INDEX has no FROM clause)
+                    key_cols = [f"trim({qident(f)})" for f in spec.key_fields]
+                    sep = (spec.business_key_separator or "-").replace("'", "''")
+                    bk_idx_expr = (
+                        key_cols[0] if len(key_cols) == 1
+                        else f" || '{sep}' || ".join(key_cols)
+                    )
+                    cur.execute(
+                        f"CREATE INDEX ON {qident(stg_table)} "
+                        f"(({bk_idx_expr}), _load_seq DESC)"
+                    )
+                    logger.info("  Staging index created (%s)", _elapsed(t_idx))
+
+            # Phase 1b: DFU match filter — only load rows with a matching dim_sku entry
+            if spec.name in _DFU_MATCH_DOMAINS:
+                with profiled_section("filter_unmatched_dfus"):
+                    t0 = time.time()
+                    dfu_deleted = _filter_unmatched_dfus(cur, stg_table, spec.name)
+                    if dfu_deleted:
+                        logger.info("  DFU filter: kept %s, removed %s (%s)",
+                                    f"{stg_rows - dfu_deleted:,}",
+                                    f"{dfu_deleted:,}", _elapsed(t0))
+
+            # Phase 1b2: FK orphan filter — remove rows referencing missing dimension values
+            if spec.name in _FK_CHECKS:
+                with profiled_section("filter_fk_orphans"):
+                    t0 = time.time()
+                    fk_deleted = _filter_fk_orphans(cur, stg_table, spec.name)
+                    if fk_deleted:
+                        logger.info("  FK orphan filter: removed %s rows (%s)",
+                                    f"{fk_deleted:,}", _elapsed(t0))
+
+            # Phase 1c: Forecast-specific — 12-month filter + execution lag
+            archive_count = 0
+            if is_forecast:
+                # Keep only the last 12 months of forecast data
+                planning_dt = get_planning_date()
+                cutoff = date(planning_dt.year - 1, planning_dt.month, 1)
+                cur.execute(f"""
+                    DELETE FROM {qident(stg_table)}
+                    WHERE lower(trim("startdate")) IN ({NULL_SQL})
+                       OR "startdate"::date < %s
+                """, [cutoff])
+                trimmed = cur.rowcount
+                if trimmed:
+                    logger.info("  Trimmed %s rows with startdate before %s",
+                                f"{trimmed:,}", cutoff.isoformat())
+
+                # External forecasts skip archive — archive is only for
+                # backtest models loaded via load_backtest_forecasts.py.
+
+                # Set lag and execution_lag from dim_sku.
+                logger.info("  Resolving execution lag from dim_sku ...")
+                t0 = time.time()
+                matched = _resolve_forecast_execution_lag(cur, stg_table)
+                logger.info("  Set execution lag for %s rows (%s)",
+                            f"{matched:,}", _elapsed(t0))
+                # No lag filter — all rows are at execution lag by assumption
+
+            # Phase 2: Clear target (partition-aware or traditional)
+            saved_indexes = []
+            saved_constraints = []
+
+            if is_partitioned:
+                with profiled_section("prepare_partitions"):
+                    logger.info("[2/4] Preparing %s (partitioned) ...", spec.table)
+                    t0 = time.time()
+                    if incremental_delete:
+                        cur.execute(f"DELETE FROM {qident(spec.table)} WHERE {incremental_delete}")
+                        logger.info("  Incremental delete (%s)", _elapsed(t0))
+                    else:
+                        # Full reload: drop ALL indexes/constraints from parent
+                        # (propagates to partitions), then TRUNCATE for fast INSERT
+                        saved_indexes = _get_all_indexes(cur, spec.table)
+                        saved_constraints = _get_unique_constraints(cur, spec.table)
+                        _drop_unique_constraints(cur, spec.table, saved_constraints)
+                        _drop_indexes(cur, saved_indexes)
+                        cur.execute(f"TRUNCATE TABLE {qident(spec.table)} CASCADE")
+                        logger.info("  Truncated + dropped %d indexes (%s)",
+                                    len(saved_indexes) + len(saved_constraints), _elapsed(t0))
+            else:
+                with profiled_section("drop_indexes"):
+                    logger.info("[2/4] Preparing %s ...", spec.table)
+                    t0 = time.time()
+                    saved_indexes = _get_all_indexes(cur, spec.table)
+                    saved_constraints = _get_unique_constraints(cur, spec.table)
+                    # Drop UNIQUE constraints FIRST (they depend on backing indexes)
+                    _drop_unique_constraints(cur, spec.table, saved_constraints)
+                    _drop_indexes(cur, saved_indexes)
+
+                if replace_mode and is_forecast:
+                    cur.execute(
+                        f"DELETE FROM {qident(spec.table)} WHERE model_id = %s",
+                        [EXTERNAL_MODEL_ID],
+                    )
+                    logger.info("  Deleted external rows, dropped %d indexes (%s)",
+                                len(saved_indexes) + len(saved_constraints), _elapsed(t0))
+                elif incremental_delete:
+                    cur.execute(f"DELETE FROM {qident(spec.table)} WHERE {incremental_delete}")
+                    logger.info("  Incremental delete + dropped %d indexes (%s)",
+                                len(saved_indexes) + len(saved_constraints), _elapsed(t0))
+                else:
+                    cur.execute(f"TRUNCATE TABLE {qident(spec.table)} CASCADE")
+                    logger.info("  Truncated + dropped %d indexes (%s)",
+                                len(saved_indexes) + len(saved_constraints), _elapsed(t0))
+
+            # Phase 3: INSERT
+            if is_partitioned and not incremental_delete:
+                # Per-month parallel loading: promote staging to a real table visible
+                # to parallel connections, create fresh partitions, INSERT each month
+                # in a separate thread. No partition routing, no constraints during load.
+                with profiled_section("insert_per_partition"):
+                    logger.info("[3/4] INSERT per-month (parallel) -> %s ...", spec.table)
+                    t0 = time.time()
+
+                    # Promote temp staging to a real table so parallel connections can see it
+                    real_stg = f"_stg_{spec.name}_shared"
+                    cur.execute(f"DROP TABLE IF EXISTS {qident(real_stg)}")
+                    cur.execute(
+                        f"CREATE UNLOGGED TABLE {qident(real_stg)} AS "
+                        f"SELECT * FROM {qident(stg_table)}"
+                    )
+                    conn.commit()
+                    logger.info("  Promoted staging to shared table (%s)", _elapsed(t0))
+
+                    # Find distinct months
+                    date_col = spec.date_fields and next(iter(spec.date_fields)) or "snapshot_date"
+                    cur.execute(
+                        f"SELECT DISTINCT date_trunc('month', {stg_alias}.{qident(date_col)}::date)::date "
+                        f"FROM {qident(real_stg)} {stg_alias} ORDER BY 1"
+                    )
+                    months = [r[0] for r in cur.fetchall()]
+
+                    # Create all fresh partitions
+                    for m in months:
+                        m_str = m.strftime("%Y-%m-%d")
+                        y, mo = m.year, m.month
+                        end_str = f"{y + 1:04d}-01-01" if mo == 12 else f"{y:04d}-{mo + 1:02d}-01"
+                        part_name = f"{spec.table}_{y:04d}_{mo:02d}"
+
+                        cur.execute("""
+                            SELECT 1 FROM pg_class
+                            WHERE relname = %s AND relnamespace = 'public'::regnamespace
+                        """, (part_name,))
+                        if cur.fetchone():
+                            cur.execute(
+                                f"ALTER TABLE {qident(spec.table)} "
+                                f"DETACH PARTITION {qident(part_name)}"
+                            )
+                            cur.execute(f"DROP TABLE {qident(part_name)}")
+
+                        cur.execute(
+                            f"CREATE TABLE {qident(part_name)} PARTITION OF {qident(spec.table)} "
+                            f"FOR VALUES FROM ('{m_str}') TO ('{end_str}')"
+                        )
+                    conn.commit()
+                    logger.info("  Created %d partitions (%s)", len(months), _elapsed(t0))
+
+                    # Build INSERT SQL targeting the shared staging table
+                    # Replace the temp staging table name with the shared one
+                    parallel_insert_sql = insert_sql.replace(
+                        qident(stg_table), qident(real_stg)
+                    )
+
+                    def _insert_month(month_date):
+                        """Insert one month's data using a separate DB connection."""
+                        m_str = month_date.strftime("%Y-%m-%d")
+                        y, mo = month_date.year, month_date.month
+                        end_str = f"{y + 1:04d}-01-01" if mo == 12 else f"{y:04d}-{mo + 1:02d}-01"
+                        part_name = f"{spec.table}_{y:04d}_{mo:02d}"
+
+                        month_filter = (
+                            f" WHERE {src_alias}.{qident(date_col)}::date >= '{m_str}' "
+                            f"AND {src_alias}.{qident(date_col)}::date < '{end_str}'"
+                        )
+                        t_m = time.time()
+                        with psycopg.connect(**db) as m_conn, m_conn.cursor() as m_cur:
+                            m_cur.execute(f"SET work_mem = '{_PG_WORK_MEM}'")
+                            m_cur.execute("SET synchronous_commit = 'off'")
+                            m_cur.execute(parallel_insert_sql + month_filter)
+                            m_rows = m_cur.rowcount
+                            m_conn.commit()
+                        elapsed = _elapsed(t_m)
+                        logger.info("  %s: %s rows (%s)", part_name, f"{m_rows:,}", elapsed)
+                        return m_rows
+
+                    # Parallel INSERT — one thread per month (I/O-bound, not CPU)
+                    row_count = 0
+                    max_workers = min(len(months), 6)  # cap at 6 parallel connections
+                    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                        futures = {pool.submit(_insert_month, m): m for m in months}
+                        for fut in as_completed(futures):
+                            row_count += fut.result()
+
+                    # Clean up shared staging table
+                    cur.execute(f"DROP TABLE IF EXISTS {qident(real_stg)}")
+                    conn.commit()
+
+                    logger.info("  Total: %s rows (%s, %s rows/s)",
+                                f"{row_count:,}", _elapsed(t0),
+                                f"{row_count / max(time.time() - t0, 0.001):,.0f}")
+            else:
+                with profiled_section("insert_from_staging"):
+                    logger.info("[3/4] INSERT -> %s ...", spec.table)
+                    t0 = time.time()
+                    cur.execute(insert_sql + forecast_filter)
+                    row_count = cur.rowcount
+                    rate = row_count / max(time.time() - t0, 0.001)
+                    logger.info("  %s rows inserted (%s, %s rows/s)",
+                                f"{row_count:,}", _elapsed(t0), f"{rate:,.0f}")
+
+            # Phase 3b: Post-load hooks
+            with profiled_section("post_load_hooks"):
+                if spec.name == "purchase_order":
+                    _post_load_purchase_order(cur)
+                elif spec.name == "sourcing":
+                    _post_load_sourcing(cur)
+
+            # Phase 4: Rebuild indexes
+            with profiled_section("recreate_indexes"):
+                if not saved_indexes and not saved_constraints:
+                    logger.info("[4/4] No indexes to rebuild")
+                else:
+                    logger.info("[4/4] Rebuilding %d indexes ...",
+                                len(saved_indexes) + len(saved_constraints))
+                    t0 = time.time()
+                    _recreate_unique_constraints(cur, spec.table, saved_constraints)
+                    _recreate_indexes(cur, saved_indexes)
+                    logger.info("  Indexes rebuilt (%s)", _elapsed(t0))
+
+            # Forecast: refresh archive views
+            with profiled_section("refresh_views"):
+                if is_forecast and not skip_archive:
+                    logger.info("  Refreshing archive views ...")
+                    for mv in MV_REFRESH_ARCHIVE:
+                        cur.execute(f"REFRESH MATERIALIZED VIEW {mv}")
+
+            # Complete batch + commit
+            complete_batch(cur, batch_id, stg_rows, row_count)
+            conn.commit()
+
+        except Exception as exc:
+            conn.rollback()
+            try:
+                with psycopg.connect(**db) as err_conn, err_conn.cursor() as err_cur:
+                    fail_batch(err_cur, batch_id, str(exc))
+                    err_conn.commit()
+            except psycopg.Error:
+                pass
+            raise
+
+    total = _elapsed(t_total)
+    logger.info("Done: %s rows -> %s (%s)", f"{row_count:,}", spec.table, total)
+    if is_forecast and not skip_archive:
+        logger.info("  Archive: %s rows", f"{archive_count:,}")
+    logger.info("=" * 60)
+
+    return {
+        "domain": spec.name,
+        "rows_in": stg_rows,
+        "rows_loaded": row_count,
+        "elapsed": total,
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    allowed = ", ".join(sorted(DOMAIN_SPECS))
+    parser = argparse.ArgumentParser(description="Load normalized CSV into Postgres")
+    parser.add_argument("--dataset", required=True, help=allowed)
+    parser.add_argument("--replace", action="store_true",
+                        help="(forecast only) Replace only model_id='external' rows")
+    parser.add_argument("--skip-archive", action="store_true",
+                        help="(forecast only) Skip loading all lags into backtest_lag_archive")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    spec = get_spec(args.dataset)
+    csv_path = ROOT / "data" / spec.clean_file
+
+    load_domain(
+        spec, csv_path,
+        replace_mode=args.replace,
+        skip_archive=args.skip_archive,
+    )
+
+
+if __name__ == "__main__":
+    load_dotenv()
+    main()

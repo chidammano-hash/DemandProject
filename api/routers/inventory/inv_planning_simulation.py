@@ -27,7 +27,7 @@ def run_simulation(
     sim_run_id = str(_uuid.uuid4())
     # Run synchronously for simplicity (large N is still fast enough ~30s for 10k)
     try:
-        from scripts.run_ss_simulation import run as _sim_run
+        from scripts.inventory.run_ss_simulation import run as _sim_run
         result = _sim_run(
             item_id=item_id,
             loc=loc,

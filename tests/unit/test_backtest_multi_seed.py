@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.run_backtest import MODEL_REGISTRY
+from scripts.ml.run_backtest import MODEL_REGISTRY
 
 
 # ── default_params lambda tests ───────────────────────────────────────────────
@@ -154,10 +154,10 @@ class TestMultiSeedIntegration:
     def _disable_pipeline_config(self):
         """Disable forecast_pipeline_config.yaml so tests use their own config."""
         with patch(
-            "scripts.run_backtest.load_forecast_pipeline_config",
+            "scripts.ml.run_backtest.load_forecast_pipeline_config",
             side_effect=FileNotFoundError,
         ), patch(
-            "scripts.run_backtest.get_algorithm_roster",
+            "scripts.ml.run_backtest.get_algorithm_roster",
             side_effect=FileNotFoundError,
         ):
             yield
@@ -174,9 +174,9 @@ class TestMultiSeedIntegration:
             },
         }
 
-    @patch("scripts.run_backtest.run_tree_backtest")
-    @patch("scripts.run_backtest.profiled_section")
-    @patch("scripts.run_backtest._import_model_class")
+    @patch("scripts.ml.run_backtest.run_tree_backtest")
+    @patch("scripts.ml.run_backtest.profiled_section")
+    @patch("scripts.ml.run_backtest._import_model_class")
     def test_single_seed_backward_compatible(
         self, mock_import, mock_profiler, mock_backtest, tmp_path: Path
     ) -> None:
@@ -209,8 +209,8 @@ class TestMultiSeedIntegration:
         with patch("sys.argv", ["run_backtest.py", "--model", "lgbm", "--config", str(config_file)]):
             with patch("importlib.import_module") as mock_importlib:
                 mock_importlib.return_value = MagicMock()
-                with patch("scripts.run_backtest.load_dotenv"):
-                    from scripts.run_backtest import main
+                with patch("scripts.ml.run_backtest.load_dotenv"):
+                    from scripts.ml.run_backtest import main
 
                     main()
 
@@ -220,9 +220,9 @@ class TestMultiSeedIntegration:
         # With n_seeds=1, seed 0 is used — random_state should be 0
         assert call_kwargs["model_params"]["random_state"] == 0
 
-    @patch("scripts.run_backtest.run_tree_backtest")
-    @patch("scripts.run_backtest.profiled_section")
-    @patch("scripts.run_backtest._import_model_class")
+    @patch("scripts.ml.run_backtest.run_tree_backtest")
+    @patch("scripts.ml.run_backtest.profiled_section")
+    @patch("scripts.ml.run_backtest._import_model_class")
     def test_multi_seed_runs_multiple_times(
         self, mock_import, mock_profiler, mock_backtest, tmp_path: Path
     ) -> None:
@@ -269,8 +269,8 @@ class TestMultiSeedIntegration:
         with patch("sys.argv", ["run_backtest.py", "--model", "lgbm", "--config", str(config_file), "--n-seeds", "3"]):
             with patch("importlib.import_module") as mock_importlib:
                 mock_importlib.return_value = MagicMock()
-                with patch("scripts.run_backtest.load_dotenv"):
-                    from scripts.run_backtest import main
+                with patch("scripts.ml.run_backtest.load_dotenv"):
+                    from scripts.ml.run_backtest import main
 
                     main()
 
@@ -282,9 +282,9 @@ class TestMultiSeedIntegration:
             seeds_used.append(call[1]["model_params"]["random_state"])
         assert seeds_used == [0, 1, 2]
 
-    @patch("scripts.run_backtest.run_tree_backtest")
-    @patch("scripts.run_backtest.profiled_section")
-    @patch("scripts.run_backtest._import_model_class")
+    @patch("scripts.ml.run_backtest.run_tree_backtest")
+    @patch("scripts.ml.run_backtest.profiled_section")
+    @patch("scripts.ml.run_backtest._import_model_class")
     def test_multi_seed_writes_summary_metadata(
         self, mock_import, mock_profiler, mock_backtest, tmp_path: Path
     ) -> None:
@@ -330,8 +330,8 @@ class TestMultiSeedIntegration:
         with patch("sys.argv", ["run_backtest.py", "--model", "lgbm", "--config", str(config_file), "--n-seeds", "3"]):
             with patch("importlib.import_module") as mock_importlib:
                 mock_importlib.return_value = MagicMock()
-                with patch("scripts.run_backtest.load_dotenv"):
-                    from scripts.run_backtest import main
+                with patch("scripts.ml.run_backtest.load_dotenv"):
+                    from scripts.ml.run_backtest import main
 
                     main()
 
@@ -346,9 +346,9 @@ class TestMultiSeedIntegration:
         assert abs(summary["mean_accuracy_pct"] - np.mean(accuracies)) < 0.001
         assert abs(summary["std_accuracy_pct"] - np.std(accuracies)) < 0.001
 
-    @patch("scripts.run_backtest.run_tree_backtest")
-    @patch("scripts.run_backtest.profiled_section")
-    @patch("scripts.run_backtest._import_model_class")
+    @patch("scripts.ml.run_backtest.run_tree_backtest")
+    @patch("scripts.ml.run_backtest.profiled_section")
+    @patch("scripts.ml.run_backtest._import_model_class")
     def test_multi_seed_extra_metadata_includes_seed_info(
         self, mock_import, mock_profiler, mock_backtest, tmp_path: Path
     ) -> None:
@@ -390,8 +390,8 @@ class TestMultiSeedIntegration:
         with patch("sys.argv", ["run_backtest.py", "--model", "lgbm", "--config", str(config_file), "--n-seeds", "2"]):
             with patch("importlib.import_module") as mock_importlib:
                 mock_importlib.return_value = MagicMock()
-                with patch("scripts.run_backtest.load_dotenv"):
-                    from scripts.run_backtest import main
+                with patch("scripts.ml.run_backtest.load_dotenv"):
+                    from scripts.ml.run_backtest import main
 
                     main()
 
@@ -401,9 +401,9 @@ class TestMultiSeedIntegration:
             assert extra["seed"] == call_idx
             assert extra["n_seeds"] == 2
 
-    @patch("scripts.run_backtest.run_tree_backtest")
-    @patch("scripts.run_backtest.profiled_section")
-    @patch("scripts.run_backtest._import_model_class")
+    @patch("scripts.ml.run_backtest.run_tree_backtest")
+    @patch("scripts.ml.run_backtest.profiled_section")
+    @patch("scripts.ml.run_backtest._import_model_class")
     def test_n_seeds_from_config(
         self, mock_import, mock_profiler, mock_backtest, tmp_path: Path
     ) -> None:
@@ -447,16 +447,16 @@ class TestMultiSeedIntegration:
         with patch("sys.argv", ["run_backtest.py", "--model", "lgbm", "--config", str(config_file)]):
             with patch("importlib.import_module") as mock_importlib:
                 mock_importlib.return_value = MagicMock()
-                with patch("scripts.run_backtest.load_dotenv"):
-                    from scripts.run_backtest import main
+                with patch("scripts.ml.run_backtest.load_dotenv"):
+                    from scripts.ml.run_backtest import main
 
                     main()
 
         assert mock_backtest.call_count == 2
 
-    @patch("scripts.run_backtest.run_tree_backtest")
-    @patch("scripts.run_backtest.profiled_section")
-    @patch("scripts.run_backtest._import_model_class")
+    @patch("scripts.ml.run_backtest.run_tree_backtest")
+    @patch("scripts.ml.run_backtest.profiled_section")
+    @patch("scripts.ml.run_backtest._import_model_class")
     def test_catboost_seed_param_key(
         self, mock_import, mock_profiler, mock_backtest, tmp_path: Path
     ) -> None:
@@ -501,8 +501,8 @@ class TestMultiSeedIntegration:
         with patch("sys.argv", ["run_backtest.py", "--model", "catboost", "--config", str(config_file), "--n-seeds", "2"]):
             with patch("importlib.import_module") as mock_importlib:
                 mock_importlib.return_value = MagicMock()
-                with patch("scripts.run_backtest.load_dotenv"):
-                    from scripts.run_backtest import main
+                with patch("scripts.ml.run_backtest.load_dotenv"):
+                    from scripts.ml.run_backtest import main
 
                     main()
 

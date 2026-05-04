@@ -136,7 +136,7 @@ async def dq_fix_preview(
 
     Each item has an `id` that can be used to selectively apply fixes via POST /fix/apply.
     """
-    from scripts.fix_dq_issues import preview_all_fixes, FIX_REGISTRY
+    from scripts.ops.fix_dq_issues import preview_all_fixes, FIX_REGISTRY
 
     if fix_type and fix_type not in FIX_REGISTRY:
         return {"error": f"Unknown fix type: {fix_type}. Valid: {list(FIX_REGISTRY.keys())}"}
@@ -156,7 +156,7 @@ async def dq_fix_apply(body: FixApplyRequest):
     Pass `fix_ids` array from the preview response. Only those fixes are applied;
     all others are skipped.
     """
-    from scripts.fix_dq_issues import apply_selected_fixes
+    from scripts.ops.fix_dq_issues import apply_selected_fixes
 
     if not body.fix_ids:
         return {"error": "No fix IDs provided", "applied": [], "total_applied": 0}
@@ -326,7 +326,7 @@ async def dq_fix(
 
     Dry-run (default) previews fixes without writing. Set apply=true to execute.
     """
-    from scripts.fix_dq_issues import run_all_fixes, FIX_REGISTRY
+    from scripts.ops.fix_dq_issues import run_all_fixes, FIX_REGISTRY
 
     if fix_type and fix_type not in FIX_REGISTRY:
         return {"error": f"Unknown fix type: {fix_type}. Valid: {list(FIX_REGISTRY.keys())}"}

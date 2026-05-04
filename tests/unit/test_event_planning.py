@@ -1,7 +1,7 @@
 """Unit tests for scripts/apply_event_adjustments.py — F4.3."""
 
 import pytest
-from scripts.apply_event_adjustments import (
+from scripts.forecasting.apply_event_adjustments import (
     apply_event_uplift,
     compute_event_impact_value,
     compute_post_event_accuracy,

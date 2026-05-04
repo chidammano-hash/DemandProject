@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 # Import under test
 # ---------------------------------------------------------------------------
 
-import scripts.generate_consensus_plan as cp
+import scripts.forecasting.generate_consensus_plan as cp
 
 
 # ---------------------------------------------------------------------------

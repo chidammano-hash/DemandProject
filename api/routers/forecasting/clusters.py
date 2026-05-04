@@ -352,7 +352,7 @@ async def run_clustering_scenario(req: ClusteringScenarioRequest):
     }
 
     # Embed scenario_id so _run_cluster_scenario uses it
-    from scripts.run_clustering_scenario import generate_scenario_id
+    from scripts.ml.run_clustering_scenario import generate_scenario_id
     scenario_id = generate_scenario_id()
     params["scenario_id"] = scenario_id
 
@@ -403,7 +403,7 @@ def get_scenario_status(scenario_id: str):
     """Poll scenario execution status."""
     _validate_scenario_id(scenario_id)
     # 1. Check for completed/failed result on disk (fastest path)
-    from scripts.run_clustering_scenario import get_scenario_result
+    from scripts.ml.run_clustering_scenario import get_scenario_result
 
     result = get_scenario_result(scenario_id)
     if result is not None:
@@ -452,7 +452,7 @@ def get_scenario_status(scenario_id: str):
 def get_clustering_scenario(scenario_id: str):
     """Retrieve a previously run scenario result."""
     _validate_scenario_id(scenario_id)
-    from scripts.run_clustering_scenario import get_scenario_result
+    from scripts.ml.run_clustering_scenario import get_scenario_result
 
     result = get_scenario_result(scenario_id)
     if result is None:
@@ -464,7 +464,7 @@ def get_clustering_scenario(scenario_id: str):
 def promote_clustering_scenario(scenario_id: str):
     """Promote a scenario to production (updates dim_sku.ml_cluster)."""
     _validate_scenario_id(scenario_id)
-    from scripts.run_clustering_scenario import promote_scenario
+    from scripts.ml.run_clustering_scenario import promote_scenario
 
     try:
         result = promote_scenario(scenario_id)

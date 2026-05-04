@@ -181,7 +181,7 @@ async def eoq_detail(
 @router.get("/inv-planning/eoq/sensitivity")
 async def eoq_sensitivity(item: str | None = None, loc: str | None = None):
     """EOQ sensitivity curve: how EOQ changes as ordering_cost varies."""
-    from scripts.compute_eoq import sensitivity_curve
+    from scripts.inventory.compute_eoq import sensitivity_curve
 
     config = load_config("eoq_config")
 

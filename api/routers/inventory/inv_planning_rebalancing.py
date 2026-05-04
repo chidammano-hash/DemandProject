@@ -301,7 +301,7 @@ def trigger_compute(
     _executor = ThreadPoolExecutor(max_workers=1)
 
     def _run():
-        from scripts.compute_rebalancing import run as compute_run
+        from scripts.inventory.compute_rebalancing import run as compute_run
         compute_run(
             solver=body.solver,
             horizon=body.horizon_weeks,

@@ -4,7 +4,7 @@ import pytest
 from datetime import date
 from unittest.mock import MagicMock
 
-from scripts.clean_forecasts_by_date import (
+from scripts.ml.clean_forecasts_by_date import (
     parse_date,
     build_where_clause,
     clean_by_date,

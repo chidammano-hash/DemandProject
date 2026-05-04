@@ -217,6 +217,6 @@ def run_investment_plan(
     _: None = Depends(require_api_key),
 ) -> dict:
     """Trigger capital investment optimization plan computation."""
-    from scripts.compute_investment_plan import run as _plan_run
+    from scripts.inventory.compute_investment_plan import run as _plan_run
     result = _plan_run(budget_constraint=budget_constraint, target_csl=target_csl)
     return {"plan_id": result["plan_id"], "status": "completed", "total_items": result["total_items"]}

@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from scripts.compute_investment_plan import (
+from scripts.inventory.compute_investment_plan import (
     compute_marginal_roi,
     estimate_current_csl,
     BASE_CSL,

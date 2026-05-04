@@ -565,7 +565,7 @@ def generate_exceptions(
     Auth required (X-API-Key header when API_KEY env var is set).
     Returns counts: detected, inserted, skipped_dedupe.
     """
-    import scripts.generate_storyboard_exceptions as gen_module
+    import scripts.ops.generate_storyboard_exceptions as gen_module
 
     result = gen_module.run(
         month_str=body.month,

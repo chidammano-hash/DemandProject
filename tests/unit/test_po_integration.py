@@ -55,7 +55,7 @@ def _patch_config(tmp_path, monkeypatch):
 
 
 def _validate(row: dict, past_due_days: int = 180):
-    from scripts.load_open_pos import validate_po_row
+    from scripts.etl.load_open_pos import validate_po_row
     return validate_po_row(row, _make_config(past_due_days=past_due_days))
 
 
@@ -219,23 +219,23 @@ class TestValidatePoRow:
 
 class TestParseDate:
     def test_valid_string(self):
-        from scripts.load_open_pos import _parse_date
+        from scripts.etl.load_open_pos import _parse_date
         result = _parse_date("2026-03-14")
         assert result == date(2026, 3, 14)
 
     def test_none_returns_none(self):
-        from scripts.load_open_pos import _parse_date
+        from scripts.etl.load_open_pos import _parse_date
         assert _parse_date(None) is None
 
     def test_empty_string_returns_none(self):
-        from scripts.load_open_pos import _parse_date
+        from scripts.etl.load_open_pos import _parse_date
         assert _parse_date("") is None
 
     def test_date_object_passthrough(self):
-        from scripts.load_open_pos import _parse_date
+        from scripts.etl.load_open_pos import _parse_date
         d = date(2026, 3, 1)
         assert _parse_date(d) == d
 
     def test_invalid_string_returns_none(self):
-        from scripts.load_open_pos import _parse_date
+        from scripts.etl.load_open_pos import _parse_date
         assert _parse_date("not-a-date") is None
