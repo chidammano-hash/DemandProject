@@ -1161,9 +1161,9 @@ class JobManager:
         if not output_dir:
             return
 
-        root = Path(__file__).resolve().parents[2]
-        meta_path = root / "data" / "backtest" / output_dir / "backtest_metadata.json"
-        pred_path = root / "data" / "backtest" / output_dir / "backtest_predictions.csv"
+        from common.core.paths import DATA_DIR
+        meta_path = DATA_DIR / "backtest" / output_dir / "backtest_metadata.json"
+        pred_path = DATA_DIR / "backtest" / output_dir / "backtest_predictions.csv"
 
         try:
             from common.ml.tuning_tracker import complete_run, register_timeframes, register_cluster_month_breakdowns

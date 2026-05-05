@@ -32,7 +32,7 @@ router = APIRouter(prefix="/champion-experiments", tags=["champion-experiments"]
 # Constants
 # ---------------------------------------------------------------------------
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
 _TEMPLATES_PATH = _PROJECT_ROOT / "config" / "forecasting" / "champion_experiment_templates.yaml"
 _PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 
@@ -1122,13 +1122,13 @@ def delete_experiment(experiment_id: int):
                     detail=f"Cannot delete experiment with status '{status}' (cancel first)",
                 )
             if is_promoted:
-                # Clean up champion/ceiling rows from forecast table
-                cur.execute(
-                    "DELETE FROM fact_external_forecast_monthly WHERE model_id IN ('champion', 'ceiling')"
-                )
-                logger.info(
-                    "Deleted champion/ceiling forecast rows for promoted experiment %d",
-                    experiment_id,
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Cannot delete promoted experiment {experiment_id}. "
+                        "Demote it first (promote a different experiment, or call "
+                        "the demote endpoint)."
+                    ),
                 )
 
             # Clean up referencing tables before deleting experiment

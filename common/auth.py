@@ -1,7 +1,10 @@
 """User authentication and RBAC for Supply Chain Command Center.
 
-Replaces the simple API key auth in api/auth.py with JWT-based user identity,
-role-based access control, and audit logging.
+Provides JWT-based user identity, role-based access control, and audit
+logging. Complements (does not replace) :mod:`api.auth`, which gates
+mutation endpoints with a service-level API key. The two layers compose:
+the API key answers "is this an authorized client?", JWT answers
+"WHO is making this request and what may they do?".
 """
 from __future__ import annotations
 

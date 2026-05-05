@@ -26,7 +26,9 @@ from typing import Optional
 
 import yaml
 
-_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "planning_config.yaml"
+from common.core.paths import CONFIG_DIR  # noqa: E402
+
+_CONFIG_PATH = CONFIG_DIR / "planning_config.yaml"
 
 # Module-level cache — guarded by _cache_lock for thread safety
 _cached_date: Optional[date] = None

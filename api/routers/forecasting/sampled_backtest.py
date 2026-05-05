@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["lgbm-tuning"])
 
-_SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
+from common.core.paths import SCRIPTS_DIR as _SCRIPTS_DIR  # noqa: E402
 _UV = "uv"
 
 

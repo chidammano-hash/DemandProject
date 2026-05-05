@@ -99,7 +99,13 @@ class TestLoadConfig:
         assert r == {"v": 42}
 
     def test_thread_safety(self, tmp_path):
-        """Multiple threads loading the same config should not corrupt the cache."""
+        """Multiple threads loading the same config should not corrupt the cache.
+
+        Note: ``mock.patch`` is not thread-safe — patching from inside a worker
+        races with __exit__ unwinding and can leave the module-level value
+        pointing at a deleted tmpdir, polluting subsequent tests. We patch
+        ONCE on the main thread and let workers race on the same target dir.
+        """
         cfg_path = tmp_path / "threaded.yaml"
         cfg_path.write_text(yaml.dump({"threads": "ok"}))
 
@@ -108,17 +114,16 @@ class TestLoadConfig:
 
         def worker():
             try:
-                with patch("common.core.utils._CONFIG_DIR", tmp_path):
-                    r = load_config("threaded.yaml")
-                    results.append(r)
+                results.append(load_config("threaded.yaml"))
             except Exception as e:
                 errors.append(e)
 
-        threads = [threading.Thread(target=worker) for _ in range(20)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
+            threads = [threading.Thread(target=worker) for _ in range(20)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
 
         assert not errors
         assert all(r == {"threads": "ok"} for r in results)

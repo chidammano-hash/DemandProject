@@ -116,7 +116,11 @@ def test_build_grid_unknown_dfu_attrs():
                                    "execution_lag", "total_lt", "brand", "region", "abc_vol"])
     grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=2)
     assert grid is not None
-    assert grid.iloc[0]["ml_cluster"] == "__unknown__"
+    # ml_cluster was removed from CAT_FEATURES (see docs/specs/01-foundation/08-known-gaps.md §1).
+    # Validate the contract on the columns that ARE categorical features.
+    from common.core.constants import CAT_FEATURES
+    for col in CAT_FEATURES:
+        assert grid.iloc[0][col] == "__unknown__", f"{col} should default to __unknown__"
 
 
 def test_build_grid_horizon_months_tracked():
@@ -210,7 +214,7 @@ def test_generate_forecast_returns_rows():
         horizon=3,
         item_id="ITEM001",
         loc="LOC1",
-        plan_version="2026-03",
+        forecast_month_generated="2026-03",
         run_id="test-run-id",
         model_id="lgbm_cluster",
         cluster_id=2,
@@ -231,7 +235,7 @@ def test_generate_forecast_keys():
         horizon=2,
         item_id="ITEM001",
         loc="LOC1",
-        plan_version="2026-03",
+        forecast_month_generated="2026-03",
         run_id="test-run-id",
         model_id="lgbm_cluster",
         cluster_id=2,
@@ -242,7 +246,8 @@ def test_generate_forecast_keys():
         assert "forecast_month" in row
         assert "forecast_qty" in row
         assert "lag_source" in row
-        assert "plan_version" in row
+        # Was renamed from plan_version → forecast_month_generated.
+        assert "forecast_month_generated" in row
         assert "model_id" in row
         assert "horizon_months" in row
 
@@ -261,7 +266,7 @@ def test_generate_forecast_qty_nonneg():
         horizon=3,
         item_id="ITEM001",
         loc="LOC1",
-        plan_version="2026-03",
+        forecast_month_generated="2026-03",
         run_id="test-run-id",
         model_id="lgbm_cluster",
         cluster_id=2,
@@ -408,7 +413,7 @@ def test_generate_forecasts_batch_returns_rows():
             ({"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid),
         ],
         horizon=3,
-        plan_version="2026-03",
+        forecast_month_generated="2026-03",
         run_id="test-run-id",
         model_id="lgbm_cluster",
         cat_encoders=enc,
@@ -434,7 +439,7 @@ def test_generate_forecasts_batch_multi_dfu():
             ({"item_id": "ITEM002", "loc": "LOC2", "cluster_id": 2}, grid2),
         ],
         horizon=3,
-        plan_version="2026-03",
+        forecast_month_generated="2026-03",
         run_id="test-run-id",
         model_id="lgbm_cluster",
         cat_encoders=enc,
@@ -456,7 +461,7 @@ def test_generate_forecasts_batch_nonneg_qty():
         artifact=artifact,
         dfu_list=[({"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid)],
         horizon=2,
-        plan_version="2026-03",
+        forecast_month_generated="2026-03",
         run_id="test-run-id",
         model_id="lgbm_cluster",
         cat_encoders=enc,
@@ -491,7 +496,7 @@ def test_generate_forecasts_batch_18_months():
         artifact=artifact,
         dfu_list=[({"item_id": "ITEM001", "loc": "LOC1", "cluster_id": 2}, grid)],
         horizon=18,
-        plan_version="2026-02",
+        forecast_month_generated="2026-02",
         run_id="test-run-id",
         model_id="lgbm_cluster",
         cat_encoders=enc,

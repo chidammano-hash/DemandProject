@@ -34,28 +34,25 @@
 
 ```
 api/                         # FastAPI backend
-├── main.py                  # App entry point — mounts 76 routers, FastAPI lifespan handler opens pool + starts APScheduler
+├── main.py                  # App entry point — mounts all routers, FastAPI lifespan handler opens pool + starts APScheduler
 ├── core.py                  # SQL helpers, filtering, pagination
 ├── pool.py                  # Connection pool management (delegates env-var defaults to common/core/db.py)
 ├── llm.py                   # OpenAI client management
 └── routers/
-    ├── inventory/           # 6 routers (sourcing, purchase_orders, demand_history, inventory_main, integrated_targets, inv_planning_algorithm_comparison)
-    ├── forecasting/         # 13 routers (accuracy_budget, backtest_management, champion_experiments, cluster_eda, cluster_experiments, expsys_accuracy, feature_lab, lgbm_tuning, model_tuning, sampled_backtest, sku_features, tuning_chat, unified_model_tuning)
-    ├── operations/          # 1 router (sop) — backward-compat shim at api/routers/sop.py
-    ├── platform/            # 2 routers (auth_router, users) — backward-compat shims at api/routers/
-    ├── intelligence/        # 2 routers (ai_planner, chat) — backward-compat shims at api/routers/
-    ├── core/                # 2 routers (dashboard, jobs) — backward-compat shims at api/routers/
+    ├── inventory/           # inv_planning_*, inv_backtest, lead_time_learning, inventory_main, sourcing, purchase_orders, demand_history, integrated_targets, inv_planning_algorithm_comparison, working_capital
+    ├── forecasting/         # accuracy*, backtest_management, bias_corrections, blended_forecast, champion_experiments, cluster*, clusters, competition, consensus_plan, expsys_accuracy, feature_lab, fva, lgbm_tuning, model_tuning, production_forecast, sampled_backtest, shap, sku_features, tuning_chat, unified_model_tuning, analysis
+    ├── operations/          # control_tower, echelon_planning, events, fill_rate, financial_plan, service_level, sop, supply, supply_scenarios
+    ├── platform/            # admin, auth_router, collaboration, config_manager, data_quality, medallion, notifications, reports, sql_runner, users, webhooks
+    ├── intelligence/        # ai_planner, customer_analytics, explain, external_signals, intel, storyboard
+    ├── core/                # dashboard, jobs
     └── domains.py           # Catch-all generic domain endpoint (mounted LAST)
 
-NOTE: many legacy routers still live at the flat `api/routers/` root
-(supply.py, inv_planning_*.py, production_forecast.py, storyboard.py,
-events.py, shap.py, clusters.py, etc.). Only clearly-owned cases were
-moved into the new subdirectories in the first pass. New routers MUST
-be placed directly in the correct subdirectory — do not add files to
-the flat `api/routers/` root.
+All routers live in their domain subdir. The flat `api/routers/` root contains
+only `domains.py` and `__init__.py`. Backward-compat shims have been removed —
+import directly from the domain path: `from api.routers.inventory.inv_planning_eoq import router`.
 
-common/                      # Shared Python modules (backward-compat shims at root)
-├── core/                    # db, utils, planning_date, constants, sql_helpers, domain_specs
+common/                      # Shared Python modules — fully namespaced
+├── core/                    # db, utils, planning_date, constants, sql_helpers, domain_specs, paths
 ├── ml/                      # backtest_framework, model_registry, champion_strategies, tuning, shap, features
 │   ├── clustering/          # features.py, training.py, labeling.py, scenario.py
 │   └── sku_features/        # compute.py, classifiers.py — unified SKU feature computation
@@ -281,7 +278,7 @@ These are hard constraints that cause bugs or test failures if violated.
 - **All config in YAML**: Every module externalizes params into `config/<name>.yaml`. No magic numbers in scripts. Load via `load_config(name)` from `common/utils.py`.
 - **Forecast pipeline master config**: `config/forecasting/forecast_pipeline_config.yaml` is the single source of truth for the ML forecast pipeline. It contains the algorithm roster with inline hyperparameters (under `algorithms.<model_id>.params`), backtest settings, tuning settings, champion selection, production forecast config, and run tracking. Use `load_forecast_pipeline_config()` from `common/utils.py` to load it. Use `get_algorithm_roster(stage=...)` to get algorithms filtered by lifecycle stage (tune/backtest/compete/forecast/expert). Use `get_competing_model_ids()` and `get_forecastable_model_ids()` for common queries. Use `get_algorithm_params(model_id)` to retrieve hyperparameters for a specific algorithm. The old separate configs (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`, `backtest_sampling_config.yaml`, `algorithm_config.yaml`) have been deleted -- all settings now live in the master config.
 - **Cold-start DFU routing**: DFUs with < `min_history_months` (12) months of sales history are routed to `cold_start_model_id` (rolling_mean) instead of the champion tree model. DFUs with < `cold_start_min_months` (3) months are skipped entirely. Configured in `config/forecasting/forecast_pipeline_config.yaml` under `production_forecast`.
-- **Clustering library in `common/ml/clustering/`**: All clustering library code lives in `common/ml/clustering/` — `features.py` (feature engineering), `training.py` (CORE_FEATURES, find_optimal_k, train_kmeans), `labeling.py` (assign_cluster_labels), `scenario.py` (promote_scenario, generate_scenario_id). Scripts in `scripts/` are thin shims that re-export from this package. `config/clustering_config.yaml` has been deleted — clustering params are stored in the `cluster_experiment` table (promoted row). `make cluster-all` goes through the unified experiment system (creates DB experiment, runs, auto-promotes). **Terminology**: Clustering operates on SKUs (item+location pairs), not DFUs. Use "SKU" when referring to the entities being clustered.
+- **Clustering library in `common/ml/clustering/`**: All clustering library code lives in `common/ml/clustering/` — `features.py` (feature engineering), `training.py` (CORE_FEATURES, find_optimal_k, train_kmeans), `labeling.py` (assign_cluster_labels), `scenario.py` (promote_scenario, generate_scenario_id). Scripts in `scripts/ml/` are CLI entry-points that import directly from this package; they are not shims. `config/clustering_config.yaml` has been deleted — clustering params are stored in the `cluster_experiment` table (promoted row). `make cluster-all` goes through the unified experiment system (creates DB experiment, runs, auto-promotes). **Terminology**: Clustering operates on SKUs (item+location pairs), not DFUs. Use "SKU" when referring to the entities being clustered.
 - **Unified SKU feature computation**: All time-series features (volume, trend, seasonality, periodicity, intermittency, lifecycle) are computed once by `common/ml/sku_features/` and stored in `dim_sku`. Config: `config/forecasting/sku_features_config.yaml`. Clustering reads pre-computed features from `dim_sku` instead of computing from raw sales.
 - **Clustering master switch**: `clustering.enabled` in `config/forecasting/forecast_pipeline_config.yaml` is the master switch for the clustering pipeline. When `false`, all backtest scripts auto-fall back to `global` strategy regardless of per-algorithm `cluster_strategy` settings. Check via `is_clustering_enabled()` from `common/utils.py`.
 - **Config `_includes` directive**: `load_config(name)` supports an `_includes` key at the top of any YAML file. Listed files are loaded first and merged as defaults, allowing shared constants (e.g., `shared_constants.yaml`) to be inherited without duplication.
@@ -296,7 +293,8 @@ These are hard constraints that cause bugs or test failures if violated.
 - **Intermittent cluster routing**: Clusters with >70% zero-demand rows (`intermittent_threshold`) are routed to rolling mean baseline instead of tree models during backtest. Configured via `backtest.baseline_intermittent` and `backtest.intermittent_threshold` in `forecast_pipeline_config.yaml`.
 - **Model registry for tree backtests**: Use `common/ml/model_registry.py` for all model-specific logic — `fit_model()`, `get_best_iteration()`, `to_native_params()`. Do NOT add new if/elif/else fit blocks in backtest scripts. Early stopping uses standardized 5% patience via `compute_early_stop_patience()` (10% for sparse/intermittent clusters).
 - **Stub table pattern**: When a materialized view depends on a future feature's table, create it with `CREATE TABLE IF NOT EXISTS` and minimum columns. LEFT JOIN produces NULL → neutral scores until real data flows.
-- **Backward-compatible imports**: `common/` root has shim modules that re-export from subpackages (e.g., `from common.db import get_db_params` works via shim → `common/core/db.py`). New code may use either path; existing imports remain valid.
+- **No backward-compat shims**: When moving a module, rewrite all importers in the same change rather than leaving a shim that re-exports from the new location. Shims become permanent debt: every shim that's been added to this repo has had a clear "intent to remove" that nobody followed up on. Atomic migration is the rule. Imports are canonical: `from common.core.db import get_db_params`, never `from common.db import …`.
+- **Project-root paths**: Never recompute the project root with `Path(__file__).parents[N]`. Import from `common.core.paths`: `from common.core.paths import PROJECT_ROOT, CONFIG_DIR, DATA_DIR, SQL_DIR, SCRIPTS_DIR`. The `parents[N]` pattern is depth-dependent and breaks every time a file is moved between directories. The only exception is the `sys.path.insert` bootstrap in standalone CLI scripts that run as `python scripts/X.py` (rare).
 - **Structured logging**: Scripts use `logging.getLogger(__name__)` — no raw `print()`. `basicConfig()` only in `__main__` blocks.
 - **Exception handling**: Catch specific exceptions (`psycopg.Error`, `ValueError`) — never bare `except Exception`. Always log with `logger.exception()`.
 - **GPU acceleration**: `DEMAND_GPU` env var controls GPU usage in backtests (`on`/`off`/`auto`, default `auto`). Optional deps: `cupy` (Monte Carlo simulation GPU arrays), `numba` (seasonality JIT kernels). All scripts fall back gracefully when these are absent.
@@ -429,8 +427,8 @@ When adding a new feature end-to-end, follow these steps in order:
 **Fix**: Pre-SHAP stages (duplicate/variance/correlation) exclude features from the *selection pool* but SHAP extraction still uses the full feature set matching the trained model. Never strip features from the SHAP input that differ from the training set.
 
 ### Import Errors After Restructure
-**Cause**: Missing backward-compat shim in `common/` root.
-**Fix**: Ensure `common/__init__.py` or shim module re-exports from the correct subpackage.
+**Cause**: An importer is using the pre-restructure path (e.g., `from common.db import …` instead of `from common.core.db import …`), or a moved router is being imported from the flat `api/routers/` root.
+**Fix**: Update the importer to the canonical path. Run `grep -rln "from common\\.<old_name> " --include="*.py"` to find stragglers. Backward-compat shims are no longer maintained; the codebase expects atomic migration.
 
 ### Tests Pass But API Fails
 **Cause**: Mock row tuple column count doesn't match actual table DDL.

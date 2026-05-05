@@ -1,8 +1,7 @@
-"""Smoke tests for all routers — validates imports, route registration, and shim integrity.
+"""Smoke tests for all routers — validates imports, route registration, and structural layout.
 
 These tests catch structural regressions from the router restructure (flat root
-to domain subdirectories with backward-compat shims). They run in <1s and
-do not require a database.
+to domain subdirectories). They run in <1s and do not require a database.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ import pkgutil
 
 import pytest
 
-# Domain subdirectories that should contain non-shim router modules.
+# Domain subdirectories that should contain all router modules.
 _DOMAIN_PACKAGES = (
     "api.routers.inventory",
     "api.routers.forecasting",
@@ -23,7 +22,7 @@ _DOMAIN_PACKAGES = (
 )
 
 # Modules legitimately allowed to live at the flat `api/routers/` root
-# (not shims, not in a domain subdir). Add new entries here when introducing
+# (not in a domain subdir). Add new entries here when introducing
 # intentional flat-root routers (e.g. catch-all handlers).
 _FLAT_ROOT_ALLOWLIST = frozenset(
     {

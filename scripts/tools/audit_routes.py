@@ -10,8 +10,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent.parent
-
+from common.core.paths import PROJECT_ROOT as ROOT
 def get_router_files():
     """Find all router .py files (excluding __init__.py).
 

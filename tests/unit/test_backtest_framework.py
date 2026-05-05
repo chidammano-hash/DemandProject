@@ -184,19 +184,26 @@ class TestPlanningDateCap:
         assert "planning_cutoff" in source or "planning_dt" in source
         assert "get_planning_date" in source
 
-    def test_planning_date_returns_feb_2026(self):
-        """With default config, planning date is 2026-02-24."""
+    def test_planning_date_honors_env_override(self, monkeypatch):
+        """get_planning_date() must honor the PLANNING_DATE env var."""
         from common.core.planning_date import get_planning_date, _reset_cache
+        monkeypatch.setenv("PLANNING_DATE", "2026-02-24")
         _reset_cache()
-        d = get_planning_date()
-        assert d == datetime.date(2026, 2, 24)
+        try:
+            assert get_planning_date() == datetime.date(2026, 2, 24)
+        finally:
+            _reset_cache()
 
-    def test_planning_cutoff_is_first_of_month(self):
-        """The planning cutoff for SQL queries should be first-of-month."""
-        from common.core.planning_date import get_planning_date
-        cutoff = get_planning_date().replace(day=1)
-        assert cutoff.day == 1
-        assert cutoff == datetime.date(2026, 2, 1)
+    def test_planning_cutoff_is_first_of_month(self, monkeypatch):
+        """Cutoff derived from a pinned planning date is first-of-month."""
+        from common.core.planning_date import get_planning_date, _reset_cache
+        monkeypatch.setenv("PLANNING_DATE", "2026-02-24")
+        _reset_cache()
+        try:
+            cutoff = get_planning_date().replace(day=1)
+            assert cutoff == datetime.date(2026, 2, 1)
+        finally:
+            _reset_cache()
 
 
 # ── Per-cluster adaptive hyperparameter profile tests ───────────────────────

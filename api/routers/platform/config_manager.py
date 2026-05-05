@@ -21,7 +21,7 @@ from common.core.utils import load_config, reset_config
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/config", tags=["config"])
 
-_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent.parent / "config"
+from common.core.paths import CONFIG_DIR as _CONFIG_DIR  # noqa: E402
 
 
 def _resolve_yaml_path(yaml_name: str) -> Path:

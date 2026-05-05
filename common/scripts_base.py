@@ -26,8 +26,7 @@ from pathlib import Path
 
 
 # Project root is two levels up from this file (common/scripts_base.py → root)
-_ROOT = Path(__file__).resolve().parents[1]
-
+from common.core.paths import PROJECT_ROOT as _ROOT
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
 
 

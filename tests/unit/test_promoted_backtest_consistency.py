@@ -110,6 +110,11 @@ def test_config_has_all_backtest_keys(algo_config, model: str):
 _PARAMS_META_KEYS = {
     "recursive", "shap_select", "shap_threshold", "shap_top_n",
     "shap_sample_size", "tune_inline", "params_file", "customer_features",
+    # Feature-selection thresholds — applied before training, not model hparams.
+    "correlation_filter", "correlation_threshold",
+    "variance_filter", "variance_threshold",
+    # Config-only knobs the tuning UI does not expose.
+    "objective", "quantile_heads",
 }
 
 

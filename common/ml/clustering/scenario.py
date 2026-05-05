@@ -27,8 +27,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Root of the project — two levels up from common/ml/clustering/
-ROOT = Path(__file__).resolve().parents[3]
-
+from common.core.paths import PROJECT_ROOT as ROOT
 # Directory to store scenario temp data
 SCENARIO_BASE = Path("/tmp/clustering_scenarios")
 

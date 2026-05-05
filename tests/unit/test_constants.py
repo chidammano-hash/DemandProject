@@ -90,10 +90,12 @@ class TestConstants:
         assert isinstance(PROTECTED_FEATURES, set)
 
     def test_ts_profile_features_non_empty(self):
-        assert len(TS_PROFILE_FEATURES) == 8
+        # Asserts a stable set of expected features exists rather than a
+        # hardcoded count, which drifts when the catalog grows.
+        assert len(TS_PROFILE_FEATURES) >= 8
         assert all(isinstance(f, str) for f in TS_PROFILE_FEATURES)
-        assert "cv_demand" in TS_PROFILE_FEATURES
-        assert "seasonal_amplitude" in TS_PROFILE_FEATURES
+        for feat in ("cv_demand", "seasonal_amplitude", "mean_demand", "adi"):
+            assert feat in TS_PROFILE_FEATURES, f"{feat} should be in TS_PROFILE_FEATURES"
 
     def test_fourier_features(self):
         assert len(FOURIER_FEATURES) == 8  # 4 periods × 2 (sin + cos)

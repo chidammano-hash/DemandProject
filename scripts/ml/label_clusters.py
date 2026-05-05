@@ -1,10 +1,6 @@
-"""
-Assign meaningful business labels to clusters based on feature centroids.
+"""CLI entry-point that labels clusters based on feature centroids.
 
-Thin CLI shim -- the core labeling logic lives in
-``common.ml.clustering.labeling``.  This script re-exports
-``assign_cluster_labels`` for backward compatibility and provides the
-``main()`` CLI entry-point.
+Core labeling logic lives in :mod:`common.ml.clustering.labeling`.
 """
 
 import argparse
@@ -21,8 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Re-export for backward compatibility
-from common.ml.clustering.labeling import assign_cluster_labels  # noqa: E402, F401
+from common.ml.clustering.labeling import assign_cluster_labels  # noqa: E402
 
 
 def main() -> None:

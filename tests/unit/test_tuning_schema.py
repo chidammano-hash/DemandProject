@@ -16,7 +16,9 @@ import pytest
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-SQL_PATH = Path(__file__).resolve().parents[2] / "sql" / "099_unified_model_tuning.sql"
+from common.core.paths import SQL_DIR  # noqa: E402
+
+SQL_PATH = SQL_DIR / "099_unified_model_tuning.sql"
 
 
 @pytest.fixture(scope="module")

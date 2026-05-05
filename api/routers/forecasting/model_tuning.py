@@ -58,7 +58,9 @@ _MODEL_CONFIGS: dict[str, dict[str, Any]] = {
     },
 }
 
-_PIPELINE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "forecasting" / "forecast_pipeline_config.yaml"
+from common.core.paths import CONFIG_DIR  # noqa: E402
+
+_PIPELINE_CONFIG_PATH = CONFIG_DIR / "forecasting" / "forecast_pipeline_config.yaml"
 
 # Config keys to compare (non-hyperparameter settings from metadata)
 _CONFIG_KEYS = [

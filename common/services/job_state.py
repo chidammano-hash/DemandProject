@@ -61,7 +61,7 @@ class JobTypeDef:
 # Job type callables — thin wrappers around existing scripts
 # ---------------------------------------------------------------------------
 
-_SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+from common.core.paths import SCRIPTS_DIR as _SCRIPTS_DIR  # noqa: E402
 _UV = "uv"
 
 
@@ -615,8 +615,7 @@ def _run_train_production_model(
     Invokes ``scripts/ml/train_production_models.py`` as a subprocess.
     Supports training a single model (--model) or all tree models (--all).
     """
-    ROOT = Path(__file__).resolve().parents[2]
-
+    from common.core.paths import PROJECT_ROOT as ROOT
     model_id = params.get("model_id", "")
     all_models = params.get("all_models", False)
 
@@ -993,8 +992,7 @@ def _run_tuning_backtest(
 
     import yaml
 
-    ROOT = Path(__file__).resolve().parents[2]
-
+    from common.core.paths import PROJECT_ROOT as ROOT
     run_id = params["run_id"]
     session_id = params["session_id"]
     overrides = params.get("overrides", {})
@@ -1068,8 +1066,7 @@ def _run_model_tuning_experiment(
     Supports lgbm, catboost, and xgboost models. The caller provides a pre-built
     temp config file and the run_id of the lgbm_tuning_run record.
     """
-    ROOT = Path(__file__).resolve().parents[2]
-
+    from common.core.paths import PROJECT_ROOT as ROOT
     run_id = params["run_id"]
     model = params["model"]
     config_path = params["config_path"]
@@ -1126,8 +1123,9 @@ def _run_model_tuning_experiment(
                 raise ValueError(
                     f"Cluster experiment {cluster_experiment_id} has no artifacts_path"
                 )
+            from common.core.paths import DATA_DIR
             safe_path = Path(ce_artifacts_path).resolve()
-            allowed_base = Path(__file__).resolve().parents[2] / "data"
+            allowed_base = DATA_DIR
             if not str(safe_path).startswith(str(allowed_base)):
                 raise ValueError(
                     f"artifacts_path {ce_artifacts_path!r} is outside the allowed data directory"
@@ -1229,8 +1227,7 @@ def _run_load_backtest_results(
     Invokes ``scripts/load_backtest_forecasts.py --model <model_id> --replace``
     as a subprocess. On success, marks the tuning run as results-promoted.
     """
-    ROOT = Path(__file__).resolve().parents[2]
-
+    from common.core.paths import PROJECT_ROOT as ROOT
     run_id = params["run_id"]
     model = params["model"]
     model_id = MODEL_OUTPUT_DIRS.get(model, params.get("model_id", ""))
@@ -1300,8 +1297,7 @@ def _run_load_backtest_model(
     as a subprocess.  If ``run_id`` is provided, marks the corresponding
     ``backtest_run`` row as loaded on success.
     """
-    ROOT = Path(__file__).resolve().parents[2]
-
+    from common.core.paths import PROJECT_ROOT as ROOT
     model_id = params["model_id"]
     run_id = params.get("run_id")
 

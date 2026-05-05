@@ -42,7 +42,7 @@ _config_store: dict[str, dict] = {}
 _config_lock = threading.RLock()
 
 # Base directory for config files: config/
-_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
+from common.core.paths import CONFIG_DIR as _CONFIG_DIR  # noqa: E402
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

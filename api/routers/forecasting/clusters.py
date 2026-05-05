@@ -116,9 +116,9 @@ def dfu_clusters(source: str = Query(default="ml", pattern="^(ml|source)$")):
 @router.get("/domains/sku/clusters/profiles")
 def dfu_cluster_profiles():
     """Get cluster profiles with centroid features and metadata."""
-    root = Path(__file__).resolve().parents[2]
-    profiles_path = root / "data" / "clustering" / "cluster_profiles.json"
-    metadata_path = root / "data" / "clustering" / "cluster_metadata.json"
+    from common.core.paths import DATA_DIR
+    profiles_path = DATA_DIR / "clustering" / "cluster_profiles.json"
+    metadata_path = DATA_DIR / "clustering" / "cluster_metadata.json"
 
     profiles = []
     if profiles_path.exists():
@@ -147,8 +147,8 @@ def dfu_cluster_visualization(image_name: str):
     allowed = {"k_selection_plots.png", "cluster_visualization.png"}
     if image_name not in allowed:
         raise HTTPException(404, f"Image not found: {image_name}")
-    root = Path(__file__).resolve().parents[2]
-    img_path = root / "data" / "clustering" / image_name
+    from common.core.paths import DATA_DIR
+    img_path = DATA_DIR / "clustering" / image_name
     if not img_path.exists():
         raise HTTPException(404, f"Image not generated yet: {image_name}")
     return FileResponse(str(img_path), media_type="image/png")

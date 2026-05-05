@@ -19,7 +19,7 @@ from common.core.db import get_db_params
 router = APIRouter(prefix="/expsys", tags=["expsys"])
 logger = logging.getLogger(__name__)
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
 _OUTPUT_DIR = _PROJECT_ROOT / "data" / "expert_system_backtest"
 _REPORT_PATH = _OUTPUT_DIR / "accuracy_report.json"
 

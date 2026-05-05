@@ -29,7 +29,7 @@ router = APIRouter(prefix="/cluster-experiments", tags=["cluster-experiments"])
 # Constants
 # ---------------------------------------------------------------------------
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
 _TEMPLATES_PATH = _PROJECT_ROOT / "config" / "forecasting" / "cluster_experiment_templates.yaml"
 _SCENARIOS_DIR = Path("/tmp/clustering_scenarios")
 

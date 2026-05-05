@@ -570,7 +570,9 @@ _LGBM_PARAM_KEYS = {
     "path_smooth", "max_bin",
 }
 
-_PIPELINE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "forecasting" / "forecast_pipeline_config.yaml"
+from common.core.paths import CONFIG_DIR  # noqa: E402
+
+_PIPELINE_CONFIG_PATH = CONFIG_DIR / "forecasting" / "forecast_pipeline_config.yaml"
 
 
 @router.post("/lgbm-tuning/runs/{run_id}/promote")

@@ -33,7 +33,7 @@ router = APIRouter(prefix="/backtest-management", tags=["backtest-management"])
 # Constants
 # ---------------------------------------------------------------------------
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
 _BACKTEST_DIR = _PROJECT_ROOT / "data" / "backtest"
 
 # Map pipeline config model_id → job registry type_id.

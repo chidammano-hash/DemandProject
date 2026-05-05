@@ -23,7 +23,7 @@ from common.core.utils import get_competing_model_ids, load_forecast_pipeline_co
 
 router = APIRouter(tags=["competition"])
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+from common.core.paths import PROJECT_ROOT as _PROJECT_ROOT
 _PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 _CHAMPION_SUMMARY_PATH = _PROJECT_ROOT / "data" / "champion" / "champion_summary.json"
 

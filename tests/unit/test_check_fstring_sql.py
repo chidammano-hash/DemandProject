@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-_TOOL_PATH = Path(__file__).resolve().parents[2] / "scripts" / "tools" / "check_fstring_sql.py"
+from common.core.paths import SCRIPTS_DIR  # noqa: E402
+
+_TOOL_PATH = SCRIPTS_DIR / "tools" / "check_fstring_sql.py"
 
 
 def _load_tool():
