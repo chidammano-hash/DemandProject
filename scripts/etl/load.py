@@ -123,7 +123,7 @@ def _resolve_source_csv(domain: str) -> Path | None:
     """Locate the normalized clean CSV path for a domain.
 
     Customer_demand and the standard domains use data/<clean_file>; for inventory
-    the loader still consumes data/inventory_clean.csv. Returns None if unknown.
+    the loader still consumes data/staged/inventory_clean.csv. Returns None if unknown.
     """
     try:
         from common.core.domain_specs import get_spec
@@ -135,7 +135,7 @@ def _resolve_source_csv(domain: str) -> Path | None:
     except (KeyError, ValueError):
         # customer_demand may not be in DOMAIN_SPECS for older versions; fall back.
         if domain == CUSTOMER_DEMAND:
-            return ROOT / "data" / "customer_demand_clean.csv"
+            return ROOT / "data" / "staged" / "customer_demand_clean.csv"
         return None
     return ROOT / "data" / spec.clean_file
 
@@ -179,8 +179,11 @@ def _delete_slice_rows(domain: str, slice_str: str) -> int:
 def _refresh_mvs(domain: str, cfg: dict | None) -> None:
     """Refresh materialized views configured for the domain in mv_refresh_map.
 
-    Falls back to legacy `mv_refresh` mapping if `mv_refresh_map` is absent
-    (existing etl_config.yaml uses `mv_refresh`).
+    Uses ``REFRESH MATERIALIZED VIEW CONCURRENTLY`` for already-populated MVs
+    (allows readers during refresh) and falls back to plain ``REFRESH`` for
+    empty/never-populated MVs (PG rejects CONCURRENTLY on those).
+
+    Falls back to legacy `mv_refresh` mapping if `mv_refresh_map` is absent.
     """
     if not cfg:
         logger.warning("Skipping MV refresh for %s — no etl_config", domain)
@@ -196,9 +199,22 @@ def _refresh_mvs(domain: str, cfg: dict | None) -> None:
                 if not ident:
                     logger.warning("Skipping unsafe MV name: %r", mv)
                     continue
-                logger.info("REFRESH MATERIALIZED VIEW CONCURRENTLY %s", ident)
+                # Check if MV is populated — required for CONCURRENTLY.
                 try:
-                    cur.execute(f'REFRESH MATERIALIZED VIEW CONCURRENTLY "{ident}"')
+                    cur.execute(
+                        "SELECT ispopulated FROM pg_matviews "
+                        "WHERE schemaname = 'public' AND matviewname = %s",
+                        (ident,),
+                    )
+                    row = cur.fetchone()
+                except psycopg.Error as exc:
+                    logger.warning("ispopulated lookup failed for %s: %s", ident, exc)
+                    row = None
+                concurrent = bool(row and row[0])
+                kw = "CONCURRENTLY " if concurrent else ""
+                logger.info("REFRESH MATERIALIZED VIEW %s%s", kw, ident)
+                try:
+                    cur.execute(f'REFRESH MATERIALIZED VIEW {kw}"{ident}"')
                 except psycopg.Error as exc:
                     logger.warning("MV refresh failed for %s: %s", ident, exc)
     except psycopg.Error as exc:
@@ -324,48 +340,174 @@ def _do_delta(domain: str, dry_run: bool) -> str | dict[str, Any]:
     {'status':'success', 'inserted':N, 'updated':N, 'deleted':N} when a real
     upsert happened (counts come straight from RETURNING, not a snapshot diff).
     """
-    _normalize_domain(domain, dry_run)
-    csv_path = _resolve_source_csv(domain)
-    if csv_path is None or not csv_path.exists():
-        logger.warning("Source CSV not found for %s (path=%s) — proceeding to load",
-                       domain, csv_path)
-        current_hash = ""
-    else:
-        current_hash = file_hash(csv_path)
-
-    last_hash = _fetch_last_hash(domain)
-    if current_hash and last_hash and current_hash == last_hash:
-        logger.info("delta: %s unchanged (hash=%s) — skipping", domain, current_hash[:12])
-        return "skipped"
-
-    if dry_run:
-        logger.info("DRY-RUN: would delta-upsert %s", domain)
-        return "success"
-
-    # All domains except customer_demand go through the safe non-destructive
-    # upsert path. customer_demand has its own loader that already does true
-    # UPSERT correctly with parallel per-partition INSERTs.
-    if domain != CUSTOMER_DEMAND:
+    # Multi-file domains (inventory, customer_demand) — detection + audit
+    # recording is per-file so the scanner correctly reports which files
+    # changed and stops perma-flagging the domain after a successful load.
+    if _multi_file_glob_pattern(domain):
+        changed_files = _multi_file_changed_files(domain)
+        if not changed_files:
+            logger.info("delta: %s unchanged (all source files match) — skipping", domain)
+            return "skipped"
+        logger.info("delta: %s has %d changed file(s)", domain, len(changed_files))
+        if dry_run:
+            return "success"
+        _normalize_domain(domain, dry_run)
         try:
             counts = _safe_upsert(domain)
             logger.info(
                 "delta: %s upserted (inserted=%d, updated=%d, deleted=%d)",
                 domain, counts["inserted"], counts["updated"], counts["deleted"],
             )
-            _record_audit_hash(
-                domain, current_hash,
-                counts["inserted"] + counts["updated"],
-            )
+            _record_multi_file_hashes(domain, changed_files)
             return {"status": "success", **counts}
         except (psycopg.Error, ValueError, FileNotFoundError, ImportError):
-            logger.exception(
-                "safe upsert failed for %s; NOT falling back to destructive loader",
-                domain,
-            )
+            logger.exception("safe upsert failed for %s", domain)
             raise
 
-    _run_loader(_customer_demand_cmd(replace=False), dry_run)
-    return "success"
+    # Hash the RAW input file (data/input/<source_file>) — not the cleaned
+    # CSV. The scanner hashes the raw file too; comparing apples to apples
+    # makes the "Detect Changes" UI honest. Avoids re-normalizing when the
+    # raw input hasn't changed at all.
+    raw_path = _resolve_raw_input(domain)
+    if raw_path is None or not raw_path.exists():
+        logger.warning("Raw input not found for %s (path=%s) — proceeding to load",
+                       domain, raw_path)
+        current_hash = ""
+    else:
+        current_hash = file_hash(raw_path)
+
+    last_hash = _fetch_last_hash(domain)
+    if current_hash and last_hash and current_hash == last_hash:
+        logger.info("delta: %s unchanged (hash=%s) — skipping", domain, current_hash[:12])
+        return "skipped"
+
+    # Source changed — re-normalize so the cleaned CSV reflects current raw,
+    # then run the safe upsert.
+    _normalize_domain(domain, dry_run)
+
+    if dry_run:
+        logger.info("DRY-RUN: would delta-upsert %s", domain)
+        return "success"
+
+    # All domains route through the safe non-destructive upsert path.
+    # customer_demand previously used its dedicated loader, but that loader
+    # raises CardinalityViolation when source has duplicate (demand_ck,
+    # startdate) rows (~0.3% of feeds). _safe_upsert dedupes via DISTINCT ON.
+    try:
+        counts = _safe_upsert(domain)
+        logger.info(
+            "delta: %s upserted (inserted=%d, updated=%d, deleted=%d)",
+            domain, counts["inserted"], counts["updated"], counts["deleted"],
+        )
+        _record_audit_hash(
+            domain, current_hash,
+            counts["inserted"] + counts["updated"],
+        )
+        return {"status": "success", **counts}
+    except (psycopg.Error, ValueError, FileNotFoundError, ImportError):
+        logger.exception(
+            "safe upsert failed for %s; NOT falling back to destructive loader",
+            domain,
+        )
+        raise
+
+
+def _multi_file_glob_pattern(domain: str) -> str | None:
+    """Return the glob pattern for a multi-file domain (None if single-file)."""
+    try:
+        from common.core.domain_specs import get_spec
+        spec = get_spec(domain)
+    except (ImportError, KeyError, ValueError):
+        return None
+    src = getattr(spec, "source_file", None) or ""
+    return src if "*" in src else None
+
+
+def _multi_file_source_files(domain: str) -> list:
+    """Return list of source files for a glob-driven domain (sorted)."""
+    import glob as _glob
+    pattern = _multi_file_glob_pattern(domain)
+    if not pattern:
+        return []
+    full = str(ROOT / "data" / "input" / pattern)
+    return sorted(__import__("pathlib").Path(p) for p in _glob.glob(full))
+
+
+def _multi_file_changed_files(domain: str) -> list[tuple]:
+    """Return [(Path, current_raw_hash)] for glob-domain files differing from audit.
+
+    Empty list = everything up-to-date. On DB error, returns ALL files as
+    "changed" so the load runs (safe default).
+    """
+    files = _multi_file_source_files(domain)
+    if not files:
+        return []
+    changed = []
+    try:
+        with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:
+            for fp in files:
+                current = file_hash(fp)
+                cur.execute(
+                    "SELECT source_hash FROM audit_load_batch "
+                    "WHERE domain=%s AND source_file=%s "
+                    "AND status='completed' ORDER BY completed_at DESC LIMIT 1",
+                    [domain, fp.name],
+                )
+                row = cur.fetchone()
+                if (row[0] if row else None) != current:
+                    changed.append((fp, current))
+    except psycopg.Error as exc:
+        logger.warning("%s change detection failed: %s — assuming all changed", domain, exc)
+        return [(fp, file_hash(fp)) for fp in files]
+    return changed
+
+
+def _record_multi_file_hashes(domain: str, files_with_hashes: list[tuple]) -> None:
+    """Write one audit_load_batch row per changed file in a glob domain.
+
+    Matches the per-file lookup the scanner does, so subsequent scans see
+    matching hashes and stop perma-flagging the domain as changed.
+    """
+    if not files_with_hashes:
+        return
+    try:
+        with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:
+            for fp, h in files_with_hashes:
+                cur.execute(
+                    "INSERT INTO audit_load_batch "
+                    "(domain, layer, source_file, source_hash, status, "
+                    " row_count_in, row_count_out, started_at, completed_at) "
+                    "VALUES (%s, 'direct', %s, %s, 'completed', "
+                    " 0, 0, NOW(), NOW())",
+                    [domain, fp.name, h],
+                )
+            conn.commit()
+    except psycopg.Error as exc:
+        logger.warning("failed to record %s per-file hashes: %s", domain, exc)
+
+
+# Backward-compat aliases (keep external callers working).
+_inventory_source_files = lambda: _multi_file_source_files("inventory")  # noqa: E731
+_inventory_changed_files = lambda: _multi_file_changed_files("inventory")  # noqa: E731
+def _record_inventory_per_file_hashes(files_with_hashes: list[tuple]) -> None:
+    _record_multi_file_hashes("inventory", files_with_hashes)
+
+
+def _resolve_raw_input(domain: str):
+    """Return the RAW input path for the domain (data/input/<source_file>).
+
+    Returns None for domains without a single canonical raw input (inventory's
+    multi-file glob, time's auto-generated stub).
+    """
+    try:
+        from common.core.domain_specs import get_spec
+        spec = get_spec(domain)
+    except (ImportError, KeyError, ValueError):
+        return None
+    src = getattr(spec, "source_file", None)
+    if not src or "*" in src or src.startswith("_generated"):
+        return None
+    return ROOT / "data" / "input" / src
 
 
 def _record_audit_hash(domain: str, source_hash: str, row_count: int) -> None:
@@ -908,9 +1050,14 @@ def _safe_upsert(domain: str) -> dict[str, int]:
         # `RETURNING (xmax = 0)` trick — which Postgres rejects on partitioned
         # tables ("cannot retrieve a system column in this context") — and
         # works uniformly across ordinary and partitioned targets.
+        # DISTINCT ON dedupes the source so the final INSERT can't trip
+        # CardinalityViolation when the CSV has duplicate rows on the conflict
+        # key (a known issue with customer_demand source feeds, ~0.3% dupes).
         cur.execute(
             f'CREATE TEMP TABLE _upsert_src AS '
-            f'SELECT {select_exprs} FROM _upsert_stg s'
+            f'SELECT DISTINCT ON ({conflict_quoted}) * '
+            f'FROM (SELECT {select_exprs} FROM _upsert_stg s) projected '
+            f'ORDER BY {conflict_quoted}'
         )
         for col in conflict_cols:
             cur.execute(f'CREATE INDEX ON _upsert_src ("{col}")')
@@ -955,7 +1102,37 @@ def _safe_upsert(domain: str) -> dict[str, int]:
                 )
 
         conn.commit()
+
+        # Post-load maintenance: ANALYZE updates planner stats so subsequent
+        # queries pick the right plan; cheap (~ms-s per table). Skipped when
+        # nothing actually changed.
+        if (ins + upd + deleted) > 0:
+            _post_load_maintenance(table, reindex=_REINDEX_REQUESTED)
+
         return {"inserted": int(ins), "updated": int(upd), "deleted": int(deleted)}
+
+
+# Module-level flag set from CLI --reindex; consumed by _safe_upsert.
+_REINDEX_REQUESTED = False
+
+
+def _post_load_maintenance(table: str, *, reindex: bool = False) -> None:
+    """Run ANALYZE (and optional REINDEX) on the target after a successful load.
+
+    ANALYZE refreshes planner statistics so query plans reflect the new data.
+    REINDEX rebuilds indexes from scratch — useful after very large bulk
+    upserts to defragment, but slow; off by default.
+    """
+    try:
+        with psycopg.connect(**get_db_params(), autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute(f'ANALYZE "{table}"')
+            logger.info("ANALYZE %s", table)
+            if reindex:
+                # REINDEX TABLE locks the table briefly; users opt in via --reindex.
+                cur.execute(f'REINDEX TABLE "{table}"')
+                logger.info("REINDEX TABLE %s", table)
+    except psycopg.Error as exc:
+        logger.warning("post-load maintenance failed for %s: %s", table, exc)
 
 
 def _delete_orphans(cur, table: str, bk_cols: list[str]) -> tuple[int, int]:
@@ -1114,6 +1291,9 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Optional CSV path (mode=file only); falls back to canonical path")
     parser.add_argument("--dry-run", action="store_true",
                         help="Plan only — no SQL or subprocess execution")
+    parser.add_argument("--reindex", action="store_true",
+                        help="Run REINDEX TABLE after a successful upsert "
+                             "(defragments indexes; slow — only for very large bulk loads)")
     return parser
 
 
@@ -1145,6 +1325,10 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
         return 2  # unreachable; parser.error exits
+
+    # Set the module-level reindex flag once; consumed by _safe_upsert.
+    global _REINDEX_REQUESTED
+    _REINDEX_REQUESTED = bool(args.reindex)
 
     cfg = _load_etl_config()
     domains = _domain_order(cfg) if args.domain == "all" else [args.domain]

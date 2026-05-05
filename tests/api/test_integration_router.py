@@ -180,7 +180,7 @@ async def test_submit_job_file_mode_partitioned_with_slice_ok(client, override_r
 async def test_submit_job_file_mode_partitioned_with_file_ok(client, override_runner):
     """Files inside the project data root are accepted."""
     from pathlib import Path
-    valid = str(Path(__file__).resolve().parents[2] / "data" / "customer_demand_clean.csv")
+    valid = str(Path(__file__).resolve().parents[2] / "data" / "staged" / "customer_demand_clean.csv")
     resp = await client.post(
         "/integration/jobs",
         json={"domain": "customer_demand", "mode": "file", "file": valid},

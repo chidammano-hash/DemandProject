@@ -220,6 +220,7 @@ from api.routers.platform import webhooks         # noqa: E402  # 08-10 Webhooks
 from api.routers.platform import config_manager   # noqa: E402  # Config management UI
 from api.routers.platform import sql_runner       # noqa: E402  # SQL Runner
 from api.routers.platform import integration      # noqa: E402  # Unified ETL integration jobs
+from api.routers.platform import integration_chain  # noqa: E402  # Smart chain detection + sequential exec
 from api.routers.inventory import sourcing as sourcing_router   # noqa: E402
 from api.routers.inventory import purchase_orders as po_router  # noqa: E402
 from api.routers.forecasting import accuracy_budget  # noqa: E402  # Accuracy budget
@@ -302,6 +303,7 @@ app.include_router(webhooks.router)
 app.include_router(config_manager.router)
 app.include_router(sql_runner.router)
 app.include_router(integration.router)
+app.include_router(integration_chain.router)
 app.include_router(sourcing_router.router)
 app.include_router(po_router.router)
 

@@ -102,6 +102,7 @@ class IntegrationRunner:
         slice: str | None = None,
         file: str | None = None,
         triggered_by: str = "api",
+        reindex: bool = False,
     ) -> str:
         if mode not in _VALID_MODES:
             raise ValueError(
@@ -125,10 +126,10 @@ class IntegrationRunner:
         executor = IntegrationRunner._executor
         if executor is None:  # pragma: no cover - constructor guarantees init
             raise RuntimeError("IntegrationRunner executor not initialized")
-        executor.submit(self._run_job, job_id, domain, mode, slice, file)
+        executor.submit(self._run_job, job_id, domain, mode, slice, file, reindex)
         logger.info(
-            "integration job %s queued: domain=%s mode=%s slice=%s file=%s by=%s",
-            job_id, domain, mode, slice, file, triggered_by,
+            "integration job %s queued: domain=%s mode=%s slice=%s file=%s by=%s reindex=%s",
+            job_id, domain, mode, slice, file, triggered_by, reindex,
         )
         return job_id
 
@@ -158,6 +159,45 @@ class IntegrationRunner:
                 )
             rows = cur.fetchall()
             return [_row_to_dict(cur, r) for r in rows]
+
+    def purge(
+        self,
+        *,
+        older_than_hours: int | None = None,
+        statuses: list[str] | None = None,
+        domain: str | None = None,
+        keep_running: bool = True,
+    ) -> int:
+        """Delete integration_job rows matching the given filters.
+
+        Defaults are conservative: ``keep_running=True`` always excludes jobs
+        currently in 'queued' or 'running' state so an in-flight worker can
+        still find its row. Returns the number of rows deleted.
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+        if keep_running:
+            clauses.append("status NOT IN ('queued', 'running')")
+        if statuses:
+            clauses.append("status = ANY(%s)")
+            params.append(statuses)
+        if domain is not None:
+            clauses.append("domain = %s")
+            params.append(domain)
+        if older_than_hours is not None and older_than_hours > 0:
+            clauses.append("started_at < NOW() - (%s * INTERVAL '1 hour')")
+            params.append(older_than_hours)
+        where = " AND ".join(clauses) if clauses else "TRUE"
+        sql = f"DELETE FROM integration_job WHERE {where} RETURNING id"
+        try:
+            with self.pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(sql, params)
+                deleted = len(cur.fetchall())
+            logger.info("purge: deleted %d integration_job row(s)", deleted)
+            return deleted
+        except psycopg.Error as exc:
+            logger.warning("purge failed: %s", exc)
+            return 0
 
     def reap_orphans(self) -> int:
         """Mark any 'queued' or 'running' job as failed.
@@ -218,6 +258,7 @@ class IntegrationRunner:
         mode: str,
         slice: str | None,
         file: str | None,
+        reindex: bool = False,
     ) -> None:
         start_monotonic = time.monotonic()
         try:
@@ -238,6 +279,8 @@ class IntegrationRunner:
             cmd.extend(["--slice", slice])
         if file:
             cmd.extend(["--file", file])
+        if reindex:
+            cmd.append("--reindex")
 
         status = "failed"
         rows_loaded = 0

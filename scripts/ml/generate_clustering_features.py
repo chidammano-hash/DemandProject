@@ -56,7 +56,7 @@ def main() -> None:
         help="Months to include (number or 'all'); default: from config",
     )
     parser.add_argument(
-        "--output", type=str, default="data/clustering_features.csv",
+        "--output", type=str, default="data/staged/clustering_features.csv",
         help="Output file path",
     )
     parser.add_argument(

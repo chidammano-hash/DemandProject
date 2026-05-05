@@ -54,7 +54,7 @@ _DEFAULTS: dict[str, object] = {
 }
 
 # Backward-compat CSV path consumed by the clustering pipeline
-_CLUSTERING_FEATURES_CSV = ROOT / "data" / "clustering_features.csv"
+_CLUSTERING_FEATURES_CSV = ROOT / "data" / "staged" / "clustering_features.csv"
 
 
 def _load_pipeline_config() -> dict:

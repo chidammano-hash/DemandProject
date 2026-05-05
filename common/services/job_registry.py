@@ -973,6 +973,34 @@ class JobManager:
         """Delete a completed/failed/cancelled job from history."""
         return self._db_delete(job_id)
 
+    @staticmethod
+    def purge_history(
+        *,
+        older_than_hours: int | None = None,
+        status: str | None = None,
+        job_type: str | None = None,
+    ) -> int:
+        """Bulk-delete terminal jobs (completed/failed/cancelled).
+
+        Filters are AND-combined; ALL filters are optional. Running and queued
+        jobs are NEVER touched. Returns the number of rows deleted.
+        """
+        clauses = ["status IN ('completed', 'failed', 'cancelled')"]
+        params: list[Any] = []
+        if status:
+            clauses.append("status = %s")
+            params.append(status)
+        if job_type:
+            clauses.append("job_type = %s")
+            params.append(job_type)
+        if older_than_hours is not None and older_than_hours > 0:
+            clauses.append("submitted_at < NOW() - (%s * INTERVAL '1 hour')")
+            params.append(older_than_hours)
+        sql = f"DELETE FROM job_history WHERE {' AND '.join(clauses)}"
+        with _get_conn() as conn:
+            result = conn.execute(sql, params)
+            return int(result.rowcount or 0)
+
     def recover_stale_jobs(self) -> int:
         """On startup: recover running jobs (PID-aware) and re-enqueue queued jobs.
 

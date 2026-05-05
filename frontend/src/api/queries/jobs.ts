@@ -60,6 +60,20 @@ export async function deleteJob(jobId: string): Promise<{ deleted: boolean }> {
   return fetchJson(`/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
 }
 
+/** Bulk-delete terminal jobs. Running/queued jobs are always preserved server-side. */
+export async function purgeJobs(filter: {
+  older_than_hours?: number;
+  status?: string;
+  job_type?: string;
+} = {}): Promise<{ deleted: number }> {
+  const qs = new URLSearchParams();
+  if (filter.older_than_hours !== undefined) qs.set("older_than_hours", String(filter.older_than_hours));
+  if (filter.status) qs.set("status", filter.status);
+  if (filter.job_type) qs.set("job_type", filter.job_type);
+  const path = qs.toString() ? `/jobs?${qs.toString()}` : "/jobs";
+  return fetchJson(path, { method: "DELETE" });
+}
+
 export async function fetchScenarioHistory(limit = 10): Promise<Job[]> {
   const data = await fetchJson<JobListPayload>(`/jobs?job_type=cluster_scenario&status=completed&limit=${limit}`);
   return data.jobs;

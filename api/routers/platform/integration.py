@@ -94,6 +94,10 @@ class SubmitJobRequest(BaseModel):
         default=False,
         description="Must be true to run 'onetime' on a domain whose TRUNCATE would CASCADE to fact tables.",
     )
+    reindex: bool = Field(
+        default=False,
+        description="Run REINDEX TABLE after a successful upsert (defragments indexes; slow — opt-in for large bulk loads).",
+    )
     triggered_by: str | None = Field(
         default=None,
         max_length=32,
@@ -318,6 +322,7 @@ def submit_job(
         slice=req.slice,
         file=req.file,
         triggered_by=req.triggered_by or "api",
+        reindex=req.reindex,
     )
     return SubmitJobResponse(job_id=job_id, status="queued")
 
@@ -352,6 +357,46 @@ def get_job(
     if record is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
     return Job(**record)
+
+
+class PurgeResponse(BaseModel):
+    deleted: int = Field(..., description="Number of integration_job rows deleted.")
+
+
+@router.delete(
+    "/jobs",
+    response_model=PurgeResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def purge_jobs(
+    older_than_hours: int | None = Query(
+        default=None,
+        ge=0,
+        description="Delete only jobs whose started_at is older than N hours. Omit to ignore the age filter.",
+    ),
+    status: str | None = Query(
+        default=None,
+        description="Restrict purge to jobs with this status (success, failed, skipped). Omit for all terminal statuses.",
+    ),
+    domain: str | None = Query(
+        default=None, description="Restrict purge to a single domain."
+    ),
+    runner: IntegrationRunner = Depends(_get_runner),
+) -> PurgeResponse:
+    """Delete integration_job rows. NEVER deletes queued/running jobs."""
+    if domain is not None and domain not in KNOWN_DOMAINS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown domain '{domain}'. Known domains: {KNOWN_DOMAINS}",
+        )
+    statuses = [status] if status else None
+    deleted = runner.purge(
+        older_than_hours=older_than_hours,
+        statuses=statuses,
+        domain=domain,
+        keep_running=True,
+    )
+    return PurgeResponse(deleted=deleted)
 
 
 @router.get("/domains", response_model=DomainListResponse)

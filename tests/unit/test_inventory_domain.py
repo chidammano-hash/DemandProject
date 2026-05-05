@@ -102,7 +102,7 @@ class TestInventoryDomainSpec:
 
     def test_inventory_clean_file(self):
         spec = DOMAIN_SPECS["inventory"]
-        assert spec.clean_file == "inventory_clean.csv"
+        assert spec.clean_file == "staged/inventory_clean.csv"
 
     def test_inventory_source_delimiter(self):
         spec = DOMAIN_SPECS["inventory"]

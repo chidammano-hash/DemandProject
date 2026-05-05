@@ -14,6 +14,7 @@ vi.mock("../../api/queries/integration", () => ({
   listJobs: vi.fn(),
   submitJob: vi.fn(),
   getJob: vi.fn(),
+  purgeJobs: vi.fn().mockResolvedValue({ deleted: 0 }),
 }));
 
 const DOMAINS = [
@@ -321,7 +322,7 @@ describe("IntegrationTab", () => {
 
     // Find the Active Jobs section by its <h2> and scope the search.
     const activeHeading = screen.getByText("Active Jobs");
-    const activeSection = activeHeading.closest("section")!;
+    const activeSection = activeHeading.closest(".animate-fade-in")!;
     expect(
       activeSection.querySelector('[aria-label="status: running"]'),
     ).not.toBeNull();
@@ -351,7 +352,7 @@ describe("IntegrationTab", () => {
     });
 
     const recentHeading = screen.getByText("Recent Jobs");
-    const recentSection = recentHeading.closest("section")!;
+    const recentSection = recentHeading.closest(".animate-fade-in")!;
     expect(
       recentSection.querySelector('[aria-label="status: success"]'),
     ).not.toBeNull();

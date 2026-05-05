@@ -337,7 +337,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Load normalized customer demand CSV into PostgreSQL",
     )
-    parser.add_argument("--file", default=str(ROOT / "data" / "customer_demand_clean.csv"))
+    parser.add_argument("--file", default=str(ROOT / "data" / "staged" / "customer_demand_clean.csv"))
     parser.add_argument("--month", type=str, default=None, help="YYYY-MM")
     parser.add_argument("--replace", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

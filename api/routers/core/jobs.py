@@ -276,3 +276,28 @@ def delete_job(job_id: str):
     if not success:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found or still active")
     return {"deleted": True}
+
+
+@router.delete("/jobs", dependencies=[Depends(require_api_key)])
+def purge_jobs(
+    older_than_hours: int | None = Query(
+        default=None, ge=0,
+        description="Only purge jobs whose submitted_at is older than N hours. Omit for no age filter.",
+    ),
+    status: str | None = Query(
+        default=None,
+        description="Restrict to one status (completed / failed / cancelled). Omit for all terminal statuses.",
+    ),
+    job_type: str | None = Query(
+        default=None,
+        description="Restrict to one job_type. Omit for all types.",
+    ),
+):
+    """Bulk-delete terminal jobs. Running/queued jobs are always preserved."""
+    from common.services.job_registry import JobManager
+    deleted = JobManager.purge_history(
+        older_than_hours=older_than_hours,
+        status=status,
+        job_type=job_type,
+    )
+    return {"deleted": deleted}

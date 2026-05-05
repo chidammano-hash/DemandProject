@@ -13,7 +13,7 @@ Source files may be yearly (2024_customer_demand.csv) or monthly (202601_custome
 Usage:
     uv run python scripts/etl/normalize_customer_demand_csv.py
     uv run python scripts/etl/normalize_customer_demand_csv.py --datafiles-dir data/input
-    uv run python scripts/etl/normalize_customer_demand_csv.py --output data/customer_demand_clean.csv
+    uv run python scripts/etl/normalize_customer_demand_csv.py --output data/staged/customer_demand_clean.csv
 """
 
 import argparse
@@ -235,8 +235,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default=str(ROOT / "data" / "customer_demand_clean.csv"),
-        help="Output path for clean CSV (default: data/customer_demand_clean.csv)",
+        default=str(ROOT / "data" / "staged" / "customer_demand_clean.csv"),
+        help="Output path for clean CSV (default: data/staged/customer_demand_clean.csv)",
     )
     parser.add_argument(
         "--location-file",

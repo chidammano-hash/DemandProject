@@ -10,7 +10,7 @@ Output CSV columns:
 Usage:
     python scripts/normalize_inventory_csv.py
     python scripts/normalize_inventory_csv.py --datafiles-dir /path/to/csvs
-    python scripts/normalize_inventory_csv.py --output data/inventory_clean.csv
+    python scripts/normalize_inventory_csv.py --output data/staged/inventory_clean.csv
     python scripts/normalize_inventory_csv.py --workers 8
 """
 
@@ -262,8 +262,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default=str(Path(__file__).resolve().parents[2] / "data" / "inventory_clean.csv"),
-        help="Output path for merged clean CSV (default: data/inventory_clean.csv)",
+        default=str(Path(__file__).resolve().parents[2] / "data" / "staged" / "inventory_clean.csv"),
+        help="Output path for merged clean CSV (default: data/staged/inventory_clean.csv)",
     )
     parser.add_argument(
         "--workers",

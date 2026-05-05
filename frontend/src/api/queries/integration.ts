@@ -67,6 +67,8 @@ export type SubmitJobRequest = {
   file?: string;
   /** Required to run onetime on a domain whose TRUNCATE would CASCADE. */
   confirm_destructive?: boolean;
+  /** Run REINDEX TABLE after a successful upsert (slow; opt-in). */
+  reindex?: boolean;
 };
 
 /** Response from POST /integration/jobs (202 accepted). */
@@ -129,4 +131,25 @@ export async function submitJob(req: SubmitJobRequest): Promise<SubmitJobRespons
 /** GET /integration/health — pool + table health snapshot. */
 export async function getHealth(): Promise<HealthStatus> {
   return fetchJson<HealthStatus>("/integration/health");
+}
+
+/** Filter for purgeJobs — all keys optional. */
+export type PurgeFilter = {
+  older_than_hours?: number;
+  status?: JobStatus;
+  domain?: string;
+};
+
+/**
+ * DELETE /integration/jobs — purge terminal jobs (queued/running are always
+ * preserved). Returns the count actually deleted.
+ */
+export async function purgeJobs(filter: PurgeFilter = {}): Promise<{ deleted: number }> {
+  const qs = buildSearchParams({
+    older_than_hours: filter.older_than_hours,
+    status: filter.status,
+    domain: filter.domain,
+  }).toString();
+  const path = qs ? `/integration/jobs?${qs}` : "/integration/jobs";
+  return fetchJson<{ deleted: number }>(path, { method: "DELETE" });
 }

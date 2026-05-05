@@ -1571,11 +1571,11 @@ db-truncate-data:                      ## Truncate non-config data/history (pres
 	@echo "✓ Reset complete. Configuration masters preserved."
 
 clean-artifacts:                       ## Remove stale intermediate files (clean CSVs, backtest, tuning, clustering, champion)
-	rm -f data/*_clean.csv data/inventory_clean.csv
+	rm -f data/staged/*_clean.csv data/staged/inventory_clean.csv
 	rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/ data/backtest/chronos/ data/backtest/chronos_bolt/ data/backtest/chronos2/ data/backtest/chronos2_enriched/
 	rm -rf data/backtest/logs/ data/backtest/tuning_archive/ data/tuning/ data/perf_reports/
 	rm -rf data/clustering/ data/champion/ data/models/
-	rm -f data/seasonality_results.csv data/clustering_features.csv
+	rm -f data/staged/seasonality_results.csv data/staged/clustering_features.csv
 	@echo "✓ Intermediate artifacts cleaned."
 
 refresh-mvs-tiered:                    ## Refresh all MVs in dependency order (4 tiers, auto-detects first run)

@@ -23,7 +23,7 @@ from common.services.perf_profiler import profiled_section
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Update dim_sku seasonality profiles")
-    parser.add_argument("--input", type=str, default="data/seasonality_results.csv", help="Input CSV from detection step")
+    parser.add_argument("--input", type=str, default="data/staged/seasonality_results.csv", help="Input CSV from detection step")
     parser.add_argument("--dry-run", action="store_true", help="Print summary without executing updates")
     args = parser.parse_args()
 

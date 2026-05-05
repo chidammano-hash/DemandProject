@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train clustering model with optimal K selection")
-    parser.add_argument("--input", type=str, default="data/clustering_features.csv", help="Input feature matrix")
+    parser.add_argument("--input", type=str, default="data/staged/clustering_features.csv", help="Input feature matrix")
     parser.add_argument("--k-range", type=int, nargs=2, default=None, metavar=("MIN", "MAX"), help="K range to test (default: from config)")
     parser.add_argument("--min-cluster-size-pct", type=float, default=None, help="Minimum cluster size as pct of total (default: from config)")
     parser.add_argument("--use-pca", action="store_true", help="Use PCA for dimensionality reduction")

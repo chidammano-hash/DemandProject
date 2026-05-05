@@ -488,7 +488,7 @@ clustering:
     label_clusters: true
     update_db: true
   artifacts:
-    features_csv: data/clustering_features.csv
+    features_csv: data/staged/clustering_features.csv
     output_dir: data/clustering
   db_target:
     table: dim_sku

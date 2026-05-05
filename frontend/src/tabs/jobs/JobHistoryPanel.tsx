@@ -3,12 +3,13 @@
  * type filters, inline param/result/error details, and delete/view-results actions.
  */
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart3, ChevronDown, ChevronRight, ScrollText, Trash2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Job, JobType } from "@/types/jobs";
 import { GROUP_CONFIG } from "@/types/jobs";
 import { fetchJobLogs, queryKeys } from "@/api/queries";
+import { purgeJobs } from "@/api/queries/jobs";
 import { EmptyState } from "@/components/EmptyState";
 import { formatTimestamp, jobDuration, getGroupKey, GROUP_ICONS } from "./jobsShared";
 import { StatusBadge } from "./StatusBadge";
@@ -220,6 +221,45 @@ export function JobHistoryPanel({
   onDelete,
   onViewResults,
 }: JobHistoryPanelProps) {
+  const queryClient = useQueryClient();
+  // "all" = drop every terminal job; otherwise N = drop jobs older than N days
+  const [purgeOlderDays, setPurgeOlderDays] = useState<"all" | number>(7);
+
+  const purgeMutation = useMutation({
+    mutationFn: purgeJobs,
+    onSuccess: () => {
+      // Invalidate the jobs cache so the table refreshes
+      queryClient.invalidateQueries({
+        predicate: (q) =>
+          Array.isArray(q.queryKey) && (q.queryKey[0] === "jobs" || q.queryKey[0] === "jobsHistory"),
+      });
+    },
+  });
+
+  const handleClear = (): void => {
+    const ageSummary =
+      purgeOlderDays === "all"
+        ? "ALL terminal"
+        : `terminal jobs older than ${purgeOlderDays} day${purgeOlderDays === 1 ? "" : "s"}`;
+    const filterSummary = historyFilter
+      ? ` (status=${historyFilter})`
+      : "";
+    const typeSummary = historyTypeFilter
+      ? ` (type=${historyTypeFilter})`
+      : "";
+    if (
+      window.confirm(
+        `Clear ${ageSummary}${filterSummary}${typeSummary} jobs? Running/queued jobs are preserved.`,
+      )
+    ) {
+      purgeMutation.mutate({
+        ...(purgeOlderDays === "all" ? {} : { older_than_hours: purgeOlderDays * 24 }),
+        ...(historyFilter ? { status: historyFilter } : {}),
+        ...(historyTypeFilter ? { job_type: historyTypeFilter } : {}),
+      });
+    }
+  };
+
   return (
     <section>
       <div className="flex items-center justify-between mb-3">
@@ -252,8 +292,43 @@ export function JobHistoryPanel({
               </option>
             ))}
           </select>
+          <span className="text-xs text-muted-foreground pl-1">Older than</span>
+          <select
+            value={String(purgeOlderDays)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setPurgeOlderDays(v === "all" ? "all" : Number(v));
+            }}
+            className="text-xs rounded-lg border border-border bg-card px-2.5 py-1.5 text-foreground"
+            aria-label="Purge age filter"
+          >
+            <option value="all">All terminal</option>
+            <option value="1">1 day</option>
+            <option value="7">7 days</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+          </select>
+          <button
+            type="button"
+            onClick={handleClear}
+            disabled={purgeMutation.isPending}
+            className="text-xs rounded-lg border border-border bg-card px-2.5 py-1.5 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            title="Bulk-delete terminal jobs matching all filters above"
+          >
+            {purgeMutation.isPending ? "Clearing…" : "Clear"}
+          </button>
         </div>
       </div>
+      {purgeMutation.isSuccess && (
+        <p className="mb-3 text-xs text-emerald-600 dark:text-emerald-400">
+          Cleared {purgeMutation.data.deleted} job{purgeMutation.data.deleted === 1 ? "" : "s"}.
+        </p>
+      )}
+      {purgeMutation.isError && (
+        <p className="mb-3 text-xs text-destructive">
+          Clear failed: {(purgeMutation.error as Error).message}
+        </p>
+      )}
 
       {historyJobs.length === 0 ? (
         (historyFilter || historyTypeFilter) ? (
