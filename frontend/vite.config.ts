@@ -54,6 +54,7 @@ const API_PATH_PREFIXES: readonly string[] = [
   "/expsys",
   "/customer-analytics",
   "/backtest-management",
+  "/integration",
 ];
 
 const API_TARGET = "http://127.0.0.1:8000";

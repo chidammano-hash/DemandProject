@@ -55,6 +55,7 @@ const SettingsTab = lazy(() => import("./tabs/SettingsTab"));
 const ModelTuningTab = lazy(() => import("./tabs/ModelTuningTab"));
 const DemandHistoryTab = lazy(() => import("./tabs/DemandHistoryTab"));
 const SkuFeaturesTab = lazy(() => import("./tabs/SkuFeaturesTab"));
+const IntegrationTab = lazy(() => import("./tabs/IntegrationTab"));
 
 // ---------------------------------------------------------------------------
 // Error boundary fallback for individual tabs
@@ -307,6 +308,11 @@ export default function App() {
                 {activeTab === "skuFeatures" && (
                   <TabPanel tabKey="skuFeatures" resetKeys={[activeTab]}>
                     <SkuFeaturesTab />
+                  </TabPanel>
+                )}
+                {activeTab === "integration" && (
+                  <TabPanel tabKey="integration" resetKeys={[activeTab]}>
+                    <IntegrationTab />
                   </TabPanel>
                 )}
               </div>

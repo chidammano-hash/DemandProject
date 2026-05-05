@@ -14,9 +14,9 @@ S4  per_dfu_rolling_causal  : unbiased S1 — at each tf t, select on 0..t-1, ev
 
 Usage
 -----
-    python -m adv_algorithm_testing.route_analysis
-    python -m adv_algorithm_testing.route_analysis --results-dir adv_algorithm_testing/results
-    python -m adv_algorithm_testing.route_analysis --min-history 3
+    python -m scripts.algorithm_testing.route_analysis
+    python -m scripts.algorithm_testing.route_analysis --results-dir scripts.algorithm_testing/results
+    python -m scripts.algorithm_testing.route_analysis --min-history 3
 """
 from __future__ import annotations
 
@@ -34,13 +34,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from adv_algorithm_testing.lag_accuracy import add_lag_columns  # noqa: E402
-from algorithm_testing.comparison import compute_portfolio_predictions  # noqa: E402
-from algorithm_testing.golden_set import load_golden_set_data  # noqa: E402
+from scripts.algorithm_testing.lag_accuracy import add_lag_columns  # noqa: E402
+from scripts.algorithm_testing.comparison import compute_portfolio_predictions  # noqa: E402
+from scripts.algorithm_testing.golden_set import load_golden_set_data  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_RESULTS = ROOT / "adv_algorithm_testing" / "results"
+DEFAULT_RESULTS = ROOT / "scripts.algorithm_testing" / "results"
 
 
 # ---------------------------------------------------------------------------

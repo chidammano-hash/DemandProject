@@ -18,8 +18,8 @@ import logging
 
 import pandas as pd
 
-from algorithm_testing.dfu_accuracy_matrix import compute_inverse_wape_blend
-from algorithm_testing.meta_router import MetaRouterModel, predict_meta_router
+from scripts.algorithm_testing.dfu_accuracy_matrix import compute_inverse_wape_blend
+from scripts.algorithm_testing.meta_router import MetaRouterModel, predict_meta_router
 
 logger = logging.getLogger(__name__)
 

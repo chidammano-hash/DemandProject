@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from adv_algorithm_testing.foundation_models import run_foundation_models
+from scripts.algorithm_testing.foundation_models import run_foundation_models
 from common.ml.feature_engineering import build_feature_matrix, mask_future_sales
 from common.ml.foundation_backtest import (
     FoundationModelSpec,

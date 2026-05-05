@@ -15,14 +15,17 @@ HASH_CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 
 def file_hash(path: Path) -> str:
-    """SHA-256 of first 10 MB for fast change detection."""
+    """SHA-256 of the full file, streamed in 1 MB chunks.
+
+    Was previously capped at the first 10 MB ("fast change detection") but that
+    silently missed edits past the cap on large CSVs (e.g. a 98 MB cleaned file
+    where a row near the bottom changes). SHA-256 over ~100 MB takes ~0.2 s,
+    which is acceptable for the few times per pipeline this runs.
+    """
     try:
         h = hashlib.sha256()
         with open(path, "rb") as f:
-            for _ in range(10):
-                chunk = f.read(HASH_CHUNK_SIZE)
-                if not chunk:
-                    break
+            while chunk := f.read(HASH_CHUNK_SIZE):
                 h.update(chunk)
         return h.hexdigest()
     except (OSError, IOError) as exc:

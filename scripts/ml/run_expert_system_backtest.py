@@ -31,12 +31,12 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from algorithm_testing.demand_classifier import classify_demand
-from algorithm_testing.statistical_models import run_statistical_models
-from algorithm_testing.tree_models import run_tree_models
-from adv_algorithm_testing.dl_models import run_dl_models
-from adv_algorithm_testing.foundation_models import run_foundation_models
-from adv_algorithm_testing.statistical_upgrades import run_statistical_upgrades
+from scripts.algorithm_testing.demand_classifier import classify_demand
+from scripts.algorithm_testing.statistical_models import run_statistical_models
+from scripts.algorithm_testing.tree_models import run_tree_models
+from scripts.algorithm_testing.dl_models import run_dl_models
+from scripts.algorithm_testing.foundation_models import run_foundation_models
+from scripts.algorithm_testing.statistical_upgrades import run_statistical_upgrades
 from common.ml.feature_engineering import build_feature_matrix
 from common.core.db import get_db_params
 from common.core.planning_date import get_planning_date

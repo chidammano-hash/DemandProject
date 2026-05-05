@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from adv_algorithm_testing.foundation_models import (
+from scripts.algorithm_testing.foundation_models import (
     _clear_pipeline_cache,
     _get_chronos_pipeline,
     _resolve_device,
@@ -389,7 +389,7 @@ def _reconcile_and_map(
     Returns:
         DFU-grain DataFrame [sku_ck, item_id, customer_group, loc, startdate, basefcst_pref]
     """
-    from adv_algorithm_testing.reconciliation import reconcile_two_level
+    from scripts.algorithm_testing.reconciliation import reconcile_two_level
 
     if bu_agg.empty:
         return pd.DataFrame(

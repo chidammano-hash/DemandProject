@@ -887,37 +887,37 @@ lgbm-auto-tune-list:
 
 # ── Expert Panel Algorithm Selection ────────────────────────────────────────
 expert-panel:            ## Run Expert Panel test (5000 DFUs, 5 timeframes, ~30 min)
-	$(UV) python -m algorithm_testing.run_expert_panel
+	$(UV) python -m scripts.algorithm_testing.run_expert_panel
 
 expert-panel-quick:      ## Quick Expert Panel test (1000 DFUs, 3 timeframes, ~8 min)
-	$(UV) python -m algorithm_testing.run_expert_panel --n-dfus 1000 --n-timeframes 3
+	$(UV) python -m scripts.algorithm_testing.run_expert_panel --n-dfus 1000 --n-timeframes 3
 
 expert-panel-mini:       ## Minimal Expert Panel test (200 DFUs, 2 timeframes, ~2 min)
-	$(UV) python -m algorithm_testing.run_expert_panel --n-dfus 200 --n-timeframes 2
+	$(UV) python -m scripts.algorithm_testing.run_expert_panel --n-dfus 200 --n-timeframes 2
 
 expert-panel-loc:        ## Run Expert Panel for all DFUs at a specific location: make expert-panel-loc LOC=1401-BULK
 	@if [ -z "$(LOC)" ]; then echo "Usage: make expert-panel-loc LOC=1401-BULK"; exit 1; fi
-	$(UV) python -m algorithm_testing.run_expert_panel --loc $(LOC)
+	$(UV) python -m scripts.algorithm_testing.run_expert_panel --loc $(LOC)
 
 # ── Advanced Expert Panel (Foundation Models + Deep Learning) ───────────────
 adv-expert-panel:        ## Advanced Expert Panel (5000 DFUs, 10 TFs, execution-lag accuracy, foundation+DL+stat upgrades)
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m adv_algorithm_testing.run_adv_expert_panel --n-timeframes 10
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.algorithm_testing.run_adv_expert_panel --n-timeframes 10
 
 adv-expert-panel-quick:  ## Quick Advanced Expert Panel (1000 DFUs, 5 TFs, execution-lag accuracy)
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m adv_algorithm_testing.run_adv_expert_panel --n-dfus 1000 --n-timeframes 5
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.algorithm_testing.run_adv_expert_panel --n-dfus 1000 --n-timeframes 5
 
 adv-expert-panel-mini:   ## Minimal Advanced Expert Panel (200 DFUs, 2 TFs)
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m adv_algorithm_testing.run_adv_expert_panel --n-dfus 200 --n-timeframes 2
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.algorithm_testing.run_adv_expert_panel --n-dfus 200 --n-timeframes 2
 
 adv-expert-panel-loc:    ## Advanced Expert Panel for all DFUs at a specific location: make adv-expert-panel-loc LOC=1401-BULK
 	@if [ -z "$(LOC)" ]; then echo "Usage: make adv-expert-panel-loc LOC=1401-BULK"; exit 1; fi
-	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m adv_algorithm_testing.run_adv_expert_panel --loc $(LOC)
+	OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 $(UV) python -m scripts.algorithm_testing.run_adv_expert_panel --loc $(LOC)
 
 route-analysis:          ## Compare per-DFU routing strategies on saved predictions (no retraining, ~2 min)
-	$(UV) python -m adv_algorithm_testing.route_analysis
+	$(UV) python -m scripts.algorithm_testing.route_analysis
 
 route-analysis-min3:     ## Same as route-analysis but require 3+ timeframes of history per DFU
-	$(UV) python -m adv_algorithm_testing.route_analysis --min-history 3
+	$(UV) python -m scripts.algorithm_testing.route_analysis --min-history 3
 
 # ── Expert System Backtest (full population, segment-assigned algorithm) ─────
 expsys-backtest:         ## Full ExpSys backtest: all DFUs, 10 TFs, loads to DB (~4-5h)
@@ -1461,6 +1461,13 @@ perf-clean:                            ## Truncate all perf profiling history fr
 # Full wipe-and-reload: clears non-config data/history, reloads from data/input/,
 # and refreshes the core ML + baseline planning outputs while preserving configs.
 # See docs/RUNBOOK.md "Database Cleanup & Fresh Recreate" for details.
+
+integration-clean-test:                ## Delete integration_job rows tagged as test/dev_test/ci
+	@echo "Deleting integration_job rows where triggered_by IN ('test','dev_test','ci')..."
+	@$(UV) python -c "import psycopg; from common.core.db import get_db_params; \
+conn = psycopg.connect(**get_db_params()); \
+cur = conn.execute(\"DELETE FROM integration_job WHERE triggered_by IN ('test','dev_test','ci') RETURNING id\"); \
+n = len(cur.fetchall()); conn.commit(); conn.close(); print(f'Deleted {n} test entries')"
 
 db-truncate-data:                      ## Truncate non-config data/history (preserves configuration masters)
 	@echo "Truncating non-config data, history, and experiment tables (preserving configuration masters)..."

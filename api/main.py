@@ -55,6 +55,16 @@ async def lifespan(app: FastAPI):
     except RuntimeError as exc:
         logger.warning("DB pool not opened on startup: %s", exc)
 
+    # Reap orphan integration jobs from any prior crashed/killed API process.
+    # Safe to do unconditionally: this fresh process has no live workers, so any
+    # row in 'queued'/'running' is provably abandoned.
+    try:
+        from common.services.integration_runner import IntegrationRunner
+        from api.core import _get_pool
+        IntegrationRunner(_get_pool()).reap_orphans()
+    except Exception as exc:  # noqa: BLE001 — startup best-effort
+        logger.warning("integration orphan reap skipped: %s", exc)
+
     # Scheduler: initialised lazily on demand. Pre-warm it so background jobs
     # start on boot rather than on the first /jobs request.
     scheduler_started = False
@@ -209,6 +219,7 @@ from api.routers.platform import reports          # noqa: E402  # 08-08 Reportin
 from api.routers.platform import webhooks         # noqa: E402  # 08-10 Webhooks
 from api.routers.platform import config_manager   # noqa: E402  # Config management UI
 from api.routers.platform import sql_runner       # noqa: E402  # SQL Runner
+from api.routers.platform import integration      # noqa: E402  # Unified ETL integration jobs
 from api.routers.inventory import sourcing as sourcing_router   # noqa: E402
 from api.routers.inventory import purchase_orders as po_router  # noqa: E402
 from api.routers.forecasting import accuracy_budget  # noqa: E402  # Accuracy budget
@@ -290,6 +301,7 @@ app.include_router(reports.router)
 app.include_router(webhooks.router)
 app.include_router(config_manager.router)
 app.include_router(sql_runner.router)
+app.include_router(integration.router)
 app.include_router(sourcing_router.router)
 app.include_router(po_router.router)
 

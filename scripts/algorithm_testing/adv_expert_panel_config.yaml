@@ -5,7 +5,7 @@ experiment:
   sampling_method: "proportional"
   n_timeframes: 10
   n_workers: 14
-  output_dir: "adv_algorithm_testing/results"
+  output_dir: "scripts/algorithm_testing/results/adv_expert_panel"
   loc_filter: null                  # e.g. '1401-BULK' — runs all DFUs at that loc instead of sampling
 
 demand_classification:

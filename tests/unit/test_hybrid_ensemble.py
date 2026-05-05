@@ -11,12 +11,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from algorithm_testing.dfu_accuracy_matrix import (
+from scripts.algorithm_testing.dfu_accuracy_matrix import (
     build_dfu_accuracy_matrix,
     compute_inverse_wape_blend,
 )
-from algorithm_testing.hybrid_ensemble import compute_hybrid_predictions
-from algorithm_testing.meta_router import (
+from scripts.algorithm_testing.hybrid_ensemble import compute_hybrid_predictions
+from scripts.algorithm_testing.meta_router import (
     MetaRouterModel,
     predict_meta_router,
     train_meta_router,

@@ -7,6 +7,7 @@ import {
   Activity,
   Network,
   PlayCircle,
+  Plug,
   Brain, Monitor,
   CalendarDays,
   Shield, BarChart3, MapPin, FlaskConical,
@@ -53,6 +54,7 @@ const NAV_ITEMS: NavItem[] = [
   // Operations — planning processes & admin
   { key: "sop",               label: "S&OP",           icon: CalendarDays,    section: "operations",  shortcut: "5" },
   { key: "jobs",              label: "Jobs",           icon: PlayCircle,      section: "operations",  shortcut: "6" },
+  { key: "integration",       label: "Integration",    icon: Plug,            section: "operations" },
   { key: "dataQuality",      label: "Data Quality",   icon: Shield,          section: "operations" },
   // System — data tools
   { key: "explorer",     label: "Explorer",      icon: Database,     section: "system" },

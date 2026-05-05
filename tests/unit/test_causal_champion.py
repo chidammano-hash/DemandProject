@@ -1,10 +1,10 @@
-"""Tests for compute_causal_champion_accuracy in algorithm_testing.comparison."""
+"""Tests for compute_causal_champion_accuracy in scripts.algorithm_testing.comparison."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from algorithm_testing.comparison import compute_causal_champion_accuracy
+from scripts.algorithm_testing.comparison import compute_causal_champion_accuracy
 
 
 def _make_predictions(

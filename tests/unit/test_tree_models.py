@@ -1,4 +1,4 @@
-"""Unit tests for algorithm_testing.tree_models.run_tree_models.
+"""Unit tests for scripts.algorithm_testing.tree_models.run_tree_models.
 
 Strategy
 --------
@@ -14,7 +14,7 @@ _MIN_GROUP_ROWS = 50 in the source.  Each DFU contributes 12 training rows
 at least 5 DFUs (5 × 12 = 60 > 50).  Helper _make_grid() defaults to
 N_DFUS_PER_GROUP DFUs per group for tests that need predictions.
 
-Patched symbols (all via algorithm_testing.tree_models.*)
+Patched symbols (all via scripts.algorithm_testing.tree_models.*)
 ----------------------------------------------------------
   fit_model              – no-op (avoids real training)
   get_best_iteration     – returns fixed int
@@ -24,7 +24,7 @@ Patched symbols (all via algorithm_testing.tree_models.*)
 
 Critical ordering rule
 ----------------------
-``patch("algorithm_testing.tree_models.importlib.import_module", ...)`` must
+``patch("scripts.algorithm_testing.tree_models.importlib.import_module", ...)`` must
 ALWAYS be the LAST entry in every ``with (P1, P2, ..., importlib_patch):``
 block.  Patching importlib.import_module first causes Python's patch()
 machinery (which internally calls importlib.import_module to resolve the
@@ -52,8 +52,8 @@ import pytest
 # ---------------------------------------------------------------------------
 # Module under test
 # ---------------------------------------------------------------------------
-import algorithm_testing.tree_models as _tree_models_mod
-from algorithm_testing.tree_models import run_tree_models
+import scripts.algorithm_testing.tree_models as _tree_models_mod
+from scripts.algorithm_testing.tree_models import run_tree_models
 
 
 # ---------------------------------------------------------------------------
@@ -181,11 +181,11 @@ class TestArchetypePartitionUsed:
 
         # importlib patch LAST to preserve fit_model/get_feature_columns patches
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -217,11 +217,11 @@ class TestArchetypePartitionUsed:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -252,11 +252,11 @@ class TestArchetypePartitionUsed:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -293,11 +293,11 @@ class TestMlClusterFallback:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -322,11 +322,11 @@ class TestMlClusterFallback:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -355,11 +355,11 @@ class TestMlClusterFallback:
         )
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -389,11 +389,11 @@ class TestEmptyPredictMonths:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -418,11 +418,11 @@ class TestEmptyPredictMonths:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -453,11 +453,11 @@ class TestUnknownModelSkipped:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -482,11 +482,11 @@ class TestUnknownModelSkipped:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -510,11 +510,11 @@ class TestUnknownModelSkipped:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -567,14 +567,14 @@ class TestArchetypeAsCategoricalFeature:
 
         # importlib patch LAST — preserves the fit_model side_effect
         with (
-            patch("algorithm_testing.tree_models.fit_model", side_effect=capture_fit),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.fit_model", side_effect=capture_fit),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
             patch(
-                "algorithm_testing.tree_models.get_feature_columns",
+                "scripts.algorithm_testing.tree_models.get_feature_columns",
                 return_value=feature_cols_with_archetype,
             ),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -611,11 +611,11 @@ class TestArchetypeAsCategoricalFeature:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -653,11 +653,11 @@ class TestArchetypeAsCategoricalFeature:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -710,11 +710,11 @@ class TestSmallGroupSkipped:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -768,11 +768,11 @@ class TestConstantTargetGuard:
         # predict should NOT be called for constant-target path
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -808,11 +808,11 @@ class TestConstantTargetGuard:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -854,10 +854,10 @@ class TestLibraryImportError:
         monkeypatch.setattr(_tree_models_mod, "importlib", fake_importlib)
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -902,10 +902,10 @@ class TestLibraryImportError:
         }
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=catboost_config),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=catboost_config),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -939,11 +939,11 @@ class TestAlgoConfigOverride:
         mock_load_config = MagicMock()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", mock_load_config),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", mock_load_config),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -986,10 +986,10 @@ class TestAlgoConfigOverride:
         monkeypatch.setattr(_tree_models_mod, "load_forecast_pipeline_config", mock_load_pipeline)
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             run_tree_models(
                 grid=grid,
@@ -1027,11 +1027,11 @@ class TestOutputSchema:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
@@ -1053,11 +1053,11 @@ class TestOutputSchema:
         lib_module = _fake_lib_module()
 
         with (
-            patch("algorithm_testing.tree_models.fit_model"),
-            patch("algorithm_testing.tree_models.get_best_iteration", return_value=50),
-            patch("algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
-            patch("algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
-            patch("algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
+            patch("scripts.algorithm_testing.tree_models.fit_model"),
+            patch("scripts.algorithm_testing.tree_models.get_best_iteration", return_value=50),
+            patch("scripts.algorithm_testing.tree_models.get_feature_columns", return_value=_FEATURE_COLS),
+            patch("scripts.algorithm_testing.tree_models.load_config", return_value=_ALGO_CONFIG),
+            patch("scripts.algorithm_testing.tree_models.importlib.import_module", return_value=lib_module),
         ):
             result = run_tree_models(
                 grid=grid,
