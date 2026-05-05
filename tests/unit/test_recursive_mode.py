@@ -21,7 +21,7 @@ from common.ml.backtest_framework import (
     _inject_recursive_noise,
     _predict_single_month,
 )
-from common.feature_engineering import (
+from common.ml.feature_engineering import (
     build_feature_matrix,
     mask_future_sales,
     update_grid_with_predictions,
@@ -367,7 +367,7 @@ class TestRecursiveStepMetrics:
 class TestNoiseInjectionConfig:
     def test_noise_disabled_by_default(self):
         """Noise injection is disabled by default in forecast_pipeline_config.yaml."""
-        from common.utils import load_config, reset_config
+        from common.core.utils import load_config, reset_config
 
         reset_config("forecast_pipeline_config.yaml")
         cfg = load_config("forecast_pipeline_config.yaml")
@@ -375,7 +375,7 @@ class TestNoiseInjectionConfig:
 
     def test_noise_pct_default(self):
         """Default noise_pct is 0.05 in config."""
-        from common.utils import load_config, reset_config
+        from common.core.utils import load_config, reset_config
 
         reset_config("forecast_pipeline_config.yaml")
         cfg = load_config("forecast_pipeline_config.yaml")

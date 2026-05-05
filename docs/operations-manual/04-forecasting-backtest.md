@@ -5,7 +5,7 @@ family registered in the platform and how to load the resulting predictions
 into PostgreSQL for downstream champion selection and accuracy analytics.
 
 The single source of truth for the algorithm roster, hyperparameters and
-backtest settings is `config/forecast_pipeline_config.yaml`. Helpers in
+backtest settings is `config/forecasting/forecast_pipeline_config.yaml`. Helpers in
 `common/utils.py` (`load_forecast_pipeline_config`, `get_algorithm_roster`,
 `get_competing_model_ids`, `get_forecastable_model_ids`,
 `get_algorithm_params`, `is_clustering_enabled`) provide read access — do
@@ -15,7 +15,7 @@ not duplicate values in scripts.
 
 ## 4.1 Algorithm Roster
 
-The `algorithms:` section of `config/forecast_pipeline_config.yaml` defines
+The `algorithms:` section of `config/forecasting/forecast_pipeline_config.yaml` defines
 every model that participates in the pipeline. Each entry declares a
 `type` (tree / foundation / statistical / deep_learning), a set of
 lifecycle `stage` flags, an `output_dir` and a `params:` block that is
@@ -66,7 +66,7 @@ make customer-features-python   # Python fallback (older path)
 ```
 
 The cust-enriched algorithm entries in
-`config/forecast_pipeline_config.yaml` set `customer_features: true` in
+`config/forecasting/forecast_pipeline_config.yaml` set `customer_features: true` in
 their `params:` block — `common/ml/backtest_framework.py` keys off this
 flag to merge the customer-features table into the training grid.
 
@@ -162,7 +162,7 @@ on DFU count, history length, GPU availability and CPU core count.
 
 ### 4.3.4 Backtest framework settings
 
-Settings under `backtest:` in `config/forecast_pipeline_config.yaml` apply
+Settings under `backtest:` in `config/forecasting/forecast_pipeline_config.yaml` apply
 to every backtest:
 
 | Key                          | Meaning                                                       |
@@ -289,7 +289,7 @@ When `cluster_strategy=per_cluster`:
    `build_feature_matrix()` and includes the `ml_cluster` column.
 2. The grid is partitioned by `ml_cluster` and one model is fit per
    partition. Per-cluster hyperparameter overrides
-   (`config/cluster_tuning_profiles.yaml`) are resolved by
+   (`config/forecasting/cluster_tuning_profiles.yaml`) are resolved by
    `resolve_cluster_params()` — see CLAUDE.md "Per-cluster tuning
    profiles" for the matching rules.
 3. Predictions are concatenated back into a single CSV.
@@ -473,9 +473,9 @@ production stage skips.
 
 ## 4.11 Cross-References
 
-* `config/forecast_pipeline_config.yaml` — algorithm roster + backtest /
+* `config/forecasting/forecast_pipeline_config.yaml` — algorithm roster + backtest /
   tuning / champion settings
-* `config/cluster_tuning_profiles.yaml` — per-cluster hyperparameter
+* `config/forecasting/cluster_tuning_profiles.yaml` — per-cluster hyperparameter
   overrides
 * `common/ml/backtest_framework.py` — expanding-window engine, per-cluster
   partitioning, SHAP integration

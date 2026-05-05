@@ -10,7 +10,7 @@ Detection functions follow a consistent contract:
             headline, supporting_data, month_start} or None if no exception found.
 
 Usage (from scripts):
-    from common.exception_engine import run_exception_detection
+    from common.engines.exception_engine import run_exception_detection
     result = run_exception_detection(conn, config, month_start=date(2026, 3, 1))
 """
 from __future__ import annotations
@@ -84,7 +84,7 @@ def compute_root_cause_key(
 
     Default fields include `exception_type` and a stable bucket label derived
     from the primary metric (e.g. bias direction, DOS band). Callers can supply
-    the exact fields via config/exception_sla.yaml.
+    the exact fields via config/operations/exception_sla.yaml.
 
     Returns a 16-char hex digest.
     """
@@ -1057,7 +1057,7 @@ def run_exception_detection(
         # Gen-4 SC-8: load SLA config (graceful fallback to defaults)
         sla_cfg: dict[str, Any] = {}
         try:
-            from common.utils import load_config as _lc
+            from common.core.utils import load_config as _lc
             sla_cfg = (_lc("exception_sla") or {}).get("exception_sla", {})
         except Exception:
             sla_cfg = {}

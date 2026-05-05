@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/compute_safety_stock.py`, `scripts/run_ss_simulation.py`, `config/safety_stock_config.yaml`, `sql/037_create_safety_stock_targets.sql` |
+| **Key Files** | `scripts/compute_safety_stock.py`, `scripts/run_ss_simulation.py`, `config/inventory/safety_stock_config.yaml`, `sql/037_create_safety_stock_targets.sql` |
 
 ---
 
@@ -110,7 +110,7 @@ make sim-run    # Monte Carlo simulation
 
 ## Configuration
 
-File: `config/safety_stock_config.yaml`
+File: `config/inventory/safety_stock_config.yaml`
 
 ```yaml
 service_levels:
@@ -126,7 +126,7 @@ guard_rails:
   max_ss_months_supply: 6
 ```
 
-File: `config/inventory_planning_config.yaml` (simulation section)
+File: `config/inventory/inventory_planning_config.yaml` (simulation section)
 
 ```yaml
 n_simulations: 10000

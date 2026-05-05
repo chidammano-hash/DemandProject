@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `scripts/run_backtest_chronos.py`, `scripts/run_backtest_bolt.py`, `scripts/run_backtest_chronos2.py`, `adv_algorithm_testing/foundation_models.py`, `config/forecast_pipeline_config.yaml` |
+| **Key Files** | `scripts/run_backtest_chronos.py`, `scripts/run_backtest_bolt.py`, `scripts/run_backtest_chronos2.py`, `adv_algorithm_testing/foundation_models.py`, `config/forecasting/forecast_pipeline_config.yaml` |
 
 ---
 
@@ -47,7 +47,7 @@ The original Amazon Chronos model (March 2024). Based on Google's T5 architectur
 - **Sampling**: Each call produces `num_samples` independent forecast paths, then takes the median
 - **Batching**: Manual — we batch DFUs into groups of `batch_size` and call `pipeline.predict()` per batch
 
-### Configuration (`config/forecast_pipeline_config.yaml`)
+### Configuration (`config/forecasting/forecast_pipeline_config.yaml`)
 ```yaml
 chronos:
   enabled: true
@@ -77,7 +77,7 @@ chronos:
 ### Key Files
 - `adv_algorithm_testing/foundation_models.py` — `_run_chronos()`, `_get_chronos_pipeline()`
 - `scripts/run_backtest_chronos.py` — backtest orchestration
-- `config/forecast_pipeline_config.yaml` — `algorithms.chronos`
+- `config/forecasting/forecast_pipeline_config.yaml` — `algorithms.chronos`
 
 ### Commands
 ```bash
@@ -139,7 +139,7 @@ chronos_bolt:
 ### Key Files
 - `adv_algorithm_testing/foundation_models.py` — `_run_chronos_bolt()`
 - `scripts/run_backtest_chronos_bolt.py` — backtest orchestration
-- `config/forecast_pipeline_config.yaml` — `algorithms.chronos_bolt`
+- `config/forecasting/forecast_pipeline_config.yaml` — `algorithms.chronos_bolt`
 
 ### Commands
 ```bash
@@ -189,7 +189,7 @@ chronos2:
 ### Key Files
 - `adv_algorithm_testing/foundation_models.py` — `_run_chronos2()`
 - `scripts/run_backtest_chronos2.py` — backtest orchestration
-- `config/forecast_pipeline_config.yaml` — `algorithms.chronos2`
+- `config/forecasting/forecast_pipeline_config.yaml` — `algorithms.chronos2`
 
 ### Commands
 ```bash
@@ -308,7 +308,7 @@ Smaller batch sizes (1024) outperform larger ones (8192) for the enriched varian
 - `adv_algorithm_testing/foundation_models.py` — `_run_chronos2_enriched()`, `_build_future_calendar()`
 - `scripts/run_backtest_chronos2_enriched.py` — backtest orchestration (builds feature matrix)
 - `common/ml/feature_engineering.py` — `build_feature_matrix()`, `mask_future_sales()`
-- `config/forecast_pipeline_config.yaml` — `algorithms.chronos2_enriched`
+- `config/forecasting/forecast_pipeline_config.yaml` — `algorithms.chronos2_enriched`
 
 ### Commands
 ```bash

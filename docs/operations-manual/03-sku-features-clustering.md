@@ -57,7 +57,7 @@ The exact name mapping from pipeline output to `dim_sku` columns lives in
 ### 1.4 Configuration
 
 Source of truth:
-`/Users/manoharchidambaram/projects/DemandProject/config/sku_features_config.yaml`
+`/Users/manoharchidambaram/projects/DemandProject/config/forecasting/sku_features_config.yaml`
 
 ```yaml
 history:
@@ -188,7 +188,7 @@ A full clustering run on the production SKU population typically completes in **
 ## 3. Master Switch — Disabling Clustering
 
 The master switch lives in
-`/Users/manoharchidambaram/projects/DemandProject/config/forecast_pipeline_config.yaml`:
+`/Users/manoharchidambaram/projects/DemandProject/config/forecasting/forecast_pipeline_config.yaml`:
 
 ```yaml
 clustering:
@@ -251,7 +251,7 @@ Create, evaluate, compare, and promote experiments from the **Cluster** tab in t
 ## 5. Per-Cluster Tuning Profiles
 
 Per-cluster hyperparameter overrides live in:
-`/Users/manoharchidambaram/projects/DemandProject/config/cluster_tuning_profiles.yaml`
+`/Users/manoharchidambaram/projects/DemandProject/config/forecasting/cluster_tuning_profiles.yaml`
 
 Resolution happens at backtest time via `resolve_cluster_params()` in
 `/Users/manoharchidambaram/projects/DemandProject/common/ml/backtest_framework.py`.
@@ -280,7 +280,7 @@ The stats used for matching come from `compute_cluster_demand_stats()`:
 
 ### 5.2 When to regenerate this file
 
-`/Users/manoharchidambaram/projects/DemandProject/config/cluster_tuning_profiles.yaml` is **auto-generated** by `scripts/tune_cluster_hyperparams.py` (invoked via `make tune-clusters` or `make tune-lgbm-clusters`). After a clustering re-promotion, profiles are flagged stale; re-run per-cluster tuning to regenerate the override block.
+`/Users/manoharchidambaram/projects/DemandProject/config/forecasting/cluster_tuning_profiles.yaml` is **auto-generated** by `scripts/tune_cluster_hyperparams.py` (invoked via `make tune-clusters` or `make tune-lgbm-clusters`). After a clustering re-promotion, profiles are flagged stale; re-run per-cluster tuning to regenerate the override block.
 
 ---
 
@@ -292,7 +292,7 @@ The stats used for matching come from `compute_cluster_demand_stats()`:
 | Cluster experiment metadata | `cluster_experiment` table (one row per run) |
 | Promoted cluster labels | `dim_sku.ml_cluster` (TEXT) |
 | Promotion artifacts | `data/clustering/cluster_labels.csv`, `cluster_centroids.csv`, `cluster_metadata.json`, `scenario_result.json` |
-| Per-cluster tuning overrides | `config/cluster_tuning_profiles.yaml` |
+| Per-cluster tuning overrides | `config/forecasting/cluster_tuning_profiles.yaml` |
 | Profile staleness flags | `cluster_tuning_profile_state` (sql/148) |
 
 ### 6.1 Inspect

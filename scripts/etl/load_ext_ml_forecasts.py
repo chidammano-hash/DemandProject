@@ -23,9 +23,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
+from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config
+from common.core.utils import load_config
 
 
 BATCH_SIZE = 2_000_000
@@ -547,7 +547,7 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Load one model by ID (path resolved from config/ext_ml_forecasts.yaml)
+  # Load one model by ID (path resolved from config/forecasting/ext_ml_forecasts.yaml)
   %(prog)s --model ext_lgbm --replace
 
   # Load all four models defined in config
@@ -562,12 +562,12 @@ Examples:
         type=str,
         default=None,
         metavar="MODEL_ID",
-        help="model_id key from config/ext_ml_forecasts.yaml (e.g. ext_lgbm)",
+        help="model_id key from config/forecasting/ext_ml_forecasts.yaml (e.g. ext_lgbm)",
     )
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Load all models defined in config/ext_ml_forecasts.yaml",
+        help="Load all models defined in config/forecasting/ext_ml_forecasts.yaml",
     )
     parser.add_argument(
         "--input",
@@ -602,7 +602,7 @@ Examples:
 
     if args.all:
         if not models_cfg:
-            print("Error: No models defined in config/ext_ml_forecasts.yaml")
+            print("Error: No models defined in config/forecasting/ext_ml_forecasts.yaml")
             sys.exit(1)
         for mid, mcfg in models_cfg.items():
             p = ROOT / mcfg["input_file"]

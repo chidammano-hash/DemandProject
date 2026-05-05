@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `scripts/run_champion_selection.py`, `common/champion_strategies.py`, `config/forecast_pipeline_config.yaml` (champion section), `api/routers/competition.py`, `frontend/src/tabs/AccuracyTab.tsx` |
+| **Key Files** | `scripts/run_champion_selection.py`, `common/champion_strategies.py`, `config/forecasting/forecast_pipeline_config.yaml` (champion section), `api/routers/competition.py`, `frontend/src/tabs/AccuracyTab.tsx` |
 
 ---
 
@@ -202,7 +202,7 @@ No new tables. Champion and ceiling predictions are stored in the existing `fact
 
 ## Configuration
 
-### `config/forecast_pipeline_config.yaml` (champion section)
+### `config/forecasting/forecast_pipeline_config.yaml` (champion section)
 
 > The legacy `config/model_competition.yaml` has been deleted. All settings now live in the master config.
 

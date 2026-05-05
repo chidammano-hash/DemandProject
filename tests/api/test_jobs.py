@@ -52,7 +52,7 @@ async def test_list_job_types(mock_pool, mock_manager):
     """GET /jobs/types returns available job types."""
     pool, _, _ = mock_pool
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -70,7 +70,7 @@ async def test_submit_job_returns_202(mock_pool, mock_manager):
     pool, _, _ = mock_pool
     mock_manager.submit_job.return_value = "job_20260227_120000_abc12345"
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -89,10 +89,10 @@ async def test_submit_job_invalid_type(mock_pool, mock_manager):
     """POST /jobs with invalid type returns 422."""
     pool, _, _ = mock_pool
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         # Remove the fake type from registry so validation fails
-        with patch("common.job_registry.JOB_TYPE_REGISTRY", {}):
+        with patch("common.services.job_registry.JOB_TYPE_REGISTRY", {}):
             transport = ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.post(
@@ -109,7 +109,7 @@ async def test_submit_job_queued_when_busy(mock_pool, mock_manager):
     # submit_job no longer raises RuntimeError — it queues instead
     mock_manager.submit_job.return_value = "job_20260227_120000_queued1"
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -132,7 +132,7 @@ async def test_list_jobs(mock_pool, mock_manager):
         1,
     )
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -149,7 +149,7 @@ async def test_get_job_detail_not_found(mock_pool, mock_manager):
     pool, _, _ = mock_pool
     mock_manager.get_status.return_value = None
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -176,7 +176,7 @@ async def test_get_job_detail_found(mock_pool, mock_manager):
         "progress_msg": "Done",
     }
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -194,7 +194,7 @@ async def test_cancel_job(mock_pool, mock_manager):
     pool, _, _ = mock_pool
     mock_manager.cancel_job.return_value = True
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -209,7 +209,7 @@ async def test_cancel_job_not_found(mock_pool, mock_manager):
     pool, _, _ = mock_pool
     mock_manager.cancel_job.return_value = False
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -223,7 +223,7 @@ async def test_delete_job(mock_pool, mock_manager):
     pool, _, _ = mock_pool
     mock_manager.delete_job.return_value = True
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -240,7 +240,7 @@ async def test_active_jobs(mock_pool, mock_manager):
         {"job_id": "j_running", "status": "running", "job_type": "backtest_lgbm"},
     ]
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -261,7 +261,7 @@ async def test_job_stats(mock_pool, mock_manager):
         "last_24h": {"submitted": 5, "completed": 4, "failed": 1},
     }
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -280,8 +280,8 @@ async def test_schedule_recurring_job(mock_pool, mock_manager):
     pool, _, _ = mock_pool
     mock_manager.schedule_recurring.return_value = "sched_abc123"
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager), \
-         patch("common.job_registry.JOB_TYPE_REGISTRY", {"backtest_lgbm": MagicMock()}):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager), \
+         patch("common.services.job_registry.JOB_TYPE_REGISTRY", {"backtest_lgbm": MagicMock()}):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -300,8 +300,8 @@ async def test_schedule_missing_trigger(mock_pool, mock_manager):
     """POST /jobs/schedule returns 422 when no cron or interval."""
     pool, _, _ = mock_pool
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager), \
-         patch("common.job_registry.JOB_TYPE_REGISTRY", {"backtest_lgbm": MagicMock()}):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager), \
+         patch("common.services.job_registry.JOB_TYPE_REGISTRY", {"backtest_lgbm": MagicMock()}):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -320,7 +320,7 @@ async def test_list_schedules(mock_pool, mock_manager):
         {"schedule_id": "s1", "job_type": "backtest_lgbm", "cron_expr": "0 2 * * *"},
     ]
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -336,8 +336,8 @@ async def test_submit_pipeline(mock_pool, mock_manager):
     pool, _, _ = mock_pool
     mock_manager.submit_pipeline.return_value = "pipe_xyz789"
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager), \
-         patch("common.job_registry.JOB_TYPE_REGISTRY", {
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager), \
+         patch("common.services.job_registry.JOB_TYPE_REGISTRY", {
              "cluster_pipeline": MagicMock(),
              "backtest_lgbm": MagicMock(),
          }):
@@ -363,7 +363,7 @@ async def test_submit_pipeline(mock_pool, mock_manager):
 @pytest.mark.asyncio
 async def test_new_job_types_registered(mock_pool, mock_manager):
     """All 22 job types (10 original + 12 new) are in JOB_TYPE_REGISTRY."""
-    from common.job_registry import JOB_TYPE_REGISTRY
+    from common.services.job_registry import JOB_TYPE_REGISTRY
     type_ids = set(JOB_TYPE_REGISTRY.keys())
     # New inventory group types
     for expected in [
@@ -385,8 +385,8 @@ async def test_pipeline_with_inventory_steps(mock_pool, mock_manager):
     pool, _, _ = mock_pool
     mock_manager.submit_pipeline.return_value = "pipe_inv_001"
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager), \
-         patch("common.job_registry.JOB_TYPE_REGISTRY", {
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager), \
+         patch("common.services.job_registry.JOB_TYPE_REGISTRY", {
              "compute_safety_stock": MagicMock(),
              "compute_eoq": MagicMock(),
              "refresh_health_scores": MagicMock(),
@@ -422,7 +422,7 @@ async def test_get_job_logs(mock_pool, mock_manager):
     mock_manager.get_status.return_value = {"job_id": "j1", "status": "completed"}
     mock_manager.get_job_logs.return_value = "line1\nline2\nline3\n"
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -443,7 +443,7 @@ async def test_get_job_logs_with_offset(mock_pool, mock_manager):
     mock_manager.get_status.return_value = {"job_id": "j1", "status": "running"}
     mock_manager.get_job_logs.return_value = full_log
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -461,7 +461,7 @@ async def test_get_job_logs_not_found(mock_pool, mock_manager):
     pool, _, _ = mock_pool
     mock_manager.get_status.return_value = None
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.jobs._get_manager", return_value=mock_manager):
+         patch("api.routers.core.jobs._get_manager", return_value=mock_manager):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

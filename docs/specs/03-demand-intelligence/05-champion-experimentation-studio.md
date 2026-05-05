@@ -169,7 +169,7 @@ All strategies use `shift(exec_lag+1)` to prevent data leakage.
 
 ### Stage 1: Promote Config
 1. Verify experiment is completed
-2. Backup `config/forecast_pipeline_config.yaml` → `.bak.<experiment_id>`
+2. Backup `config/forecasting/forecast_pipeline_config.yaml` → `.bak.<experiment_id>`
 3. Write new champion strategy, params, metric, lag_mode, min_sku_rows to `champion` section
 4. Clear previous `is_promoted` flags
 5. Set `is_promoted=TRUE`, insert into `champion_promotion_log`
@@ -184,7 +184,7 @@ All strategies use `shift(exec_lag+1)` to prevent data leakage.
 
 ## Configuration Templates
 
-9 templates in `config/champion_experiment_templates.yaml`:
+9 templates in `config/forecasting/champion_experiment_templates.yaml`:
 
 | Template | Strategy | Key Params |
 |----------|----------|-----------|
@@ -242,7 +242,7 @@ The experiment runner (`scripts/run_champion_experiment.py`) reuses:
 ## Implementation Sequence
 
 1. `sql/102_champion_experiments.sql` — DB schema
-2. `config/champion_experiment_templates.yaml` — Templates
+2. `config/forecasting/champion_experiment_templates.yaml` — Templates
 3. `scripts/run_champion_experiment.py` — Async runner
 4. `common/services/job_state.py` + `job_registry.py` — Job registration
 5. `api/routers/forecasting/champion_experiments.py` — API router

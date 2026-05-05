@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from common.sql_helpers import (
+from common.core.sql_helpers import (
     NULL_SQL,
     IQR_OUTLIER_MULTIPLIER,
     LEAD_TIME_MAX_DAYS,
@@ -21,7 +21,7 @@ from common.sql_helpers import (
     typed_expr_sets,
     business_key_expr,
 )
-from common.domain_specs import get_spec
+from common.core.domain_specs import get_spec
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ class TestTypedExpr:
     def test_unknown_field_warns(self, caplog):
         """E4: typed_expr logs warning for field not in spec columns."""
         spec = get_spec("sales")
-        with caplog.at_level(logging.WARNING, logger="common.sql_helpers"):
+        with caplog.at_level(logging.WARNING, logger="common.core.sql_helpers"):
             result = typed_expr("nonexistent_xyz_field", spec, "s")
         assert "::" not in result
         assert "not found" in caplog.text

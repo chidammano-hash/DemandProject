@@ -13,7 +13,7 @@ Usage:
     uv run python scripts/run_sop_cycle.py --action populate-demand --cycle-id 1
     uv run python scripts/run_sop_cycle.py --dry-run --action create --cycle-month 2026-05-01
 
-Config: config/sop_config.yaml
+Config: config/operations/sop_config.yaml
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
+from common.core.db import get_db_params
 from common.scripts_base import add_common_args, setup_logging
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config
+from common.core.utils import load_config as _load_config
 
 STAGE_ORDER = [
     "demand_review",

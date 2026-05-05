@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/generate_replenishment_exceptions.py`, `api/routers/inventory/inv_planning_exceptions.py`, `config/exception_config.yaml`, `sql/027_create_replenishment_exceptions.sql` |
+| **Key Files** | `scripts/generate_replenishment_exceptions.py`, `api/routers/inventory/inv_planning_exceptions.py`, `config/operations/exception_config.yaml`, `sql/027_create_replenishment_exceptions.sql` |
 
 ---
 
@@ -105,7 +105,7 @@ Supports `--dry-run` for previewing exceptions before committing.
 
 ## Configuration
 
-File: `config/exception_config.yaml`
+File: `config/operations/exception_config.yaml`
 
 ```yaml
 dedup_window_days: 7

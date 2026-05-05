@@ -81,7 +81,7 @@ Each vector has its own config file:
 
 | Vector | Config File |
 |---|---|
-| Notifications | `config/notification_config.yaml` |
+| Notifications | `config/platform/notification_config.yaml` |
 | API Consumers | `config/api_governance_config.yaml` |
 | Data Pipelines | `config/data_pipeline_config.yaml` |
 | ERP Integration | `config/erp_config.yaml` |

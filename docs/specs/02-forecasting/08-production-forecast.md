@@ -38,7 +38,7 @@ For each tree model (LightGBM, CatBoost, XGBoost):
 1. Load all sales history from `fact_sales_monthly` up to the planning date
 2. Build the full feature matrix using `build_feature_matrix()` -- identical features to backtest but with all available months
 3. Split into train/validation sets: the last `val_fraction` (20%) of months serve as early-stopping validation
-4. Train one model per cluster (`ml_cluster`), applying per-cluster tuning profiles from `config/cluster_tuning_profiles.yaml`
+4. Train one model per cluster (`ml_cluster`), applying per-cluster tuning profiles from `config/forecasting/cluster_tuning_profiles.yaml`
 5. Save model artifacts to `data/models/{model_id}/cluster_{N}.pkl`
 6. Save `training_metadata.json` alongside each artifact with feature columns, row counts, training timestamp, and hyperparameters
 7. Clusters with fewer than `min_cluster_rows` (50) rows are skipped -- their DFUs fall back to the global model or `cold_start_model_id`
@@ -193,7 +193,7 @@ DFUs with insufficient sales history cannot be forecast by tree models. The pipe
 | >= `cold_start_min_months` (3) and < 12 | `cold_start_model_id` (rolling_mean) | Some signal exists, use simple extrapolation |
 | < `cold_start_min_months` (3) | Skipped entirely | Too little data for any meaningful forecast |
 
-Configured in `config/forecast_pipeline_config.yaml` under `production_forecast`.
+Configured in `config/forecasting/forecast_pipeline_config.yaml` under `production_forecast`.
 
 ## API
 

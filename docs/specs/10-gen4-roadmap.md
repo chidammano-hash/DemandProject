@@ -37,13 +37,13 @@ Evolve the Supply Chain Command Center from a dashboard-and-pipelines platform (
 These surfaced in three or more independent reviews. Treat as foundational — everything else depends on or amplifies them.
 
 1. **Unify the service-level target across SS, fill rate, and S&OP.** ✅ **DONE** (2026-04-23). `common.core.service_levels` is the single resolver; DB `fact_service_level_targets` is authoritative, YAML is fallback. See [04-inventory/12-service-level-unification.md](04-inventory/12-service-level-unification.md).
-2. **Stop assuming normality for intermittent/lumpy demand.** ✅ **LANDED** (2026-04-23). `scripts/run_ss_simulation.py` gained `empirical_quantile_ss()` + `--method` flag; `config/safety_stock_config.yaml` ships `method: normal_approx | empirical_quantile`. FM-quantile → SS path documented in `fm_spine` config block.
+2. **Stop assuming normality for intermittent/lumpy demand.** ✅ **LANDED** (2026-04-23). `scripts/run_ss_simulation.py` gained `empirical_quantile_ss()` + `--method` flag; `config/inventory/safety_stock_config.yaml` ships `method: normal_approx | empirical_quantile`. FM-quantile → SS path documented in `fm_spine` config block.
 3. **Replace hand-entered `uplift_pct` with learned causal elasticities.** ✅ **SCAFFOLD LANDED** (2026-04-23). `sql/141` partitions `fact_external_signal` + `fact_causal_elasticity`; `scripts/ml/fit_elasticity.py` (sklearn OLS fallback, EconML DML TODO); `v_event_uplift_effective` view prefers learned over manual. Follow-up: production EconML integration, ingest real external signals.
-4. **Immutable AI decision ledger + policy-as-code guardrails.** ✅ **FOUNDATION LANDED** (2026-04-23). DDL `sql/137_create_ai_decision_ledger.sql`, helper `common/ai/decision_ledger.py`, policy engine `common/ai/policy_engine.py`, policies `config/agent_autonomy.yaml`. See [06-ai-platform/05-decision-ledger-and-policy.md](06-ai-platform/05-decision-ledger-and-policy.md). Follow-up: wire existing agents.
+4. **Immutable AI decision ledger + policy-as-code guardrails.** ✅ **FOUNDATION LANDED** (2026-04-23). DDL `sql/137_create_ai_decision_ledger.sql`, helper `common/ai/decision_ledger.py`, policy engine `common/ai/policy_engine.py`, policies `config/ai/agent_autonomy.yaml`. See [06-ai-platform/05-decision-ledger-and-policy.md](06-ai-platform/05-decision-ledger-and-policy.md). Follow-up: wire existing agents.
 5. **Feature store with point-in-time correctness.** ✅ **SCAFFOLD LANDED** (2026-04-23). `sql/138_create_feature_store.sql` + `common/feature_store.py` (Feast-compatible API over Postgres; HISTORY-table LATERAL join); 6 tests. Feast swap documented as follow-up.
-6. **Promote MLflow to authoritative Model Registry with gated promotion.** ✅ **LANDED** (2026-04-23). `api/routers/forecasting/backtest_management.py` gate: min WAPE improvement + min coverage; every accept/reject writes `DecisionRecord` to the ledger; `config/forecast_pipeline_config.yaml` `champion.promote_gate` block.
+6. **Promote MLflow to authoritative Model Registry with gated promotion.** ✅ **LANDED** (2026-04-23). `api/routers/forecasting/backtest_management.py` gate: min WAPE improvement + min coverage; every accept/reject writes `DecisionRecord` to the ledger; `config/forecasting/forecast_pipeline_config.yaml` `champion.promote_gate` block.
 7. **Unified Digital Twin + closed-loop exception orchestrator.** ✅ **TWIN SCAFFOLD LANDED** (2026-04-23). `common/twin/state.py` with `TwinState.simulate(scenario, n_iter)`; `scripts/run_ss_simulation.py` wired as first consumer. Closed-loop orchestrator still pending.
-8. **Chronos-2 as FM spine, not one of 10 competing models.** ✅ **CONFIG LANDED** (2026-04-23). `config/forecast_pipeline_config.yaml` `fm_spine` block marks `chronos2_enriched` as production champion default; `collapse_tree_variants` flag gated off. CRPS-vs-WAPE champion selection still pending.
+8. **Chronos-2 as FM spine, not one of 10 competing models.** ✅ **CONFIG LANDED** (2026-04-23). `config/forecasting/forecast_pipeline_config.yaml` `fm_spine` block marks `chronos2_enriched` as production champion default; `collapse_tree_variants` flag gated off. CRPS-vs-WAPE champion selection still pending.
 9. **pgvector-backed RAG + knowledge graph in one engine.** ✅ **LANDED** (2026-04-23). `sql/139_create_rag_chunk.sql` (VECTOR(1536) + HNSW + GIN + tsvector trigger); `sql/140_create_knowledge_graph.sql` (kg_node + kg_edge); `common/ai/rag.py` with RRF fusion (9 tests). Legacy `chat_embeddings` table and the NL→SQL `/chat` surface have since been removed; `rag_chunk` is the single embedding store.
 10. **Vite proxy drift + hand-maintained TS types are structural debt.** Collapse proxy to array-driven loop; generate TS from FastAPI OpenAPI. ✅ **Proxy refactor done** (2026-04-23) — `frontend/vite.config.ts` uses a single `API_PATH_PREFIXES` array; `scripts/tools/audit_routes.py` parses both forms and verifies consistency. OpenAPI → TS codegen still pending.
 
@@ -77,7 +77,7 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 - ✅ Demand-weighted fill rate — already `SUM(shipped)/SUM(ordered)` in `api/routers/fill_rate.py`; confirmed during audit, no change needed. (2026-04-23) (SC-5)
 - ✅ Cash-to-cash, turns, DIO/DPO/DSO — new router `api/routers/inventory/working_capital.py` with `GET /analytics/working-capital`. (2026-04-23) (SC-10)
 - ✅ Per-cluster tuning profile auto-invalidation — `sql/148` + `promote_scenario()` upserts stale rows; `POST /admin/tuning/invalidate-stale` endpoint. (2026-04-23) (SC-9)
-- ✅ Exceptions grouped by root-cause key + SLA bands — `sql/149` adds cols; `derive_severity_band()`, `compute_sla_due_at()`, `compute_root_cause_key()` in `exception_engine.py`; `config/exception_sla.yaml`. (2026-04-23) (SC-8)
+- ✅ Exceptions grouped by root-cause key + SLA bands — `sql/149` adds cols; `derive_severity_band()`, `compute_sla_due_at()`, `compute_root_cause_key()` in `exception_engine.py`; `config/operations/exception_sla.yaml`. (2026-04-23) (SC-8)
 - ✅ `fact_sop_decisions` log — `sql/147_create_fact_sop_decisions.sql` + `common/engines/sop_decisions.py` helper. SOP router wiring TODO. (2026-04-23) (SC-3)
 
 ### P2 — Polish
@@ -172,7 +172,7 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 ### Phase 0 — Foundations (weeks 1–8)
 
 - Split `AIPlannerAgent` monolith → 5 specialist agents (Demand, Supply, SOP, Exception, Negotiator) + Orchestrator, behind MCP tool contracts (AI-1) — **deferred**; closed-loop orchestrator (phase 3) now provides the skeleton that the specialist agents will plug into.
-- ✅ Encode autonomy tiers in `config/agent_autonomy.yaml`; wrap all writes in `common/ai/policy_engine.py` (AI-1, AI-10) — (2026-04-23)
+- ✅ Encode autonomy tiers in `config/ai/agent_autonomy.yaml`; wrap all writes in `common/ai/policy_engine.py` (AI-1, AI-10) — (2026-04-23)
 - ✅ Immutable `ai_decision_ledger` with hash-chained rows + DB-trigger append-only (AI-10) — (2026-04-23)
 - ✅ Three-tier memory (working / episodic / semantic) — `common/ai/memory.py` with `WorkingMemory` (TTL), `EpisodicMemory` (FK to ai_decision_ledger via `fact_decision` in `sql/142`), `SemanticMemory` (pgvector via rag.py); 12 tests. (2026-04-23) (AI-1, AI-5)
 - ✅ `chat_embeddings` retired in favour of `rag_chunk` (HNSW + GIN); `kg_node` / `kg_edge` added. (2026-04-23) (AI-5)
@@ -193,7 +193,7 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 
 - ✅ `fact_external_signal` partitioned ingest (RANGE by event_ts) — `sql/141`. (2026-04-23) (AI-3)
 - ✅ Causal elasticity scaffold — `scripts/ml/fit_elasticity.py` (OLS fallback) + `fact_causal_elasticity` + `v_event_uplift_effective` view that prefers learned over manual `uplift_pct`. EconML DML remains TODO. (2026-04-23) (AI-3)
-- ✅ Near-term sensing model — `common/ml/sensing.py` with `blend_forecasts()` horizon-weighted blend; `config/sensing_config.yaml`. 10 tests. (2026-04-23) (AI-3)
+- ✅ Near-term sensing model — `common/ml/sensing.py` with `blend_forecasts()` horizon-weighted blend; `config/forecasting/sensing_config.yaml`. 10 tests. (2026-04-23) (AI-3)
 - Tool-calling chat with intent taxonomy + semantic-layer view registry (AI-4) — **deferred**
 - ✅ Multimodal response envelope `{narrative, blocks: [chart|table|action_card|markdown]}` — `common/ai/envelope.py` with strict typed validation; 12 tests. (2026-04-23) (AI-4)
 - ✅ Dry-run preview + explicit confirm — `common/ai/dry_run.py` with `dry_run` + `confirm` helpers, pluggable handler registry, ledger write on confirm. 5 tests. (2026-04-23) (AI-4)

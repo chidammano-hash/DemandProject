@@ -10,7 +10,7 @@ Usage:
         --months-ahead 12 \\
         --dry-run
 
-Config: config/consensus_config.yaml
+Config: config/forecasting/consensus_config.yaml
 Output: fact_consensus_plan
 """
 
@@ -23,8 +23,8 @@ import psycopg
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from common.db import get_db_params
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
 
 # ---------------------------------------------------------------------------
@@ -247,7 +247,7 @@ def generate_consensus_plan(
 
     Returns summary dict: total_rows, overridden_rows, total_override_impact_units
     """
-    cfg = yaml.safe_load(open("config/consensus_config.yaml"))
+    cfg = yaml.safe_load(open("config/forecasting/consensus_config.yaml"))
     adjust_p = cfg["consensus_plan"]["consensus_plan_output"]["adjust_p10_p90_proportionally"]
 
     if plan_run_date is None:

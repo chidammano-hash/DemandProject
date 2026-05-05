@@ -5,7 +5,7 @@ stored in the ``lgbm_tuning_run``, ``lgbm_tuning_timeframe``, and
 ``lgbm_tuning_comparison`` Postgres tables (see ``sql/095_create_lgbm_tuning.sql``).
 
 All DB access uses psycopg3 with ``%s`` placeholders and explicit connection
-management via ``common.db.get_db_params``.
+management via ``common.core.db.get_db_params``.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from typing import Any
 
 import psycopg
 
-from common.db import get_db_params
-from common.utils import load_config, load_forecast_pipeline_config
+from common.core.db import get_db_params
+from common.core.utils import load_config, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 

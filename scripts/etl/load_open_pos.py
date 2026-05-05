@@ -30,10 +30,10 @@ import psycopg
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from common.db import get_db_params
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config
+from common.core.utils import load_config as _load_config
 
 
 def load_config() -> dict:

@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import yaml
 
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config_shared
+from common.core.utils import load_config as _load_config_shared
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,7 +37,7 @@ logging.basicConfig(
 log = logging.getLogger("generate_ai_insights")
 
 
-def _load_config(path: str = "config/ai_planner_config.yaml") -> dict:
+def _load_config(path: str = "config/ai/ai_planner_config.yaml") -> dict:
     """Load AI planner config via load_config() for _includes support."""
     try:
         cfg_name = os.path.splitext(os.path.basename(path))[0]
@@ -54,7 +54,7 @@ def _load_config(path: str = "config/ai_planner_config.yaml") -> dict:
 def _build_pool():
     """Build a psycopg connection pool using shared db config."""
     import psycopg_pool
-    from common.db import get_db_params
+    from common.core.db import get_db_params
 
     p = get_db_params()
     dsn = (
@@ -78,7 +78,7 @@ def run_portfolio(config: dict, dry_run: bool) -> None:
 
     with profiled_section("build_pool"):
         pool = _build_pool()
-    from common.ai_planner import AIPlannerAgent
+    from common.ai.ai_planner import AIPlannerAgent
 
     agent = AIPlannerAgent(pool, config)
     with profiled_section("portfolio_scan"):
@@ -104,7 +104,7 @@ def run_dfu(item_id: str, loc: str, config: dict, dry_run: bool) -> None:
 
     with profiled_section("build_pool"):
         pool = _build_pool()
-    from common.ai_planner import AIPlannerAgent
+    from common.ai.ai_planner import AIPlannerAgent
 
     agent = AIPlannerAgent(pool, config)
     with profiled_section("sku_analysis"):
@@ -128,7 +128,7 @@ def main() -> None:
     group.add_argument("--item", metavar="ITEM_NO", help="Single DFU item number")
     parser.add_argument("--loc",    metavar="LOC",     help="Single DFU location (required with --item)")
     parser.add_argument("--dry-run", action="store_true", help="Log actions without writing to DB")
-    parser.add_argument("--config", default="config/ai_planner_config.yaml", help="Config file path")
+    parser.add_argument("--config", default="config/ai/ai_planner_config.yaml", help="Config file path")
     args = parser.parse_args()
 
     config = _load_config(args.config)

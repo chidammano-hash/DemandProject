@@ -12,7 +12,7 @@ from scripts.inventory.generate_planned_orders import (
     compute_net_requirements,
     compute_confidence_score,
 )
-from common.planning_date import get_planning_date
+from common.core.planning_date import get_planning_date
 
 TODAY = get_planning_date()
 

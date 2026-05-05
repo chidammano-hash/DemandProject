@@ -2,7 +2,7 @@
 
 **Status**: Implemented
 **Module**: `common/ml/shap_selector.py`
-**Config**: `config/forecast_pipeline_config.yaml` (per-algorithm params)
+**Config**: `config/forecasting/forecast_pipeline_config.yaml` (per-algorithm params)
 
 ## Overview
 
@@ -52,7 +52,7 @@ Existing SHAP-based selection, now operating on the reduced feature set from sta
 
 ## Configuration
 
-Per-algorithm in `config/forecast_pipeline_config.yaml`:
+Per-algorithm in `config/forecasting/forecast_pipeline_config.yaml`:
 
 ```yaml
 algorithms:
@@ -121,4 +121,4 @@ All features are recomputed per backtest cutoff to prevent future leakage.
 | `common/core/constants.py` | `DUPLICATE_FEATURE_ALIASES`, `PROTECTED_FEATURES`, `CAT_FEATURES` |
 | `scripts/run_backtest.py` | Builds `feature_selector_fn` closure with config params |
 | `common/ml/backtest_framework.py` | Calls `feature_selector_fn` per timeframe (unchanged) |
-| `config/forecast_pipeline_config.yaml` | Per-algorithm feature selection config |
+| `config/forecasting/forecast_pipeline_config.yaml` | Per-algorithm feature selection config |

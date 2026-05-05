@@ -3,7 +3,7 @@
 import os
 from unittest.mock import patch
 
-from common.db import get_db_params
+from common.core.db import get_db_params
 
 
 class TestGetDbParams:

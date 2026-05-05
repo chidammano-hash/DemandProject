@@ -4,7 +4,7 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from common.metrics import compute_accuracy_metrics
+from common.services.metrics import compute_accuracy_metrics
 
 
 class TestComputeAccuracyMetrics:

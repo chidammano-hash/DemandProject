@@ -204,7 +204,7 @@ async def test_lag_curve_no_filters_uses_agg_view():
 # ---------------------------------------------------------------------------
 
 def test_add_item_location_filters_single_item():
-    from api.routers.accuracy import _add_item_location_filters
+    from api.routers.forecasting.accuracy import _add_item_location_filters
     where, params = [], []
     _add_item_location_filters(where, params, item_id_col="f.item_id", loc_col="f.loc",
                                item="100320", location=None)
@@ -214,7 +214,7 @@ def test_add_item_location_filters_single_item():
 
 
 def test_add_item_location_filters_multi_items():
-    from api.routers.accuracy import _add_item_location_filters
+    from api.routers.forecasting.accuracy import _add_item_location_filters
     where, params = [], []
     _add_item_location_filters(where, params, item_id_col="f.item_id", loc_col="f.loc",
                                item="100320,100321", location="LOC1,LOC2")
@@ -223,7 +223,7 @@ def test_add_item_location_filters_multi_items():
 
 
 def test_add_item_location_filters_empty_strings():
-    from api.routers.accuracy import _add_item_location_filters
+    from api.routers.forecasting.accuracy import _add_item_location_filters
     where, params = [], []
     _add_item_location_filters(where, params, item_id_col="f.item_id", loc_col="f.loc",
                                item="", location="")
@@ -232,7 +232,7 @@ def test_add_item_location_filters_empty_strings():
 
 
 def test_add_item_location_filters_none():
-    from api.routers.accuracy import _add_item_location_filters
+    from api.routers.forecasting.accuracy import _add_item_location_filters
     where, params = [], []
     _add_item_location_filters(where, params, item_id_col="f.item_id", loc_col="f.loc",
                                item=None, location=None)

@@ -892,8 +892,8 @@ Replace the current split between `lgbm_tuning.py` and `model_tuning.py` with a 
 ```
 
 **Template Source:**
-- `"algorithm_config"`: Reads live from `config/forecast_pipeline_config.yaml`
-- `"expert"`: Reads from `config/tuning_templates.yaml` (new file, contains the 5 runs per model from this spec)
+- `"algorithm_config"`: Reads live from `config/forecasting/forecast_pipeline_config.yaml`
+- `"expert"`: Reads from `config/forecasting/tuning_templates.yaml` (new file, contains the 5 runs per model from this spec)
 - `"custom"`: Empty — user fills everything manually
 
 ### 5.3 Backward Compatibility
@@ -1282,7 +1282,7 @@ The experiment system is designed to survive API restarts at any point:
 
 ## Configuration
 
-### 12.1 New Config File: `config/tuning_templates.yaml`
+### 12.1 New Config File: `config/forecasting/tuning_templates.yaml`
 
 Contains expert-recommended experiment templates per model.
 
@@ -1780,7 +1780,7 @@ vi.mock("@/api/queries", () => ({
 2. Create unified router `api/routers/forecasting/unified_model_tuning.py`
 3. Register new job type `model_tuning_run` in `job_registry.py`
 4. Implement job callable `_run_model_tuning_experiment` in `job_state.py`
-5. Create `config/tuning_templates.yaml`
+5. Create `config/forecasting/tuning_templates.yaml`
 6. Create `config/model_tuning_config.yaml`
 7. Add backward-compatible aliases in existing routers
 8. Write all backend tests
@@ -1843,7 +1843,7 @@ vi.mock("@/api/queries", () => ({
 |----------|----------|---------|
 | `sql/099_unified_model_tuning.sql` | `sql/` | New tables: lgbm_tuning_lag, tuning_promotion_log, alter lgbm_tuning_run |
 | `api/routers/forecasting/unified_model_tuning.py` | `api/routers/forecasting/` | Unified /model-tuning/{model}/* router |
-| `config/tuning_templates.yaml` | `config/` | Expert-recommended experiment templates |
+| `config/forecasting/tuning_templates.yaml` | `config/` | Expert-recommended experiment templates |
 | `config/model_tuning_config.yaml` | `config/` | Tuning system configuration |
 | `frontend/src/tabs/ModelTuningTab.tsx` | `frontend/src/tabs/` | Main tab component (replaces LgbmTuningTab.tsx) |
 | `frontend/src/tabs/model-tuning/ExperimentBuilder.tsx` | `frontend/src/tabs/model-tuning/` | Experiment builder modal |

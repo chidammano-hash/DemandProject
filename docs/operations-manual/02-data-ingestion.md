@@ -2,7 +2,7 @@
 
 This section covers the end-to-end ingestion path for the Supply Chain Command Center: from raw input CSVs that drop into `data/input/` through normalization, Postgres loading, materialized view (MV) refresh, and verification. It also documents how to add a new data source and how to diagnose the most common failure modes.
 
-The single source of truth for ingestion ordering is `config/etl_config.yaml` (`domain_order:`). The orchestrator script is `scripts/etl/run_pipeline.py`, invoked through the `make pipeline-*` and `make setup-data` targets. Domain schemas live in `common/core/domain_specs.py`.
+The single source of truth for ingestion ordering is `config/etl/etl_config.yaml` (`domain_order:`). The orchestrator script is `scripts/etl/run_pipeline.py`, invoked through the `make pipeline-*` and `make setup-data` targets. Domain schemas live in `common/core/domain_specs.py`.
 
 ---
 
@@ -443,7 +443,7 @@ If the UI shows stale numbers, run `make refresh-mvs-tiered` first before assumi
 - **Per-domain normalize**: `scripts/normalize_dataset_csv.py` (and `scripts/normalize_inventory_csv.py`, `scripts/etl/normalize_customer_demand_csv.py`)
 - **Per-domain load**: `scripts/load_dataset_postgres.py` (and `scripts/etl/load_customer_demand_postgres.py`)
 - **Domain schemas**: `common/core/domain_specs.py` — `DOMAIN_SPECS` dict
-- **Pipeline config**: `config/etl_config.yaml`
+- **Pipeline config**: `config/etl/etl_config.yaml`
 - **Makefile**: `Makefile` (sections "Normalize / Load", "Pipelines", "Database Cleanup & Fresh Recreate")
 - **Cleanup runbook**: `docs/RUNBOOK.md` "Database Cleanup & Fresh Recreate"
 - **Critical rules**: `CLAUDE.md` "Data Loading" section

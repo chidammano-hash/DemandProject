@@ -7,7 +7,7 @@
 | **Status** | Implemented |
 | **Model IDs** | `ext_lgbm`, `ext_cat`, `ext_xg`, `ext_best` |
 | **Script** | `scripts/etl/load_ext_ml_forecasts.py` |
-| **Config** | `config/ext_ml_forecasts.yaml` |
+| **Config** | `config/forecasting/ext_ml_forecasts.yaml` |
 | **Key Tables** | `backtest_lag_archive`, `fact_external_forecast_monthly` |
 
 ---
@@ -230,7 +230,7 @@ GET /forecast/accuracy/lag-curve?models=lgbm,ext_lgbm
 
 ## 8. Configuration
 
-`config/ext_ml_forecasts.yaml` externalises all file paths, model ID assignments, and validation thresholds.
+`config/forecasting/ext_ml_forecasts.yaml` externalises all file paths, model ID assignments, and validation thresholds.
 
 ```yaml
 # External ML forecast loading configuration

@@ -27,7 +27,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 
 from api.core import get_conn
-from common.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
+from common.core.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
 
 router = APIRouter(tags=["shap"])
 

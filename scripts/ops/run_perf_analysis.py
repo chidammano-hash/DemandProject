@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from common.core.utils import load_config  # noqa: E402
-from common.db import get_db_params  # noqa: E402
+from common.core.db import get_db_params  # noqa: E402
 from common.services.perf_profiler import (  # noqa: E402
     PerfReport,
     QuerySummary,
@@ -58,8 +58,8 @@ def _auto_load_script_config(script_name: str) -> dict | None:
     """Try to auto-load a YAML config for a script by naming convention.
 
     Maps script names to config files:
-      compute_eoq -> config/eoq_config.yaml
-      compute_demand_variability -> config/forecast_domain_config.yaml
+      compute_eoq -> config/inventory/eoq_config.yaml
+      compute_demand_variability -> config/forecasting/forecast_domain_config.yaml
     """
     import yaml  # type: ignore[import-untyped]
 

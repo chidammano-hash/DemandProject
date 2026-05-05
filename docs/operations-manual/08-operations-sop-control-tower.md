@@ -238,7 +238,7 @@ issues collapse into a single card with an occurrence count.
 ### 8.6.1 What checks run
 
 `common/engines/dq_engine.py` exposes a `DQEngine` class that loads check
-definitions from `config/data_quality_config.yaml` and persists them in
+definitions from `config/platform/data_quality_config.yaml` and persists them in
 `fact_dq_check_definitions`. Four primitive check types are implemented:
 
 | Check type | Implementation | Failure condition |
@@ -257,7 +257,7 @@ Aggregated domain health scores (`dim_dq_domain_score`) feed the Control Tower
 
 ```bash
 make dq-schema     # Apply sql/063_create_data_quality.sql
-make dq-populate   # Seed check definitions from config/data_quality_config.yaml
+make dq-populate   # Seed check definitions from config/platform/data_quality_config.yaml
 make dq-run        # Execute all enabled checks and persist results
 make dq-all        # dq-schema + dq-populate + dq-run
 ```
@@ -349,7 +349,7 @@ and persist as cron expressions in `fact_job_schedule`.
 
 `common/services/notification_engine.py` is a multi-channel dispatcher with
 adapters for Slack, Microsoft Teams, Email (SMTP), and PagerDuty. Channel
-config lives in `config/notification_config.yaml`.
+config lives in `config/platform/notification_config.yaml`.
 
 Notifications are rate-limited in-process by `event_key` — duplicate events
 within the cooldown window (default 300s) are suppressed. This is per-process

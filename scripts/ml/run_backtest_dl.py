@@ -55,7 +55,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--config", type=str, default=None,
-        help="Path to config YAML (default: config/forecast_pipeline_config.yaml)",
+        help="Path to config YAML (default: config/forecasting/forecast_pipeline_config.yaml)",
     )
     parser.add_argument(
         "--output-dir", type=str, default=None,
@@ -82,7 +82,7 @@ def main() -> None:
             with open(config_path) as f:
                 cfg = yaml.safe_load(f)
         else:
-            from common.utils import load_forecast_pipeline_config
+            from common.core.utils import load_forecast_pipeline_config
             cfg = load_forecast_pipeline_config()
 
         algo_entry = cfg.get("algorithms", {}).get(model_name, {})

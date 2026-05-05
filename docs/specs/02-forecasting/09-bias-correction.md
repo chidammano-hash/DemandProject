@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inv. Planning (Projection panel), Accuracy (Bias Corrections panel) |
-| **Key Files** | `scripts/compute_bias_corrections.py`, `scripts/compute_inventory_projection.py`, `api/routers/bias_corrections.py`, `api/routers/inv_planning_projection.py`, `config/bias_correction_config.yaml`, `config/inventory_planning_config.yaml` (projection section) |
+| **Key Files** | `scripts/compute_bias_corrections.py`, `scripts/compute_inventory_projection.py`, `api/routers/bias_corrections.py`, `api/routers/inv_planning_projection.py`, `config/bias_correction_config.yaml`, `config/inventory/inventory_planning_config.yaml` (projection section) |
 
 ---
 
@@ -99,7 +99,7 @@ If no production forecast exists for a DFU, the projection falls back to a 3-mon
 | GET | `/inv-planning/projection/summary` | Portfolio-level risk summary |
 | GET | `/inv-planning/projection/at-risk` | DFUs with near-term stockout risk |
 
-### Configuration: `config/inventory_planning_config.yaml` (projection section)
+### Configuration: `config/inventory/inventory_planning_config.yaml` (projection section)
 
 | Key | Default | Description |
 |-----|---------|-------------|

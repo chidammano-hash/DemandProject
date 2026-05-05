@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 def _get_conn():
     """Open a single psycopg connection using get_db_params()."""
     import psycopg  # imported here to keep module-level imports APScheduler-free
-    from common.db import get_db_params
+    from common.core.db import get_db_params
 
     return psycopg.connect(**get_db_params(), autocommit=True)
 
@@ -769,7 +769,7 @@ def _run_compute_safety_stock(
     """Compute safety stock targets for all DFUs."""
     if progress_cb:
         progress_cb(pct=10, msg="Computing safety stock targets")
-    cmd = [_UV, "run", "python", "scripts/compute_safety_stock.py", "--config", "config/safety_stock_config.yaml"]
+    cmd = [_UV, "run", "python", "scripts/compute_safety_stock.py", "--config", "config/inventory/safety_stock_config.yaml"]
     if params.get("forecast_source"):
         cmd.extend(["--forecast-source", params["forecast_source"]])
     if params.get("model_id"):
@@ -787,7 +787,7 @@ def _run_compute_eoq(
     """Compute EOQ cycle stock targets."""
     if progress_cb:
         progress_cb(pct=10, msg="Computing EOQ targets")
-    cmd = [_UV, "run", "python", "scripts/compute_eoq.py", "--config", "config/eoq_config.yaml"]
+    cmd = [_UV, "run", "python", "scripts/compute_eoq.py", "--config", "config/inventory/eoq_config.yaml"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "EOQ computation completed"}
 
@@ -819,7 +819,7 @@ def _run_assign_policies(
     if progress_cb:
         progress_cb(pct=10, msg="Assigning replenishment policies")
     cmd = [_UV, "run", "python", "scripts/assign_replenishment_policies.py",
-           "--config", "config/replenishment_policy_config.yaml"]
+           "--config", "config/inventory/replenishment_policy_config.yaml"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Policy assignment completed"}
 
@@ -862,7 +862,7 @@ def _run_compute_variability(
     if progress_cb:
         progress_cb(pct=10, msg="Computing demand variability")
     cmd = [_UV, "run", "python", "scripts/compute_demand_variability.py",
-           "--config", "config/forecast_domain_config.yaml"]
+           "--config", "config/forecasting/forecast_domain_config.yaml"]
     output = _run_subprocess(cmd, cancel_event=cancel_event, job_id=job_id)
     return {"output_log": output if output else "Demand variability computation completed"}
 
@@ -961,7 +961,7 @@ def _run_data_quality(
     job_id: str | None = None,
 ) -> dict[str, Any]:
     """Run all data quality checks via DQEngine."""
-    from common.dq_engine import DQEngine
+    from common.engines.dq_engine import DQEngine
 
     if progress_cb:
         progress_cb(pct=10, msg="Running data quality checks")
@@ -1004,7 +1004,7 @@ def _run_tuning_backtest(
         progress_cb(pct=5, msg=f"Starting tuning backtest #{run_id} ({strategy_label})")
 
     # 1. Build temp config with overrides (pipeline config format)
-    from common.utils import get_pipeline_config_path
+    from common.core.utils import get_pipeline_config_path
     pipeline_path = get_pipeline_config_path()
     with open(pipeline_path) as f:
         base_config = yaml.safe_load(f)

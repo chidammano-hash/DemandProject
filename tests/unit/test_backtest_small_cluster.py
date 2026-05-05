@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from common.constants import MIN_CLUSTER_ROWS
+from common.core.constants import MIN_CLUSTER_ROWS
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

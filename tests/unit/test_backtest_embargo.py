@@ -7,7 +7,7 @@ predict_start is consistent with the gap_months used in tuning CV splits.
 import pandas as pd
 import pytest
 
-from common.backtest_framework import generate_timeframes
+from common.ml.backtest_framework import generate_timeframes
 
 
 class TestEmbargoMonthsZero:
@@ -131,7 +131,7 @@ class TestEmbargoConsistencyWithTuning:
     def test_gap_size_matches_tuning_cv(self):
         """Both embargo_months and gap_months create the same number of
         skipped months between training data and evaluation data."""
-        from common.tuning import generate_cv_month_splits
+        from common.ml.tuning import generate_cv_month_splits
 
         # Setup: 48 months of data
         all_months = pd.date_range("2021-01-01", periods=48, freq="MS").tolist()

@@ -155,7 +155,7 @@ class TestDfuSpecSeasonalityColumns:
     """Verify seasonality columns are correctly defined in DFU_SPEC."""
 
     def test_seasonality_columns_in_dfu_spec(self):
-        from common.domain_specs import DFU_SPEC
+        from common.core.domain_specs import DFU_SPEC
         seasonality_cols = [
             "seasonality_profile", "seasonality_strength", "is_yearly_seasonal",
             "peak_month", "trough_month", "peak_trough_ratio",
@@ -164,15 +164,15 @@ class TestDfuSpecSeasonalityColumns:
             assert col in DFU_SPEC.columns, f"Missing column: {col}"
 
     def test_seasonality_profile_searchable(self):
-        from common.domain_specs import DFU_SPEC
+        from common.core.domain_specs import DFU_SPEC
         assert "seasonality_profile" in DFU_SPEC.search_fields
 
     def test_seasonality_int_fields(self):
-        from common.domain_specs import DFU_SPEC
+        from common.core.domain_specs import DFU_SPEC
         assert "peak_month" in DFU_SPEC.int_fields
         assert "trough_month" in DFU_SPEC.int_fields
 
     def test_seasonality_float_fields(self):
-        from common.domain_specs import DFU_SPEC
+        from common.core.domain_specs import DFU_SPEC
         assert "seasonality_strength" in DFU_SPEC.float_fields
         assert "peak_trough_ratio" in DFU_SPEC.float_fields

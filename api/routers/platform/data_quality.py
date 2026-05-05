@@ -122,7 +122,7 @@ async def dq_run(
     domain: str = Query("", description="Run checks for specific domain only"),
 ):
     """Trigger an ad-hoc data quality check run."""
-    from common.dq_engine import DQEngine
+    from common.engines.dq_engine import DQEngine
     engine = DQEngine()
     results = engine.run_all_checks(domain=domain or None)
     return {"triggered": len(results), "message": "ok", "results": results, "total": len(results)}

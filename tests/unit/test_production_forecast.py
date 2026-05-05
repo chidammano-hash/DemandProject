@@ -24,7 +24,7 @@ from scripts.forecasting.generate_production_forecasts import (
     generate_forecasts_batch,
     generate_forecasts_statistical,
 )
-from common.constants import LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES
+from common.core.constants import LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +557,7 @@ def test_load_config_ci_section():
 
 def test_inference_grid_feature_parity_with_backtest():
     """build_inference_grid must produce the same features as build_feature_matrix."""
-    from common.constants import CALENDAR_FEATURES, DERIVED_FEATURES
+    from common.core.constants import CALENDAR_FEATURES, DERIVED_FEATURES
     sales = _make_sales(n_months=24)
     attrs = _make_dfu_attrs()
     grid = build_inference_grid("ITEM001", "LOC1", 2, sales, attrs, horizon=3)

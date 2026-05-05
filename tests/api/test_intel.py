@@ -55,7 +55,7 @@ async def test_intel_success(mock_pool):
 
     with (
         patch("api.core._get_pool", return_value=pool),
-        patch("api.routers.intel.get_openai", return_value=mock_openai),
+        patch("api.routers.intelligence.intel.get_openai", return_value=mock_openai),
         patch.dict("os.environ", {"GOOGLE_API_KEY": "", "GOOGLE_CX": ""}, clear=False),
     ):
         from api.main import app

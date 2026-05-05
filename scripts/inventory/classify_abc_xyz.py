@@ -20,11 +20,11 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import psycopg
-from common.db import get_db_params  # noqa: E402
+from common.core.db import get_db_params  # noqa: E402
 from common.services.perf_profiler import profiled_section
 
 
-CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "replenishment_policy_config.yaml"
+CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "inventory" / "replenishment_policy_config.yaml"
 
 _ABC_VALID = {"A", "B", "C"}
 

@@ -20,8 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import psycopg
-from common.db import get_db_params  # noqa: E402
-from common.planning_date import get_planning_date  # noqa: E402
+from common.core.db import get_db_params  # noqa: E402
+from common.core.planning_date import get_planning_date  # noqa: E402
 from common.services.perf_profiler import profiled_section
 
 # Minimum day of month before computing signals (insufficient data before day 5)

@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (infrastructure layer) |
-| **Key Files** | `common/cache.py`, `common/query_tracker.py`, `config/cache_config.yaml` |
+| **Key Files** | `common/cache.py`, `common/query_tracker.py`, `config/platform/cache_config.yaml` |
 
 ---
 
@@ -57,7 +57,7 @@ Indexes on `(endpoint, recorded_at DESC)` and `(cache_hit)`. Rows older than 30 
 
 ## Configuration
 
-`config/cache_config.yaml`:
+`config/platform/cache_config.yaml`:
 
 ```yaml
 cache:

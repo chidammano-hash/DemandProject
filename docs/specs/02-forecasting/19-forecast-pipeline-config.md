@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (config file only) |
-| **Key Files** | `config/forecast_pipeline_config.yaml`, `common/core/utils.py` (`load_forecast_pipeline_config`, `get_algorithm_roster`, `get_competing_model_ids`, `get_forecastable_model_ids`) |
+| **Key Files** | `config/forecasting/forecast_pipeline_config.yaml`, `common/core/utils.py` (`load_forecast_pipeline_config`, `get_algorithm_roster`, `get_competing_model_ids`, `get_forecastable_model_ids`) |
 
 ---
 
@@ -31,7 +31,7 @@ Pipeline configuration was fragmented across 4 separate YAML files, each governi
 
 ## Solution
 
-A single master config file (`config/forecast_pipeline_config.yaml`) consolidates all pipeline settings. It introduces a new `algorithms` section -- a master roster of all 12 algorithms with per-algorithm lifecycle flags that control which pipeline stages each algorithm participates in. Helper functions in `common/core/utils.py` provide filtered access to the roster.
+A single master config file (`config/forecasting/forecast_pipeline_config.yaml`) consolidates all pipeline settings. It introduces a new `algorithms` section -- a master roster of all 12 algorithms with per-algorithm lifecycle flags that control which pipeline stages each algorithm participates in. Helper functions in `common/core/utils.py` provide filtered access to the roster.
 
 Model-specific hyperparameters (learning_rate, n_estimators, etc.) are now inline under `algorithms.<model_id>.params` in the master config. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve them.
 
@@ -393,8 +393,8 @@ All legacy config files have been deleted. The master `forecast_pipeline_config.
 - [Production Forecast](./08-production-forecast.md) -- inference settings governed by `production_forecast` section
 - [LGBM Tuning](./10b-lgbm-tuning.md) -- tracking settings governed by `tracking` section
 - `cluster_experiment` table (promoted row) -- detailed clustering hyperparameters, referenced by `clustering.config_ref`
-- `config/cluster_tuning_profiles.yaml` -- cluster tuning profiles, referenced by `clustering.tuning_profiles_ref`
-- `config/cluster_experiment_templates.yaml` -- experiment templates, referenced by `clustering.experiment_templates_ref`
+- `config/forecasting/cluster_tuning_profiles.yaml` -- cluster tuning profiles, referenced by `clustering.tuning_profiles_ref`
+- `config/forecasting/cluster_experiment_templates.yaml` -- experiment templates, referenced by `clustering.experiment_templates_ref`
 
 ## See Also
 

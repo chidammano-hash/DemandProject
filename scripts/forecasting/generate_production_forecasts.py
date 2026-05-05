@@ -50,15 +50,15 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
-from common.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
-from common.forecast_ci import build_sigma_lookup, compute_ci_bounds
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.constants import CAT_FEATURES, LAG_RANGE, ROLLING_WINDOWS
+from common.ml.forecast_ci import build_sigma_lookup, compute_ci_bounds
+from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
 
 import psycopg
 
-PIPELINE_CONFIG_PATH = ROOT / "config" / "forecast_pipeline_config.yaml"
+PIPELINE_CONFIG_PATH = ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 
 logger = logging.getLogger(__name__)
 

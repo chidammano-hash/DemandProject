@@ -4,7 +4,7 @@ Provides pure-function classifiers that turn computed time-series features
 into categorical labels (seasonality profile, variability class).
 
 Thresholds are aligned with the existing pipeline defaults in
-``config/forecast_domain_config.yaml`` but are passed as parameters so
+``config/forecasting/forecast_domain_config.yaml`` but are passed as parameters so
 callers can override from config.
 """
 

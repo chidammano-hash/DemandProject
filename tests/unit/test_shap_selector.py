@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from common.shap_selector import (
+from common.ml.shap_selector import (
     _select_features_from_shap,
     _weighted_pool_cluster_shap,
     build_shap_summary,
@@ -280,7 +280,7 @@ class TestWeightedPoolClusterShap:
 # ---------------------------------------------------------------------------
 
 
-from common.shap_selector import (
+from common.ml.shap_selector import (
     SPARSE_MIN_NONZERO_ROWS,
     _stratified_sample_for_shap,
     compute_timeframe_shap_per_cluster,

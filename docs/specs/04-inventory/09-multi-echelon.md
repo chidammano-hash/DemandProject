@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/compute_echelon_targets.py`, `api/routers/inventory/echelon_planning.py`, `config/echelon_config.yaml` |
+| **Key Files** | `scripts/compute_echelon_targets.py`, `api/routers/inventory/echelon_planning.py`, `config/inventory/echelon_config.yaml` |
 
 ---
 
@@ -100,7 +100,7 @@ make echelon-compute    # Compute multi-echelon SS targets
 
 ## Configuration
 
-File: `config/echelon_config.yaml`
+File: `config/inventory/echelon_config.yaml`
 
 ```yaml
 echelon_levels: 2

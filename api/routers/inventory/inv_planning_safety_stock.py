@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from api.auth import require_api_key
 from api.core import _f, add_cross_dim_filters, get_conn, set_cache
-from common.utils import load_config
+from common.core.utils import load_config
 
 router = APIRouter(tags=["inv-planning"])
 

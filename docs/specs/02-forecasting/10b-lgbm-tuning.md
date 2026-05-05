@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented (3 models, 10 experiments each) |
 | **UI Tab** | Model Tuning (sidebar: Demand section) — model selector pills for LGBM/CatBoost/XGBoost |
-| **Key Files** | `sql/095_create_lgbm_tuning.sql`, `scripts/ml/compare_backtest_runs.py`, `scripts/ml/auto_tune.py`, `scripts/ml/seed_model_tuning.py`, `api/routers/forecasting/lgbm_tuning.py`, `api/routers/forecasting/model_tuning.py`, `frontend/src/tabs/LgbmTuningTab.tsx`, `common/ml/tuning_tracker.py`, `config/forecast_pipeline_config.yaml` (tracking section), `config/tune_strategies.yaml` |
+| **Key Files** | `sql/095_create_lgbm_tuning.sql`, `scripts/ml/compare_backtest_runs.py`, `scripts/ml/auto_tune.py`, `scripts/ml/seed_model_tuning.py`, `api/routers/forecasting/lgbm_tuning.py`, `api/routers/forecasting/model_tuning.py`, `frontend/src/tabs/LgbmTuningTab.tsx`, `common/ml/tuning_tracker.py`, `config/forecasting/forecast_pipeline_config.yaml` (tracking section), `config/forecasting/tune_strategies.yaml` |
 
 ---
 
@@ -26,7 +26,7 @@ A dedicated tuning run registry that automatically captures every LGBM backtest 
 
 Before a backtest starts, a tuning run record is created in `lgbm_tuning_run` with status `running`. This can happen automatically (when `auto_register: true` in config) or manually via the API. The run captures:
 
-- All hyperparameters from `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>.params` (learning_rate, num_leaves, max_depth, etc.)
+- All hyperparameters from `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>.params` (learning_rate, num_leaves, max_depth, etc.)
 - Feature list from `common/feature_engineering.py`
 - Cluster strategy (per_cluster or global)
 - Inference mode (recursive or direct)
@@ -439,7 +439,7 @@ Side-by-side comparison view, opened from the Run History panel or via direct UR
 
 ## Configuration
 
-### `config/forecast_pipeline_config.yaml` (tracking section)
+### `config/forecasting/forecast_pipeline_config.yaml` (tracking section)
 
 > The legacy `config/lgbm_tuning_config.yaml` has been deleted. Tuning run management settings now live in the master config under the `tracking` section.
 
@@ -547,7 +547,7 @@ for production backtests, champion selection, and long-range forecasts.
 ### Phase 1: Data Model + Script Integration
 
 1. Create `sql/095_create_lgbm_tuning.sql` with all three tables
-2. Add `tracking` section to `config/forecast_pipeline_config.yaml`
+2. Add `tracking` section to `config/forecasting/forecast_pipeline_config.yaml`
 3. Create `scripts/ml/register_tuning_run.py` with register/complete/compare/list/promote subcommands
 4. Modify `scripts/run_backtest.py` to call register (pre) and complete (post) when auto_register is enabled
 5. Add Make targets to Makefile
@@ -670,7 +670,7 @@ There are **four ways** to run tuning experiments, from simplest to most sophist
 
 Run predefined strategies from model-specific config files. Each strategy overrides specific params, runs a full backtest (~25 min each), registers the result, and prints a leaderboard.
 
-**Strategy configs:** All strategies are in `config/tune_strategies.yaml`, organized by model key:
+**Strategy configs:** All strategies are in `config/forecasting/tune_strategies.yaml`, organized by model key:
 - `lgbm` section: 13 strategies
 - `catboost` section: 15 strategies
 - `xgboost` section: 15 strategies
@@ -821,7 +821,7 @@ make lgbm-auto-tune-promote RUNS=5
 
 ### Per-Cluster Adaptive Profiles
 
-The backtest framework automatically applies cluster-specific param overrides based on demand characteristics. Profiles are defined in `config/cluster_tuning_profiles.yaml`:
+The backtest framework automatically applies cluster-specific param overrides based on demand characteristics. Profiles are defined in `config/forecasting/cluster_tuning_profiles.yaml`:
 
 | Profile | Triggers When | Key Overrides |
 |---------|---------------|---------------|

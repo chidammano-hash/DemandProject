@@ -3,7 +3,7 @@ Run tree-model backtesting with per-cluster strategy and expanding-window timefr
 
 Supports LGBM (default), CatBoost, and XGBoost via the --model flag.
 All run options (recursive, SHAP, tuning) are controlled via
-config/forecast_pipeline_config.yaml rather than CLI flags.
+config/forecasting/forecast_pipeline_config.yaml rather than CLI flags.
 
 Produces two CSVs under data/backtest/<model_id>/:
   - backtest_predictions.csv          (execution-lag row for DB load)
@@ -31,20 +31,20 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.backtest_framework import (
+from common.ml.backtest_framework import (
     compute_cluster_demand_stats,
     resolve_cluster_params,
     run_tree_backtest,
 )
-from common.constants import compute_min_cluster_rows
+from common.core.constants import compute_min_cluster_rows
 from common.ml.model_registry import (
     fit_model,
     get_best_iteration,
 )
 from common.scripts_base import load_project_env, setup_logging
 from common.services.perf_profiler import profiled_section
-from common.tuning import TRAIN_FOLD_FNS, load_best_params, tune_for_timeframe
-from common.utils import get_algorithm_roster, load_config, load_forecast_pipeline_config
+from common.ml.tuning import TRAIN_FOLD_FNS, load_best_params, tune_for_timeframe
+from common.core.utils import get_algorithm_roster, load_config, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 
@@ -1118,7 +1118,7 @@ def persist_cluster_models(
 def main() -> None:
     # TODO(gen-4 cross-cutting): bias correction + quantile heads.
     # If `algorithms.<model_id>.params.quantile_heads` is non-empty in
-    # config/forecast_pipeline_config.yaml, run one fit per quantile
+    # config/forecasting/forecast_pipeline_config.yaml, run one fit per quantile
     # using LightGBM's `objective: quantile` with each `alpha`. That
     # will triple fit time per cluster and produce three parallel
     # prediction sets (p10/p50/p90) to write alongside the existing
@@ -1132,7 +1132,7 @@ def main() -> None:
                         choices=list(MODEL_REGISTRY.keys()),
                         help="Model type to run (default: lgbm)")
     parser.add_argument("--config", type=str, default=None,
-                        help="Path to config YAML (default: config/forecast_pipeline_config.yaml)")
+                        help="Path to config YAML (default: config/forecasting/forecast_pipeline_config.yaml)")
     parser.add_argument("--model-id", type=str, default=None,
                         help="Override model_id from config")
     parser.add_argument("--n-timeframes", type=int, default=None,
@@ -1404,7 +1404,7 @@ def main() -> None:
     # Build causal per-timeframe tuner when tune_inline is set (PL-002)
     inline_tuner_fn = None
     if tune_inline:
-        _tune_config_path = ROOT / "config" / "hyperparameter_tuning.yaml"
+        _tune_config_path = ROOT / "config" / "forecasting" / "hyperparameter_tuning.yaml"
         with open(_tune_config_path) as _f:
             _tune_config = yaml.safe_load(_f)
         _fold_fn = TRAIN_FOLD_FNS[model_name]
@@ -1439,10 +1439,10 @@ def main() -> None:
     feature_selector_fn = None
     if shap_select:
         from common.ml.shap_selector import compute_timeframe_shap_per_cluster
-        from common.shap_selector import compute_timeframe_shap
+        from common.ml.shap_selector import compute_timeframe_shap
         shap_extractor_name = registry["shap_extractor"]
         shap_extractor_fn = getattr(
-            importlib.import_module("common.shap_selector"),
+            importlib.import_module("common.ml.shap_selector"),
             shap_extractor_name,
         )
 
@@ -1480,7 +1480,7 @@ def main() -> None:
                     shap_threshold, _corr_filter, _corr_threshold, _var_filter, _var_threshold)
 
     # Load production forecast config for model persistence (F1.1)
-    pipeline_config_path = ROOT / "config" / "forecast_pipeline_config.yaml"
+    pipeline_config_path = ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
     prod_config = None
     if pipeline_config_path.exists():
         with open(pipeline_config_path) as f:

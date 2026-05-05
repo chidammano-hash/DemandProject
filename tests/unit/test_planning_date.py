@@ -9,8 +9,8 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-import common.planning_date as pd_module
-from common.planning_date import _reset_cache, _resolve_date, get_planning_date
+import common.core.planning_date as pd_module
+from common.core.planning_date import _reset_cache, _resolve_date, get_planning_date
 
 
 @pytest.fixture(autouse=True)

@@ -34,12 +34,12 @@ logger.info("Monte Carlo backend: %s", "CuPy (GPU)" if _GPU_AVAILABLE else "NumP
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import psycopg
-from common.db import get_db_params  # noqa: E402
-from common.planning_date import get_planning_date  # noqa: E402
+from common.core.db import get_db_params  # noqa: E402
+from common.core.planning_date import get_planning_date  # noqa: E402
 from common.services.perf_profiler import profiled_section  # noqa: E402
 from common.twin import TwinState  # noqa: E402
 
-CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "inventory_planning_config.yaml"
+CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "inventory" / "inventory_planning_config.yaml"
 
 
 def load_twin_state(

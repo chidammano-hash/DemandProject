@@ -144,7 +144,7 @@ async def test_notification_test_200():
     mock_engine.send.return_value = {"status": "delivered", "channel": "email"}
     with patch("api.core._get_pool", return_value=pool), \
          patch.dict("sys.modules", {
-             "common.notification_engine": MagicMock(
+             "common.services.notification_engine": MagicMock(
                  NotificationEngine=lambda: mock_engine
              )
          }):
@@ -169,7 +169,7 @@ async def test_notification_test_default_body():
     mock_engine.send.return_value = {"status": "delivered"}
     with patch("api.core._get_pool", return_value=pool), \
          patch.dict("sys.modules", {
-             "common.notification_engine": MagicMock(
+             "common.services.notification_engine": MagicMock(
                  NotificationEngine=lambda: mock_engine
              )
          }):

@@ -14,7 +14,7 @@ import json
 
 from fastapi import HTTPException
 
-from common.domain_specs import DomainSpec, get_spec
+from common.core.domain_specs import DomainSpec, get_spec
 
 # ---------------------------------------------------------------------------
 # Re-exports from sub-modules (backward compatibility)

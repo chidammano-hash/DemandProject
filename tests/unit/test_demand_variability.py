@@ -232,7 +232,7 @@ class TestClassifyVariabilityClass:
 
 class TestDfuSpecVariabilityColumns:
     def test_variability_columns_in_dfu_spec(self):
-        from common.domain_specs import DFU_SPEC
+        from common.core.domain_specs import DFU_SPEC
         expected_cols = [
             "demand_mean", "demand_std", "demand_cv", "demand_mad",
             "demand_p50", "demand_p90", "demand_skewness", "demand_kurtosis",
@@ -243,17 +243,17 @@ class TestDfuSpecVariabilityColumns:
             assert col in DFU_SPEC.columns, f"Missing column in DFU_SPEC: {col}"
 
     def test_variability_class_searchable(self):
-        from common.domain_specs import DFU_SPEC
+        from common.core.domain_specs import DFU_SPEC
         assert "variability_class" in DFU_SPEC.search_fields
 
     def test_variability_float_fields(self):
-        from common.domain_specs import DFU_SPEC
+        from common.core.domain_specs import DFU_SPEC
         float_cols = ["demand_cv", "demand_std", "demand_mean", "demand_mad",
                       "demand_p50", "demand_p90", "intermittency_ratio"]
         for col in float_cols:
             assert col in DFU_SPEC.float_fields, f"Expected {col} in float_fields"
 
     def test_variability_int_fields(self):
-        from common.domain_specs import DFU_SPEC
+        from common.core.domain_specs import DFU_SPEC
         assert "zero_demand_months" in DFU_SPEC.int_fields
         assert "total_demand_months" in DFU_SPEC.int_fields

@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
+from common.core.db import get_db_params
 
 
 _DEPENDENCIES = ("agg_inventory_monthly", "mv_inventory_forecast_monthly")

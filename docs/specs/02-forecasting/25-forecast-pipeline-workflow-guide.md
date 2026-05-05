@@ -122,7 +122,7 @@ make tune-clusters        # Per-cluster tuning for all tree models
 3. Optuna learns which parameter regions minimize WAPE
 4. Best parameters saved to `data/tuning/best_params_<model>.json`
 
-**Per-cluster tuning** (`make tune-lgbm-clusters`) runs Optuna independently per `ml_cluster`, writing cluster-specific overrides to `config/cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. During backtest, profiles are matched by Phase 1 (exact cluster_name) then Phase 2 (statistical criteria fallback).
+**Per-cluster tuning** (`make tune-lgbm-clusters`) runs Optuna independently per `ml_cluster`, writing cluster-specific overrides to `config/forecasting/cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. During backtest, profiles are matched by Phase 1 (exact cluster_name) then Phase 2 (statistical criteria fallback).
 
 **After tuning, promote and re-backtest:**
 ```bash
@@ -305,6 +305,6 @@ Individual model enable/disable toggles are in the same Settings page under **Ac
 | "Repository not found" for Chronos | HuggingFace auth or wrong model size | Run `huggingface-cli login`; check `model_size` in config |
 | Backtest accuracy is 0% | No sales data for the period | Check `make health`; verify `fact_sales_monthly` has data |
 | Production forecast all NaN | No trained `.pkl` models | Run backtest first — models are saved during backtest |
-| Tuning converges in < 10 trials | Search space too narrow | Widen ranges in `config/hyperparameter_tuning.yaml` |
+| Tuning converges in < 10 trials | Search space too narrow | Widen ranges in `config/forecasting/hyperparameter_tuning.yaml` |
 | Cold-start items get no forecast | < 3 months of history | Lower `cold_start_min_months` in Settings (min 1) |
 | Clustering produces 1 cluster | Insufficient data diversity | Lower `min_months_history` or increase sample size |

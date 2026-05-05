@@ -249,7 +249,7 @@ async def test_confirm_run_returns_run_id(mock_pool):
     with (
         patch("api.core._get_pool", return_value=pool),
         patch("common.ml.tuning_tracker.register_run", return_value=7),
-        patch("common.job_registry.JobManager", return_value=mock_mgr),
+        patch("common.services.job_registry.JobManager", return_value=mock_mgr),
     ):
         from api.main import app
         transport = ASGITransport(app=app)

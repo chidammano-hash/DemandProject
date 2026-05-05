@@ -5,7 +5,7 @@ Sampled backtest: 5K DFUs, ~3 min, ~273K predictions.
 Expected accuracy deviation: +/-1.5% of full run.
 
 All DB access uses psycopg3 with ``%s`` placeholders and explicit connection
-management via ``common.db.get_db_params``.
+management via ``common.core.db.get_db_params``.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 def _load_sampling_config() -> dict[str, Any]:
     """Load sampling config from ``forecast_pipeline_config.yaml`` ``backtest_sampling`` section."""
-    from common.utils import load_forecast_pipeline_config
+    from common.core.utils import load_forecast_pipeline_config
     pipeline_cfg = load_forecast_pipeline_config()
     return pipeline_cfg.get("backtest_sampling", {})
 

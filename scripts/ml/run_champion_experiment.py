@@ -27,12 +27,12 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.champion_strategies import (
+from common.ml.champion_strategies import (
     STRATEGY_REGISTRY,
     compute_ceiling,
     compute_strategy_accuracy,
 )
-from common.db import get_db_params
+from common.core.db import get_db_params
 from scripts.ml.run_champion_selection import load_dfu_features, load_monthly_errors_df
 
 logging.basicConfig(

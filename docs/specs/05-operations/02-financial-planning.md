@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (FinancialPlanPanel) |
-| **Key Files** | `inv-planning/FinancialPlanPanel.tsx`, `api/routers/financial_plan.py`, `scripts/compute_financial_plan.py`, `config/financial_plan_config.yaml`, `sql/057_create_financial_plan.sql` |
+| **Key Files** | `inv-planning/FinancialPlanPanel.tsx`, `api/routers/financial_plan.py`, `scripts/compute_financial_plan.py`, `config/operations/financial_plan_config.yaml`, `sql/057_create_financial_plan.sql` |
 
 ---
 
@@ -80,7 +80,7 @@ A computation pipeline joins on-hand inventory, safety stock targets, production
 
 ## Configuration
 
-File: `config/financial_plan_config.yaml`
+File: `config/operations/financial_plan_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|

@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import psycopg
 
-from common.constants import (
+from common.core.constants import (
     ARCHIVE_COLS,
     CAT_FEATURES,
     LAG_RANGE,
@@ -37,11 +37,11 @@ from common.constants import (
     NUMERIC_SKU_FEATURES,
     OUTPUT_COLS,
 )
-from common.db import get_db_params
-from common.metrics import compute_accuracy_metrics
-from common.mlflow_utils import log_backtest_run
-from common.planning_date import get_planning_date
-from common.utils import load_config
+from common.core.db import get_db_params
+from common.services.metrics import compute_accuracy_metrics
+from common.ml.mlflow_utils import log_backtest_run
+from common.core.planning_date import get_planning_date
+from common.core.utils import load_config
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ def compute_cluster_demand_stats(
 
     All five keys are consumed by ``resolve_cluster_params`` via ``_matches_profile``,
     which reads them dynamically using the ``_min`` / ``_max`` suffix convention
-    defined in ``config/cluster_tuning_profiles.yaml``:
+    defined in ``config/forecasting/cluster_tuning_profiles.yaml``:
 
     - mean_demand:        mean of non-zero qty values
     - cv_demand:          coefficient of variation (std / mean) of qty
@@ -1152,7 +1152,7 @@ def run_tree_backtest(
     All algorithms use per-cluster strategy. Options (recursive, SHAP, tuning)
     are passed via closures rather than CLI flags; see forecast_pipeline_config.yaml.
     """
-    from common.feature_engineering import (
+    from common.ml.feature_engineering import (
         build_feature_matrix,
         get_feature_columns,
         mask_future_sales,
@@ -1741,7 +1741,7 @@ def run_tree_backtest(
     # ── Save SHAP outputs (Feature 42) ───────────────────────────────────────
     extra_artifact_paths: list[str] = []
     if feature_selector_fn is not None and shap_timeframe_reports:
-        from common.shap_selector import save_shap_outputs
+        from common.ml.shap_selector import save_shap_outputs
         logger.info("Saving SHAP feature selection outputs...")
         _, shap_summary_path = save_shap_outputs(
             shap_timeframe_reports, output_path.parent, len(timeframes)

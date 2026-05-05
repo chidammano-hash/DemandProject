@@ -306,7 +306,7 @@ The full pipeline was executed across all 6 phases, loading 10 data domains, run
 **Fix applied:**
 1. Reloaded `fact_external_forecast_monthly` from clean CSV (14,747,328 rows)
 2. Reloaded `fact_sales_monthly` from clean CSV (6,135,244 rows)
-3. Updated `config/data_quality_config.yaml`: IQR threshold 1.5 → 10.0 for all qty/forecast columns
+3. Updated `config/platform/data_quality_config.yaml`: IQR threshold 1.5 → 10.0 for all qty/forecast columns
 4. Refreshed all 8 accuracy/forecast/fill-rate MVs
 
 **Verification:** Accuracy for loc=1401-BULK lag=0 restored to **78.82%** (bias=0.47%)

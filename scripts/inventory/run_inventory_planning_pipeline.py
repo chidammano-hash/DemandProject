@@ -169,7 +169,7 @@ def _refresh_integrated_mv() -> None:
     """Refresh the integrated targets MV after SS + EOQ are computed."""
     import psycopg
 
-    from common.db import get_db_params
+    from common.core.db import get_db_params
 
     try:
         with psycopg.connect(**get_db_params()) as conn, conn.cursor() as cur:

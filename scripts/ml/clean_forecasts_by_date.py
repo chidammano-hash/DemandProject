@@ -29,8 +29,8 @@ load_dotenv(ROOT / ".env")
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
-from common.utils import _ts
+from common.core.db import get_db_params
+from common.core.utils import _ts
 
 VALID_DATE_COLUMNS = ("startdate", "fcstdate")
 

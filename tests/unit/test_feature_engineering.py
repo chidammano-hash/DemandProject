@@ -4,8 +4,8 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from common.constants import TS_PROFILE_FEATURES
-from common.feature_engineering import (
+from common.core.constants import TS_PROFILE_FEATURES
+from common.ml.feature_engineering import (
     _compute_ts_profile_features,
     build_feature_matrix,
     get_feature_columns,

@@ -11,7 +11,7 @@ Usage
     uv run python -m scripts.ml.run_expert_system_backtest
     uv run python -m scripts.ml.run_expert_system_backtest --replace
     uv run python -m scripts.ml.run_expert_system_backtest --skip-load
-    uv run python -m scripts.ml.run_expert_system_backtest --config config/expert_system_backtest.yaml
+    uv run python -m scripts.ml.run_expert_system_backtest --config config/forecasting/expert_system_backtest.yaml
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ from common.ml.feature_engineering import build_feature_matrix
 from common.core.db import get_db_params
 from common.core.planning_date import get_planning_date
 from common.ml.backtest_framework import generate_timeframes
-from common.utils import load_config
+from common.core.utils import load_config
 
 logger = logging.getLogger(__name__)
 
@@ -1014,8 +1014,8 @@ def run_backtest(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Expert System Backtest (ExpSys)")
     parser.add_argument(
-        "--config", type=Path, default=Path("config/expert_system_backtest.yaml"),
-        help="Path to config YAML (default: config/expert_system_backtest.yaml)",
+        "--config", type=Path, default=Path("config/forecasting/expert_system_backtest.yaml"),
+        help="Path to config YAML (default: config/forecasting/expert_system_backtest.yaml)",
     )
     parser.add_argument(
         "--replace", action="store_true",

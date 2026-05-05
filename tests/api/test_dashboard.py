@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 import httpx
 from httpx import ASGITransport
 
-from common.planning_date import _reset_cache
+from common.core.planning_date import _reset_cache
 
 
 # ===========================================================================
@@ -21,7 +21,7 @@ async def test_planning_date_frozen(mock_pool):
     pool, _, _cursor = mock_pool
     frozen = date(2026, 2, 24)
     with patch("api.core._get_pool", return_value=pool), \
-         patch("common.planning_date._resolve_date", return_value=frozen):
+         patch("common.core.planning_date._resolve_date", return_value=frozen):
         _reset_cache()
         from api.main import app
         transport = ASGITransport(app=app)
@@ -43,7 +43,7 @@ async def test_planning_date_live(mock_pool):
     pool, _, _cursor = mock_pool
     today = date.today()
     with patch("api.core._get_pool", return_value=pool), \
-         patch("common.planning_date._resolve_date", return_value=today):
+         patch("common.core.planning_date._resolve_date", return_value=today):
         _reset_cache()
         from api.main import app
         transport = ASGITransport(app=app)
@@ -615,7 +615,7 @@ async def test_dashboard_trend_uses_planning_date(mock_pool):
     cursor.fetchall.return_value = []
     frozen = date(2026, 2, 24)
     with patch("api.core._get_pool", return_value=pool), \
-         patch("common.planning_date._resolve_date", return_value=frozen):
+         patch("common.core.planning_date._resolve_date", return_value=frozen):
         _reset_cache()
         from api.main import app
         transport = ASGITransport(app=app)
@@ -639,7 +639,7 @@ async def test_dashboard_kpis_uses_planning_date(mock_pool):
     ]
     frozen = date(2026, 2, 24)
     with patch("api.core._get_pool", return_value=pool), \
-         patch("common.planning_date._resolve_date", return_value=frozen):
+         patch("common.core.planning_date._resolve_date", return_value=frozen):
         _reset_cache()
         from api.main import app
         transport = ASGITransport(app=app)
@@ -796,7 +796,7 @@ async def test_customer_map_by_zip(mock_pool):
     ]
     mock_nomi = _mock_pgeocode([34.0901, 40.7484], [-118.4065, -73.9967])
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.dashboard._get_nomi", return_value=mock_nomi):
+         patch("api.routers.core.dashboard._get_nomi", return_value=mock_nomi):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -823,7 +823,7 @@ async def test_customer_map_by_city(mock_pool):
     ]
     mock_nomi = _mock_pgeocode([33.9425, 29.7633], [-118.2551, -95.3633])
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.dashboard._get_nomi", return_value=mock_nomi):
+         patch("api.routers.core.dashboard._get_nomi", return_value=mock_nomi):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -883,7 +883,7 @@ async def test_customer_map_zip_fallback_to_state_centroid(mock_pool):
     ]
     mock_nomi = _mock_pgeocode([np.nan], [np.nan])
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.dashboard._get_nomi", return_value=mock_nomi):
+         patch("api.routers.core.dashboard._get_nomi", return_value=mock_nomi):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

@@ -1,6 +1,6 @@
 """Tests for common/constants.py."""
 
-from common.constants import (
+from common.core.constants import (
     CAT_FEATURES,
     CROSTON_FEATURES,
     CROSS_DFU_FEATURES,

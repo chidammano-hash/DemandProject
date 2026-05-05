@@ -6,7 +6,7 @@ Upserts results into fact_eoq_targets.
 
 Usage:
     uv run python scripts/compute_eoq.py
-    uv run python scripts/compute_eoq.py --config config/eoq_config.yaml
+    uv run python scripts/compute_eoq.py --config config/inventory/eoq_config.yaml
     uv run python scripts/compute_eoq.py --dry-run
 """
 from __future__ import annotations
@@ -21,9 +21,9 @@ from typing import Any
 import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from common.db import get_db_params
+from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config
+from common.core.utils import load_config as _load_config
 
 
 # ---------------------------------------------------------------------------
@@ -279,8 +279,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute EOQ & cycle stock targets.")
     parser.add_argument(
         "--config",
-        default="config/eoq_config.yaml",
-        help="Path to YAML config (default: config/eoq_config.yaml)",
+        default="config/inventory/eoq_config.yaml",
+        help="Path to YAML config (default: config/inventory/eoq_config.yaml)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Skip DB writes")
     args = parser.parse_args()

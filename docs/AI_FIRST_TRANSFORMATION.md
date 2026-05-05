@@ -81,7 +81,7 @@ The transformation is not "add AI to the app." It is "stop hiding the AI we alre
 
 ### 2.1 — Six Concrete Agents (replacing the "AI Planner" tab)
 
-Each agent uses the existing `policy_engine.evaluate()` + `decision_ledger.append_decision()` + `reversible.apply()` triad. Tier defaults from `config/agent_autonomy.yaml`.
+Each agent uses the existing `policy_engine.evaluate()` + `decision_ledger.append_decision()` + `reversible.apply()` triad. Tier defaults from `config/ai/agent_autonomy.yaml`.
 
 | Agent | Trigger | Tools | Escalation |
 |---|---|---|---|

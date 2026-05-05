@@ -8,7 +8,7 @@
 | **Spec version** | 2.0 (2026-04-05) |
 | **UI Tab** | SKU Features (dedicated explorer), Inventory Planning (variability detail), DFU Analysis (filter dimension) |
 | **API prefix** | `/sku-features` |
-| **Config** | `config/sku_features_config.yaml` |
+| **Config** | `config/forecasting/sku_features_config.yaml` |
 | **DDL** | `sql/005_create_dim_dfu.sql` (base), `sql/022_add_demand_variability_columns.sql` (variability), `sql/120_add_unified_feature_columns.sql` (extended) |
 | **Pipeline entry** | `scripts/ml/compute_sku_features.py` (`make features-compute`) |
 | **Core library** | `common/ml/sku_features/` (orchestration), `common/ml/clustering/features.py` (computation) |
@@ -393,7 +393,7 @@ The pipeline is fully idempotent. Running `make features-compute` multiple times
 
 ## Configuration
 
-### File: `config/sku_features_config.yaml`
+### File: `config/forecasting/sku_features_config.yaml`
 
 ```yaml
 # Unified SKU Feature Computation Configuration
@@ -455,7 +455,7 @@ The following config files predate the unified pipeline. They are no longer auth
 - `config/seasonality_config.yaml` -- legacy seasonality thresholds
 - `config/variability_config.yaml` -- legacy variability thresholds
 
-All new work should reference `config/sku_features_config.yaml` exclusively.
+All new work should reference `config/forecasting/sku_features_config.yaml` exclusively.
 
 ---
 
@@ -844,7 +844,7 @@ The clustering scenario script (`scripts/run_clustering_scenario.py`) maintains 
 
 | File | Purpose |
 |---|---|
-| `config/sku_features_config.yaml` | Thresholds for classification, history window, parallelism |
+| `config/forecasting/sku_features_config.yaml` | Thresholds for classification, history window, parallelism |
 | `config/planning_config.yaml` | Planning date (via `get_planning_date()`) |
 
 ---

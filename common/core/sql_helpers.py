@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import time
 
-from common.domain_specs import DomainSpec
+from common.core.domain_specs import DomainSpec
 
 logger = logging.getLogger(__name__)
 

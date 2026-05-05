@@ -261,7 +261,7 @@ class TestPrintLeaderboard:
 
 
 class TestProductionStrategies:
-    """Validate the actual config/tune_strategies.yaml file."""
+    """Validate the actual config/forecasting/tune_strategies.yaml file."""
 
     def test_strategies_file_exists(self):
         from scripts.ml.auto_tune import STRATEGIES_FILE

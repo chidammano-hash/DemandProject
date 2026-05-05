@@ -20,7 +20,7 @@ import pytest
 
 def _import_f():
     """Import _f from fill_rate router without triggering FastAPI startup."""
-    from api.routers.fill_rate import _f
+    from api.routers.operations.fill_rate import _f
     return _f
 
 

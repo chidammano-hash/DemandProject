@@ -16,7 +16,7 @@ import pgeocode
 import psycopg
 
 from api.core import get_conn, set_cache
-from common.planning_date import get_planning_date
+from common.core.planning_date import get_planning_date
 
 # Lazy-initialized US zip code geocoder (pgeocode downloads ~2MB file on first use)
 _nomi: pgeocode.Nominatim | None = None

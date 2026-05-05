@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/compute_eoq.py`, `scripts/assign_replenishment_policy.py`, `config/eoq_config.yaml`, `sql/026_create_inventory_health_score.sql` |
+| **Key Files** | `scripts/compute_eoq.py`, `scripts/assign_replenishment_policy.py`, `config/inventory/eoq_config.yaml`, `sql/026_create_inventory_health_score.sql` |
 
 ---
 
@@ -119,7 +119,7 @@ make health-all    # health-schema + health-refresh
 
 ## Configuration
 
-File: `config/eoq_config.yaml`
+File: `config/inventory/eoq_config.yaml`
 
 ```yaml
 ordering_cost: 50.0
@@ -128,7 +128,7 @@ moq: 1
 max_eoq_months_supply: 6
 ```
 
-File: `config/replenishment_policy_config.yaml`
+File: `config/inventory/replenishment_policy_config.yaml`
 
 ```yaml
 policies:

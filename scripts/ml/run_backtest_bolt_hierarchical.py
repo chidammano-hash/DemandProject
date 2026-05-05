@@ -521,7 +521,7 @@ def main() -> None:
             with open(config_path) as f:
                 cfg = yaml.safe_load(f)
         else:
-            from common.utils import load_forecast_pipeline_config
+            from common.core.utils import load_forecast_pipeline_config
             cfg = load_forecast_pipeline_config()
 
         algo_entry = cfg.get("algorithms", {}).get("bolt_hierarchical", {})

@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/compute_replenishment_plan.py`, `api/routers/inventory/inv_planning_replenishment.py`, `config/inventory_planning_config.yaml` (projection section) |
+| **Key Files** | `scripts/compute_replenishment_plan.py`, `api/routers/inventory/inv_planning_replenishment.py`, `config/inventory/inventory_planning_config.yaml` (projection section) |
 
 ---
 
@@ -90,7 +90,7 @@ Router: `inv_planning_replenishment.py`
 
 ## Configuration
 
-The replenishment plan reads policy parameters from `config/replenishment_policy_config.yaml` and projection settings from `config/inventory_planning_config.yaml` (projection section). Planning horizon length and CI band usage rules are configurable.
+The replenishment plan reads policy parameters from `config/inventory/replenishment_policy_config.yaml` and projection settings from `config/inventory/inventory_planning_config.yaml` (projection section). Planning horizon length and CI band usage rules are configurable.
 
 ```yaml
 # In inventory_planning_config.yaml, projection section

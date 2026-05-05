@@ -13,7 +13,7 @@ import pandas as pd
 import psycopg
 
 from common.ml.clustering.features import _compute_features_for_group
-from common.planning_date import get_planning_date
+from common.core.planning_date import get_planning_date
 
 logger = logging.getLogger(__name__)
 

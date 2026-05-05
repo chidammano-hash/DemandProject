@@ -20,7 +20,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from api.core import get_conn
-from common.planning_date import get_planning_date
+from common.core.planning_date import get_planning_date
 
 router = APIRouter(tags=["production-forecast"])
 

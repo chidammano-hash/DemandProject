@@ -45,7 +45,7 @@ _SIMULATION_HORIZON_DAYS: int = 30
 _SIMULATION_N_ITER: int = 2_000
 
 # Default candidate action types the orchestrator builds per exception.
-# Each one maps to a policy_id in config/agent_autonomy.yaml.
+# Each one maps to a policy_id in config/ai/agent_autonomy.yaml.
 _CANDIDATE_ACTIONS: tuple[tuple[str, str], ...] = (
     ("expedite_transfer", "supply.auto_transfer"),
     ("emergency_po", "supply.auto_transfer"),       # TODO: dedicated policy when minted

@@ -330,7 +330,7 @@ def confirm_run(session_id: str, body: ConfirmRunBody) -> dict:
         conn.commit()
 
     # Submit via JobManager — gets PID tracking, cancel, log streaming, restart recovery
-    from common.job_registry import JobManager
+    from common.services.job_registry import JobManager
     mgr = JobManager()
     mgr.submit_job(
         job_type="tuning_backtest",

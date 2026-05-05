@@ -17,7 +17,7 @@ Usage:
     uv run python scripts/compute_replenishment_plan.py --plan-version 2026-02
     uv run python scripts/compute_replenishment_plan.py --dry-run
     uv run python scripts/compute_replenishment_plan.py --item 100320 --loc 1401-BULK
-    uv run python scripts/compute_replenishment_plan.py --config config/replenishment_plan_config.yaml
+    uv run python scripts/compute_replenishment_plan.py --config config/inventory/replenishment_plan_config.yaml
 """
 from __future__ import annotations
 
@@ -38,9 +38,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from common.db import get_db_params
+from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config
+from common.core.utils import load_config as _load_config
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -55,7 +55,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-CONFIG_PATH = "config/replenishment_plan_config.yaml"
+CONFIG_PATH = "config/inventory/replenishment_plan_config.yaml"
 DAYS_PER_MONTH: float = 30.44
 
 

@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Data Quality |
-| **Key Files** | `common/dq_engine.py`, `config/data_quality_config.yaml`, `scripts/fix_dq_issues.py`, `api/routers/data_quality.py`, `frontend/src/tabs/DataQualityTab.tsx` |
+| **Key Files** | `common/dq_engine.py`, `config/platform/data_quality_config.yaml`, `scripts/fix_dq_issues.py`, `api/routers/data_quality.py`, `frontend/src/tabs/DataQualityTab.tsx` |
 
 ---
 
@@ -20,7 +20,7 @@ A config-driven Data Quality Engine runs 12 check types against any table or col
 
 ## How It Works
 
-1. Check definitions are declared in `config/data_quality_config.yaml` — 73 individual checks across 8 domains.
+1. Check definitions are declared in `config/platform/data_quality_config.yaml` — 73 individual checks across 8 domains.
 2. The `DQEngine` loads the config, flattens it into a list of checks, and runs each one against PostgreSQL.
 3. Each check returns a status (pass/fail/warn/error/skip) with a metric value and details.
 4. Results are written to `fact_dq_check_results` for historical tracking.
@@ -103,7 +103,7 @@ uv run python scripts/fix_dq_issues.py --fix range   # Fix only range issues
 
 ## Configuration
 
-`config/data_quality_config.yaml` — nested structure: `checks.<check_type>.<domain_key>`.
+`config/platform/data_quality_config.yaml` — nested structure: `checks.<check_type>.<domain_key>`.
 
 Key parameters:
 

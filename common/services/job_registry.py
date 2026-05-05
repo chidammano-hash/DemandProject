@@ -14,7 +14,7 @@ This module provides the groundwork for agentic AI automation:
 any AI agent can submit, schedule, and monitor jobs via the REST API.
 
 Public API (unchanged — all external imports still work):
-    from common.job_registry import JobManager, JOB_TYPE_REGISTRY
+    from common.services.job_registry import JobManager, JOB_TYPE_REGISTRY
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 # Sub-module imports
 # ---------------------------------------------------------------------------
-from common.job_state import (
+from common.services.job_state import (
     MODEL_OUTPUT_DIRS,
     JobTypeDef,
     _get_conn,
@@ -83,7 +83,7 @@ from common.job_state import (
     _run_ss_simulation,
     _run_tuning_backtest,
 )
-from common.job_scheduler import make_scheduler, make_trigger
+from common.services.job_scheduler import make_scheduler, make_trigger
 
 try:
     from apscheduler.jobstores.base import JobLookupError

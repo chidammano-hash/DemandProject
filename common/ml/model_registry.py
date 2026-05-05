@@ -265,7 +265,7 @@ def build_model(algorithm_id: str, params: dict | None = None) -> Any:
     """
     # Import inside the function to avoid a hard dependency at import time
     # (model_registry is imported from scripts that don't all load the YAML).
-    from common.utils import get_algorithm_params, load_forecast_pipeline_config
+    from common.core.utils import get_algorithm_params, load_forecast_pipeline_config
 
     cfg = load_forecast_pipeline_config()
     algorithms = cfg.get("algorithms", {}) or {}

@@ -68,7 +68,7 @@ error list, so a single pass surfaces every break.
 
 ## Policy Engine
 
-- Policies: [config/agent_autonomy.yaml](../../config/agent_autonomy.yaml)
+- Policies: [config/ai/agent_autonomy.yaml](../../config/ai/agent_autonomy.yaml)
 - Engine: [common/ai/policy_engine.py](../../common/ai/policy_engine.py)
 - Tests: [tests/unit/test_policy_engine.py](../../tests/unit/test_policy_engine.py)
 

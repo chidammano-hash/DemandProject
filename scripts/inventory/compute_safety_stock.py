@@ -28,7 +28,7 @@ Usage:
     uv run python scripts/compute_safety_stock.py
     uv run python scripts/compute_safety_stock.py --dry-run
     uv run python scripts/compute_safety_stock.py --policy-version v2
-    uv run python scripts/compute_safety_stock.py --config config/safety_stock_config.yaml
+    uv run python scripts/compute_safety_stock.py --config config/inventory/safety_stock_config.yaml
     uv run python scripts/compute_safety_stock.py --forecast-source production
     uv run python scripts/compute_safety_stock.py --forecast-source staging --model-id lgbm_cluster
 """
@@ -51,11 +51,11 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from common.db import get_db_params
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.scripts_base import setup_logging
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config
+from common.core.utils import load_config as _load_config
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -963,7 +963,7 @@ def _batch_upsert(cur, rows: list[tuple], batch_size: int) -> int:
 # ---------------------------------------------------------------------------
 
 def run(
-    config_path: str = "config/safety_stock_config.yaml",
+    config_path: str = "config/inventory/safety_stock_config.yaml",
     policy_version: str | None = None,
     dry_run: bool = False,
     forecast_source: str = "historical",
@@ -1369,8 +1369,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--config",
-        default="config/safety_stock_config.yaml",
-        help="Path to safety_stock_config.yaml (default: config/safety_stock_config.yaml)",
+        default="config/inventory/safety_stock_config.yaml",
+        help="Path to safety_stock_config.yaml (default: config/inventory/safety_stock_config.yaml)",
     )
     parser.add_argument(
         "--policy-version",

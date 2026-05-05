@@ -27,7 +27,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from common.constants import DUPLICATE_FEATURE_ALIASES, PROTECTED_FEATURES
+from common.core.constants import DUPLICATE_FEATURE_ALIASES, PROTECTED_FEATURES
 
 logger = logging.getLogger(__name__)
 

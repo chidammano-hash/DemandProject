@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Query
 
 from api.core import add_cross_dim_filters, get_conn
-from common.utils import load_config
+from common.core.utils import load_config
 
 router = APIRouter(tags=["inv-planning"])
 

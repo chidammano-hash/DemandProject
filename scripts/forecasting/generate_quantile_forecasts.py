@@ -15,7 +15,7 @@ Usage:
         --horizon 6 \\
         --plan-version 2026-04-01_test
 
-Config: config/forecast_domain_config.yaml (quantile_forecast section)
+Config: config/forecasting/forecast_domain_config.yaml (quantile_forecast section)
 """
 
 import argparse
@@ -29,8 +29,8 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from common.db import get_db_params
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
 
 QUANTILES = [0.10, 0.50, 0.90]
@@ -405,7 +405,7 @@ def run(
     import pandas as pd
     import numpy as np
 
-    cfg = yaml.safe_load(open("config/forecast_domain_config.yaml"))
+    cfg = yaml.safe_load(open("config/forecasting/forecast_domain_config.yaml"))
     model_cfg = cfg["quantile_forecast"]["model"]
     model_id = "lgbm_quantile_cluster"
 

@@ -152,8 +152,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = _parse_args(argv)
 
-    from common.utils import load_config
-    from common.db import get_db_params
+    from common.core.utils import load_config
+    from common.core.db import get_db_params
     import psycopg
 
     cfg = load_config("elasticity_config")

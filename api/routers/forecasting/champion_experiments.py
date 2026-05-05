@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from api.auth import require_api_key
 from api.core import get_conn, set_cache
 from common.ml.champion_strategies import STRATEGY_REGISTRY as _STRAT_REG
-from common.utils import reset_config
+from common.core.utils import reset_config
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +33,8 @@ router = APIRouter(prefix="/champion-experiments", tags=["champion-experiments"]
 # ---------------------------------------------------------------------------
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_TEMPLATES_PATH = _PROJECT_ROOT / "config" / "champion_experiment_templates.yaml"
-_PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecast_pipeline_config.yaml"
+_TEMPLATES_PATH = _PROJECT_ROOT / "config" / "forecasting" / "champion_experiment_templates.yaml"
+_PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 
 _VALID_STRATEGIES = set(_STRAT_REG.keys())
 _VALID_METRICS = {"accuracy_pct", "wape"}
@@ -263,7 +263,7 @@ def get_templates(response: FastAPIResponse):
     for tmpl in templates:
         if tmpl.get("source") in ("model_competition_config", "pipeline_config"):
             try:
-                from common.utils import get_competing_model_ids, load_forecast_pipeline_config
+                from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config
 
                 pipeline_cfg = load_forecast_pipeline_config()
                 champ = pipeline_cfg.get("champion", {})

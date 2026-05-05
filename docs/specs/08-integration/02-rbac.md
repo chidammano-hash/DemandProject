@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (infrastructure layer) |
-| **Key Files** | `api/routers/auth_router.py`, `api/routers/users.py`, `api/auth.py`, `config/auth_config.yaml` |
+| **Key Files** | `api/routers/auth_router.py`, `api/routers/users.py`, `api/auth.py`, `config/platform/auth_config.yaml` |
 
 ---
 
@@ -89,7 +89,7 @@ A JWT-based authentication layer with four predefined roles (admin, planner, ana
 
 ## Configuration
 
-`config/auth_config.yaml`:
+`config/platform/auth_config.yaml`:
 
 ```yaml
 jwt:

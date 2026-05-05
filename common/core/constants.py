@@ -2,7 +2,7 @@
 
 import logging
 
-from common.utils import load_config
+from common.core.utils import load_config
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ def compute_min_cluster_rows(
     """Minimum training rows for a cluster, scaled by feature count.
 
     Uses a ratio of ``samples_per_feature`` per feature (default from
-    ``config/forecast_pipeline_config.yaml``
+    ``config/forecasting/forecast_pipeline_config.yaml``
     ``clustering.samples_per_feature``, falling back to 3), with a *floor*
     of 50 rows regardless.  Accounts for the 80/20 train/val split by
     inflating by 1.25x so that the *training* partition alone has enough
@@ -169,7 +169,7 @@ def compute_min_cluster_rows(
         Absolute minimum regardless of feature count.
     """
     if samples_per_feature is None:
-        from common.utils import load_forecast_pipeline_config
+        from common.core.utils import load_forecast_pipeline_config
         pcfg = load_forecast_pipeline_config()
         samples_per_feature = (
             pcfg.get("clustering", {}).get("samples_per_feature", 3)

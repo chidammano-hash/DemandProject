@@ -138,7 +138,7 @@ make report-schema             # dim_report_template + fact_report_schedule + fa
 Run after schema setup. Seeds default admin user and configures JWT-based authentication.
 
 ```bash
-# Auth config lives in config/auth_config.yaml (JWT secret, token TTL, role hierarchy)
+# Auth config lives in config/platform/auth_config.yaml (JWT secret, token TTL, role hierarchy)
 # common/auth.py provides: CurrentUser, get_current_user, require_role dependencies
 # api/routers/auth_router.py provides: POST /auth/login, POST /auth/refresh
 # api/routers/users.py provides: CRUD for dim_user (admin-only)
@@ -194,7 +194,7 @@ make inventory-pipeline     # normalize + load + refresh (all-in-one)
 Run after Phase 2 ingestion to validate loaded data. Can also be scheduled as a recurring pipeline step.
 
 ```bash
-# Data quality checks are config-driven (config/data_quality_config.yaml)
+# Data quality checks are config-driven (config/platform/data_quality_config.yaml)
 # common/dq_engine.py runs SQL-based checks: freshness, completeness, uniqueness,
 #   range validation, volume delta, referential integrity
 # Results written to fact_dq_check_results; domain health scores in mv_dq_dashboard
@@ -319,7 +319,7 @@ make demand-signals-compute  # Compute demand signals → fact_demand_signals
 **Safety Stock Simulation** (IPfeature10 — requires inventory loaded):
 ```bash
 make sim-schema  # Apply DDL for fact_ss_simulation_results (one-time)
-make sim-run     # Run Monte Carlo safety stock simulation (reads config/inventory_planning_config.yaml simulation section)
+make sim-run     # Run Monte Carlo safety stock simulation (reads config/inventory/inventory_planning_config.yaml simulation section)
 ```
 
 **ABC-XYZ Classification** (IPfeature11 — requires sales + inventory loaded):
@@ -374,7 +374,7 @@ make rebalancing-refresh       # REFRESH MATERIALIZED VIEW CONCURRENTLY mv_netwo
 
 **SQL files:** `sql/071_create_transfer_network.sql` (dim_transfer_lane), `sql/072_create_rebalancing_plan.sql` (fact_rebalancing_plan + fact_rebalancing_transfer), `sql/073_create_rebalancing_views.sql` (mv_network_balance)
 
-**Config:** `config/rebalancing_config.yaml` — transfer cost thresholds, minimum transfer qty, priority scoring weights, network constraints.
+**Config:** `config/inventory/rebalancing_config.yaml` — transfer cost thresholds, minimum transfer qty, priority scoring weights, network constraints.
 
 ---
 
@@ -407,7 +407,7 @@ Each backtest trains models AND persists `.pkl` artifacts to `data/models/<model
 
 ### Configuration (Feature 44)
 
-Before running any backtest, edit the algorithm entry in `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>`:
+Before running any backtest, edit the algorithm entry in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>`:
 
 ```yaml
 algorithms:
@@ -429,7 +429,7 @@ algorithms:
 
 Same structure for `catboost_cluster:` and `xgboost_cluster:` entries.
 
-**Architecture (Feature 44):** Tree-based models (LGBM, CatBoost, XGBoost) share `common/backtest_framework.py` via `run_tree_backtest()`. Each script provides both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting based on the `cluster_strategy` config key (`per_cluster` or `global`). **`ml_cluster` is excluded from model features** (listed in `METADATA_COLS`) — it is merged into the grid as a metadata column for per-cluster partitioning only, never passed to models as an input feature. Algorithm options (cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparameters) are read from `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>`. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve hyperparameters. Shared modules: `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py`, `shap_selector.py`.
+**Architecture (Feature 44):** Tree-based models (LGBM, CatBoost, XGBoost) share `common/backtest_framework.py` via `run_tree_backtest()`. Each script provides both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting based on the `cluster_strategy` config key (`per_cluster` or `global`). **`ml_cluster` is excluded from model features** (listed in `METADATA_COLS`) — it is merged into the grid as a metadata column for per-cluster partitioning only, never passed to models as an input feature. Algorithm options (cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparameters) are read from `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>`. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve hyperparameters. Shared modules: `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py`, `shap_selector.py`.
 
 ### GPU Acceleration
 
@@ -465,7 +465,7 @@ Three modes — choose based on your goal:
 | Mode | When to use | How to activate | Output |
 |---|---|---|---|
 | **Global** — tune once on all data, one param set | Quick baseline tuning | `make tune-lgbm` | `data/tuning/best_params_lgbm.json` |
-| **Per-cluster** — tune independently per `ml_cluster` | Best accuracy (recommended) | `make tune-lgbm-clusters` | `config/cluster_tuning_profiles.yaml` |
+| **Per-cluster** — tune independently per `ml_cluster` | Best accuracy (recommended) | `make tune-lgbm-clusters` | `config/forecasting/cluster_tuning_profiles.yaml` |
 | **Inline** — per-timeframe tuning inside each backtest fold | Unbiased backtest evaluation | Set `tune_inline: true` in config, then `make backtest-lgbm` | Params applied per timeframe |
 
 **Recommended workflow:**
@@ -483,23 +483,23 @@ make tune-xgboost   # ~25–50 min  → data/tuning/best_params_xgboost.json
 make tune-all       # All three sequentially
 ```
 
-Each JSON file contains `best_params`, `best_n_estimators`, per-cluster WAPEs, and CV fold metrics. Apply in backtest by setting `params_file: data/tuning/best_params_<model>.json` in `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>` (Feature 44).
+Each JSON file contains `best_params`, `best_n_estimators`, per-cluster WAPEs, and CV fold metrics. Apply in backtest by setting `params_file: data/tuning/best_params_<model>.json` in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>` (Feature 44).
 
 **Per-cluster tuning (Mode B — recommended):**
 ```bash
-make tune-lgbm-clusters      # ~45–60 min  → config/cluster_tuning_profiles.yaml
+make tune-lgbm-clusters      # ~45–60 min  → config/forecasting/cluster_tuning_profiles.yaml
 make tune-catboost-clusters   # ~60–90 min
 make tune-xgboost-clusters    # ~45–60 min
 make tune-clusters            # All three sequentially
 ```
 
-Tunes Optuna Bayesian optimization (30 trials) independently for each `ml_cluster` from `dim_sku`. Writes per-cluster params to `config/cluster_tuning_profiles.yaml` with `cluster_name`-based matching. During backtest, each cluster first checks for an exact name match in profiles; if found, those tuned overrides are applied on top of base params. If not found, base params are used and the log shows "using global params (no profile match)".
+Tunes Optuna Bayesian optimization (30 trials) independently for each `ml_cluster` from `dim_sku`. Writes per-cluster params to `config/forecasting/cluster_tuning_profiles.yaml` with `cluster_name`-based matching. During backtest, each cluster first checks for an exact name match in profiles; if found, those tuned overrides are applied on top of base params. If not found, base params are used and the log shows "using global params (no profile match)".
 
 Options: `--trials 30` (default), `--clusters L2_1 L2_3` (tune specific clusters), `--min-rows 500` (skip clusters with fewer rows).
 
 **Disabling per-cluster profiles (use global params only):**
 
-Set `enabled: false` in `config/cluster_tuning_profiles.yaml`. All clusters will use the base params from `forecast_pipeline_config.yaml`. The profiles are ignored but preserved — set back to `true` to re-enable.
+Set `enabled: false` in `config/forecasting/cluster_tuning_profiles.yaml`. All clusters will use the base params from `forecast_pipeline_config.yaml`. The profiles are ignored but preserved — set back to `true` to re-enable.
 
 **End-to-end LGBM workflow after new clustering:**
 ```bash
@@ -526,7 +526,7 @@ Skip step 3 to use only global params. Skip steps 2-3 to use the existing params
 
 **Inline per-timeframe tuning (Mode C, PL-002 fix):**
 
-Set `tune_inline: true` in `config/forecast_pipeline_config.yaml` for the relevant algorithm entry, then run `make backtest-lgbm` (or catboost/xgboost). Each of the 10 timeframes (~20 trials x 3 folds, ~2-3x slower) tunes on only data available up to its training cutoff — no future leakage into backtest accuracy metrics.
+Set `tune_inline: true` in `config/forecasting/forecast_pipeline_config.yaml` for the relevant algorithm entry, then run `make backtest-lgbm` (or catboost/xgboost). Each of the 10 timeframes (~20 trials x 3 folds, ~2-3x slower) tunes on only data available up to its training cutoff — no future leakage into backtest accuracy metrics.
 
 ### Run Backtests
 
@@ -760,7 +760,7 @@ make db-apply-sql    # Includes sql/098_add_promoted_to_tuning.sql
 
 ### Configuration
 
-Experiment templates are loaded from `config/forecast_pipeline_config.yaml` (each algorithm's `params` section) plus the unified strategy file `config/tune_strategies.yaml` (model-keyed sections: `lgbm`, `catboost`, `xgboost`).
+Experiment templates are loaded from `config/forecasting/forecast_pipeline_config.yaml` (each algorithm's `params` section) plus the unified strategy file `config/forecasting/tune_strategies.yaml` (model-keyed sections: `lgbm`, `catboost`, `xgboost`).
 
 ### Key Files
 
@@ -792,7 +792,7 @@ Identifies the best model per DFU per month. All strategies enforce **strict exe
 ### Commands
 
 ```bash
-make champion-select          # Run with strategy from config/forecast_pipeline_config.yaml champion section
+make champion-select          # Run with strategy from config/forecasting/forecast_pipeline_config.yaml champion section
 make champion-train-meta      # Train meta-learner (required before using meta_learner strategy)
 make champion-simulate        # Simulate all strategies, compare accuracy vs ceiling
 make champion-all             # train-meta + simulate + select (full pipeline)
@@ -801,9 +801,9 @@ make champion-all             # train-meta + simulate + select (full pipeline)
 .venv/bin/python -m scripts.run_champion_selection --strategy rolling
 ```
 
-### Config (`config/forecast_pipeline_config.yaml`, `champion` section)
+### Config (`config/forecasting/forecast_pipeline_config.yaml`, `champion` section)
 
-> **Note:** All champion selection settings live in `config/forecast_pipeline_config.yaml` under the `champion` section. The legacy `config/model_competition.yaml` has been deleted.
+> **Note:** All champion selection settings live in `config/forecasting/forecast_pipeline_config.yaml` under the `champion` section. The legacy `config/model_competition.yaml` has been deleted.
 >
 > The competing models list is derived from `algorithms[*].compete == true` in the master config rather than an explicit list.
 
@@ -975,7 +975,7 @@ Run after Phase 6. Generates future-period (T+1 to T+24) demand forecasts using 
 Train → Generate → Load (→ fact_candidate_forecast) → Promote (→ fact_production_forecast)
 ```
 
-Config: `config/forecast_pipeline_config.yaml` (production_forecast section).
+Config: `config/forecasting/forecast_pipeline_config.yaml` (production_forecast section).
 
 ```bash
 make forecast-generate       # Generate 24-month forward forecasts → fact_candidate_forecast
@@ -1044,7 +1044,7 @@ Beyond the one-off Phase 2b checks, Data Quality runs as a recurring automated p
 
 ```bash
 make dq-schema               # dim_dq_check_catalog + fact_dq_check_results + mv_dq_dashboard
-make dq-populate             # Populate check catalog from config/data_quality_config.yaml
+make dq-populate             # Populate check catalog from config/platform/data_quality_config.yaml
 make dq-run                  # Run all enabled DQ checks → fact_dq_check_results
 make dq-all                  # Full pipeline: schema + populate + run
 ```
@@ -1106,7 +1106,7 @@ API endpoints (`/sop/*`):
 - `GET /sop/cycles/{id}/plan` — approved plan detail
 
 Dashboard: S&OP tab (sidebar "S&OP") shows stage machine, gap cards, advance/approve buttons.
-Config in `config/sop_config.yaml`.
+Config in `config/operations/sop_config.yaml`.
 
 ### Notification & Webhook Configuration (08-04, 08-10)
 
@@ -1114,7 +1114,7 @@ Configure notification channels and webhook subscriptions. These fire automatica
 when pipeline events occur (DQ failures, AI insights, exception alerts, report delivery).
 
 ```bash
-# Notification channels configured via config/notification_config.yaml
+# Notification channels configured via config/platform/notification_config.yaml
 # common/notification_engine.py dispatches to Slack, Teams, Email, PagerDuty
 # Delivery history stored in fact_notification_log (sql/065)
 ```
@@ -1206,7 +1206,7 @@ make pipeline-inventory-refresh      # Incremental
 | `--dry-run` | Preview what would be done without making changes |
 | `--data-dir /path` | Override source directory (default: `data/input`) |
 
-**Config:** `config/etl_config.yaml` — domain load order, parallel workers, MV refresh mapping per domain, always-refresh list.
+**Config:** `config/etl/etl_config.yaml` — domain load order, parallel workers, MV refresh mapping per domain, always-refresh list.
 
 **Error handling:** If normalization fails for a domain, that domain is skipped during loading (logged as `(skipped)` in the summary table). Other domains continue normally.
 
@@ -1235,7 +1235,7 @@ The FastAPI backend includes platform middleware applied in `api/main.py`:
 - **CORS** — allows `localhost:5173` (dev) origins
 - **Cache layer** — `common/cache.py` provides `@cached` decorator with TTL-based caching.
   Two backends: Redis (when `REDIS_URL` env var set) or in-memory fallback.
-  Config in `config/cache_config.yaml`. Cache invalidation on write endpoints.
+  Config in `config/platform/cache_config.yaml`. Cache invalidation on write endpoints.
 - **Query performance tracking** — endpoint latency + DB query counts logged to
   `fact_query_performance` for API governance and observability.
 
@@ -1431,7 +1431,7 @@ InMemory cache is cleared on process restart. Redis cache persists across restar
 
 ### Notifications (Spec 08-04)
 
-Configure notification channels in `config/notification_config.yaml`:
+Configure notification channels in `config/platform/notification_config.yaml`:
 
 ```yaml
 channels:
@@ -1660,7 +1660,7 @@ All MV refreshes now use `CONCURRENTLY` (via unique indexes from migration 119),
 
 ### Data Retention Policies
 
-Configured in `config/db_maintenance_config.yaml`:
+Configured in `config/platform/db_maintenance_config.yaml`:
 
 | Table | Retention | Method |
 |---|---|---|
@@ -2153,9 +2153,9 @@ docker compose exec -T postgres psql -U demand -d demand_mvp -c "
 ### Step 12: Champion Model Selection
 
 ```bash
-~/.local/bin/uv run python scripts/train_meta_learner.py --config config/forecast_pipeline_config.yaml
-~/.local/bin/uv run python scripts/simulate_champion_strategies.py --config config/forecast_pipeline_config.yaml
-~/.local/bin/uv run python scripts/run_champion_selection.py --config config/forecast_pipeline_config.yaml
+~/.local/bin/uv run python scripts/train_meta_learner.py --config config/forecasting/forecast_pipeline_config.yaml
+~/.local/bin/uv run python scripts/simulate_champion_strategies.py --config config/forecasting/forecast_pipeline_config.yaml
+~/.local/bin/uv run python scripts/run_champion_selection.py --config config/forecasting/forecast_pipeline_config.yaml
 ```
 
 ### Step 13: Baseline Planning Refresh
@@ -2262,7 +2262,7 @@ After any cleanup that affects champion/ceiling rows, re-run `make champion-sele
 | Clustering fails | Load sales first: `make load-sales`; verify MLflow: `docker ps \| grep mlflow`; check: `ls -lh data/clustering_features.csv` |
 | Cluster assignments not updating | Preview with `--dry-run`; verify DFU key format matches database; check Postgres connection |
 | Backtest fails | Run clustering first: `make cluster-all`; load sales: `make load-sales`; install deps: `uv sync` |
-| Champion selection finds no DFUs | Load backtest predictions: `make backtest-load`; lower `min_dfu_rows` in `config/forecast_pipeline_config.yaml` champion section; verify models exist: `SELECT DISTINCT model_id FROM fact_external_forecast_monthly` |
+| Champion selection finds no DFUs | Load backtest predictions: `make backtest-load`; lower `min_dfu_rows` in `config/forecasting/forecast_pipeline_config.yaml` champion section; verify models exist: `SELECT DISTINCT model_id FROM fact_external_forecast_monthly` |
 | Chat endpoint errors | Set `OPENAI_API_KEY` in `.env`; run `make generate-embeddings`; check API logs for rate limit errors |
 | AI Planner errors | Set `ANTHROPIC_API_KEY` in `.env`; verify insight schema exists: `make ai-insights-schema`; check API logs for rate limit or tool dispatch errors |
 
@@ -2271,14 +2271,14 @@ After any cleanup that affects champion/ceiling rows, re-run `make champion-sele
 | Problem | Fix |
 |---|---|
 | Exception queue is empty | Safety stock targets must exist first. Run `make ss-all` to compute safety stock targets, then `make exceptions-generate` to detect exceptions. Dependency chain: safety stock targets -> exception generation |
-| `make exceptions-generate` finds no exceptions | Verify `fact_safety_stock_targets` has rows: `SELECT COUNT(*) FROM fact_safety_stock_targets`; check thresholds in `config/exception_config.yaml` |
+| `make exceptions-generate` finds no exceptions | Verify `fact_safety_stock_targets` has rows: `SELECT COUNT(*) FROM fact_safety_stock_targets`; check thresholds in `config/operations/exception_config.yaml` |
 
 ### Inventory Rebalancing
 
 | Problem | Fix |
 |---|---|
 | `mv_network_balance` refresh fails | Ensure dependent tables are populated first: `fact_rebalancing_plan`, `dim_transfer_lane`; run `make rebalancing-refresh` after data is loaded |
-| Rebalancing compute finds no candidates | Verify safety stock targets exist (`SELECT COUNT(*) FROM fact_safety_stock_targets`); verify inventory snapshots are loaded; check `config/rebalancing_config.yaml` thresholds are not too restrictive |
+| Rebalancing compute finds no candidates | Verify safety stock targets exist (`SELECT COUNT(*) FROM fact_safety_stock_targets`); verify inventory snapshots are loaded; check `config/inventory/rebalancing_config.yaml` thresholds are not too restrictive |
 | Dry-run shows transfers but compute writes nothing | Confirm you are running `make rebalancing-compute` (not `make rebalancing-compute-dry`); check DB connectivity and table permissions |
 
 ### Platform Services (Specs 08-01 through 08-10)
@@ -2289,7 +2289,7 @@ After any cleanup that affects champion/ceiling rows, re-run `make champion-sele
 | `bcrypt` or `PyJWT` import error | Run `make init` or `uv sync` to install new dependencies |
 | Data quality checks return empty results | Run `make db-apply-sql` to ensure DDL 062-070 are applied; verify check catalog has entries via `GET /data-quality/catalog` |
 | Cache not working (stale data) | Check `CACHE_BACKEND` env var; for Redis, verify connectivity: `redis-cli ping`; InMemory cache clears on restart |
-| Notifications not sending | Verify channel is `enabled: true` in `config/notification_config.yaml`; check SMTP credentials / Slack webhook URL |
+| Notifications not sending | Verify channel is `enabled: true` in `config/platform/notification_config.yaml`; check SMTP credentials / Slack webhook URL |
 | Webhook deliveries failing | Check delivery history via `GET /webhooks/deliveries`; verify target URL is reachable; check HMAC signature validation on receiver |
 | Rate limiting too aggressive | Adjust limits in `config/api_governance_config.yaml`; increase `default_limit` or add per-endpoint overrides |
 | Anonymous admin mode in production | Set `JWT_SECRET` in `.env` — without it, all requests bypass auth |

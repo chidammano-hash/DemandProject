@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (backend only) |
-| **Key Files** | `common/services/perf_profiler.py`, `scripts/ops/run_perf_analysis.py`, `config/perf_config.yaml` |
+| **Key Files** | `common/services/perf_profiler.py`, `scripts/ops/run_perf_analysis.py`, `config/platform/perf_config.yaml` |
 
 ---
 
@@ -93,7 +93,7 @@ The `SuggestionEngine` applies 8 detection rules against the collected profile d
 | 7 | Large Memory Delta | Section allocates > 200MB net | Check for DataFrame copies, unnecessary `.values` calls |
 | 8 | Query Dominance | DB time > 70% of total wall time | Optimize queries first; code changes will have minimal impact |
 
-Thresholds are configurable via `config/perf_config.yaml`.
+Thresholds are configurable via `config/platform/perf_config.yaml`.
 
 ---
 
@@ -102,7 +102,7 @@ Thresholds are configurable via `config/perf_config.yaml`.
 ```
 common/services/perf_profiler.py    Core module: ProfileCollector, decorators, suggestion engine
 scripts/ops/run_perf_analysis.py    CLI entry point: 4 modes (script, api, pipeline, report)
-config/perf_config.yaml             Threshold configuration
+config/platform/perf_config.yaml             Threshold configuration
 data/perf_reports/                  Output directory (gitignored)
 ```
 
@@ -263,7 +263,7 @@ python scripts/ops/run_perf_analysis.py --mode report --input data/perf_reports/
 
 ## Configuration
 
-File: `config/perf_config.yaml`
+File: `config/platform/perf_config.yaml`
 
 ```yaml
 # Profiling behavior
@@ -311,7 +311,7 @@ The profiler does not create database tables. All output is written to local fil
 
 - **Upstream:** Any script, API endpoint, or pipeline to be profiled
 - **Libraries:** `tracemalloc` (stdlib), `time` (stdlib), `psycopg` (for connection wrapping)
-- **Configuration:** `config/perf_config.yaml`
+- **Configuration:** `config/platform/perf_config.yaml`
 - **Output:** `data/perf_reports/` (gitignored)
 
 ---

@@ -219,7 +219,7 @@ Run from `frontend/`:
 
 ## 7. Performance Profiling
 
-Performance work is centralised in `common/services/perf_profiler.py` and `scripts/ops/run_perf_analysis.py`, with thresholds in `config/perf_config.yaml`.
+Performance work is centralised in `common/services/perf_profiler.py` and `scripts/ops/run_perf_analysis.py`, with thresholds in `config/platform/perf_config.yaml`.
 
 ### 7.1 Make targets
 
@@ -234,7 +234,7 @@ Performance work is centralised in `common/services/perf_profiler.py` and `scrip
 
 ### 7.2 Available script presets
 
-`config/perf_config.yaml` declares which scripts can be profiled and what args to pass. Examples currently registered:
+`config/platform/perf_config.yaml` declares which scripts can be profiled and what args to pass. Examples currently registered:
 
 ```
 compute_safety_stock        compute_eoq               compute_replenishment_plan
@@ -251,9 +251,9 @@ run_ss_simulation           run_sop_cycle             populate_dq_checks
 fix_dq_issues
 ```
 
-To add a new preset, append it under `script_presets:` in `config/perf_config.yaml` with optional `args:` / `callable:` / `callable_kwargs:` keys.
+To add a new preset, append it under `script_presets:` in `config/platform/perf_config.yaml` with optional `args:` / `callable:` / `callable_kwargs:` keys.
 
-### 7.3 Suggestion thresholds (`config/perf_config.yaml`)
+### 7.3 Suggestion thresholds (`config/platform/perf_config.yaml`)
 
 | Threshold | Default | Triggers a suggestion when… |
 |---|---|---|
@@ -385,7 +385,7 @@ Stage 1 installs deps with `npm ci`, runs `tsc -b && vite build`, and produces `
 
 ### 10.4 After adding a new pipeline script
 
-1. `make perf-script SCRIPT=<your_script>` (after registering it in `config/perf_config.yaml` `script_presets:`).
+1. `make perf-script SCRIPT=<your_script>` (after registering it in `config/platform/perf_config.yaml` `script_presets:`).
 2. Review suggestions for N+1 queries, unbatched inserts, memory spikes.
 3. Wrap stages in `profiled_section()` if you have not already.
 

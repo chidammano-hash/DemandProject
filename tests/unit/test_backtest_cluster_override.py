@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.constants import MIN_CLUSTER_ROWS
+from common.core.constants import MIN_CLUSTER_ROWS
 
 logger = logging.getLogger(__name__)
 

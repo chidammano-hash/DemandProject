@@ -29,7 +29,7 @@ from typing import Any
 
 import numpy as np
 
-from common.utils import load_forecast_pipeline_config
+from common.core.utils import load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 

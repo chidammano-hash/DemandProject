@@ -40,7 +40,7 @@ def _get_config() -> dict:
     global _AI_CONFIG
     if _AI_CONFIG is None:
         try:
-            with open("config/ai_planner_config.yaml") as f:
+            with open("config/ai/ai_planner_config.yaml") as f:
                 _AI_CONFIG = yaml.safe_load(f)
         except FileNotFoundError:
             _AI_CONFIG = {
@@ -84,7 +84,7 @@ class AutoAcceptRequest(BaseModel):
 async def analyze_dfu(body: AnalyzeRequest, request: Request):
     """Run AI analysis for a single DFU (synchronous, ~5-15s)."""
     require_api_key(request)
-    from common.ai_planner import AIPlannerAgent
+    from common.ai.ai_planner import AIPlannerAgent
     from api.core import _get_pool
 
     pool = _get_pool()
@@ -114,7 +114,7 @@ async def analyze_dfu(body: AnalyzeRequest, request: Request):
 async def trigger_portfolio_scan(request: Request):
     """Trigger an async portfolio scan.  Returns 202 immediately."""
     require_api_key(request)
-    from common.ai_planner import AIPlannerAgent
+    from common.ai.ai_planner import AIPlannerAgent
     from api.core import _get_pool
 
     pool = _get_pool()

@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (EventCalendarPanel) |
-| **Key Files** | `inv-planning/EventCalendarPanel.tsx`, `api/routers/events.py`, `scripts/apply_event_adjustments.py`, `config/event_planning_config.yaml`, `sql/058_create_event_calendar.sql` |
+| **Key Files** | `inv-planning/EventCalendarPanel.tsx`, `api/routers/events.py`, `scripts/apply_event_adjustments.py`, `config/operations/event_planning_config.yaml`, `sql/058_create_event_calendar.sql` |
 
 ---
 
@@ -97,7 +97,7 @@ The adjustment script (`scripts/apply_event_adjustments.py`) reads approved even
 
 ## Configuration
 
-File: `config/event_planning_config.yaml`
+File: `config/operations/event_planning_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|

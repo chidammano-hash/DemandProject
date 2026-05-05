@@ -46,7 +46,7 @@ After any production pipeline run completes, the system **automatically register
 - `backtest_metadata.json` — portfolio accuracy, WAPE, bias, n_predictions, n_dfus, per-timeframe breakdowns
 - `backtest_predictions.csv` — raw predictions for per-cluster and per-month aggregation
 
-**Source config** (`config/forecast_pipeline_config.yaml`):
+**Source config** (`config/forecasting/forecast_pipeline_config.yaml`):
 - `algorithms.{model}.params` — production hyperparameters
 - `algorithms.{model}` — cluster_strategy, recursive, shap_select, shap_threshold, etc.
 
@@ -67,7 +67,7 @@ After any production pipeline run completes, the system **automatically register
 **Source artifacts** (`data/champion/`):
 - `champion_summary.json` — strategy, champion_accuracy, ceiling_accuracy, gap_bps, model_distribution, per-lag and per-month breakdowns
 
-**Source config** (`config/forecast_pipeline_config.yaml` champion section):
+**Source config** (`config/forecasting/forecast_pipeline_config.yaml` champion section):
 - `strategy`, `metric`, `lag`, `min_sku_rows`; competing models derived from `algorithms[*].compete == true`
 
 **Target tables:**

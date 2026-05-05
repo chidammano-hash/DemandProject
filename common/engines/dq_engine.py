@@ -7,8 +7,8 @@ from __future__ import annotations
 import json
 import logging
 
-from common.db import get_db_params
-from common.utils import load_config, reset_config
+from common.core.db import get_db_params
+from common.core.utils import load_config, reset_config
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ _CONFIG_NAME = "data_quality_config.yaml"
 
 
 # ---------------------------------------------------------------------------
-# Config (thread-safe via common.utils.load_config)
+# Config (thread-safe via common.core.utils.load_config)
 # ---------------------------------------------------------------------------
 def _load_config() -> dict:
     return load_config(_CONFIG_NAME)

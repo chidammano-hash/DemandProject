@@ -30,7 +30,7 @@ router = APIRouter(prefix="/cluster-experiments", tags=["cluster-experiments"])
 # ---------------------------------------------------------------------------
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_TEMPLATES_PATH = _PROJECT_ROOT / "config" / "cluster_experiment_templates.yaml"
+_TEMPLATES_PATH = _PROJECT_ROOT / "config" / "forecasting" / "cluster_experiment_templates.yaml"
 _SCENARIOS_DIR = Path("/tmp/clustering_scenarios")
 
 # Cache TTLs (seconds)

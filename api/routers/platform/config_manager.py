@@ -16,12 +16,33 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from api.auth import require_api_key
-from common.utils import load_config, reset_config
+from common.core.utils import load_config, reset_config
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/config", tags=["config"])
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent.parent.parent / "config"
+
+
+def _resolve_yaml_path(yaml_name: str) -> Path:
+    """Locate a config yaml at flat root or any domain subdir.
+
+    Mirrors the lookup logic in :func:`common.core.utils.load_config`.
+    Returns the flat-root path when the file does not exist anywhere
+    (so callers writing a new file get a predictable location).
+    """
+    flat = _CONFIG_DIR / yaml_name
+    if flat.exists():
+        return flat
+    matches = list(_CONFIG_DIR.rglob(yaml_name))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=500,
+            detail=f"ambiguous config name {yaml_name!r}: {[str(m) for m in matches]}",
+        )
+    return flat
 
 # ---------------------------------------------------------------------------
 # Field metadata types
@@ -601,7 +622,7 @@ def list_configs():
     configs = []
     for name, meta in CONFIG_REGISTRY.items():
         yaml_name = f"{name}.yaml"
-        exists = (_CONFIG_DIR / yaml_name).exists()
+        exists = _resolve_yaml_path(yaml_name).exists()
         configs.append({
             "name": name,
             "label": meta["label"],
@@ -653,7 +674,7 @@ def update_config(name: str, body: ConfigUpdate):
         raise HTTPException(status_code=404, detail=f"Unknown config: {name}")
 
     yaml_name = f"{name}.yaml"
-    yaml_path = _CONFIG_DIR / yaml_name
+    yaml_path = _resolve_yaml_path(yaml_name)
 
     # Load current values
     current = load_config(yaml_name)
@@ -699,7 +720,7 @@ def reset_to_backup(name: str):
         raise HTTPException(status_code=404, detail=f"Unknown config: {name}")
 
     yaml_name = f"{name}.yaml"
-    yaml_path = _CONFIG_DIR / yaml_name
+    yaml_path = _resolve_yaml_path(yaml_name)
     backup_path = yaml_path.with_suffix(".yaml.bak")
 
     if not backup_path.exists():

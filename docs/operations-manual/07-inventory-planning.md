@@ -104,12 +104,12 @@ All knobs live in YAML — never hardcode in scripts.
 
 | File | Owns |
 |---|---|
-| `config/inventory_planning_config.yaml` | Merged config: `lead_time`, `simulation` (n_simulations: 10000), `projection` |
-| `config/safety_stock_config.yaml` | Service-level targets, σ floor, MOQ rounding |
-| `config/eoq_config.yaml` | Holding cost %, ordering cost, min-order-qty rules |
-| `config/replenishment_policy_config.yaml` | ABC×XYZ → policy mapping (Min/Max vs R/Q vs s/S) |
-| `config/replenishment_plan_config.yaml` | Period buckets, lookahead horizon |
-| `config/sop_config.yaml` | S&OP cycle timing (Section 8) |
+| `config/inventory/inventory_planning_config.yaml` | Merged config: `lead_time`, `simulation` (n_simulations: 10000), `projection` |
+| `config/inventory/safety_stock_config.yaml` | Service-level targets, σ floor, MOQ rounding |
+| `config/inventory/eoq_config.yaml` | Holding cost %, ordering cost, min-order-qty rules |
+| `config/inventory/replenishment_policy_config.yaml` | ABC×XYZ → policy mapping (Min/Max vs R/Q vs s/S) |
+| `config/inventory/replenishment_plan_config.yaml` | Period buckets, lookahead horizon |
+| `config/operations/sop_config.yaml` | S&OP cycle timing (Section 8) |
 | `config/planning_config.yaml` | Global `PLANNING_DATE` override behavior |
 | `config/shared_constants.yaml` | Service-level Z-table, financial defaults, guard rails (inherited via `_includes`) |
 

@@ -1083,7 +1083,7 @@ async def test_get_templates_lgbm():
     with (
         patch("api.core._get_pool", return_value=pool),
         patch(
-            "common.utils.load_config",
+            "common.core.utils.load_config",
             return_value=templates_config,
         ),
         patch("api.routers.forecasting.unified_model_tuning._load_live_params",
@@ -1126,7 +1126,7 @@ async def test_get_templates_catboost():
     with (
         patch("api.core._get_pool", return_value=pool),
         patch(
-            "common.utils.load_config",
+            "common.core.utils.load_config",
             return_value=templates_config,
         ),
         patch("api.routers.forecasting.unified_model_tuning._load_live_params",

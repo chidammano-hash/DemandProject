@@ -14,8 +14,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from common.backtest_framework import _fill_predict_nans, _predict_single_month
-from common.feature_engineering import (
+from common.ml.backtest_framework import _fill_predict_nans, _predict_single_month
+from common.ml.feature_engineering import (
     build_feature_matrix,
     mask_future_sales,
     update_grid_with_predictions,

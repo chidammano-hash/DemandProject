@@ -8,7 +8,7 @@ Strict temporal train/test split prevents data leakage — no random splitting.
 
 Usage:
     python scripts/train_meta_learner.py \
-        --config config/forecast_pipeline_config.yaml \
+        --config config/forecasting/forecast_pipeline_config.yaml \
         [--model-type random_forest] \
         [--output data/champion/meta_learner.joblib]
 """
@@ -35,9 +35,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
+from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
-from common.utils import load_forecast_pipeline_config, get_competing_model_ids
+from common.core.utils import load_forecast_pipeline_config, get_competing_model_ids
 
 
 def _load_monthly_errors(
@@ -247,7 +247,7 @@ def train_classifier(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train meta-learner for champion selection")
     parser.add_argument(
-        "--config", type=str, default="config/forecast_pipeline_config.yaml",
+        "--config", type=str, default="config/forecasting/forecast_pipeline_config.yaml",
     )
     parser.add_argument(
         "--model-type", type=str, default=None,

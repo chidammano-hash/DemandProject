@@ -3,7 +3,7 @@
 Consolidates commonly duplicated helpers:
 - _ts(): Formatted timestamp for console logging
 - load_config(): Thread-safe YAML config loader with caching (with optional
-  Pydantic validation when a model is registered in common.config_models)
+  Pydantic validation when a model is registered in common.core.config_models)
 """
 
 from __future__ import annotations
@@ -97,6 +97,15 @@ def load_config(name: str) -> dict:
             return cached
 
         cfg_path = _CONFIG_DIR / name
+        if not cfg_path.exists():
+            # Fallback: search domain subdirs (config/forecasting/, config/inventory/, etc.)
+            matches = list(_CONFIG_DIR.rglob(name))
+            if len(matches) == 1:
+                cfg_path = matches[0]
+            elif len(matches) > 1:
+                raise ValueError(
+                    f"ambiguous config name {name!r}: found in {[str(m) for m in matches]}"
+                )
         if cfg_path.exists():
             with open(cfg_path) as f:
                 raw = yaml.safe_load(f) or {}

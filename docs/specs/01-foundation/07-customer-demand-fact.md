@@ -454,7 +454,7 @@ These will be served automatically by `domains.py` once the DomainSpec is regist
 | Normalize script | `scripts/etl/normalize_customer_demand_csv.py` |
 | Load script | `scripts/etl/load_customer_demand_postgres.py` |
 | DomainSpec entry | `common/core/domain_specs.py` (add `CUSTOMER_DEMAND_SPEC`) |
-| Config | `config/etl_config.yaml` (add to domain_order) |
+| Config | `config/etl/etl_config.yaml` (add to domain_order) |
 | Tests | `tests/unit/test_customer_demand_load.py` |
 
 ---

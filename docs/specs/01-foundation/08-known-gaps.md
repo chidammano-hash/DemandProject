@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Living document |
 | **UI Tab** | N/A (engineering reference) |
-| **Key Files** | `common/core/constants.py`, `common/ml/feature_engineering.py`, `config/forecast_pipeline_config.yaml` |
+| **Key Files** | `common/core/constants.py`, `common/ml/feature_engineering.py`, `config/forecasting/forecast_pipeline_config.yaml` |
 
 ---
 

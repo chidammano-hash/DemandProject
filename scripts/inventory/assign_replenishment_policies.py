@@ -4,7 +4,7 @@ Upserts policy definitions from config into dim_replenishment_policy, then
 auto-assigns DFUs to policies based on abc_vol and variability_class.
 
 Algorithm:
-1. Load config/replenishment_policy_config.yaml
+1. Load config/inventory/replenishment_policy_config.yaml
 2. Upsert all policies into dim_replenishment_policy (ON CONFLICT DO UPDATE)
 3. If auto_assign.enabled:
    - Load dim_sku: item_id (item_id), loc, abc_vol, variability_class
@@ -36,8 +36,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "replenishment_policy_config.yaml")

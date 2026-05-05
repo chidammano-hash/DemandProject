@@ -10,7 +10,7 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch, call
 
-from common.dq_engine import (
+from common.engines.dq_engine import (
     _check_completeness,
     _check_row_count,
     _check_uniqueness,
@@ -191,7 +191,7 @@ class TestCheckFunctionsRegistry:
 class TestRunSingle:
     def _make_engine(self, checks=None):
         """Create DQEngine with a mocked config."""
-        with patch("common.dq_engine._load_config", return_value={"checks": checks or []}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": checks or []}):
             return DQEngine()
 
     def test_unknown_check_type_returns_skip(self):
@@ -256,7 +256,7 @@ class TestRunAllChecks:
             {"check_name": "c1", "check_type": "row_count", "table_name": "t1", "enabled": True, "domain": "d"},
             {"check_name": "c2", "check_type": "row_count", "table_name": "t2", "enabled": False, "domain": "d"},
         ]
-        with patch("common.dq_engine._load_config", return_value={"checks": checks}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": checks}):
             engine = DQEngine()
 
         mock_conn = MagicMock()
@@ -266,7 +266,7 @@ class TestRunAllChecks:
         mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch("psycopg.connect", return_value=mock_conn), \
-             patch("common.dq_engine.get_db_params", return_value={}):
+             patch("common.engines.dq_engine.get_db_params", return_value={}):
             results = engine.run_all_checks()
 
         # Only c1 should run (c2 disabled)
@@ -278,7 +278,7 @@ class TestRunAllChecks:
             {"check_name": "c1", "check_type": "row_count", "table_name": "t1", "domain": "sales"},
             {"check_name": "c2", "check_type": "row_count", "table_name": "t2", "domain": "item"},
         ]
-        with patch("common.dq_engine._load_config", return_value={"checks": checks}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": checks}):
             engine = DQEngine()
 
         mock_conn = MagicMock()
@@ -288,7 +288,7 @@ class TestRunAllChecks:
         mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch("psycopg.connect", return_value=mock_conn), \
-             patch("common.dq_engine.get_db_params", return_value={}):
+             patch("common.engines.dq_engine.get_db_params", return_value={}):
             results = engine.run_all_checks(domain="item")
 
         assert len(results) == 1
@@ -298,7 +298,7 @@ class TestRunAllChecks:
         checks = [
             {"check_name": "c1", "check_type": "row_count", "table_name": "t1", "domain": "d"},
         ]
-        with patch("common.dq_engine._load_config", return_value={"checks": checks}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": checks}):
             engine = DQEngine()
 
         mock_conn = MagicMock()
@@ -311,7 +311,7 @@ class TestRunAllChecks:
         mock_conn.__exit__ = MagicMock(return_value=False)
 
         with patch("psycopg.connect", return_value=mock_conn), \
-             patch("common.dq_engine.get_db_params", return_value={}):
+             patch("common.engines.dq_engine.get_db_params", return_value={}):
             engine.run_all_checks()
 
         # autocommit=True so no explicit commit needed
@@ -319,12 +319,12 @@ class TestRunAllChecks:
         assert cursor.execute.call_count >= 2
 
     def test_empty_checks_list(self):
-        with patch("common.dq_engine._load_config", return_value={"checks": []}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": []}):
             engine = DQEngine()
 
         mock_conn = MagicMock()
         with patch("psycopg.connect", return_value=mock_conn), \
-             patch("common.dq_engine.get_db_params", return_value={}):
+             patch("common.engines.dq_engine.get_db_params", return_value={}):
             results = engine.run_all_checks()
 
         assert results == []
@@ -336,7 +336,7 @@ class TestRunAllChecks:
 
 class TestRecordResult:
     def test_record_result_inserts_row(self):
-        with patch("common.dq_engine._load_config", return_value={"checks": []}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": []}):
             engine = DQEngine()
         conn, cursor = _mock_conn()
         result = {
@@ -355,7 +355,7 @@ class TestRecordResult:
 
     def test_record_result_swallows_exceptions(self):
         """Best-effort recording should not raise."""
-        with patch("common.dq_engine._load_config", return_value={"checks": []}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": []}):
             engine = DQEngine()
         conn = MagicMock()
         cursor = MagicMock()
@@ -373,7 +373,7 @@ class TestRecordResult:
 
 class TestGetDomainScore:
     def test_computes_score_from_results(self):
-        with patch("common.dq_engine._load_config", return_value={"checks": []}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": []}):
             engine = DQEngine()
 
         mock_conn = MagicMock()
@@ -386,7 +386,7 @@ class TestGetDomainScore:
         mock_conn.__exit__ = MagicMock(return_value=False)
 
         with patch("psycopg.connect", return_value=mock_conn), \
-             patch("common.dq_engine.get_db_params", return_value={}):
+             patch("common.engines.dq_engine.get_db_params", return_value={}):
             score = engine.get_domain_score("item")
 
         assert score["domain"] == "item"
@@ -396,7 +396,7 @@ class TestGetDomainScore:
         assert score["failed"] == 2
 
     def test_perfect_score_all_pass(self):
-        with patch("common.dq_engine._load_config", return_value={"checks": []}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": []}):
             engine = DQEngine()
 
         mock_conn = MagicMock()
@@ -408,7 +408,7 @@ class TestGetDomainScore:
         mock_conn.__exit__ = MagicMock(return_value=False)
 
         with patch("psycopg.connect", return_value=mock_conn), \
-             patch("common.dq_engine.get_db_params", return_value={}):
+             patch("common.engines.dq_engine.get_db_params", return_value={}):
             score = engine.get_domain_score("sales")
 
         assert score["score"] == 100.0
@@ -416,7 +416,7 @@ class TestGetDomainScore:
 
     def test_no_checks_returns_100(self):
         """No recent checks defaults to 100.0."""
-        with patch("common.dq_engine._load_config", return_value={"checks": []}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": []}):
             engine = DQEngine()
 
         mock_conn = MagicMock()
@@ -428,14 +428,14 @@ class TestGetDomainScore:
         mock_conn.__exit__ = MagicMock(return_value=False)
 
         with patch("psycopg.connect", return_value=mock_conn), \
-             patch("common.dq_engine.get_db_params", return_value={}):
+             patch("common.engines.dq_engine.get_db_params", return_value={}):
             score = engine.get_domain_score("unknown")
 
         assert score["score"] == 100.0
         assert score["total_checks"] == 0
 
     def test_includes_warn_in_total(self):
-        with patch("common.dq_engine._load_config", return_value={"checks": []}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": []}):
             engine = DQEngine()
 
         mock_conn = MagicMock()
@@ -447,7 +447,7 @@ class TestGetDomainScore:
         mock_conn.__exit__ = MagicMock(return_value=False)
 
         with patch("psycopg.connect", return_value=mock_conn), \
-             patch("common.dq_engine.get_db_params", return_value={}):
+             patch("common.engines.dq_engine.get_db_params", return_value={}):
             score = engine.get_domain_score("item")
 
         assert score["total_checks"] == 6
@@ -467,20 +467,20 @@ class TestErrorHandling:
     def test_run_all_checks_connection_failure(self):
         """Connection error propagates from run_all_checks."""
         checks = [{"check_name": "c1", "check_type": "row_count", "table_name": "t", "domain": "d"}]
-        with patch("common.dq_engine._load_config", return_value={"checks": checks}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": checks}):
             engine = DQEngine()
 
         with patch("psycopg.connect", side_effect=Exception("connection refused")), \
-             patch("common.dq_engine.get_db_params", return_value={}):
+             patch("common.engines.dq_engine.get_db_params", return_value={}):
             with pytest.raises(Exception, match="connection refused"):
                 engine.run_all_checks()
 
     def test_get_domain_score_connection_failure(self):
-        with patch("common.dq_engine._load_config", return_value={"checks": []}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": []}):
             engine = DQEngine()
 
         with patch("psycopg.connect", side_effect=Exception("timeout")), \
-             patch("common.dq_engine.get_db_params", return_value={}):
+             patch("common.engines.dq_engine.get_db_params", return_value={}):
             with pytest.raises(Exception, match="timeout"):
                 engine.get_domain_score("item")
 
@@ -641,7 +641,7 @@ class TestCheckReferentialIntegrity:
 
 class TestRunSingleNewTypes:
     def _make_engine(self, checks=None):
-        with patch("common.dq_engine._load_config", return_value={"checks": checks or []}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": checks or []}):
             return DQEngine()
 
     def test_range_dispatch(self):
@@ -693,7 +693,7 @@ class TestRunSingleNewTypes:
 
 class TestFlattenChecks:
     def _make_engine(self, config: dict):
-        with patch("common.dq_engine._load_config", return_value=config):
+        with patch("common.engines.dq_engine._load_config", return_value=config):
             return DQEngine()
 
     def test_flat_list_passthrough(self):
@@ -1119,7 +1119,7 @@ class TestCheckCardinalityAnomaly:
 
 class TestRunSingleStatisticalTypes:
     def _make_engine(self, checks=None):
-        with patch("common.dq_engine._load_config", return_value={"checks": checks or []}):
+        with patch("common.engines.dq_engine._load_config", return_value={"checks": checks or []}):
             return DQEngine()
 
     def test_cross_column_dispatch(self):

@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import psycopg
-from common.db import get_db_params  # noqa: E402
+from common.core.db import get_db_params  # noqa: E402
 
 
 def _safe_refresh(conn: psycopg.Connection, view: str) -> None:

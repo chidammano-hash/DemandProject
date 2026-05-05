@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning |
-| **Key Files** | `scripts/compute_rebalancing.py`, `api/routers/inventory/inv_planning_rebalancing.py`, `config/rebalancing_config.yaml`, `sql/071_create_transfer_network.sql` |
+| **Key Files** | `scripts/compute_rebalancing.py`, `api/routers/inventory/inv_planning_rebalancing.py`, `config/inventory/rebalancing_config.yaml`, `sql/071_create_transfer_network.sql` |
 
 ---
 
@@ -143,7 +143,7 @@ Supports `--dry-run` for previewing without writing.
 
 ## Configuration
 
-File: `config/rebalancing_config.yaml`
+File: `config/inventory/rebalancing_config.yaml`
 
 ```yaml
 solver: greedy                # greedy or lp

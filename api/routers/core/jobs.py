@@ -61,7 +61,7 @@ _manager = None
 def _get_manager():
     global _manager
     if _manager is None:
-        from common.job_registry import JobManager
+        from common.services.job_registry import JobManager
         _manager = JobManager()
     return _manager
 
@@ -93,7 +93,7 @@ def submit_job(req: SubmitJobRequest):
     """
     mgr = _get_manager()
 
-    from common.job_registry import JOB_TYPE_REGISTRY
+    from common.services.job_registry import JOB_TYPE_REGISTRY
     if req.job_type not in JOB_TYPE_REGISTRY:
         raise HTTPException(status_code=422, detail=f"Unknown job type: {req.job_type}")
 
@@ -144,7 +144,7 @@ def schedule_recurring_job(req: ScheduleJobRequest):
     """
     mgr = _get_manager()
 
-    from common.job_registry import JOB_TYPE_REGISTRY
+    from common.services.job_registry import JOB_TYPE_REGISTRY
     if req.job_type not in JOB_TYPE_REGISTRY:
         raise HTTPException(status_code=422, detail=f"Unknown job type: {req.job_type}")
     if not req.cron and not req.interval_minutes:
@@ -197,7 +197,7 @@ def submit_pipeline(req: SubmitPipelineRequest):
     """
     mgr = _get_manager()
 
-    from common.job_registry import JOB_TYPE_REGISTRY
+    from common.services.job_registry import JOB_TYPE_REGISTRY
     for step in req.steps:
         if step.job_type not in JOB_TYPE_REGISTRY:
             raise HTTPException(status_code=422, detail=f"Unknown job type: {step.job_type}")

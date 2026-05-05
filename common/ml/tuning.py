@@ -16,7 +16,7 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
-from common.utils import _ts
+from common.core.utils import _ts
 
 
 # ── CV splits ─────────────────────────────────────────────────────────────────
@@ -379,8 +379,8 @@ def tune_for_timeframe(
         print("  [tune_for_timeframe] optuna not installed — returning empty params")  # noqa: T201
         return {}, 500
 
-    from common.feature_engineering import mask_future_sales
-    from common.constants import LAG_RANGE
+    from common.ml.feature_engineering import mask_future_sales
+    from common.core.constants import LAG_RANGE
 
     t_cfg = config["tuning"]
     _n_trials = n_trials or t_cfg.get("inline_n_trials", 20)

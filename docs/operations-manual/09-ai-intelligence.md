@@ -24,7 +24,7 @@ All components share a single LLM client layer (`api/llm.py`) that prefers OpenA
 | Variable | Required for | Notes |
 |---|---|---|
 | `OPENAI_API_KEY` | AI Planner (default provider), Market Intelligence, embeddings via `text-embedding-3-small` | Must be ≥ 20 characters or `get_openai()` returns 503. |
-| `ANTHROPIC_API_KEY` | Failover from OpenAI, AI Planner when `provider: "anthropic"` is set in `config/ai_planner_config.yaml` | Optional. Without it, `chat_completion` will raise 503 if OpenAI is down. |
+| `ANTHROPIC_API_KEY` | Failover from OpenAI, AI Planner when `provider: "anthropic"` is set in `config/ai/ai_planner_config.yaml` | Optional. Without it, `chat_completion` will raise 503 if OpenAI is down. |
 | `API_KEY` | Auth gate on `/admin/*` and `/ai-planner/*` write endpoints | When unset, `require_api_key` is a no-op (development only). |
 
 ### 9.1.3 Model Defaults & Overrides
@@ -32,7 +32,7 @@ All components share a single LLM client layer (`api/llm.py`) that prefers OpenA
 | Surface | Default model | Override |
 |---|---|---|
 | `chat_completion()` | `gpt-4o-mini`, `temperature=0.3`, `max_tokens=2000` | Per-call kwargs. |
-| AI Planner agent | `gpt-4o`, `temperature=0.2`, `max_tokens=4096` | `config/ai_planner_config.yaml` keys: `provider`, `model`, `max_tokens`, `temperature`. |
+| AI Planner agent | `gpt-4o`, `temperature=0.2`, `max_tokens=4096` | `config/ai/ai_planner_config.yaml` keys: `provider`, `model`, `max_tokens`, `temperature`. |
 | Anthropic failover model | `claude-sonnet-4-20250514` | Hard-coded in `chat_completion`. |
 | Embeddings (RAG) | `text-embedding-3-small` (1536 dims) | Used by `common/ai/rag.py` against the `rag_chunk` table. |
 
@@ -85,7 +85,7 @@ The AI Planner is a **proactive batch agent**, not a chatbot. It scans the deman
 - Module: `common/ai/ai_planner.py` (class `AIPlannerAgent`)
 - Router: `api/routers/intelligence/ai_planner.py`
 - Frontend tab: `frontend/src/tabs/AIPlannerTab.tsx` (sub-panels in `frontend/src/tabs/ai-planner/`)
-- Config: `config/ai_planner_config.yaml`
+- Config: `config/ai/ai_planner_config.yaml`
 - Provider: configurable — `provider: "openai"` (default, uses `OPENAI_API_KEY`) or `provider: "anthropic"` (uses `ANTHROPIC_API_KEY`)
 
 ### 9.3.2 Endpoints
@@ -255,7 +255,7 @@ Query the rollup via `GET /ai-planner/metrics?days=7`:
 
 - AI Planner: `MAX_TURNS=40`, `TOKEN_BUDGET=100_000` per scan (hard caps in `common/ai/ai_planner.py`).
 - Chat: `max_tokens=2000`, single round trip, no tool loop.
-- Tune defaults via `config/ai_planner_config.yaml` (`portfolio_scan_limit`, `forecast_lookback_months`, `max_tokens`).
+- Tune defaults via `config/ai/ai_planner_config.yaml` (`portfolio_scan_limit`, `forecast_lookback_months`, `max_tokens`).
 
 ### 9.7.3 Rate limits
 
@@ -323,7 +323,7 @@ Check `ai_call_log` for the `scan_run_id` returned by the endpoint:
 
 ### Symptom: Portfolio scan logs `MAX_TURNS` or `TOKEN_BUDGET` warning
 
-The agent hit a circuit breaker. Either the prompt is sending the model in circles or the portfolio is too large. Tune `portfolio_scan_limit` in `config/ai_planner_config.yaml`, or split the scan into multiple smaller runs.
+The agent hit a circuit breaker. Either the prompt is sending the model in circles or the portfolio is too large. Tune `portfolio_scan_limit` in `config/ai/ai_planner_config.yaml`, or split the scan into multiple smaller runs.
 
 ### Symptom: LLM timeouts / hangs
 

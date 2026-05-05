@@ -2,7 +2,7 @@
 
 import pytest
 
-from common.domain_specs import DOMAIN_SPECS, INVENTORY_SPEC, DomainSpec, get_spec
+from common.core.domain_specs import DOMAIN_SPECS, INVENTORY_SPEC, DomainSpec, get_spec
 
 
 class TestInventoryDomainSpec:

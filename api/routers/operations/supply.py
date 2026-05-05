@@ -409,7 +409,7 @@ async def generate_planned_orders_async(
                 load_config,
             )
             import psycopg
-            from common.db import get_db_params
+            from common.core.db import get_db_params
 
             config = load_config()
             run_id = job_id

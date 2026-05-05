@@ -23,7 +23,7 @@ import logging
 import time
 import uuid
 from datetime import date
-from common.planning_date import get_planning_date
+from common.core.planning_date import get_planning_date
 from typing import Any, Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator

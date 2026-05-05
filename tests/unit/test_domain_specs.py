@@ -2,7 +2,7 @@
 
 import pytest
 
-from common.domain_specs import (
+from common.core.domain_specs import (
     DOMAIN_SPECS,
     DomainSpec,
     get_spec,

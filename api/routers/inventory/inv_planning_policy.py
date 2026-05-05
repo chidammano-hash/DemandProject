@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from api.auth import require_api_key
 from api.core import get_conn, set_cache
-from common.planning_date import get_planning_date
+from common.core.planning_date import get_planning_date
 
 router = APIRouter(tags=["inv-planning"])
 

@@ -212,7 +212,7 @@ class TestParseChecks:
 
     def test_full_config_parse(self):
         """Parse the real config file and verify all 5 check types present."""
-        from common.utils import load_config, reset_config
+        from common.core.utils import load_config, reset_config
         reset_config(None)
         config = load_config("data_quality_config.yaml")
         checks = parse_checks(config)

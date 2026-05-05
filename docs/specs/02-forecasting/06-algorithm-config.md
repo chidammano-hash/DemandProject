@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (config file only) |
-| **Key Files** | `config/forecast_pipeline_config.yaml` (algorithms section), `scripts/run_backtest.py`, `scripts/run_backtest_catboost.py`, `scripts/run_backtest_xgboost.py` |
+| **Key Files** | `config/forecasting/forecast_pipeline_config.yaml` (algorithms section), `scripts/run_backtest.py`, `scripts/run_backtest_catboost.py`, `scripts/run_backtest_xgboost.py` |
 
 ---
 
@@ -16,11 +16,11 @@ Before this feature, backtest options were scattered across 30+ Makefile targets
 
 ## Solution
 
-Algorithm configuration is consolidated into `config/forecast_pipeline_config.yaml` under the `algorithms` section. Each algorithm entry contains lifecycle flags, behavioral options, and inline hyperparameters (under `.params`). The legacy `config/algorithm_config.yaml` has been deleted. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve hyperparameters programmatically.
+Algorithm configuration is consolidated into `config/forecasting/forecast_pipeline_config.yaml` under the `algorithms` section. Each algorithm entry contains lifecycle flags, behavioral options, and inline hyperparameters (under `.params`). The legacy `config/algorithm_config.yaml` has been deleted. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve hyperparameters programmatically.
 
 ## How It Works
 
-1. Edit `config/forecast_pipeline_config.yaml` under `algorithms.<model_id>` to set the desired options
+1. Edit `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>` to set the desired options
 2. Run `make backtest-lgbm` (or catboost/xgboost)
 3. The script reads its section from the YAML file
 4. All options (cluster strategy, SHAP, tuning, recursive, hyperparameters) are applied automatically

@@ -124,7 +124,7 @@ Connection is **one-directional**: algorithm experiments can reference a cluster
 ### Data Flow
 
 ```
-config/cluster_experiment_templates.yaml
+config/forecasting/cluster_experiment_templates.yaml
          |
          v
 +------------------+    POST /cluster-experiments     +--------------+
@@ -767,7 +767,7 @@ labeling: priority_ordered # intermittency -> periodicity -> seasonality -> tren
 
 ### Experiment Templates
 
-File: `config/cluster_experiment_templates.yaml`
+File: `config/forecasting/cluster_experiment_templates.yaml`
 
 ```yaml
 templates:
@@ -898,8 +898,8 @@ scikit-learn, pandas, numpy, scipy, matplotlib, seaborn, MLflow
 
 ### Config References
 
-- `config/cluster_experiment_templates.yaml` -- preset experiment templates
-- `config/cluster_tuning_profiles.yaml` -- per-cluster hyperparameter overrides for backtests
+- `config/forecasting/cluster_experiment_templates.yaml` -- preset experiment templates
+- `config/forecasting/cluster_tuning_profiles.yaml` -- per-cluster hyperparameter overrides for backtests
 
 ---
 

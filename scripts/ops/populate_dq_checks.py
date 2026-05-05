@@ -1,7 +1,7 @@
 """Populate dim_dq_check_catalog from data_quality_config.yaml.
 
 Reads all check definitions (completeness, uniqueness, range,
-volume_delta, referential_integrity) from config/data_quality_config.yaml,
+volume_delta, referential_integrity) from config/platform/data_quality_config.yaml,
 generates a unique check_name per check, builds a SQL template string, and
 UPSERTs into dim_dq_check_catalog (ON CONFLICT on check_name DO UPDATE).
 
@@ -19,9 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
+from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
-from common.utils import _ts, load_config
+from common.core.utils import _ts, load_config
 
 CONFIG_NAME = "data_quality_config.yaml"
 

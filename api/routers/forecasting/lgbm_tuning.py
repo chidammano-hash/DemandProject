@@ -570,7 +570,7 @@ _LGBM_PARAM_KEYS = {
     "path_smooth", "max_bin",
 }
 
-_PIPELINE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "forecast_pipeline_config.yaml"
+_PIPELINE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 
 
 @router.post("/lgbm-tuning/runs/{run_id}/promote")
@@ -618,7 +618,7 @@ def promote_run(run_id: int):
         with open(_PIPELINE_CONFIG_PATH, "w") as f:
             yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
-        from common.utils import reset_config
+        from common.core.utils import reset_config
         reset_config("forecast_pipeline_config.yaml")
     except (OSError, KeyError, yaml.YAMLError) as exc:
         logger.exception("Failed to write forecast_pipeline_config.yaml during promote")

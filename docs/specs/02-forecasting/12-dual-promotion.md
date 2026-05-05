@@ -25,7 +25,7 @@ The Model Tuning Studio has a single "Promote" action that writes hyperparameter
 Two independent promotion actions:
 
 ### Promote Parameters (existing)
-- Writes hyperparameters to `config/forecast_pipeline_config.yaml`
+- Writes hyperparameters to `config/forecasting/forecast_pipeline_config.yaml`
 - Future `make forecast-generate` uses the promoted params
 - Tracked: `is_promoted`, `promoted_at` on `lgbm_tuning_run`
 

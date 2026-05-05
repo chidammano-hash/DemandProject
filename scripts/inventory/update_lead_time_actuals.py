@@ -8,7 +8,7 @@ Usage:
     uv run python scripts/update_lead_time_actuals.py --input data/po_receipts.csv
     uv run python scripts/update_lead_time_actuals.py --supplier-id "ABC Trading Co." --dry-run
 
-Config: config/inventory_planning_config.yaml (lead_time section)
+Config: config/inventory/inventory_planning_config.yaml (lead_time section)
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
-from common.utils import load_config as _load_config
+from common.core.db import get_db_params
+from common.core.utils import load_config as _load_config
 
 
 def load_config() -> dict:

@@ -10,13 +10,13 @@ import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from common.utils import load_config, reset_config
+from common.core.utils import load_config, reset_config
 
 _CONFIG_NAME = "notification_config.yaml"
 
 
 # ---------------------------------------------------------------------------
-# Config (thread-safe via common.utils.load_config)
+# Config (thread-safe via common.core.utils.load_config)
 # ---------------------------------------------------------------------------
 def _load_config() -> dict:
     return load_config(_CONFIG_NAME)

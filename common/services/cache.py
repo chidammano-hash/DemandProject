@@ -14,7 +14,7 @@ from functools import wraps
 import threading
 from typing import Any, Callable
 
-from common.utils import load_config, reset_config as _reset_utils_config
+from common.core.utils import load_config, reset_config as _reset_utils_config
 
 _CONFIG_NAME = "cache_config.yaml"
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Config (thread-safe via common.utils.load_config)
+# Config (thread-safe via common.core.utils.load_config)
 # ---------------------------------------------------------------------------
 def _load_config() -> dict:
     return load_config(_CONFIG_NAME)

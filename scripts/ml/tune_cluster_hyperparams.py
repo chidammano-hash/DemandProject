@@ -2,7 +2,7 @@
 Per-cluster hyperparameter tuning using Optuna.
 
 Tunes LGBM/CatBoost/XGBoost independently per ml_cluster, then writes
-best params into config/cluster_tuning_profiles.yaml with cluster_name-based
+best params into config/forecasting/cluster_tuning_profiles.yaml with cluster_name-based
 matching.
 
 Usage:
@@ -32,19 +32,19 @@ import optuna
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-from common.backtest_framework import load_backtest_data
-from common.constants import CAT_FEATURES, LAG_RANGE
-from common.db import get_db_params
-from common.feature_engineering import build_feature_matrix, get_feature_columns, mask_future_sales
+from common.ml.backtest_framework import load_backtest_data
+from common.core.constants import CAT_FEATURES, LAG_RANGE
+from common.core.db import get_db_params
+from common.ml.feature_engineering import build_feature_matrix, get_feature_columns, mask_future_sales
 from common.services.perf_profiler import profiled_section
-from common.tuning import (
+from common.ml.tuning import (
     TRAIN_FOLD_FNS,
     best_rounds_to_n_estimators,
     compute_wape_stabilised,
     generate_cv_month_splits,
     suggest_params,
 )
-from common.utils import load_forecast_pipeline_config
+from common.core.utils import load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +214,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--config", type=str,
-        default=str(ROOT / "config" / "hyperparameter_tuning.yaml"),
+        default=str(ROOT / "config" / "forecasting" / "hyperparameter_tuning.yaml"),
         help="Path to hyperparameter tuning YAML config",
     )
     args = parser.parse_args()
@@ -481,7 +481,7 @@ def main() -> None:
         )
 
     # ── Write cluster profiles YAML ──────────────────────────────────────────
-    output_path = ROOT / "config" / "cluster_tuning_profiles.yaml"
+    output_path = ROOT / "config" / "forecasting" / "cluster_tuning_profiles.yaml"
     with profiled_section("write_profiles"):
         write_cluster_profiles(
             output_path=output_path,

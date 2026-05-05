@@ -338,7 +338,7 @@ async def run_clustering_scenario(req: ClusteringScenarioRequest):
 
     Delegates to the JobManager so the scenario appears in the Jobs tab.
     """
-    from common.job_registry import JobManager
+    from common.services.job_registry import JobManager
 
     manager = JobManager()
 
@@ -374,7 +374,7 @@ async def run_clustering_scenario(req: ClusteringScenarioRequest):
 
 def _get_job_manager():
     """Lazy import and instantiate JobManager (testable seam)."""
-    from common.job_registry import JobManager
+    from common.services.job_registry import JobManager
     return JobManager()
 
 

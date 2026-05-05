@@ -29,10 +29,10 @@ logger = logging.getLogger(__name__)
 def load_retention_config() -> dict:
     """Load retention policies from config."""
     try:
-        with open("config/db_maintenance_config.yaml") as f:
+        with open("config/platform/db_maintenance_config.yaml") as f:
             return yaml.safe_load(f)
     except FileNotFoundError:
-        logger.warning("config/db_maintenance_config.yaml not found, using defaults")
+        logger.warning("config/platform/db_maintenance_config.yaml not found, using defaults")
         return {
             "retention_policies": {
                 "fact_customer_demand_monthly": {"months": 36, "type": "partition"},

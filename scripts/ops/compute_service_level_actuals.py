@@ -8,7 +8,7 @@ Usage:
     uv run python scripts/compute_service_level_actuals.py --month 2026-03-01
     uv run python scripts/compute_service_level_actuals.py --month 2026-03-01 --dry-run
 
-Config: config/service_level_config.yaml
+Config: config/operations/service_level_config.yaml
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
+from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config
+from common.core.utils import load_config as _load_config
 
 
 def load_config() -> dict:

@@ -10,7 +10,7 @@ Usage:
         --plan-version 2026-04-01_production \\
         [--apply-to-plan] [--dry-run] [--segment dfu|cluster|abc_seasonality]
 
-Config: config/forecast_domain_config.yaml (bias_correction section)
+Config: config/forecasting/forecast_domain_config.yaml (bias_correction section)
 """
 
 from __future__ import annotations
@@ -30,10 +30,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config
+from common.core.utils import load_config as _load_config
 
 DEFAULT_WEIGHTS = [0.50, 0.30, 0.20]
 CORRECTION_MIN = 0.70

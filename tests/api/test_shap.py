@@ -78,7 +78,7 @@ def _make_pool():
 async def test_shap_models_empty_when_no_data_dir(tmp_path):
     """shap_models returns empty list when no backtest data dir."""
     with patch("api.core._get_pool", return_value=_make_pool()), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path / "nonexistent"):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path / "nonexistent"):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -94,7 +94,7 @@ async def test_shap_models_lists_models_with_summaries(tmp_path):
     _write_summary_csv(tmp_path / "catboost_cluster" / "shap", ["f1"])
 
     with patch("api.core._get_pool", return_value=_make_pool()), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -110,7 +110,7 @@ async def test_shap_models_lists_models_with_summaries(tmp_path):
 async def test_shap_summary_404_when_no_csv(tmp_path):
     """shap_summary returns 404 when no summary CSV exists."""
     with patch("api.core._get_pool", return_value=_make_pool()), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -125,7 +125,7 @@ async def test_shap_summary_returns_features(tmp_path):
     _write_summary_csv(tmp_path / "lgbm_cluster" / "shap", features)
 
     with patch("api.core._get_pool", return_value=_make_pool()), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -143,7 +143,7 @@ async def test_shap_summary_returns_features(tmp_path):
 async def test_shap_timeframes_404_when_no_dir(tmp_path):
     """shap_timeframes returns 404 when no shap directory."""
     with patch("api.core._get_pool", return_value=_make_pool()), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -159,7 +159,7 @@ async def test_shap_timeframes_returns_sorted_list(tmp_path):
     _write_shap_csv(shap_dir, 1, ["a"])
 
     with patch("api.core._get_pool", return_value=_make_pool()), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -178,7 +178,7 @@ async def test_shap_timeframes_returns_sorted_list(tmp_path):
 async def test_shap_timeframe_detail_404(tmp_path):
     """shap_timeframe_detail returns 404 when CSV not found."""
     with patch("api.core._get_pool", return_value=_make_pool()), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -193,7 +193,7 @@ async def test_shap_timeframe_detail_success(tmp_path):
     _write_shap_csv(shap_dir, 3, ["x", "y", "z"])
 
     with patch("api.core._get_pool", return_value=_make_pool()), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -243,7 +243,7 @@ async def test_shap_summary_filtered_by_brand(tmp_path):
     pool = _make_pool_with_clusters(["c1"])  # brand filter resolves to cluster c1
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -263,7 +263,7 @@ async def test_shap_summary_no_filters_uses_summary_csv(tmp_path):
     _write_summary_csv(shap_dir, ["a", "b", "c"])
 
     with patch("api.core._get_pool", return_value=_make_pool()), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -287,7 +287,7 @@ async def test_shap_timeframe_filtered_by_item(tmp_path):
     pool = _make_pool_with_clusters(["c1"])  # item filter resolves to cluster c1
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -311,7 +311,7 @@ async def test_shap_summary_filtered_empty_clusters(tmp_path):
     pool = _make_pool_with_clusters([])  # filter resolves to no clusters
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -333,7 +333,7 @@ async def test_shap_timeframe_no_cluster_column_ignores_filter(tmp_path):
     pool = _make_pool_with_clusters(["c1"])
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.shap._BACKTEST_DATA_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._BACKTEST_DATA_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

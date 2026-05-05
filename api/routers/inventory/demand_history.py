@@ -10,8 +10,8 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import get_conn, set_cache
-from common.planning_date import get_planning_date
-from common.utils import load_config
+from common.core.planning_date import get_planning_date
+from common.core.utils import load_config
 
 logger = logging.getLogger(__name__)
 

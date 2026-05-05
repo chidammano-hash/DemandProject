@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | StoryboardTab |
-| **Key Files** | `StoryboardTab.tsx`, `api/routers/storyboard.py`, `common/exception_engine.py`, `scripts/generate_storyboard_exceptions.py`, `config/exception_config.yaml`, `sql/038_create_storyboard.sql` |
+| **Key Files** | `StoryboardTab.tsx`, `api/routers/storyboard.py`, `common/exception_engine.py`, `scripts/generate_storyboard_exceptions.py`, `config/operations/exception_config.yaml`, `sql/038_create_storyboard.sql` |
 
 ---
 
@@ -106,7 +106,7 @@ The generation script (`scripts/generate_storyboard_exceptions.py`) accepts `--i
 
 ## Configuration
 
-File: `config/exception_config.yaml`
+File: `config/operations/exception_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|

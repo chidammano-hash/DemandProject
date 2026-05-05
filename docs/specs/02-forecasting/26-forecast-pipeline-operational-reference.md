@@ -253,7 +253,7 @@ Open `http://localhost:5173` to access the UI. The Aggregate Analysis tab shows 
 **Prerequisites:** Raw CSV files in `data/input/`. PostgreSQL database running (via `make up`).
 
 **Config files:**
-- `config/etl_config.yaml` -- domain load order, MV refresh tiers, parallel workers, normalization settings
+- `config/etl/etl_config.yaml` -- domain load order, MV refresh tiers, parallel workers, normalization settings
 
 **Database tables written (11 tables):**
 
@@ -320,7 +320,7 @@ make check-all      # DB + API health check
 **Prerequisites:** `fact_sales_monthly` and `dim_sku` populated (Stage 1 complete).
 
 **Config files:**
-- `config/forecast_domain_config.yaml` -- key settings:
+- `config/forecasting/forecast_domain_config.yaml` -- key settings:
   - `seasonality.min_months_history`: 24 -- **Why:** Need at least 2 full seasonal cycles to detect annual patterns
   - `seasonality.thresholds.low/medium/high`: 0.15 / 0.35 / 0.70 -- **When to change:** Adjust if too many/few DFUs are classified as seasonal
   - `seasonality.confirmation.yoy_correlation`: 0.40, `acf_lag12`: 0.30
@@ -379,8 +379,8 @@ SELECT variability_class, COUNT(*) FROM dim_sku GROUP BY 1;
 **Prerequisites:** `dim_sku`, `dim_sourcing`, `fact_sales_monthly` populated (Stage 1 complete).
 
 **Config files:**
-- `config/inventory_planning_config.yaml` -- lead time profiling thresholds
-- ABC-XYZ settings in `config/inventory_planning_config.yaml` -- ABC thresholds (revenue-based), XYZ thresholds (CV-based)
+- `config/inventory/inventory_planning_config.yaml` -- lead time profiling thresholds
+- ABC-XYZ settings in `config/inventory/inventory_planning_config.yaml` -- ABC thresholds (revenue-based), XYZ thresholds (CV-based)
 
 **Database tables:**
 
@@ -441,7 +441,7 @@ make customer-features-python   # Python-based alternative
 **Prerequisites:** `fact_sales_monthly` and `dim_sku` populated. Seasonality/variability profiling is recommended but not strictly required.
 
 **Config files:**
-- `config/forecast_pipeline_config.yaml` -- `clustering` section:
+- `config/forecasting/forecast_pipeline_config.yaml` -- `clustering` section:
   - `enabled`: true -- **Master switch.** When `false`, all backtests fall back to `global` strategy regardless of per-algorithm settings.
   - `steps`: generate_features, train_model, label_clusters, update_db
 - Clustering params are stored in the `cluster_experiment` table (promoted row):
@@ -516,19 +516,19 @@ Verify no cluster is below the minimum size threshold (2% of total).
 **Prerequisites:** Clustering complete (for per-cluster tree models). `fact_sales_monthly` populated.
 
 **Config files:**
-- `config/forecast_pipeline_config.yaml` -- `backtest` section:
+- `config/forecasting/forecast_pipeline_config.yaml` -- `backtest` section:
   - `n_timeframes`: 10 -- **When to change:** Reduce to 5 for faster iteration during experimentation; use 10+ for production evaluation
   - `embargo_months`: 1 -- **Why:** Prevents data leakage from forecasts generated in the same month
   - `forecast_horizon`: 6
   - `early_stop_pct`: 0.03 -- **Why:** 3% patience for early stopping prevents overfitting
-- `config/forecast_pipeline_config.yaml` -- `algorithms` section (16 algorithms):
+- `config/forecasting/forecast_pipeline_config.yaml` -- `algorithms` section (16 algorithms):
   - **Tree models (6):** `lgbm_cluster`, `catboost_cluster`, `xgboost_cluster`, `lgbm_cust_enriched`, `catboost_cust_enriched`, `xgboost_cust_enriched`
   - **Foundation models (5):** `chronos`, `chronos_bolt`, `chronos2`, `chronos2_enriched`, `bolt_hierarchical`
   - **Statistical models (3):** `mstl`, `seasonal_naive`, `rolling_mean`
   - **Deep learning models (2):** `nbeats`, `nhits`
   - Each algorithm has lifecycle flags: `enabled`, `tune`, `backtest`, `compete`, `forecast`, `expert`
   - **Note:** `chronos` has `compete: false` -- it is backtested and used in expert panel testing, but excluded from champion selection
-- `config/forecast_pipeline_config.yaml` -- `backtest_sampling` section:
+- `config/forecasting/forecast_pipeline_config.yaml` -- `backtest_sampling` section:
   - `enabled`: true, `default_target_n`: 5000 -- **When to change:** Set to `false` or increase `default_target_n` for production-quality champion selection; keep sampled for experimentation speed
   - `default_method`: proportional, `min_per_cluster`: 10
 
@@ -663,12 +663,12 @@ SELECT model_id, COUNT(*) FROM backtest_lag_archive GROUP BY 1 ORDER BY 2 DESC;
 **Prerequisites:** Backtest data loaded (used for walk-forward CV splits). Clustering complete.
 
 **Config files:**
-- `config/hyperparameter_tuning.yaml`:
+- `config/forecasting/hyperparameter_tuning.yaml`:
   - `n_trials`: 50 -- **When to change:** Increase to 100-200 for thorough search; reduce to 20 for quick exploration
   - `n_splits`: 5, `gap_months`: 1, `val_months_per_fold`: 3, `min_train_months`: 13
   - Per-model search spaces with `type`, `low`/`high` bounds, optional `log` flag
-- `config/tune_strategies.yaml` -- 43 named strategies (13 LGBM + 15 CatBoost + 15 XGBoost)
-- `config/tuning_templates.yaml` -- UI experiment templates (production_baseline + 4 expert templates per model)
+- `config/forecasting/tune_strategies.yaml` -- 43 named strategies (13 LGBM + 15 CatBoost + 15 XGBoost)
+- `config/forecasting/tuning_templates.yaml` -- UI experiment templates (production_baseline + 4 expert templates per model)
 
 **Database tables:**
 
@@ -734,7 +734,7 @@ make tune-lgbm-clusters       # Per-cluster LGBM tuning
 make tune-clusters            # Per-cluster tuning for all tree models
 ```
 
-Per-cluster tuning writes cluster-specific overrides to `config/cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. During backtest, `resolve_cluster_params()` matches profiles: Phase 1 = exact `cluster_name` match, Phase 2 = statistical criteria fallback (mean_demand, cv_demand, zero_demand_pct, etc.).
+Per-cluster tuning writes cluster-specific overrides to `config/forecasting/cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. During backtest, `resolve_cluster_params()` matches profiles: Phase 1 = exact `cluster_name` match, Phase 2 = statistical criteria fallback (mean_demand, cv_demand, zero_demand_pct, etc.).
 
 **Error Recovery:**
 - Optuna studies are resumable: `data/tuning/optuna_<model>.db` (SQLite). Re-running continues from where it stopped.
@@ -753,12 +753,12 @@ Per-cluster tuning writes cluster-specific overrides to `config/cluster_tuning_p
 **Prerequisites:** Backtest predictions loaded for all competing models.
 
 **Config files:**
-- `config/forecast_pipeline_config.yaml` -- `champion` section:
+- `config/forecasting/forecast_pipeline_config.yaml` -- `champion` section:
   - `strategy`: rolling -- **When to change:** Try `ensemble_top3_inverse` or `meta_learner_rf` if single-model selection leaves accuracy on the table vs. oracle ceiling
   - `strategy_params.window_months`: 6
   - `fallback_model_id`: seasonal_naive -- **Why:** Safe baseline for DFUs with insufficient backtest data
   - `metric`: wape, `lag`: execution
-- `config/champion_experiment_templates.yaml` -- **36 strategy templates** organized by category:
+- `config/forecasting/champion_experiment_templates.yaml` -- **36 strategy templates** organized by category:
   - Core: expanding, rolling_6m, rolling_3m, decay_090/095
   - Ensemble: ensemble_top3_inverse, ensemble_top2_equal, adaptive_ensemble, ensemble_rolling_6m, cascade_ensemble, diverse_ensemble
   - Learning: meta_learner_rf, learned_blend_ridge, ridge_blend, shrinkage_blend
@@ -843,7 +843,7 @@ Compare champion accuracy to ceiling (oracle): gap_bps should be <100 bps.
 **Prerequisites:** Champion selection complete. Trained model artifacts exist in `data/models/`.
 
 **Config files:**
-- `config/forecast_pipeline_config.yaml` -- `production_forecast` section:
+- `config/forecasting/forecast_pipeline_config.yaml` -- `production_forecast` section:
   - `horizon_months`: 24 -- **When to change:** Reduce to 12 if only short-term planning needed; increase to 36 for long-range S&OP
   - `min_history_months`: 12 -- **Why:** DFUs below this threshold use cold-start model instead of champion
   - `cold_start_model_id`: rolling_mean -- **Why:** Simple, robust baseline for DFUs without enough history for ML models
@@ -943,7 +943,7 @@ FROM fact_production_forecast WHERE plan_version = '2026-04' GROUP BY 1 ORDER BY
 
 **Tuning promotion:**
 1. Experiment completes -> user clicks "Promote" in `EnhancedPromoteModal`
-2. API writes params to `config/forecast_pipeline_config.yaml`
+2. API writes params to `config/forecasting/forecast_pipeline_config.yaml`
 3. Downstream: re-run backtest for that algorithm, reload, re-run champion
 
 **Champion promotion (two stages):**
@@ -998,13 +998,13 @@ make fresh-champion # Full ML pipeline
 
 **Tuning rollback:**
 1. Query `tuning_promotion_log` for previous parameters
-2. Manually edit `config/forecast_pipeline_config.yaml` to restore old params
+2. Manually edit `config/forecasting/forecast_pipeline_config.yaml` to restore old params
 3. Re-run backtest for affected model: `make backtest-lgbm && make backtest-load-lgbm`
 4. Re-run champion selection: `make champion-select`
 
 **Champion rollback:**
 1. Query `champion_promotion_log` for previous strategy
-2. Restore strategy in `config/forecast_pipeline_config.yaml` champion section
+2. Restore strategy in `config/forecasting/forecast_pipeline_config.yaml` champion section
 3. Re-run: `make champion-select`
 
 **Clustering rollback:**
@@ -1013,7 +1013,7 @@ make fresh-champion # Full ML pipeline
 
 ### 4.4 Adding a New Algorithm
 
-1. Register the algorithm in `config/forecast_pipeline_config.yaml` under `algorithms`
+1. Register the algorithm in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms`
 2. Set lifecycle flags: `enabled`, `tune`, `backtest`, `compete`, `forecast`, `expert`
 3. If tree model: add `params` section and entry in `config/algorithm_config.yaml`
 4. Create backtest script or add model to existing registry (`common/ml/model_registry.py`)
@@ -1336,7 +1336,7 @@ Located in the Model Tuning Tab. Provides a YAML config editor for:
 
 | Category | Path |
 |---|---|
-| Master pipeline config | `config/forecast_pipeline_config.yaml` |
+| Master pipeline config | `config/forecasting/forecast_pipeline_config.yaml` |
 | Production forecast script | `scripts/generate_production_forecasts.py` |
 | Champion selection script | `scripts/run_champion_selection.py` |
 | Tree model backtest | `scripts/run_backtest.py` |

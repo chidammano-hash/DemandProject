@@ -9,7 +9,7 @@ Usage:
     uv run python scripts/compute_blended_forecast.py --item-no 100320 --loc 1401-BULK
     uv run python scripts/compute_blended_forecast.py --dry-run
 
-Config: config/forecast_domain_config.yaml (quantile_forecast section)
+Config: config/forecasting/forecast_domain_config.yaml (quantile_forecast section)
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config
+from common.core.utils import load_config as _load_config
 
 SENSING_HORIZON_WEEKS = 4
 OUTLIER_THRESHOLD = 3.0

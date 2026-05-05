@@ -199,7 +199,7 @@ When `shap_select: true`, SHAP runs independently per cluster via `compute_timef
 
 ### Step 7: Per-Cluster Tuning Profiles
 
-Each cluster can receive hyperparameter overrides from `config/cluster_tuning_profiles.yaml`:
+Each cluster can receive hyperparameter overrides from `config/forecasting/cluster_tuning_profiles.yaml`:
 
 1. **Phase 1:** Exact match by `cluster_name` in `match_criteria` (e.g., `cluster_name: high_volume_periodic`)
 2. **Phase 2:** Statistical criteria fallback (mean_demand, cv_demand, zero_demand_pct, seasonal_amplitude, n_rows)
@@ -313,7 +313,7 @@ All models use `compute_early_stop_patience(max_iterations, pct=0.03)`:
 
 ## Configuration
 
-Backtest behavior is controlled by `config/forecast_pipeline_config.yaml`. See [Algorithm Config](./06-algorithm-config.md) for details.
+Backtest behavior is controlled by `config/forecasting/forecast_pipeline_config.yaml`. See [Algorithm Config](./06-algorithm-config.md) for details.
 
 Key backtest-level settings:
 - `early_stop_pct: 0.05` — early stopping patience as percentage of max iterations (10% for sparse clusters)
@@ -325,7 +325,7 @@ Key backtest-level settings:
 
 ## Backtest Model Coverage
 
-The backtest framework supports the full algorithm portfolio defined in `config/forecast_pipeline_config.yaml`:
+The backtest framework supports the full algorithm portfolio defined in `config/forecasting/forecast_pipeline_config.yaml`:
 
 | Category | Models | Make Target |
 |----------|--------|-------------|

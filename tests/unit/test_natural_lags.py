@@ -10,7 +10,7 @@ Verifies that:
 import pandas as pd
 import pytest
 
-from common.backtest_framework import assign_natural_lags, generate_timeframes
+from common.ml.backtest_framework import assign_natural_lags, generate_timeframes
 
 
 def _make_predictions(

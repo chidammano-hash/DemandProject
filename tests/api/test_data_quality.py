@@ -165,8 +165,8 @@ async def test_dq_run_200():
         {"check_name": "freshness_sales", "status": "pass"}
     ]
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.data_quality.DQEngine", return_value=mock_engine, create=True), \
-         patch.dict("sys.modules", {"common.dq_engine": MagicMock(DQEngine=lambda: mock_engine)}):
+         patch("api.routers.platform.data_quality.DQEngine", return_value=mock_engine, create=True), \
+         patch.dict("sys.modules", {"common.engines.dq_engine": MagicMock(DQEngine=lambda: mock_engine)}):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -186,7 +186,7 @@ async def test_dq_run_with_domain():
     mock_engine = MagicMock()
     mock_engine.run_all_checks.return_value = []
     with patch("api.core._get_pool", return_value=pool), \
-         patch.dict("sys.modules", {"common.dq_engine": MagicMock(DQEngine=lambda: mock_engine)}):
+         patch.dict("sys.modules", {"common.engines.dq_engine": MagicMock(DQEngine=lambda: mock_engine)}):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

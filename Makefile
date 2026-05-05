@@ -232,7 +232,7 @@ help:
 	@echo "  expsys-backtest        - Expert System Backtest: full population, segment-assigned algo, loads to DB (~4-5h)"
 	@echo "  expsys-backtest-dry    - ExpSys accuracy only, no DB load (--skip-load)"
 	@echo "  expsys-backtest-replace - ExpSys: delete existing rows then reload"
-	@echo "  NOTE: recursive, SHAP, and tuning are configured via config/forecast_pipeline_config.yaml"
+	@echo "  NOTE: recursive, SHAP, and tuning are configured via config/forecasting/forecast_pipeline_config.yaml"
 	@echo "  features-compute     - compute all SKU features (volume, trend, seasonality, variability, lifecycle)"
 	@echo "  lt-profile-schema    - create dim_item_lead_time_profile table (one-time)"
 	@echo "  lt-profile-compute   - compute LT variability profiles per item-location"
@@ -562,7 +562,7 @@ policy-schema:
 	$(UV) python -c "import psycopg, os; conn = psycopg.connect(host=os.getenv('POSTGRES_HOST','localhost'), port=os.getenv('POSTGRES_PORT','5440'), dbname=os.getenv('POSTGRES_DB','demand_mvp'), user=os.getenv('POSTGRES_USER','demand'), password=os.getenv('POSTGRES_PASSWORD','demand')); conn.autocommit=True; conn.execute(open('sql/025_create_replenishment_policy.sql').read()); conn.close(); print('Replenishment policy DDL applied')"
 
 policy-assign:
-	$(UV) python scripts/inventory/assign_replenishment_policies.py --config config/replenishment_policy_config.yaml
+	$(UV) python scripts/inventory/assign_replenishment_policies.py --config config/inventory/replenishment_policy_config.yaml
 
 policy-all: policy-schema policy-assign
 
@@ -630,7 +630,7 @@ ai-insights-all: ai-insights-schema ai-insights-scan
 
 # ---------------------------------------------------------------------------
 # Backtesting (LGBM / CatBoost / XGBoost / Chronos — per-cluster only)
-# Options (recursive, SHAP, tuning, params) are set in config/forecast_pipeline_config.yaml
+# Options (recursive, SHAP, tuning, params) are set in config/forecasting/forecast_pipeline_config.yaml
 # ---------------------------------------------------------------------------
 backtest-lgbm:
 	$(UV) python scripts/ml/run_backtest.py --parallel --workers 8 $(ARGS)

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from common.forecast_ci import (
+from common.ml.forecast_ci import (
     _load_dfu_sigma_aggregated,
     build_sigma_lookup,
     compute_ci_bounds,

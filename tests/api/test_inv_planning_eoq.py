@@ -202,7 +202,7 @@ async def test_eoq_sensitivity_200():
     }
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.inv_planning_eoq.load_config", return_value=mock_cfg):
+         patch("api.routers.inventory.inv_planning_eoq.load_config", return_value=mock_cfg):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -234,7 +234,7 @@ async def test_eoq_sensitivity_response_structure():
     }
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.inv_planning_eoq.load_config", return_value=mock_cfg):
+         patch("api.routers.inventory.inv_planning_eoq.load_config", return_value=mock_cfg):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

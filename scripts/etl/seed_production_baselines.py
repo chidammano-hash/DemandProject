@@ -30,8 +30,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
-from common.utils import load_config, load_forecast_pipeline_config
+from common.core.db import get_db_params
+from common.core.utils import load_config, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 
@@ -314,7 +314,7 @@ def seed_tuning_baseline(model_id: str, conn: psycopg.Connection) -> int | None:
     acc = meta.get("accuracy_at_execution_lag", {})
 
     # Read production params from forecast_pipeline_config.yaml
-    from common.utils import get_algorithm_params
+    from common.core.utils import get_algorithm_params
     pcfg = load_forecast_pipeline_config()
     algo_entry = pcfg.get("algorithms", {}).get(model_id, {})
     algo_section = algo_entry.get("params", algo_entry)

@@ -371,8 +371,8 @@ No manual threshold or cutover needed.
 
 ### Phase 2: Model Registration & Backtest (1 week)
 
-- [ ] Add 3 new model entries to `config/forecast_pipeline_config.yaml`
-- [ ] Add hyperparameter blocks to `config/forecast_pipeline_config.yaml`
+- [ ] Add 3 new model entries to `config/forecasting/forecast_pipeline_config.yaml`
+- [ ] Add hyperparameter blocks to `config/forecasting/forecast_pipeline_config.yaml`
 - [ ] Add SHAP-protected customer features to constants
 - [ ] Modify `model_registry.py` `_is_customer_enriched()` check
   - If model_id contains `_cust_enriched`, include customer feature columns

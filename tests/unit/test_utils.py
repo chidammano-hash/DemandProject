@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from common.core.utils import _deep_merge
-from common.utils import _ts, load_config, reset_config
+from common.core.utils import _ts, load_config, reset_config
 
 # ---------------------------------------------------------------------------
 # _ts() tests
@@ -50,26 +50,26 @@ class TestLoadConfig:
     def test_returns_dict(self, tmp_path):
         cfg_path = tmp_path / "test_config.yaml"
         cfg_path.write_text(yaml.dump({"key": "value"}))
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             result = load_config("test_config.yaml")
         assert result == {"key": "value"}
 
     def test_missing_file_returns_empty_dict(self, tmp_path):
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             result = load_config("nonexistent.yaml")
         assert result == {}
 
     def test_empty_file_returns_empty_dict(self, tmp_path):
         cfg_path = tmp_path / "empty.yaml"
         cfg_path.write_text("")
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             result = load_config("empty.yaml")
         assert result == {}
 
     def test_caches_result(self, tmp_path):
         cfg_path = tmp_path / "cached.yaml"
         cfg_path.write_text(yaml.dump({"v": 1}))
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             r1 = load_config("cached.yaml")
             # Overwrite file — cached result should NOT change
             cfg_path.write_text(yaml.dump({"v": 2}))
@@ -79,7 +79,7 @@ class TestLoadConfig:
     def test_reset_clears_specific(self, tmp_path):
         cfg_path = tmp_path / "resettable.yaml"
         cfg_path.write_text(yaml.dump({"v": 1}))
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             r1 = load_config("resettable.yaml")
             assert r1 == {"v": 1}
 
@@ -91,7 +91,7 @@ class TestLoadConfig:
     def test_reset_all(self, tmp_path):
         cfg_path = tmp_path / "all_reset.yaml"
         cfg_path.write_text(yaml.dump({"v": 1}))
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             load_config("all_reset.yaml")
             reset_config()  # reset all
             cfg_path.write_text(yaml.dump({"v": 42}))
@@ -108,7 +108,7 @@ class TestLoadConfig:
 
         def worker():
             try:
-                with patch("common.utils._CONFIG_DIR", tmp_path):
+                with patch("common.core.utils._CONFIG_DIR", tmp_path):
                     r = load_config("threaded.yaml")
                     results.append(r)
             except Exception as e:
@@ -126,7 +126,7 @@ class TestLoadConfig:
     def test_different_configs_independent(self, tmp_path):
         (tmp_path / "a.yaml").write_text(yaml.dump({"name": "a"}))
         (tmp_path / "b.yaml").write_text(yaml.dump({"name": "b"}))
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             ra = load_config("a.yaml")
             rb = load_config("b.yaml")
         assert ra == {"name": "a"}
@@ -142,7 +142,7 @@ class TestLoadConfig:
             "_includes": ["shared"],
             "my_setting": 42,
         }))
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             result = load_config("consumer.yaml")
         # Shared values are merged in
         assert result["service_levels"] == {"A": 0.98, "B": 0.95}
@@ -163,7 +163,7 @@ class TestLoadConfig:
             "defaults": {"cost": 100},
             "own_val": "mine",
         }))
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             result = load_config("override.yaml")
         # Deep-merged: cost overridden, moq inherited
         assert result["defaults"]["cost"] == 100
@@ -179,7 +179,7 @@ class TestLoadConfig:
             "_includes": ["a", "b"],
             "z": 99,
         }))
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             result = load_config("multi.yaml")
         assert result["x"] == 1      # from a
         assert result["y"] == 3      # b overrides a
@@ -191,7 +191,7 @@ class TestLoadConfig:
             "_includes": [],
             "val": 7,
         }))
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             result = load_config("noinc.yaml")
         assert result == {"val": 7}
 
@@ -201,7 +201,7 @@ class TestLoadConfig:
             "_includes": ["nonexistent"],
             "val": 5,
         }))
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             result = load_config("missing_inc.yaml")
         assert result == {"val": 5}
 
@@ -216,7 +216,7 @@ class TestLoadConfig:
             "_includes": ["mid"],
             "leaf_val": 3,
         }))
-        with patch("common.utils._CONFIG_DIR", tmp_path):
+        with patch("common.core.utils._CONFIG_DIR", tmp_path):
             result = load_config("leaf.yaml")
         assert result["root_val"] == 1
         assert result["mid_val"] == 2
@@ -251,7 +251,7 @@ class TestLoadConfig:
         name = "validated.yaml"
         _config_validators[name] = _TestModel
         try:
-            with patch("common.utils._CONFIG_DIR", tmp_path):
+            with patch("common.core.utils._CONFIG_DIR", tmp_path):
                 result = load_config(name)
             # Shared value wins over Pydantic default
             assert result["section"]["service_levels"] == {"A": 0.98}
@@ -280,7 +280,7 @@ class TestLoadConfig:
         name = "with_extra.yaml"
         _config_validators[name] = _SmallModel
         try:
-            with patch("common.utils._CONFIG_DIR", tmp_path):
+            with patch("common.core.utils._CONFIG_DIR", tmp_path):
                 result = load_config(name)
             assert result["known"] == 10
             assert result["extra_from_shared"] == "preserved"

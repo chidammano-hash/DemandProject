@@ -21,9 +21,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
-from common.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
-from common.sql_helpers import (
+from common.core.db import get_db_params
+from common.core.domain_specs import DOMAIN_SPECS, DomainSpec, get_spec
+from common.core.sql_helpers import (
     NULL_SQL,
     EXTERNAL_MODEL_ID,
     HASH_CHUNK_SIZE,
@@ -35,7 +35,7 @@ from common.sql_helpers import (
 )
 from common.engines.medallion import file_hash, create_batch, complete_batch, fail_batch
 from common.services.perf_profiler import profiled_section
-from common.planning_date import get_planning_date
+from common.core.planning_date import get_planning_date
 
 logger = logging.getLogger(__name__)
 

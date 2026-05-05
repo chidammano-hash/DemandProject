@@ -20,7 +20,7 @@ from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel, Field
 
 from api.core import get_conn, set_cache
-from common.utils import (
+from common.core.utils import (
     get_algorithm_params,
     get_pipeline_config_path,
     load_forecast_pipeline_config,
@@ -1675,12 +1675,12 @@ def delete_experiment(model: str, run_id: int):
 
 @router.get("/{model}/templates")
 def get_templates(model: str, response: FastAPIResponse):
-    """Load experiment templates from config/tuning_templates.yaml."""
+    """Load experiment templates from config/forecasting/tuning_templates.yaml."""
     _validate_model(model)
     set_cache(response, max_age=300)
 
     try:
-        from common.utils import load_config
+        from common.core.utils import load_config
         tmpl_cfg = load_config("tuning_templates.yaml")
     except (FileNotFoundError, OSError) as exc:
         logger.exception("Failed to load tuning_templates.yaml")
@@ -1707,7 +1707,7 @@ def get_templates(model: str, response: FastAPIResponse):
 def _load_live_params(model: str) -> dict[str, Any]:
     """Load the current production params from forecast_pipeline_config.yaml for a model.
 
-    Uses ``get_algorithm_params()`` from ``common.utils`` and filters to
+    Uses ``get_algorithm_params()`` from ``common.core.utils`` and filters to
     the known hyperparameter keys for the given model.
     """
     try:

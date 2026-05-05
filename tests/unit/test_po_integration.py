@@ -6,7 +6,7 @@ import sys
 import os
 from datetime import date, timedelta
 
-from common.planning_date import get_planning_date
+from common.core.planning_date import get_planning_date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 

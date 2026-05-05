@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (sidebar badge for unread count) |
-| **Key Files** | `common/notification_engine.py`, `api/routers/notifications.py`, `config/notification_config.yaml` |
+| **Key Files** | `common/notification_engine.py`, `api/routers/notifications.py`, `config/platform/notification_config.yaml` |
 
 ---
 
@@ -83,7 +83,7 @@ Unique constraint on `(user_id, event_type)`.
 
 ## Configuration
 
-`config/notification_config.yaml`:
+`config/platform/notification_config.yaml`:
 
 ```yaml
 channels:

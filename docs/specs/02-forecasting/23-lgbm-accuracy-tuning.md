@@ -8,7 +8,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy, Item Analysis |
-| **Key Files** | `config/forecast_pipeline_config.yaml`, `config/cluster_tuning_profiles.yaml`, `common/ml/shap_selector.py`, `common/core/constants.py`, `common/ml/model_registry.py`, `common/ml/backtest_framework.py`, `common/ml/feature_engineering.py`, `common/ml/champion_strategies.py`, `scripts/run_backtest.py`, `scripts/tune_cluster_hyperparams.py` |
+| **Key Files** | `config/forecasting/forecast_pipeline_config.yaml`, `config/forecasting/cluster_tuning_profiles.yaml`, `common/ml/shap_selector.py`, `common/core/constants.py`, `common/ml/model_registry.py`, `common/ml/backtest_framework.py`, `common/ml/feature_engineering.py`, `common/ml/champion_strategies.py`, `scripts/run_backtest.py`, `scripts/tune_cluster_hyperparams.py` |
 
 ---
 
@@ -244,7 +244,7 @@ _PROFILE_PRIORITY = [
 
 #### 2.4.2 Profile Match Criteria and Overrides
 
-Full profile definitions from `config/cluster_tuning_profiles.yaml`:
+Full profile definitions from `config/forecasting/cluster_tuning_profiles.yaml`:
 
 **sparse_intermittent** -- Truly intermittent SKUs
 
@@ -510,7 +510,7 @@ backtest:
 
 ### 5b.1 Overview
 
-A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna independently for each `ml_cluster`, producing cluster-specific overrides written to `config/cluster_tuning_profiles.yaml`.
+A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna independently for each `ml_cluster`, producing cluster-specific overrides written to `config/forecasting/cluster_tuning_profiles.yaml`.
 
 - **Script:** `scripts/tune_cluster_hyperparams.py`
 - **Makefile targets:** `make tune-lgbm-clusters`, `make tune-clusters` (all tree models)
@@ -561,8 +561,8 @@ A dedicated per-cluster Bayesian hyperparameter tuning pipeline that runs Optuna
 
 | File | What Changed |
 |------|-------------|
-| `config/forecast_pipeline_config.yaml` | LGBM params: objective=regression_l1, n_estimators=2000, learning_rate=0.015, num_leaves=63, max_depth=8, min_child_samples=20, colsample_bytree=0.8, feature_fraction_bynode=0.7, path_smooth=1.0, max_bin=255, variance_filter=false, correlation_threshold=0.98, shap_threshold=0.90. Backtest: early_stop_pct=0.05, shap_retrain_threshold=0.50, recursive_noise_pct=0.03, baseline_intermittent=true, baseline_intermittent_window=12, intermittent_threshold=0.7. |
-| `config/cluster_tuning_profiles.yaml` | All 7 profiles (sparse_intermittent, low_volume_volatile, volatile_large_cluster, medium_volume_periodic, high_volume_stable, seasonal_dominant, default) with tightened match criteria and tuned overrides. |
+| `config/forecasting/forecast_pipeline_config.yaml` | LGBM params: objective=regression_l1, n_estimators=2000, learning_rate=0.015, num_leaves=63, max_depth=8, min_child_samples=20, colsample_bytree=0.8, feature_fraction_bynode=0.7, path_smooth=1.0, max_bin=255, variance_filter=false, correlation_threshold=0.98, shap_threshold=0.90. Backtest: early_stop_pct=0.05, shap_retrain_threshold=0.50, recursive_noise_pct=0.03, baseline_intermittent=true, baseline_intermittent_window=12, intermittent_threshold=0.7. |
+| `config/forecasting/cluster_tuning_profiles.yaml` | All 7 profiles (sparse_intermittent, low_volume_volatile, volatile_large_cluster, medium_volume_periodic, high_volume_stable, seasonal_dominant, default) with tightened match criteria and tuned overrides. |
 | `common/core/constants.py` | `PROTECTED_FEATURES` set expanded with mean_demand, qty_lag_1-3, rolling_mean_3m/6m/12m, croston features, customer enrichment features. |
 | `common/ml/feature_engineering.py` | `mask_future_sales`: qty=NaN instead of qty=0. `update_grid_incremental`: calls `_recompute_derived_features()` to recompute all 7 derived features. `_recompute_derived_features`: added lag_ratio_yoy, lag_ratio_mom, lag_ratio_3v12, n_zero_last_6m. |
 | `common/ml/backtest_framework.py` | dropna relaxed to subset=["qty_lag_1"]. `_PROFILE_PRIORITY` ordering. `_log_timeframe_accuracy()` for per-cluster accuracy reporting. `_compute_cluster_wape()` for SHAP retrain safety. Per-cluster feature selection plumbing (`per_cluster_feature_cols` dict). `_predict_single_month` accepts per_cluster_feature_cols and `_sku_cks` passthrough for baseline models needing DFU-level mapping during recursive prediction. |

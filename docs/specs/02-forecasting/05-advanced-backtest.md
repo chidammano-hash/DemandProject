@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy (SHAP panel) |
-| **Key Files** | `scripts/tune_hyperparams.py`, `common/tuning.py`, `common/shap_selector.py`, `common/feature_engineering.py`, `api/routers/shap.py`, `config/hyperparameter_tuning.yaml` |
+| **Key Files** | `scripts/tune_hyperparams.py`, `common/tuning.py`, `common/shap_selector.py`, `common/feature_engineering.py`, `api/routers/shap.py`, `config/forecasting/hyperparameter_tuning.yaml` |
 
 ---
 
@@ -127,7 +127,7 @@ No API, frontend, or database changes. The `"recursive": true` flag in `backtest
 | `make tune-xgboost` | Tune XGBoost (~25-50 min) |
 | `make tune-all` | Tune all three sequentially |
 
-All three capabilities are activated via `config/forecast_pipeline_config.yaml`:
+All three capabilities are activated via `config/forecasting/forecast_pipeline_config.yaml`:
 
 ```yaml
 lgbm:
@@ -139,11 +139,11 @@ lgbm:
 
 ## Configuration
 
-### Tuning Config: `config/hyperparameter_tuning.yaml`
+### Tuning Config: `config/forecasting/hyperparameter_tuning.yaml`
 
 Controls search spaces, CV settings, and trial budgets for all three algorithms.
 
-### Algorithm Config: `config/forecast_pipeline_config.yaml`
+### Algorithm Config: `config/forecasting/forecast_pipeline_config.yaml`
 
 | Key | Default | Description |
 |-----|---------|-------------|

@@ -23,7 +23,7 @@ from api.auth import require_api_key
 from api.core import get_conn
 from common.ai.decision_ledger import DecisionRecord, append_decision
 from common.ai.lineage import emit_event as emit_lineage_event
-from common.utils import get_algorithm_roster, load_forecast_pipeline_config
+from common.core.utils import get_algorithm_roster, load_forecast_pipeline_config
 
 logger = logging.getLogger(__name__)
 

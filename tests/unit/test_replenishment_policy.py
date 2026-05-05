@@ -14,7 +14,7 @@ from scripts.inventory.assign_replenishment_policies import (
 
 
 CONFIG_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "config", "replenishment_policy_config.yaml"
+    os.path.dirname(__file__), "..", "..", "config", "inventory", "replenishment_policy_config.yaml"
 )
 
 

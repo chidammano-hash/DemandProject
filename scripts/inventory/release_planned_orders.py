@@ -35,7 +35,7 @@ Usage:
         --action send_erp \\
         --integration-id 1
 
-Config: config/procurement_config.yaml
+Config: config/etl/procurement_config.yaml
 """
 
 import argparse
@@ -50,11 +50,11 @@ import psycopg
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from common.db import get_db_params
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
 
-_cfg = yaml.safe_load(open("config/procurement_config.yaml"))
+_cfg = yaml.safe_load(open("config/etl/procurement_config.yaml"))
 _LT_FALLBACK = _cfg["procurement"]["lead_time_fallback_days"]
 
 

@@ -61,7 +61,7 @@ async def create_annotation(
     # Trigger notifications for @mentions
     if req.mentions:
         try:
-            from common.notification_engine import NotificationEngine
+            from common.services.notification_engine import NotificationEngine
             engine = NotificationEngine()
             for mention in req.mentions:
                 engine.send(

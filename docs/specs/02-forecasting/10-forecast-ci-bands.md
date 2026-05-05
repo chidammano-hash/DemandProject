@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inv. Planning (Demand Forecast panel) |
-| **Key Files** | `common/forecast_ci.py`, `config/forecast_pipeline_config.yaml` (production_forecast.confidence_interval section), `scripts/generate_production_forecasts.py`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
+| **Key Files** | `common/forecast_ci.py`, `config/forecasting/forecast_pipeline_config.yaml` (production_forecast.confidence_interval section), `scripts/generate_production_forecasts.py`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
 
 ---
 
@@ -64,7 +64,7 @@ No dedicated pipeline. CI computation runs automatically during `make forecast-g
 
 ## Configuration
 
-In `config/forecast_pipeline_config.yaml` under `production_forecast`:
+In `config/forecasting/forecast_pipeline_config.yaml` under `production_forecast`:
 
 ```yaml
 confidence_interval:

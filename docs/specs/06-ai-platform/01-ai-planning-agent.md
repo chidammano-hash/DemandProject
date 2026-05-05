@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | AIPlannerTab |
-| **Key Files** | `AIPlannerTab.tsx`, `api/routers/ai_planner.py`, `common/ai_planner.py`, `scripts/generate_ai_insights.py`, `config/ai_planner_config.yaml`, `sql/036_create_ai_insights.sql` |
+| **Key Files** | `AIPlannerTab.tsx`, `api/routers/ai_planner.py`, `common/ai_planner.py`, `scripts/generate_ai_insights.py`, `config/ai/ai_planner_config.yaml`, `sql/036_create_ai_insights.sql` |
 
 ---
 
@@ -109,7 +109,7 @@ Portfolio scan runs in a background thread via `_executor.submit()`. The fronten
 
 ## Configuration
 
-File: `config/ai_planner_config.yaml`
+File: `config/ai/ai_planner_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|

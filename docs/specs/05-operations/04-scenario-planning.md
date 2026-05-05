@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (ScenarioPlanningPanel) |
-| **Key Files** | `inv-planning/ScenarioPlanningPanel.tsx`, `api/routers/supply_scenarios.py`, `scripts/run_supply_chain_scenario.py`, `config/supply_scenario_config.yaml`, `sql/059_create_supply_scenarios.sql` |
+| **Key Files** | `inv-planning/ScenarioPlanningPanel.tsx`, `api/routers/supply_scenarios.py`, `scripts/run_supply_chain_scenario.py`, `config/operations/supply_scenario_config.yaml`, `sql/059_create_supply_scenarios.sql` |
 
 ---
 
@@ -95,7 +95,7 @@ Simulation runs asynchronously via background thread. Poll status via the detail
 
 ## Configuration
 
-File: `config/supply_scenario_config.yaml`
+File: `config/operations/supply_scenario_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|

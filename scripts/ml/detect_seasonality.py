@@ -51,11 +51,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
+from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
 
 
-def load_config(config_path: str = "config/forecast_domain_config.yaml") -> dict:
+def load_config(config_path: str = "config/forecasting/forecast_domain_config.yaml") -> dict:
     """Load seasonality configuration."""
     path = ROOT / config_path
     with open(path) as f:

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-from common.job_state import (
+from common.services.job_state import (
     _run_subprocess,
     _store_pid,
     _clear_pid,
@@ -41,7 +41,7 @@ def _make_mock_conn():
 class TestStorePid:
     def test_stores_pid_in_db(self):
         mock_conn = _make_mock_conn()
-        with patch("common.job_state._get_conn", return_value=mock_conn):
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
             _store_pid("job_123", 42)
         mock_conn.execute.assert_called_once()
         args = mock_conn.execute.call_args
@@ -49,21 +49,21 @@ class TestStorePid:
         assert args[0][1] == (42, "job_123")
 
     def test_no_op_when_no_job_id(self):
-        with patch("common.job_state._get_conn") as mock_get:
+        with patch("common.services.job_state._get_conn") as mock_get:
             _store_pid(None, 42)
         mock_get.assert_not_called()
 
     def test_swallows_db_errors(self):
         mock_conn = _make_mock_conn()
         mock_conn.execute.side_effect = Exception("DB down")
-        with patch("common.job_state._get_conn", return_value=mock_conn):
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
             _store_pid("job_123", 42)  # should not raise
 
 
 class TestClearPid:
     def test_clears_pid_in_db(self):
         mock_conn = _make_mock_conn()
-        with patch("common.job_state._get_conn", return_value=mock_conn):
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
             _clear_pid("job_123")
         mock_conn.execute.assert_called_once()
         args = mock_conn.execute.call_args
@@ -73,12 +73,12 @@ class TestClearPid:
 class TestAppendLog:
     def test_appends_text_to_db(self):
         mock_conn = _make_mock_conn()
-        with patch("common.job_state._get_conn", return_value=mock_conn):
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
             _append_log("job_123", "line1\nline2\n")
         mock_conn.execute.assert_called_once()
 
     def test_no_op_when_empty_text(self):
-        with patch("common.job_state._get_conn") as mock_get:
+        with patch("common.services.job_state._get_conn") as mock_get:
             _append_log("job_123", "")
         mock_get.assert_not_called()
 
@@ -87,14 +87,14 @@ class TestGetJobLog:
     def test_returns_log_text(self):
         mock_conn = _make_mock_conn()
         mock_conn.execute.return_value.fetchone.return_value = ("hello world",)
-        with patch("common.job_state._get_conn", return_value=mock_conn):
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
             result = get_job_log("job_123")
         assert result == "hello world"
 
     def test_returns_empty_string_on_not_found(self):
         mock_conn = _make_mock_conn()
         mock_conn.execute.return_value.fetchone.return_value = None
-        with patch("common.job_state._get_conn", return_value=mock_conn):
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
             result = get_job_log("missing")
         assert result == ""
 
@@ -103,14 +103,14 @@ class TestGetJobPid:
     def test_returns_pid(self):
         mock_conn = _make_mock_conn()
         mock_conn.execute.return_value.fetchone.return_value = (1234,)
-        with patch("common.job_state._get_conn", return_value=mock_conn):
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
             result = get_job_pid("job_123")
         assert result == 1234
 
     def test_returns_none_when_null(self):
         mock_conn = _make_mock_conn()
         mock_conn.execute.return_value.fetchone.return_value = (None,)
-        with patch("common.job_state._get_conn", return_value=mock_conn):
+        with patch("common.services.job_state._get_conn", return_value=mock_conn):
             result = get_job_pid("job_123")
         assert result is None
 
@@ -128,10 +128,10 @@ class TestRunSubprocess:
         mock_proc.wait.return_value = None
         mock_proc.returncode = 0
 
-        with patch("common.job_state.subprocess.Popen", return_value=mock_proc), \
-             patch("common.job_state._store_pid") as m_store, \
-             patch("common.job_state._clear_pid") as m_clear, \
-             patch("common.job_state._append_log") as m_log:
+        with patch("common.services.job_state.subprocess.Popen", return_value=mock_proc), \
+             patch("common.services.job_state._store_pid") as m_store, \
+             patch("common.services.job_state._clear_pid") as m_clear, \
+             patch("common.services.job_state._append_log") as m_log:
             result = _run_subprocess(["echo", "hi"], job_id="j1")
 
         assert "line1" in result
@@ -147,10 +147,10 @@ class TestRunSubprocess:
         mock_proc.wait.return_value = None
         mock_proc.returncode = 0
 
-        with patch("common.job_state.subprocess.Popen", return_value=mock_proc) as m_popen, \
-             patch("common.job_state._store_pid"), \
-             patch("common.job_state._clear_pid"), \
-             patch("common.job_state._append_log"):
+        with patch("common.services.job_state.subprocess.Popen", return_value=mock_proc) as m_popen, \
+             patch("common.services.job_state._store_pid"), \
+             patch("common.services.job_state._clear_pid"), \
+             patch("common.services.job_state._append_log"):
             _run_subprocess(["test"])
 
         _, kwargs = m_popen.call_args
@@ -164,10 +164,10 @@ class TestRunSubprocess:
         mock_proc.wait.return_value = None
         mock_proc.returncode = 1
 
-        with patch("common.job_state.subprocess.Popen", return_value=mock_proc), \
-             patch("common.job_state._store_pid"), \
-             patch("common.job_state._clear_pid"), \
-             patch("common.job_state._append_log"):
+        with patch("common.services.job_state.subprocess.Popen", return_value=mock_proc), \
+             patch("common.services.job_state._store_pid"), \
+             patch("common.services.job_state._clear_pid"), \
+             patch("common.services.job_state._append_log"):
             with pytest.raises(RuntimeError, match="Command failed"):
                 _run_subprocess(["false"], job_id="j1")
 
@@ -183,12 +183,12 @@ class TestRunSubprocess:
         mock_proc.wait.return_value = None
         mock_proc.returncode = -15  # SIGTERM
 
-        with patch("common.job_state.subprocess.Popen", return_value=mock_proc), \
-             patch("common.job_state._store_pid"), \
-             patch("common.job_state._clear_pid"), \
-             patch("common.job_state._append_log"), \
-             patch("common.job_state.os.killpg") as m_killpg, \
-             patch("common.job_state.os.getpgid", return_value=5555):
+        with patch("common.services.job_state.subprocess.Popen", return_value=mock_proc), \
+             patch("common.services.job_state._store_pid"), \
+             patch("common.services.job_state._clear_pid"), \
+             patch("common.services.job_state._append_log"), \
+             patch("common.services.job_state.os.killpg") as m_killpg, \
+             patch("common.services.job_state.os.getpgid", return_value=5555):
             with pytest.raises(RuntimeError, match="cancelled"):
                 _run_subprocess(["sleep", "100"], cancel_event=cancel, job_id="j1")
 
@@ -202,10 +202,10 @@ class TestRunSubprocess:
         mock_proc.wait.return_value = None
         mock_proc.returncode = 1
 
-        with patch("common.job_state.subprocess.Popen", return_value=mock_proc), \
-             patch("common.job_state._store_pid"), \
-             patch("common.job_state._clear_pid") as m_clear, \
-             patch("common.job_state._append_log"):
+        with patch("common.services.job_state.subprocess.Popen", return_value=mock_proc), \
+             patch("common.services.job_state._store_pid"), \
+             patch("common.services.job_state._clear_pid") as m_clear, \
+             patch("common.services.job_state._append_log"):
             with pytest.raises(RuntimeError):
                 _run_subprocess(["false"], job_id="j1")
 
@@ -220,11 +220,11 @@ class TestRunSubprocess:
         mock_proc.wait.return_value = None
         mock_proc.returncode = 0
 
-        with patch("common.job_state.subprocess.Popen", return_value=mock_proc), \
-             patch("common.job_state._store_pid"), \
-             patch("common.job_state._clear_pid"), \
-             patch("common.job_state._append_log") as m_log, \
-             patch("common.job_state.time.time", side_effect=[0.0] + [0.0] * 100):
+        with patch("common.services.job_state.subprocess.Popen", return_value=mock_proc), \
+             patch("common.services.job_state._store_pid"), \
+             patch("common.services.job_state._clear_pid"), \
+             patch("common.services.job_state._append_log") as m_log, \
+             patch("common.services.job_state.time.time", side_effect=[0.0] + [0.0] * 100):
             _run_subprocess(["test"], job_id="j1")
 
         # Should have flushed at least once (20 line threshold)
@@ -239,10 +239,10 @@ class TestRunSubprocess:
         mock_proc.returncode = 0
 
         cb = MagicMock()
-        with patch("common.job_state.subprocess.Popen", return_value=mock_proc), \
-             patch("common.job_state._store_pid"), \
-             patch("common.job_state._clear_pid"), \
-             patch("common.job_state._append_log"):
+        with patch("common.services.job_state.subprocess.Popen", return_value=mock_proc), \
+             patch("common.services.job_state._store_pid"), \
+             patch("common.services.job_state._clear_pid"), \
+             patch("common.services.job_state._append_log"):
             _run_subprocess(["test"], progress_cb=cb, step_msg="Starting")
 
         cb.assert_any_call(msg="Starting")

@@ -17,7 +17,7 @@ from typing import Any
 
 import pandas as pd
 
-from common.db import get_db_params
+from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
 
 logger = logging.getLogger(__name__)

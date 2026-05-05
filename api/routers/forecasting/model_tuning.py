@@ -58,7 +58,7 @@ _MODEL_CONFIGS: dict[str, dict[str, Any]] = {
     },
 }
 
-_PIPELINE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "forecast_pipeline_config.yaml"
+_PIPELINE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 
 # Config keys to compare (non-hyperparameter settings from metadata)
 _CONFIG_KEYS = [
@@ -649,7 +649,7 @@ def _promote_run_impl(model_type: str, run_id: int) -> dict[str, Any]:
         with open(_PIPELINE_CONFIG_PATH, "w") as f:
             yaml.dump(algo_cfg, f, default_flow_style=False, sort_keys=False)
 
-        from common.utils import reset_config
+        from common.core.utils import reset_config
         reset_config("forecast_pipeline_config.yaml")
     except (OSError, KeyError, yaml.YAMLError) as exc:
         logger.exception("Failed to write forecast_pipeline_config.yaml during %s promote", model_type)

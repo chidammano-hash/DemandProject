@@ -3,7 +3,7 @@
 from unittest.mock import patch, MagicMock
 import pytest
 
-from common.mlflow_utils import log_backtest_run
+from common.ml.mlflow_utils import log_backtest_run
 
 
 class TestLogBacktestRun:

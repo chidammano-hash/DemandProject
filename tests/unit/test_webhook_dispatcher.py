@@ -1,7 +1,7 @@
 """Unit tests for common/webhook_dispatcher.py (Spec 08-10)."""
 from unittest.mock import patch, MagicMock
 
-from common.webhook_dispatcher import _sign_payload, dispatch_webhook
+from common.services.webhook_dispatcher import _sign_payload, dispatch_webhook
 
 
 class TestSignPayload:
@@ -22,7 +22,7 @@ class TestSignPayload:
 
 
 class TestDispatchWebhook:
-    @patch("common.webhook_dispatcher.urllib.request.urlopen")
+    @patch("common.services.webhook_dispatcher.urllib.request.urlopen")
     def test_success(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.status = 200
@@ -40,7 +40,7 @@ class TestDispatchWebhook:
         assert result["status_code"] == 200
         assert result["attempt"] == 1
 
-    @patch("common.webhook_dispatcher.urllib.request.urlopen")
+    @patch("common.services.webhook_dispatcher.urllib.request.urlopen")
     def test_failure_after_retries(self, mock_urlopen):
         mock_urlopen.side_effect = Exception("Connection refused")
 

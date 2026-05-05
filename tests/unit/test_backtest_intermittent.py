@@ -205,7 +205,7 @@ class TestYAMLConfigIntegration:
 
     def test_config_keys_exist(self) -> None:
         """The YAML config must contain the Tweedie keys."""
-        from common.utils import load_config
+        from common.core.utils import load_config
 
         cfg = load_config("forecast_pipeline_config.yaml")
         backtest = cfg["backtest"]
@@ -214,7 +214,7 @@ class TestYAMLConfigIntegration:
         assert "lumpy_threshold" in backtest
 
     def test_config_default_values(self) -> None:
-        from common.utils import load_config
+        from common.core.utils import load_config
 
         cfg = load_config("forecast_pipeline_config.yaml")
         backtest = cfg["backtest"]
@@ -224,7 +224,7 @@ class TestYAMLConfigIntegration:
 
     def test_baseline_intermittent_explicit(self) -> None:
         """Gen-4 roadmap 1.2: baseline_intermittent must be explicit in config."""
-        from common.utils import load_config
+        from common.core.utils import load_config
 
         cfg = load_config("forecast_pipeline_config.yaml")
         backtest = cfg["backtest"]
@@ -235,7 +235,7 @@ class TestYAMLConfigIntegration:
 
     def test_embargo_months_non_zero(self) -> None:
         """Gen-4 roadmap 1.3: embargo_months must be non-zero to prevent leakage."""
-        from common.utils import load_config
+        from common.core.utils import load_config
 
         cfg = load_config("forecast_pipeline_config.yaml")
         backtest = cfg["backtest"]

@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (backend only) |
-| **Key Files** | `scripts/run_expert_system_backtest.py`, `config/expert_system_backtest.yaml` |
+| **Key Files** | `scripts/run_expert_system_backtest.py`, `config/forecasting/expert_system_backtest.yaml` |
 
 ---
 
@@ -23,7 +23,7 @@ Produces a canonical production forecast using a **segment-assigned algorithm** 
 
 ## 2. Algorithm Assignment
 
-Default assignment (configurable via `config/expert_system_backtest.yaml`):
+Default assignment (configurable via `config/forecasting/expert_system_backtest.yaml`):
 
 | Archetype | Primary | Fallback chain |
 |---|---|---|
@@ -128,7 +128,7 @@ On restart, completed timeframes are loaded from disk and skipped. This allows r
 ## 8. Configuration Reference
 
 ```yaml
-# config/expert_system_backtest.yaml
+# config/forecasting/expert_system_backtest.yaml
 experiment:
   n_timeframes: 10
   forecast_horizon: 6      # months predicted per timeframe

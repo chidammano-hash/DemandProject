@@ -75,9 +75,9 @@ def _make_app_client(pool, tmp_path, model_id="lgbm_cluster", shap_override=None
 
     return (
         patch("api.core._get_pool", return_value=pool),
-        patch("api.routers.shap._MODELS_DIR", tmp_path),
+        patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path),
         patch("pickle.load", return_value=_ARTIFACT),
-        patch("api.routers.shap._compute_shap_full", return_value=(shap_vals, base_vals)),
+        patch("api.routers.forecasting.shap._compute_shap_full", return_value=(shap_vals, base_vals)),
     )
 
 
@@ -137,7 +137,7 @@ async def test_dfu_shap_404_no_model_dir(tmp_path):
 
     # Do NOT create the model dir → exists() returns False
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.shap._MODELS_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -166,7 +166,7 @@ async def test_dfu_shap_404_dfu_not_found(tmp_path):
     (model_dir / "cluster_0.pkl").write_bytes(b"placeholder")
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.shap._MODELS_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -196,7 +196,7 @@ async def test_dfu_shap_404_pkl_missing(tmp_path):
     (model_dir / "cluster_9.pkl").write_bytes(b"placeholder")
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.shap._MODELS_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -224,7 +224,7 @@ async def test_dfu_shap_top_n_clamped(tmp_path):
     (model_dir / "cluster_0.pkl").write_bytes(b"placeholder")
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.shap._MODELS_DIR", tmp_path):
+         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -260,9 +260,9 @@ async def test_dfu_shap_includes_future_months(tmp_path):
     extended_base = np.full(7, 120.0)
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.shap._MODELS_DIR", tmp_path), \
+         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path), \
          patch("pickle.load", return_value=_ARTIFACT), \
-         patch("api.routers.shap._compute_shap_full", return_value=(extended_shap, extended_base)):
+         patch("api.routers.forecasting.shap._compute_shap_full", return_value=(extended_shap, extended_base)):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -305,9 +305,9 @@ async def test_dfu_shap_future_lag_model_mismatch(tmp_path):
     extended_base = np.full(6, 120.0)
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.shap._MODELS_DIR", tmp_path), \
+         patch("api.routers.forecasting.shap._MODELS_DIR", tmp_path), \
          patch("pickle.load", return_value=_ARTIFACT), \
-         patch("api.routers.shap._compute_shap_full", return_value=(extended_shap, extended_base)):
+         patch("api.routers.forecasting.shap._compute_shap_full", return_value=(extended_shap, extended_base)):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

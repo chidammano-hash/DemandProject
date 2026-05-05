@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from common.utils import load_forecast_pipeline_config
+from common.core.utils import load_forecast_pipeline_config
 
 # ---------------------------------------------------------------------------
 # Promote-side key sets  (authoritative source: API routers)

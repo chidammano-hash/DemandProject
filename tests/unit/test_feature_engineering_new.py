@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.constants import CROSS_DFU_FEATURES
-from common.feature_engineering import build_feature_matrix
+from common.core.constants import CROSS_DFU_FEATURES
+from common.ml.feature_engineering import build_feature_matrix
 
 
 def _make_sales_df():
@@ -196,13 +196,13 @@ class TestZeroDemandCount:
 
 class TestTsProfileInGrid:
     def test_ts_profile_features_present(self):
-        from common.constants import TS_PROFILE_FEATURES
+        from common.core.constants import TS_PROFILE_FEATURES
         grid = _build_grid()
         for feat in TS_PROFILE_FEATURES:
             assert feat in grid.columns, f"Missing TS profile feature: {feat}"
 
     def test_ts_profile_no_nan(self):
-        from common.constants import TS_PROFILE_FEATURES
+        from common.core.constants import TS_PROFILE_FEATURES
         grid = _build_grid()
         for feat in TS_PROFILE_FEATURES:
             assert grid[feat].notna().all(), f"NaN in {feat}"
@@ -222,7 +222,7 @@ class TestTsProfileInGrid:
 
     def test_ts_profile_static_per_dfu(self):
         """TS profile features should be constant per DFU (static attributes)."""
-        from common.constants import TS_PROFILE_FEATURES
+        from common.core.constants import TS_PROFILE_FEATURES
         grid = _build_grid()
         for feat in TS_PROFILE_FEATURES:
             nunique = grid.groupby("sku_ck")[feat].nunique()
@@ -251,7 +251,7 @@ class TestFeatureCountIncrease:
 
     def test_enhanced_features_all_present(self):
         """Grid should have all enhanced features from the 4 new groups (except external forecast)."""
-        from common.constants import FOURIER_FEATURES, CROSTON_FEATURES, CROSS_DFU_FEATURES
+        from common.core.constants import FOURIER_FEATURES, CROSTON_FEATURES, CROSS_DFU_FEATURES
         grid = _build_grid()
         for name in FOURIER_FEATURES + CROSTON_FEATURES + CROSS_DFU_FEATURES:
             assert name in grid.columns, f"Missing enhanced feature: {name}"
@@ -525,7 +525,7 @@ class TestFourierFeatures:
 
     def test_fourier_columns_present(self):
         grid = _build_grid()
-        from common.constants import FOURIER_FEATURES
+        from common.core.constants import FOURIER_FEATURES
         for feat in FOURIER_FEATURES:
             assert feat in grid.columns, f"Missing Fourier feature: {feat}"
 
@@ -589,7 +589,7 @@ class TestFourierFeatures:
 
     def test_fourier_protected(self):
         """Fourier features should be in PROTECTED_FEATURES."""
-        from common.constants import PROTECTED_FEATURES, FOURIER_FEATURES
+        from common.core.constants import PROTECTED_FEATURES, FOURIER_FEATURES
         for feat in FOURIER_FEATURES:
             assert feat in PROTECTED_FEATURES, f"{feat} should be protected"
 
@@ -599,19 +599,19 @@ class TestCrostonFeatures:
 
     def test_croston_columns_present(self):
         grid = _build_grid()
-        from common.constants import CROSTON_FEATURES
+        from common.core.constants import CROSTON_FEATURES
         for feat in CROSTON_FEATURES:
             assert feat in grid.columns, f"Missing Croston feature: {feat}"
 
     def test_croston_no_nan(self):
         grid = _build_grid()
-        from common.constants import CROSTON_FEATURES
+        from common.core.constants import CROSTON_FEATURES
         for feat in CROSTON_FEATURES:
             assert grid[feat].notna().all(), f"NaN in {feat}"
 
     def test_croston_dtype_float32(self):
         grid = _build_grid()
-        from common.constants import CROSTON_FEATURES
+        from common.core.constants import CROSTON_FEATURES
         for feat in CROSTON_FEATURES:
             assert grid[feat].dtype == np.float32, f"{feat} not float32"
 
@@ -678,19 +678,19 @@ class TestCrossDfuFeatures:
 
     def test_cross_dfu_columns_present(self):
         grid = _build_grid()
-        from common.constants import CROSS_DFU_FEATURES
+        from common.core.constants import CROSS_DFU_FEATURES
         for feat in CROSS_DFU_FEATURES:
             assert feat in grid.columns, f"Missing cross-DFU feature: {feat}"
 
     def test_cross_dfu_no_nan(self):
         grid = _build_grid()
-        from common.constants import CROSS_DFU_FEATURES
+        from common.core.constants import CROSS_DFU_FEATURES
         for feat in CROSS_DFU_FEATURES:
             assert grid[feat].notna().all(), f"NaN in {feat}"
 
     def test_cross_dfu_dtype_float32(self):
         grid = _build_grid()
-        from common.constants import CROSS_DFU_FEATURES
+        from common.core.constants import CROSS_DFU_FEATURES
         for feat in CROSS_DFU_FEATURES:
             assert grid[feat].dtype == np.float32, f"{feat} not float32"
 
@@ -762,7 +762,7 @@ class TestCrossDfuFeatures:
         })
         items = pd.DataFrame(columns=["item_id"])
         grid = build_feature_matrix(sales, dfu, items, list(months))
-        from common.constants import CROSS_DFU_FEATURES
+        from common.core.constants import CROSS_DFU_FEATURES
         for feat in CROSS_DFU_FEATURES:
             assert (grid[feat] == 0).all(), f"{feat} should be 0 without ml_cluster"
 
@@ -774,7 +774,7 @@ class TestExternalForecastEnrichment:
         """When ext_forecast_df is None, features should be 0."""
         grid = _build_grid()
         result = enrich_with_external_forecast(grid, None)
-        from common.constants import EXTERNAL_FORECAST_FEATURES
+        from common.core.constants import EXTERNAL_FORECAST_FEATURES
         for feat in EXTERNAL_FORECAST_FEATURES:
             assert feat in result.columns, f"Missing {feat}"
             assert (result[feat] == 0).all(), f"{feat} should be 0 with None input"
@@ -784,7 +784,7 @@ class TestExternalForecastEnrichment:
         grid = _build_grid()
         empty = pd.DataFrame(columns=["sku_ck", "startdate", "basefcst_pref"])
         result = enrich_with_external_forecast(grid, empty)
-        from common.constants import EXTERNAL_FORECAST_FEATURES
+        from common.core.constants import EXTERNAL_FORECAST_FEATURES
         for feat in EXTERNAL_FORECAST_FEATURES:
             assert (result[feat] == 0).all()
 
@@ -801,7 +801,7 @@ class TestExternalForecastEnrichment:
             })
         ext_df = pd.DataFrame(ext_rows)
         result = enrich_with_external_forecast(grid, ext_df)
-        from common.constants import EXTERNAL_FORECAST_FEATURES
+        from common.core.constants import EXTERNAL_FORECAST_FEATURES
         for feat in EXTERNAL_FORECAST_FEATURES:
             assert feat in result.columns
             assert result[feat].notna().all(), f"NaN in {feat}"
@@ -809,7 +809,7 @@ class TestExternalForecastEnrichment:
     def test_enrichment_dtype_float32(self):
         grid = _build_grid()
         result = enrich_with_external_forecast(grid, None)
-        from common.constants import EXTERNAL_FORECAST_FEATURES
+        from common.core.constants import EXTERNAL_FORECAST_FEATURES
         for feat in EXTERNAL_FORECAST_FEATURES:
             assert result[feat].dtype == np.float32
 
@@ -864,7 +864,7 @@ class TestEnhancedFeaturesInGetFeatureColumns:
         from common.ml.feature_engineering import get_feature_columns
         grid = _build_grid()
         feat_cols = get_feature_columns(grid)
-        from common.constants import FOURIER_FEATURES
+        from common.core.constants import FOURIER_FEATURES
         for feat in FOURIER_FEATURES:
             assert feat in feat_cols, f"{feat} missing from feature columns"
 
@@ -872,7 +872,7 @@ class TestEnhancedFeaturesInGetFeatureColumns:
         from common.ml.feature_engineering import get_feature_columns
         grid = _build_grid()
         feat_cols = get_feature_columns(grid)
-        from common.constants import CROSTON_FEATURES
+        from common.core.constants import CROSTON_FEATURES
         for feat in CROSTON_FEATURES:
             assert feat in feat_cols, f"{feat} missing from feature columns"
 
@@ -880,11 +880,11 @@ class TestEnhancedFeaturesInGetFeatureColumns:
         from common.ml.feature_engineering import get_feature_columns
         grid = _build_grid()
         feat_cols = get_feature_columns(grid)
-        from common.constants import CROSS_DFU_FEATURES
+        from common.core.constants import CROSS_DFU_FEATURES
         for feat in CROSS_DFU_FEATURES:
             assert feat in feat_cols, f"{feat} missing from feature columns"
 
     def test_enhanced_not_in_metadata(self):
-        from common.constants import METADATA_COLS, ENHANCED_FEATURES
+        from common.core.constants import METADATA_COLS, ENHANCED_FEATURES
         for feat in ENHANCED_FEATURES:
             assert feat not in METADATA_COLS, f"{feat} should NOT be in METADATA_COLS"

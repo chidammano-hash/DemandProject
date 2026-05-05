@@ -22,11 +22,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import psycopg
 
-from common.db import get_db_params
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.scripts_base import add_common_args, setup_logging
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config
+from common.core.utils import load_config as _load_config
 
 
 def load_config() -> dict:

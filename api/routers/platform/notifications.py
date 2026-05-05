@@ -86,7 +86,7 @@ async def test_notification(
     api_key: str = Depends(require_api_key),
 ):
     """Send a test notification (manager+ only)."""
-    from common.notification_engine import NotificationEngine
+    from common.services.notification_engine import NotificationEngine
     engine = NotificationEngine()
     results = engine.send(
         event_type="test",

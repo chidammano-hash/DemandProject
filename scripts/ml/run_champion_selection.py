@@ -11,7 +11,7 @@ The ceiling (oracle) picks the best model per DFU per month using that
 month's actual error — the theoretical upper bound with perfect foresight.
 
 Usage:
-    python scripts/run_champion_selection.py [--config config/forecast_pipeline_config.yaml]
+    python scripts/run_champion_selection.py [--config config/forecasting/forecast_pipeline_config.yaml]
 """
 
 import argparse
@@ -35,13 +35,13 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.champion_strategies import (
+from common.ml.champion_strategies import (
     STRATEGY_REGISTRY,
     compute_strategy_accuracy,
 )
-from common.db import get_db_params
+from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
-from common.utils import get_competing_model_ids, load_forecast_pipeline_config
+from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config
 
 
 # ---------------------------------------------------------------------------
@@ -799,7 +799,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=str,
-        default="config/forecast_pipeline_config.yaml",
+        default="config/forecasting/forecast_pipeline_config.yaml",
         help="Path to competition config YAML",
     )
     parser.add_argument(

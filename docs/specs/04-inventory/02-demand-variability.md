@@ -124,7 +124,7 @@ cv_thresholds:
   high: 1.0
 ```
 
-File: `config/inventory_planning_config.yaml` (lead_time section)
+File: `config/inventory/inventory_planning_config.yaml` (lead_time section)
 
 ```yaml
 lt_cv_thresholds:

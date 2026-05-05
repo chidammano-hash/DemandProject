@@ -42,24 +42,24 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.backtest_framework import (  # noqa: E402
+from common.ml.backtest_framework import (  # noqa: E402
     compute_cluster_demand_stats,
     load_backtest_data,
     resolve_cluster_params,
 )
-from common.constants import (  # noqa: E402
+from common.core.constants import (  # noqa: E402
     CAT_FEATURES,
     compute_min_cluster_rows,
 )
-from common.db import get_db_params  # noqa: E402
+from common.core.db import get_db_params  # noqa: E402
 from common.ml.model_registry import (  # noqa: E402
     fit_model,
     get_best_iteration,
 )
-from common.planning_date import get_planning_date  # noqa: E402
+from common.core.planning_date import get_planning_date  # noqa: E402
 from common.scripts_base import load_project_env, setup_logging  # noqa: E402
 from common.services.perf_profiler import profiled_section  # noqa: E402
-from common.utils import (  # noqa: E402
+from common.core.utils import (  # noqa: E402
     get_algorithm_roster,
     load_forecast_pipeline_config,
 )
@@ -524,7 +524,7 @@ def _save_training_metadata(
 
 def train_production_model(model_id: str) -> None:
     """Train a single model_id on full history and save production artifacts."""
-    from common.feature_engineering import (
+    from common.ml.feature_engineering import (
         build_feature_matrix,
         get_feature_columns,
     )

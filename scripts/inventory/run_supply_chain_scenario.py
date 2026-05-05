@@ -13,7 +13,7 @@ Usage:
         --impact-pct 50 --duration-weeks 4
     uv run python scripts/run_supply_chain_scenario.py --scenario-id 1 --dry-run
 
-Config: config/supply_scenario_config.yaml
+Config: config/operations/supply_scenario_config.yaml
 """
 
 from __future__ import annotations
@@ -30,10 +30,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config
+from common.core.utils import load_config as _load_config
 
 DISRUPTION_TYPES = {
     "supplier_delay",       # Supplier lead time extended by N weeks

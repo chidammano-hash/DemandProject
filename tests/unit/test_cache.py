@@ -1,7 +1,7 @@
 """Unit tests for common/cache.py (Spec 08-03)."""
 import time
 
-from common.cache import (
+from common.services.cache import (
     InMemoryBackend,
     cache_key_for,
     reset_cache,

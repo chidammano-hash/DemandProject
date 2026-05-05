@@ -354,8 +354,8 @@ async def test_portfolio_scan_returns_202():
     """POST /portfolio-scan returns 202 with scan_run_id immediately."""
     pool, conn, cursor = _make_pool()
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.ai_planner._executor") as mock_exec, \
-         patch("api.routers.ai_planner._AI_CONFIG", {"model": "claude-opus-4-6", "portfolio_scan_limit": 10}):
+         patch("api.routers.intelligence.ai_planner._executor") as mock_exec, \
+         patch("api.routers.intelligence.ai_planner._AI_CONFIG", {"model": "claude-opus-4-6", "portfolio_scan_limit": 10}):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

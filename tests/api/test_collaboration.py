@@ -45,7 +45,7 @@ async def test_create_annotation_with_mentions():
     mock_engine = MagicMock()
     with patch("api.core._get_pool", return_value=pool), \
          patch.dict("sys.modules", {
-             "common.notification_engine": MagicMock(
+             "common.services.notification_engine": MagicMock(
                  NotificationEngine=lambda: mock_engine
              )
          }):

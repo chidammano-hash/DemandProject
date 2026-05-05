@@ -25,12 +25,12 @@ def _isolate_cache():
 # ---------------------------------------------------------------------------
 
 def _patch_planning_date(d=date(2026, 3, 1)):
-    return patch("api.routers.customer_analytics.get_planning_date", return_value=d)
+    return patch("api.routers.intelligence.customer_analytics.get_planning_date", return_value=d)
 
 
 def _patch_nomi():
     """Mock pgeocode so we don't need the data file."""
-    return patch("api.routers.customer_analytics._get_nomi", return_value=MagicMock())
+    return patch("api.routers.intelligence.customer_analytics._get_nomi", return_value=MagicMock())
 
 
 # ---------------------------------------------------------------------------

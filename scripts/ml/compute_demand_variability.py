@@ -7,7 +7,7 @@
     single pass.  This file is kept only for backward-compatible function
     exports consumed by existing tests.
 
-Reads config/forecast_domain_config.yaml (variability section) for all thresholds.
+Reads config/forecasting/forecast_domain_config.yaml (variability section) for all thresholds.
 Queries fact_sales_monthly (type=1, 24-month rolling window).
 Winsorizes outliers, computes CV/MAD/skewness/kurtosis/intermittency.
 Classifies each DFU into variability_class: low | medium | high | lumpy.
@@ -15,7 +15,7 @@ Upserts results back into dim_sku.
 
 Usage:
     uv run python scripts/compute_demand_variability.py
-    uv run python scripts/compute_demand_variability.py --config config/forecast_domain_config.yaml
+    uv run python scripts/compute_demand_variability.py --config config/forecasting/forecast_domain_config.yaml
     uv run python scripts/compute_demand_variability.py --dry-run
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ import psycopg
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from common.db import get_db_params
+from common.core.db import get_db_params
 from common.services.perf_profiler import profiled_section
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

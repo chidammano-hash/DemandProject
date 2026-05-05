@@ -18,7 +18,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import Response as FastAPIResponse
 
 from api.core import get_conn, set_cache
-from common.planning_date import get_planning_date
+from common.core.planning_date import get_planning_date
 from common.services.cache import cached_sync
 
 # All customer-analytics aggregates hit fact_customer_demand_monthly with

@@ -20,8 +20,8 @@ from typing import Any
 
 import psycopg
 
-from common.db import get_db_params
-from common.utils import load_config
+from common.core.db import get_db_params
+from common.core.utils import load_config
 
 log = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ def _analyze_cluster_patterns(limit_runs: int = 10) -> dict[str, Any]:
 
 def _get_current_config() -> dict[str, Any]:
     """Return current LGBM algorithm config and tried strategies."""
-    from common.utils import get_algorithm_params
+    from common.core.utils import get_algorithm_params
     lgbm_params = get_algorithm_params("lgbm_cluster")
 
     strategies: list[dict[str, Any]] = []

@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `scripts/compute_customer_features.py`, `scripts/run_backtest_cust_enriched.py`, `config/forecast_pipeline_config.yaml` |
+| **Key Files** | `scripts/compute_customer_features.py`, `scripts/run_backtest_cust_enriched.py`, `config/forecasting/forecast_pipeline_config.yaml` |
 
 ---
 
@@ -507,7 +507,7 @@ cumulative threshold.
 
 ## 6. Configuration
 
-### 6.1 `config/forecast_pipeline_config.yaml` — Algorithm Roster
+### 6.1 `config/forecasting/forecast_pipeline_config.yaml` — Algorithm Roster
 
 ```yaml
   lgbm_cust_enriched:
@@ -553,7 +553,7 @@ cumulative threshold.
     notes: "XGBoost with 34 customer-derived features"
 ```
 
-### 6.2 `config/forecast_pipeline_config.yaml` — Hyperparameters
+### 6.2 `config/forecasting/forecast_pipeline_config.yaml` — Hyperparameters
 
 Start with the same hyperparameters as the base models, with two changes:
 
@@ -650,17 +650,17 @@ customer-features:
 backtest-lgbm-cust:
 	$(UV) python -m scripts.run_backtest --model lgbm \
 		--model-id lgbm_cust_enriched \
-		--config config/forecast_pipeline_config.yaml
+		--config config/forecasting/forecast_pipeline_config.yaml
 
 backtest-catboost-cust:
 	$(UV) python -m scripts.run_backtest --model catboost \
 		--model-id catboost_cust_enriched \
-		--config config/forecast_pipeline_config.yaml
+		--config config/forecasting/forecast_pipeline_config.yaml
 
 backtest-xgboost-cust:
 	$(UV) python -m scripts.run_backtest --model xgboost \
 		--model-id xgboost_cust_enriched \
-		--config config/forecast_pipeline_config.yaml
+		--config config/forecasting/forecast_pipeline_config.yaml
 
 backtest-cust-enriched-all: backtest-lgbm-cust backtest-catboost-cust backtest-xgboost-cust
 
@@ -905,8 +905,8 @@ Enriched models expected to win champion selection for **30-45% of DFUs**.
 | Backtest framework | `common/ml/backtest_framework.py` | Modify |
 | Backtest script | `scripts/run_backtest.py` | Modify |
 | Production forecast | `scripts/generate_production_forecasts.py` | Modify |
-| Pipeline config | `config/forecast_pipeline_config.yaml` | Modify |
-| Algorithm config | `config/forecast_pipeline_config.yaml` | Modify |
+| Pipeline config | `config/forecasting/forecast_pipeline_config.yaml` | Modify |
+| Algorithm config | `config/forecasting/forecast_pipeline_config.yaml` | Modify |
 | Makefile | `Makefile` | Modify |
 | Unit tests (features) | `tests/unit/test_customer_features.py` | New |
 | Unit tests (integration) | `tests/unit/test_feature_engineering_enriched.py` | New |

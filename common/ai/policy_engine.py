@@ -1,7 +1,7 @@
 """Policy-as-code guardrails for AI agent write actions.
 
 Gen-4 roadmap AI-1 P0. Every action proposed by an agent is evaluated
-against a named policy from `config/agent_autonomy.yaml`. The policy
+against a named policy from `config/ai/agent_autonomy.yaml`. The policy
 declares:
   - `tier`: the maximum autonomy tier allowed (advisory, suggestive,
     auto_within_policy, autonomous)

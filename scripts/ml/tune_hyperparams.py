@@ -33,12 +33,12 @@ import optuna
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-from common.backtest_framework import load_backtest_data
-from common.constants import CAT_FEATURES, LAG_RANGE
-from common.db import get_db_params
-from common.feature_engineering import build_feature_matrix, get_feature_columns, mask_future_sales
-from common.mlflow_utils import log_backtest_run
-from common.tuning import (
+from common.ml.backtest_framework import load_backtest_data
+from common.core.constants import CAT_FEATURES, LAG_RANGE
+from common.core.db import get_db_params
+from common.ml.feature_engineering import build_feature_matrix, get_feature_columns, mask_future_sales
+from common.ml.mlflow_utils import log_backtest_run
+from common.ml.tuning import (
     TRAIN_FOLD_FNS,
     best_rounds_to_n_estimators,
     compute_wape_stabilised,
@@ -46,7 +46,7 @@ from common.tuning import (
     save_best_params,
     suggest_params,
 )
-from common.utils import _ts, get_algorithm_roster, load_forecast_pipeline_config
+from common.core.utils import _ts, get_algorithm_roster, load_forecast_pipeline_config
 
 
 # ── Objective factory ─────────────────────────────────────────────────────────
@@ -218,7 +218,7 @@ def main() -> None:
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Override output directory from config")
     parser.add_argument("--config", type=str,
-                        default=str(ROOT / "config" / "hyperparameter_tuning.yaml"),
+                        default=str(ROOT / "config" / "forecasting" / "hyperparameter_tuning.yaml"),
                         help="Path to hyperparameter tuning YAML config")
     parser.add_argument("--resume", action="store_true",
                         help="Resume an existing Optuna study from SQLite DB")

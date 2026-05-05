@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | SopTab |
-| **Key Files** | `SopTab.tsx`, `api/routers/sop.py`, `scripts/run_sop_cycle.py`, `config/sop_config.yaml`, `sql/056_create_sop_module.sql` |
+| **Key Files** | `SopTab.tsx`, `api/routers/sop.py`, `scripts/run_sop_cycle.py`, `config/operations/sop_config.yaml`, `sql/056_create_sop_module.sql` |
 
 ---
 
@@ -91,7 +91,7 @@ All mutation endpoints require API key authentication when `API_KEY` is set.
 
 ## Configuration
 
-File: `config/sop_config.yaml`
+File: `config/operations/sop_config.yaml`
 
 | Key | Purpose | Default |
 |---|---|---|

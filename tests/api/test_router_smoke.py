@@ -65,48 +65,20 @@ def test_app_includes_routers_under_each_domain():
     )
 
 
-def test_flat_router_shims_resolve_to_domain_modules():
-    """Backward-compat shims at api.routers.<name> re-export the moved module."""
-    # Sample a handful from each domain to confirm sys.modules redirection works.
-    cases = [
-        ("api.routers.inv_planning_eoq", "api.routers.inventory.inv_planning_eoq"),
-        (
-            "api.routers.inv_planning_safety_stock",
-            "api.routers.inventory.inv_planning_safety_stock",
-        ),
-        ("api.routers.competition", "api.routers.forecasting.competition"),
-        ("api.routers.shap", "api.routers.forecasting.shap"),
-        ("api.routers.control_tower", "api.routers.operations.control_tower"),
-        ("api.routers.supply", "api.routers.operations.supply"),
-        ("api.routers.config_manager", "api.routers.platform.config_manager"),
-        ("api.routers.notifications", "api.routers.platform.notifications"),
-        ("api.routers.intel", "api.routers.intelligence.intel"),
-        ("api.routers.storyboard", "api.routers.intelligence.storyboard"),
-        ("api.routers.clusters", "api.routers.forecasting.clusters"),
-        ("api.routers.financial_plan", "api.routers.operations.financial_plan"),
-    ]
-    for shim_path, expected_path in cases:
-        mod = importlib.import_module(shim_path)
-        assert mod.__name__ == expected_path, (
-            f"shim {shim_path} should redirect to {expected_path}, got {mod.__name__}"
-        )
+def test_only_allowlisted_files_at_flat_root():
+    """No router files should live at the flat api/routers/ root except allowlisted ones.
 
-
-def test_no_unmoved_router_at_flat_root():
-    """All flat api/routers/*.py (except domains.py and __init__.py) should be shims."""
+    All concrete routers must live in a domain subdir
+    (inventory/, forecasting/, operations/, platform/, intelligence/, core/).
+    """
     import api.routers as flat_pkg
 
-    non_shim: list[str] = []
+    unexpected: list[str] = []
     for _, modname, ispkg in pkgutil.iter_modules(flat_pkg.__path__):
         if ispkg or modname in _FLAT_ROOT_ALLOWLIST:
             continue
-        full = f"api.routers.{modname}"
-        mod = importlib.import_module(full)
-        # A shim's __name__ is rewritten via sys.modules[__name__] = _moved,
-        # so the imported module's __name__ won't match the requested path.
-        if mod.__name__ == full:
-            non_shim.append(full)
-    assert not non_shim, (
-        f"flat router(s) still at root (move to domain subdir + add shim, "
-        f"or add to _FLAT_ROOT_ALLOWLIST if intentional): {non_shim}"
+        unexpected.append(f"api.routers.{modname}")
+    assert not unexpected, (
+        f"flat router(s) at api/routers/ root (move to a domain subdir, "
+        f"or add to _FLAT_ROOT_ALLOWLIST if intentional): {unexpected}"
     )

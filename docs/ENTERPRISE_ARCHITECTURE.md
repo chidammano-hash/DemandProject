@@ -692,7 +692,7 @@ setup-all (~4-6 hours)
 | `consistency` | Cross-table consistency checks | Critical |
 | `timeliness` | Data arrival within SLA window | Warning |
 
-**Implementation**: `common/engines/dq_engine.py`, config in `config/data_quality_config.yaml`, API at `/data-quality/`, Self-Heal UI in Data Quality tab.
+**Implementation**: `common/engines/dq_engine.py`, config in `config/platform/data_quality_config.yaml`, API at `/data-quality/`, Self-Heal UI in Data Quality tab.
 
 #### Data Loading Controls
 
@@ -1401,7 +1401,7 @@ Four integration vectors (from `docs/specs/08-integration/01-integration-archite
 | # | Control | Implementation | Location |
 |---|---|---|---|
 | SC-1 | Authentication | JWT Bearer tokens, bcrypt password hashing | `common/auth.py` |
-| SC-2 | Authorization | 4-tier RBAC with role hierarchy | `common/auth.py`, `config/auth_config.yaml` |
+| SC-2 | Authorization | 4-tier RBAC with role hierarchy | `common/auth.py`, `config/platform/auth_config.yaml` |
 | SC-3 | Rate Limiting | Sliding window, tier-based (100 req/min) | `common/services/rate_limiter.py` |
 | SC-4 | Input Validation | Pydantic v2 models on all endpoints | All router files |
 | SC-5 | SQL Injection Prevention | `%s` parameterized queries exclusively | All SQL in routers and scripts |

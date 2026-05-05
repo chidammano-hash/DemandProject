@@ -20,11 +20,11 @@ from pydantic import BaseModel, field_validator
 
 from api.auth import require_api_key
 from api.core import get_conn
-from common.planning_date import get_planning_date
+from common.core.planning_date import get_planning_date
 
 router = APIRouter(tags=["consensus-plan"])
 
-_cfg = yaml.safe_load(open("config/consensus_config.yaml"))
+_cfg = yaml.safe_load(open("config/forecasting/consensus_config.yaml"))
 _VALID_TYPES = set(_cfg["consensus_plan"]["valid_override_types"])
 _MULT_MIN = _cfg["consensus_plan"]["multiplier_bounds"]["min"]
 _MULT_MAX = _cfg["consensus_plan"]["multiplier_bounds"]["max"]

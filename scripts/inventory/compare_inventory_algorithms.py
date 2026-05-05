@@ -31,10 +31,10 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from common.db import get_db_params  # noqa: E402
+from common.core.db import get_db_params  # noqa: E402
 from common.scripts_base import setup_logging  # noqa: E402
 from common.services.perf_profiler import profiled_section  # noqa: E402
-from common.utils import load_config  # noqa: E402
+from common.core.utils import load_config  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Logging

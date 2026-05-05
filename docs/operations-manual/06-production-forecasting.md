@@ -63,7 +63,7 @@ Inputs:
 - **Trained model artifacts** — `data/models/<model_id>/cluster_*.pkl`, produced by `make train-production-all` (one fitted model per `ml_cluster`).
 - **Champion DFU assignments** — `data/champion/dfu_assignments.csv` (or, when missing, the top-accuracy candidate per DFU read from `fact_candidate_forecast`; see `_load_dfu_assignments` in `api/routers/forecasting/backtest_management.py:533`).
 - **Sales history** — last `lookback_months` (default 36) of `fact_sales_monthly`, used to seed lag features for T+1.
-- **Pipeline config** — `config/forecast_pipeline_config.yaml` `production_forecast:` block (lines 435-468).
+- **Pipeline config** — `config/forecasting/forecast_pipeline_config.yaml` `production_forecast:` block (lines 435-468).
 
 Output:
 
@@ -89,7 +89,7 @@ For each DFU the script loops `h = 1 .. horizon_months`. At step `h+1`, the lag 
 
 ## 3. Cold-Start Routing
 
-The DFU population is heterogeneous — some items have years of history, some are brand-new. The pipeline routes each DFU through one of three paths based on `(item_id, loc)` history depth. All thresholds live in `config/forecast_pipeline_config.yaml` under `production_forecast:` (lines 435-441).
+The DFU population is heterogeneous — some items have years of history, some are brand-new. The pipeline routes each DFU through one of three paths based on `(item_id, loc)` history depth. All thresholds live in `config/forecasting/forecast_pipeline_config.yaml` under `production_forecast:` (lines 435-441).
 
 | Path | Rule | `model_id` used |
 |---|---|---|
@@ -100,7 +100,7 @@ The DFU population is heterogeneous — some items have years of history, some a
 Implementation: `scripts/generate_production_forecasts.py:1442-1454`.
 
 ```yaml
-# config/forecast_pipeline_config.yaml (lines 435-441)
+# config/forecasting/forecast_pipeline_config.yaml (lines 435-441)
 production_forecast:
   horizon_months: 24
   lookback_months: 36
@@ -327,7 +327,7 @@ WHERE item_id = '<id>' AND loc = '<loc>'
 GROUP BY item_id, loc;
 ```
 
-Then check thresholds in `config/forecast_pipeline_config.yaml`:
+Then check thresholds in `config/forecasting/forecast_pipeline_config.yaml`:
 
 - `history_months < cold_start_min_months` (default 3) -> DFU is **intentionally skipped**. Lower the floor only if you accept very low-confidence forecasts.
 - `cold_start_min_months <= history_months < min_history_months` (default 12) -> DFU should be served by `cold_start_model_id` (`rolling_mean`). Check that staging contains rolling_mean rows for the DFU. If missing, regenerate: `make forecast-generate-dfu ITEM=<id> LOC=<loc>`.
@@ -399,7 +399,7 @@ ORDER BY src, forecast_month;
 Source-of-truth files referenced in this section:
 
 - `Makefile` (lines 1071-1096 production-forecast targets)
-- `config/forecast_pipeline_config.yaml` (`production_forecast:` block, lines 435-468)
+- `config/forecasting/forecast_pipeline_config.yaml` (`production_forecast:` block, lines 435-468)
 - `scripts/generate_production_forecasts.py`
 - `api/routers/forecasting/backtest_management.py`
 - `api/routers/production_forecast.py`

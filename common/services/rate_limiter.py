@@ -8,13 +8,13 @@ import threading
 import time
 from collections import defaultdict
 
-from common.utils import load_config
+from common.core.utils import load_config
 
 _CONFIG_NAME = "auth_config.yaml"
 
 
 # ---------------------------------------------------------------------------
-# Config (thread-safe via common.utils.load_config)
+# Config (thread-safe via common.core.utils.load_config)
 # ---------------------------------------------------------------------------
 def _load_config() -> dict:
     full = load_config(_CONFIG_NAME)

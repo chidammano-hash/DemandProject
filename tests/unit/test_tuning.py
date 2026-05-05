@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from common.tuning import (
+from common.ml.tuning import (
     TRAIN_FOLD_FNS,
     best_rounds_to_n_estimators,
     compute_wape_stabilised,

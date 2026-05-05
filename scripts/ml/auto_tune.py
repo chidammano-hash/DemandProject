@@ -1,7 +1,7 @@
 """
 Auto-tune LGBM: run N hyperparameter strategies, register, compare, and promote the best.
 
-Reads strategy definitions from config/tune_strategies.yaml (model-keyed),
+Reads strategy definitions from config/forecasting/tune_strategies.yaml (model-keyed),
 generates a temporary forecast_pipeline_config.yaml for each, runs the backtest,
 registers the run, and produces a ranked leaderboard.  The best run's
 hyperparameters can be promoted into the production forecast_pipeline_config.yaml
@@ -32,14 +32,14 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.utils import _ts
+from common.core.utils import _ts
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-STRATEGIES_FILE = ROOT / "config" / "tune_strategies.yaml"
-PIPELINE_CONFIG_FILE = ROOT / "config" / "forecast_pipeline_config.yaml"
+STRATEGIES_FILE = ROOT / "config" / "forecasting" / "tune_strategies.yaml"
+PIPELINE_CONFIG_FILE = ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 MAX_RUNS = 10
 UV = str(Path.home() / ".local" / "bin" / "uv")
 
@@ -271,7 +271,7 @@ def register_run(label: str, notes: str, model: str = "lgbm") -> int | None:
     # Fallback: query DB for latest run with this label
     try:
         import psycopg
-        from common.db import get_db_params
+        from common.core.db import get_db_params
         with psycopg.connect(**get_db_params()) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -301,7 +301,7 @@ def get_baseline_accuracy() -> tuple[int | None, float | None]:
     """Get the baseline (run 1) accuracy from DB. Returns (run_id, accuracy_pct)."""
     try:
         import psycopg
-        from common.db import get_db_params
+        from common.core.db import get_db_params
         with psycopg.connect(**get_db_params()) as conn:
             with conn.cursor() as cur:
                 cur.execute(

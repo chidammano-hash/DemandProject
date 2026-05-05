@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from common.medallion import file_hash, create_batch, complete_batch, fail_batch
+from common.engines.medallion import file_hash, create_batch, complete_batch, fail_batch
 
 
 class TestFileHash:

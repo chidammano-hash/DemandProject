@@ -21,20 +21,20 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params  # noqa: E402
+from common.core.db import get_db_params  # noqa: E402
 from common.ml.sku_features.compute import (  # noqa: E402
     compute_all_sku_features,
     load_sales_from_db,
 )
 from common.ml.sku_features.persistence import write_features_to_dim_sku  # noqa: E402
-from common.planning_date import get_planning_date  # noqa: E402
+from common.core.planning_date import get_planning_date  # noqa: E402
 from common.services.perf_profiler import profiled_section  # noqa: E402
-from common.utils import _ts, load_config  # noqa: E402
+from common.core.utils import _ts, load_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Default config (used when config/sku_features_config.yaml is absent)
+# Default config (used when config/forecasting/sku_features_config.yaml is absent)
 # ---------------------------------------------------------------------------
 _DEFAULTS: dict[str, object] = {
     "time_window_months": 36,
@@ -58,11 +58,11 @@ _CLUSTERING_FEATURES_CSV = ROOT / "data" / "clustering_features.csv"
 
 
 def _load_pipeline_config() -> dict:
-    """Load config/sku_features_config.yaml, falling back to built-in defaults."""
+    """Load config/forecasting/sku_features_config.yaml, falling back to built-in defaults."""
     try:
         cfg = load_config("sku_features_config")
         if cfg:
-            logger.info("Loaded config/sku_features_config.yaml")
+            logger.info("Loaded config/forecasting/sku_features_config.yaml")
             return cfg
     except Exception:
         logger.debug("No sku_features_config.yaml found — using defaults")

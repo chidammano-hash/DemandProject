@@ -30,7 +30,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from common.ai.drift import psi_signal, wape_signal
-from common.db import get_db_params
+from common.core.db import get_db_params
 
 logger = logging.getLogger(__name__)
 

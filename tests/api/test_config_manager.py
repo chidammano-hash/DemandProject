@@ -134,8 +134,8 @@ async def test_update_config_no_changes():
     """PUT with no actual changes returns no-change response."""
     pool = _make_pool()
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.config_manager.load_config", return_value={"tuning": {"n_trials": 50}}), \
-         patch("api.routers.config_manager.reset_config"):
+         patch("api.routers.platform.config_manager.load_config", return_value={"tuning": {"n_trials": 50}}), \
+         patch("api.routers.platform.config_manager.reset_config"):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -159,9 +159,9 @@ async def test_update_config_writes_changes(tmp_path):
 
     pool = _make_pool()
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.config_manager._CONFIG_DIR", tmp_path), \
-         patch("api.routers.config_manager.load_config", return_value={"tuning": {"n_trials": 50, "n_splits": 5}}), \
-         patch("api.routers.config_manager.reset_config"):
+         patch("api.routers.platform.config_manager._CONFIG_DIR", tmp_path), \
+         patch("api.routers.platform.config_manager.load_config", return_value={"tuning": {"n_trials": 50, "n_splits": 5}}), \
+         patch("api.routers.platform.config_manager.reset_config"):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -188,7 +188,7 @@ async def test_reset_config_no_backup_returns_404():
     """POST /config/{name}/reset returns 404 when no backup exists."""
     pool = _make_pool()
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.config_manager._CONFIG_DIR", MagicMock()):
+         patch("api.routers.platform.config_manager._CONFIG_DIR", MagicMock()):
         # Mock Path operations to simulate no backup
         from api.main import app
         transport = ASGITransport(app=app)
@@ -210,8 +210,8 @@ async def test_reset_config_restores_backup(tmp_path):
 
     pool = _make_pool()
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.config_manager._CONFIG_DIR", tmp_path), \
-         patch("api.routers.config_manager.reset_config"):
+         patch("api.routers.platform.config_manager._CONFIG_DIR", tmp_path), \
+         patch("api.routers.platform.config_manager.reset_config"):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -228,7 +228,7 @@ async def test_reset_config_restores_backup(tmp_path):
 
 def test_all_configs_have_valid_categories():
     """Every config in CONFIG_REGISTRY has a valid category."""
-    from api.routers.config_manager import CONFIG_REGISTRY, CATEGORIES
+    from api.routers.platform.config_manager import CONFIG_REGISTRY, CATEGORIES
     valid_cats = {c["key"] for c in CATEGORIES}
     for name, meta in CONFIG_REGISTRY.items():
         assert meta["category"] in valid_cats, f"{name} has invalid category {meta['category']}"
@@ -236,7 +236,7 @@ def test_all_configs_have_valid_categories():
 
 def test_all_fields_have_required_metadata():
     """Every field has label, description, and type."""
-    from api.routers.config_manager import CONFIG_REGISTRY
+    from api.routers.platform.config_manager import CONFIG_REGISTRY
     for name, meta in CONFIG_REGISTRY.items():
         for path, field in meta["fields"].items():
             assert "label" in field, f"{name}.{path} missing label"
@@ -248,7 +248,7 @@ def test_all_fields_have_required_metadata():
 
 def test_select_fields_have_options():
     """Select-type fields must have options list."""
-    from api.routers.config_manager import CONFIG_REGISTRY
+    from api.routers.platform.config_manager import CONFIG_REGISTRY
     for name, meta in CONFIG_REGISTRY.items():
         for path, field in meta["fields"].items():
             if field["type"] == "select":
@@ -258,7 +258,7 @@ def test_select_fields_have_options():
 
 def test_number_fields_have_min_or_max():
     """Number/integer fields should have at least min or max constraint."""
-    from api.routers.config_manager import CONFIG_REGISTRY
+    from api.routers.platform.config_manager import CONFIG_REGISTRY
     for name, meta in CONFIG_REGISTRY.items():
         for path, field in meta["fields"].items():
             if field["type"] in ("number", "integer"):
@@ -270,7 +270,7 @@ def test_number_fields_have_min_or_max():
 
 def test_nested_helper_get_set():
     """Test _get_nested and _set_nested helpers."""
-    from api.routers.config_manager import _get_nested, _set_nested
+    from api.routers.platform.config_manager import _get_nested, _set_nested
     data = {"a": {"b": {"c": 42}}}
     assert _get_nested(data, "a.b.c") == 42
     assert _get_nested(data, "a.b.d", "default") == "default"

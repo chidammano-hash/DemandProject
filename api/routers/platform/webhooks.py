@@ -76,7 +76,7 @@ async def test_webhook(
     if not row:
         raise HTTPException(status_code=404, detail="Webhook not found or inactive")
 
-    from common.webhook_dispatcher import dispatch_webhook
+    from common.services.webhook_dispatcher import dispatch_webhook
     result = dispatch_webhook(
         url=row[0], secret=row[1],
         event_type="test",

@@ -9,7 +9,7 @@ Usage:
     uv run python scripts/compute_financial_plan.py --plan-date 2026-04-01
     uv run python scripts/compute_financial_plan.py --dry-run
 
-Config: config/financial_plan_config.yaml
+Config: config/operations/financial_plan_config.yaml
 """
 
 from __future__ import annotations
@@ -28,10 +28,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from common.db import get_db_params
-from common.planning_date import get_planning_date
+from common.core.db import get_db_params
+from common.core.planning_date import get_planning_date
 from common.services.perf_profiler import profiled_section
-from common.utils import load_config as _load_config
+from common.core.utils import load_config as _load_config
 
 DEFAULT_CARRYING_COST_PCT = 0.25   # 25% annually
 DEFAULT_MONTHS_AHEAD = 6

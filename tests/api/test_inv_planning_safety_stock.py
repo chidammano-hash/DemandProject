@@ -565,7 +565,7 @@ async def test_safety_stock_config_200():
     }
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.inv_planning_safety_stock.load_config", return_value=mock_config):
+         patch("api.routers.inventory.inv_planning_safety_stock.load_config", return_value=mock_config):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -594,7 +594,7 @@ async def test_safety_stock_config_has_z_table():
     }
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.inv_planning_safety_stock.load_config", return_value=mock_config):
+         patch("api.routers.inventory.inv_planning_safety_stock.load_config", return_value=mock_config):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -836,7 +836,7 @@ async def test_safety_stock_config_has_service_levels():
     }
 
     with patch("api.core._get_pool", return_value=pool), \
-         patch("api.routers.inv_planning_safety_stock.load_config", return_value=mock_config):
+         patch("api.routers.inventory.inv_planning_safety_stock.load_config", return_value=mock_config):
         from api.main import app
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

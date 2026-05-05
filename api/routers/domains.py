@@ -7,7 +7,7 @@ import json
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response as FastAPIResponse
 
-from common.domain_specs import DOMAIN_SPECS
+from common.core.domain_specs import DOMAIN_SPECS
 from api.core import (
     get_conn,
     get_spec_or_404,

@@ -11,7 +11,7 @@ horizons the long-range signal dominates; between the configured
 ``short_horizon_days`` and ``long_horizon_days`` the near-term weight
 decays linearly.
 
-Config lives in ``config/sensing_config.yaml``.
+Config lives in ``config/forecasting/sensing_config.yaml``.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def blend_forecasts(
         long_range: prediction from the long-range model.
         near_term:  prediction from the sensing model.
         horizon_days_out: integer days between "now" and the target day.
-        weights_config: dict loaded from ``config/sensing_config.yaml``.
+        weights_config: dict loaded from ``config/forecasting/sensing_config.yaml``.
 
     Returns:
         The blended point forecast (``w * near_term + (1-w) * long_range``).

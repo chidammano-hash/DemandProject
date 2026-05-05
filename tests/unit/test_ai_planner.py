@@ -39,7 +39,7 @@ def _make_pool(fetchall_return=None, fetchone_return=None, description=None):
 # ---------------------------------------------------------------------------
 
 def test_get_dfu_full_context_found():
-    from common.ai_planner import get_dfu_full_context
+    from common.ai.ai_planner import get_dfu_full_context
 
     pool, conn, cursor = _make_pool(
         fetchone_return=("100320", "1401-BULK", "A", "L", "high_volume_steady", None, False,
@@ -64,7 +64,7 @@ def test_get_dfu_full_context_found():
 
 
 def test_get_dfu_full_context_not_found():
-    from common.ai_planner import get_dfu_full_context
+    from common.ai.ai_planner import get_dfu_full_context
 
     pool, conn, cursor = _make_pool(fetchone_return=None)
     result = get_dfu_full_context(pool, "MISSING", "LOC")
@@ -76,7 +76,7 @@ def test_get_dfu_full_context_not_found():
 # ---------------------------------------------------------------------------
 
 def test_get_forecast_performance_returns_list():
-    from common.ai_planner import get_forecast_performance
+    from common.ai.ai_planner import get_forecast_performance
 
     pool, conn, cursor = _make_pool(
         fetchall_return=[
@@ -101,7 +101,7 @@ def test_get_forecast_performance_returns_list():
 # ---------------------------------------------------------------------------
 
 def test_get_portfolio_exceptions_returns_list():
-    from common.ai_planner import get_portfolio_exceptions
+    from common.ai.ai_planner import get_portfolio_exceptions
 
     pool, conn, cursor = _make_pool(
         fetchall_return=[
@@ -125,7 +125,7 @@ def test_get_portfolio_exceptions_returns_list():
 # ---------------------------------------------------------------------------
 
 def test_compute_bias_trend_returns_dict():
-    from common.ai_planner import compute_bias_trend
+    from common.ai.ai_planner import compute_bias_trend
 
     pool, conn, cursor = _make_pool(
         fetchone_return=(25.0, 28.0, 4, 0),
@@ -141,7 +141,7 @@ def test_compute_bias_trend_returns_dict():
 
 
 def test_compute_bias_trend_no_data():
-    from common.ai_planner import compute_bias_trend
+    from common.ai.ai_planner import compute_bias_trend
 
     pool, conn, cursor = _make_pool(fetchone_return=None)
     result = compute_bias_trend(pool, "100320", "1401-BULK")
@@ -153,7 +153,7 @@ def test_compute_bias_trend_no_data():
 # ---------------------------------------------------------------------------
 
 def test_get_inventory_trend_returns_list():
-    from common.ai_planner import get_inventory_trend
+    from common.ai.ai_planner import get_inventory_trend
 
     pool, conn, cursor = _make_pool(
         fetchall_return=[
@@ -176,7 +176,7 @@ def test_get_inventory_trend_returns_list():
 # ---------------------------------------------------------------------------
 
 def test_get_eoq_context_returns_dict():
-    from common.ai_planner import get_eoq_context
+    from common.ai.ai_planner import get_eoq_context
 
     pool, conn, cursor = _make_pool(
         fetchone_return=(250, 250, 3000.0, 0.17, 125.0, 500.0, 3.0, 8000.0, "2026-03-01"),
@@ -194,7 +194,7 @@ def test_get_eoq_context_returns_dict():
 
 
 def test_get_eoq_context_no_data():
-    from common.ai_planner import get_eoq_context
+    from common.ai.ai_planner import get_eoq_context
 
     pool, conn, cursor = _make_pool(fetchone_return=None)
     result = get_eoq_context(pool, "100320", "1401-BULK")
@@ -206,7 +206,7 @@ def test_get_eoq_context_no_data():
 # ---------------------------------------------------------------------------
 
 def test_check_stockout_history_returns_dict():
-    from common.ai_planner import check_stockout_history
+    from common.ai.ai_planner import check_stockout_history
 
     pool, conn, cursor = _make_pool(
         fetchone_return=(2, 0, 18.5, 6),
@@ -225,7 +225,7 @@ def test_check_stockout_history_returns_dict():
 # ---------------------------------------------------------------------------
 
 def test_get_portfolio_health_summary_returns_dict():
-    from common.ai_planner import get_portfolio_health_summary
+    from common.ai.ai_planner import get_portfolio_health_summary
 
     pool, conn, cursor = _make_pool(
         fetchone_return=(500, 42.0, 25, 10, 28.5, 7),
@@ -245,7 +245,7 @@ def test_get_portfolio_health_summary_returns_dict():
 # ---------------------------------------------------------------------------
 
 def test_create_insight_returns_id():
-    from common.ai_planner import create_insight
+    from common.ai.ai_planner import create_insight
 
     pool, conn, cursor = _make_pool(fetchone_return=(42,))
 
@@ -265,7 +265,7 @@ def test_create_insight_returns_id():
 
 
 def test_create_insight_no_row_returns_minus1():
-    from common.ai_planner import create_insight
+    from common.ai.ai_planner import create_insight
 
     pool, conn, cursor = _make_pool(fetchone_return=None)
 
@@ -283,7 +283,7 @@ def test_create_insight_no_row_returns_minus1():
 
 def test_create_insight_validation_rejects_bad_summary():
     """Summary without any digit fails Pydantic validation; returns -1."""
-    from common.ai_planner import create_insight
+    from common.ai.ai_planner import create_insight
 
     pool, conn, cursor = _make_pool(fetchone_return=(99,))
 
@@ -301,7 +301,7 @@ def test_create_insight_validation_rejects_bad_summary():
 
 def test_create_insight_validation_rejects_bad_type():
     """Invalid insight_type fails Pydantic validation; returns -1."""
-    from common.ai_planner import create_insight
+    from common.ai.ai_planner import create_insight
 
     pool, conn, cursor = _make_pool(fetchone_return=(99,))
 
@@ -329,7 +329,7 @@ def _make_openai_agent(pool):
     """Return an AIPlannerAgent using a mocked OpenAI client."""
     mock_oai = MagicMock()
     with patch.dict("sys.modules", {"openai": mock_oai}):
-        from common.ai_planner import AIPlannerAgent
+        from common.ai.ai_planner import AIPlannerAgent
         agent = AIPlannerAgent(pool, _DEFAULT_CFG)
     return agent
 
@@ -338,7 +338,7 @@ def _make_anthropic_agent(pool):
     """Return an AIPlannerAgent using a mocked Anthropic client."""
     mock_ant = MagicMock()
     with patch.dict("sys.modules", {"anthropic": mock_ant}):
-        from common.ai_planner import AIPlannerAgent
+        from common.ai.ai_planner import AIPlannerAgent
         agent = AIPlannerAgent(pool, _ANTHROPIC_CFG)
     return agent
 
@@ -378,7 +378,7 @@ def test_dispatch_tool_create_insight_injects_scan_run_id():
         captured.update(kwargs)
         return 99
 
-    with patch("common.ai_planner.create_insight", side_effect=fake_create_insight):
+    with patch("common.ai.ai_planner.create_insight", side_effect=fake_create_insight):
         agent._dispatch_tool("create_insight", {
             "insight_type": "stockout_risk",
             "severity": "high",

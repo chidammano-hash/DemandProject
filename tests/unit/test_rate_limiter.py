@@ -1,5 +1,5 @@
 """Unit tests for common/rate_limiter.py (Spec 08-09)."""
-from common.rate_limiter import RateLimiter
+from common.services.rate_limiter import RateLimiter
 
 
 class TestRateLimiter:

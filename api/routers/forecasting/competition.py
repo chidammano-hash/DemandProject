@@ -19,12 +19,12 @@ from pydantic import BaseModel
 from api.auth import require_api_key
 from api.core import get_conn
 from common.ml.champion_strategies import STRATEGY_REGISTRY as _STRAT_REG
-from common.utils import get_competing_model_ids, load_forecast_pipeline_config, reset_config
+from common.core.utils import get_competing_model_ids, load_forecast_pipeline_config, reset_config
 
 router = APIRouter(tags=["competition"])
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecast_pipeline_config.yaml"
+_PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "forecasting" / "forecast_pipeline_config.yaml"
 _CHAMPION_SUMMARY_PATH = _PROJECT_ROOT / "data" / "champion" / "champion_summary.json"
 
 _VALID_STRATEGIES = set(_STRAT_REG.keys())
