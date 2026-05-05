@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | JobsTab |
-| **Key Files** | `JobsTab.tsx`, `api/routers/jobs.py`, `common/job_registry.py`, `common/job_scheduler.py`, `sql/020_create_job_history.sql` |
+| **Key Files** | `JobsTab.tsx`, `api/routers/core/jobs.py`, `common/services/job_registry.py`, `common/services/job_scheduler.py`, `sql/020_create_job_history.sql` |
 
 ---
 

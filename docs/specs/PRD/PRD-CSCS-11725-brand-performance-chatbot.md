@@ -678,4 +678,4 @@ Compose response (Key Findings only in MVP)
 - **Tableau:** SCM Executive Dashboard — Fill Rate
 - **Confluence:** [Onesource Redshift → Databricks environment mapping](https://sgwsagility.atlassian.net/wiki/spaces/DATA/pages/1714716681/)
 - **ServiceNow:** INC0701267, RITM0528481, SCTASK0552488, RITM0538339, RITM0538340
-- **Related spec:** [docs/specs/06-ai-platform/02-chatbot-market-intel.md](../06-ai-platform/02-chatbot-market-intel.md)
+- **Related spec:** [docs/specs/06-ai-platform/02-market-intel.md](../06-ai-platform/02-market-intel.md)

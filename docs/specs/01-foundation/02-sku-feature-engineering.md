@@ -54,7 +54,7 @@ A unified feature computation pipeline processes all DFUs in a single pass:
 2. **Compute** ~35 time-series features per DFU using the shared library in `common/ml/clustering/features.py`.
 3. **Classify** each DFU into categorical labels (seasonality profile, variability class) using configurable thresholds.
 4. **Persist** all numeric features and classification labels to `dim_sku` columns via bulk COPY + UPDATE.
-5. **Export** a backward-compatible CSV (`data/clustering_features.csv`) consumed by the clustering pipeline.
+5. **Export** a backward-compatible CSV (`data/staged/clustering_features.csv`) consumed by the clustering pipeline.
 
 The pipeline is idempotent (UPDATE-based, not INSERT), parallelized across CPU cores, and completes in under 2 minutes for typical portfolios (~18,000 DFUs).
 
@@ -216,7 +216,7 @@ The following classifications in `dim_sku` depend on features computed by this p
 | `xyz_class` | ABC-XYZ pipeline (`scripts/inventory/compute_abc_xyz.py`) | Reads `demand_cv` from `dim_sku` |
 | `abc_xyz_segment` | ABC-XYZ pipeline | Combines ABC (revenue-based) with XYZ (CV-based) |
 | `abc_xyz_policy_id` | ABC-XYZ pipeline | Policy assignment from segment |
-| `ml_cluster` | Clustering pipeline (`scripts/ml/run_clustering_scenario.py`) | Reads pre-computed features from `data/clustering_features.csv` |
+| `ml_cluster` | Clustering pipeline (`scripts/ml/run_clustering_scenario.py`) | Reads pre-computed features from `data/staged/clustering_features.csv` |
 
 ---
 
@@ -366,7 +366,7 @@ make variability-compute    # alias -> features-compute
 | 2. Compute features | `compute_all_sku_features()` | Sales DataFrame | DataFrame: sku_ck + 35 feature columns |
 | 3. Apply classifiers | `_apply_classifiers()` | Feature DataFrame + config thresholds | Adds `seasonality_profile`, `variability_class` columns |
 | 4. Write to DB | `write_features_to_dim_sku()` | Feature DataFrame | `dim_sku` columns updated |
-| 5. Write CSV | pandas `to_csv()` | Feature DataFrame | `data/clustering_features.csv` (backward-compat) |
+| 5. Write CSV | pandas `to_csv()` | Feature DataFrame | `data/staged/clustering_features.csv` (backward-compat) |
 | 6. Optional CSV | pandas `to_csv()` | Feature DataFrame | User-specified path via `--output-csv` |
 
 ### Pipeline Position in Full Setup
@@ -701,7 +701,7 @@ The inventory planning variability endpoints remain available:
 | GET | `/inv-planning/variability/summary` | Portfolio variability distribution |
 | GET | `/inv-planning/variability/detail` | Per-DFU variability metrics |
 
-Router: `api/routers/inv_planning_variability.py`
+Router: `api/routers/inventory/inv_planning_variability.py`
 
 ---
 
@@ -751,7 +751,7 @@ The features computed by this pipeline are read by multiple downstream subsystem
 ### 1. Clustering Pipeline
 
 **Consumer:** `scripts/ml/run_clustering_scenario.py`, `common/ml/clustering/`
-**Mechanism:** Reads `data/clustering_features.csv` (written by Step 5 of the pipeline).
+**Mechanism:** Reads `data/staged/clustering_features.csv` (written by Step 5 of the pipeline).
 **Features used:** All numeric features are available as clustering input dimensions. The clustering algorithm selects a subset based on the scenario configuration. Typical inputs: `cv_demand`, `mean_demand`, `seasonality_strength`, `yoy_correlation`, `zero_demand_pct`, `trend_slope_norm`.
 **Column mapping:** The clustering scenario script maps between naming conventions (see [Column Name Mapping](#column-name-mapping) below).
 
@@ -787,7 +787,7 @@ The features computed by this pipeline are read by multiple downstream subsystem
 
 ### 7. Inventory Planning Variability Views
 
-**Consumer:** `api/routers/inv_planning_variability.py`
+**Consumer:** `api/routers/inventory/inv_planning_variability.py`
 **Mechanism:** Queries `dim_sku` for variability metrics.
 **Features used:** `demand_cv`, `demand_mad`, `demand_mean`, `demand_std`, `demand_skewness`, `demand_kurtosis`, `demand_p50`, `demand_p90`, `zero_demand_months`, `total_demand_months`, `intermittency_ratio`, `variability_class`.
 

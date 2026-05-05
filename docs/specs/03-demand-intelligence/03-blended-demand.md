@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (Sensing group) |
-| **Key Files** | `scripts/compute_blended_forecast.py`, `api/routers/blended_forecast.py`, `config/blended_demand_config.yaml` |
+| **Key Files** | `scripts/compute_blended_forecast.py`, `api/routers/forecasting/blended_forecast.py`, `config/blended_demand_config.yaml` |
 
 ---
 
@@ -92,7 +92,7 @@ Output is written to the blended demand forecast table, consumed by downstream r
 | GET | `/inv-planning/blended-demand/detail` | Per-DFU blended demand with alpha values |
 | PUT | `/inv-planning/blended-demand/alpha` | Override alpha for segment or DFU |
 
-Router: `api/routers/blended_forecast.py`
+Router: `api/routers/forecasting/blended_forecast.py`
 
 ---
 
@@ -136,7 +136,7 @@ segment_overrides:
 ## See Also
 
 - [../04-inventory/06-analytics](../04-inventory/06-analytics.md) -- Demand signals (sensing input)
-- [../02-forecasting/02-05-champion-selection](../02-forecasting/02-05-champion-selection.md) -- Statistical forecast source
+- [../02-forecasting/07-champion-selection](../02-forecasting/07-champion-selection.md) -- Statistical forecast source
 - [01-sku-clustering](01-sku-clustering.md) -- Cluster-level alpha defaults possible via segment mapping
 
 ## Frontend

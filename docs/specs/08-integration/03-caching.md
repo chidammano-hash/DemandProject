@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (infrastructure layer) |
-| **Key Files** | `common/cache.py`, `common/query_tracker.py`, `config/platform/cache_config.yaml` |
+| **Key Files** | `common/services/cache.py`, `common/services/query_tracker.py`, `config/platform/cache_config.yaml` |
 
 ---
 

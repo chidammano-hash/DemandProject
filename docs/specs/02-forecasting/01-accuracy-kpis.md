@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `common/metrics.py`, `api/routers/accuracy.py`, `frontend/src/tabs/AccuracyTab.tsx`, `sql/011_create_accuracy_slice_views.sql`, `sql/011_create_accuracy_slice_views.sql` |
+| **Key Files** | `common/services/metrics.py`, `api/routers/forecasting/accuracy.py`, `frontend/src/tabs/AccuracyTab.tsx`, `sql/011_create_accuracy_slice_views.sql`, `sql/011_create_accuracy_slice_views.sql` |
 
 ---
 
@@ -74,7 +74,7 @@ Views are also auto-refreshed by `make backtest-load`.
 
 ## Configuration
 
-No dedicated config file. Accuracy formulas are defined in `common/metrics.py` and reused across all backtest scripts, champion selection, and API endpoints.
+No dedicated config file. Accuracy formulas are defined in `common/services/metrics.py` and reused across all backtest scripts, champion selection, and API endpoints.
 
 ## Dependencies
 

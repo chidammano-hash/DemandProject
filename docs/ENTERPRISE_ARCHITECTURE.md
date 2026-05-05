@@ -577,8 +577,8 @@ All materialized views support `CONCURRENTLY` refresh for zero-downtime reads du
 ```mermaid
 flowchart LR
     subgraph "Phase 1: Normalize"
-        CSV[Source CSVs<br>10 domains] --> NORM[normalize_dataset_csv.py]
-        NORM --> CLEAN[Clean CSVs]
+        CSV[Source CSVs<br>data/input/<br>10 domains] --> NORM[normalize_dataset_csv.py]
+        NORM --> CLEAN[Clean CSVs<br>data/staged/]
     end
 
     subgraph "Phase 2: Load"
@@ -704,6 +704,7 @@ setup-all (~4-6 hours)
 | Forecast Lag Filter | Lags 0-4 only for fact table; all lags archived |
 | Batch Tracking | `audit_load_batch` records each load run with row counts |
 | Idempotent Reload | `--replace` flag for safe re-execution |
+| Staging Layout | Source CSVs live in `data/input/`; normalized clean CSVs and ML intermediates (e.g. `clustering_features.csv`, `seasonality_results.csv`) are written to `data/staged/` (per-domain paths declared via `DomainSpec.clean_file`, prefixed `staged/`) |
 
 #### Audit Trail
 
@@ -821,7 +822,7 @@ Cache Layer         -      via      -         -      R/W      -          -      
 | **REST API** | Primary integration | 72 routers serve JSON; pagination offset/limit (50-1000 rows); JWT Bearer or X-API-Key auth |
 | **Webhooks (Outbound)** | HMAC-SHA256 signed | 8 event types: job_completed, forecast_published, insight_created, exception_generated, stockout_alert, threshold_breach, approval_required, data_loaded |
 | **Event-Driven** | Notification engine | Routes events to Slack/Teams/Email/PagerDuty based on severity rules |
-| **File-Based ETL** | CSV ingestion | Source CSVs from ERP dropped to `data/input/`, normalized and loaded via Make targets |
+| **File-Based ETL** | CSV ingestion | Source CSVs from ERP dropped to `data/input/`, normalized into `data/staged/`, then loaded via Make targets |
 | **AI Tool-Use** | Claude API | Structured tool calling (10 tools, up to 40 turns per session) |
 | **Cloud Connectors** | Planned | Abstract `CloudConnector` base class for Snowflake, BigQuery, S3, Databricks |
 | **ERP Adapters** | Planned | Abstract `ERPAdapter` base class for SAP S/4HANA, Oracle Fusion, NetSuite, Manhattan WMS |
@@ -1033,8 +1034,8 @@ All 10 data domains share a single set of endpoints via `DomainSpec` registry:
 | SQL Placeholders | All SQL uses `%s` (psycopg3), never string interpolation or `$1` | Code review, security scanning |
 | Configuration | All parameters externalized to YAML in `config/`, loaded via `load_config(name)` | No magic numbers in scripts |
 | Planning Date | All date-sensitive code uses `get_planning_date()`, never `date.today()` | `common/core/planning_date.py` |
-| Timestamps | All timestamps via `_ts()` from `common/utils.py`, no per-file definitions | Import check |
-| DB Connections | Scripts use `get_db_params()` from `common/db.py`, no inline connection helpers | Code review |
+| Timestamps | All timestamps via `_ts()` from `common/core/utils.py`, no per-file definitions | Import check |
+| DB Connections | Scripts use `get_db_params()` from `common/core/db.py`, no inline connection helpers | Code review |
 | ML Models | All model logic flows through `model_registry.py`, no per-model if/elif blocks | Architectural rule |
 | Logging | `logging.getLogger(__name__)`, no raw `print()`, `basicConfig()` only in `__main__` | Ruff lint hook |
 | Exception Handling | Catch specific exceptions (`psycopg.Error`, `ValueError`), never bare `except Exception` | Code review |

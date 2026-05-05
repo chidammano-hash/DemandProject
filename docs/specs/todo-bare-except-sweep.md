@@ -16,9 +16,9 @@ Highest-value routers still to narrow (each has 3+ bare `except`s):
 - `api/routers/forecasting/unified_model_tuning.py` — 30+ sites. Mostly DB reads behind feature-flag tables. Safe to narrow to `psycopg.Error` but high surface area.
 - `api/routers/forecasting/cluster_experiments.py` — 5 sites.
 - `api/routers/inventory/inv_planning_algorithm_comparison.py` — several sites.
-- `api/routers/events.py`, `financial_plan.py`, `service_level.py` — imperative `await require_api_key()` routers; medium priority.
-- `api/routers/storyboard.py` — 4 sites.
-- `api/routers/consensus_plan.py` — 4 sites.
+- `api/routers/operations/events.py`, `financial_plan.py`, `service_level.py` — imperative `await require_api_key()` routers; medium priority.
+- `api/routers/intelligence/storyboard.py` — 4 sites.
+- `api/routers/forecasting/consensus_plan.py` — 4 sites.
 
 ## Engines / services
 

@@ -340,7 +340,7 @@ The full pipeline was executed across all 6 phases, loading 10 data domains, run
 **Fix applied:**
 1. `frontend/src/api/queries/core.ts`: Send `common_dfus`/`include_dfu_count` to API
 2. `api/core.py`: Added `sku_count` alias in `compute_kpis()` return dict
-3. `api/routers/accuracy.py`: Added `common_sku_count`/`sku_counts` aliases in response
+3. `api/routers/forecasting/accuracy.py`: Added `common_sku_count`/`sku_counts` aliases in response
 
 **Verification:** Backend 2,282 tests + Frontend 739 tests all pass.
 

@@ -39,7 +39,7 @@ Reduce dataset-by-dataset duplication and provide a reusable path for adding new
 
 ## 2. Current Pattern
 
-1. Define dataset spec in `common/domain_specs.py`
+1. Define dataset spec in `common/core/domain_specs.py`
 2. Add DDL in `sql/`
 3. Reuse generic scripts:
    - `normalize_dataset_csv.py`
@@ -112,17 +112,17 @@ flowchart TD
 
 | Domain | Source File | Format | Delimiter | Normalize Script | Clean Output | Key Columns |
 |--------|-----------|--------|-----------|-----------------|-------------|-------------|
-| **item** | `data/input/itemdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset item` | `data/itemdata_clean.csv` | `item_id` (PK) |
-| **location** | `data/input/locationdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset location` | `data/locationdata_clean.csv` | `location_id` (PK) |
-| **customer** | `data/input/customerdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset customer` | `data/customerdata_clean.csv` | `site + customer_no` (CK) |
-| **time** | _(auto-generated 2020-2035)_ | — | — | `normalize_dataset_csv.py --dataset time` | `data/timedata_clean.csv` | `date_key` (PK) |
-| **sku** | `data/input/sku.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset sku` | `data/dfu_clean.csv` | `item_id + customer_group + loc` (CK) |
-| **sales** | `data/input/dfu_lvl2_hist.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset sales` | `data/dfu_lvl2_hist_clean.csv` | `item_id + customer_group + loc + startdate + type` |
-| **forecast** | `data/input/dfu_stat_fcst.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset forecast` | `data/dfu_stat_fcst_clean.csv` | `item_id + customer_group + loc + fcstdate + startdate` |
-| **inventory** | `data/input/Inventory_Snapshot_YYYY_MM.csv` (14 files) | CSV | `,` | `normalize_inventory_csv.py` | `data/inventory_clean.csv` | `item_id + loc + snapshot_date` |
-| **sourcing** | `data/input/sourcing.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset sourcing` | `data/sourcing_clean.csv` | `item_id + loc + source_cd` (CK) |
-| **purchase_order** | `data/input/purchase_orders.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset purchase_order` | `data/purchase_orders_clean.csv` | `po_number + item_id + loc` (CK) |
-| **customer_demand** | `data/input/{YYYY}_customer_demand.csv` or `{YYYYMM}_customer_demand.csv` | CSV | `,` | `normalize_customer_demand_csv.py` | `data/customer_demand_clean.csv` | `item_id + customer_no + location_id + startdate` |
+| **item** | `data/input/itemdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset item` | `data/staged/itemdata_clean.csv` | `item_id` (PK) |
+| **location** | `data/input/locationdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset location` | `data/staged/locationdata_clean.csv` | `location_id` (PK) |
+| **customer** | `data/input/customerdata.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset customer` | `data/staged/customerdata_clean.csv` | `site + customer_no` (CK) |
+| **time** | _(auto-generated 2020-2035)_ | — | — | `normalize_dataset_csv.py --dataset time` | `data/staged/timedata_clean.csv` | `date_key` (PK) |
+| **sku** | `data/input/dfu.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset sku` | `data/staged/sku_clean.csv` | `item_id + customer_group + loc` (CK) |
+| **sales** | `data/input/dfu_lvl2_hist.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset sales` | `data/staged/sku_lvl2_hist_clean.csv` | `item_id + customer_group + loc + startdate + type` |
+| **forecast** | `data/input/dfu_stat_fcst.txt` | TXT | `\|` | `normalize_dataset_csv.py --dataset forecast` | `data/staged/sku_stat_fcst_clean.csv` | `item_id + customer_group + loc + fcstdate + startdate` |
+| **inventory** | `data/input/Inventory_Snapshot_YYYY_MM.csv` (14 files) | CSV | `,` | `normalize_inventory_csv.py` | `data/staged/inventory_clean.csv` | `item_id + loc + snapshot_date` |
+| **sourcing** | `data/input/sourcing.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset sourcing` | `data/staged/sourcing_clean.csv` | `item_id + loc + source_cd` (CK) |
+| **purchase_order** | `data/input/purchase_orders.csv` | CSV | `,` | `normalize_dataset_csv.py --dataset purchase_order` | `data/staged/purchase_orders_clean.csv` | `po_number + item_id + loc` (CK) |
+| **customer_demand** | `data/input/{YYYY}_customer_demand.csv` or `{YYYYMM}_customer_demand.csv` | CSV | `,` | `normalize_customer_demand_csv.py` | `data/staged/customer_demand_clean.csv` | `item_id + customer_no + location_id + startdate` |
 
 **Normalization rules applied to all domains:**
 - Null normalization: `''`, `'null'`, `'none'`, `'NA'` → `NULL`
@@ -142,7 +142,7 @@ flowchart TD
         I1["itemdata.csv"]
         I2["locationdata.csv"]
         I3["customerdata.csv"]
-        I4["sku.txt"]
+        I4["dfu.txt"]
         I5["dfu_lvl2_hist.txt"]
         I6["dfu_stat_fcst.txt"]
         I7["Inventory_Snapshot_*.csv<br/>(14 monthly files)"]
@@ -155,14 +155,14 @@ flowchart TD
         NCD["normalize_customer_demand_csv.py"]
     end
 
-    subgraph CLEAN["Clean CSVs (data/)"]
+    subgraph CLEAN["Clean CSVs (data/staged/)"]
         C1["itemdata_clean.csv"]
         C2["locationdata_clean.csv"]
         C3["customerdata_clean.csv"]
         C4["timedata_clean.csv"]
-        C5["dfu_clean.csv"]
-        C6["dfu_lvl2_hist_clean.csv"]
-        C7["dfu_stat_fcst_clean.csv"]
+        C5["sku_clean.csv"]
+        C6["sku_lvl2_hist_clean.csv"]
+        C7["sku_stat_fcst_clean.csv"]
         C8["inventory_clean.csv"]
         C9["customer_demand_clean.csv"]
     end
@@ -224,7 +224,7 @@ The forecast loader uses phase ordering to preserve multi-horizon accuracy:
 
 ### Data Loading
 
-Data loads directly from CSV into main tables via `scripts/load_dataset_postgres.py`. Single-pass: COPY to staging, type-cast + dedup, INSERT into target tables. Batch tracking via `audit_load_batch`.
+Data loads directly from CSV into main tables via `scripts/etl/load_dataset_postgres.py`. Single-pass: COPY to staging, type-cast + dedup, INSERT into target tables. Batch tracking via `audit_load_batch`.
 
 ---
 
@@ -237,11 +237,11 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
 3. API + UI:
    - FastAPI backend + React/Vite/shadcn UI frontend
 6. AI Planning Agent:
-   - Anthropic Claude `claude-opus-4-6` via `anthropic>=0.40.0` SDK (tool_use API)
-   - `AIPlannerAgent` in `common/ai_planner.py`: 10 tools, agentic loop, insight creation
+   - Anthropic Claude `claude-sonnet-4-20250514` via `anthropic>=0.40.0` SDK (tool_use API)
+   - `AIPlannerAgent` in `common/ai/ai_planner.py`: 10 tools, agentic loop, insight creation
    - Not a chatbot — proactive exception work-queue scanner writing structured insights to DB
 6b. Data Quality & Pipeline Observability:
-   - `DQEngine` in `common/dq_engine.py`: rule-based data quality checks with 7 check types (freshness, completeness, row_count, uniqueness, range, volume_delta, referential_integrity)
+   - `DQEngine` in `common/engines/dq_engine.py`: rule-based data quality checks with 7 check types (freshness, completeness, row_count, uniqueness, range, volume_delta, referential_integrity)
    - Scheduled checks via job scheduler integration; dashboard with pass/fail/warn KPI cards and trend chart
    - 5 API endpoints under `/data-quality/` (dashboard, rules, history, run, acknowledge)
    - Config: `config/platform/data_quality_config.yaml` (rules per dataset, thresholds, severity mapping, schedule)
@@ -249,33 +249,33 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
    - JWT authentication via `common/auth.py` with bcrypt password hashing
    - 4 roles: viewer, planner, manager, admin — role-based endpoint access control
    - Audit logging: all mutations recorded with user, timestamp, action, resource
-   - Router: `api/routers/auth_router.py` (login, register, refresh) + `api/routers/users.py` (CRUD, role assignment)
+   - Router: `api/routers/platform/auth_router.py` (login, register, refresh) + `api/routers/platform/users.py` (CRUD, role assignment)
 6d. Performance & Caching:
-   - `InMemoryBackend` cache in `common/cache.py` with configurable TTL per endpoint
+   - `InMemoryBackend` cache in `common/services/cache.py` with configurable TTL per endpoint
    - Query performance tracking: slow query detection, response time histograms
    - Config: `config/platform/cache_config.yaml` (TTL, max entries, eviction policy)
 6e. Notifications & Alerting:
-   - `NotificationEngine` in `common/notification_engine.py` with pluggable adapter pattern
+   - `NotificationEngine` in `common/services/notification_engine.py` with pluggable adapter pattern
    - 4 adapters: Slack, Teams, Email (SMTP), PagerDuty
-   - Router: `api/routers/notifications.py` (channels, preferences, send, history)
+   - Router: `api/routers/platform/notifications.py` (channels, preferences, send, history)
    - Config: `config/platform/notification_config.yaml` (channels, routing rules, severity thresholds)
 6f. Webhooks:
-   - `WebhookDispatcher` in `common/webhook_dispatcher.py` with HMAC-SHA256 signed payloads
+   - `WebhookDispatcher` in `common/services/webhook_dispatcher.py` with HMAC-SHA256 signed payloads
    - Retry with exponential backoff (configurable max attempts)
-   - Router: `api/routers/webhooks.py` (register, list, test, delivery history)
+   - Router: `api/routers/platform/webhooks.py` (register, list, test, delivery history)
    - Config: `config/webhook_config.yaml` (retry policy, signing secrets, event types)
 6g. SQL Runner:
    - Freeform read-only SQL execution from the UI
    - Two-layer write protection: regex-based DML/DDL rejection + DB-level `SET TRANSACTION READ ONLY`
    - Configurable row limits (default 1000) and query timeouts (default 30s)
    - Schema browser (information_schema introspection) and in-memory query history
-   - Router: `api/routers/sql_runner.py` (execute, schema, history)
+   - Router: `api/routers/platform/sql_runner.py` (execute, schema, history)
    - Config: `config/sql_runner_config.yaml` (max_rows, statement_timeout_ms, enabled)
    - Frontend: `SqlRunnerTab` under System sidebar section
 6h. API Governance:
-   - Rate limiting via `common/rate_limiter.py` (token bucket algorithm)
+   - Rate limiting via `common/services/rate_limiter.py` (token bucket algorithm)
    - API versioning support (v1/v2 path prefixes)
-   - Rate limiting logic in `common/rate_limiter.py`; no dedicated router (governance endpoints planned, not yet mounted)
+   - Rate limiting logic in `common/services/rate_limiter.py`; no dedicated router (governance endpoints planned, not yet mounted)
 7. Multi-model forecasting:
    - `model_id` column on forecast fact table
    - Per-model analytics and model selector in UI
@@ -354,7 +354,7 @@ Data loads directly from CSV into main tables via `scripts/load_dataset_postgres
    - Views refreshed automatically by `backtest-load`; also manually via `make accuracy-slice-refresh`
 17. Champion model selection (feature15):
    - Per-DFU per-month best-model selection using Forecast Value Added (FVA) approach
-   - 8 configurable strategies via `common/champion_strategies.py` strategy registry:
+   - 8 configurable strategies via `common/ml/champion_strategies.py` strategy registry:
      - `expanding` — cumulative WAPE, all prior months equal weight (default)
      - `rolling` — last N months only (configurable `window_months`)
      - `decay` — exponential decay weighting recent months more (`decay_factor`)
@@ -867,13 +867,13 @@ flowchart TD
 
 ## 15. API Router Architecture
 
-`api/main.py` creates the app, adds middleware, and mounts all 63 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/`. `domains.py` is mounted last (catch-all `{domain}` path parameter). Note: `inv_planning.py` is a thin compatibility shim (not directly mounted); `api_governance.py` does not exist as a router file (governance logic is in `common/rate_limiter.py`).
+`api/main.py` creates the app, adds middleware, and mounts all 80 routers via `app.include_router()`. All route handlers live in router modules under `api/routers/` organized into 6 domain subfolders (`core/`, `forecasting/`, `intelligence/`, `inventory/`, `operations/`, `platform/`). `domains.py` is mounted last (catch-all `{domain}` path parameter). Note: `api_governance.py` does not exist as a router file (governance logic is in `common/services/rate_limiter.py`).
 
-**63 mounted routers** (as of 08-01 through 08-10 + all evolution features + Feature 46 + Feature 47 + Feature 48):
-accuracy, ai_planner, analysis, auth_router, backtest_management, bias_corrections, blended_forecast, champion_experiments, cluster_experiments, clusters, collaboration, competition, consensus_plan, control_tower, dashboard, data_quality, domains, echelon_planning, events, external_signals, fill_rate, financial_plan, fva, intel, inv_backtest, inv_planning_abc_xyz, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_projection, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, inventory, jobs, lead_time_learning, lgbm_tuning, notifications, production_forecast, reports, service_level, shap, sop, storyboard, supply, supply_scenarios, unified_model_tuning, users, webhooks, demand_history
+**Mounted router modules** (alphabetical, exact list lives in `api/main.py`):
+accuracy, accuracy_budget, admin_router, ai_planner, analysis, auth_router, backtest_management, bias_corrections, blended_forecast, champion_experiments, cluster_eda, cluster_experiments, clusters, collaboration, competition, config_manager, consensus_plan, control_tower, customer_analytics, dashboard, data_quality, demand_history, domains, echelon_planning, events, explain_router, expsys_accuracy, external_signals, feature_lab, fill_rate, financial_plan, fva, integrated_targets, integration, intel, inv_backtest, inv_planning_abc_xyz, inv_planning_algorithm_comparison, inv_planning_demand_signals, inv_planning_eoq, inv_planning_exceptions, inv_planning_health, inv_planning_insights, inv_planning_intramonth, inv_planning_investment, inv_planning_lead_time, inv_planning_policy, inv_planning_projection, inv_planning_rebalancing, inv_planning_replenishment, inv_planning_safety_stock, inv_planning_simulation, inv_planning_supplier, inv_planning_variability, inventory, jobs, lead_time_learning, lgbm_tuning, medallion, model_tuning, notifications, po_router, production_forecast, reports, sampled_backtest, service_level, shap, sku_features, sop, sourcing_router, sql_runner, storyboard, supply, supply_scenarios, tuning_chat, unified_model_tuning, users, webhooks, working_capital.
 
-**Vite proxy path prefixes** in `frontend/vite.config.ts`:
-`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/sku`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/data-quality`, `/auth`, `/users`, `/notifications`, `/collaboration`, `/external-signals`, `/fva`, `/reports`, `/api`, `/webhooks`, `/lgbm-tuning`, `/cluster-eda`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`, `/backtest-management`
+**Vite proxy path prefixes** in `frontend/vite.config.ts` (50 entries — exact list is the source of truth; representative subset shown):
+`/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/sku`, `/sku-features`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/supply`, `/analytics`, `/finance`, `/sop`, `/events`, `/scenarios`, `/auth`, `/users`, `/data-quality`, `/notifications`, `/collaboration`, `/demand-signals`, `/demand-history`, `/fva`, `/reports`, `/webhooks`, `/cache`, `/config`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/catboost-tuning`, `/xgboost-tuning`, `/cluster-eda`, `/cluster-experiments`, `/champion-experiments`, `/feature-lab`, `/accuracy-budget`, `/model-tuning`, `/expsys`, `/customer-analytics`, `/backtest-management`
 
 **CRITICAL:** Every new API path prefix must be added to `frontend/vite.config.ts` or the frontend receives HTML instead of JSON. Restart the Vite dev server after changes.
 
@@ -926,29 +926,29 @@ All tree-based backtest scripts share common logic extracted into reusable modul
 |--------|---------|
 | `common/ml/clustering/` | Clustering library package: `features.py` (`compute_time_series_features`), `training.py` (`CORE_FEATURES`, `LOG_TRANSFORM_FEATURES`, `find_optimal_k`, `merge_small_clusters`), `labeling.py` (`assign_cluster_labels`), `scenario.py` (`generate_scenario_id`, `promote_scenario`, `get_scenario_result`) |
 | `common/ml/sku_features/` | Unified SKU feature computation package: `compute.py` (`load_sales_from_db`, `compute_all_sku_features`), `classifiers.py` (`classify_seasonality_profile`, `classify_variability_class`), `persistence.py` (`write_features_to_dim_sku` — bulk COPY via staging table). Orchestrates time-series feature extraction and derived classifications (seasonality profile, variability class) then writes all feature columns to `dim_sku` in a single pass. |
-| `common/backtest_framework.py` | `run_tree_backtest()` orchestrator, timeframe generation, data loading, execution-lag assignment, all-lag expansion, post-processing, model-scoped output saving (`data/backtest/<model_id>/`), feature importance; `_fill_predict_nans()`, `_predict_single_month()`, `recursive` param for recursive multi-step inference (Feature 43); configurable `shap_retrain_threshold` from `forecast_pipeline_config.yaml` |
-| `common/model_registry.py` | Centralized model abstraction layer: `CANONICAL_TO_NATIVE` / `NATIVE_TO_CANONICAL` parameter name mapping (lgbm/catboost/xgboost), `to_native_params()` / `from_native_params()` for canonical ↔ native translation, `fit_model()` unified fit function (accepts `demand_pattern` for sparse-aware early stopping), `get_best_iteration()` abstracting attribute differences (`best_iteration_` vs `best_iteration`), `compute_early_stop_patience()` with 5% patience (10% for sparse clusters), custom WAPE eval callbacks (`_wape_lgbm`, `WapeMetric`, `_wape_xgb`) with scaled denominator floor |
-| `common/feature_engineering.py` | `build_feature_matrix()`, `get_feature_columns()`, `mask_future_sales()` with `cat_dtype` parameter for framework-specific categorical handling; `update_grid_with_predictions()` for recursive multi-step lag write-back (Feature 43) |
-| `common/metrics.py` | `compute_accuracy_metrics()`: WAPE, bias, accuracy % |
-| `common/mlflow_utils.py` | `log_backtest_run()`: generic MLflow experiment logging |
-| `common/db.py` | `get_db_params()`: shared DB connection parameters |
-| `common/constants.py` | `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output column ordering, thresholds |
-| `common/tuning.py` | Shared tuning utilities: `generate_cv_month_splits`, `compute_wape_stabilised`, `suggest_params`, `save_best_params`, `load_best_params`, `best_rounds_to_n_estimators`, `tune_for_timeframe()` (per-timeframe causal tuning, PL-002), `TRAIN_FOLD_FNS` registry (`train_lgbm_fold`, `train_catboost_fold`, `train_xgboost_fold`) (Feature 41) |
-| `common/shap_selector.py` | SHAP-based feature selection: `compute_shap_global` (LGBM/XGBoost via `shap.TreeExplainer`), `compute_shap_catboost` (native ShapValues), `compute_timeframe_shap` (cluster-pooled or global), `compute_timeframe_shap_per_cluster` (independent per-cluster SHAP returning `dict[str, list[str]]`), `_stratified_sample_for_shap` (50/50 zero/non-zero sampling for sparse clusters), `build_shap_summary`, `save_shap_outputs` (Feature 42) |
-| `common/job_state.py` | In-memory job state: `_active_jobs`, `_pending_queues`, `_cancel_flags`, state lock, status constants; extracted from `job_registry.py` for separation of concerns |
-| `common/job_scheduler.py` | APScheduler wrapper: `make_scheduler()`, `make_trigger()` utilities; extracted from `job_registry.py` to isolate APScheduler-specific initialization and trigger creation |
+| `common/ml/backtest_framework.py` | `run_tree_backtest()` orchestrator, timeframe generation, data loading, execution-lag assignment, all-lag expansion, post-processing, model-scoped output saving (`data/backtest/<model_id>/`), feature importance; `_fill_predict_nans()`, `_predict_single_month()`, `recursive` param for recursive multi-step inference (Feature 43); configurable `shap_retrain_threshold` from `forecast_pipeline_config.yaml` |
+| `common/ml/model_registry.py` | Centralized model abstraction layer: `CANONICAL_TO_NATIVE` / `NATIVE_TO_CANONICAL` parameter name mapping (lgbm/catboost/xgboost), `to_native_params()` / `from_native_params()` for canonical ↔ native translation, `fit_model()` unified fit function (accepts `demand_pattern` for sparse-aware early stopping), `get_best_iteration()` abstracting attribute differences (`best_iteration_` vs `best_iteration`), `compute_early_stop_patience()` with 5% patience (10% for sparse clusters), custom WAPE eval callbacks (`_wape_lgbm`, `WapeMetric`, `_wape_xgb`) with scaled denominator floor |
+| `common/ml/feature_engineering.py` | `build_feature_matrix()`, `get_feature_columns()`, `mask_future_sales()` with `cat_dtype` parameter for framework-specific categorical handling; `update_grid_with_predictions()` for recursive multi-step lag write-back (Feature 43) |
+| `common/services/metrics.py` | `compute_accuracy_metrics()`: WAPE, bias, accuracy % |
+| `common/ml/mlflow_utils.py` | `log_backtest_run()`: generic MLflow experiment logging |
+| `common/core/db.py` | `get_db_params()`: shared DB connection parameters |
+| `common/core/constants.py` | `CAT_FEATURES`, `LAG_RANGE`, `ROLLING_WINDOWS`, output column ordering, thresholds |
+| `common/ml/tuning.py` | Shared tuning utilities: `generate_cv_month_splits`, `compute_wape_stabilised`, `suggest_params`, `save_best_params`, `load_best_params`, `best_rounds_to_n_estimators`, `tune_for_timeframe()` (per-timeframe causal tuning, PL-002), `TRAIN_FOLD_FNS` registry (`train_lgbm_fold`, `train_catboost_fold`, `train_xgboost_fold`) (Feature 41) |
+| `common/ml/shap_selector.py` | SHAP-based feature selection: `compute_shap_global` (LGBM/XGBoost via `shap.TreeExplainer`), `compute_shap_catboost` (native ShapValues), `compute_timeframe_shap` (cluster-pooled or global), `compute_timeframe_shap_per_cluster` (independent per-cluster SHAP returning `dict[str, list[str]]`), `_stratified_sample_for_shap` (50/50 zero/non-zero sampling for sparse clusters), `build_shap_summary`, `save_shap_outputs` (Feature 42) |
+| `common/services/job_state.py` | In-memory job state: `_active_jobs`, `_pending_queues`, `_cancel_flags`, state lock, status constants; extracted from `job_registry.py` for separation of concerns |
+| `common/services/job_scheduler.py` | APScheduler wrapper: `make_scheduler()`, `make_trigger()` utilities; extracted from `job_registry.py` to isolate APScheduler-specific initialization and trigger creation |
 | `common/auth.py` | JWT authentication: `create_access_token()`, `create_refresh_token()`, `verify_token()`, `hash_password()`, `verify_password()`, `get_current_user()` FastAPI dependency, role-based `require_role(role)` dependency factory (08-02) |
-| `common/cache.py` | `InMemoryBackend` cache: `get()`, `set()`, `invalidate()`, `invalidate_pattern()` with TTL, LRU eviction, max entry count; `cache_response()` FastAPI middleware decorator (08-03) |
-| `common/rate_limiter.py` | Token bucket rate limiter: `RateLimiter` class with per-endpoint and per-user rate tracking, `check_rate_limit()` FastAPI dependency, 429 response with `Retry-After` header (08-09) |
-| `common/dq_engine.py` | `DQEngine` data quality engine: `run_rules()`, `evaluate_rule()`, pluggable rule types (completeness, freshness, schema_drift, outlier, referential_integrity), severity scoring, result persistence (08-01) |
-| `common/notification_engine.py` | `NotificationEngine` with adapter pattern: `send()`, `register_channel()`, `route_event()`; adapters: `SlackAdapter`, `TeamsAdapter`, `EmailAdapter`, `PagerDutyAdapter`; event routing by type x severity (08-04) |
-| `common/webhook_dispatcher.py` | `WebhookDispatcher`: `dispatch()`, `sign_payload()` (HMAC-SHA256), `retry_delivery()` with exponential backoff; `deliver_webhook()` async worker; event type filtering per registration (08-10) |
-| `common/planning_date.py` | `get_planning_date()`: shared planning date replacing `date.today()` across all scripts and routers; config in `config/planning_config.yaml` |
-| `common/utils.py` | `_ts()` timestamp helper, `load_config()` thread-safe YAML config loader with caching, `reset_config()` for tests |
-| `common/forecast_ci.py` | Forecast confidence interval computation for production forecasts |
-| `common/exception_engine.py` | `ExceptionEngine` class: threshold evaluation, severity scoring, exception type classification for storyboard (Feature 40) |
-| `common/sql_helpers.py` | Shared SQL utilities for load scripts: `qident()`, `typed_expr()`, `business_key_expr()`, `_elapsed()`, `NULL_SQL`, `MV_REFRESH_ARCHIVE`, constants (`IQR_OUTLIER_MULTIPLIER`, `LEAD_TIME_MAX_DAYS`, `LEAD_TIME_DEFAULT_DAYS`, `HASH_CHUNK_SIZE`, `EXTERNAL_MODEL_ID`, percentile constants) |
-| `common/query_tracker.py` | API query tracking + usage metrics for governance and observability |
+| `common/services/cache.py` | `InMemoryBackend` cache: `get()`, `set()`, `invalidate()`, `invalidate_pattern()` with TTL, LRU eviction, max entry count; `cache_response()` FastAPI middleware decorator (08-03) |
+| `common/services/rate_limiter.py` | Token bucket rate limiter: `RateLimiter` class with per-endpoint and per-user rate tracking, `check_rate_limit()` FastAPI dependency, 429 response with `Retry-After` header (08-09) |
+| `common/engines/dq_engine.py` | `DQEngine` data quality engine: `run_rules()`, `evaluate_rule()`, pluggable rule types (completeness, freshness, schema_drift, outlier, referential_integrity), severity scoring, result persistence (08-01) |
+| `common/services/notification_engine.py` | `NotificationEngine` with adapter pattern: `send()`, `register_channel()`, `route_event()`; adapters: `SlackAdapter`, `TeamsAdapter`, `EmailAdapter`, `PagerDutyAdapter`; event routing by type x severity (08-04) |
+| `common/services/webhook_dispatcher.py` | `WebhookDispatcher`: `dispatch()`, `sign_payload()` (HMAC-SHA256), `retry_delivery()` with exponential backoff; `deliver_webhook()` async worker; event type filtering per registration (08-10) |
+| `common/core/planning_date.py` | `get_planning_date()`: shared planning date replacing `date.today()` across all scripts and routers; config in `config/planning_config.yaml` |
+| `common/core/utils.py` | `_ts()` timestamp helper, `load_config()` thread-safe YAML config loader with caching, `reset_config()` for tests |
+| `common/ml/forecast_ci.py` | Forecast confidence interval computation for production forecasts |
+| `common/engines/exception_engine.py` | `ExceptionEngine` class: threshold evaluation, severity scoring, exception type classification for storyboard (Feature 40) |
+| `common/core/sql_helpers.py` | Shared SQL utilities for load scripts: `qident()`, `typed_expr()`, `business_key_expr()`, `_elapsed()`, `NULL_SQL`, `MV_REFRESH_ARCHIVE`, constants (`IQR_OUTLIER_MULTIPLIER`, `LEAD_TIME_MAX_DAYS`, `LEAD_TIME_DEFAULT_DAYS`, `HASH_CHUNK_SIZE`, `EXTERNAL_MODEL_ID`, percentile constants) |
+| `common/services/query_tracker.py` | API query tracking + usage metrics for governance and observability |
 
 Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting which to pass to `run_tree_backtest()` based on the `cluster_strategy` key in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>` (`per_cluster` or `global`). **`ml_cluster` is excluded from model features** (listed in `METADATA_COLS` in `constants.py`) to prevent data leakage from full-history cluster assignments. It is merged into the feature grid as a metadata column so that `per_cluster` mode can partition DFUs into separate models per cluster, but models never see it as an input feature. Algorithm behavior (cluster_strategy, recursive, SHAP selection, inline tuning, params file, hyperparameters) is read from `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>`, not from CLI flags. `run_tree_backtest()` accepts optional `feature_selector_fn` callable (Feature 42): when provided, each timeframe computes SHAP after the initial model train and retrains on the selected feature subset before generating predictions. Per-cluster SHAP (`compute_timeframe_shap_per_cluster`) returns `dict[str, list[str]]` — the backtest framework handles per-cluster retrain and per-cluster prediction with independent feature sets. `run_tree_backtest()` also accepts `recursive: bool = False` (Feature 43): when `True`, each predict month is scored one at a time using `_predict_single_month(models, predict_data, feature_cols)`, and predictions are written back into the feature grid via `update_grid_with_predictions()` so that `qty_lag_1` for month T+1 reflects the model's own prediction for month T rather than zero. Recursive lag smoothing (`recursive_lag_smooth: 0.15`) damps compounding errors from step 3 onward. Intermittent clusters (>70% zeros) are automatically routed to rolling mean baseline instead of tree models. Per-cluster tuning profiles (`cluster_tuning_profiles.yaml`) are resolved via `resolve_cluster_params()` with Phase 1 `cluster_name` exact match before Phase 2 statistical criteria fallback.
 
@@ -981,26 +981,26 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
 4. **Assignment Update** (`common/ml/clustering/scenario.py` via `promote_scenario()`):
    - Updates `dim_sku.cluster_assignment` column in PostgreSQL
    - Validates updates and reports cluster distribution
-5. **LGBM Backtest** (`run_backtest.py` → `common/backtest_framework.py` — Feature 44):
-   - Uses shared `run_tree_backtest()` orchestrator from `common/backtest_framework.py`
+5. **LGBM Backtest** (`run_backtest.py` → `common/ml/backtest_framework.py` — Feature 44):
+   - Uses shared `run_tree_backtest()` orchestrator from `common/ml/backtest_framework.py`
    - Script implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`; selects based on `cluster_strategy` config key
    - `ml_cluster` is a metadata column (in `METADATA_COLS`) — used for per-cluster partitioning, excluded from `feature_cols`
    - Algorithm options read from `config/forecasting/forecast_pipeline_config.yaml` (`algorithms.lgbm_cluster`: cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparams under `.params`)
-   - Shared feature engineering from `common/feature_engineering.py`: lag 1-12, rolling mean/std 3/6/12m, calendar, DFU/item attributes
+   - Shared feature engineering from `common/ml/feature_engineering.py`: lag 1-12, rolling mean/std 3/6/12m, calendar, DFU/item attributes
    - Default model IDs: `lgbm_cluster` (per_cluster) or `lgbm_global` (global)
    - Outputs two CSVs: execution-lag only (main table) + all lags 0-4 (archive)
    - Deduplication across timeframes (latest timeframe wins)
-   - MLflow logging via `common/mlflow_utils.py` to `demand_backtest` experiment
-   - All 3 models use unified `fit_model()` from `common/model_registry.py` — no duplicate fit blocks
+   - MLflow logging via `common/ml/mlflow_utils.py` to `demand_backtest` experiment
+   - All 3 models use unified `fit_model()` from `common/ml/model_registry.py` — no duplicate fit blocks
    - Early stopping: standardized 5% patience (10% for sparse clusters) via `compute_early_stop_patience()` with custom WAPE eval callbacks
    - Best iteration: abstracted via `get_best_iteration()` (handles `best_iteration_` vs `best_iteration` attribute differences)
-6. **CatBoost Backtest** (`run_backtest_catboost.py` → `common/backtest_framework.py` — Feature 44):
+6. **CatBoost Backtest** (`run_backtest_catboost.py` → `common/ml/backtest_framework.py` — Feature 44):
    - Uses shared `run_tree_backtest()` orchestrator with `cat_dtype="str"` for CatBoost's index-based categoricals
    - Script implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`
    - `ml_cluster` used for partitioning only (in `METADATA_COLS`), not a model feature; `cluster_strategy` config key selects mode
    - Algorithm options read from `config/forecasting/forecast_pipeline_config.yaml` (`algorithms.catboost_cluster`)
    - Default model IDs: `catboost_cluster` (per_cluster) or `catboost_global` (global)
-7. **XGBoost Backtest** (`run_backtest_xgboost.py` → `common/backtest_framework.py` — Feature 44):
+7. **XGBoost Backtest** (`run_backtest_xgboost.py` → `common/ml/backtest_framework.py` — Feature 44):
    - Uses shared `run_tree_backtest()` orchestrator with `cat_dtype="category"` for XGBoost's native categoricals
    - Script implements both `train_and_predict_per_cluster()` and `train_and_predict_global()`
    - `ml_cluster` used for partitioning only (in `METADATA_COLS`), not a model feature; `cluster_strategy` config key selects mode
@@ -1075,9 +1075,9 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Refreshes `agg_forecast_monthly`, `agg_accuracy_by_dim`, `agg_accuracy_lag_archive` materialized views
    - CLI: `make backtest-load-all`, `make backtest-load-all-bulk`, `make backtest-load-bulk`, `make backtest-load-main-only`, `make backtest-load-archive-only`
    - Each backtest writes to `data/backtest/<model_id>/` subdirectory (prevents CSV overwrites — PL-001 fix)
-16. **Champion Selection** (`run_champion_selection.py` + `common/champion_strategies.py`):
+16. **Champion Selection** (`run_champion_selection.py` + `common/ml/champion_strategies.py`):
    - 8 configurable strategies: expanding, rolling, decay, ensemble, meta_learner, hybrid_warmup, adaptive_ensemble, ensemble_rolling
-   - Strategy registry in `common/champion_strategies.py` — all strategies operate on pandas DataFrames (testable without DB)
+   - Strategy registry in `common/ml/champion_strategies.py` — all strategies operate on pandas DataFrames (testable without DB)
    - New strategies: `hybrid_warmup` (ensemble for stable months + rolling for warm-up; addresses 58% coverage gap), `adaptive_ensemble` (varies top-K 2–5 per DFU-month based on model WAPE spread), `ensemble_rolling` (blends top-K using rolling window WAPE instead of expanding)
    - All strategies enforce **exec-lag-aware causality** via `shift(exec_lag + 1)` per DFU-model group — selection for month T excludes last exec_lag months whose actuals weren't available at issuance time; backward compatible with exec_lag=0
    - **Fallback model** fills warm-up DFU-months (NOT EXISTS + ON CONFLICT DO NOTHING insert) so every DFU-month has a champion row
@@ -1089,7 +1089,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Meta-learner (`scripts/train_meta_learner.py`): RandomForest/XGBoost classifier trained on ceiling labels with temporal split
    - Simulation (`scripts/simulate_champion_strategies.py`): runs all 16 strategy variants (including ensemble_top5_inv, ensemble_roll6_inv, ensemble_roll9_inv, adaptive_ensemble, hybrid_warmup, hybrid_warmup_adapt), compares accuracy vs ceiling
    - **Fixes:** Decimal -> float cast for DB values, `is_ensemble` detection checks synthetic model_id (not in competing list), per-cluster strategy loads `dfu_features`, cached winners CSV (`experiment_{id}_winners.csv`) for fast UI load, `item_id` read as str dtype, promoted experiment deletion cleans up forecast rows + promotion_log FK
-17. **Hyperparameter Tuning** (`scripts/tune_hyperparams.py` + `common/tuning.py`):
+17. **Hyperparameter Tuning** (`scripts/tune_hyperparams.py` + `common/ml/tuning.py`):
    - Bayesian optimisation via Optuna (TPESampler + MedianPruner) for LGBM, CatBoost, XGBoost
    - Walk-forward expanding CV with causal masking (`mask_future_sales()` inside each fold)
    - `n_estimators` determined by early stopping (excluded from search space)
@@ -1097,25 +1097,25 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Search spaces and CV settings in `config/forecasting/hyperparameter_tuning.yaml` (includes `inline_n_trials: 20`, `inline_n_splits: 3`)
    - Output: `data/tuning/best_params_<model>.json` consumed via `params_file` key in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>` (Feature 44)
    - MLflow experiment: `hyperparameter_tuning`
-   - **Per-timeframe causal inline tuning (PL-002):** `tune_for_timeframe()` in `common/tuning.py` filters the feature matrix to `months <= cutoff_date` before running a lightweight Optuna study (20 trials, 3 folds) — eliminates future leakage into backtest accuracy metrics. Enabled via `tune_inline: true` in algorithm entry of `config/forecasting/forecast_pipeline_config.yaml`. `TRAIN_FOLD_FNS` registry (`train_lgbm_fold`, `train_catboost_fold`, `train_xgboost_fold`) shared between global tuning and inline tuner. `run_tree_backtest()` accepts optional `inline_tuner_fn` callable — each timeframe gets its own causally-valid params.
+   - **Per-timeframe causal inline tuning (PL-002):** `tune_for_timeframe()` in `common/ml/tuning.py` filters the feature matrix to `months <= cutoff_date` before running a lightweight Optuna study (20 trials, 3 folds) — eliminates future leakage into backtest accuracy metrics. Enabled via `tune_inline: true` in algorithm entry of `config/forecasting/forecast_pipeline_config.yaml`. `TRAIN_FOLD_FNS` registry (`train_lgbm_fold`, `train_catboost_fold`, `train_xgboost_fold`) shared between global tuning and inline tuner. `run_tree_backtest()` accepts optional `inline_tuner_fn` callable — each timeframe gets its own causally-valid params.
    - **Per-cluster Bayesian tuning:** `scripts/tune_cluster_hyperparams.py` runs Optuna independently per `ml_cluster`, producing cluster-specific hyperparameter overrides written to `config/forecasting/cluster_tuning_profiles.yaml` with `cluster_name` in `match_criteria`. During backtest, `resolve_cluster_params()` matches by Phase 1 `cluster_name` exact match, then Phase 2 statistical criteria fallback. CLI: `make tune-lgbm-clusters`, `make tune-clusters`.
    - **Two modes:** Production (`params_file` in algorithm config — global tune once, apply everywhere) vs. Honest backtesting (`tune_inline: true` in algorithm config — 600 fits vs 250, no future leakage)
-18. **SHAP Feature Selection** (`common/shap_selector.py` — Feature 42):
+18. **SHAP Feature Selection** (`common/ml/shap_selector.py` — Feature 42):
    - Per-timeframe SHAP computation integrated into `run_tree_backtest()` via `feature_selector_fn` hook
    - LGBM/XGBoost: `shap.TreeExplainer` via `compute_shap_global`; CatBoost: native `get_feature_importance(type="ShapValues")` via `compute_shap_catboost`
    - For per_cluster/transfer strategies: SHAP pooled across cluster models weighted by cluster size via `_weighted_pool_cluster_shap`; `ml_cluster` excluded from effective feature set
    - Feature selection: cumulative importance threshold (default 95%) or exact top-N; minimum 5 features guaranteed
    - Output: `data/backtest/<model_id>/shap/shap_timeframe_XX.csv` (per-timeframe) + `shap_summary.csv` (cross-timeframe aggregated)
-   - API: 4 read-only endpoints (models list, summary, timeframes, per-timeframe detail) under `/forecast/shap/` served from CSVs (no DB queries), plus **1 on-demand compute endpoint** `GET /forecast/shap/{model_id}/sku?item_id=&loc=&top_n=` that loads persisted pkl from `data/models/{model_id}/cluster_{ml_cluster}.pkl`, rebuilds the exact feature matrix (lags 1-12, rolling mean/std with ddof=1, calendar, categoricals, item numerics), runs SHAP, and returns per-month signed contributions for both historical and future production-forecast months — all via `api/routers/shap.py`
+   - API: 4 read-only endpoints (models list, summary, timeframes, per-timeframe detail) under `/forecast/shap/` served from CSVs (no DB queries), plus **1 on-demand compute endpoint** `GET /forecast/shap/{model_id}/sku?item_id=&loc=&top_n=` that loads persisted pkl from `data/models/{model_id}/cluster_{ml_cluster}.pkl`, rebuilds the exact feature matrix (lags 1-12, rolling mean/std with ddof=1, calendar, categoricals, item numerics), runs SHAP, and returns per-month signed contributions for both historical and future production-forecast months — all via `api/routers/forecasting/shap.py`
    - Frontend: collapsible "Feature Importance (SHAP)" panel in Accuracy tab; indigo=selected / gray=dropped bar chart; **per-DFU interactive SHAP panel** (`DfuShapPanel.tsx`) in Item Analysis tab
    - Config keys in `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>`: `shap_select`, `shap_top_n`, `shap_threshold`, `shap_sample_size`; composable with `tune_inline` and `params_file` (Feature 44)
    - Activated by setting `shap_select: true` in the algorithm section; run via `make backtest-lgbm`, `make backtest-catboost`, or `make backtest-xgboost`
    - Graceful degradation: SHAP failures log warning and keep all features; backtest continues uninterrupted
-19. **Recursive Multi-Step Inference** (`common/backtest_framework.py` + `common/feature_engineering.py` — Feature 43):
+19. **Recursive Multi-Step Inference** (`common/ml/backtest_framework.py` + `common/ml/feature_engineering.py` — Feature 43):
    - `--recursive` CLI flag on LGBM, CatBoost, and XGBoost backtest scripts; passes `recursive=True` to `run_tree_backtest()`
    - In direct mode (default), months 2+ of the prediction window use `qty_lag_1 = 0` (masked sales). In recursive mode, each predict month is scored individually, and the model's prediction for month T is written back via `update_grid_with_predictions()` before scoring month T+1
-   - `update_grid_with_predictions(grid, month, predictions)` in `common/feature_engineering.py`: writes predicted `basefcst_pref` to `qty[month]` then recomputes all lag (1-12) and rolling (3m/6m/12m) features in a single vectorized `groupby().shift()` pass
-   - `_predict_single_month(models, data, feature_cols)` in `common/backtest_framework.py`: routes one month's batch to the correct cluster model dict (per-cluster) or single model (global) without retraining
+   - `update_grid_with_predictions(grid, month, predictions)` in `common/ml/feature_engineering.py`: writes predicted `basefcst_pref` to `qty[month]` then recomputes all lag (1-12) and rolling (3m/6m/12m) features in a single vectorized `groupby().shift()` pass
+   - `_predict_single_month(models, data, feature_cols)` in `common/ml/backtest_framework.py`: routes one month's batch to the correct cluster model dict (per-cluster) or single model (global) without retraining
    - `_fill_predict_nans(predict_data, feature_cols, cat_cols)`: fills numeric NaN lag features with 0 per-month (skips categorical columns)
    - Training cost unchanged: model trained once per timeframe; recursive loop is inference-only
    - Composable with `shap_select` and `tune_inline` via `config/forecasting/forecast_pipeline_config.yaml` algorithm entries (Feature 44)
@@ -1160,7 +1160,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
 29. Fill Rate Analytics (IPfeature8):
    - Order fill rate metrics aggregated from inventory snapshot data
    - DDL: `sql/028_create_fill_rate_monthly.sql` — `mv_fill_rate_monthly` materialized view
-   - Router: `api/routers/fill_rate.py` — 3 endpoints: `GET /fill-rate/summary`, `GET /fill-rate/trend`, `GET /fill-rate/detail`
+   - Router: `api/routers/operations/fill_rate.py` — 3 endpoints: `GET /fill-rate/summary`, `GET /fill-rate/trend`, `GET /fill-rate/detail`
    - Frontend: FillRatePanel in InvPlanningTab
    - Makefile: `fill-rate-schema`, `fill-rate-refresh`, `fill-rate-all`
    - Tests: `tests/api/test_fill_rate.py`
@@ -1168,7 +1168,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Short-horizon demand signals computed from recent sales velocity and inventory movement patterns
    - DDL: `sql/029_create_demand_signals.sql` — `fact_demand_signals` table
    - Script: `scripts/compute_demand_signals.py`
-   - 3 API endpoints in `api/routers/inv_planning.py`: `GET /inv-planning/demand-signals/summary`, `/list`, `/item`
+   - 3 API endpoints in `api/routers/inventory/inv_planning_demand_signals.py`: `GET /inv-planning/demand-signals/summary`, `/list`, `/item`
    - Makefile: `demand-signals-schema`, `demand-signals-compute`, `demand-signals-all`
    - Tests: `tests/api/test_inv_planning_demand_signals.py`, `tests/unit/test_demand_signals.py`
 31. Safety Stock Monte Carlo Simulation (IPfeature10):
@@ -1212,7 +1212,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
 36. Unified Control Tower / Command Center (IPfeature15):
    - Single-pane-of-glass operational dashboard aggregating KPIs, alerts, critical items, and trends
    - DDL: `sql/035_create_control_tower_kpis.sql` — `mv_control_tower_kpis` materialized view
-   - Router: `api/routers/control_tower.py` — 4 endpoints: `GET /control-tower/kpis`, `/alerts`, `/top-critical`, `/trend`
+   - Router: `api/routers/operations/control_tower.py` — 4 endpoints: `GET /control-tower/kpis`, `/alerts`, `/top-critical`, `/trend`
    - Frontend: `frontend/src/tabs/ControlTowerTab.tsx` — dedicated Control Tower tab registered in App.tsx and AppSidebar
    - Router registered in `api/main.py`; Vite proxy entry `/control-tower` added to `frontend/vite.config.ts`
    - Makefile: `control-tower-schema`, `control-tower-refresh`, `control-tower-all`
@@ -1264,13 +1264,13 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - **AI Tuning integration:** Tuning chat `confirm-run` submits via `JobManager.submit_job("tuning_backtest")` instead of standalone `ThreadPoolExecutor` — gets PID tracking, cancel, log streaming, and restart recovery for free
 
 37. AI Planning Agent (IPAIfeature1):
-   - Claude `tool_use` agent (`common/ai_planner.py`) with `AIPlannerAgent` class and 10 tools
+   - Claude `tool_use` agent (`common/ai/ai_planner.py`) with `AIPlannerAgent` class and 10 tools
    - 9 read-only PostgreSQL tools (get_dfu_full_context, get_forecast_performance, get_portfolio_exceptions, compute_bias_trend, get_inventory_trend, get_eoq_context, get_similar_dfus, check_stockout_history, get_portfolio_health_summary) + 1 write tool (create_insight)
-   - Agent calls Claude `claude-opus-4-6` via Anthropic SDK; tool_use loop dispatches to Python handlers with real DB queries
+   - Agent calls Claude `claude-sonnet-4-20250514` via Anthropic SDK; tool_use loop dispatches to Python handlers with real DB queries
    - DDL: `sql/036_create_ai_insights.sql` — `ai_insights` table (5 insight types, 4 severities, open/acknowledged/resolved workflow) + `ai_planning_memos` table (portfolio/DFU scope narratives)
    - Config: `config/ai/ai_planner_config.yaml` (model, thresholds, severity rules, portfolio_scan_limit, schedule)
    - Script: `scripts/generate_ai_insights.py` — CLI batch scan (`--portfolio`, `--item`/`--loc`, `--dry-run`)
-   - 5 API endpoints in `api/routers/ai_planner.py`: `POST /ai-planner/analyze` (single DFU, synchronous), `POST /ai-planner/portfolio-scan` (202 background), `GET /ai-planner/insights` (paginated, filterable), `PUT /ai-planner/insights/{id}/status`, `GET /ai-planner/memos`
+   - 5 API endpoints in `api/routers/intelligence/ai_planner.py`: `POST /ai-planner/analyze` (single DFU, synchronous), `POST /ai-planner/portfolio-scan` (202 background), `GET /ai-planner/insights` (paginated, filterable), `PUT /ai-planner/insights/{id}/status`, `GET /ai-planner/memos`
    - Frontend: `AIPlannerTab.tsx` — insight cards with severity badges, financial impact chips, causal reasoning, acknowledge/resolve actions; portfolio health KPI bar; planning memo markdown panel
    - Types: `frontend/src/types/ai-planner.ts` — AiInsight, AiPlanningMemo, InsightSeverity, InsightStatus, InsightType
    - New UI component: `frontend/src/components/ui/select.tsx` — minimal React Context-based Select wrapper matching shadcn/ui API
@@ -1280,12 +1280,12 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Tests: 18 backend unit, 10 API, 7 frontend
 
 38. Data Quality & Pipeline Observability (08-01):
-   - `DQEngine` in `common/dq_engine.py`: rule-based data quality validation engine with 7 pluggable check types
+   - `DQEngine` in `common/engines/dq_engine.py`: rule-based data quality validation engine with 7 pluggable check types
    - 7 check types: freshness (data staleness by `load_ts`), completeness (null percentage per column), row_count (minimum row threshold), uniqueness (duplicate key detection), range (min/max value bounds), volume_delta (period-over-period volume change), referential_integrity (FK consistency)
    - Scheduled checks: integrates with APScheduler job engine for periodic automated scans; manual trigger via `POST /data-quality/run`
    - DDL: `sql/062_create_dq_tables.sql` — `dq_rule_results` + `dq_run_history` tables
    - Config: `config/platform/data_quality_config.yaml` (rules per dataset, thresholds, severity mapping, schedule)
-   - 5 API endpoints in `api/routers/data_quality.py`: `GET /data-quality/dashboard` (aggregate pass/fail/warn counts), `GET /data-quality/rules` (rule definitions), `GET /data-quality/history` (run history with trends), `POST /data-quality/run` (trigger DQ scan), `PUT /data-quality/rules/{id}/acknowledge`
+   - 5 API endpoints in `api/routers/platform/data_quality.py`: `GET /data-quality/dashboard` (aggregate pass/fail/warn counts), `GET /data-quality/rules` (rule definitions), `GET /data-quality/history` (run history with trends), `POST /data-quality/run` (trigger DQ scan), `PUT /data-quality/rules/{id}/acknowledge`
    - Frontend: `DataQualityTab.tsx` — dashboard with pass/fail/warn KPI cards, rule results table with status badges, historical trend chart
    - Makefile: `dq-schema`, `dq-run`, `dq-all`
 
@@ -1294,13 +1294,13 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - 4 roles with hierarchical permissions: viewer (read-only), planner (read + override forecasts), manager (planner + approve + manage users), admin (full access)
    - DDL: `sql/063_create_user_tables.sql` — `app_users` + `audit_log` + `refresh_tokens` tables
    - Config: `config/platform/auth_config.yaml` (JWT secret, token expiry, password policy, role permissions matrix)
-   - Router: `api/routers/auth_router.py` — `POST /auth/login` (JWT issuance), `POST /auth/register`, `POST /auth/refresh` (token rotation), `POST /auth/logout` (revoke refresh token)
-   - Router: `api/routers/users.py` — `GET /users` (list, admin only), `GET /users/{id}`, `PUT /users/{id}/role` (role assignment, admin only), `DELETE /users/{id}` (deactivate, admin only)
+   - Router: `api/routers/platform/auth_router.py` — `POST /auth/login` (JWT issuance), `POST /auth/register`, `POST /auth/refresh` (token rotation), `POST /auth/logout` (revoke refresh token)
+   - Router: `api/routers/platform/users.py` — `GET /users` (list, admin only), `GET /users/{id}`, `PUT /users/{id}/role` (role assignment, admin only), `DELETE /users/{id}` (deactivate, admin only)
    - Audit logging middleware: all mutation endpoints automatically log user, action, resource, timestamp to `audit_log`
    - Dependencies: `PyJWT>=2.8`, `passlib[bcrypt]>=1.7`
 
 40. Performance & Caching (08-03):
-   - `InMemoryBackend` cache in `common/cache.py` with configurable TTL per endpoint pattern
+   - `InMemoryBackend` cache in `common/services/cache.py` with configurable TTL per endpoint pattern
    - LRU eviction with max entry count; cache key derivation from request path + query params + global filters
    - Query performance tracking: per-endpoint response time percentiles (p50/p95/p99), slow query detection (>2s threshold)
    - Config: `config/platform/cache_config.yaml` (default TTL, per-endpoint TTL overrides, max entries, eviction policy)
@@ -1308,12 +1308,12 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Middleware integration: transparent caching for GET endpoints, cache-control headers
 
 41. Notifications & Alerting (08-04):
-   - `NotificationEngine` in `common/notification_engine.py` with adapter pattern for pluggable channels
+   - `NotificationEngine` in `common/services/notification_engine.py` with adapter pattern for pluggable channels
    - 4 channel adapters: Slack (webhook + Bot API), Teams (incoming webhook), Email (SMTP with templates), PagerDuty (Events API v2)
    - Event-driven: exceptions, DQ failures, AI insights, job completions trigger notifications based on routing rules
    - DDL: `sql/065_create_notification_tables.sql` — `notification_channels` + `notification_history` + `notification_preferences` tables
    - Config: `config/platform/notification_config.yaml` (channel configs, routing rules by event type x severity, throttle settings)
-   - Router: `api/routers/notifications.py` — `GET /notifications/channels`, `POST /notifications/channels` (register), `GET /notifications/preferences`, `PUT /notifications/preferences`, `POST /notifications/send` (manual send), `GET /notifications/history`
+   - Router: `api/routers/platform/notifications.py` — `GET /notifications/channels`, `POST /notifications/channels` (register), `GET /notifications/preferences`, `PUT /notifications/preferences`, `POST /notifications/send` (manual send), `GET /notifications/history`
    - Makefile: `notification-schema`
 
 42. Collaboration & Annotations (08-05):
@@ -1321,7 +1321,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - @mention support with notification integration (triggers alert to mentioned users)
    - Shared views: save and share dashboard/filter configurations with team members
    - DDL: `sql/066_create_collaboration_tables.sql` — `collaboration_threads` + `collaboration_comments` + `shared_views` tables
-   - Router: `api/routers/collaboration.py` — `GET /collaboration/threads` (by resource), `POST /collaboration/threads`, `POST /collaboration/threads/{id}/comments`, `GET /collaboration/shared-views`, `POST /collaboration/shared-views`, `DELETE /collaboration/shared-views/{id}`
+   - Router: `api/routers/platform/collaboration.py` — `GET /collaboration/threads` (by resource), `POST /collaboration/threads`, `POST /collaboration/threads/{id}/comments`, `GET /collaboration/shared-views`, `POST /collaboration/shared-views`, `DELETE /collaboration/shared-views/{id}`
 
 43. External Demand Signals (08-06):
    - External signal source registry: weather, promotions, economic indicators, social media, POS data
@@ -1329,7 +1329,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Demand decomposition: break demand into base + trend + seasonal + external signal components
    - DDL: `sql/067_create_external_signals_tables.sql` — `external_signal_sources` + `fact_external_signals` + `demand_decomposition` tables
    - Config: `config/external_signals_config.yaml` (source definitions, fetch schedules, normalization rules)
-   - Router: `api/routers/external_signals.py` — `GET /external-signals/sources`, `POST /external-signals/sources` (register), `GET /external-signals/data` (query signals), `GET /external-signals/decomposition` (decomposed demand), `POST /external-signals/fetch` (trigger fetch)
+   - Router: `api/routers/intelligence/external_signals.py` — `GET /external-signals/sources`, `POST /external-signals/sources` (register), `GET /external-signals/data` (query signals), `GET /external-signals/decomposition` (decomposed demand), `POST /external-signals/fetch` (trigger fetch)
    - Makefile: `ext-signals-schema`, `ext-signals-fetch`, `ext-signals-decompose`
 
 44. FVA Tracking (08-07):
@@ -1338,7 +1338,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - ROI measurement: quantify financial impact of forecast interventions vs. the current forecast baseline; compares estimated and realized impact
    - DDL: `sql/068_create_fva_tracking.sql` — `fact_intervention_metrics` table for intervention measurement
    - Config: FVA settings are now inline in the FVA router (stages, metrics, ROI computation parameters)
-   - Router: `api/routers/fva.py` — `GET /fva/waterfall` (ordered ladder stages + ceiling benchmark), `GET /fva/interventions` (intervention log), `GET /fva/roi-summary` (aggregate ROI metrics)
+   - Router: `api/routers/forecasting/fva.py` — `GET /fva/waterfall` (ordered ladder stages + ceiling benchmark), `GET /fva/interventions` (intervention log), `GET /fva/roi-summary` (aggregate ROI metrics)
    - Frontend: `FVATab.tsx` — Forecast Value Ladder cards, ceiling benchmark card, intervention history list, ROI summary KPIs
 
 45. Reporting & Distribution (08-08):
@@ -1347,25 +1347,25 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Delivery tracking: log all report deliveries with status, recipients, file paths
    - DDL: `sql/069_create_report_tables.sql` — `report_templates` + `report_schedules` + `report_deliveries` tables
    - Config: `config/report_config.yaml` (template defaults, delivery methods, S3 bucket config)
-   - Router: `api/routers/reports.py` — `GET /reports/templates`, `POST /reports/templates`, `GET /reports/schedules`, `POST /reports/schedules`, `POST /reports/generate` (on-demand), `GET /reports/deliveries`
+   - Router: `api/routers/platform/reports.py` — `GET /reports/templates`, `POST /reports/templates`, `GET /reports/schedules`, `POST /reports/schedules`, `POST /reports/generate` (on-demand), `GET /reports/deliveries`
    - Makefile: `report-schema`
 
 46. API Governance (08-09):
-   - Rate limiting via `common/rate_limiter.py`: token bucket algorithm with configurable rates per endpoint and per user
+   - Rate limiting via `common/services/rate_limiter.py`: token bucket algorithm with configurable rates per endpoint and per user
    - API versioning: `v1` prefix on all existing routes, `v2` available for breaking changes
    - Usage metrics: per-endpoint call counts, error rates, latency histograms
    - Config: `config/api_governance_config.yaml` (rate limits by role, versioning policy, deprecation schedule)
-   - Rate limiting logic in `common/rate_limiter.py`; dedicated governance router planned but not yet implemented
+   - Rate limiting logic in `common/services/rate_limiter.py`; dedicated governance router planned but not yet implemented
    - Middleware: rate limit enforcement returns 429 with `Retry-After` header; `X-RateLimit-*` headers on all responses
 
 47. Webhooks (08-10):
-   - `WebhookDispatcher` in `common/webhook_dispatcher.py`: event-driven webhook delivery with HMAC-SHA256 payload signing
+   - `WebhookDispatcher` in `common/services/webhook_dispatcher.py`: event-driven webhook delivery with HMAC-SHA256 payload signing
    - Supported events: exception.created, insight.created, job.completed, dq.failed, forecast.published
    - Retry with exponential backoff: configurable max attempts (default 5), backoff factor, timeout
    - Payload format: JSON with `event_type`, `timestamp`, `data`, `signature` headers (`X-Webhook-Signature`)
    - DDL: `sql/070_create_webhook_tables.sql` — `webhook_registrations` + `webhook_deliveries` tables
    - Config: `config/webhook_config.yaml` (retry policy, signing algorithm, event types, timeout)
-   - Router: `api/routers/webhooks.py` — `GET /webhooks` (list registrations), `POST /webhooks` (register endpoint), `DELETE /webhooks/{id}`, `POST /webhooks/{id}/test` (send test payload), `GET /webhooks/{id}/deliveries` (delivery log)
+   - Router: `api/routers/platform/webhooks.py` — `GET /webhooks` (list registrations), `POST /webhooks` (register endpoint), `DELETE /webhooks/{id}`, `POST /webhooks/{id}/test` (send test payload), `GET /webhooks/{id}/deliveries` (delivery log)
    - Makefile: `webhook-schema`
 
 48. Sales & Operations Planning — S&OP (F4.2):
@@ -1379,7 +1379,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
      - `fact_sop_approved_plan` — locked approved demand plan per cycle
    - Config: `config/operations/sop_config.yaml` (stage definitions, approval rules, gap thresholds)
    - Script: `scripts/run_sop_cycle.py` — CLI actions: `--action create` (new cycle), `--action advance` (next stage), `--action populate-demand` (fill demand review from forecast)
-   - Router: `api/routers/sop.py` — `GET /sop/cycles` (list cycles), `GET /sop/cycles/{id}` (cycle detail with stage), `POST /sop/cycles` (create cycle), `PUT /sop/cycles/{id}/advance` (advance stage), `GET /sop/gaps` (gap analysis), `GET /sop/approved-plan` (locked approved demand)
+   - Router: `api/routers/operations/sop.py` — `GET /sop/cycles` (list cycles), `GET /sop/cycles/{id}` (cycle detail with stage), `POST /sop/cycles` (create cycle), `PUT /sop/cycles/{id}/advance` (advance stage), `GET /sop/gaps` (gap analysis), `GET /sop/approved-plan` (locked approved demand)
    - Frontend: `SopTab.tsx` — S&OP cycle stage machine with visual stage progress bar, gap cards with severity badges, advance/approve action buttons, approved plan table
    - Makefile: `sop-schema`, `sop-create`, `sop-advance`, `sop-populate`, `sop-all`
 
@@ -1390,7 +1390,7 @@ Each model script (LGBM, CatBoost, XGBoost) implements both `train_and_predict_p
    - Plans: `fact_rebalancing_plan` (plan header with status workflow: draft → approved → executed/cancelled) + `fact_rebalancing_transfer` (individual item-level transfer recommendations with before/after DOS, cost, and benefit estimates)
    - Network balance detection: `mv_network_balance` materialized view computes per-item DOS CV across locations; items with DOS CV above threshold flagged as imbalanced
    - Config: `config/inventory/rebalancing_config.yaml` (solver selection, DOS CV threshold, max transfers per plan, cost parameters, transit time constraints, approval workflow settings)
-   - Router: `api/routers/inv_planning_rebalancing.py` — 12 endpoints: `GET /inv-planning/rebalancing/kpis` (network balance summary), `GET /inv-planning/rebalancing/imbalanced` (items with high DOS CV), `GET /inv-planning/rebalancing/network` (transfer lane topology), `POST /inv-planning/rebalancing/network` (add/update lanes), `DELETE /inv-planning/rebalancing/network/{lane_id}`, `POST /inv-planning/rebalancing/compute` (run solver), `GET /inv-planning/rebalancing/plans` (list plans), `GET /inv-planning/rebalancing/plans/{plan_id}` (plan detail with transfers), `PUT /inv-planning/rebalancing/plans/{plan_id}/approve`, `PUT /inv-planning/rebalancing/plans/{plan_id}/execute`, `PUT /inv-planning/rebalancing/plans/{plan_id}/cancel`, `GET /inv-planning/rebalancing/plans/{plan_id}/transfers`
+   - Router: `api/routers/inventory/inv_planning_rebalancing.py` — 12 endpoints: `GET /inv-planning/rebalancing/kpis` (network balance summary), `GET /inv-planning/rebalancing/imbalanced` (items with high DOS CV), `GET /inv-planning/rebalancing/network` (transfer lane topology), `POST /inv-planning/rebalancing/network` (add/update lanes), `DELETE /inv-planning/rebalancing/network/{lane_id}`, `POST /inv-planning/rebalancing/compute` (run solver), `GET /inv-planning/rebalancing/plans` (list plans), `GET /inv-planning/rebalancing/plans/{plan_id}` (plan detail with transfers), `PUT /inv-planning/rebalancing/plans/{plan_id}/approve`, `PUT /inv-planning/rebalancing/plans/{plan_id}/execute`, `PUT /inv-planning/rebalancing/plans/{plan_id}/cancel`, `GET /inv-planning/rebalancing/plans/{plan_id}/transfers`
    - Frontend: `RebalancingPanel.tsx` — 27th sub-panel in Inventory Planning tab (Optimize group); network KPI cards (imbalanced items, avg DOS CV, potential savings), imbalanced items table, transfer lane network editor, compute plan button with solver selection, plan detail with transfer table and before/after DOS visualization, approval workflow buttons
    - Makefile: `rebalancing-schema`, `rebalancing-compute`, `rebalancing-refresh`, `rebalancing-all`
 
@@ -1477,7 +1477,7 @@ All config files live in `config/`. Every compute script externalizes parameters
 
 | Directory | Contents | Created By |
 |-----------|----------|-----------|
-| `data/` | Clean CSVs from normalization | `normalize_*.py` |
+| `data/staged/` | All 11 normalized clean CSVs from `normalize_*.py` (e.g. `itemdata_clean.csv`, `sku_lvl2_hist_clean.csv`, `inventory_clean.csv`, `customer_demand_clean.csv`) plus ML intermediates `clustering_features.csv` and `seasonality_results.csv` | `normalize_*.py` + ML scripts |
 | `data/backtest/<model_id>/` | Backtest predictions + SHAP CSVs | `run_backtest*.py` |
 | `data/clustering/` | Feature matrices, KMeans model, labels | `run_cluster_pipeline.py` via `common/ml/clustering/` |
 | `data/tuning/` | `best_params_<model>.json` | `tune_hyperparams.py` |
@@ -1615,14 +1615,14 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 
 | Suite | Module Under Test | Tests |
 |-------|-------------------|-------|
-| `test_metrics.py` | `common/metrics.py` — WAPE, bias, accuracy % | 10 |
-| `test_constants.py` | `common/constants.py` — LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES | 11 |
-| `test_domain_specs.py` | `common/domain_specs.py` — all 10 domains, parametrized | 14+ |
-| `test_backtest_framework.py` | `common/backtest_framework.py` — timeframe generation | 9 |
-| `test_feature_engineering.py` | `common/feature_engineering.py` — feature matrix, mask_future_sales, update_grid_with_predictions (Feature 43) | 6+ |
-| `test_mlflow_utils.py` | `common/mlflow_utils.py` — experiment logging | 3 |
-| `test_db.py` | `common/db.py` — connection parameters | 5 |
-| `test_load_dataset_postgres.py` | `scripts/load_dataset_postgres.py` — forecast execution-lag loading (JOIN-based filter, no staging mutation), archive loading, SQL generation | 24 |
+| `test_metrics.py` | `common/services/metrics.py` — WAPE, bias, accuracy % | 10 |
+| `test_constants.py` | `common/core/constants.py` — LAG_RANGE, ROLLING_WINDOWS, CAT_FEATURES | 11 |
+| `test_domain_specs.py` | `common/core/domain_specs.py` — all 10 domains, parametrized | 14+ |
+| `test_backtest_framework.py` | `common/ml/backtest_framework.py` — timeframe generation | 9 |
+| `test_feature_engineering.py` | `common/ml/feature_engineering.py` — feature matrix, mask_future_sales, update_grid_with_predictions (Feature 43) | 6+ |
+| `test_mlflow_utils.py` | `common/ml/mlflow_utils.py` — experiment logging | 3 |
+| `test_db.py` | `common/core/db.py` — connection parameters | 5 |
+| `test_load_dataset_postgres.py` | `scripts/etl/load_dataset_postgres.py` — forecast execution-lag loading (JOIN-based filter, no staging mutation), archive loading, SQL generation | 24 |
 | `test_health.py` | `api/main.py` — health endpoint | 1 |
 | `test_domains.py` | `api/main.py` — domain CRUD endpoints | 6 |
 | `test_forecast_accuracy.py` | `api/main.py` — accuracy/lag endpoints | 3 |
@@ -1630,36 +1630,36 @@ Full-stack automated testing covering backend (Python) and frontend (TypeScript)
 | `test_competition.py` | `api/main.py` — champion selection endpoints | 2 |
 | `test_clusters.py` | `api/main.py` — cluster endpoints | 2 |
 | `test_inventory.py` | `api/main.py` — inventory endpoints | 18 |
-| `test_inventory_domain.py` | `common/domain_specs.py` — inventory domain spec | 28 |
+| `test_inventory_domain.py` | `common/core/domain_specs.py` — inventory domain spec | 28 |
 | `test_distinct.py` | `api/main.py` — distinct values endpoint | 12 |
 | `test_dashboard.py` | `api/main.py` — dashboard endpoints (kpis, alerts, top-movers, heatmap) | 17 |
-| `test_jobs.py` | `api/routers/jobs.py` — job scheduler endpoints (types, submit, list, cancel, delete, stats, schedules, pipeline) | 16 |
-| `test_shap_selector.py` | `common/shap_selector.py` — SHAP extraction, feature selection, cluster pooling, CSV output, error fallback | 22 |
-| `test_shap.py` | `api/routers/shap.py` — SHAP endpoints (models list, summary, timeframes, per-timeframe detail, 404 cases) | 8 |
-| `test_shap_dfu.py` | `api/routers/shap.py` — per-DFU SHAP endpoint (200 lgbm, no model dir, DFU not found, pkl missing, top_n clamp, catboost path) | 6 |
-| `test_model_registry.py` | `common/model_registry.py` — canonical ↔ native param mapping, roundtrips, get_best_iteration, compute_early_stop_patience, fit_model dispatch | 20 |
-| `test_backtest_recursive.py` | `common/backtest_framework.py` — `_fill_predict_nans`, `_predict_single_month` (global/cluster/transfer), recursive loop integration | 13 |
+| `test_jobs.py` | `api/routers/core/jobs.py` — job scheduler endpoints (types, submit, list, cancel, delete, stats, schedules, pipeline) | 16 |
+| `test_shap_selector.py` | `common/ml/shap_selector.py` — SHAP extraction, feature selection, cluster pooling, CSV output, error fallback | 22 |
+| `test_shap.py` | `api/routers/forecasting/shap.py` — SHAP endpoints (models list, summary, timeframes, per-timeframe detail, 404 cases) | 8 |
+| `test_shap_dfu.py` | `api/routers/forecasting/shap.py` — per-DFU SHAP endpoint (200 lgbm, no model dir, DFU not found, pkl missing, top_n clamp, catboost path) | 6 |
+| `test_model_registry.py` | `common/ml/model_registry.py` — canonical ↔ native param mapping, roundtrips, get_best_iteration, compute_early_stop_patience, fit_model dispatch | 20 |
+| `test_backtest_recursive.py` | `common/ml/backtest_framework.py` — `_fill_predict_nans`, `_predict_single_month` (global/cluster/transfer), recursive loop integration | 13 |
 | `test_eoq.py` | `scripts/compute_eoq.py` — Wilson EOQ formula, effective EOQ with MOQ+cap, sensitivity curve | 23 |
-| `test_inv_planning_eoq.py` | `api/routers/inv_planning.py` — EOQ summary, detail, sensitivity endpoints | 10 |
+| `test_inv_planning_eoq.py` | `api/routers/inventory/inv_planning_eoq.py` — EOQ summary, detail, sensitivity endpoints | 10 |
 | `test_replenishment_policy.py` | Policy assignment logic — auto-assign rules, dry-run, force-overwrite, compliance calculation | 18 |
-| `test_inv_planning_policy.py` | `api/routers/inv_planning.py` — policy CRUD, assign, compliance endpoints | 13 |
+| `test_inv_planning_policy.py` | `api/routers/inventory/inv_planning_policy.py` — policy CRUD, assign, compliance endpoints | 13 |
 | `test_health_score.py` | Pure-Python replicas of SQL scoring logic — SS coverage, DOS target, stockout risk, forecast accuracy, composite, health tier | 42 |
-| `test_inv_planning_health.py` | `api/routers/inv_planning.py` — health summary, detail, heatmap endpoints | 12 |
+| `test_inv_planning_health.py` | `api/routers/inventory/inv_planning_health.py` — health summary, detail, heatmap endpoints | 12 |
 | `test_exception_generation.py` | `scripts/generate_replenishment_exceptions.py` — detect_exception_type, compute_recommendation pure functions | 19 |
-| `test_inv_planning_exceptions.py` | `api/routers/inv_planning.py` — exception list, summary, acknowledge, status, generate endpoints | 13 |
-| `test_fill_rate.py` | `api/routers/fill_rate.py` — fill rate summary, trend, detail endpoints | varies |
-| `test_inv_planning_demand_signals.py` | `api/routers/inv_planning.py` — demand signals summary, list, item endpoints | varies |
+| `test_inv_planning_exceptions.py` | `api/routers/inventory/inv_planning_exceptions.py` — exception list, summary, acknowledge, status, generate endpoints | 13 |
+| `test_fill_rate.py` | `api/routers/operations/fill_rate.py` — fill rate summary, trend, detail endpoints | varies |
+| `test_inv_planning_demand_signals.py` | `api/routers/inventory/inv_planning_demand_signals.py` — demand signals summary, list, item endpoints | varies |
 | `test_demand_signals.py` | `scripts/compute_demand_signals.py` — demand signal computation pure functions | varies |
-| `test_inv_planning_simulation.py` | `api/routers/inv_planning.py` — simulation run, results, compare, status endpoints | varies |
-| `test_inv_planning_abc_xyz.py` | `api/routers/inv_planning.py` — ABC-XYZ matrix, summary, detail endpoints | varies |
+| `test_inv_planning_simulation.py` | `api/routers/inventory/inv_planning_simulation.py` — simulation run, results, compare, status endpoints | varies |
+| `test_inv_planning_abc_xyz.py` | `api/routers/inventory/inv_planning_abc_xyz.py` — ABC-XYZ matrix, summary, detail endpoints | varies |
 | `test_abc_xyz_classification.py` | `scripts/classify_abc_xyz.py` — ABC-XYZ classification logic | varies |
-| `test_inv_planning_supplier.py` | `api/routers/inv_planning.py` — supplier performance summary, detail, items endpoints | varies |
-| `test_inv_planning_investment.py` | `api/routers/inv_planning.py` — investment efficient-frontier, summary, detail, plan endpoints | varies |
+| `test_inv_planning_supplier.py` | `api/routers/inventory/inv_planning_supplier.py` — supplier performance summary, detail, items endpoints | varies |
+| `test_inv_planning_investment.py` | `api/routers/inventory/inv_planning_investment.py` — investment efficient-frontier, summary, detail, plan endpoints | varies |
 | `test_investment_plan.py` | `scripts/compute_investment_plan.py` — investment plan computation logic | varies |
-| `test_inv_planning_intramonth.py` | `api/routers/inv_planning.py` — intramonth stockout summary, detail, daily endpoints | varies |
-| `test_control_tower.py` | `api/routers/control_tower.py` — control tower kpis, alerts, top-critical, trend endpoints | varies |
-| `test_ai_planner.py` | `common/ai_planner.py` — tool functions, agent loop, dry-run mode | 18 |
-| `test_ai_planner_api.py` | `api/routers/ai_planner.py` — insights CRUD, portfolio scan 202, memo list | 10 |
+| `test_inv_planning_intramonth.py` | `api/routers/inventory/inv_planning_intramonth.py` — intramonth stockout summary, detail, daily endpoints | varies |
+| `test_control_tower.py` | `api/routers/operations/control_tower.py` — control tower kpis, alerts, top-critical, trend endpoints | varies |
+| `test_ai_planner.py` | `common/ai/ai_planner.py` — tool functions, agent loop, dry-run mode | 18 |
+| `test_ai_planner_api.py` | `api/routers/intelligence/ai_planner.py` — insights CRUD, portfolio scan 202, memo list | 10 |
 
 **Total backend: 3,042+ tests**
 
@@ -1741,7 +1741,7 @@ End-to-end smoke tests run against the full stack (API + UI must be running).
 
 ## 24. How to Add Next Dataset
 
-1. Add `<DATASET>_SPEC` in `common/domain_specs.py`
+1. Add `<DATASET>_SPEC` in `common/core/domain_specs.py`
 2. Add matching DDL in `sql/`
 3. Add Make targets:
    - `normalize-<dataset>`
@@ -1750,4 +1750,4 @@ End-to-end smoke tests run against the full stack (API + UI must be running).
 5. For specialized domains (like inventory): Add dedicated API endpoints and frontend tab
 6. Run `make generate-embeddings` to update chat context with new schema metadata
 
-**Example: Inventory domain** — uses dedicated normalize script (`normalize_inventory_csv.py`) for multi-file merge, dedicated API endpoints (`/inventory/*`), and dedicated UI tab (`InventoryTab`). Domain spec still lives in `common/domain_specs.py` for schema metadata.
+**Example: Inventory domain** — uses dedicated normalize script (`normalize_inventory_csv.py`) for multi-file merge, dedicated API endpoints (`/inventory/*`), and dedicated UI tab (`InventoryTab`). Domain spec still lives in `common/core/domain_specs.py` for schema metadata.

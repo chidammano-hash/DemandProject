@@ -78,21 +78,21 @@ All except `inventory` and `customer_demand` are dispatched through `scripts/nor
 
 ### Output location
 
-Clean CSVs land in `data/` (NOT `data/input/`) and follow the `clean_file` field of each `DomainSpec`. Examples:
+Clean CSVs land in `data/staged/` (NOT `data/input/`) and follow the `clean_file` field of each `DomainSpec`. The `clean_file` value embeds the `staged/` prefix, so the resolver `ROOT / "data" / spec.clean_file` resolves to `data/staged/<name>_clean.csv`. Examples:
 
 | Domain | Clean file |
 |---|---|
-| item | `data/itemdata_clean.csv` |
-| location | `data/locationdata_clean.csv` |
-| customer | `data/customerdata_clean.csv` |
-| time | `data/timedata_clean.csv` |
-| sku | `data/sku_clean.csv` |
-| sales | `data/sku_lvl2_hist_clean.csv` |
-| forecast | `data/sku_stat_fcst_clean.csv` |
-| inventory | `data/inventory_clean.csv` |
-| customer_demand | `data/customer_demand_clean.csv` |
-| sourcing | `data/sourcing_clean.csv` |
-| purchase_order | `data/purchase_orders_clean.csv` |
+| item | `data/staged/itemdata_clean.csv` |
+| location | `data/staged/locationdata_clean.csv` |
+| customer | `data/staged/customerdata_clean.csv` |
+| time | `data/staged/timedata_clean.csv` |
+| sku | `data/staged/sku_clean.csv` |
+| sales | `data/staged/sku_lvl2_hist_clean.csv` |
+| forecast | `data/staged/sku_stat_fcst_clean.csv` |
+| inventory | `data/staged/inventory_clean.csv` |
+| customer_demand | `data/staged/customer_demand_clean.csv` |
+| sourcing | `data/staged/sourcing_clean.csv` |
+| purchase_order | `data/staged/purchase_orders_clean.csv` |
 
 Clean CSVs are gitignored. The `make clean-artifacts` target removes them.
 

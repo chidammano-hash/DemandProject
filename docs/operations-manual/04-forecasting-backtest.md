@@ -6,7 +6,7 @@ into PostgreSQL for downstream champion selection and accuracy analytics.
 
 The single source of truth for the algorithm roster, hyperparameters and
 backtest settings is `config/forecasting/forecast_pipeline_config.yaml`. Helpers in
-`common/utils.py` (`load_forecast_pipeline_config`, `get_algorithm_roster`,
+`common/core/utils.py` (`load_forecast_pipeline_config`, `get_algorithm_roster`,
 `get_competing_model_ids`, `get_forecastable_model_ids`,
 `get_algorithm_params`, `is_clustering_enabled`) provide read access — do
 not duplicate values in scripts.

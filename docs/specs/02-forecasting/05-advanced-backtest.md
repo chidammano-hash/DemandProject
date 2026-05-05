@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy (SHAP panel) |
-| **Key Files** | `scripts/tune_hyperparams.py`, `common/tuning.py`, `common/shap_selector.py`, `common/feature_engineering.py`, `api/routers/shap.py`, `config/forecasting/hyperparameter_tuning.yaml` |
+| **Key Files** | `scripts/tune_hyperparams.py`, `common/ml/tuning.py`, `common/ml/shap_selector.py`, `common/ml/feature_engineering.py`, `api/routers/forecasting/shap.py`, `config/forecasting/hyperparameter_tuning.yaml` |
 
 ---
 

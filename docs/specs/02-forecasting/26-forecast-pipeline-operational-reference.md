@@ -486,13 +486,13 @@ API endpoints (prefix `/cluster-experiments`):
 - `GET /{id}/used-by` -- which tuning experiments reference this clustering
 
 **Scripts:**
-- `scripts/generate_clustering_features.py` -- 6 feature dimensions: volume, trend, seasonality, periodicity, intermittency, lifecycle
+- `scripts/ml/generate_clustering_features.py` -- 6 feature dimensions: volume, trend, seasonality, periodicity, intermittency, lifecycle
 - `scripts/ml/run_cluster_pipeline.py` -- unified pipeline: features -> train -> label -> promote (KMeans with silhouette + Calinski-Harabasz combined scoring)
-- `scripts/label_clusters.py` -- hierarchical labeling taxonomy (e.g., `high_volume_seasonal_growing`)
+- `scripts/ml/label_clusters.py` -- hierarchical labeling taxonomy (e.g., `high_volume_seasonal_growing`)
 - Cluster assignment updates are handled by `promote_scenario()` in the unified pipeline
 
 **Output artifacts:**
-- `data/clustering_features.csv`, `data/clustering/kmeans_model.pkl`, `data/clustering/cluster_labels.csv`
+- `data/staged/clustering_features.csv`, `data/clustering/kmeans_model.pkl`, `data/clustering/cluster_labels.csv`
 - `data/clustering/centroids.csv`, `data/clustering/cluster_summary.json`, `data/clustering/k_selection_plot.png`
 
 **Error Recovery:**

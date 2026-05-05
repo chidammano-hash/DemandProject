@@ -95,7 +95,7 @@ uv run python scripts/ml/compute_sku_features.py --output-csv data/sku_features.
 | Destination | Contents |
 |---|---|
 | `dim_sku` table | All feature columns above, plus `features_computed_ts` / `demand_profile_ts` |
-| `data/clustering_features.csv` | Backward-compat CSV consumed by older clustering scripts |
+| `data/staged/clustering_features.csv` | Backward-compat CSV consumed by older clustering scripts |
 | Optional `--output-csv <path>` | Full feature matrix dump for inspection |
 
 The DB write uses `psycopg3` `COPY` into a temp staging table followed by a single `UPDATE ... FROM` join — efficient for the full SKU population.
@@ -201,7 +201,7 @@ clustering:
     label_clusters: true
     update_db: true
   artifacts:
-    features_csv: data/clustering_features.csv
+    features_csv: data/staged/clustering_features.csv
     output_dir: data/clustering
   db_target:
     table: dim_sku
@@ -214,7 +214,7 @@ When `clustering.enabled: false`:
 - Per-cluster tuning profile resolution is short-circuited to base params.
 - The `clustering` pipeline stage in `pipeline.stages` is skipped (it is gated by `enabled_by: clustering.enabled`).
 
-Check the flag programmatically via `is_clustering_enabled()` in `common/utils.py`.
+Check the flag programmatically via `is_clustering_enabled()` in `common/core/utils.py`.
 
 ---
 
@@ -288,7 +288,7 @@ The stats used for matching come from `compute_cluster_demand_stats()`:
 
 | Artifact | Location |
 |---|---|
-| SKU features | `dim_sku` columns (see 1.3); CSV mirror at `data/clustering_features.csv` |
+| SKU features | `dim_sku` columns (see 1.3); CSV mirror at `data/staged/clustering_features.csv` |
 | Cluster experiment metadata | `cluster_experiment` table (one row per run) |
 | Promoted cluster labels | `dim_sku.ml_cluster` (TEXT) |
 | Promotion artifacts | `data/clustering/cluster_labels.csv`, `cluster_centroids.csv`, `cluster_metadata.json`, `scenario_result.json` |

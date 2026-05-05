@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy, Item Analysis |
-| **Key Files** | `scripts/run_backtest.py`, `scripts/run_backtest_catboost.py`, `scripts/run_backtest_xgboost.py`, `common/backtest_framework.py`, `common/feature_engineering.py` |
+| **Key Files** | `scripts/run_backtest.py`, `scripts/run_backtest_catboost.py`, `scripts/run_backtest_xgboost.py`, `common/ml/backtest_framework.py`, `common/ml/feature_engineering.py` |
 
 ---
 

@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | StoryboardTab |
-| **Key Files** | `StoryboardTab.tsx`, `api/routers/storyboard.py`, `common/exception_engine.py`, `scripts/generate_storyboard_exceptions.py`, `config/operations/exception_config.yaml`, `sql/038_create_storyboard.sql` |
+| **Key Files** | `StoryboardTab.tsx`, `api/routers/intelligence/storyboard.py`, `common/engines/exception_engine.py`, `scripts/generate_storyboard_exceptions.py`, `config/operations/exception_config.yaml`, `sql/038_create_storyboard.sql` |
 
 ---
 

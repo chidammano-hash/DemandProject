@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Market Intel |
-| **Key Files** | `frontend/src/tabs/MarketIntelTab.tsx`, `api/routers/intel.py` |
+| **Key Files** | `frontend/src/tabs/MarketIntelTab.tsx`, `api/routers/intelligence/intel.py` |
 
 ---
 

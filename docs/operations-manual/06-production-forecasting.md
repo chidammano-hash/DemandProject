@@ -275,7 +275,7 @@ Exactly one row should be active. If zero rows: nothing has been promoted yet. I
 
 ### 7.3 Verify served data
 
-The frontend reads through `api/routers/production_forecast.py` (prefix-less, all routes under `/forecast/production*` and `/forecast/demand-plan*`):
+The frontend reads through `api/routers/forecasting/production_forecast.py` (prefix-less, all routes under `/forecast/production*` and `/forecast/demand-plan*`):
 
 | Endpoint | What it returns |
 |---|---|
@@ -402,7 +402,7 @@ Source-of-truth files referenced in this section:
 - `config/forecasting/forecast_pipeline_config.yaml` (`production_forecast:` block, lines 435-468)
 - `scripts/generate_production_forecasts.py`
 - `api/routers/forecasting/backtest_management.py`
-- `api/routers/production_forecast.py`
+- `api/routers/forecasting/production_forecast.py`
 - `sql/039_create_production_forecast.sql`
 - `sql/121_candidate_forecast_and_promotion.sql`
 - `sql/122_create_production_forecast_staging.sql`

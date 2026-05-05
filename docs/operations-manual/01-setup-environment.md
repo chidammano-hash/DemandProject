@@ -97,8 +97,8 @@ Edit `/Users/manoharchidambaram/projects/DemandProject/.env` (created by `make i
 
 | Variable | Default | Read by | Purpose |
 |---|---|---|---|
-| `PLANNING_DATE` | unset (uses config) | `common/planning_date.py` | Override "today" for all date-sensitive code (`YYYY-MM-DD`). Useful for replaying a fixed planning date. |
-| `USE_SYSTEM_DATE` | unset (`false`) | `common/planning_date.py` | When `true`, ignore `config/planning_config.yaml` and use the OS clock. |
+| `PLANNING_DATE` | unset (uses config) | `common/core/planning_date.py` | Override "today" for all date-sensitive code (`YYYY-MM-DD`). Useful for replaying a fixed planning date. |
+| `USE_SYSTEM_DATE` | unset (`false`) | `common/core/planning_date.py` | When `true`, ignore `config/planning_config.yaml` and use the OS clock. |
 | `DEMAND_GPU` | `auto` | backtest scripts in `scripts/ml/` | GPU acceleration mode: `on` / `off` / `auto`. Falls back gracefully if `cupy` / `numba` are not installed. |
 | `POOL_MIN_SIZE` | `5` | `api/pool.py` | psycopg3 connection pool floor. |
 | `POOL_MAX_SIZE` | `50` | `api/pool.py` | psycopg3 connection pool ceiling. With N gunicorn workers, total backend connections = `N × POOL_MAX_SIZE` — keep under Postgres `max_connections` (100). |

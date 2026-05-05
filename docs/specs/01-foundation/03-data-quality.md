@@ -6,13 +6,13 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Data Quality |
-| **Key Files** | `common/dq_engine.py`, `config/platform/data_quality_config.yaml`, `scripts/fix_dq_issues.py`, `api/routers/data_quality.py`, `frontend/src/tabs/DataQualityTab.tsx` |
+| **Key Files** | `common/engines/dq_engine.py`, `config/platform/data_quality_config.yaml`, `scripts/fix_dq_issues.py`, `api/routers/platform/data_quality.py`, `frontend/src/tabs/DataQualityTab.tsx` |
 
 ---
 
 ## Problem
 
-Supply Chain Command Center manages 8 domain datasets totaling hundreds of millions of rows. Without automated quality monitoring, issues like stale loads, null keys, duplicate records, and broken foreign keys go undetected until they corrupt downstream analytics — wrong accuracy metrics, incorrect safety stock, and misleading exception queues. A planner who acts on bad data makes bad decisions.
+Supply Chain Command Center manages 11 domain datasets totaling hundreds of millions of rows. Without automated quality monitoring, issues like stale loads, null keys, duplicate records, and broken foreign keys go undetected until they corrupt downstream analytics — wrong accuracy metrics, incorrect safety stock, and misleading exception queues. A planner who acts on bad data makes bad decisions.
 
 ## Solution
 
@@ -20,7 +20,7 @@ A config-driven Data Quality Engine runs 12 check types against any table or col
 
 ## How It Works
 
-1. Check definitions are declared in `config/platform/data_quality_config.yaml` — 73 individual checks across 8 domains.
+1. Check definitions are declared in `config/platform/data_quality_config.yaml` — checks span all 11 domains.
 2. The `DQEngine` loads the config, flattens it into a list of checks, and runs each one against PostgreSQL.
 3. Each check returns a status (pass/fail/warn/error/skip) with a metric value and details.
 4. Results are written to `fact_dq_check_results` for historical tracking.
@@ -118,11 +118,11 @@ Key parameters:
 
 ## Dependencies
 
-- [Data Models](02-data-models.md) — all 8 domain tables must exist
+- [Data Models](02-data-models.md) — all 11 domain tables must exist
 - [Planning Date](04-planning-date.md) — freshness checks use the planning date
 - [Infrastructure](01-infrastructure.md) — PostgreSQL connection
 
 ## See Also
 
-- [Storyboard](../05-ai/04-storyboard.md) — exception-based planner workflow that depends on data quality
+- [Storyboard](../06-ai-platform/04-storyboard.md) — exception-based planner workflow that depends on data quality
 - [Pipeline Orchestrator](../../../docs/RUNBOOK.md) — unified ETL pipeline with DQ checks after each load phase

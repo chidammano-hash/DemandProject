@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | ControlTowerTab |
-| **Key Files** | `ControlTowerTab.tsx`, `api/routers/control_tower.py`, `sql/035_create_control_tower_kpis.sql` |
+| **Key Files** | `ControlTowerTab.tsx`, `api/routers/operations/control_tower.py`, `sql/035_create_control_tower_kpis.sql` |
 
 ---
 

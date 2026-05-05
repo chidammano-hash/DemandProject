@@ -278,8 +278,8 @@ Usage:
 
 The script follows the standard ETL conventions for this project:
 
-- Reads DB params via `from common.db import get_db_params`
-- Loads config via `load_config("ext_ml_forecasts")` from `common/utils.py`
+- Reads DB params via `from common.core.db import get_db_params`
+- Loads config via `load_config("ext_ml_forecasts")` from `common/core/utils.py`
 - Uses `%s` placeholders in all SQL
 - Logs via `logging.getLogger(__name__)` — no raw `print()` calls
 - Catches `psycopg.Error` and `ValueError` specifically; never bare `except Exception`

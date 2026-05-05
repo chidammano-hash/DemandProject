@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (visible as badge in Global Filter Bar) |
-| **Key Files** | `common/planning_date.py`, `config/planning_config.yaml`, `api/routers/dashboard.py` |
+| **Key Files** | `common/core/planning_date.py`, `config/planning_config.yaml`, `api/routers/core/dashboard.py` |
 
 ---
 
@@ -16,7 +16,7 @@ Supply Chain Command Center ingests data snapshots (sales, inventory, forecasts)
 
 ## Solution
 
-A single module (`common/planning_date.py`) provides `get_planning_date()` that every script, router, and common module calls instead of `date.today()`. The date can be frozen in config for development, overridden via environment variables for one-off runs, or set to live system time for production. Twenty-five production files were migrated to use this function.
+A single module (`common/core/planning_date.py`) provides `get_planning_date()` that every script, router, and common module calls instead of `date.today()`. The date can be frozen in config for development, overridden via environment variables for one-off runs, or set to live system time for production. Twenty-five production files were migrated to use this function.
 
 ## How It Works
 
@@ -61,4 +61,4 @@ The config is loaded once and cached for the process lifetime. Use `_reset_cache
 ## See Also
 
 - [Data Quality](03-data-quality.md) — freshness checks use the planning date instead of wall-clock time
-- [Inventory Projection](../03-inventory/01-inventory-snapshot.md) — projection start date anchored to planning date
+- [Inventory Projection](../04-inventory/01-inventory-snapshot.md) — projection start date anchored to planning date

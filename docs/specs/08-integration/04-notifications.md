@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (sidebar badge for unread count) |
-| **Key Files** | `common/notification_engine.py`, `api/routers/notifications.py`, `config/platform/notification_config.yaml` |
+| **Key Files** | `common/services/notification_engine.py`, `api/routers/platform/notifications.py`, `config/platform/notification_config.yaml` |
 
 ---
 
@@ -121,4 +121,4 @@ Secrets use environment variable references (`SMTP_HOST`, `SLACK_WEBHOOK_URL`), 
 
 - [Integration Architecture](./01-integration-architecture.md) -- notifications as Vector 1
 - [Webhooks](./10-webhooks.md) -- outbound event delivery to external systems
-- [Storyboard](../05-ai-platform/04-storyboard.md) -- exception events that trigger notifications
+- [Storyboard](../06-ai-platform/04-storyboard.md) -- exception events that trigger notifications

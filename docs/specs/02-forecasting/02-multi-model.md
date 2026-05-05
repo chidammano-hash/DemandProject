@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy, Item Analysis |
-| **Key Files** | `sql/008_perf_indexes_and_agg.sql`, `api/routers/accuracy.py`, `frontend/src/tabs/AccuracyTab.tsx` |
+| **Key Files** | `sql/008_perf_indexes_and_agg.sql`, `api/routers/forecasting/accuracy.py`, `frontend/src/tabs/AccuracyTab.tsx` |
 
 ---
 

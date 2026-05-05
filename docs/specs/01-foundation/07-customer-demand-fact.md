@@ -182,7 +182,7 @@ Script: `scripts/etl/normalize_customer_demand_csv.py`
    - Compute `oos_qty = MAX(0, oos_cases)`
    - Map `item_no` → `item_id` (TEXT)
    - Map `customer_no` → TEXT
-4. Write normalized CSV to `data/customer_demand_clean.csv`
+4. Write normalized CSV to `data/staged/customer_demand_clean.csv`
 
 **Column mapping:**
 
@@ -203,7 +203,7 @@ Script: `scripts/etl/load_customer_demand_postgres.py`
 
 **Arguments:**
 ```
---file PATH           # Specific CSV to load (default: data/customer_demand_clean.csv)
+--file PATH           # Specific CSV to load (default: data/staged/customer_demand_clean.csv)
 --month YYYY-MM       # Load only this month (drop + recreate partition)
 --replace             # Drop all partitions and reload (for initial load)
 --dry-run             # Preview without writing
@@ -274,7 +274,7 @@ CUSTOMER_DEMAND_SPEC = DomainSpec(
         "demand_qty", "sales_qty", "oos_qty",
     ],
     source_file="*_customer_demand.csv",
-    clean_file="customer_demand_clean.csv",
+    clean_file="staged/customer_demand_clean.csv",
     search_fields=["item_id", "customer_no", "location_id", "site"],
     int_fields=set(),
     float_fields={"demand_qty", "sales_qty", "oos_qty"},

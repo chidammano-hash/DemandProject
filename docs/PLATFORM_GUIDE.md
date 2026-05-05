@@ -8,7 +8,7 @@ A full-stack supply chain analytics platform for demand planning and inventory o
 
 | Layer | Technology |
 |---|---|
-| Backend API | Python + FastAPI + Uvicorn (72 mounted routers) |
+| Backend API | Python + FastAPI + Uvicorn (80 mounted routers) |
 | Frontend | React + Vite + TypeScript + Tailwind CSS + shadcn/ui |
 | Charts | Recharts + ECharts |
 | Database | PostgreSQL 16 (pgvector for embeddings) |
@@ -20,7 +20,7 @@ A full-stack supply chain analytics platform for demand planning and inventory o
 | E2E Testing | Playwright |
 | Build | Make, uv, Docker Compose (2 services: Postgres + MLflow) |
 
-Data flow: raw CSVs -> normalize scripts -> PostgreSQL -> FastAPI (:8000) -> React UI (:5173)
+Data flow: `data/input/` raw CSVs -> normalize scripts -> `data/staged/*_clean.csv` -> PostgreSQL -> FastAPI (:8000) -> React UI (:5173)
 
 ---
 
@@ -29,23 +29,25 @@ Data flow: raw CSVs -> normalize scripts -> PostgreSQL -> FastAPI (:8000) -> Rea
 ```
 DemandProject/
 ├── api/                         FastAPI backend (main.py + routers/)
-│   └── routers/                 72 router files (72 mounted)
-├── common/                      63 shared Python modules
+│   └── routers/                 80 router files (80 mounted, organized into 6 domain subdirs)
+├── common/                      Shared Python modules (core/, ml/, engines/, services/, ai/)
 ├── scripts/                     Data pipeline & ML scripts (ETL, clustering, backtesting)
 ├── frontend/                    React + TypeScript UI
-│   ├── src/tabs/                21 tab components + sub-panels
+│   ├── src/tabs/                22 tab components + sub-panels
 │   ├── src/components/          Shared UI components
 │   ├── src/hooks/               Custom React hooks
-│   ├── src/api/queries/         54 domain query modules
+│   ├── src/api/queries/         57 domain query modules
 │   └── e2e/                     Playwright E2E tests
 ├── tests/                       Backend test suite (pytest: unit/ + api/)
-├── sql/                         89 DDL migration files
+├── sql/                         DDL migration files
 ├── config/                      YAML configs (all tunable parameters externalized)
-├── docs/specs/                  Design specs (8 domains, 75 files)
+├── docs/specs/                  Design specs (8 domains, 90 files)
 ├── Makefile                     All dev commands
 ├── docker-compose.yml           2-service infra (Postgres + MLflow)
 ├── CLAUDE.md                    Full project specification
-└── data/input/                   Source CSVs (gitignored, ~15GB)
+└── data/
+    ├── input/                   Source CSVs (gitignored, ~15GB)
+    └── staged/                  Normalized *_clean.csv files (gitignored) — output of `make normalize-all`, input to `make load-all`
 ```
 
 ---
@@ -85,8 +87,8 @@ cd DemandProject
 make init              # Create .venv, install uv, sync dependencies
 make up                # Start Docker services (Postgres, MLflow)
 make db-apply-sql      # Apply DDL schemas
-make normalize-all     # Normalize all 10 source domains
-make load-all          # Load into Postgres + refresh materialized views
+make normalize-all     # Normalize all source domains -> data/staged/*_clean.csv
+make load-all          # Load data/staged/*_clean.csv into Postgres + refresh materialized views
 
 make api               # Start FastAPI on :8000
 make ui-init           # Install npm deps
@@ -118,8 +120,8 @@ setup-all
 ├── setup-backtest
 │   ├── setup-features
 │   │   ├── setup-data (normalize-all + load-all)
-│   │   ├── cluster-all, seasonality-all, variability-all
-│   │   ├── lt-profile-all, abc-xyz-all, demand-signals-all
+│   │   ├── features-compute (unified SKU features: volume, trend, seasonality, variability, lifecycle)
+│   │   ├── cluster-all, lt-profile-all, abc-xyz-all, demand-signals-all
 │   │   └── (10 domains: item, location, customer, time, sku, sales, forecast, inventory, sourcing, purchase_order)
 │   ├── backtest-all (LGBM + CatBoost + XGBoost + Chronos T5/Bolt/2/2E)
 │   ├── backtest-load-all + accuracy-slice-refresh
@@ -138,7 +140,7 @@ make pipeline-refresh         # Incremental: detect changes, reload only deltas
 make pipeline-inventory       # Full reload inventory only
 make pipeline-inventory-refresh  # Incremental inventory refresh only
 make setup-data               # Normalize + load all 10 domains (~30 min)
-make setup-features           # Data + clustering + seasonality + variability + lead time + ABC-XYZ + demand signals
+make setup-features           # Data + features-compute + clustering + lead time + ABC-XYZ + demand signals
 make setup-backtest           # Features + backtests + champion selection
 make setup-inv-planning       # Inventory planning features (SS, EOQ, policies, exceptions, health, etc.)
 make setup-demand-planning    # Demand planning features (production forecasts, projections, consensus, etc.)
@@ -155,7 +157,7 @@ make backtest-nhits-full      # N-HiTS backtest + load predictions into Postgres
 make backtest-nbeats          # Run N-BEATS deep learning backtest (requires neuralforecast + torch)
 make backtest-nbeats-full     # N-BEATS backtest + load predictions into Postgres
 make champion-all             # Train meta-learner + simulate strategies + select champions
-make seasonality-all          # Detect seasonality patterns + write to dim_sku
+make features-compute         # Compute all SKU features (volume, trend, seasonality, variability, lifecycle) into dim_sku
 make forecast-prod-all        # Generate production forecasts from champion models
 make ai-insights-all          # Run AI portfolio scan + write insights
 make dq-all                   # Data quality schema + checks
@@ -335,25 +337,26 @@ Every feature ships with tests; every removed feature removes its tests.
 |---|---|
 | Project spec | `CLAUDE.md` |
 | API entry point | `api/main.py` |
-| API routers (72 files, 72 mounted) | `api/routers/` |
-| Shared Python modules (29) | `common/` |
-| Shared SQL helpers | `common/sql_helpers.py` |
-| Domain config | `common/domain_specs.py` |
+| API routers (80 files, 80 mounted) | `api/routers/` (organized into core/, forecasting/, intelligence/, inventory/, operations/, platform/) |
+| Shared Python modules | `common/` (core/, ml/, engines/, services/, ai/) |
+| Shared SQL helpers | `common/core/sql_helpers.py` |
+| Domain config | `common/core/domain_specs.py` |
+| Normalized clean CSVs | `data/staged/` (output of `make normalize-all`, input to `make load-all`) |
 | YAML configs | `config/` |
 | Pipeline scripts | `scripts/` |
-| DDL migrations (89) | `sql/` |
+| DDL migrations | `sql/` |
 | Frontend app | `frontend/src/App.tsx` |
 | Tab components | `frontend/src/tabs/` |
 | API query modules | `frontend/src/api/queries/` |
 | Backend tests | `tests/` |
 | Frontend tests | `frontend/src/**/__tests__/` |
 | E2E tests | `frontend/e2e/tests/` |
-| Design specs | `docs/specs/` (8 domains, 75 files) |
+| Design specs | `docs/specs/` (8 domains) |
 | Makefile | `Makefile` |
 
 ## Key Documentation
 
 - [CLAUDE.md](../../CLAUDE.md) -- Complete project specification (tech stack, commands, conventions)
-- [docs/specs/](../../docs/specs/) -- Feature design specifications (8 domains, 75 files)
+- [docs/specs/](../../docs/specs/) -- Feature design specifications (8 domains)
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- Architecture, data flow, database schema, API routing
 - [RUNBOOK.md](RUNBOOK.md) -- Setup, workflow, troubleshooting guide

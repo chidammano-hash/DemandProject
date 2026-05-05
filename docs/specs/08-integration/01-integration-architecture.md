@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (infrastructure layer) |
-| **Key Files** | `common/notification_engine.py`, `common/rate_limiter.py`, `common/webhook_dispatcher.py`, `api/routers/webhooks.py`, `api/routers/notifications.py` |
+| **Key Files** | `common/services/notification_engine.py`, `common/services/rate_limiter.py`, `common/services/webhook_dispatcher.py`, `api/routers/platform/webhooks.py`, `api/routers/platform/notifications.py` |
 
 ---
 

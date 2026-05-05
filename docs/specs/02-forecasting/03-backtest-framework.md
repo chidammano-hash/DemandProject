@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `common/backtest_framework.py`, `common/ml/model_registry.py`, `common/feature_engineering.py`, `common/metrics.py`, `common/constants.py`, `scripts/load_backtest_forecasts.py`, `sql/010_create_backtest_lag_archive.sql` |
+| **Key Files** | `common/ml/backtest_framework.py`, `common/ml/model_registry.py`, `common/ml/feature_engineering.py`, `common/services/metrics.py`, `common/core/constants.py`, `scripts/load_backtest_forecasts.py`, `sql/010_create_backtest_lag_archive.sql` |
 
 ---
 

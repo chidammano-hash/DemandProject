@@ -107,4 +107,4 @@ Investment parameters are passed at runtime (budget amount, holding cost rate). 
 
 - [03-safety-stock](03-safety-stock.md) -- SS targets and simulation curves are the input
 - [07-abc-xyz-supplier](07-abc-xyz-supplier.md) -- ABC class influences prioritization
-- [../04-operations/04-02-financial-planning](../04-operations/04-02-financial-planning.md) -- Carries investment totals into financial plan
+- [../05-operations/02-financial-planning](../05-operations/02-financial-planning.md) -- Carries investment totals into financial plan

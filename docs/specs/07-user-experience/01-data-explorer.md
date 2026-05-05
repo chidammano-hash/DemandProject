@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | ExplorerTab, ItemAnalysisTab |
-| **Key Files** | `ExplorerTab.tsx`, `ItemAnalysisTab.tsx`, `api/routers/domains.py`, `api/routers/analysis.py`, `api/routers/inventory.py` |
+| **Key Files** | `ExplorerTab.tsx`, `ItemAnalysisTab.tsx`, `api/routers/domains.py`, `api/routers/forecasting/analysis.py`, `api/routers/inventory/inventory_main.py` |
 
 ---
 
@@ -102,12 +102,12 @@ The `domains.py` router is mounted last in `main.py` because its `{domain}` path
 | TanStack Table + TanStack Virtual | Virtualized data grid rendering |
 | papaparse | Client-side CSV export |
 | ECharts (`echarts-for-react`) | Forecast overlay chart |
-| `common/domain_specs.py` | Central schema config for all 8 domains |
+| `common/core/domain_specs.py` | Central schema config for all 8 domains |
 
 ---
 
 ## See Also
 
-- `02-forecasting/06-advanced-backtest.md` -- SHAP feature selection that produces the CSV data shown in the SHAP panel
+- `02-forecasting/05-advanced-backtest.md` -- SHAP feature selection that produces the CSV data shown in the SHAP panel
 - `03-inventory-planning/01-inventory-snapshot.md` -- inventory data powering the Supply panels
 - `07-user-experience/02-ui-architecture.md` -- component architecture and virtualization strategy

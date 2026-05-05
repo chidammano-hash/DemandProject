@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | ✅ Implemented |
 | **UI Tab** | N/A (API-driven) |
-| **Key Files** | `common/webhook_dispatcher.py`, `api/routers/webhooks.py` |
+| **Key Files** | `common/services/webhook_dispatcher.py`, `api/routers/platform/webhooks.py` |
 
 ---
 
@@ -104,7 +104,7 @@ Every webhook delivery includes:
 
 ## Configuration
 
-No config file required. Retry intervals (30s, 120s, 600s), circuit breaker threshold (10 failures), and delivery timeout (10s) are constants in `common/webhook_dispatcher.py`.
+No config file required. Retry intervals (30s, 120s, 600s), circuit breaker threshold (10 failures), and delivery timeout (10s) are constants in `common/services/webhook_dispatcher.py`.
 
 ## Dependencies
 

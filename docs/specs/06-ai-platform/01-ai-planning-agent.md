@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | AIPlannerTab |
-| **Key Files** | `AIPlannerTab.tsx`, `api/routers/ai_planner.py`, `common/ai_planner.py`, `scripts/generate_ai_insights.py`, `config/ai/ai_planner_config.yaml`, `sql/036_create_ai_insights.sql` |
+| **Key Files** | `AIPlannerTab.tsx`, `api/routers/intelligence/ai_planner.py`, `common/ai/ai_planner.py`, `scripts/generate_ai_insights.py`, `config/ai/ai_planner_config.yaml`, `sql/036_create_ai_insights.sql` |
 
 ---
 
@@ -141,4 +141,4 @@ File: `config/ai/ai_planner_config.yaml`
 - `06-ai-platform/04-storyboard.md` -- rule-based exception queue that complements AI insights
 - `06-ai-platform/03-control-tower.md` -- aggregated KPIs that the agent queries
 - `03-inventory-planning/03-safety-stock.md` -- safety stock targets used for stockout/excess detection
-- `02-forecasting/05-champion-selection.md` -- model performance data queried by the agent
+- `02-forecasting/07-champion-selection.md` -- model performance data queried by the agent

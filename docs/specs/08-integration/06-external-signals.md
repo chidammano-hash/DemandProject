@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Demand Signals panel (within Inventory Planning tab) |
-| **Key Files** | `api/routers/external_signals.py` |
+| **Key Files** | `api/routers/intelligence/external_signals.py` |
 
 ---
 
@@ -88,10 +88,10 @@ Signal sources are managed via the API (database-driven, not YAML). Refresh sche
 
 - `scipy.stats.pearsonr` for correlation computation (already in deps)
 - Optional: `httpx` for API-based signal pulls
-- Signal refresh integrates with job scheduler (`common/job_registry.py`)
+- Signal refresh integrates with job scheduler (`common/services/job_registry.py`)
 
 ## See Also
 
-- [Blended Demand](../04-operations/12-blended-demand.md) -- incorporates signal-adjusted weights
+- [Blended Demand](../03-demand-intelligence/03-blended-demand.md) -- incorporates signal-adjusted weights
 - [Notifications](./04-notifications.md) -- signal refresh completion triggers notifications
 - [Integration Architecture](./01-integration-architecture.md) -- external signals as a data source vector

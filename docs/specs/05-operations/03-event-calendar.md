@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (EventCalendarPanel) |
-| **Key Files** | `inv-planning/EventCalendarPanel.tsx`, `api/routers/events.py`, `scripts/apply_event_adjustments.py`, `config/operations/event_planning_config.yaml`, `sql/058_create_event_calendar.sql` |
+| **Key Files** | `inv-planning/EventCalendarPanel.tsx`, `api/routers/operations/events.py`, `scripts/apply_event_adjustments.py`, `config/operations/event_planning_config.yaml`, `sql/058_create_event_calendar.sql` |
 
 ---
 

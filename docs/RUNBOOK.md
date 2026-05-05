@@ -140,8 +140,8 @@ Run after schema setup. Seeds default admin user and configures JWT-based authen
 ```bash
 # Auth config lives in config/platform/auth_config.yaml (JWT secret, token TTL, role hierarchy)
 # common/auth.py provides: CurrentUser, get_current_user, require_role dependencies
-# api/routers/auth_router.py provides: POST /auth/login, POST /auth/refresh
-# api/routers/users.py provides: CRUD for dim_user (admin-only)
+# api/routers/platform/auth_router.py provides: POST /auth/login, POST /auth/refresh
+# api/routers/platform/users.py provides: CRUD for dim_user (admin-only)
 
 # No Make target needed — auth is auto-initialized when API starts.
 # All mutation endpoints use require_role() for RBAC enforcement.
@@ -195,7 +195,7 @@ Run after Phase 2 ingestion to validate loaded data. Can also be scheduled as a 
 
 ```bash
 # Data quality checks are config-driven (config/platform/data_quality_config.yaml)
-# common/dq_engine.py runs SQL-based checks: freshness, completeness, uniqueness,
+# common/engines/dq_engine.py runs SQL-based checks: freshness, completeness, uniqueness,
 #   range validation, volume delta, referential integrity
 # Results written to fact_dq_check_results; domain health scores in mv_dq_dashboard
 
@@ -429,7 +429,7 @@ algorithms:
 
 Same structure for `catboost_cluster:` and `xgboost_cluster:` entries.
 
-**Architecture (Feature 44):** Tree-based models (LGBM, CatBoost, XGBoost) share `common/backtest_framework.py` via `run_tree_backtest()`. Each script provides both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting based on the `cluster_strategy` config key (`per_cluster` or `global`). **`ml_cluster` is excluded from model features** (listed in `METADATA_COLS`) — it is merged into the grid as a metadata column for per-cluster partitioning only, never passed to models as an input feature. Algorithm options (cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparameters) are read from `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>`. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve hyperparameters. Shared modules: `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py`, `shap_selector.py`.
+**Architecture (Feature 44):** Tree-based models (LGBM, CatBoost, XGBoost) share `common/ml/backtest_framework.py` via `run_tree_backtest()`. Each script provides both `train_and_predict_per_cluster()` and `train_and_predict_global()`, selecting based on the `cluster_strategy` config key (`per_cluster` or `global`). **`ml_cluster` is excluded from model features** (listed in `METADATA_COLS`) — it is merged into the grid as a metadata column for per-cluster partitioning only, never passed to models as an input feature. Algorithm options (cluster_strategy, recursive, shap_select, tune_inline, params_file, hyperparameters) are read from `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>`. Use `get_algorithm_params(model_id)` from `common/core/utils.py` to retrieve hyperparameters. Shared modules: `feature_engineering.py`, `metrics.py`, `mlflow_utils.py`, `db.py`, `constants.py`, `tuning.py`, `shap_selector.py`.
 
 ### GPU Acceleration
 
@@ -582,8 +582,8 @@ make backtest-chronos2e
 make backtest-load-chronos2e
 
 # Resume any crashed run (uses checkpoints — skips completed timeframes):
-uv run python -m scripts.run_backtest_chronos_bolt --resume
-uv run python -m scripts.run_backtest_chronos2_enriched --resume
+uv run python -m scripts.ml.run_backtest_chronos_bolt --resume
+uv run python -m scripts.ml.run_backtest_chronos2_enriched --resume
 ```
 
 See `docs/specs/02-forecasting/18-chronos-foundation-models.md` for full architecture comparison.
@@ -666,16 +666,16 @@ The `load_backtest_forecasts.py` script supports several flags for efficient mul
 
 ```bash
 # Load 4 models with single index cycle (fastest):
-uv run python scripts/load_backtest_forecasts.py \
+uv run python scripts/etl/load_backtest_forecasts.py \
   --models lgbm_cluster catboost_cluster xgboost_cluster chronos \
   --replace --bulk
 
 # Load main table only (skip archive):
-uv run python scripts/load_backtest_forecasts.py \
+uv run python scripts/etl/load_backtest_forecasts.py \
   --models lgbm_cluster chronos --replace --bulk --main-only
 
 # Load archive only:
-uv run python scripts/load_backtest_forecasts.py \
+uv run python scripts/etl/load_backtest_forecasts.py \
   --models lgbm_cluster chronos --replace --bulk --archive-only
 
 # Makefile convenience targets:
@@ -798,7 +798,7 @@ make champion-simulate        # Simulate all strategies, compare accuracy vs cei
 make champion-all             # train-meta + simulate + select (full pipeline)
 
 # Override strategy:
-.venv/bin/python -m scripts.run_champion_selection --strategy rolling
+.venv/bin/python -m scripts.ml.run_champion_selection --strategy rolling
 ```
 
 ### Config (`config/forecasting/forecast_pipeline_config.yaml`, `champion` section)
@@ -1050,7 +1050,7 @@ make dq-all                  # Full pipeline: schema + populate + run
 ```
 
 **Automated schedule:** Every 4 hours via APScheduler (`dq_check` job type in job_registry).
-The scheduler triggers `common/dq_engine.py` which evaluates SQL-based rules (freshness,
+The scheduler triggers `common/engines/dq_engine.py` which evaluates SQL-based rules (freshness,
 completeness, uniqueness, range, volume delta, referential integrity), writes results to
 `fact_dq_check_results`, and refreshes `mv_dq_dashboard` domain health scores.
 
@@ -1115,7 +1115,7 @@ when pipeline events occur (DQ failures, AI insights, exception alerts, report d
 
 ```bash
 # Notification channels configured via config/platform/notification_config.yaml
-# common/notification_engine.py dispatches to Slack, Teams, Email, PagerDuty
+# common/services/notification_engine.py dispatches to Slack, Teams, Email, PagerDuty
 # Delivery history stored in fact_notification_log (sql/065)
 ```
 
@@ -1125,7 +1125,7 @@ API endpoints (`/notifications/*`):
 
 ```bash
 # Webhook subscriptions registered via API (no Make target needed)
-# common/webhook_dispatcher.py signs and dispatches HTTPS callbacks on events
+# common/services/webhook_dispatcher.py signs and dispatches HTTPS callbacks on events
 # Event types: dq.check.failed, insight.created, exception.detected,
 #              forecast.generated, report.delivered, etc.
 ```
@@ -1167,7 +1167,7 @@ Templates define the data queries, layout, and output format (PDF/CSV/Excel).
 
 ### Unified Pipeline Orchestrator
 
-Single-command data pipeline that handles normalize, load, and MV refresh for all 10 domains. Data loads directly from CSV into main tables via `scripts/load_dataset_postgres.py` (single-pass: COPY to staging, type-cast + dedup, INSERT). Batch tracking via `audit_load_batch`. Two modes: **full reload** (wipe and reload everything) and **incremental refresh** (detect changes, reload only deltas).
+Single-command data pipeline that handles normalize, load, and MV refresh for all 10 domains. Data loads directly from CSV into main tables via `scripts/etl/load_dataset_postgres.py` (single-pass: COPY to staging, type-cast + dedup, INSERT). Batch tracking via `audit_load_batch`. Two modes: **full reload** (wipe and reload everything) and **incremental refresh** (detect changes, reload only deltas).
 
 ```bash
 # Full reload — all domains, parallel normalization
@@ -1233,7 +1233,7 @@ make pipeline-inventory-refresh      # Incremental
 The FastAPI backend includes platform middleware applied in `api/main.py`:
 - **GZip compression** — responses > 1KB are gzip-compressed
 - **CORS** — allows `localhost:5173` (dev) origins
-- **Cache layer** — `common/cache.py` provides `@cached` decorator with TTL-based caching.
+- **Cache layer** — `common/services/cache.py` provides `@cached` decorator with TTL-based caching.
   Two backends: Redis (when `REDIS_URL` env var set) or in-memory fallback.
   Config in `config/platform/cache_config.yaml`. Cache invalidation on write endpoints.
 - **Query performance tracking** — endpoint latency + DB query counts logged to
@@ -1706,7 +1706,7 @@ make fresh-load             # Normalize + load + refresh MVs only (~5 min)
 |---|---|---|
 | `make db-truncate-data` | Truncate non-config data, history, and experiment tables in one transaction while preserving configuration masters | < 1 min |
 | `make clean-artifacts` | Remove stale clean CSVs, backtest/tuning outputs, clustering artifacts, champion files, and perf reports | < 1 sec |
-| `make normalize-all` | Normalize all 10 input CSVs → `data/*_clean.csv` | ~1 min |
+| `make normalize-all` | Normalize all 10 input CSVs → `data/staged/*_clean.csv` | ~1 min |
 | `make load-all` | Load all 10 domains into Postgres (dimensions first, facts second) | ~1 min |
 | `make refresh-mvs-tiered` | Refresh all 13 MVs in 4-tier dependency order | ~30 sec |
 | `make cluster-all` | Feature engineering + KMeans training + label + update dim_sku.ml_cluster | ~10 min |
@@ -2004,47 +2004,47 @@ EOSQL
 Remove stale artifacts so the pipeline regenerates everything from scratch:
 
 ```bash
-rm -f data/*_clean.csv data/inventory_clean.csv
+rm -f data/staged/*_clean.csv data/staged/inventory_clean.csv
 rm -rf data/backtest/lgbm_cluster/ data/backtest/catboost_cluster/ data/backtest/xgboost_cluster/
 rm -rf data/backtest/chronos/ data/backtest/chronos_bolt/ data/backtest/chronos2/ data/backtest/chronos2_enriched/
 rm -rf data/backtest/seasonal_naive/ data/backtest/rolling_mean/ data/backtest/mstl/
 rm -rf data/backtest/nhits/ data/backtest/nbeats/
 rm -rf data/backtest/logs/ data/backtest/tuning_archive/ data/tuning/ data/perf_reports/
 rm -rf data/clustering/ data/champion/ data/models/
-rm -f data/seasonality_results.csv data/clustering_features.csv
+rm -f data/staged/seasonality_results.csv data/staged/clustering_features.csv
 ```
 
 ### Step 3: Normalize Input CSVs
 
 ```bash
-~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset item
-~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset location
-~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset customer
-~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset time
-~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset sku
-~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset sales
-~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset forecast
-~/.local/bin/uv run python scripts/normalize_inventory_csv.py
-~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset sourcing
-~/.local/bin/uv run python scripts/normalize_dataset_csv.py --dataset purchase_order
+~/.local/bin/uv run python scripts/etl/normalize_dataset_csv.py --dataset item
+~/.local/bin/uv run python scripts/etl/normalize_dataset_csv.py --dataset location
+~/.local/bin/uv run python scripts/etl/normalize_dataset_csv.py --dataset customer
+~/.local/bin/uv run python scripts/etl/normalize_dataset_csv.py --dataset time
+~/.local/bin/uv run python scripts/etl/normalize_dataset_csv.py --dataset sku
+~/.local/bin/uv run python scripts/etl/normalize_dataset_csv.py --dataset sales
+~/.local/bin/uv run python scripts/etl/normalize_dataset_csv.py --dataset forecast
+~/.local/bin/uv run python scripts/etl/normalize_inventory_csv.py
+~/.local/bin/uv run python scripts/etl/normalize_dataset_csv.py --dataset sourcing
+~/.local/bin/uv run python scripts/etl/normalize_dataset_csv.py --dataset purchase_order
 ```
 
 ### Step 4: Load Into Postgres (Dimensions First, Then Facts)
 
 ```bash
 # Wave 1: Dimensions
-~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset item
-~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset location
-~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset customer
-~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset time
-~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset sku
-~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset sourcing
+~/.local/bin/uv run python scripts/etl/load_dataset_postgres.py --dataset item
+~/.local/bin/uv run python scripts/etl/load_dataset_postgres.py --dataset location
+~/.local/bin/uv run python scripts/etl/load_dataset_postgres.py --dataset customer
+~/.local/bin/uv run python scripts/etl/load_dataset_postgres.py --dataset time
+~/.local/bin/uv run python scripts/etl/load_dataset_postgres.py --dataset sku
+~/.local/bin/uv run python scripts/etl/load_dataset_postgres.py --dataset sourcing
 
 # Wave 2: Facts
-~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset sales
-~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset forecast
-~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset inventory
-~/.local/bin/uv run python scripts/load_dataset_postgres.py --dataset purchase_order
+~/.local/bin/uv run python scripts/etl/load_dataset_postgres.py --dataset sales
+~/.local/bin/uv run python scripts/etl/load_dataset_postgres.py --dataset forecast
+~/.local/bin/uv run python scripts/etl/load_dataset_postgres.py --dataset inventory
+~/.local/bin/uv run python scripts/etl/load_dataset_postgres.py --dataset purchase_order
 ```
 
 ### Step 5: Refresh Materialized Views (Tier-Ordered)
@@ -2094,7 +2094,7 @@ The legacy scripts (`detect_seasonality.py`, `update_seasonality_profiles.py`, `
 ### Step 8: Lead Time Profiles
 
 ```bash
-~/.local/bin/uv run python scripts/compute_lead_time_variability.py
+~/.local/bin/uv run python scripts/inventory/compute_lead_time_variability.py
 ```
 
 ### Step 9: Run Backtests (Tree + Foundation + Statistical + Deep Learning)
@@ -2103,37 +2103,37 @@ Sequential execution (safe for laptops). For parallel, append `&` to each and `w
 
 ```bash
 # Tree models
-~/.local/bin/uv run python scripts/run_backtest.py
-~/.local/bin/uv run python scripts/run_backtest_catboost.py
-~/.local/bin/uv run python scripts/run_backtest_xgboost.py
+~/.local/bin/uv run python scripts/ml/run_backtest.py
+~/.local/bin/uv run python scripts/ml/run_backtest_catboost.py
+~/.local/bin/uv run python scripts/ml/run_backtest_xgboost.py
 
 # Foundation models
-~/.local/bin/uv run python -m scripts.run_backtest_chronos
-~/.local/bin/uv run python -m scripts.run_backtest_chronos_bolt
-~/.local/bin/uv run python -m scripts.run_backtest_chronos2
-~/.local/bin/uv run python -m scripts.run_backtest_chronos2_enriched
+~/.local/bin/uv run python -m scripts.ml.run_backtest_chronos
+~/.local/bin/uv run python -m scripts.ml.run_backtest_chronos_bolt
+~/.local/bin/uv run python -m scripts.ml.run_backtest_chronos2
+~/.local/bin/uv run python -m scripts.ml.run_backtest_chronos2_enriched
 
 # Statistical baselines
-~/.local/bin/uv run python scripts/run_backtest.py --model seasonal_naive
-~/.local/bin/uv run python scripts/run_backtest.py --model rolling_mean
-~/.local/bin/uv run python scripts/run_backtest_mstl.py
+~/.local/bin/uv run python scripts/ml/run_backtest.py --model seasonal_naive
+~/.local/bin/uv run python scripts/ml/run_backtest.py --model rolling_mean
+~/.local/bin/uv run python scripts/ml/run_backtest_mstl.py
 
 # Deep learning models
-~/.local/bin/uv run python scripts/run_backtest_dl.py --model nhits
-~/.local/bin/uv run python scripts/run_backtest_dl.py --model nbeats
+~/.local/bin/uv run python scripts/ml/run_backtest_dl.py --model nhits
+~/.local/bin/uv run python scripts/ml/run_backtest_dl.py --model nbeats
 ```
 
 ### Step 10: Load Backtest Predictions
 
 ```bash
 # Standard load (per-model index cycle):
-~/.local/bin/uv run python scripts/load_backtest_forecasts.py --all --replace
+~/.local/bin/uv run python scripts/etl/load_backtest_forecasts.py --all --replace
 
 # Bulk load (~4x faster — single index drop/recreate across all models):
-~/.local/bin/uv run python scripts/load_backtest_forecasts.py --all --replace --bulk
+~/.local/bin/uv run python scripts/etl/load_backtest_forecasts.py --all --replace --bulk
 
 # Load specific models only:
-~/.local/bin/uv run python scripts/load_backtest_forecasts.py \
+~/.local/bin/uv run python scripts/etl/load_backtest_forecasts.py \
   --models lgbm_cluster catboost_cluster xgboost_cluster chronos --replace --bulk
 ```
 
@@ -2153,9 +2153,9 @@ docker compose exec -T postgres psql -U demand -d demand_mvp -c "
 ### Step 12: Champion Model Selection
 
 ```bash
-~/.local/bin/uv run python scripts/train_meta_learner.py --config config/forecasting/forecast_pipeline_config.yaml
-~/.local/bin/uv run python scripts/simulate_champion_strategies.py --config config/forecasting/forecast_pipeline_config.yaml
-~/.local/bin/uv run python scripts/run_champion_selection.py --config config/forecasting/forecast_pipeline_config.yaml
+~/.local/bin/uv run python scripts/ml/train_meta_learner.py --config config/forecasting/forecast_pipeline_config.yaml
+~/.local/bin/uv run python scripts/ml/simulate_champion_strategies.py --config config/forecasting/forecast_pipeline_config.yaml
+~/.local/bin/uv run python scripts/ml/run_champion_selection.py --config config/forecasting/forecast_pipeline_config.yaml
 ```
 
 ### Step 13: Baseline Planning Refresh
@@ -2252,14 +2252,14 @@ After any cleanup that affects champion/ceiling rows, re-run `make champion-sele
 |---|---|
 | Forecast load fails with "missing data for column model_id" | `make normalize-forecast && make load-forecast` |
 | Inventory normalize fails | Verify 14 CSVs in `data/input/`: `ls data/input/Inventory_Snapshot_*.csv \| wc -l` (expect 14); files must be UTF-8 CSV with columns `exec_date,item,loc,lead_time,tot_oh,tot_oh_oo,mtd_sls` |
-| Inventory load fails | Apply DDL first: `make db-apply-inventory`; verify `ls -lh data/inventory_clean.csv` |
+| Inventory load fails | Apply DDL first: `make db-apply-inventory`; verify `ls -lh data/staged/inventory_clean.csv` |
 | Inventory tab shows no data | Verify load: `docker compose exec -T postgres psql -U demand -d demand_mvp -c "SELECT COUNT(*) FROM fact_inventory_snapshot"`; refresh view: `make refresh-agg-inventory` |
 
 ### ML Pipelines
 
 | Problem | Fix |
 |---|---|
-| Clustering fails | Load sales first: `make load-sales`; verify MLflow: `docker ps \| grep mlflow`; check: `ls -lh data/clustering_features.csv` |
+| Clustering fails | Load sales first: `make load-sales`; verify MLflow: `docker ps \| grep mlflow`; check: `ls -lh data/staged/clustering_features.csv` |
 | Cluster assignments not updating | Preview with `--dry-run`; verify DFU key format matches database; check Postgres connection |
 | Backtest fails | Run clustering first: `make cluster-all`; load sales: `make load-sales`; install deps: `uv sync` |
 | Champion selection finds no DFUs | Load backtest predictions: `make backtest-load`; lower `min_dfu_rows` in `config/forecasting/forecast_pipeline_config.yaml` champion section; verify models exist: `SELECT DISTINCT model_id FROM fact_external_forecast_monthly` |

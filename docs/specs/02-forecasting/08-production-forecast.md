@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inv. Planning (Demand Forecast panel), Model Experimentation Studio |
-| **Key Files** | `scripts/ml/train_production_models.py`, `scripts/generate_production_forecasts.py`, `api/routers/production_forecast.py`, `config/production_forecast_config.yaml`, `sql/039_create_production_forecast.sql`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
+| **Key Files** | `scripts/ml/train_production_models.py`, `scripts/generate_production_forecasts.py`, `api/routers/forecasting/production_forecast.py`, `config/production_forecast_config.yaml`, `sql/039_create_production_forecast.sql`, `frontend/src/tabs/inv-planning/DemandForecastPanel.tsx` |
 
 ---
 

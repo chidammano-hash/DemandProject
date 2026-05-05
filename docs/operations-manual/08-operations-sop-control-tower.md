@@ -16,13 +16,13 @@ the current `restructure` branch.
 | Module | API router | UI tab | Primary Make target |
 |---|---|---|---|
 | S&OP | `api/routers/operations/sop.py` (mounted at `/sop`) | `frontend/src/tabs/SopTab.tsx` | `make sop-all` |
-| Control Tower | `api/routers/control_tower.py` (mounted at `/control-tower`) | `frontend/src/tabs/ControlTowerTab.tsx` | `make control-tower-all` |
-| Promotion / Event Planning | `api/routers/events.py` (mounted at `/events`) | `EventCalendarPanel` inside `InvPlanningTab` | `make events-all` |
-| Planner Storyboard | `api/routers/storyboard.py` (mounted at `/storyboard`) | `frontend/src/tabs/StoryboardTab.tsx` | `make storyboard-all` |
-| Data Quality | `api/routers/data_quality.py` + `common/engines/dq_engine.py` | DQ surfaced inside ControlTower / Storyboard | `make dq-all` |
-| Job Engine | `api/routers/core/jobs.py` (shim at `api/routers/jobs.py`) | `frontend/src/tabs/JobsTab.tsx` | n/a (runtime) |
-| Notifications | `api/routers/notifications.py` + `common/services/notification_engine.py` | `SettingsTab` channel config | n/a (runtime) |
-| Webhooks | `api/routers/webhooks.py` + `common/services/webhook_dispatcher.py` | `SettingsTab` registrations | n/a (runtime) |
+| Control Tower | `api/routers/operations/control_tower.py` (mounted at `/control-tower`) | `frontend/src/tabs/ControlTowerTab.tsx` | `make control-tower-all` |
+| Promotion / Event Planning | `api/routers/operations/events.py` (mounted at `/events`) | `EventCalendarPanel` inside `InvPlanningTab` | `make events-all` |
+| Planner Storyboard | `api/routers/intelligence/storyboard.py` (mounted at `/storyboard`) | `frontend/src/tabs/StoryboardTab.tsx` | `make storyboard-all` |
+| Data Quality | `api/routers/platform/data_quality.py` + `common/engines/dq_engine.py` | DQ surfaced inside ControlTower / Storyboard | `make dq-all` |
+| Job Engine | `api/routers/core/jobs.py` | `frontend/src/tabs/JobsTab.tsx` | n/a (runtime) |
+| Notifications | `api/routers/platform/notifications.py` + `common/services/notification_engine.py` | `SettingsTab` channel config | n/a (runtime) |
+| Webhooks | `api/routers/platform/webhooks.py` + `common/services/webhook_dispatcher.py` | `SettingsTab` registrations | n/a (runtime) |
 
 The umbrella target that bootstraps every operational module from a clean
 database is:
@@ -302,7 +302,7 @@ backfilling NULL `customer_no` from upstream joins, deduplicating duplicate
 - `common/services/job_registry.py` exposes the public `JobManager` singleton
   (accessed via `JobManager.instance()`) and `JOB_TYPE_REGISTRY` — the
   catalogue of every runnable job type. Job implementations are imported from
-  `common/job_state.py` (`_run_*` callables).
+  `common/services/job_state.py` (`_run_*` callables).
 - `api/main.py` lifespan handler **pre-warms** `JobManager.instance()` on
   startup so APScheduler is live before the first `/jobs` request:
 

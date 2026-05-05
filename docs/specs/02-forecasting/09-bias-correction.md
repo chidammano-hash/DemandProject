@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inv. Planning (Projection panel), Accuracy (Bias Corrections panel) |
-| **Key Files** | `scripts/compute_bias_corrections.py`, `scripts/compute_inventory_projection.py`, `api/routers/bias_corrections.py`, `api/routers/inv_planning_projection.py`, `config/bias_correction_config.yaml`, `config/inventory/inventory_planning_config.yaml` (projection section) |
+| **Key Files** | `scripts/compute_bias_corrections.py`, `scripts/compute_inventory_projection.py`, `api/routers/forecasting/bias_corrections.py`, `api/routers/inventory/inv_planning_projection.py`, `config/bias_correction_config.yaml`, `config/inventory/inventory_planning_config.yaml` (projection section) |
 
 ---
 

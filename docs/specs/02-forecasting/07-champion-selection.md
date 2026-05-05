@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Accuracy |
-| **Key Files** | `scripts/run_champion_selection.py`, `common/champion_strategies.py`, `config/forecasting/forecast_pipeline_config.yaml` (champion section), `api/routers/competition.py`, `frontend/src/tabs/AccuracyTab.tsx` |
+| **Key Files** | `scripts/run_champion_selection.py`, `common/ml/champion_strategies.py`, `config/forecasting/forecast_pipeline_config.yaml` (champion section), `api/routers/forecasting/competition.py`, `frontend/src/tabs/AccuracyTab.tsx` |
 
 ---
 

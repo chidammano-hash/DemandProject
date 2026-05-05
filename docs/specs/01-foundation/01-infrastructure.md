@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (platform-wide) |
-| **Key Files** | `docker-compose.yml`, `api/main.py`, `common/domain_specs.py`, `Makefile` |
+| **Key Files** | `docker-compose.yml`, `api/main.py`, `common/core/domain_specs.py`, `Makefile` |
 
 ---
 
@@ -20,8 +20,8 @@ Supply Chain Command Center is a full-stack analytics platform that ingests CSV 
 
 ## How It Works
 
-1. Raw CSV files are normalized into clean CSVs by Python scripts.
-2. Clean CSVs are loaded into PostgreSQL via `psycopg` bulk copy.
+1. Raw CSV files are normalized into clean CSVs (written to `data/staged/`) by Python scripts.
+2. Clean CSVs are loaded into PostgreSQL from `data/staged/` via `psycopg` bulk copy.
 3. Materialized views pre-aggregate data for O(1) KPI queries.
 4. FastAPI serves analytics endpoints to the React frontend.
 5. ML training and scoring jobs log parameters and metrics to MLflow.
@@ -35,7 +35,7 @@ Supply Chain Command Center is a full-stack analytics platform that ingests CSV 
 | ML Tracking | MLflow v2.16.2 |
 | API | Python + FastAPI + Uvicorn |
 | Validation | Pydantic v2 |
-| DB Driver | psycopg v3 (connection pool: min=2, max=10) |
+| DB Driver | psycopg v3 (connection pool: min=2, max=20) |
 | Frontend | React + Vite + TypeScript |
 | Styling | Tailwind CSS + shadcn/ui |
 | Charts | Recharts + ECharts |
@@ -57,9 +57,9 @@ Postgres tuning: `shared_buffers=512MB`, `work_mem=64MB`, `effective_cache_size=
 
 ## Architecture
 
-The API layer uses 61 modular routers mounted in `api/main.py`. The `domains.py` router is mounted last because it has a catch-all `{domain}` path parameter. All route handlers live in router modules — `main.py` is a ~149-line shell. Optional API key auth is enabled when the `API_KEY` env var is set.
+The API layer uses domain-organized routers under `api/routers/{core,forecasting,inventory,operations,platform,intelligence}/` mounted in `api/main.py` (~80 routers, ~330-line shell). The `domains.py` router is mounted last because it has a catch-all `{domain}` path parameter. Optional API key auth is enabled when the `API_KEY` env var is set.
 
-The central schema registry is `DomainSpec` in `common/domain_specs.py`, covering all 8 domains (item, location, customer, time, sku, sales, forecast, inventory). Scripts and API endpoints are generic — they operate on any domain via `--dataset <name>` or `/domains/{domain}/*`.
+The central schema registry is `DomainSpec` in `common/core/domain_specs.py`, covering all 11 domains (item, location, customer, time, sku, sales, forecast, customer_demand, inventory, sourcing, purchase_order). Scripts and API endpoints are generic — they operate on any domain via `--dataset <name>` or `/domains/{domain}/*`.
 
 ## Implemented Features
 
@@ -72,43 +72,43 @@ The central schema registry is `DomainSpec` in `common/domain_specs.py`, coverin
 | Multi-Model Forecast Support | [../02-forecasting/02-multi-model.md](../02-forecasting/02-multi-model.md) | Forecasting |
 | Backtest Framework (timeframes A-J) | [../02-forecasting/03-backtest-framework.md](../02-forecasting/03-backtest-framework.md) | Forecasting |
 | Tree Model Implementations (LGBM, CatBoost, XGBoost) | [../02-forecasting/04-tree-models.md](../02-forecasting/04-tree-models.md) | Forecasting |
-| Champion Model Selection (5 strategies) | [../02-forecasting/05-champion-selection.md](../02-forecasting/05-champion-selection.md) | Forecasting |
-| Advanced Backtest (tuning, SHAP, recursive) | [../02-forecasting/06-advanced-backtest.md](../02-forecasting/06-advanced-backtest.md) | Forecasting |
-| Algorithm Config (YAML-driven) | [../02-forecasting/07-algorithm-config.md](../02-forecasting/07-algorithm-config.md) | Forecasting |
+| Champion Model Selection (5 strategies) | [../02-forecasting/07-champion-selection.md](../02-forecasting/07-champion-selection.md) | Forecasting |
+| Advanced Backtest (tuning, SHAP, recursive) | [../02-forecasting/05-advanced-backtest.md](../02-forecasting/05-advanced-backtest.md) | Forecasting |
+| Algorithm Config (YAML-driven) | [../02-forecasting/06-algorithm-config.md](../02-forecasting/06-algorithm-config.md) | Forecasting |
 | Production Forecast Pipeline | [../02-forecasting/08-production-forecast.md](../02-forecasting/08-production-forecast.md) | Forecasting |
 | Bias Correction Engine | [../02-forecasting/09-bias-correction.md](../02-forecasting/09-bias-correction.md) | Forecasting |
 | SKU Clustering + What-If Scenarios | [../03-demand-intelligence/01-sku-clustering.md](../03-demand-intelligence/01-sku-clustering.md) | Demand Intelligence |
 | SKU Feature Engineering (Seasonality + Variability) | [../01-foundation/02-sku-feature-engineering.md](../01-foundation/02-sku-feature-engineering.md) | Demand Intelligence |
-| Blended Demand Forecast | [../02-forecasting/12-blended-demand.md](../02-forecasting/12-blended-demand.md) | Forecasting |
-| Inventory Snapshots + Backtest | [../03-inventory/01-inventory-snapshot.md](../03-inventory/01-inventory-snapshot.md) | Inventory |
+| Blended Demand Forecast | [../03-demand-intelligence/03-blended-demand.md](../03-demand-intelligence/03-blended-demand.md) | Forecasting |
+| Inventory Snapshots + Backtest | [../04-inventory/01-inventory-snapshot.md](../04-inventory/01-inventory-snapshot.md) | Inventory |
 | Lead Time Variability | [../04-inventory/02-demand-variability.md](../04-inventory/02-demand-variability.md) | Inventory |
-| Safety Stock Engine + Simulation | [../03-inventory/03-safety-stock.md](../03-inventory/03-safety-stock.md) | Inventory |
-| EOQ + Replenishment Policies + Health Score | [../03-inventory/04-replenishment.md](../03-inventory/04-replenishment.md) | Inventory |
-| Exception Queue | [../03-inventory/05-exceptions.md](../03-inventory/05-exceptions.md) | Inventory |
-| Fill Rate + Demand Signals + Intramonth | [../03-inventory/06-analytics.md](../03-inventory/06-analytics.md) | Inventory |
-| ABC-XYZ + Supplier Performance | [../03-inventory/07-abc-xyz-supplier.md](../03-inventory/07-abc-xyz-supplier.md) | Inventory |
-| Investment Optimization | [../03-inventory/08-investment.md](../03-inventory/08-investment.md) | Inventory |
-| Multi-Echelon Safety Stock | [../03-inventory/10-echelon.md](../03-inventory/10-echelon.md) | Inventory |
-| Replenishment Plan | [../03-inventory/11-replenishment-plan.md](../03-inventory/11-replenishment-plan.md) | Inventory |
-| Inventory Rebalancing | [../03-inventory/12-rebalancing.md](../03-inventory/12-rebalancing.md) | Inventory |
-| S&OP Cycle Management | [../04-operations/01-sop.md](../04-operations/01-sop.md) | Operations |
-| Financial Planning | [../04-operations/02-financial.md](../04-operations/02-financial.md) | Operations |
-| Event Calendar | [../04-operations/03-events.md](../04-operations/03-events.md) | Operations |
-| Scenario Planning | [../04-operations/04-scenarios.md](../04-operations/04-scenarios.md) | Operations |
-| AI Planning Agent | [../05-ai/01-ai-planner.md](../05-ai/01-ai-planner.md) | AI |
-| Chatbot + Market Intelligence | [../05-ai/02-chatbot.md](../05-ai/02-chatbot.md) | AI |
-| Control Tower | [../05-ai/03-control-tower.md](../05-ai/03-control-tower.md) | AI |
-| Storyboard (Exception Workflow) | [../05-ai/04-storyboard.md](../05-ai/04-storyboard.md) | AI |
-| UI Architecture + Theming | [../06-ui/01-ui-architecture.md](../06-ui/01-ui-architecture.md) | UI |
-| Job Scheduler (APScheduler) | [../06-ui/02-job-scheduler.md](../06-ui/02-job-scheduler.md) | UI |
-| Testing Strategy (pytest + Vitest + Playwright) | [../06-ui/03-testing.md](../06-ui/03-testing.md) | UI |
+| Safety Stock Engine + Simulation | [../04-inventory/03-safety-stock.md](../04-inventory/03-safety-stock.md) | Inventory |
+| EOQ + Replenishment Policies + Health Score | [../04-inventory/04-replenishment.md](../04-inventory/04-replenishment.md) | Inventory |
+| Exception Queue | [../04-inventory/05-exception-queue.md](../04-inventory/05-exception-queue.md) | Inventory |
+| Fill Rate + Demand Signals + Intramonth | [../04-inventory/06-analytics.md](../04-inventory/06-analytics.md) | Inventory |
+| ABC-XYZ + Supplier Performance | [../04-inventory/07-abc-xyz-supplier.md](../04-inventory/07-abc-xyz-supplier.md) | Inventory |
+| Investment Optimization | [../04-inventory/08-investment.md](../04-inventory/08-investment.md) | Inventory |
+| Multi-Echelon Safety Stock | [../04-inventory/09-multi-echelon.md](../04-inventory/09-multi-echelon.md) | Inventory |
+| Replenishment Plan | [../04-inventory/10-replenishment-plan.md](../04-inventory/10-replenishment-plan.md) | Inventory |
+| Inventory Rebalancing | [../04-inventory/11-rebalancing.md](../04-inventory/11-rebalancing.md) | Inventory |
+| S&OP Cycle Management | [../05-operations/01-sop-cycle.md](../05-operations/01-sop-cycle.md) | Operations |
+| Financial Planning | [../05-operations/02-financial-planning.md](../05-operations/02-financial-planning.md) | Operations |
+| Event Calendar | [../05-operations/03-event-calendar.md](../05-operations/03-event-calendar.md) | Operations |
+| Scenario Planning | [../05-operations/04-scenario-planning.md](../05-operations/04-scenario-planning.md) | Operations |
+| AI Planning Agent | [../06-ai-platform/01-ai-planning-agent.md](../06-ai-platform/01-ai-planning-agent.md) | AI |
+| Chatbot + Market Intelligence | [../06-ai-platform/02-market-intel.md](../06-ai-platform/02-market-intel.md) | AI |
+| Control Tower | [../06-ai-platform/03-control-tower.md](../06-ai-platform/03-control-tower.md) | AI |
+| Storyboard (Exception Workflow) | [../06-ai-platform/04-storyboard.md](../06-ai-platform/04-storyboard.md) | AI |
+| UI Architecture + Theming | [../07-user-experience/02-ui-architecture.md](../07-user-experience/02-ui-architecture.md) | UI |
+| Job Scheduler (APScheduler) | [../07-user-experience/04-job-scheduler.md](../07-user-experience/04-job-scheduler.md) | UI |
+| Testing Strategy (pytest + Vitest + Playwright) | [../07-user-experience/05-testing.md](../07-user-experience/05-testing.md) | UI |
 | LGBM Tuning Tracker (experiment tracking, A/B comparison) | [../02-forecasting/10b-lgbm-tuning.md](../02-forecasting/10b-lgbm-tuning.md) | Forecasting |
 | Performance Profiling (decorator, suggestions, production-safe) | [05-performance-profiling.md](05-performance-profiling.md) | Foundation |
 | Unified Model Tuning Studio (LGBM, CatBoost, XGBoost) | [../02-forecasting/11-unified-model-tuning-v2.md](../02-forecasting/11-unified-model-tuning-v2.md) | Forecasting |
 | Unified Pipeline Orchestrator (full/incremental modes) | — | Integration |
-| RBAC + User Management | [../07-integration/02-rbac.md](../07-integration/02-rbac.md) | Integration |
-| Notifications + Webhooks | [../07-integration/03-notifications.md](../07-integration/03-notifications.md) | Integration |
-| FVA + ROI Measurement | [../07-integration/04-fva.md](../07-integration/04-fva.md) | Integration |
+| RBAC + User Management | [../08-integration/02-rbac.md](../08-integration/02-rbac.md) | Integration |
+| Notifications + Webhooks | [../08-integration/04-notifications.md](../08-integration/04-notifications.md) | Integration |
+| FVA + ROI Measurement | [../08-integration/07-fva.md](../08-integration/07-fva.md) | Integration |
 | Demand History Workbench (5 endpoints) | [../03-demand-intelligence/06-demand-history-workbench.md](../03-demand-intelligence/06-demand-history-workbench.md) | Demand Intelligence |
 
 ## Quick Start

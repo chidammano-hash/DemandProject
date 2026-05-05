@@ -111,7 +111,7 @@ Skills live in `.claude/skills/`. Claude auto-activates them based on what you'r
 - N+1 query prevention
 - Caching strategies for hot paths
 
-**Relevant to DemandProject:** FastAPI router architecture, `api/core.py` connection pool patterns, APScheduler job design in `common/job_registry.py`.
+**Relevant to DemandProject:** FastAPI router architecture, `api/core.py` connection pool patterns, APScheduler job design in `common/services/job_registry.py`.
 
 ---
 

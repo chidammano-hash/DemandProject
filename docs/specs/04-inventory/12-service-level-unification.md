@@ -15,7 +15,7 @@ Before unification, three independent stores drove SL calculations:
 
 | Source | Owner | Scope |
 |---|---|---|
-| `_SL_TARGETS` dict in [api/routers/fill_rate.py](../../api/routers/fill_rate.py) | Fill-rate reporting | Portfolio-wide, hardcoded |
+| `_SL_TARGETS` dict in [api/routers/operations/fill_rate.py](../../api/routers/operations/fill_rate.py) | Fill-rate reporting | Portfolio-wide, hardcoded |
 | `service_levels_by_abc` in [config/shared_constants.yaml](../../config/shared_constants.yaml) | SS + replenishment | Portfolio-wide, YAML |
 | `fact_service_level_targets` table (DDL [sql/051](../../sql/051_create_service_level_tracking.sql)) | Per-SKU overrides | SKU/class, DB |
 
@@ -58,7 +58,7 @@ back to YAML, never raises.
 
 | File | Before | After |
 |---|---|---|
-| [api/routers/fill_rate.py](../../api/routers/fill_rate.py) | `_SL_TARGETS = {...}` | `load_sl_targets_by_abc(cursor=cur)` |
+| [api/routers/operations/fill_rate.py](../../api/routers/operations/fill_rate.py) | `_SL_TARGETS = {...}` | `load_sl_targets_by_abc(cursor=cur)` |
 | [scripts/compute_safety_stock.py](../../scripts/compute_safety_stock.py) | YAML only | YAML + DB override via helper |
 
 ## Tests

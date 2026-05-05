@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (API-driven) |
-| **Key Files** | `api/routers/reports.py` |
+| **Key Files** | `api/routers/platform/reports.py` |
 
 ---
 
@@ -102,7 +102,7 @@ A report generation engine with built-in templates for common planning reports. 
 
 - `openpyxl>=3.1` for Excel generation
 - `weasyprint>=60` or `reportlab>=4.0` for PDF generation (optional, falls back to HTML)
-- APScheduler (`common/job_registry.py`) executes scheduled generation
+- APScheduler (`common/services/job_registry.py`) executes scheduled generation
 - [Notifications](./04-notifications.md) delivers email reports when configured
 
 ## See Also

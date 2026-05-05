@@ -27,7 +27,7 @@ A dedicated tuning run registry that automatically captures every LGBM backtest 
 Before a backtest starts, a tuning run record is created in `lgbm_tuning_run` with status `running`. This can happen automatically (when `auto_register: true` in config) or manually via the API. The run captures:
 
 - All hyperparameters from `config/forecasting/forecast_pipeline_config.yaml` under `algorithms.<model_id>.params` (learning_rate, num_leaves, max_depth, etc.)
-- Feature list from `common/feature_engineering.py`
+- Feature list from `common/ml/feature_engineering.py`
 - Cluster strategy (per_cluster or global)
 - Inference mode (recursive or direct)
 - SHAP selection settings

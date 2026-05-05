@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | FVA |
-| **Key Files** | `api/routers/fva.py`, `frontend/src/tabs/FVATab.tsx`, `sql/068_create_fva_tracking.sql`, `frontend/src/api/queries/platform.ts` |
+| **Key Files** | `api/routers/forecasting/fva.py`, `frontend/src/tabs/FVATab.tsx`, `sql/068_create_fva_tracking.sql`, `frontend/src/api/queries/platform.ts` |
 
 ---
 
@@ -125,6 +125,6 @@ The `ceiling` value is shown as a benchmark card rather than part of the main la
 
 ## See Also
 
-- [Champion Selection](../02-forecasting/05-champion-selection.md) -- model tiers shown in waterfall
-- [AI Planning Agent](../05-ai-platform/01-ai-planning-agent.md) -- insight actions tracked as interventions
+- [Champion Selection](../02-forecasting/07-champion-selection.md) -- model tiers shown in waterfall
+- [AI Planning Agent](../06-ai-platform/01-ai-planning-agent.md) -- insight actions tracked as interventions
 - [Collaboration](./05-collaboration.md) -- annotations provide qualitative context for interventions

@@ -240,7 +240,7 @@ clustering:
     label_clusters: true
     update_db: true
   artifacts:
-    features_csv: data/clustering_features.csv
+    features_csv: data/staged/clustering_features.csv
     output_dir: data/clustering
   db_target:
     table: dim_sku
@@ -320,7 +320,7 @@ Located in `common/core/utils.py`:
 ### Usage
 
 ```python
-from common.utils import load_forecast_pipeline_config, get_algorithm_roster, get_competing_model_ids, is_clustering_enabled
+from common.core.utils import load_forecast_pipeline_config, get_algorithm_roster, get_competing_model_ids, is_clustering_enabled
 
 # Full config
 cfg = load_forecast_pipeline_config()
@@ -359,12 +359,12 @@ New code should use the master config:
 
 ```python
 # OLD (still works but deprecated):
-from common.utils import load_config
+from common.core.utils import load_config
 cfg = load_config("model_competition")
 models = cfg["competition"]["models"]
 
 # NEW (preferred):
-from common.utils import load_forecast_pipeline_config, get_competing_model_ids
+from common.core.utils import load_forecast_pipeline_config, get_competing_model_ids
 cfg = load_forecast_pipeline_config()
 models = get_competing_model_ids()
 ```

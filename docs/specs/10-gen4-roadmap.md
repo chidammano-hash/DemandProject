@@ -74,7 +74,7 @@ These surfaced in three or more independent reviews. Treat as foundational — e
 - ✅ Rebalancing on-hand + in-transit + open POs — `load_inventory_state()` extended; `available_supply` config section. (2026-04-23) (SC-4)
 - ✅ `objective` knob — `max_service_solver` + `equalize_dos_solver` added; dispatcher honors `objective` key in `rebalancing_config.yaml`. (2026-04-23) (SC-4)
 - ✅ Line-fill + case-fill scaffold — `sql/146_add_fill_rate_line_case.sql` (columns added, values TODO). (2026-04-23) (SC-5)
-- ✅ Demand-weighted fill rate — already `SUM(shipped)/SUM(ordered)` in `api/routers/fill_rate.py`; confirmed during audit, no change needed. (2026-04-23) (SC-5)
+- ✅ Demand-weighted fill rate — already `SUM(shipped)/SUM(ordered)` in `api/routers/operations/fill_rate.py`; confirmed during audit, no change needed. (2026-04-23) (SC-5)
 - ✅ Cash-to-cash, turns, DIO/DPO/DSO — new router `api/routers/inventory/working_capital.py` with `GET /analytics/working-capital`. (2026-04-23) (SC-10)
 - ✅ Per-cluster tuning profile auto-invalidation — `sql/148` + `promote_scenario()` upserts stale rows; `POST /admin/tuning/invalidate-stale` endpoint. (2026-04-23) (SC-9)
 - ✅ Exceptions grouped by root-cause key + SLA bands — `sql/149` adds cols; `derive_severity_band()`, `compute_sla_due_at()`, `compute_root_cause_key()` in `exception_engine.py`; `config/operations/exception_sla.yaml`. (2026-04-23) (SC-8)

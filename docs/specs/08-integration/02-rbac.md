@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | N/A (infrastructure layer) |
-| **Key Files** | `api/routers/auth_router.py`, `api/routers/users.py`, `api/auth.py`, `config/platform/auth_config.yaml` |
+| **Key Files** | `api/routers/platform/auth_router.py`, `api/routers/platform/users.py`, `api/auth.py`, `config/platform/auth_config.yaml` |
 
 ---
 

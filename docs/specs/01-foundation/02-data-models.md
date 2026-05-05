@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Explorer (all domains) |
-| **Key Files** | `common/domain_specs.py`, `sql/001-019*.sql`, `scripts/normalize_dataset_csv.py`, `scripts/load_dataset_postgres.py` |
+| **Key Files** | `common/core/domain_specs.py`, `sql/001-019*.sql`, `scripts/etl/normalize_dataset_csv.py`, `scripts/etl/load_dataset_postgres.py` |
 
 ---
 
@@ -16,13 +16,13 @@ Planners and supply chain teams need consistent, well-structured data to trust t
 
 ## Solution
 
-Supply Chain Command Center uses a domain-driven design where all 8 datasets share a single `DomainSpec` pattern. Each domain defines its columns, types, keys, and search fields in one central config file (`common/domain_specs.py`). Generic ETL scripts normalize any CSV into a clean format and load it into PostgreSQL. Materialized views pre-aggregate data for fast analytics.
+Supply Chain Command Center uses a domain-driven design where all 11 datasets share a single `DomainSpec` pattern. Each domain defines its columns, types, keys, and search fields in one central config file (`common/core/domain_specs.py`). Generic ETL scripts normalize any CSV into a clean format under `data/staged/` and load it into PostgreSQL. Materialized views pre-aggregate data for fast analytics.
 
 ## How It Works
 
-1. Each domain (item, location, customer, time, sku, sales, forecast, inventory) is defined as a `DomainSpec` dataclass.
-2. Raw CSVs are normalized via `scripts/normalize_dataset_csv.py` (null normalization, type casting, date parsing).
-3. Clean CSVs are loaded into PostgreSQL via `scripts/load_dataset_postgres.py`.
+1. Each domain (item, location, customer, time, sku, sales, forecast, customer_demand, inventory, sourcing, purchase_order) is defined as a `DomainSpec` dataclass.
+2. Raw CSVs are normalized via `scripts/etl/normalize_dataset_csv.py` and written to `data/staged/<domain>_clean.csv` (null normalization, type casting, date parsing).
+3. Clean CSVs are loaded into PostgreSQL from `data/staged/` via `scripts/etl/load_dataset_postgres.py`.
 4. Materialized views aggregate data for O(1) KPI queries.
 5. FastAPI serves all domains through generic endpoints: `GET /domains/{domain}/rows`, `/search`, `/suggest`, `/distinct`.
 
@@ -68,7 +68,7 @@ The DFU (Demand Forecast Unit — an item+customerGroup+location combination) ta
 |---|---|---|---|
 | `fact_sales_monthly` | item_id + customer_group + loc + startdate + type | qty_shipped, qty_ordered, qty | Only TYPE=1 loaded; startdate must be month-start |
 | `fact_external_forecast_monthly` | item_id + customer_group + loc + fcstdate + startdate + model_id | basefcst_pref, tothist_dmd | UNIQUE(forecast_ck, model_id); lags 0-4 |
-| `fact_inventory_snapshot` | item_id + loc + snapshot_date | qty_on_hand, qty_on_order, mtd_sales, lead_time_days | ~190M rows from 14 monthly CSVs |
+| `fact_inventory_snapshot` | item_id + loc + snapshot_date | qty_on_hand, qty_on_order, mtd_sales, lead_time_days | ~198M rows, monthly range-partitioned by `snapshot_date` |
 | `backtest_lag_archive` | forecast_ck + model_id + lag | basefcst_pref, tothist_dmd, timeframe | All-lags (0-4) backtest predictions |
 
 ### Forecast Loading (Dual-Path)
@@ -111,7 +111,7 @@ Each table has B-tree indexes on key lookup columns and GIN trigram indexes on t
 
 ## Configuration
 
-All domain definitions live in `common/domain_specs.py` as frozen `DomainSpec` dataclasses. Each spec declares:
+All domain definitions live in `common/core/domain_specs.py` as frozen `DomainSpec` dataclasses. Each spec declares:
 - `columns`: ordered list of column names
 - `key_fields`: columns forming the composite key (`_ck`)
 - `search_fields`: columns with GIN trigram indexes
@@ -124,5 +124,5 @@ All domain definitions live in `common/domain_specs.py` as frozen `DomainSpec` d
 
 ## See Also
 
-- [Data Quality](03-data-quality.md) — automated validation across all 8 domains
+- [Data Quality](03-data-quality.md) — automated validation across all 11 domains
 - [Planning Date](04-planning-date.md) — configurable date for frozen data environments

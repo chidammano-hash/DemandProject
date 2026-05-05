@@ -113,5 +113,5 @@ change_threshold_pct: 20     # Flag deviations > 20%
 
 - [04-replenishment](04-replenishment.md) -- Policy definitions that govern order logic
 - [03-safety-stock](03-safety-stock.md) -- SS targets define reorder points
-- [../02-forecasting/02-08-production-forecast](../02-forecasting/02-08-production-forecast.md) -- Forecast + CI bands
+- [../02-forecasting/08-production-forecast](../02-forecasting/08-production-forecast.md) -- Forecast + CI bands
 - [11-rebalancing](11-rebalancing.md) -- Transfers may substitute for new orders

@@ -99,5 +99,5 @@ After deletion, both scripts refresh these 5 views to keep aggregates consistent
 ## See Also
 
 - `02-forecasting/03-backtest-framework.md` -- backtest pipeline that produces the data being cleaned
-- `02-forecasting/05-champion-selection.md` -- champion rows stored in the same forecast table
+- `02-forecasting/07-champion-selection.md` -- champion rows stored in the same forecast table
 - `07-user-experience/04-job-scheduler.md` -- cleanup can be scheduled as a recurring job

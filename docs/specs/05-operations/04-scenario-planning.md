@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (ScenarioPlanningPanel) |
-| **Key Files** | `inv-planning/ScenarioPlanningPanel.tsx`, `api/routers/supply_scenarios.py`, `scripts/run_supply_chain_scenario.py`, `config/operations/supply_scenario_config.yaml`, `sql/059_create_supply_scenarios.sql` |
+| **Key Files** | `inv-planning/ScenarioPlanningPanel.tsx`, `api/routers/operations/supply_scenarios.py`, `scripts/run_supply_chain_scenario.py`, `config/operations/supply_scenario_config.yaml`, `sql/059_create_supply_scenarios.sql` |
 
 ---
 

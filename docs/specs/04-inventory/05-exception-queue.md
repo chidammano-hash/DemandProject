@@ -136,5 +136,5 @@ thresholds:
 
 - [04-replenishment](04-replenishment.md) -- Policy violations feed exception queue
 - [03-safety-stock](03-safety-stock.md) -- Below-SS triggers exceptions
-- [../05-ai-platform/05-01-ai-planning-agent](../05-ai-platform/05-01-ai-planning-agent.md) -- AI agent analyzes exceptions
-- [../05-ai-platform/05-03-control-tower](../05-ai-platform/05-03-control-tower.md) -- Exception counts on control tower dashboard
+- [../06-ai-platform/01-ai-planning-agent](../06-ai-platform/01-ai-planning-agent.md) -- AI agent analyzes exceptions
+- [../06-ai-platform/03-control-tower](../06-ai-platform/03-control-tower.md) -- Exception counts on control tower dashboard

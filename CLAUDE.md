@@ -62,31 +62,41 @@ common/                      # Shared Python modules — fully namespaced
 └── auth.py                  # Authentication helpers
 
 scripts/                     # Pipeline scripts
-├── etl/                     # normalize, load (7 scripts)
-├── ml/                      # backtest, clustering, tuning, champion (16 scripts)
+├── etl/                     # normalize, load (13 scripts)
+├── ml/                      # backtest, clustering, tuning, champion (37 scripts)
 ├── forecasting/             # production, quantile, blended, consensus (7 scripts)
-├── inventory/               # safety stock, eoq, replenishment, rebalancing (18 scripts)
-├── ops/                     # sop, health, dq fixes (7 scripts)
-└── ai/                      # insights, embeddings (2 scripts)
+├── inventory/               # safety stock, eoq, replenishment, rebalancing (23 scripts)
+├── ops/                     # sop, health, dq fixes (8 scripts)
+├── algorithm_testing/       # algorithm comparison harnesses (23 scripts)
+├── tools/                   # developer utilities (3 scripts)
+├── db/                      # ad-hoc DB scripts (2 scripts)
+└── ai/                      # insights, embeddings (3 scripts)
 
 frontend/                    # React + Vite + TypeScript
-├── src/tabs/                # 21 tab components + sub-panels
-├── src/api/queries/         # 39 domain API modules
+├── src/tabs/                # 22 top-level tab components + sub-panel folders
+├── src/api/queries/         # 57 domain API query modules
 ├── src/components/          # Shared UI components
 ├── Dockerfile               # Nginx multi-stage build
 └── nginx.conf               # SPA fallback + API reverse proxy
 
-config/                      # ~37 YAML config files organized by concern:
+config/                      # 42 YAML config files organized by concern:
 │   ├── etl_config.yaml                # ETL pipeline: domain load order, MV refresh, parallel workers
 │   ├── forecast_pipeline_config.yaml  # ML pipeline: algorithm roster + params, backtest, tuning, champion, forecast
 │   ├── shared_constants.yaml          # Shared constants (service levels, z-table, financial defaults, guard rails)
 │   ├── inventory_planning_config.yaml # Merged inventory planning (lead time, simulation, projection)
 │   ├── tune_strategies.yaml           # Merged tune strategies (LGBM, CatBoost, XGBoost)
 │   └── ...                            # ~30 more configs (inventory, ops, etc.)
-sql/                         # 89 DDL migration files
-tests/                       # 2762+ backend tests (api/ + unit/)
+sql/                         # 132 DDL migration files
+tests/                       # 3977+ backend tests (api/ + unit/)
 docs/                        # ARCHITECTURE, PLATFORM_GUIDE, RUNBOOK, specs/
 data/                        # Generated ML artifacts + input CSVs (gitignored)
+├── input/                   # Raw source CSVs
+├── staged/                  # Normalized *_clean.csv files (output of normalize-all, input to load-all)
+├── backtest/                # Backtest predictions
+├── champion/                # Champion model assignments
+├── clustering/              # Clustering experiment outputs
+├── models/                  # Trained model artifacts
+└── tuning/                  # Hyperparameter tuning artifacts
 archive/                     # Archived reference materials
 ```
 
@@ -200,7 +210,7 @@ See `Makefile` for the full list (130+ targets including one-time schema setup, 
 
 ### Domain-Driven Generic Design
 
-All datasets extend a single `DomainSpec` dataclass in `common/domain_specs.py`. Scripts and API endpoints are generic — they operate on any domain via `--dataset <name>` or `/domains/{domain}/*`.
+All datasets extend a single `DomainSpec` dataclass in `common/core/domain_specs.py`. Scripts and API endpoints are generic — they operate on any domain via `--dataset <name>` or `/domains/{domain}/*`.
 
 **11 Domains:** item, location, customer, time, sku (dimensions); sales, forecast, customer_demand (facts); inventory (dedicated pipeline); sourcing, purchase_order (procurement).
 
@@ -209,8 +219,10 @@ All domains are loaded via `make load-all` (and normalized via `make normalize-a
 ### Data Flow
 
 ```
-Source CSV → normalize_dataset_csv.py → clean CSV → load_dataset_postgres.py → PostgreSQL → FastAPI → React UI
+Source CSV → normalize_dataset_csv.py → data/staged/<name>_clean.csv → load_dataset_postgres.py → PostgreSQL → FastAPI → React UI
 ```
+
+Normalized CSVs live under `data/staged/`. `DomainSpec.clean_file` values embed the `staged/` prefix (e.g. `clean_file="staged/itemdata_clean.csv"`), so `ROOT / "data" / spec.clean_file` resolves to the correct location without changes to resolver call sites.
 
 ### API Pattern
 
@@ -269,24 +281,24 @@ These are hard constraints that cause bugs or test failures if violated.
 
 ### Frontend Patterns
 
-- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. Current prefixes: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/dfu`, `/competition`, `/bench`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/model-tuning`, `/cluster-experiments`, `/champion-experiments`, `/demand-history`, `/backtest-management`.
+- **Vite proxy is CRITICAL**: `frontend/vite.config.ts` proxies API path prefixes to `:8000`. When adding a new API path prefix, you MUST add a proxy entry or the frontend gets HTML instead of JSON. There are currently 50 proxy entries; consult `frontend/vite.config.ts` for the authoritative list rather than maintaining a duplicate here. Common prefixes include: `/domains`, `/jobs`, `/clustering`, `/forecast`, `/inventory`, `/dashboard`, `/health`, `/sku`, `/sku-features`, `/competition`, `/market-intelligence`, `/inv-planning`, `/fill-rate`, `/control-tower`, `/ai-planner`, `/storyboard`, `/sql-runner`, `/sourcing`, `/purchase-orders`, `/lgbm-tuning`, `/catboost-tuning`, `/xgboost-tuning`, `/model-tuning`, `/cluster-eda`, `/cluster-experiments`, `/champion-experiments`, `/feature-lab`, `/accuracy-budget`, `/demand-history`, `/demand-signals`, `/customer-analytics`, `/backtest-management`, `/integration`.
 - **Theme context, not props**: Use `useThemeContext()` or `useChartColors()` — never pass `theme` as a prop from `App.tsx`.
 - **Test wrappers**: Wrap components with `TestQueryWrapper` from `src/tabs/__tests__/test-utils.tsx`. Mock API with `vi.mock("../api/queries")`. Mock `echarts-for-react` for chart tests. Mock `@tanstack/react-virtual` for virtualized row tests.
 
 ### Code Patterns
 
-- **All config in YAML**: Every module externalizes params into `config/<name>.yaml`. No magic numbers in scripts. Load via `load_config(name)` from `common/utils.py`.
-- **Forecast pipeline master config**: `config/forecasting/forecast_pipeline_config.yaml` is the single source of truth for the ML forecast pipeline. It contains the algorithm roster with inline hyperparameters (under `algorithms.<model_id>.params`), backtest settings, tuning settings, champion selection, production forecast config, and run tracking. Use `load_forecast_pipeline_config()` from `common/utils.py` to load it. Use `get_algorithm_roster(stage=...)` to get algorithms filtered by lifecycle stage (tune/backtest/compete/forecast/expert). Use `get_competing_model_ids()` and `get_forecastable_model_ids()` for common queries. Use `get_algorithm_params(model_id)` to retrieve hyperparameters for a specific algorithm. The old separate configs (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`, `backtest_sampling_config.yaml`, `algorithm_config.yaml`) have been deleted -- all settings now live in the master config.
+- **All config in YAML**: Every module externalizes params into `config/<name>.yaml`. No magic numbers in scripts. Load via `load_config(name)` from `common.core.utils`.
+- **Forecast pipeline master config**: `config/forecasting/forecast_pipeline_config.yaml` is the single source of truth for the ML forecast pipeline. It contains the algorithm roster with inline hyperparameters (under `algorithms.<model_id>.params`), backtest settings, tuning settings, champion selection, production forecast config, and run tracking. Use `load_forecast_pipeline_config()` from `common.core.utils` to load it. Use `get_algorithm_roster(stage=...)` to get algorithms filtered by lifecycle stage (tune/backtest/compete/forecast/expert). Use `get_competing_model_ids()` and `get_forecastable_model_ids()` for common queries. Use `get_algorithm_params(model_id)` to retrieve hyperparameters for a specific algorithm. The old separate configs (`model_competition.yaml`, `lgbm_tuning_config.yaml`, `production_forecast_config.yaml`, `backtest_sampling_config.yaml`, `algorithm_config.yaml`) have been deleted -- all settings now live in the master config.
 - **Cold-start DFU routing**: DFUs with < `min_history_months` (12) months of sales history are routed to `cold_start_model_id` (rolling_mean) instead of the champion tree model. DFUs with < `cold_start_min_months` (3) months are skipped entirely. Configured in `config/forecasting/forecast_pipeline_config.yaml` under `production_forecast`.
 - **Clustering library in `common/ml/clustering/`**: All clustering library code lives in `common/ml/clustering/` — `features.py` (feature engineering), `training.py` (CORE_FEATURES, find_optimal_k, train_kmeans), `labeling.py` (assign_cluster_labels), `scenario.py` (promote_scenario, generate_scenario_id). Scripts in `scripts/ml/` are CLI entry-points that import directly from this package; they are not shims. `config/clustering_config.yaml` has been deleted — clustering params are stored in the `cluster_experiment` table (promoted row). `make cluster-all` goes through the unified experiment system (creates DB experiment, runs, auto-promotes). **Terminology**: Clustering operates on SKUs (item+location pairs), not DFUs. Use "SKU" when referring to the entities being clustered.
 - **Unified SKU feature computation**: All time-series features (volume, trend, seasonality, periodicity, intermittency, lifecycle) are computed once by `common/ml/sku_features/` and stored in `dim_sku`. Config: `config/forecasting/sku_features_config.yaml`. Clustering reads pre-computed features from `dim_sku` instead of computing from raw sales.
-- **Clustering master switch**: `clustering.enabled` in `config/forecasting/forecast_pipeline_config.yaml` is the master switch for the clustering pipeline. When `false`, all backtest scripts auto-fall back to `global` strategy regardless of per-algorithm `cluster_strategy` settings. Check via `is_clustering_enabled()` from `common/utils.py`.
+- **Clustering master switch**: `clustering.enabled` in `config/forecasting/forecast_pipeline_config.yaml` is the master switch for the clustering pipeline. When `false`, all backtest scripts auto-fall back to `global` strategy regardless of per-algorithm `cluster_strategy` settings. Check via `is_clustering_enabled()` from `common.core.utils`.
 - **Config `_includes` directive**: `load_config(name)` supports an `_includes` key at the top of any YAML file. Listed files are loaded first and merged as defaults, allowing shared constants (e.g., `shared_constants.yaml`) to be inherited without duplication.
 - **`cluster_strategy` resolution order**: `forecast_pipeline_config.yaml` algorithm entry (`algorithms.<name>.cluster_strategy`) > default `"per_cluster"`. Only tree/statistical models use this field; foundation/DL models always run globally.
 - **Backtest sampling config**: `forecast_pipeline_config.yaml` `backtest_sampling` section is the sole source for sampling settings (the legacy `backtest_sampling_config.yaml` has been deleted).
-- **DB params**: All scripts use `from common.db import get_db_params` — no inline connection helpers.
-- **Planning date**: All date-sensitive code uses `get_planning_date()` from `common/planning_date.py`, not `date.today()`. Config: `config/planning_config.yaml`. Env overrides: `PLANNING_DATE` or `USE_SYSTEM_DATE`.
-- **Timestamp helper**: Import `from common.utils import _ts` — no per-file `_ts()` definitions.
+- **DB params**: All scripts use `from common.core.db import get_db_params` — no inline connection helpers.
+- **Planning date**: All date-sensitive code uses `get_planning_date()` from `common.core.planning_date`, not `date.today()`. Config: `config/planning_config.yaml`. Env overrides: `PLANNING_DATE` or `USE_SYSTEM_DATE`.
+- **Timestamp helper**: Import `from common.core.utils import _ts` — no per-file `_ts()` definitions.
 - **`ml_cluster` is a metadata column, not a model feature** — Listed in `METADATA_COLS` (excluded from `feature_cols` by `get_feature_columns()`). Removed from `CAT_FEATURES` and `CROSS_DFU_FEATURES` to prevent data leakage (cluster assignments use full history). It is still merged into the feature grid via `build_feature_matrix()` for per-cluster model partitioning (one model per cluster), clustering UI, and inventory planning. See `docs/specs/01-foundation/08-known-gaps.md` §1.
 - **Multi-stage feature selection**: `shap_selector.py` runs 4 stages per timeframe: (0) duplicate alias removal, (1) near-zero variance filter, (2) correlation pre-filter, (3) SHAP cumulative selection. Configured via `correlation_filter`, `variance_filter` params in `forecast_pipeline_config.yaml`. **Per-cluster SHAP**: `compute_timeframe_shap_per_cluster()` runs SHAP independently per cluster, returning `dict[str, list[str]]` (cluster -> selected features). Sparse clusters with too few non-zero rows skip SHAP and keep all features. Stratified sampling (50/50 zero/non-zero) used for clusters with >50% zeros.
 - **Per-cluster tuning profiles**: `config/forecasting/cluster_tuning_profiles.yaml` defines per-cluster hyperparameter overrides. Profiles are matched in two phases: Phase 1 matches by `cluster_name` (exact match against `ml_cluster` label via `match_criteria.cluster_name`); Phase 2 falls back to statistical criteria (mean_demand, cv_demand, zero_demand_pct, etc.). First match wins per `_PROFILE_PRIORITY` order. Resolved via `resolve_cluster_params()` in `backtest_framework.py`.
@@ -350,6 +362,7 @@ When adding a new router, also:
 
 ### Data Loading
 
+- **Staged CSV convention**: Normalized CSVs land in `data/staged/`. `DomainSpec.clean_file` values embed the `staged/` prefix (e.g. `clean_file="staged/itemdata_clean.csv"`), so the canonical resolution pattern remains `ROOT / "data" / spec.clean_file` without changes at call sites. ML intermediates such as `clustering_features.csv` and `seasonality_results.csv` also live under `data/staged/`. Do not place new normalized outputs at the `data/` root.
 - **Null normalization**: `''`, `'null'`, `'none'`, `'NA'` → NULL during load
 - **Type casting**: Integer/float/date fields auto-cast with null coercion
 - **Sales filtering**: Only `TYPE=1` rows loaded into `fact_sales_monthly`
@@ -503,7 +516,7 @@ When adding a new feature end-to-end, follow these steps in order:
 
 ## Design Specs
 
-Located in `docs/specs/` — 8 domains, 56 spec files. See [docs/specs/README.md](docs/specs/README.md) for the full index with reading order.
+Located in `docs/specs/` — 8 domains, 86 spec files. See [docs/specs/README.md](docs/specs/README.md) for the full index with reading order.
 
 Domains: Foundation, Forecasting, Demand Intelligence, Inventory Planning, Operations, AI Platform, User Experience, Integration.
 

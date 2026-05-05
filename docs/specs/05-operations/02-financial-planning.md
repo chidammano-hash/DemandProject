@@ -6,7 +6,7 @@
 |---|---|
 | **Status** | Implemented |
 | **UI Tab** | Inventory Planning (FinancialPlanPanel) |
-| **Key Files** | `inv-planning/FinancialPlanPanel.tsx`, `api/routers/financial_plan.py`, `scripts/compute_financial_plan.py`, `config/operations/financial_plan_config.yaml`, `sql/057_create_financial_plan.sql` |
+| **Key Files** | `inv-planning/FinancialPlanPanel.tsx`, `api/routers/operations/financial_plan.py`, `scripts/compute_financial_plan.py`, `config/operations/financial_plan_config.yaml`, `sql/057_create_financial_plan.sql` |
 
 ---
 
